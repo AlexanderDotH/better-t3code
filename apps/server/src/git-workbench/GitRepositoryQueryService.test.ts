@@ -1,3 +1,4 @@
+import { HostProcessWorkingDirectory } from "@t3tools/shared/hostProcess";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -13,7 +14,7 @@ import * as GitRepositoryQueryService from "./GitRepositoryQueryService.ts";
 
 const GitLayer = GitVcsDriver.layer.pipe(
   Layer.provide(
-    ServerConfig.ServerConfig.layerTest(process.cwd(), {
+    ServerConfig.ServerConfig.layerTest(HostProcessWorkingDirectory.defaultValue(), {
       prefix: "t3-git-repository-query-test-",
     }),
   ),
@@ -99,11 +100,13 @@ it.effect("keeps later history pages anchored after HEAD advances", () =>
     const service = yield* GitRepositoryQueryService.GitRepositoryQueryService;
 
     const first = yield* service.listHistory({ cwd, limit: 2 });
+    assert.isNotNull(first.snapshotOid);
+    assert.isNotNull(first.nextCursor);
     yield* commitFile(cwd, 5);
     const second = yield* service.listHistory({
       cwd,
-      snapshotOid: first.snapshotOid,
-      cursor: first.nextCursor ?? undefined,
+      snapshotOid: first.snapshotOid!,
+      cursor: first.nextCursor!,
       limit: 2,
     });
 
@@ -115,7 +118,7 @@ it.effect("keeps later history pages anchored after HEAD advances", () =>
       second.items.map((item) => item.subject),
       ["commit 2", "commit 1"],
     );
-    assert.match(first.snapshotOid, /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/);
+    assert.match(first.snapshotOid!, /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/);
     assert.strictEqual(second.snapshotOid, first.snapshotOid);
     assert.strictEqual(second.nextCursor, null);
   }).pipe(Effect.provide(TestLayer), Effect.scoped),

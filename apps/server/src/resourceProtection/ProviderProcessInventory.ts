@@ -207,7 +207,7 @@ export function providerProcessStartTimeMs(
   }
 }
 
-export class ProviderProcessSignalError extends Schema.TaggedErrorClass<ProviderProcessSignalError>()(
+export class ProviderProcessSignalError extends Schema.TaggedError<ProviderProcessSignalError>()(
   "ProviderProcessSignalError",
   {
     pid: Schema.Number,

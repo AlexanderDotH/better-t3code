@@ -1,10 +1,10 @@
 import { Connection } from "@t3tools/client-runtime/connection";
-import { pullRequestDiffLoaderLayer } from "@t3tools/client-runtime/state/pull-requests";
 import { shellSnapshotLoaderLayer } from "@t3tools/client-runtime/state/shell";
 import {
   subagentSnapshotLoaderLayer,
   threadSnapshotLoaderLayer,
 } from "@t3tools/client-runtime/state/threads";
+import { pullRequestDiffLoaderLayer } from "@t3tools/client-runtime/state/pull-requests";
 import * as Layer from "effect/Layer";
 import { Atom } from "effect/unstable/reactivity";
 
@@ -21,8 +21,8 @@ const providedConnectionPlatformLayer = connectionPlatformLayer.pipe(
 
 const snapshotLoaderLayer = Layer.mergeAll(
   threadSnapshotLoaderLayer,
-  shellSnapshotLoaderLayer,
   subagentSnapshotLoaderLayer,
+  shellSnapshotLoaderLayer,
   pullRequestDiffLoaderLayer,
 );
 
@@ -34,7 +34,14 @@ type ConnectionLayerSource =
   | typeof backgroundActivityObserverLayer
   | typeof backgroundActivityReporterLayer;
 
-const providedClientConnectionLayer = Layer.merge(Connection.layer, snapshotLoaderLayer).pipe(
+const providedClientConnectionLayer = snapshotLoaderLayer.pipe(
+  Layer.provideMerge(
+    Connection.layerWithOptions({
+      environmentThemes: true,
+      usageLimitSources: true,
+      usageLimitsCommand: true,
+    }),
+  ),
   Layer.provideMerge(
     Layer.mergeAll(
       runtimeContextLayer,

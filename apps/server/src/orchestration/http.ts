@@ -191,8 +191,8 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
             Effect.tapError(() =>
               cleanupFailedUploadedAttachments(args.payload, normalizedCommand),
             ),
-            Effect.catchCause((cause) =>
-              failEnvironmentInternal("orchestration_dispatch_failed", Cause.squash(cause)),
+            Effect.catch((cause) =>
+              failEnvironmentInternal("orchestration_dispatch_failed", cause),
             ),
           );
         }),

@@ -107,6 +107,7 @@ function makeProject(): OrchestrationProjectShell {
     title: "Project",
     workspaceRoot: "/repo",
     defaultModelSelection: null,
+    checkpointsEnabled: true,
     scripts: [],
     createdAt: planUpdatedAt,
     updatedAt: planUpdatedAt,
@@ -148,7 +149,8 @@ function makeProviderInstance(input: {
     displayName: undefined,
     enabled: true,
     snapshot: {
-      maintenanceCapabilities: {},
+      resolveMaintenance: () => Effect.die("unused"),
+      applyUsageLimits: () => Effect.void,
       getSnapshot: Effect.succeed(snapshot),
       refresh: Effect.succeed(snapshot),
       streamChanges: Effect.die("unused") as never,
@@ -396,6 +398,7 @@ describe("PlanParallelismReview", () => {
       const error = yield* Fiber.join(fiber).pipe(Effect.flip);
       yield* Deferred.await(interrupted);
 
+      if (!(error instanceof PlanParallelismReviewError)) throw error;
       expect(error.reason).toBe("timeout");
     }).pipe(Effect.provide(TestClock.layer())),
   );

@@ -13,7 +13,6 @@ import {
   getDefaultCloneUrl,
   normalizePastedCloneUrl,
   resolveAddProjectPath,
-  resolveCloneDestinationPath,
   sortAddProjectProviderSources,
   type AddProjectRemoteSource,
 } from "@t3tools/client-runtime/operations/projects";
@@ -29,11 +28,16 @@ import {
 } from "@t3tools/client-runtime/state/filesystem";
 import {
   appendBrowsePathSegment,
-  hasTrailingPathSeparator,
   inferProjectTitleFromPath,
   isWindowsPlatform,
 } from "@t3tools/client-runtime/state/projects";
-import { CommandId, type EnvironmentId, ProjectId } from "@t3tools/contracts";
+import {
+  CommandId,
+  type EnvironmentId,
+  type EnvironmentMachineKind,
+  ProjectId,
+  resolveEnvironmentMachineKind,
+} from "@t3tools/contracts";
 import { CommonActions, StackActions, useNavigation } from "@react-navigation/native";
 import { SymbolView } from "../../components/AppSymbol";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -51,9 +55,9 @@ import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
 import { sourceControlEnvironment } from "../../state/sourceControl";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
+import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ErrorBanner } from "../../components/ErrorBanner";
 import { SourceControlIcon } from "../../components/SourceControlIcon";
-import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { uuidv4 } from "../../lib/uuid";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
@@ -68,6 +72,7 @@ interface EnvironmentOption {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly platform: string;
+  readonly machine: EnvironmentMachineKind;
   readonly baseDirectory: string | null;
   readonly connectionState: EnvironmentConnectionPhase;
   readonly connectionError: string | null;
@@ -355,6 +360,7 @@ function useEnvironmentOptions(): ReadonlyArray<EnvironmentOption> {
         environmentId: connection.environmentId,
         label: connection.environmentLabel,
         platform: platformFromOs(config?.environment.platform.os ?? null),
+        machine: resolveEnvironmentMachineKind(config ?? null),
         baseDirectory: config?.settings.addProjectBaseDirectory ?? null,
         connectionState: runtime?.connectionState ?? "available",
         connectionError: runtime?.connectionError ?? null,
@@ -392,23 +398,18 @@ function useSelectedEnvironment(): {
 
 function EmptyEnvironmentState() {
   const navigation = useNavigation();
-  const translator = useMobileInterfaceTranslator();
 
   return (
     <View className="items-center gap-3 rounded-2xl bg-card px-5 py-8">
-      <Text className="text-center text-lg font-t3-bold">
-        {translator.message("mobile.project.environmentUnavailable")}
-      </Text>
+      <Text className="text-center text-lg font-t3-bold">Environment unavailable</Text>
       <Text className="text-center text-sm leading-normal text-foreground-muted">
-        {translator.message("mobile.project.reconnectDescription")}
+        Start or reconnect an environment before adding a project.
       </Text>
       <Pressable
         onPress={() => navigation.dispatch(StackActions.replace("ConnectionsNew"))}
         className="mt-1 rounded-full bg-primary px-4 py-2.5 active:opacity-70"
       >
-        <Text className="text-sm font-t3-bold text-primary-foreground">
-          {translator.message("mobile.connection.addEnvironment")}
-        </Text>
+        <Text className="text-sm font-t3-bold text-primary-foreground">Add environment</Text>
       </Pressable>
     </View>
   );
@@ -461,7 +462,6 @@ function SourceControlRow(props: {
 
 export function AddProjectSourceScreen() {
   const navigation = useNavigation();
-  const translator = useMobileInterfaceTranslator();
   const { environmentOptions, selectedEnvironment, setSelectedEnvironmentId } =
     useSelectedEnvironment();
   const discoveryState = useEnvironmentQuery(
@@ -483,7 +483,7 @@ export function AddProjectSourceScreen() {
 
       {environmentOptions.length > 1 ? (
         <>
-          <SectionTitle>{translator.message("mobile.settings.environments")}</SectionTitle>
+          <SectionTitle>Environments</SectionTitle>
           <ListSection>
             {environmentOptions.map((environment, index) => (
               <ListRow
@@ -495,14 +495,14 @@ export function AddProjectSourceScreen() {
                     : connectionStatusText({
                         phase: environment.connectionState,
                         error: environment.connectionError,
+                        traceId: environment.connectionErrorTraceId,
                       })
                 }
                 icon={
-                  <SymbolView
-                    name="server.rack"
+                  <EnvironmentMachineSymbol
+                    kind={environment.machine}
                     size={17}
-                    tintColorClassName={"accent-icon"}
-                    type="monochrome"
+                    tintColorClassName="accent-icon"
                   />
                 }
                 selected={environment.environmentId === selectedEnvironment?.environmentId}
@@ -529,8 +529,8 @@ export function AddProjectSourceScreen() {
         <>
           <ListSection>
             <ListRow
-              title={translator.message("mobile.project.localFolder")}
-              subtitle={translator.message("mobile.project.browseFolder")}
+              title="Local folder"
+              subtitle="Browse a folder on disk"
               icon={
                 <SymbolView
                   name="folder.badge.plus"
@@ -752,7 +752,6 @@ function FolderBrowser(props: {
   }) => Promise<boolean>;
   readonly pinnedDirectoryName?: string;
 }) {
-  const translator = useMobileInterfaceTranslator();
   const browsePath = useMemo(
     () => getFilesystemBrowsePath(props.pathInput, props.environment.platform),
     [props.environment.platform, props.pathInput],
@@ -783,7 +782,7 @@ function FolderBrowser(props: {
 
   return (
     <>
-      <SectionTitle>{translator.message("mobile.project.browseFolders")}</SectionTitle>
+      <SectionTitle>Browse folders</SectionTitle>
       {browseState.error ? <ErrorBanner message={browseState.error} /> : null}
       <ListSection>
         {browseState.isPending && browseState.data === null ? (
@@ -841,7 +840,6 @@ function FolderBrowser(props: {
 }
 
 export function AddProjectLocalFolderScreen(props: { readonly environmentId?: string | string[] }) {
-  const translator = useMobileInterfaceTranslator();
   const environment = useEnvironmentFromParam(props.environmentId);
   const createProject = useCreateProject(environment);
   const { isBrowseNavigating, navigateToBrowsePath, pathInput, setPathInput } =
@@ -881,7 +879,7 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
             onSubmit={() => void submitPath()}
           />
           <PrimaryActionButton
-            label={translator.message("mobile.project.add")}
+            label="Add project"
             disabled={isBrowseNavigating || isSubmitting}
             onPress={() => void submitPath()}
             loading={isSubmitting}
@@ -906,7 +904,6 @@ export function AddProjectDestinationScreen(props: {
   readonly repositoryTitle?: string | string[];
   readonly repositoryName?: string | string[];
 }) {
-  const translator = useMobileInterfaceTranslator();
   const cloneRepository = useAtomCommand(sourceControlEnvironment.cloneRepository, {
     reportFailure: false,
   });
@@ -929,13 +926,10 @@ export function AddProjectDestinationScreen(props: {
   const submitPath = useCallback(async () => {
     if (!environment || !remoteUrl || isBrowseNavigating || isSubmitting) return;
     setError(null);
-    const resolved = resolveCloneDestinationPath({
+    const resolved = resolveAddProjectPath({
       rawPath: pathInput,
       currentProjectCwd: null,
       platform: environment.platform,
-      destinationIsParent: hasTrailingPathSeparator(pathInput),
-      repositoryNameWithOwner: repositoryTitle,
-      remoteUrl,
     });
     if (!resolved.ok) {
       setError(resolved.error);
@@ -966,7 +960,6 @@ export function AddProjectDestinationScreen(props: {
     isBrowseNavigating,
     isSubmitting,
     pathInput,
-    repositoryTitle,
     remoteUrl,
   ]);
 
@@ -989,7 +982,7 @@ export function AddProjectDestinationScreen(props: {
             onSubmit={() => void submitPath()}
           />
           <PrimaryActionButton
-            label={translator.message("mobile.project.clone")}
+            label="Clone project"
             disabled={isBrowseNavigating || isSubmitting || !remoteUrl}
             onPress={() => void submitPath()}
             loading={isSubmitting}

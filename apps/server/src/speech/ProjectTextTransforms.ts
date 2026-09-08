@@ -11,7 +11,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { resolveVoiceTranslationModelSelection, ServerSettingsService } from "../serverSettings.ts";
+import { resolveVoiceTranslationModelSelection } from "@t3tools/shared/serverSettings";
+import { ServerSettingsService } from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 
 type ProjectTextTransformInput = TranslateTranscriptInput | ImprovePromptInput;

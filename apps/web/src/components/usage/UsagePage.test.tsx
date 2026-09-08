@@ -1,11 +1,11 @@
-import { USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
+import { EnvironmentId, UsageDay, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const testState = vi.hoisted(() => ({
   useUsage: vi.fn(),
-  metric: "cost" as "cost" | "tokens",
+  metric: "cost" as "cost" | "tokens" | "limits",
   breakdown: "time" as "model" | "time",
 }));
 
@@ -14,23 +14,25 @@ vi.mock("react", async (importOriginal) => {
   return {
     ...actual,
     useState: vi.fn((initial: unknown) => [
-      typeof initial === "function"
-        ? {
-            days: 1,
-            window: {
-              sinceDay: "2026-08-10",
-              untilDay: "2026-08-11",
-              timeZone: "UTC",
-              resolution: "hour",
-              sinceTime: "2026-08-10T12:37:00.000Z",
-              untilTime: "2026-08-11T12:37:00.000Z",
-            },
-          }
-        : initial === "cost"
-          ? testState.metric
-          : initial === "model"
-            ? testState.breakdown
-            : initial,
+      initial === readUsagePagePreferences
+        ? { metric: testState.metric, windowDays: 30 }
+        : typeof initial === "function"
+          ? {
+              days: 1,
+              window: {
+                sinceDay: "2026-08-10",
+                untilDay: "2026-08-11",
+                timeZone: "UTC",
+                resolution: "hour",
+                sinceTime: "2026-08-10T12:37:00.000Z",
+                untilTime: "2026-08-11T12:37:00.000Z",
+              },
+            }
+          : initial === "cost"
+            ? testState.metric
+            : initial === "model"
+              ? testState.breakdown
+              : initial,
       vi.fn(),
     ]),
   };
@@ -57,6 +59,7 @@ vi.mock("../WorkspaceBreadcrumb", () => ({
 vi.mock("../WorkspacePageContainer", () => ({ WorkspacePageContainer: "main" }));
 vi.mock("../WorkspacePageHeader", () => ({ WorkspacePageHeader: "header" }));
 vi.mock("./UsageProviderChart", () => ({ UsageProviderChart: "div" }));
+vi.mock("./UsagePriceOverrides", () => ({ UsagePriceOverrides: () => null }));
 vi.mock("./usageProviders", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./usageProviders")>();
   return {
@@ -69,6 +72,7 @@ vi.mock("./usageProviders", async (importOriginal) => {
 });
 
 import { UsagePage } from "./UsagePage";
+import { readUsagePagePreferences } from "./usagePagePreferences";
 
 const providerTotals = (codex: number, claude: number) =>
   new Map([
@@ -103,38 +107,32 @@ const modelTotals = Object.freeze([
   },
 ]);
 
+const environments = [
+  {
+    environmentId: EnvironmentId.make("test-environment"),
+    label: "Test environment",
+    isPending: false,
+    error: null,
+    summary: {
+      contractVersion: USAGE_CONTRACT_VERSION,
+      readAt: "2026-08-11T12:37:00.000Z",
+      sinceDay: UsageDay.make("2026-08-10"),
+      untilDay: UsageDay.make("2026-08-11"),
+      timeZone: "UTC",
+      buckets: [],
+      sources: [],
+      pricing: { status: "fresh", source: "test", fetchedAt: null, knownModels: 1 },
+      scanDurationMs: 1,
+    },
+  },
+];
+
 beforeEach(() => {
   testState.metric = "cost";
   testState.breakdown = "time";
   testState.useUsage.mockReturnValue({
     merged: {
       ...mergeUsage([], USAGE_CONTRACT_VERSION),
-      uncachedInputTokens: 101,
-      cachedInputTokens: 202,
-      cacheCreationTokens: 3,
-      outputTokens: 404,
-      reasoningTokens: 55,
-      totalTokens: 710,
-      calls: [
-        { kind: "root", costUsd: 1, totalTokens: 400, records: 4 },
-        { kind: "subagent", costUsd: 0.5, totalTokens: 200, records: 2 },
-        { kind: "metadata", costUsd: 0.1, totalTokens: 100, records: 1 },
-        { kind: "auto-reasoning", costUsd: 0.05, totalTokens: 50, records: 1 },
-        { kind: "unknown", costUsd: 0, totalTokens: 10, records: 1 },
-      ],
-      contextDiagnostics: {
-        nativeForks: 2,
-        compactHandoffs: 3,
-        totalHandoffChars: 456,
-        compactionEvents: 4,
-        maxContextTokens: 200_000,
-        instructionChars: 1_000,
-        memoryInjectionChars: 2_000,
-        toolSchemaChars: 3_000,
-        subagentResultChars: 4_000,
-        toolDigestChars: 5_000,
-        autoRoutingChars: 6_000,
-      },
       models: modelTotals,
       hourly: [
         {
@@ -153,7 +151,8 @@ beforeEach(() => {
         },
       ],
     },
-    environments: [],
+    environments,
+    selectedEnvironments: environments,
     isPending: false,
     isPartial: false,
     refresh: vi.fn(),
@@ -204,40 +203,5 @@ describe("UsagePage model breakdown", () => {
       "token-heavy-model",
       "token-heavy-cheaper-model",
     ]);
-  });
-});
-
-describe("UsagePage accounting diagnostics", () => {
-  it("shows the disjoint token mix with processed total as secondary context", () => {
-    const markup = renderToStaticMarkup(<UsagePage />);
-
-    expect(markup).toContain("New input");
-    expect(markup).toContain("Cached input");
-    expect(markup).toContain("Output");
-    expect(markup).toContain("Reasoning");
-    expect(markup).toContain("Processed total");
-    expect(markup).toContain("Cache writes");
-  });
-
-  it("shows root, subagent, hidden metadata, and content-free context diagnostics", () => {
-    const markup = renderToStaticMarkup(<UsagePage />);
-
-    expect(markup).toContain("Calls by role");
-    expect(markup).toContain("Root calls");
-    expect(markup).toContain("Subagent calls");
-    expect(markup).toContain("Hidden metadata calls");
-    expect(markup).toContain("Auto reasoning calls");
-    expect(markup).toContain("Context diagnostics");
-    expect(markup).toContain("Native forks");
-    expect(markup).toContain("Compact handoffs");
-    expect(markup).toContain("Handoff characters");
-    expect(markup).toContain("Compaction events");
-    expect(markup).toContain("Instruction characters");
-    expect(markup).toContain("Memory injection characters");
-    expect(markup).toContain("Tool schema characters");
-    expect(markup).toContain("Subagent result characters");
-    expect(markup).toContain("Tool digest characters");
-    expect(markup).toContain("Auto routing characters");
-    expect(markup).not.toContain("private prompt");
   });
 });

@@ -65,6 +65,7 @@ it.layer(TestLayer)("OrchestrationProjectionPipeline fork history", (it) => {
         correlationId: CommandId.make("command-project"),
         metadata: {},
         payload: {
+          checkpointsEnabled: true,
           projectId,
           title: "Fork project",
           workspaceRoot: "/tmp/project-fork",
@@ -515,7 +516,17 @@ it.layer(TestLayer)("OrchestrationProjectionPipeline fork history", (it) => {
         WHERE thread_id = ${threadId}
       `;
       const parsedFork = JSON.parse(updatedFork[0]?.forkJson ?? "null") as {
-        readonly workspace: { readonly status: string; readonly preparedAt: string | null };
+        readonly workspace: {
+          readonly status: string;
+          readonly preparedAt: string | null;
+          readonly spec: {
+            mode: string;
+            baseBranch: string;
+            startFromOrigin: boolean;
+            runSetupScript: boolean;
+          };
+          readonly lastError: string | null;
+        };
         readonly handoff: { readonly status: string; readonly completedAt: string | null };
       };
       assert.deepEqual(parsedFork.workspace, {

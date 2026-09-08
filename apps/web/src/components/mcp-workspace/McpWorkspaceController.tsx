@@ -18,13 +18,13 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 
-import { ensureEnvironmentApi } from "~/environmentApi";
+import { useSettingsCommand } from "../settings/useSettingsMutation";
 import { ensureLocalApi } from "~/localApi";
 import { agentSettingsEnvironment } from "~/state/agentSettings";
 import { useEnvironmentQuery } from "~/state/query";
@@ -111,16 +111,19 @@ export function McpWorkspaceRuntimeProvider(props: McpWorkspaceRuntimeProviderPr
     props.providerInstanceId,
   );
   const [selectedContextId, setSelectedContextId] = useState<string | null>(null);
-  useEffect(() => {
-    setSelectedProviderId(props.providerInstanceId);
-    setSelectedContextId(null);
-  }, [
+  const originKey = JSON.stringify([
     props.environmentId,
     props.projectCwd,
     props.providerInstanceId,
     props.runtimeSessionId,
     props.threadId,
   ]);
+  const [previousOriginKey, setPreviousOriginKey] = useState(originKey);
+  if (previousOriginKey !== originKey) {
+    setPreviousOriginKey(originKey);
+    setSelectedProviderId(props.providerInstanceId);
+    setSelectedContextId(null);
+  }
   const selectedProvider =
     props.providers.find((provider) => provider.instanceId === selectedProviderId) ??
     props.providers.find((provider) => provider.instanceId === props.providerInstanceId) ??
@@ -227,7 +230,9 @@ function McpExactRuntimePanel(props: RuntimePanelProps) {
   );
   const selectorKey = `${props.environmentId}\u0000${props.projectCwd ?? ""}\u0000${props.providerInstanceId}\u0000${props.threadId}\u0000${props.runtimeSessionId}`;
   const selectorKeyRef = useRef(selectorKey);
-  selectorKeyRef.current = selectorKey;
+  useLayoutEffect(() => {
+    selectorKeyRef.current = selectorKey;
+  }, [selectorKey]);
   const [detailsByProviderKey, setDetailsByProviderKey] = useState<
     Readonly<Record<string, McpRuntimeServerDetailsResult | undefined>>
   >({});
@@ -242,13 +247,15 @@ function McpExactRuntimePanel(props: RuntimePanelProps) {
   >({});
   const [pendingAction, setPendingAction] = useState<McpRuntimeActionPending | null>(null);
 
-  useEffect(() => {
+  const [previousSelectorKey, setPreviousSelectorKey] = useState(selectorKey);
+  if (previousSelectorKey !== selectorKey) {
+    setPreviousSelectorKey(selectorKey);
     setDetailsByProviderKey({});
     setDetailsLoadingKeys(new Set());
     setDetailsErrorByProviderKey({});
     setActionErrorByProviderKey({});
     setPendingAction(null);
-  }, [selectorKey]);
+  }
 
   const loadDetails = useCallback(
     async (server: McpRuntimeServer, expanded: boolean) => {
@@ -298,6 +305,7 @@ function McpExactRuntimePanel(props: RuntimePanelProps) {
     ],
   );
 
+  const runRuntimeAction = useSettingsCommand(agentSettingsEnvironment.mcp.runtimeAction);
   const performAction = useCallback(
     async (server: McpRuntimeServer, action: McpRuntimeAction) => {
       if (props.readOnly) {
@@ -322,10 +330,13 @@ function McpExactRuntimePanel(props: RuntimePanelProps) {
         [server.providerKey]: undefined,
       }));
       try {
-        const result = await ensureEnvironmentApi(props.environmentId).mcp.runtimeAction({
-          ...selector,
-          providerKey: server.providerKey,
-          action,
+        const result = await runRuntimeAction({
+          environmentId: props.environmentId,
+          input: {
+            ...selector,
+            providerKey: server.providerKey,
+            action,
+          },
         });
         if (selectorKeyRef.current !== requestSelectorKey) return;
         if (!result.accepted) {
@@ -351,7 +362,14 @@ function McpExactRuntimePanel(props: RuntimePanelProps) {
         }
       }
     },
-    [props.authorizationAvailable, props.environmentId, props.readOnly, selector, selectorKey],
+    [
+      props.authorizationAvailable,
+      props.environmentId,
+      props.readOnly,
+      runRuntimeAction,
+      selector,
+      selectorKey,
+    ],
   );
 
   return (

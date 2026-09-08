@@ -196,7 +196,7 @@ export const ProjectAgentCoordinationUnavailableReason = Schema.Literals([
 export type ProjectAgentCoordinationUnavailableReason =
   typeof ProjectAgentCoordinationUnavailableReason.Type;
 
-export class ProjectAgentCoordinationUnavailableError extends Schema.TaggedErrorClass<ProjectAgentCoordinationUnavailableError>()(
+export class ProjectAgentCoordinationUnavailableError extends Schema.TaggedError<ProjectAgentCoordinationUnavailableError>()(
   "ProjectAgentCoordinationUnavailableError",
   {
     reason: ProjectAgentCoordinationUnavailableReason,
@@ -208,7 +208,7 @@ export class ProjectAgentCoordinationUnavailableError extends Schema.TaggedError
   }
 }
 
-export class ProjectAgentCoordinationOperationError extends Schema.TaggedErrorClass<ProjectAgentCoordinationOperationError>()(
+export class ProjectAgentCoordinationOperationError extends Schema.TaggedError<ProjectAgentCoordinationOperationError>()(
   "ProjectAgentCoordinationOperationError",
   {
     operation: Schema.Literals(["list", "claim", "send", "inbox"]),

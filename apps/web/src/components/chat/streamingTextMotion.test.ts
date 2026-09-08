@@ -75,11 +75,18 @@ class StreamingMotionTestNode {
 }
 
 function installStreamingMotionTestDom() {
+  const motionListeners = new Set<() => void>();
+  const motionQuery = {
+    matches: false,
+    addEventListener: (_event: string, listener: () => void) => motionListeners.add(listener),
+    removeEventListener: (_event: string, listener: () => void) => motionListeners.delete(listener),
+  };
   const callbacks = new Map<number, FrameRequestCallback>();
   let nextFrameId = 0;
   const document = new StreamingMotionTestNode("#document", null, 9);
   const window = {
     document,
+    matchMedia: () => motionQuery,
     HTMLIFrameElement: StreamingMotionTestNode,
     setInterval: globalThis.setInterval,
     clearInterval: globalThis.clearInterval,
@@ -100,7 +107,14 @@ function installStreamingMotionTestDom() {
   vi.stubGlobal("window", window);
   vi.stubGlobal("HTMLIFrameElement", window.HTMLIFrameElement);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  return { callbacks, document };
+  return {
+    callbacks,
+    document,
+    setReducedMotion(matches: boolean) {
+      motionQuery.matches = matches;
+      for (const listener of motionListeners) listener();
+    },
+  };
 }
 
 function StreamingTextMotionHarness(props: {
@@ -473,6 +487,32 @@ describe("Markdown source reconciliation", () => {
 });
 
 describe("streaming motion commit lifecycle", () => {
+  it("stops active work immediately when reduced motion is enabled", async () => {
+    vi.useFakeTimers();
+    const { callbacks, document, setReducedMotion } = installStreamingMotionTestDom();
+    const { createRoot } = await import("react-dom/client");
+    const root = createRoot(document.createElement("div") as unknown as Element);
+    try {
+      await act(() =>
+        root.render(createElement(StreamingTextMotionHarness, { text: "", isStreaming: true })),
+      );
+      await act(() =>
+        root.render(createElement(StreamingTextMotionHarness, { text: "A", isStreaming: true })),
+      );
+      expect(callbacks.size).toBe(1);
+      await act(() => setReducedMotion(true));
+      expect(callbacks.size).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+      await act(() =>
+        root.render(createElement(StreamingTextMotionHarness, { text: "AB", isStreaming: true })),
+      );
+      expect(callbacks.size).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      await act(() => root.unmount());
+    }
+  });
+
   it("drains the hook cleanup timer and pending frame when streaming settles", async () => {
     vi.useFakeTimers();
     const { callbacks, document } = installStreamingMotionTestDom();

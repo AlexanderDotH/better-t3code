@@ -1,3 +1,4 @@
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeChildProcess from "node:child_process";
@@ -18,7 +19,7 @@ const runRealGit = (input: GitWorkbenchOperationCommandInput) =>
       cwd: input.cwd,
       encoding: "utf8",
       env: {
-        ...process.env,
+        ...HostProcessEnvironment.defaultValue(),
         ...input.env,
         GIT_CONFIG_COUNT: "1",
         GIT_CONFIG_KEY_0: "commit.gpgsign",
@@ -52,7 +53,7 @@ const git = (cwd: string, args: readonly string[]) =>
     Effect.flatMap((result) =>
       result.exitCode === 0
         ? Effect.succeed(result.stdout.trim())
-        : Effect.dieMessage(result.stderr || `git ${args.join(" ")} failed`),
+        : Effect.die(new Error(result.stderr || `git ${args.join(" ")} failed`)),
     ),
   );
 

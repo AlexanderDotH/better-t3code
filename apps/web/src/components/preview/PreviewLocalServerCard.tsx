@@ -1,7 +1,5 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
-import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
-
 import { PreviewFaviconIcon } from "./PreviewFaviconIcon";
 import type { PreviewableServer } from "./useDiscoveredLocalServers";
 
@@ -12,8 +10,7 @@ interface Props {
 }
 
 export function PreviewLocalServerCard({ threadRef, server, onOpen }: Props) {
-  const translate = useInterfaceTranslator().message;
-  const subtitle = server.processName ?? translate("browser.preview.listening");
+  const subtitle = describeServer(server);
   return (
     <button
       type="button"
@@ -29,4 +26,9 @@ export function PreviewLocalServerCard({ threadRef, server, onOpen }: Props) {
       </div>
     </button>
   );
+}
+
+function describeServer(server: PreviewableServer): string {
+  if (server.processName) return server.processName;
+  return "Listening";
 }

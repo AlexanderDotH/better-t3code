@@ -1,5 +1,5 @@
 import type { CodeViewItem, DiffLineAnnotation, SelectedLineRange } from "@pierre/diffs";
-import type { CodeViewDiffItem } from "@pierre/diffs/react";
+import type { CodeViewDiffItem, CodeViewHandle } from "@pierre/diffs/react";
 import type {
   EnvironmentId,
   PullRequestDetailView,
@@ -16,6 +16,7 @@ import {
   ChevronsDownUpIcon,
   ChevronsUpDownIcon,
   Columns2Icon,
+  FolderTreeIcon,
   MessageSquareIcon,
   MessageSquareOffIcon,
   Rows3Icon,
@@ -24,11 +25,12 @@ import {
   XIcon,
 } from "lucide-react";
 import { useAtomRefresh } from "@effect/atom-react";
+import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { useClientSettings } from "~/hooks/useSettings";
+import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
-import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 import { areAllDiffFilesCollapsed } from "~/lib/diffCollapse";
 import { pullRequestFindingKey, type PullRequestFinding } from "./pullRequestDetail.logic";
 import { canEditPullRequestComment } from "./pullRequestEditing.logic";
@@ -43,6 +45,7 @@ import {
   resolveFileDiffPreviousPath,
   type RenderablePatch,
 } from "~/lib/diffRendering";
+import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
 import { createPullRequestDiffFileContentsLoader } from "~/lib/diffFileContents";
 import {
@@ -55,8 +58,10 @@ import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { DiffPanelLoadingState } from "../DiffPanelShell";
-import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
+import { DiffFileTree } from "../diffs/DiffFileTree";
+import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
+import { diffFileTreeEntries } from "../diffs/diffFileTree.logic";
 import { StyledDiffCodeView } from "../diffs/StyledDiffCodeView";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
@@ -96,6 +101,8 @@ type ReviewAnnotation = DiffLineAnnotation<ReviewAnnotationGroup>;
 
 /** Commits per press of "Show more" in the scope menu. */
 const COMMIT_PAGE_SIZE = 10;
+
+const PULL_REQUEST_FILE_TREE_STORAGE_KEY = "t3code.pullRequestFileTreeOpen";
 
 /** One answer from the host: a whole number of files, and where the next one carries on. */
 interface DiffSlice {
@@ -180,14 +187,14 @@ function getReviewPositionAnchor(position: PullRequestReviewPosition): {
  * host sit under the line they were written on, and a new comment joins the review being
  * drafted rather than being posted as it is typed.
  */
-export function PullRequestCodeTab({
+function PullRequestCodeTab({
   environmentId,
   reference,
   detail,
   selectedCommitOid,
   onSelectedCommitChange,
   pendingFinding,
-  fixFindingLabel,
+  fixFindingLabel = "Fix in a thread",
   onFixFinding,
   onAddToAgentSelection,
   onRefresh,
@@ -210,8 +217,6 @@ export function PullRequestCodeTab({
   refreshToken?: number;
 }) {
   const { resolvedTheme } = useTheme();
-  const translate = useInterfaceTranslator().message;
-  const resolvedFixFindingLabel = fixFindingLabel ?? translate("pullRequest.thread.fix");
   const settings = useClientSettings();
   const [toggledFiles, setToggledFiles] = useState<ReadonlySet<string>>(() => new Set());
   // A change of any size can carry hundreds of commits, and a menu that long is a scroll rather
@@ -219,8 +224,14 @@ export function PullRequestCodeTab({
   const [visibleCommitCount, setVisibleCommitCount] = useState(COMMIT_PAGE_SIZE);
   /** Set once the reader has asked for every file at once, until they pick a file apart again. */
   const [foldOverride, setFoldOverride] = useState<DiffFoldOverride>(null);
-  const [diffRenderMode, setDiffRenderMode] = useState<"stacked" | "split">("stacked");
+  const diffLayout = settings.diffLayout;
+  const updateClientSettings = useUpdateClientSettings();
   const [wordWrap, setWordWrap] = useState(settings.wordWrap);
+  const [fileTreeOpen, setFileTreeOpen] = useLocalStorage(
+    PULL_REQUEST_FILE_TREE_STORAGE_KEY,
+    false,
+    Schema.Boolean,
+  );
   const [selectedLines, setSelectedLines] = useState<{
     id: string;
     range: SelectedLineRange;
@@ -239,6 +250,7 @@ export function PullRequestCodeTab({
     readonly slices: ReadonlyArray<DiffSlice>;
   }>({ key: "", cursor: null, slices: NO_SLICES });
   const parseCache = useRef(new Map<string, RenderablePatch>());
+  const [viewer, setViewer] = useState<CodeViewHandle<ReviewAnnotationGroup> | null>(null);
 
   const referenceKey = pullRequestReviewKey(reference);
   const commit = selectedCommitOid;
@@ -545,34 +557,35 @@ export function PullRequestCodeTab({
     [items],
   );
   const allFilesCollapsed = areAllDiffFilesCollapsed(fileKeys, collapsedFileKeys);
+  const fileTreeEntries = useMemo(() => diffFileTreeEntries(files), [files]);
+
+  // A failed slice must not be asked for again on its own. The files already loaded keep the
+  // sentinel on screen, so re-arming it after a failure would request the same slice forever.
+  const canLoadNextSlice =
+    nextCursor !== null &&
+    nextCursor !== cursor &&
+    !diffQuery.isPending &&
+    diffQuery.error === null;
+  const loadNextSlice = useCallback(() => {
+    if (nextCursor === null) return;
+    setSliceState((previous) => ({ ...previous, cursor: nextCursor }));
+  }, [nextCursor]);
 
   // The sentinel is held as state rather than a ref because the viewer mounts its own footer:
   // an effect reading a ref could run before that node exists and would never arm the observer.
   const [sentinel, setSentinel] = useState<HTMLDivElement | null>(null);
   useEffect(() => {
-    // A failed slice must stop the observer. The files already loaded keep the sentinel on
-    // screen, so re-arming it after a failure would ask for the same slice again, forever.
-    if (
-      sentinel === null ||
-      nextCursor === null ||
-      nextCursor === cursor ||
-      diffQuery.isPending ||
-      diffQuery.error !== null
-    ) {
-      return;
-    }
+    if (sentinel === null || !canLoadNextSlice) return;
     const observer = new IntersectionObserver(
       (observed) => {
-        if (observed.some((entry) => entry.isIntersecting)) {
-          setSliceState((previous) => ({ ...previous, cursor: nextCursor }));
-        }
+        if (observed.some((entry) => entry.isIntersecting)) loadNextSlice();
       },
       // Start the next slice slightly before the sentinel is on screen.
       { rootMargin: "240px" },
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [cursor, diffQuery.error, diffQuery.isPending, nextCursor, sentinel]);
+  }, [canLoadNextSlice, loadNextSlice, sentinel]);
 
   // A stable identity: the viewer's SlotPortals memoizes each file's header/annotation portal on
   // these render props, so a fresh function here would recreate every visible file's portal on
@@ -588,6 +601,17 @@ export function PullRequestCodeTab({
         return next;
       }),
     [],
+  );
+
+  const requestTreeReveal = useCodeViewFileReveal(viewer, scopeKey);
+  const revealFile = useCallback(
+    (path: string) => {
+      const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
+      if (item === undefined) return;
+      if (item.collapsed === true) toggleFile(item.id);
+      requestTreeReveal(item.id);
+    },
+    [items, requestTreeReveal, toggleFile],
   );
 
   const toggleAllFiles = () => {
@@ -645,9 +669,7 @@ export function PullRequestCodeTab({
           : buildDiffReviewComment({
               id: `pull-request-selection:${anchor.fileKey}:${anchor.range.start}:${anchor.range.end}`,
               sectionId: `pull-request:${detail.number}`,
-              sectionTitle: translate("pullRequest.code.reviewSection", {
-                number: detail.number,
-              }),
+              sectionTitle: `PR #${detail.number} review`,
               filePath: anchor.path,
               fileDiff: file,
               range: anchor.range,
@@ -657,7 +679,7 @@ export function PullRequestCodeTab({
       setSelectedLines(null);
       if (comment !== null) onFinish(comment);
     },
-    [detail.number, files, translate],
+    [detail.number, files],
   );
 
   // The viewer's SlotPortals memoizes each visible file's header/annotation portal on these
@@ -677,17 +699,17 @@ export function PullRequestCodeTab({
         >
           {diffQuery.error !== null ? (
             <>
-              <span>{translate("pullRequest.code.restUnavailable")}</span>
+              <span>The rest of this diff could not be loaded.</span>
               <Button size="xs" variant="outline" onClick={() => diffQuery.refresh()}>
-                {translate("common.retry")}
+                Retry
               </Button>
             </>
           ) : diffQuery.isPending ? (
-            translate("pullRequest.code.loadingMoreFiles")
+            "Loading more files..."
           ) : null}
         </div>
       ),
-    [nextCursor, diffQuery.error, diffQuery.isPending, diffQuery.refresh, translate],
+    [nextCursor, diffQuery.error, diffQuery.isPending, diffQuery.refresh],
   );
 
   const renderHeaderPrefix = useCallback(
@@ -700,7 +722,7 @@ export function PullRequestCodeTab({
           size="icon-micro"
           variant="ghost-muted"
           aria-expanded={!collapsed}
-          aria-label={translate(collapsed ? "git.diff.expand" : "git.diff.collapse")}
+          aria-label={collapsed ? "Expand diff" : "Collapse diff"}
           className="mr-1 rounded hover:bg-transparent"
           onClick={(event) => {
             event.stopPropagation();
@@ -715,7 +737,7 @@ export function PullRequestCodeTab({
         </Button>
       );
     },
-    [toggleFile, translate],
+    [toggleFile],
   );
 
   const renderHeaderMetadata = useCallback(
@@ -744,10 +766,11 @@ export function PullRequestCodeTab({
 
   const diffViewOptions = useMemo(
     () => ({
-      diffStyle: diffRenderMode === "split" ? ("split" as const) : ("unified" as const),
+      diffStyle: diffLayout === "split" ? ("split" as const) : ("unified" as const),
       lineDiffType: "none" as const,
       overflow: wordWrap ? ("wrap" as const) : ("scroll" as const),
       theme: resolveDiffThemeName(resolvedTheme),
+      preferredHighlighter: PREFERRED_HIGHLIGHTER,
       themeType: resolvedTheme,
       stickyHeaders: true,
       loadDiffFiles,
@@ -760,15 +783,7 @@ export function PullRequestCodeTab({
       onGutterUtilityClick: beginComment,
       onLineSelectionEnd: beginComment,
     }),
-    [
-      diffRenderMode,
-      wordWrap,
-      resolvedTheme,
-      loadDiffFiles,
-      canCommentOnLines,
-      draft,
-      beginComment,
-    ],
+    [diffLayout, wordWrap, resolvedTheme, loadDiffFiles, canCommentOnLines, draft, beginComment],
   );
 
   const runThreadCommand = useCallback(
@@ -805,7 +820,7 @@ export function PullRequestCodeTab({
         reference={reference}
         pending={threadPending}
         fixPending={pendingFinding === pullRequestFindingKey({ kind: "thread", thread })}
-        fixLabel={resolvedFixFindingLabel}
+        fixLabel={fixFindingLabel}
         {...(onFixFinding ? { onFix: () => onFixFinding({ kind: "thread", thread }) } : {})}
         onLoadMore={async (cursor): Promise<PullRequestThreadCommentsResult | null> => {
           const result = await loadThreadComments({
@@ -815,14 +830,14 @@ export function PullRequestCodeTab({
           if (result._tag === "Failure") {
             toastManager.add({
               type: "error",
-              title: translate("pullRequest.code.moreCommentsFailed"),
+              title: "More comments could not be loaded",
             });
             return null;
           }
           return result.value;
         }}
         onReply={(body) =>
-          runThreadCommand(translate("pullRequest.code.replyFailed"), () =>
+          runThreadCommand("Reply could not be posted", () =>
             replyToThread({
               environmentId,
               input: { ...reference, threadId: thread.id, body },
@@ -834,7 +849,7 @@ export function PullRequestCodeTab({
           canEditPullRequestComment(detail, { author: comment.author, kind: "review-comment" })
         }
         onEditComment={(commentId, body) =>
-          runThreadCommand(translate("pullRequest.comment.saveFailed"), () =>
+          runThreadCommand("The comment could not be saved", () =>
             updateComment({
               environmentId,
               input: { ...reference, commentId, kind: "review-comment", body },
@@ -842,7 +857,7 @@ export function PullRequestCodeTab({
           )
         }
         onToggleResolved={() =>
-          void runThreadCommand(translate("pullRequest.code.conversationUpdateFailed"), () =>
+          void runThreadCommand("The conversation could not be updated", () =>
             setThreadResolution({
               environmentId,
               input: { ...reference, threadId: thread.id, resolved: !thread.isResolved },
@@ -855,7 +870,7 @@ export function PullRequestCodeTab({
     [
       detail,
       environmentId,
-      resolvedFixFindingLabel,
+      fixFindingLabel,
       loadThreadComments,
       onRefresh,
       onFixFinding,
@@ -867,7 +882,6 @@ export function PullRequestCodeTab({
       runThreadCommand,
       setThreadResolution,
       threadPending,
-      translate,
       updateComment,
     ],
   );
@@ -888,11 +902,11 @@ export function PullRequestCodeTab({
             kind="draft"
             rangeLabel={`${draft.path}:${getReviewPositionAnchor(draft.position).line}`}
             text=""
-            submitLabel={translate("pullRequest.code.addToReview")}
+            submitLabel="Add to review"
             {...(onAddToAgentSelection
               ? {
                   secondaryAction: {
-                    label: translate("pullRequest.code.addToAgent"),
+                    label: "Add to agent",
                     onAction: (text: string) =>
                       finishSelection(draft, text, (comment) =>
                         onAddToAgentSelection({ comment, request: text }),
@@ -927,7 +941,6 @@ export function PullRequestCodeTab({
       removeComment,
       renderThreadCard,
       reviewKey,
-      translate,
     ],
   );
 
@@ -948,7 +961,7 @@ export function PullRequestCodeTab({
               type="button"
               size="icon-sm"
               variant="ghost"
-              aria-label={translate("pullRequest.code.closeReview")}
+              aria-label="Close review"
               className="absolute right-2 top-2"
               onClick={() => setReviewOpen(false)}
             >
@@ -974,7 +987,7 @@ export function PullRequestCodeTab({
             variant="glass"
           >
             <MessageSquareIcon className="size-3.5" />
-            {translate("pullRequest.code.review")}
+            Review
             {pendingComments.length > 0 ? (
               <span className="flex size-4 items-center justify-center rounded-full bg-accent text-[10px] tabular-nums text-accent-foreground">
                 {pendingComments.length}
@@ -997,9 +1010,7 @@ export function PullRequestCodeTab({
       onSelectedCommitChange(null);
     }
   }, [commit, onSelectedCommitChange, selectedCommit]);
-  const scopeLabel = selectedCommit
-    ? selectedCommit.messageHeadline
-    : translate("pullRequest.code.allCommits");
+  const scopeLabel = selectedCommit ? selectedCommit.messageHeadline : "All commits";
   /**
    * The same controls the thread diff panel carries, in the same order, minus the
    * ignore-whitespace toggle: that is `git diff -w` on the server, and no host's pull request
@@ -1014,7 +1025,7 @@ export function PullRequestCodeTab({
           <DropdownMenu>
             <DropdownMenuTrigger
               className="inline-flex h-6 max-w-64 items-center gap-1 rounded-md bg-accent px-2 text-xs font-medium text-accent-foreground outline-none transition-colors hover:bg-accent/80 focus-visible:ring-2 focus-visible:ring-ring"
-              aria-label={translate("git.diff.scopeAria", { scope: scopeLabel })}
+              aria-label={`Diff scope: ${scopeLabel}`}
             >
               <span className="truncate">{scopeLabel}</span>
               <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
@@ -1024,7 +1035,7 @@ export function PullRequestCodeTab({
                 className={commit === null ? "bg-foreground/[0.08]" : undefined}
                 onClick={() => onSelectedCommitChange(null)}
               >
-                <span>{translate("pullRequest.code.allCommits")}</span>
+                <span>All commits</span>
               </DropdownMenuItem>
               {orderedCommits.slice(0, visibleCommitCount).map((entry) => (
                 <DropdownMenuItem
@@ -1053,9 +1064,7 @@ export function PullRequestCodeTab({
                   onClick={() => setVisibleCommitCount((count) => count + COMMIT_PAGE_SIZE)}
                 >
                   <span className="text-muted-foreground">
-                    {translate("pullRequest.code.showMore", {
-                      count: orderedCommits.length - visibleCommitCount,
-                    })}
+                    Show more ({orderedCommits.length - visibleCommitCount} left)
                   </span>
                 </DropdownMenuItem>
               ) : null}
@@ -1066,19 +1075,20 @@ export function PullRequestCodeTab({
             competed for a strip this narrow and every one of them truncated to nothing. */}
         <PullRequestMetaLine>
           <span className="shrink-0 tabular-nums">
-            {translate("pullRequest.code.fileCount", { count: files.length })}
+            {files.length} {files.length === 1 ? "file" : "files"}
             {nextCursor === null ? "" : "+"}
           </span>
           {withheldContent ? (
             <Tooltip>
               <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
                 <TriangleAlertIcon
-                  aria-label={translate("pullRequest.code.diffTruncated")}
+                  aria-label="Some of this diff was not shown"
                   className="size-3.5 text-amber-600 dark:text-amber-500"
                 />
               </TooltipTrigger>
               <TooltipPopup side="bottom">
-                {translate("pullRequest.code.withheldDetail")}
+                The host withheld part of this diff — a binary file, or a change too large to
+                inline.
               </TooltipPopup>
             </Tooltip>
           ) : null}
@@ -1086,12 +1096,12 @@ export function PullRequestCodeTab({
             <Tooltip>
               <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
                 <MessageSquareOffIcon
-                  aria-label={translate("pullRequest.code.wholeChangeComments")}
+                  aria-label="Line comments are written from the whole change"
                   className="size-3.5"
                 />
               </TooltipTrigger>
               <TooltipPopup side="bottom">
-                {translate("pullRequest.code.wholeChangeDetail")}
+                A comment is anchored to the whole change, so switch to All commits to write one.
               </TooltipPopup>
             </Tooltip>
           ) : null}
@@ -1111,9 +1121,7 @@ export function PullRequestCodeTab({
                   type="button"
                   size="icon-sm"
                   variant="ghost"
-                  aria-label={translate(
-                    allFilesCollapsed ? "git.diff.expandAll" : "git.diff.collapseAll",
-                  )}
+                  aria-label={allFilesCollapsed ? "Expand all files" : "Collapse all files"}
                   onClick={toggleAllFiles}
                 />
               }
@@ -1125,25 +1133,26 @@ export function PullRequestCodeTab({
               )}
             </TooltipTrigger>
             <TooltipPopup side="top">
-              {translate(allFilesCollapsed ? "git.diff.expandAll" : "git.diff.collapseAll")}
+              {allFilesCollapsed ? "Expand all files" : "Collapse all files"}
             </TooltipPopup>
           </Tooltip>
         ) : null}
         <ToggleGroup
-          className="shrink-0 gap-1"
-          size="sm"
-          value={[diffRenderMode]}
+          aria-label="Diff layout"
+          className="shrink-0"
+          variant="segmented"
+          value={[diffLayout]}
           onValueChange={(value) => {
             const next = value[0];
             if (next === "stacked" || next === "split") {
-              setDiffRenderMode(next);
+              updateClientSettings({ diffLayout: next });
             }
           }}
         >
-          <Toggle aria-label={translate("git.diff.view.stacked")} value="stacked" variant="ghost">
+          <Toggle aria-label="Stacked diff view" value="stacked">
             <Rows3Icon className="size-3.5" />
           </Toggle>
-          <Toggle aria-label={translate("git.diff.view.split")} value="split" variant="ghost">
+          <Toggle aria-label="Split diff view" value="split">
             <Columns2Icon className="size-3.5" />
           </Toggle>
         </ToggleGroup>
@@ -1151,9 +1160,7 @@ export function PullRequestCodeTab({
           <TooltipTrigger
             render={
               <Toggle
-                aria-label={translate(
-                  wordWrap ? "git.diff.disableWrapAria" : "git.diff.enableWrapAria",
-                )}
+                aria-label={wordWrap ? "Disable diff line wrapping" : "Enable diff line wrapping"}
                 variant="ghost"
                 size="sm"
                 pressed={wordWrap}
@@ -1166,9 +1173,29 @@ export function PullRequestCodeTab({
             <TextWrapIcon className="size-3.5" />
           </TooltipTrigger>
           <TooltipPopup side="top">
-            {translate(wordWrap ? "git.diff.disableWrap" : "git.diff.enableWrap")}
+            {wordWrap ? "Disable line wrapping" : "Enable line wrapping"}
           </TooltipPopup>
         </Tooltip>
+        {fileKeys.length > 0 ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  aria-label={fileTreeOpen ? "Hide file tree" : "Show file tree"}
+                  variant="ghost"
+                  size="sm"
+                  pressed={fileTreeOpen}
+                  onPressedChange={(pressed) => setFileTreeOpen(Boolean(pressed))}
+                />
+              }
+            >
+              <FolderTreeIcon className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {fileTreeOpen ? "Hide file tree" : "Show file tree"}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
       </div>
     </div>
   );
@@ -1190,7 +1217,7 @@ export function PullRequestCodeTab({
   // Under the toolbar rather than in place of it, so choosing a commit does not take the
   // dropdown that was just used off the screen while its diff loads.
   if (diffQuery.isPending && loadedSlices.length === 0) {
-    return withReviewBar(<DiffPanelLoadingState label={translate("pullRequest.loading.diff")} />);
+    return withReviewBar(<DiffPanelLoadingState label="Loading pull request diff..." />);
   }
 
   // A slice that fails once there are files on screen is reported at the end of them instead:
@@ -1226,8 +1253,8 @@ export function PullRequestCodeTab({
     return withReviewBar(
       <p className="px-4 py-5 text-sm text-muted-foreground">
         {commit === null
-          ? translate("pullRequest.code.noPullRequestChanges")
-          : translate("pullRequest.code.noCommitChanges")}
+          ? "This pull request has no file changes."
+          : "This commit has no file changes."}
       </p>,
     );
   }
@@ -1258,80 +1285,74 @@ export function PullRequestCodeTab({
     );
 
   return (
-    <DiffWorkerPoolProvider>
-      <div className="flex h-full min-h-0 flex-col">
-        {toolbar}
-        {/* Above the code, closed, and counted: these belong to the change rather than to any
+    <div className="flex h-full min-h-0 flex-col">
+      {toolbar}
+      {/* Above the code, closed, and counted: these belong to the change rather than to any
             line of it, and in the stream they read as cards dropped into the patch. */}
-        {orphanFiles.size > 0 ? (
-          <Collapsible
-            className="shrink-0 border-b border-border/60"
-            open={orphansOpen}
-            onOpenChange={setOrphansOpen}
-          >
-            {/* Still a heading, so the section keeps its place in a screen reader's outline;
+      {orphanFiles.size > 0 ? (
+        <Collapsible
+          className="shrink-0 border-b border-border/60"
+          open={orphansOpen}
+          onOpenChange={setOrphansOpen}
+        >
+          {/* Still a heading, so the section keeps its place in a screen reader's outline;
                 the count is spelled out there rather than left as a bare number. */}
-            <h2>
-              <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-4 py-2 text-left text-xs text-muted-foreground">
-                {/* While slices are still arriving a conversation may simply belong to a file
+          <h2>
+            <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-4 py-2 text-left text-xs text-muted-foreground">
+              {/* While slices are still arriving a conversation may simply belong to a file
                     that has not landed yet, which is not the same as being off the diff. */}
-                <span>
-                  {nextCursor === null
-                    ? translate("pullRequest.code.offDiffConversations")
-                    : translate("pullRequest.code.offLoadedDiffConversations")}
-                </span>
-                <ChevronRightIcon
-                  aria-hidden
-                  className={cn("size-3.5 transition-transform", orphansOpen && "rotate-90")}
-                />
-                <span aria-hidden className="tabular-nums">
-                  {orphanThreads.length}
-                </span>
-                <span className="sr-only">
-                  {orphanThreads.length === 1
-                    ? translate("pullRequest.thread.commentCount", { count: 1 })
-                    : translate("pullRequest.thread.commentCount", {
-                        count: orphanThreads.length,
-                      })}
-                </span>
-              </CollapsibleTrigger>
-            </h2>
-            <CollapsiblePanel>
-              {/* Capped: opened on a change with dozens of them, this would otherwise leave no
+              <span>
+                {nextCursor === null
+                  ? "Conversations not on the current diff"
+                  : "Conversations not on the diff loaded so far"}
+              </span>
+              <ChevronRightIcon
+                aria-hidden
+                className={cn("size-3.5 transition-transform", orphansOpen && "rotate-90")}
+              />
+              <span aria-hidden className="tabular-nums">
+                {orphanThreads.length}
+              </span>
+              <span className="sr-only">
+                {orphanThreads.length === 1
+                  ? "1 conversation"
+                  : `${orphanThreads.length} conversations`}
+              </span>
+            </CollapsibleTrigger>
+          </h2>
+          <CollapsiblePanel>
+            {/* Capped: opened on a change with dozens of them, this would otherwise leave no
                   room for the diff it sits above. */}
-              <div className="max-h-64 space-y-3 overflow-auto px-4 pb-3">
-                {[...orphanFiles].map(([path, threads]) => (
-                  <div key={path}>
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <p className="truncate px-3 text-xs text-muted-foreground">{path}</p>
-                        }
-                      />
-                      <TooltipPopup side="top">{path}</TooltipPopup>
-                    </Tooltip>
-                    <div className="mt-1 space-y-2">
-                      {threads.map((thread) => (
-                        <div key={thread.id}>
-                          {thread.line === null ? null : (
-                            <p className="px-3 text-xs text-muted-foreground">
-                              {translate("pullRequest.code.line", { line: thread.line })}
-                            </p>
-                          )}
-                          {renderThreadCard(thread)}
-                        </div>
-                      ))}
-                    </div>
+            <div className="max-h-64 space-y-3 overflow-auto px-4 pb-3">
+              {[...orphanFiles].map(([path, threads]) => (
+                <div key={path}>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={<p className="truncate px-3 text-xs text-muted-foreground">{path}</p>}
+                    />
+                    <TooltipPopup side="top">{path}</TooltipPopup>
+                  </Tooltip>
+                  <div className="mt-1 space-y-2">
+                    {threads.map((thread) => (
+                      <div key={thread.id}>
+                        {thread.line === null ? null : (
+                          <p className="px-3 text-xs text-muted-foreground">Line {thread.line}</p>
+                        )}
+                        {renderThreadCard(thread)}
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            </CollapsiblePanel>
-          </Collapsible>
-        ) : null}
+                </div>
+              ))}
+            </div>
+          </CollapsiblePanel>
+        </Collapsible>
+      ) : null}
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* Relative wrapper so the review overlay floats over the diff rather than pushing it
             up; the viewer inside still owns its own scrolling. */}
         <div
-          className="relative min-h-0 flex-1"
+          className="relative min-h-0 min-w-0 flex-1"
           // The chevron answers this too, but the whole header row is the target a reader
           // actually aims for. The header lives in the viewer's shadow tree, so the capture
           // listener walks `composedPath` — the only way to see through the shadow boundary.
@@ -1366,6 +1387,7 @@ export function PullRequestCodeTab({
             // interaction, but its native host outline clips and competes with the focus
             // indicators on its actual controls.
             className="h-full overflow-auto [scrollbar-gutter:stable]"
+            viewerRef={setViewer}
             items={items}
             selectedLines={selectedLines}
             onSelectedLinesChange={setSelectedLines}
@@ -1381,9 +1403,40 @@ export function PullRequestCodeTab({
           />
           {reviewOverlay}
         </div>
-        {unstructured}
+        {fileTreeOpen ? (
+          <aside className="flex w-[min(20rem,40%)] min-w-48 shrink-0 border-l border-border/60">
+            <DiffFileTree
+              ariaLabel={`Pull request #${detail.number} files`}
+              entries={fileTreeEntries}
+              onSelectFile={revealFile}
+              // The tree lists only what has arrived; a footer says so while the diff is still
+              // paging, and lets the reader pull the rest in without scrolling for it.
+              footer={
+                nextCursor === null ? null : (
+                  <div className="shrink-0 border-t border-border/60 p-2">
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="outline"
+                      className="w-full"
+                      disabled={diffQuery.isPending}
+                      onClick={diffQuery.error !== null ? () => diffQuery.refresh() : loadNextSlice}
+                    >
+                      {diffQuery.error !== null
+                        ? "Retry"
+                        : diffQuery.isPending
+                          ? "Loading more files..."
+                          : "Load more files"}
+                    </Button>
+                  </div>
+                )
+              }
+            />
+          </aside>
+        ) : null}
       </div>
-    </DiffWorkerPoolProvider>
+      {unstructured}
+    </div>
   );
 }
 

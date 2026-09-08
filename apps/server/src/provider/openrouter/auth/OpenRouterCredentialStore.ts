@@ -10,7 +10,7 @@ const OPENROUTER_API_KEY = "OPENROUTER_API_KEY";
 const textDecoder = new TextDecoder();
 const textEncoder = new TextEncoder();
 
-export class OpenRouterCredentialStoreError extends Schema.TaggedErrorClass<OpenRouterCredentialStoreError>()(
+export class OpenRouterCredentialStoreError extends Schema.TaggedError<OpenRouterCredentialStoreError>()(
   "OpenRouterCredentialStoreError",
   {
     operation: Schema.Literals(["read", "write", "remove", "resolve"]),

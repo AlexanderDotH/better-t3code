@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as UsageRouteImport } from './routes/usage'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PairRouteImport } from './routes/pair'
@@ -16,6 +17,7 @@ import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as SettingsSourceControlRouteImport } from './routes/settings.source-control'
+import { Route as SettingsSnapShotRouteImport } from './routes/settings.snap-shot'
 import { Route as SettingsSkillsRouteImport } from './routes/settings.skills'
 import { Route as SettingsProvidersRouteImport } from './routes/settings.providers'
 import { Route as SettingsProjectsRouteImport } from './routes/settings.projects'
@@ -24,7 +26,6 @@ import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybi
 import { Route as SettingsIntegrationsRouteImport } from './routes/settings.integrations'
 import { Route as SettingsImportChatsRouteImport } from './routes/settings.import-chats'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
-import { Route as SettingsExperimentalRouteImport } from './routes/settings.experimental'
 import { Route as SettingsDiagnosticsRouteImport } from './routes/settings.diagnostics'
 import { Route as SettingsConnectionsRouteImport } from './routes/settings.connections'
 import { Route as SettingsBetterT3RouteImport } from './routes/settings.better-t3'
@@ -36,6 +37,11 @@ import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-reques
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
 
+const WelcomeRoute = WelcomeRouteImport.update({
+  id: '/welcome',
+  path: '/welcome',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const UsageRoute = UsageRouteImport.update({
   id: '/usage',
   path: '/usage',
@@ -68,6 +74,11 @@ const ChatIndexRoute = ChatIndexRouteImport.update({
 const SettingsSourceControlRoute = SettingsSourceControlRouteImport.update({
   id: '/source-control',
   path: '/source-control',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsSnapShotRoute = SettingsSnapShotRouteImport.update({
+  id: '/snap-shot',
+  path: '/snap-shot',
   getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsSkillsRoute = SettingsSkillsRouteImport.update({
@@ -108,11 +119,6 @@ const SettingsImportChatsRoute = SettingsImportChatsRouteImport.update({
 const SettingsGeneralRoute = SettingsGeneralRouteImport.update({
   id: '/general',
   path: '/general',
-  getParentRoute: () => SettingsRoute,
-} as any)
-const SettingsExperimentalRoute = SettingsExperimentalRouteImport.update({
-  id: '/experimental',
-  path: '/experimental',
   getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsDiagnosticsRoute = SettingsDiagnosticsRouteImport.update({
@@ -173,6 +179,7 @@ export interface FileRoutesByFullPath {
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
+  '/welcome': typeof WelcomeRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/connect/callback': typeof ConnectCallbackRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
@@ -181,7 +188,6 @@ export interface FileRoutesByFullPath {
   '/settings/better-t3': typeof SettingsBetterT3Route
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
-  '/settings/experimental': typeof SettingsExperimentalRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/import-chats': typeof SettingsImportChatsRoute
   '/settings/integrations': typeof SettingsIntegrationsRoute
@@ -190,6 +196,7 @@ export interface FileRoutesByFullPath {
   '/settings/projects': typeof SettingsProjectsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/skills': typeof SettingsSkillsRoute
+  '/settings/snap-shot': typeof SettingsSnapShotRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
@@ -199,6 +206,7 @@ export interface FileRoutesByTo {
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
+  '/welcome': typeof WelcomeRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/connect/callback': typeof ConnectCallbackRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
@@ -207,7 +215,6 @@ export interface FileRoutesByTo {
   '/settings/better-t3': typeof SettingsBetterT3Route
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
-  '/settings/experimental': typeof SettingsExperimentalRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/import-chats': typeof SettingsImportChatsRoute
   '/settings/integrations': typeof SettingsIntegrationsRoute
@@ -216,6 +223,7 @@ export interface FileRoutesByTo {
   '/settings/projects': typeof SettingsProjectsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/skills': typeof SettingsSkillsRoute
+  '/settings/snap-shot': typeof SettingsSnapShotRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
@@ -228,6 +236,7 @@ export interface FileRoutesById {
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
+  '/welcome': typeof WelcomeRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
   '/connect_/callback': typeof ConnectCallbackRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
@@ -236,7 +245,6 @@ export interface FileRoutesById {
   '/settings/better-t3': typeof SettingsBetterT3Route
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
-  '/settings/experimental': typeof SettingsExperimentalRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/import-chats': typeof SettingsImportChatsRoute
   '/settings/integrations': typeof SettingsIntegrationsRoute
@@ -245,6 +253,7 @@ export interface FileRoutesById {
   '/settings/projects': typeof SettingsProjectsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/skills': typeof SettingsSkillsRoute
+  '/settings/snap-shot': typeof SettingsSnapShotRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
@@ -258,6 +267,7 @@ export interface FileRouteTypes {
     | '/pair'
     | '/settings'
     | '/usage'
+    | '/welcome'
     | '/pull-requests'
     | '/connect/callback'
     | '/projects/$projectKey'
@@ -266,7 +276,6 @@ export interface FileRouteTypes {
     | '/settings/better-t3'
     | '/settings/connections'
     | '/settings/diagnostics'
-    | '/settings/experimental'
     | '/settings/general'
     | '/settings/import-chats'
     | '/settings/integrations'
@@ -275,6 +284,7 @@ export interface FileRouteTypes {
     | '/settings/projects'
     | '/settings/providers'
     | '/settings/skills'
+    | '/settings/snap-shot'
     | '/settings/source-control'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
@@ -284,6 +294,7 @@ export interface FileRouteTypes {
     | '/pair'
     | '/settings'
     | '/usage'
+    | '/welcome'
     | '/pull-requests'
     | '/connect/callback'
     | '/projects/$projectKey'
@@ -292,7 +303,6 @@ export interface FileRouteTypes {
     | '/settings/better-t3'
     | '/settings/connections'
     | '/settings/diagnostics'
-    | '/settings/experimental'
     | '/settings/general'
     | '/settings/import-chats'
     | '/settings/integrations'
@@ -301,6 +311,7 @@ export interface FileRouteTypes {
     | '/settings/projects'
     | '/settings/providers'
     | '/settings/skills'
+    | '/settings/snap-shot'
     | '/settings/source-control'
     | '/'
     | '/$environmentId/$threadId'
@@ -312,6 +323,7 @@ export interface FileRouteTypes {
     | '/pair'
     | '/settings'
     | '/usage'
+    | '/welcome'
     | '/_chat/pull-requests'
     | '/connect_/callback'
     | '/projects/$projectKey'
@@ -320,7 +332,6 @@ export interface FileRouteTypes {
     | '/settings/better-t3'
     | '/settings/connections'
     | '/settings/diagnostics'
-    | '/settings/experimental'
     | '/settings/general'
     | '/settings/import-chats'
     | '/settings/integrations'
@@ -329,6 +340,7 @@ export interface FileRouteTypes {
     | '/settings/projects'
     | '/settings/providers'
     | '/settings/skills'
+    | '/settings/snap-shot'
     | '/settings/source-control'
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
@@ -341,12 +353,20 @@ export interface RootRouteChildren {
   PairRoute: typeof PairRoute
   SettingsRoute: typeof SettingsRouteWithChildren
   UsageRoute: typeof UsageRoute
+  WelcomeRoute: typeof WelcomeRoute
   ConnectCallbackRoute: typeof ConnectCallbackRoute
   ProjectsProjectKeyRoute: typeof ProjectsProjectKeyRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/welcome': {
+      id: '/welcome'
+      path: '/welcome'
+      fullPath: '/welcome'
+      preLoaderRoute: typeof WelcomeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/usage': {
       id: '/usage'
       path: '/usage'
@@ -394,6 +414,13 @@ declare module '@tanstack/react-router' {
       path: '/source-control'
       fullPath: '/settings/source-control'
       preLoaderRoute: typeof SettingsSourceControlRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/snap-shot': {
+      id: '/settings/snap-shot'
+      path: '/snap-shot'
+      fullPath: '/settings/snap-shot'
+      preLoaderRoute: typeof SettingsSnapShotRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/settings/skills': {
@@ -450,13 +477,6 @@ declare module '@tanstack/react-router' {
       path: '/general'
       fullPath: '/settings/general'
       preLoaderRoute: typeof SettingsGeneralRouteImport
-      parentRoute: typeof SettingsRoute
-    }
-    '/settings/experimental': {
-      id: '/settings/experimental'
-      path: '/experimental'
-      fullPath: '/settings/experimental'
-      preLoaderRoute: typeof SettingsExperimentalRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/settings/diagnostics': {
@@ -554,7 +574,6 @@ interface SettingsRouteChildren {
   SettingsBetterT3Route: typeof SettingsBetterT3Route
   SettingsConnectionsRoute: typeof SettingsConnectionsRoute
   SettingsDiagnosticsRoute: typeof SettingsDiagnosticsRoute
-  SettingsExperimentalRoute: typeof SettingsExperimentalRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
   SettingsImportChatsRoute: typeof SettingsImportChatsRoute
   SettingsIntegrationsRoute: typeof SettingsIntegrationsRoute
@@ -563,6 +582,7 @@ interface SettingsRouteChildren {
   SettingsProjectsRoute: typeof SettingsProjectsRoute
   SettingsProvidersRoute: typeof SettingsProvidersRoute
   SettingsSkillsRoute: typeof SettingsSkillsRoute
+  SettingsSnapShotRoute: typeof SettingsSnapShotRoute
   SettingsSourceControlRoute: typeof SettingsSourceControlRoute
 }
 
@@ -572,7 +592,6 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsBetterT3Route: SettingsBetterT3Route,
   SettingsConnectionsRoute: SettingsConnectionsRoute,
   SettingsDiagnosticsRoute: SettingsDiagnosticsRoute,
-  SettingsExperimentalRoute: SettingsExperimentalRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsImportChatsRoute: SettingsImportChatsRoute,
   SettingsIntegrationsRoute: SettingsIntegrationsRoute,
@@ -581,6 +600,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsProjectsRoute: SettingsProjectsRoute,
   SettingsProvidersRoute: SettingsProvidersRoute,
   SettingsSkillsRoute: SettingsSkillsRoute,
+  SettingsSnapShotRoute: SettingsSnapShotRoute,
   SettingsSourceControlRoute: SettingsSourceControlRoute,
 }
 
@@ -594,6 +614,7 @@ const rootRouteChildren: RootRouteChildren = {
   PairRoute: PairRoute,
   SettingsRoute: SettingsRouteWithChildren,
   UsageRoute: UsageRoute,
+  WelcomeRoute: WelcomeRoute,
   ConnectCallbackRoute: ConnectCallbackRoute,
   ProjectsProjectKeyRoute: ProjectsProjectKeyRoute,
 }

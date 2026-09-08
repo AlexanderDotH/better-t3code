@@ -1,10 +1,6 @@
 import { resolveProjectThreadSections } from "@t3tools/client-runtime/project-thread-preview";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import {
-  effectiveSettled,
-  effectiveSnoozed,
-  type ChangeRequestSettleSource,
-} from "@t3tools/client-runtime/state/thread-settled";
+import { effectiveSettled, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import {
   DEFAULT_PROJECT_THREAD_PREVIEW_COUNT,
   type EnvironmentId,
@@ -13,6 +9,10 @@ import {
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { resolveThreadStatus } from "../threads/threadPresentation";
+import {
+  resolveCachedThreadChangeRequest,
+  type ThreadListV2ChangeRequestState,
+} from "../threads/threadListV2";
 import type { HomeThreadGroup } from "./homeThreadList";
 
 /** Threads shown per project before the "Show more" affordance appears. */
@@ -87,6 +87,8 @@ export interface HomeListLayout {
   readonly items: ReadonlyArray<HomeListItem>;
   readonly stickyHeaderIndices: ReadonlyArray<number>;
 }
+
+export const EMPTY_HOME_LIST_LAYOUT: HomeListLayout = { items: [], stickyHeaderIndices: [] };
 
 export type HomeGroupDisplayAction =
   | "toggle-collapsed"
@@ -174,7 +176,8 @@ export function resolveGroupedProjectSettledThreadKeys(input: {
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
   readonly settlementEnvironmentIds: ReadonlySet<EnvironmentId>;
   readonly snoozeEnvironmentIds: ReadonlySet<EnvironmentId>;
-  readonly changeRequestByKey: ReadonlyMap<string, ChangeRequestSettleSource>;
+  readonly changeRequestByKey: ReadonlyMap<string, ThreadListV2ChangeRequestState>;
+  readonly queuedThreadKeys?: ReadonlySet<string>;
   readonly autoSettleOnMerge: boolean;
   readonly now: string;
   readonly autoSettleAfterDays: number | null;
@@ -190,11 +193,12 @@ export function resolveGroupedProjectSettledThreadKeys(input: {
     }
     if (thread.pinnedAt != null) continue;
     const threadKey = projectThreadKey(thread);
+    if (input.queuedThreadKeys?.has(threadKey)) continue;
     if (
       effectiveSettled(thread, {
         now: input.now,
         autoSettleAfterDays: input.autoSettleAfterDays,
-        changeRequest: input.changeRequestByKey.get(threadKey) ?? null,
+        changeRequest: resolveCachedThreadChangeRequest(thread, input.changeRequestByKey),
         autoSettleOnMerge: input.autoSettleOnMerge,
       })
     ) {
@@ -283,7 +287,7 @@ export function buildHomeListLayout(input: {
       for (const [pendingIndex, pendingTask] of group.pendingTasks.entries()) {
         items.push({
           type: "pending-task",
-          key: `pending-task:${pendingTask.message.messageId}`,
+          key: pendingTask.key,
           pendingTask,
           isLast:
             pendingIndex === group.pendingTasks.length - 1 &&

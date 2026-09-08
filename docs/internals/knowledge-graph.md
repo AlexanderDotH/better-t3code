@@ -33,7 +33,7 @@ Changing the selected model advances the model generation. Older jobs remain fen
 
 ## Persistence and revision delivery
 
-Migration 59 creates a separate set of derived-data tables for scopes, nodes, edges, evidence, node and edge provenance, file fingerprints, revision patches, semantic environment state, and the semantic queue. Foreign keys cascade within a scope. Clearing graph data does not delete projects, threads, messages, checkpoints, or repository files.
+The historical `059_KnowledgeGraphDerivedData` migration creates a separate set of derived-data tables for scopes, nodes, edges, evidence, node and edge provenance, file fingerprints, revision patches, semantic environment state, and the semantic queue. The convergence migration also installs this schema for upstream databases. Foreign keys cascade within a scope. Clearing graph data does not delete projects, threads, messages, checkpoints, or repository files.
 
 Every committed deterministic or semantic update advances the scope revision. Subscribers receive one of:
 

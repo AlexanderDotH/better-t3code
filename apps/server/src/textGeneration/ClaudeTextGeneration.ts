@@ -1,3 +1,7 @@
+import {
+  resolveClaudeEffort,
+  normalizeClaudeCliEffort,
+} from "../provider/Layers/ClaudeProvider.ts";
 /**
  * ClaudeTextGeneration – Text generation layer using the Claude CLI.
  *
@@ -44,12 +48,16 @@ import {
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
 import {
-  getClaudeModelCapabilities,
-  isClaudeUltracodeEffort,
-  normalizeClaudeCliEffort,
-  resolveClaudeApiModelId,
-  resolveClaudeEffort,
-} from "../provider/Layers/ClaudeProvider.ts";
+  BUNDLED_CLAUDE_MODEL_CATALOG,
+  type ClaudeModelCatalog,
+  getClaudeCatalogModelCapabilities,
+  isClaudeCatalogUltracodeEffort,
+  normalizeClaudeCatalogEffort,
+  resolveClaudeCatalogApiModelId,
+  resolveClaudeCatalogEffort,
+  resolveClaudeModelSlug,
+  scopeClaudeModelCatalog,
+} from "../provider/ClaudeModelCatalog.ts";
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
 import type { ClaudeGatewayModelProfile } from "../provider/Drivers/ClaudeGatewayCatalog.ts";
 import { resolveClaudeConfigDir } from "../provider/Drivers/ClaudeHome.ts";
@@ -66,24 +74,35 @@ export interface ClaudeTextGenerationOptions {
 
 /**
  * Schema for the wrapper JSON returned by `claude -p --output-format json`.
- * We only care about `structured_output`.
+ * Verbose mode wraps the result in an array of conversation messages.
  */
 const ClaudeOutputEnvelope = Schema.Struct({
   structured_output: Schema.Unknown,
 });
+const ClaudeOutputMessage = Schema.Struct({
+  type: Schema.String,
+  structured_output: Schema.optionalKey(Schema.Unknown),
+});
+const isClaudeOutputEnvelope = Schema.is(ClaudeOutputEnvelope);
 
 const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
-const decodeClaudeOutputEnvelope = Schema.decodeEffect(Schema.fromJsonString(ClaudeOutputEnvelope));
+const decodeClaudeOutput = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Union([ClaudeOutputEnvelope, Schema.Array(ClaudeOutputMessage)])),
+);
 
 export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(function* (
   claudeSettings: ClaudeSettings,
   environment?: NodeJS.ProcessEnv,
+  modelCatalog: Effect.Effect<ClaudeModelCatalog> = Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG),
   options?: ClaudeTextGenerationOptions,
 ) {
-  const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const fileSystem = yield* FileSystem.FileSystem;
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
+  const scopedModelCatalog = modelCatalog.pipe(
+    Effect.map((catalog) => scopeClaudeModelCatalog(catalog, claudeSettings.customModels)),
+  );
   const claudeConfigDir = yield* resolveClaudeConfigDir(claudeSettings);
 
   const readStreamAsString = <E>(
@@ -156,6 +175,11 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     modelSelection: ModelSelection;
     environmentOverride?: NodeJS.ProcessEnv;
   }): Effect.fn.Return<S["Type"], TextGenerationError, S["DecodingServices"]> {
+    const catalog = yield* scopedModelCatalog;
+    const resolvedModelSelection = {
+      ...modelSelection,
+      model: resolveClaudeModelSlug(catalog, modelSelection.model),
+    };
     const jsonSchemaStr = yield* encodeJsonForOperation(
       operation,
       toJsonSchemaObject(outputSchemaJson),
@@ -164,17 +188,22 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     const gatewayProfile = options?.resolveGatewayModelProfile
       ? yield* options.resolveGatewayModelProfile(modelSelection.model)
       : undefined;
-    const caps = gatewayProfile?.capabilities ?? getClaudeModelCapabilities(modelSelection.model);
+    const caps =
+      gatewayProfile?.capabilities ??
+      getClaudeCatalogModelCapabilities(catalog, resolvedModelSelection.model);
     const descriptors = getProviderOptionDescriptors({
       caps,
-      selections: modelSelection.options,
+      selections: resolvedModelSelection.options,
     });
     const findDescriptor = (id: string) => descriptors.find((descriptor) => descriptor.id === id);
-    const rawEffortSelection = getModelSelectionStringOptionValue(modelSelection, "effort");
-    const resolvedEffort =
-      resolveClaudeEffort(caps, rawEffortSelection) ?? gatewayProfile?.defaultEffort;
-    const cliEffort = normalizeClaudeCliEffort(resolvedEffort, modelSelection.model, caps);
-    const ultracode = isClaudeUltracodeEffort(resolvedEffort);
+    const rawEffortSelection = getModelSelectionStringOptionValue(resolvedModelSelection, "effort");
+    const resolvedEffort = gatewayProfile
+      ? resolveClaudeEffort(caps, rawEffortSelection)
+      : resolveClaudeCatalogEffort(catalog, resolvedModelSelection.model, rawEffortSelection);
+    const cliEffort = gatewayProfile
+      ? normalizeClaudeCliEffort(resolvedEffort, resolvedModelSelection.model, caps)
+      : normalizeClaudeCatalogEffort(catalog, resolvedEffort, resolvedModelSelection.model);
+    const ultracode = isClaudeCatalogUltracodeEffort(resolvedEffort);
     const thinkingDescriptor = findDescriptor("thinking");
     const fastModeDescriptor = findDescriptor("fastMode");
     const thinking =
@@ -182,21 +211,29 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     const fastMode =
       fastModeDescriptor?.type === "boolean" ? fastModeDescriptor.currentValue : undefined;
     const settings = {
-      ...(operation === "decideAutoReasoning" ? { disableAllHooks: true } : {}),
+      disableAllHooks: true,
       ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
       ...(!gatewayProfile && typeof fastMode === "boolean" ? { fastMode } : {}),
       ...(ultracode ? { ultracode: true } : {}),
     };
-    const settingsJson =
-      Object.keys(settings).length > 0
-        ? yield* encodeJsonForOperation(
-            operation,
-            settings,
-            "Failed to encode Claude CLI settings.",
-          )
-        : undefined;
+    const settingsJson = yield* encodeJsonForOperation(
+      operation,
+      settings,
+      "Failed to encode Claude CLI settings.",
+    );
 
     const runClaudeCommand = Effect.fn("runClaudeJson.runClaudeCommand")(function* () {
+      // Titles need only the supplied prompt, not configuration from the checkout.
+      const workingDirectory =
+        operation === "generateThreadTitle"
+          ? yield* fileSystem
+              .makeTempDirectoryScoped({ prefix: "t3code-claude-title-" })
+              .pipe(
+                Effect.mapError((cause) =>
+                  normalizeCliError("claude", operation, cause, "Failed to create title directory"),
+                ),
+              )
+          : cwd;
       const commandEnvironment = environmentOverride ?? claudeEnvironment;
       const spawnCommand = yield* resolveSpawnCommand(
         claudeSettings.binaryPath || "claude",
@@ -211,28 +248,23 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
             ? fastMode === true && gatewayProfile.fastModelId
               ? gatewayProfile.fastModelId
               : gatewayProfile.baseModelId
-            : resolveClaudeApiModelId(modelSelection),
+            : resolveClaudeCatalogApiModelId(catalog, resolvedModelSelection),
           ...(cliEffort ? ["--effort", cliEffort] : []),
-          ...(settingsJson ? ["--settings", settingsJson] : []),
-          ...(operation === "decideAutoReasoning"
-            ? [
-                "--disallowedTools",
-                "*",
-                "--setting-sources",
-                "",
-                "--strict-mcp-config",
-                "--mcp-config",
-                "{}",
-              ]
-            : operation === "planFetchExploration"
-              ? ["--disallowedTools", "*"]
-              : ["--dangerously-skip-permissions"]),
+          "--settings",
+          settingsJson,
+          // Metadata prompts need no executable capabilities, even when they contain a skill name.
+          "--tools",
+          "",
+          "--disable-slash-commands",
+          "--strict-mcp-config",
+          "--permission-mode",
+          "dontAsk",
         ],
         { env: commandEnvironment },
       );
       const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         env: commandEnvironment,
-        cwd,
+        cwd: workingDirectory,
         shell: spawnCommand.shell,
         stdin: {
           stream: Stream.encodeText(Stream.make(prompt)),
@@ -290,7 +322,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       ),
     );
 
-    const envelope = yield* decodeClaudeOutputEnvelope(rawStdout).pipe(
+    const output = yield* decodeClaudeOutput(rawStdout).pipe(
       Effect.catchTags({
         SchemaError: (cause) =>
           Effect.fail(
@@ -302,9 +334,12 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           ),
       }),
     );
+    const envelope = isClaudeOutputEnvelope(output)
+      ? output
+      : output.findLast((message) => message.type === "result");
 
     const decodeOutput = Schema.decodeEffect(outputSchemaJson);
-    return yield* decodeOutput(envelope.structured_output).pipe(
+    return yield* decodeOutput(envelope?.structured_output).pipe(
       Effect.catchTags({
         SchemaError: (cause) =>
           Effect.fail(

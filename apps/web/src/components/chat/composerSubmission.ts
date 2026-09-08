@@ -1,4 +1,5 @@
 import { PROVIDER_SEND_TURN_MAX_INPUT_CHARS } from "@t3tools/contracts";
+import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
 
 type ComposerSubmitEvent = { preventDefault: () => void };
 
@@ -13,12 +14,16 @@ export function getComposerPromptLengthValidationMessage(
   prompt: string,
   maxInputChars = PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
 ): string | null {
-  const effectiveLimit = Math.max(0, Math.min(PROVIDER_SEND_TURN_MAX_INPUT_CHARS, maxInputChars));
-  const excessCharacters = prompt.trim().length - effectiveLimit;
+  const normalizedPrompt = prompt.trim();
+  const inputLength = Math.max(
+    normalizedPrompt.length,
+    expandAssistantCitationsForProvider(normalizedPrompt).length,
+  );
+  const excessCharacters = inputLength - maxInputChars;
   if (excessCharacters <= 0) return null;
 
   const characterLabel = excessCharacters === 1 ? "character" : "characters";
-  return `Prompt is ${excessCharacters.toLocaleString("en-US")} ${characterLabel} over the ${effectiveLimit.toLocaleString("en-US")}-character limit. Shorten or split it before sending.`;
+  return `Prompt is ${excessCharacters.toLocaleString("en-US")} ${characterLabel} over the ${maxInputChars.toLocaleString("en-US")}-character limit. Shorten or split it before sending.`;
 }
 
 export function getComposerSubmissionValidationMessage(

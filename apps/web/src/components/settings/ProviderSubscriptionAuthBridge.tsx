@@ -5,6 +5,7 @@ import type { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import { useCallback } from "react";
 import {
   isAtomCommandInterrupted,
+  type AtomCommandResult,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 
@@ -22,9 +23,12 @@ interface ProviderSubscriptionAuthBridgeProps {
   readonly presentation: ProviderSubscriptionPresentation;
 }
 
-function commandFailure(result: { readonly _tag: string }, fallback: string): Error | null {
-  if (result._tag !== "Failure" || isAtomCommandInterrupted(result as never)) return null;
-  const error = squashAtomCommandFailure(result as never);
+function commandFailure(
+  result: AtomCommandResult<unknown, unknown>,
+  fallback: string,
+): Error | null {
+  if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return null;
+  const error = squashAtomCommandFailure(result);
   return error instanceof Error ? error : new Error(fallback);
 }
 

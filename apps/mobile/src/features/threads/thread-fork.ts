@@ -8,11 +8,13 @@ import type {
   ThreadForkWorkspace,
   VcsRef,
 } from "@t3tools/contracts";
+import { MessageId } from "@t3tools/contracts";
 import {
-  MessageId,
-  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
-  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
-} from "@t3tools/contracts";
+  forkBoundaryKey,
+  resolveFirstTurnForkBudget,
+  resolveForkWorkspaceSpec,
+} from "@t3tools/client-runtime/thread-fork";
+export { forkBoundaryKey } from "@t3tools/client-runtime/thread-fork";
 import { resolveDefaultThreadEnvMode } from "@t3tools/shared/threadEnvMode";
 import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
 
@@ -99,12 +101,6 @@ export function resolveForkBoundary(entry: ForkableFeedEntry): ThreadForkBoundar
   return { kind: "message", messageId: MessageId.make(entry.message.id) };
 }
 
-export function forkBoundaryKey(boundary: ThreadForkBoundary): string {
-  return boundary.kind === "message"
-    ? `message:${boundary.messageId}`
-    : `proposed-plan:${boundary.planId}`;
-}
-
 export function resolveForkActionPresentation(input: {
   readonly boundary: ThreadForkBoundary;
   readonly supported: boolean;
@@ -125,6 +121,7 @@ export function resolveForkWorkspace(input: {
   readonly projectFile: "local" | "worktree" | null | undefined;
   readonly globalDefault: "local" | "worktree";
   readonly startFromOrigin: boolean;
+  readonly isGitRepository: boolean;
   readonly refs: ReadonlyArray<
     Pick<VcsRef, "name" | "current" | "isDefault" | "worktreePath"> &
       Partial<Pick<VcsRef, "isRemote" | "remoteName">>
@@ -141,12 +138,12 @@ export function resolveForkWorkspace(input: {
         input.refs.find((ref) => ref.current)?.name ??
         null)
       : null;
-  return {
-    mode,
-    baseBranch,
-    startFromOrigin: input.startFromOrigin,
-    runSetupScript: mode === "worktree",
-  };
+  return resolveForkWorkspaceSpec({
+    defaultMode: mode,
+    isGitRepository: input.isGitRepository,
+    projectRootBranch: baseBranch,
+    newWorktreesStartFromOrigin: input.startFromOrigin,
+  });
 }
 
 interface HistoryOriginLike {
@@ -208,11 +205,12 @@ export function resolveForkComposerBudget(input: {
   readonly draftMessage: string;
   readonly draftAttachmentCount: number;
 }): ForkComposerBudget | null {
-  if (input.handoff === null || input.handoff.status !== "pending") {
+  const budget = resolveFirstTurnForkBudget(input.handoff);
+  if (budget === null) {
     return null;
   }
-  const promptRemaining = PROVIDER_SEND_TURN_MAX_INPUT_CHARS - input.draftMessage.trim().length;
-  const attachmentRemaining = PROVIDER_SEND_TURN_MAX_ATTACHMENTS - input.draftAttachmentCount;
+  const promptRemaining = budget.remainingInputChars - input.draftMessage.trim().length;
+  const attachmentRemaining = budget.remainingAttachmentCount - input.draftAttachmentCount;
   const promptExceededBy = Math.max(0, -promptRemaining);
   const attachmentsExceededBy = Math.max(0, -attachmentRemaining);
   return {

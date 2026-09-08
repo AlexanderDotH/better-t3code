@@ -1,15 +1,15 @@
-import { ProviderDriverKind, type ModelCapabilities } from "@t3tools/contracts";
+import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import {
+  AntigravityIcon,
   ClaudeAI,
   CursorIcon,
-  GeminiIcon,
   GrokIcon,
+  GeminiIcon,
+  OpenRouterIcon,
   Icon,
   OpenAI,
   OpenCodeIcon,
-  OpenRouterIcon,
 } from "../Icons";
-import { PROVIDER_OPTIONS } from "../../session-logic";
 
 export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>> = {
   [ProviderDriverKind.make("codex")]: OpenAI,
@@ -17,32 +17,23 @@ export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>
   [ProviderDriverKind.make("opencode")]: OpenCodeIcon,
   [ProviderDriverKind.make("cursor")]: CursorIcon,
   [ProviderDriverKind.make("grok")]: GrokIcon,
+  [ProviderDriverKind.make("antigravity")]: AntigravityIcon,
   [ProviderDriverKind.make("gemini")]: GeminiIcon,
   [ProviderDriverKind.make("chatgpt")]: OpenAI,
-  [ProviderDriverKind.make("openrouter")]: OpenRouterIcon,
   [ProviderDriverKind.make("openai")]: OpenAI,
+  [ProviderDriverKind.make("openrouter")]: OpenRouterIcon,
 };
 
-function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): option is {
-  value: ProviderDriverKind;
-  label: string;
-  available: true;
-  pickerSidebarBadge?: "new" | "soon";
-} {
-  return option.available;
-}
-
-export const AVAILABLE_PROVIDER_OPTIONS = PROVIDER_OPTIONS.filter(isAvailableProviderOption);
-
 export type ModelEsque = {
+  capabilities?: ServerProvider["models"][number]["capabilities"];
   slug: string;
   name: string;
   shortName?: string | undefined;
   subProvider?: string | undefined;
+  aliases?: ReadonlyArray<string> | undefined;
+  isDefault?: boolean | undefined;
+  badge?: "new" | undefined;
   isLegacy?: boolean | undefined;
-  isSelectable?: boolean | undefined;
-  unavailableReason?: string | undefined;
-  capabilities?: ModelCapabilities | null | undefined;
   isUnavailable?: boolean | undefined;
 };
 

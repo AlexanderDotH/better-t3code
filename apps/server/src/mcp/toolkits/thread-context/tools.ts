@@ -42,7 +42,7 @@ export const ThreadContextResult = Schema.Struct({
 });
 export type ThreadContextResult = typeof ThreadContextResult.Type;
 
-export class ThreadContextError extends Schema.TaggedErrorClass<ThreadContextError>()(
+export class ThreadContextError extends Schema.TaggedError<ThreadContextError>()(
   "ThreadContextError",
   {
     reason: Schema.Literals([

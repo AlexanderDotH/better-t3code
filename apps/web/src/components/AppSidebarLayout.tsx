@@ -19,6 +19,11 @@ import {
   useEnvironmentIdentificationMode,
   useLegacySidebarEnabled,
 } from "../hooks/useSettings";
+import {
+  PanelAnimationSuppressionProvider,
+  usePanelAnimationSettings,
+  usePanelNavigationSuppression,
+} from "../panelAnimations";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import {
@@ -44,9 +49,6 @@ import {
 } from "./ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { resolveThreadSidebarLayout, ThreadSidebarSelection } from "./ThreadSidebarSelection";
-import { ChatVisualModeSyncCoordinator } from "../chatVisualModeSync";
-import { ProjectThreadPreviewSyncCoordinator } from "../projectThreadPreviewSync";
-import { InterfaceLanguageSyncCoordinator } from "../interfaceLanguageSync";
 import { resolveAppSidebarPlacement } from "./AppSidebarLayout.logic";
 import { useBetterT3DeviceFeature } from "../hooks/useBetterT3Feature";
 import { useInterfaceTranslator } from "../hooks/useInterfaceTranslator";
@@ -154,6 +156,8 @@ function ProjectProjectionRetention() {
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const legacySidebarEnabled = useLegacySidebarEnabled();
+  const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
+    usePanelAnimationSettings();
   const classicSidebarEnabled = useBetterT3DeviceFeature("chat.classicSidebar");
   const sidebarPosition = useClientSettings((settings) => settings.sidebarPosition);
   const sidebarPlacement = resolveAppSidebarPlacement(sidebarPosition);
@@ -163,6 +167,8 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   // Settings routes show the settings nav in place of whichever thread
   // sidebar is active.
   const pathname = useLocation({ select: (location) => location.pathname });
+  const panelAnimationsSuppressed = usePanelNavigationSuppression(pathname);
+  const routePanelAnimationsActive = panelAnimationsActive && !panelAnimationsSuppressed;
   const isOnSettings = pathname === "/settings" || pathname.startsWith("/settings/");
   const isMacosDesktop = isElectron && isMacPlatform(navigator.platform);
   const [sidebarWidth, setSidebarWidth] = useState(readInitialThreadSidebarWidth);
@@ -190,6 +196,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   });
   const sidebarProviderStyle = {
     "--sidebar-width": `${renderedSidebarWidth}px`,
+    "--panel-animation-duration": `${panelAnimationDurationMs}ms`,
     ...(isMacosDesktop && !isWindowFullscreen
       ? { "--workspace-controls-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET }
       : {}),
@@ -233,47 +240,47 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   }, [navigate, pathname]);
 
   return (
-    <SidebarProvider
-      className={cn("h-dvh! min-h-0!", sidebarPlacement.providerDirectionClassName)}
-      data-sidebar-position={sidebarPosition}
-      defaultOpen
-      style={sidebarProviderStyle}
-    >
-      <ChatVisualModeSyncCoordinator />
-      <ProjectThreadPreviewSyncCoordinator />
-      <InterfaceLanguageSyncCoordinator />
-      <ProjectProjectionRetention />
-      <Sidebar
-        side={sidebarPosition}
-        collapsible="offcanvas"
-        data-app-sidebar=""
-        data-thread-sidebar-layout={threadSidebarLayout}
-        className={cn(
-          sidebarPlacement.borderClassName,
-          "border-sidebar-border bg-sidebar text-sidebar-foreground",
-        )}
-        resizable={{
-          maxWidth: sidebarMaximumWidth,
-          minWidth: THREAD_SIDEBAR_MIN_WIDTH,
-          shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
-            nextWidth <= currentWidth ||
-            wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
-          storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
-          onResize: setSidebarWidth,
-        }}
+    <PanelAnimationSuppressionProvider value={panelAnimationsSuppressed}>
+      <SidebarProvider
+        className={cn("h-dvh! min-h-0!", sidebarPlacement.providerDirectionClassName)}
+        data-panel-animations={routePanelAnimationsActive ? "true" : "false"}
+        data-sidebar-position={sidebarPosition}
+        defaultOpen
+        style={sidebarProviderStyle}
       >
-        {isOnSettings ? (
-          <>
-            <SidebarChromeHeader isElectron={isElectron} />
-            <SettingsSidebarNav pathname={pathname} />
-          </>
-        ) : (
-          <ThreadSidebarSelection layout={threadSidebarLayout} />
-        )}
-        <SidebarRail onDoubleClick={resetSidebarWidth} />
-      </Sidebar>
-      {children}
-      <SidebarControl side={sidebarPosition} />
-    </SidebarProvider>
+        <ProjectProjectionRetention />
+        <Sidebar
+          side={sidebarPosition}
+          collapsible="offcanvas"
+          data-app-sidebar=""
+          data-thread-sidebar-layout={threadSidebarLayout}
+          className={cn(
+            sidebarPlacement.borderClassName,
+            "border-sidebar-border bg-sidebar text-sidebar-foreground",
+          )}
+          resizable={{
+            maxWidth: sidebarMaximumWidth,
+            minWidth: THREAD_SIDEBAR_MIN_WIDTH,
+            shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
+              nextWidth <= currentWidth ||
+              wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
+            storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
+            onResize: setSidebarWidth,
+          }}
+        >
+          {isOnSettings ? (
+            <>
+              <SidebarChromeHeader isElectron={isElectron} />
+              <SettingsSidebarNav pathname={pathname} />
+            </>
+          ) : (
+            <ThreadSidebarSelection layout={threadSidebarLayout} />
+          )}
+          <SidebarRail onDoubleClick={resetSidebarWidth} />
+        </Sidebar>
+        {children}
+        <SidebarControl side={sidebarPosition} />
+      </SidebarProvider>
+    </PanelAnimationSuppressionProvider>
   );
 }

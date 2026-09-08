@@ -111,6 +111,7 @@ describe("mobile thread fork presentation", () => {
   it("resolves ordinary new-thread workspace defaults and a stable base", () => {
     expect(
       resolveForkWorkspace({
+        isGitRepository: true,
         projectSetting: "worktree",
         projectFile: "local",
         globalDefault: "local",
@@ -139,6 +140,7 @@ describe("mobile thread fork presentation", () => {
 
     expect(
       resolveForkWorkspace({
+        isGitRepository: true,
         projectSetting: null,
         projectFile: "local",
         globalDefault: "worktree",
@@ -151,6 +153,19 @@ describe("mobile thread fork presentation", () => {
       startFromOrigin: false,
       runSetupScript: false,
     });
+  });
+
+  it("falls back to a local fork for a non-repository project", () => {
+    expect(
+      resolveForkWorkspace({
+        isGitRepository: false,
+        projectSetting: "worktree",
+        projectFile: null,
+        globalDefault: "worktree",
+        startFromOrigin: true,
+        refs: [{ name: "main", current: true, isDefault: true, worktreePath: null }],
+      }),
+    ).toEqual({ mode: "local", baseBranch: null, startFromOrigin: false, runSetupScript: false });
   });
 
   it("marks inherited rows immutable and places the divider after the greatest ordinal", () => {

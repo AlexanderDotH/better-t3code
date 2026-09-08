@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import {
   ApprovalRequestId,
   ProviderDriverKind,
@@ -196,7 +196,8 @@ describe("OpenAI provider conformance", () => {
             .pipe(Effect.forkChild);
           const opened = yield* Fiber.join(openedFiber);
           expect(Option.isSome(opened)).toBe(true);
-          if (Option.isNone(opened) || opened.value.type !== "request.opened") return;
+          assert.isOk(Option.isSome(opened) && opened.value.type === "request.opened");
+          assert.isDefined(opened.value.requestId);
           expect(executed).toEqual([]);
           yield* adapter.respondToRequest(
             threadId,
@@ -248,6 +249,8 @@ describe("OpenAI provider conformance", () => {
             resumeCursor: firstSession.resumeCursor,
           });
           expect((yield* adapter.readThread(threadId)).turns).toEqual(snapshot.turns);
+          assert.isDefined(firstSession.runtimeSessionId);
+          assert.isDefined(resumed.runtimeSessionId);
           const staleStop = yield* adapter.forceStopSession(
             threadId,
             RuntimeSessionId.make(firstSession.runtimeSessionId),
@@ -535,7 +538,7 @@ describe("OpenAI provider conformance", () => {
             ]),
           isAvailable: () => Effect.succeed(true),
           requiresApproval: () => false,
-          requestType: () => "dynamic_tool_approval",
+          requestType: () => "dynamic_tool_call",
           approvalDetail: (name) => name,
           execute: ({ name }) =>
             Effect.gen(function* () {

@@ -8,7 +8,7 @@ and includes the active operation, latest commit, and recent history.
 
 ## Open the Git card
 
-The Git overview is one card in the web and desktop [workspace-card carousel](./chat-controls.md#workspace-cards), alongside Chat and MCP. On a new repository thread, Git is the exposed edge below Chat. Select the edge's free area, repository status, or changed-file count to bring Git forward with a vertical shuffle. Its enabled environment, worktree, branch, and pull-request controls keep their original actions instead of switching cards.
+The Git overview is one card in the web and desktop [workspace-card carousel](./thread-sidebar.md#workspace-cards), alongside Chat and MCP. On a new repository thread, Git is the exposed edge below Chat. Select the edge's free area, repository status, or changed-file count to bring Git forward with a vertical shuffle. Its enabled environment, worktree, branch, and pull-request controls keep their original actions instead of switching cards.
 
 When Git is in front, Chat is exposed above and MCP is exposed below. Select either edge to leave Git; there is no separate Return-to-chat control inside the Git card. Your composer remains mounted and retains its draft, attachments, provider settings, and context controls. Selecting the Chat edge restores its previous focus.
 

@@ -3,7 +3,7 @@ import * as Predicate from "effect/Predicate";
 import * as Stream from "effect/Stream";
 import * as Sse from "effect/unstable/encoding/Sse";
 
-export class OpenRouterProtocolError extends Schema.TaggedErrorClass<OpenRouterProtocolError>()(
+export class OpenRouterProtocolError extends Schema.TaggedError<OpenRouterProtocolError>()(
   "OpenRouterProtocolError",
   {
     protocol: Schema.Literals(["chat-completions", "responses"]),

@@ -57,7 +57,7 @@ const makeLayer = (options?: {
   readonly worktreePath?: string | null;
 }) => {
   const roots: Array<string> = [];
-  const projection = Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+  const projection = Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
     getThreadCheckpointContext: (requestedThreadId) => {
       expect(requestedThreadId).toBe(threadId);
       return Effect.succeed(
@@ -76,7 +76,7 @@ const makeLayer = (options?: {
             }),
       );
     },
-  } as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape);
+  });
   const workspace = Layer.succeed(WorkspaceContext.WorkspaceContext, {
     execute: ({ workspaceRoot }) => {
       roots.push(workspaceRoot);
@@ -210,7 +210,7 @@ const makeEditLayer = (options?: {
 }) => {
   const requests: Array<{ readonly workspaceRoot: string; readonly input: WorkspaceEditInput }> =
     [];
-  const projection = Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+  const projection = Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
     getThreadCheckpointContext: () =>
       Effect.succeed(
         options?.contextMissing === true
@@ -228,13 +228,13 @@ const makeEditLayer = (options?: {
       Effect.succeed(
         Option.fromNullishOr(options?.shell === undefined ? activeShell() : options.shell),
       ),
-  } as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape);
-  const fileSystem = Layer.succeed(WorkspaceFileSystem.WorkspaceFileSystem, {
+  });
+  const fileSystem = Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)({
     editFiles: (request) => {
       requests.push(request);
       return options?.editError ? Effect.fail(options.editError) : Effect.succeed(editResult);
     },
-  } as WorkspaceFileSystem.WorkspaceFileSystem["Service"]);
+  });
   return { requests, layer: Layer.mergeAll(projection, fileSystem) };
 };
 

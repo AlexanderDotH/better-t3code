@@ -104,6 +104,15 @@ export function createMcpEnvironmentAtoms<R, E>(
   });
 
   return {
+    providerStatusQuery: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:mcp:provider-status-query",
+      tag: WS_METHODS.mcpProviderStatus,
+      staleTimeMs: 30_000,
+    }),
+    importSourcesQuery: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:mcp:import-sources-query",
+      tag: WS_METHODS.mcpDiscoverImportSources,
+    }),
     list: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:mcp:list",
       tag: WS_METHODS.mcpList,

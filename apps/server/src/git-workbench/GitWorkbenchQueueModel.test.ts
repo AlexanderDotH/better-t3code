@@ -13,6 +13,7 @@ const scope = {
 
 const observed: GitWorkbenchObservedState = {
   ...scope,
+  stateToken: "state-1",
   headOid: "a".repeat(40),
   refName: "refs/heads/main",
   indexToken: "index-1",

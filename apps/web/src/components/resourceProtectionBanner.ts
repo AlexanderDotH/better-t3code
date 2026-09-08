@@ -1,3 +1,4 @@
+import "./resourceProtectionBanner.css";
 import { resolveResourceProtectionPresentation } from "@t3tools/client-runtime/resource-protection";
 import type { EnvironmentId, ResourceProtectionSnapshot, ThreadId } from "@t3tools/contracts";
 import type { ResolvedInterfaceLanguage } from "@t3tools/shared/interfaceLanguage";

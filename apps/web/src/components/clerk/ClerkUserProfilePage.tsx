@@ -1,8 +1,9 @@
-import { RefreshCwIcon } from "lucide-react";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
+import { RefreshIcon } from "~/components/ui/refresh-icon";
+
 import type { ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
-import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { Button } from "../ui/button";
 
 export function ClerkUserProfilePage({
@@ -57,7 +58,7 @@ export function ClerkUserProfileRefreshButton({
       disabled={disabled || isPending}
       onClick={onClick}
     >
-      <RefreshCwIcon aria-hidden="true" className={cn("size-3.5", isPending && "animate-spin")} />
+      <RefreshIcon aria-hidden="true" className="size-3.5" refreshing={isPending} />
       {translator.message("settings.common.refresh")}
     </Button>
   );

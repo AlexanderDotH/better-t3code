@@ -267,17 +267,16 @@ function streamGeminiRound(input: {
           return events;
         };
 
-        const terminal = Effect.sync(
-          (): NativeProviderRoundEvent<Content, GeminiToolCall> =>
-            parts.length === 0
-              ? { type: "failed", message: "Gemini returned no content." }
-              : {
-                  type: "completed",
-                  historyItems: [{ role: "model", parts }],
-                  toolCalls: calls,
-                  stopReason: finishReason,
-                  ...(usage ? { usage: normalizedUsage(usage) } : {}),
-                },
+        const terminal = Effect.sync((): NativeProviderRoundEvent<Content, GeminiToolCall> =>
+          parts.length === 0
+            ? { type: "failed", message: "Gemini returned no content." }
+            : {
+                type: "completed",
+                historyItems: [{ role: "model", parts }],
+                toolCalls: calls,
+                stopReason: finishReason,
+                ...(usage ? { usage: normalizedUsage(usage) } : {}),
+              },
         );
         return Stream.fromAsyncIterable(generator, (cause) =>
           providerRequestError("models.generateContentStream", errorDetail(cause), cause),

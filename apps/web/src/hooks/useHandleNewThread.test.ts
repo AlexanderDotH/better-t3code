@@ -1,235 +1,174 @@
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
-import { EnvironmentId, ProjectId } from "@t3tools/contracts";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
-const mocks = vi.hoisted(() => ({
-  navigate: vi.fn(),
-  projects: [] as Array<unknown>,
-  projectFileRead: vi.fn(),
-  readThreadShell: vi.fn(() => null),
-  routeParams: {
-    environmentId: "environment-a",
-    threadId: "thread-a",
-  } as Record<string, string>,
-  settings: {
-    defaultThreadEnvMode: "local" as const,
-    newWorktreesStartFromOrigin: true,
-  },
-  sequence: [] as Array<string>,
-}));
+const testState = vi.hoisted(() => {
+  let completeProjectFileRead: (value: null) => void = () => undefined;
+  let projectFileRead = Promise.resolve<null>(null);
+  let storedDraft: {
+    readonly draftId: string;
+    readonly environmentId: string;
+    readonly promotedTo: null;
+    readonly threadId: string;
+  } | null = null;
+  const router = {
+    state: {
+      location: { href: "/" },
+      matches: [{ params: {} }],
+    },
+    navigate: vi.fn(async (request: { readonly params: { readonly draftId: string } }) => {
+      router.state.location.href = `/draft/${request.params.draftId}`;
+    }),
+  };
+  const draftStore = {
+    getComposerDraft: vi.fn(() => ({})),
+    getDraftSessionByLogicalProjectKey: vi.fn(() => storedDraft),
+    getDraftSession: vi.fn(() => null),
+    getDraftThread: vi.fn(() => null),
+    applyStickyState: vi.fn(),
+    setDraftThreadContext: vi.fn(),
+    setLogicalProjectDraftThreadId: vi.fn(),
+    setModelSelection: vi.fn(),
+  };
 
-vi.mock("react", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("react")>()),
-  useCallback: <Value>(value: Value) => value,
-  useMemo: <Value>(factory: () => Value) => factory(),
-}));
+  return {
+    completeProjectFileRead: (value: null) => completeProjectFileRead(value),
+    draftStore,
+    get projectFileRead() {
+      return projectFileRead;
+    },
+    reset(nextStoredDraft: typeof storedDraft) {
+      storedDraft = nextStoredDraft;
+      router.state.location.href = "/";
+      router.navigate.mockClear();
+      draftStore.setLogicalProjectDraftThreadId.mockClear();
+      projectFileRead = new Promise<null>((resolve) => {
+        completeProjectFileRead = resolve;
+      });
+    },
+    router,
+  };
+});
 
 vi.mock("@effect/atom-react", () => ({
-  useAtomValue: () => mocks.settings,
+  useAtomValue: (atom: unknown) =>
+    atom === "primary-settings"
+      ? { newWorktreesStartFromOrigin: false }
+      : new Map([
+          [
+            "environment-ssh",
+            {
+              settings: {
+                defaultThreadEnvMode: "local",
+                newWorktreesStartFromOrigin: false,
+                defaultModelSelection: null,
+              },
+            },
+          ],
+        ]),
 }));
-
+vi.mock("@t3tools/client-runtime/environment", () => ({
+  scopedProjectKey: () => "remote-project",
+  scopeProjectRef: (environmentId: string, projectId: string) => ({ environmentId, projectId }),
+  scopeThreadRef: (environmentId: string, threadId: string) => ({ environmentId, threadId }),
+}));
+vi.mock("@t3tools/contracts", () => ({
+  DEFAULT_RUNTIME_MODE: "default",
+  DEFAULT_SERVER_SETTINGS: {},
+}));
+vi.mock("@t3tools/shared/threadEnvMode", () => ({
+  resolveDefaultThreadEnvMode: (input: {
+    readonly projectFile: "local" | "worktree" | null;
+    readonly globalDefault: "local" | "worktree";
+  }) => input.projectFile ?? input.globalDefault,
+}));
 vi.mock("@tanstack/react-router", () => ({
   useParams: () => null,
-  useRouter: (() => {
-    const router = {
-      navigate: (...args: Array<unknown>) => mocks.navigate(...args),
-      get state() {
-        return { matches: [{ params: mocks.routeParams }] };
-      },
-    };
-    return () => router;
-  })(),
+  useRouter: () => testState.router,
 }));
-
+vi.mock("react", () => ({
+  useCallback: <T>(callback: T) => callback,
+  useMemo: <T>(factory: () => T) => factory(),
+}));
+vi.mock("../components/Sidebar.logic", () => ({ orderItemsByPreferredIds: () => [] }));
+vi.mock("../composerDraftStore", () => {
+  const useComposerDraftStore = Object.assign(() => null, {
+    getState: () => testState.draftStore,
+  });
+  return {
+    composerDraftHasUserContent: () => false,
+    markPromotedDraftThreadByRef: vi.fn(),
+    useComposerDraftStore,
+  };
+});
+vi.mock("../lib/chatThreadActions", () => ({
+  hasExplicitComposerModelSelection: () => false,
+  resolveNewDraftStartFromOrigin: () => false,
+  resolveNewThreadModelSelectionOverride: () => null,
+}));
+vi.mock("../lib/t3ProjectFileDefaults", () => ({
+  readT3ProjectFileDefaultThreadEnvMode: () => testState.projectFileRead,
+}));
+vi.mock("../lib/utils", () => ({
+  newDraftId: () => "draft-delayed",
+  newThreadId: () => "thread-delayed",
+}));
+vi.mock("../logicalProject", () => ({
+  deriveLogicalProjectKeyFromSettings: () => "remote-project",
+  getProjectOrderKey: () => "remote-project",
+  selectProjectGroupingSettings: () => ({}),
+}));
 vi.mock("../state/entities", () => ({
-  readThreadShell: mocks.readThreadShell,
-  useProjects: () => mocks.projects,
+  readProjects: () => [
+    {
+      id: "project-remote",
+      environmentId: "environment-ssh",
+      workspaceRoot: "/remote/project",
+      defaultThreadEnvMode: null,
+      defaultModelSelection: null,
+    },
+  ],
+  readThreadShell: () => null,
+  useProjects: () => [],
   useThread: () => null,
 }));
-
-vi.mock("./useSettings", () => ({
-  useClientSettings: () => ({
-    sidebarProjectGroupingMode: "separate",
-    sidebarProjectGroupingOverrides: {},
-  }),
+vi.mock("../state/server", () => ({
+  environmentServerConfigsAtom: {},
+  primaryServerSettingsAtom: "primary-settings",
 }));
-
-vi.mock("../lib/t3ProjectFileDefaults", () => ({
-  readT3ProjectFileDefaultThreadEnvMode: mocks.projectFileRead,
+vi.mock("../threadRoutes", () => ({ resolveThreadRouteTarget: () => null }));
+vi.mock("../uiStateStore", () => ({
+  legacyProjectCwdPreferenceKey: () => "remote-project",
+  useUiStateStore: () => [],
 }));
+vi.mock("./useSettings", () => ({ useClientSettings: () => ({}) }));
 
-import { type DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "./useHandleNewThread";
 
-const ENVIRONMENT_B = EnvironmentId.make("environment-b");
-const PROJECT_B = ProjectId.make("project-b");
-const PROJECT_B_REF = scopeProjectRef(ENVIRONMENT_B, PROJECT_B);
-
-function makeProject(
-  defaultThreadEnvMode: EnvironmentProject["defaultThreadEnvMode"] = null,
-): EnvironmentProject {
-  return {
-    environmentId: ENVIRONMENT_B,
-    id: PROJECT_B,
-    title: "Project B",
-    workspaceRoot: "/workspace/project-b",
-    repositoryIdentity: null,
-    defaultModelSelection: null,
-    defaultThreadEnvMode,
-    checkpointsEnabled: true,
-    faviconPath: null,
-    scripts: [],
-    createdAt: "2026-09-01T08:00:00.000Z",
-    updatedAt: "2026-09-01T08:00:00.000Z",
-  };
-}
-
-function deferred<Value>() {
-  let resolve!: (value: Value | PromiseLike<Value>) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<Value>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise;
-    reject = rejectPromise;
-  });
-  return { promise, reject, resolve };
-}
-
-function resetDraftStore() {
-  useComposerDraftStore.setState({
-    draftsByThreadKey: {},
-    draftThreadsByThreadKey: {},
-    logicalProjectDraftThreadKeyByLogicalProjectKey: {},
-    stickyModelSelectionByProvider: {},
-    stickyActiveProvider: null,
-  });
-}
-
-async function flushPromises() {
-  await Promise.resolve();
-  await Promise.resolve();
-}
-
-describe("useNewThreadHandler cross-project navigation", () => {
-  beforeEach(() => {
-    resetDraftStore();
-    mocks.projects = [makeProject()];
-    mocks.routeParams = {
-      environmentId: "environment-a",
-      threadId: "thread-a",
-    };
-    mocks.sequence.length = 0;
-    mocks.navigate.mockReset();
-    mocks.projectFileRead.mockReset();
-    mocks.readThreadShell.mockReset();
-    mocks.readThreadShell.mockReturnValue(null);
-  });
-
-  it("registers and navigates to project B before t3.json settles and dedupes concurrent opens", async () => {
-    const navigation = deferred<void>();
-    const projectFile = deferred<"worktree" | null>();
-    mocks.navigate.mockImplementation(() => {
-      mocks.sequence.push("navigate");
-      return navigation.promise;
-    });
-    mocks.projectFileRead.mockImplementation(() => {
-      mocks.sequence.push("project-file");
-      return projectFile.promise;
-    });
-
-    const handleNewThread = useNewThreadHandler();
-    const firstOpen = handleNewThread(PROJECT_B_REF);
-    const registeredDraft = useComposerDraftStore
-      .getState()
-      .getDraftSessionByProjectRef(PROJECT_B_REF);
-
-    expect(registeredDraft).toMatchObject({
-      environmentId: ENVIRONMENT_B,
-      projectId: PROJECT_B,
-      envMode: "local",
-      startFromOrigin: false,
-    });
-    expect(mocks.sequence).toEqual(["navigate", "project-file"]);
-
-    const concurrentOpen = useNewThreadHandler()(PROJECT_B_REF);
-    expect(concurrentOpen).toBe(firstOpen);
-    expect(mocks.navigate).toHaveBeenCalledTimes(1);
-
-    navigation.resolve();
-    await expect(firstOpen).resolves.toMatchObject({ draftId: registeredDraft?.draftId });
-
-    projectFile.resolve("worktree");
-    await flushPromises();
-    expect(
-      useComposerDraftStore.getState().getDraftSession(registeredDraft!.draftId),
-    ).toMatchObject({
-      envMode: "worktree",
-      startFromOrigin: true,
-    });
-  });
-
+describe("useNewThreadHandler", () => {
   it.each([
-    {
-      label: "gains composer content",
-      change: (draftId: DraftId) => {
-        useComposerDraftStore.getState().setPrompt(draftId, "keep my draft");
+    ["new", null],
+    [
+      "reusable",
+      {
+        draftId: "draft-existing",
+        environmentId: "environment-ssh",
+        promotedTo: null,
+        threadId: "thread-existing",
       },
-    },
-    {
-      label: "changes workspace context",
-      change: (draftId: DraftId) => {
-        useComposerDraftStore.getState().setDraftThreadContext(draftId, {
-          branch: "feature/user-choice",
-        });
-      },
-    },
-    {
-      label: "starts promotion",
-      change: (draftId: DraftId) => {
-        useComposerDraftStore.getState().markDraftThreadPromoting(draftId);
-      },
-    },
-  ])("does not apply a late project-file default after the draft $label", async ({ change }) => {
-    const projectFile = deferred<"worktree" | null>();
-    mocks.navigate.mockResolvedValue(undefined);
-    mocks.projectFileRead.mockReturnValue(projectFile.promise);
-
-    const opened = await useNewThreadHandler()(PROJECT_B_REF);
-    const draft = useComposerDraftStore.getState().getDraftSession(opened!.draftId);
-    expect(draft).not.toBeNull();
-
-    change(opened!.draftId);
-    projectFile.resolve("worktree");
-    await flushPromises();
-
-    expect(useComposerDraftStore.getState().getDraftSession(opened!.draftId)?.envMode).toBe(
-      "local",
+    ],
+  ])("abandons a delayed %s draft open when the user navigates elsewhere", async (_, draft) => {
+    testState.reset(draft);
+    const openThread = useNewThreadHandler();
+    const pendingOpen = openThread(
+      { environmentId: "environment-ssh", projectId: "project-remote" } as never,
+      { replace: true },
     );
-  });
 
-  it("uses an authoritative project setting without reading t3.json", async () => {
-    mocks.projects = [makeProject("worktree")];
-    mocks.navigate.mockResolvedValue(undefined);
+    testState.router.state.location.href = "/usage";
+    testState.completeProjectFileRead(null);
+    await pendingOpen;
 
-    const opened = await useNewThreadHandler()(PROJECT_B_REF);
-
-    expect(mocks.projectFileRead).not.toHaveBeenCalled();
-    expect(useComposerDraftStore.getState().getDraftSession(opened!.draftId)).toMatchObject({
-      envMode: "worktree",
-      startFromOrigin: true,
-    });
-  });
-
-  it("propagates navigation failures so the invoking surface can retain its error toast", async () => {
-    const navigationError = new Error("navigation failed");
-    mocks.navigate.mockRejectedValueOnce(navigationError);
-    mocks.projectFileRead.mockResolvedValue(null);
-
-    const handleNewThread = useNewThreadHandler();
-    await expect(handleNewThread(PROJECT_B_REF)).rejects.toBe(navigationError);
-
-    mocks.navigate.mockResolvedValueOnce(undefined);
-    await expect(handleNewThread(PROJECT_B_REF)).resolves.not.toBeNull();
-    expect(mocks.navigate).toHaveBeenCalledTimes(2);
+    expect(testState.router.state.location.href).toBe("/usage");
+    expect(testState.router.navigate).not.toHaveBeenCalled();
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
   });
 });

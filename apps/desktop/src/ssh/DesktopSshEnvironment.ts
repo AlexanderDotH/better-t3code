@@ -6,6 +6,7 @@ import type {
 import * as NetService from "@t3tools/shared/Net";
 import { translateInterfaceMessage } from "@t3tools/shared/interfaceLanguage";
 import * as SshAuth from "@t3tools/ssh/auth";
+import { resolveSshTarget } from "@t3tools/ssh/command";
 import { discoverSshHosts } from "@t3tools/ssh/config";
 import {
   SshCommandError,
@@ -56,6 +57,9 @@ export class DesktopSshEnvironment extends Context.Service<
     readonly discoverHosts: (input?: {
       readonly homeDir?: string;
     }) => Effect.Effect<readonly DesktopDiscoveredSshHost[], DesktopSshEnvironmentDiscoverError>;
+    readonly resolveHost: (
+      alias: string,
+    ) => Effect.Effect<DesktopSshEnvironmentTarget, SshCommandError | SshInvalidTargetError>;
     readonly ensureEnvironment: (
       target: DesktopSshEnvironmentTarget,
       options?: { readonly issuePairingToken?: boolean },
@@ -131,6 +135,7 @@ const makePasswordPrompt = (
     prompts.request(request).pipe(Effect.mapError(toSshPasswordPromptError)),
 });
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const manager = yield* SshTunnel.SshEnvironmentManager;
   const prompts = yield* DesktopSshPasswordPrompts.DesktopSshPasswordPrompts;
@@ -142,6 +147,11 @@ export const make = Effect.gen(function* () {
       discoverDesktopSshHostsEffect(input).pipe(
         Effect.provide(runtimeContext),
         Effect.withSpan("desktop.ssh.discoverHosts"),
+      ),
+    resolveHost: (alias) =>
+      resolveSshTarget(alias.trim()).pipe(
+        Effect.provide(runtimeContext),
+        Effect.withSpan("desktop.ssh.resolveHost"),
       ),
     ensureEnvironment: (target, ensureOptions) =>
       manager

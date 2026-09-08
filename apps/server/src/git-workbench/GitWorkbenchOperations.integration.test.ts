@@ -1,3 +1,4 @@
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeChildProcess from "node:child_process";
@@ -22,7 +23,7 @@ function realGit(cwd: string, args: readonly string[], env?: NodeJS.ProcessEnv) 
     cwd,
     encoding: "utf8",
     env: {
-      ...process.env,
+      ...HostProcessEnvironment.defaultValue(),
       ...env,
       GIT_CONFIG_COUNT: "1",
       GIT_CONFIG_KEY_0: "commit.gpgsign",

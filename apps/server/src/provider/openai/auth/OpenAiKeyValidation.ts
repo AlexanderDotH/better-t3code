@@ -11,7 +11,7 @@ import {
 } from "../OpenAiTransport.ts";
 import { OpenAiModelCatalogError } from "../OpenAiModelCatalog.ts";
 
-export class OpenAiKeyValidationError extends Schema.TaggedErrorClass<OpenAiKeyValidationError>()(
+export class OpenAiKeyValidationError extends Schema.TaggedError<OpenAiKeyValidationError>()(
   "OpenAiKeyValidationError",
   {
     code: Schema.Literals([

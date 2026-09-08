@@ -2,74 +2,58 @@
 
 ## Using T3 Code
 
-- [Install and first run](./user/install.md)
+- [Install T3 Code](./user/install.md)
+- [Messages and context](./user/composer.md)
+- [Working with threads](./user/thread-sidebar.md)
 - [Permission modes](./user/permission-modes.md)
-- [Chat controls and agent workflows](./user/chat-controls.md)
-- [General-purpose subagents](./user/general-subagents.md)
+- [Terminal history](./user/terminal.md)
+- [Source control](./user/source-control.md)
+- [Project settings](./user/project-settings.md)
+- [Appearance and themes](./user/appearance.md)
+- [Better T3 settings](./user/better-t3.md)
 - [Keyboard shortcuts](./user/keybindings.md)
-- [Organizing threads](./user/thread-sidebar.md)
-- [Review usage](./user/usage.md)
-- [Customize a project icon](./user/project-settings.md)
-- [Interface language](./user/interface-language.md)
-- [Better T3 settings](./user/better-t3-settings.md)
-- [Project Knowledge Graph](./user/knowledge-graph.md)
-- [Resource protection](./user/resource-protection.md)
-- [Mobile appearance](./user/mobile-appearance.md)
-- [Environment themes](./user/environment-theme.md)
+- [SnapShots](./user/snap-shot.md)
+- [Import browser sessions](./user/browser-import.md)
+- [Usage and limits](./user/usage.md)
+- [Product usage data](./user/telemetry.md)
 - [Remote access](./user/remote-access.md)
-- [Container server](./user/container-server.md)
-- [Keeping app and server in sync](./user/updating.md)
-- [Source control integrations](./user/source-control.md)
-- [Git workbench](./user/git-workbench.md)
-- [MCP servers](./user/mcp-servers.md)
-- [Background service (Linux)](./user/background-service.md)
-- Providers: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md) ·
-  [OpenCode](./user/providers-opencode.md) · [Gemini](./user/providers-gemini.md) ·
-  [ChatGPT Subscription](./user/providers-chatgpt-subscription.md) ·
-  [OpenRouter](./user/providers-openrouter.md) ·
-  [OpenAI Responses](./user/providers-openai.md)
-
-Mobile app: [apps/mobile/README.md](../apps/mobile/README.md)
+- [Running in the background](./user/background-service.md)
+- [Updating T3 Code](./user/updating.md)
+- Provider guides: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md) · [OpenCode](./user/providers-opencode.md) · [Antigravity](./user/providers-antigravity.md) · [Gemini, ChatGPT, OpenAI and OpenRouter](./user/providers-native.md)
 
 ---
 
 ## Working on T3 Code
 
-Everything below is for maintainers. Setup lives in the [root README](../README.md);
-policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../AGENTS.md).
+Start with the [development runbook](./operations/development.md) and
+[contribution policy](../CONTRIBUTING.md).
+
+Internal notes preserve architectural decisions, constraints, and implementation traps that the
+source alone does not explain. Most code changes do not need an internal documentation update. Follow the
+[documentation rules](../AGENTS.md#documentation) before adding one.
 
 - [Architecture overview](./internals/overview.md)
-- [Thread forking](./internals/thread-forking.md)
-- [Workspace layout](./internals/workspace-layout.md)
 - [Glossary](./internals/glossary.md)
-- [Scripts](./internals/scripts.md)
 - [Connection runtime](./internals/connection-runtime.md)
 - [Providers](./internals/providers.md)
-- [ChatGPT Subscription harness](./internals/chatgpt-subscription-harness.md)
-- [Native provider harness](./internals/native-provider-harness.md)
-- [Internal provider MCP](./internals/internal-mcp.md)
-- [MCP configuration and runtime status](./internals/mcp-runtime-status.md)
-- [Git workbench](./internals/git-workbench.md)
-- [Workspace card deck](./internals/workspace-card-deck.md)
+- [Model classification](./internals/model-manifest.md)
 - [Remote environments](./internals/remote.md)
 - [Server updates](./internals/server-updates.md)
 - [Resource telemetry](./internals/resource-telemetry.md)
-- [Better T3 feature registry](./internals/better-t3-feature-registry.md)
-- [Project Knowledge Graph](./internals/knowledge-graph.md)
-- [Resource protection](./internals/resource-protection.md)
-- [Interface localization](./internals/interface-localization.md)
 - [Product analytics](./internals/product-analytics.md)
 - [Environment auth](./internals/environment-auth.md)
 - [T3 Connect](./internals/t3-connect.md)
-- [CI gates](./internals/ci.md)
-- [Engineering work artifacts](./internals/work-artifacts.md)
+- [Assistant citations](./internals/assistant-citations.md)
+- [Mobile navigation](./internals/mobile-navigation.md)
+- [Mobile development lifecycle](./internals/mobile-development.md)
+- [Terminal runtime](./internals/terminal-runtime.md)
+- [Voice input](./internals/voice-input.md)
 
 ### Runbooks
 
+- [Development and local builds](./operations/development.md)
+- [T3 Connect setup](./operations/connect-setup.md)
 - [Release](./operations/release.md)
-- [Fork production automation safety](./operations/fork-production-safety.md)
 - [Observability](./operations/observability.md)
 - [Relay observability](./operations/relay-observability.md)
 - [Mobile app store screenshots](./operations/mobile-app-store-screenshots.md)
-- [Better T3 Code upstream synchronization](./operations/upstream-sync.md)
-- [Effect function checklist](./operations/effect-fn-checklist.md)

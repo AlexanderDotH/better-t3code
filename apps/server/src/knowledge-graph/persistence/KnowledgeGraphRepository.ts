@@ -52,7 +52,7 @@ export const KnowledgeGraphRepositoryErrorReason = Schema.Literals([
 ]);
 export type KnowledgeGraphRepositoryErrorReason = typeof KnowledgeGraphRepositoryErrorReason.Type;
 
-export class KnowledgeGraphRepositoryError extends Schema.TaggedErrorClass<KnowledgeGraphRepositoryError>()(
+export class KnowledgeGraphRepositoryError extends Schema.TaggedError<KnowledgeGraphRepositoryError>()(
   "KnowledgeGraphRepositoryError",
   {
     operation: Schema.String,

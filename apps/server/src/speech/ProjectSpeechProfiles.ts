@@ -31,7 +31,7 @@ export const PROJECT_SPEECH_PROFILE_INDEX_TIMEOUT = "5 seconds";
 export const INDEX_FALLBACK_WARNING =
   "Full project indexing was unavailable; using a basic speech profile.";
 
-class ProjectSpeechProfileIndexingFailure extends Schema.TaggedErrorClass<ProjectSpeechProfileIndexingFailure>()(
+class ProjectSpeechProfileIndexingFailure extends Schema.TaggedError<ProjectSpeechProfileIndexingFailure>()(
   "ProjectSpeechProfileIndexingFailure",
   { cause: Schema.Defect() },
 ) {}

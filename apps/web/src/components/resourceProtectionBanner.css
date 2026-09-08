@@ -1,0 +1,4 @@
+.resource-protection-banner-surface[data-variant="warning"] {
+  --chat-composer-attached-outline: color-mix(in srgb, var(--warning) 48%, transparent);
+  --chat-composer-attached-tint: color-mix(in srgb, var(--warning) 16%, transparent);
+}

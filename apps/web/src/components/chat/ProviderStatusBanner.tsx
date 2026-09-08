@@ -1,4 +1,4 @@
-import { type ServerProvider } from "@t3tools/contracts";
+import { type ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { memo } from "react";
 import { InfoIcon, XIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
@@ -6,25 +6,21 @@ import { Button } from "../ui/button";
 import { formatProviderDriverKindLabel } from "../../providerModels";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
-const STATUS_TONE = {
-  error: {
-    surface: "border-error/32 bg-error-surface text-error-foreground",
-    icon: "text-error",
-    message: "text-error-foreground/80",
-    dismiss: "text-error-foreground/60",
-  },
-  warning: {
-    surface: "border-warning/32 bg-warning-surface text-warning-foreground",
-    icon: "text-warning",
-    message: "text-warning-foreground/80",
-    dismiss: "text-warning-foreground/60",
-  },
-} as const;
-
 export function getProviderStatusBannerKey(status: ServerProvider | null): string | null {
-  return !status || status.status === "ready" || status.status === "disabled"
-    ? null
-    : [status.instanceId, status.status, status.auth.status, status.message ?? ""].join("\u0000");
+  if (!status || status.status === "ready" || status.status === "disabled") return null;
+  // Antigravity checks saved credentials when a session starts. Its local
+  // health check leaves auth unknown after a restart, which is not a failure.
+  if (
+    status.driver === "antigravity" &&
+    status.installed &&
+    status.status === "warning" &&
+    status.auth.status === "unknown"
+  ) {
+    return null;
+  }
+  return [status.instanceId, status.status, status.auth.status, status.message ?? ""].join(
+    "\u0000",
+  );
 }
 
 export function shouldShowProviderStatusBanner(
@@ -35,14 +31,46 @@ export function shouldShowProviderStatusBanner(
   return bannerKey !== null && bannerKey !== dismissedBannerKey;
 }
 
+export function hasProviderSetup(status: ServerProvider): boolean {
+  return (
+    status.driver === "antigravity" ||
+    status.setup?.canAuthenticate === true ||
+    status.setup?.canInstall === true
+  );
+}
+
+/** Keep the environment's error intact in both the banner and model picker. */
+export function getProviderStatusMessage(status: ServerProvider): string {
+  if (status.message) return status.message;
+  const providerName = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
+  if (!status.installed && hasProviderSetup(status)) {
+    return `Open provider setup to install ${formatProviderDriverKindLabel(status.driver)} on this environment.`;
+  }
+  if (status.auth.status === "unauthenticated") {
+    if (hasProviderSetup(status)) {
+      return status.driver === "antigravity"
+        ? "Open provider setup to sign in with Google."
+        : "Open provider setup to sign in.";
+    }
+    return "Sign in via the CLI to authenticate again.";
+  }
+  return status.status === "ready"
+    ? "No models are available for this provider."
+    : status.status === "error"
+      ? `${providerName} provider is unavailable.`
+      : `${providerName} provider has limited availability.`;
+}
+
 export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   onDismiss,
+  onOpenProviderSetup,
   status,
 }: {
   onDismiss: () => void;
+  onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   status: ServerProvider | null;
 }) {
-  if (!status || status.status === "ready" || status.status === "disabled") {
+  if (!status || getProviderStatusBannerKey(status) === null) {
     return null;
   }
 
@@ -51,42 +79,41 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   const title = isUnauthenticated
     ? `${providerName} is unauthenticated`
     : `${providerName} provider status`;
-  const message = isUnauthenticated
-    ? "Sign in via the CLI to authenticate again."
-    : (status.message ??
-      (status.status === "error"
-        ? `${providerName} provider is unavailable.`
-        : `${providerName} provider has limited availability.`));
-  const tone = STATUS_TONE[status.status === "warning" ? "warning" : "error"];
+  const message = getProviderStatusMessage(status);
 
   return (
     <div className="pointer-events-auto mx-auto w-fit max-w-[calc(100%-2rem)] pt-3">
       <div
         className={cn(
-          "relative inline-flex items-center gap-3 rounded-xl border py-3 ps-3.5 pe-10 text-sm shadow-sm",
-          tone.surface,
+          "alert-glass relative inline-flex items-center gap-3 rounded-xl border py-3 ps-3.5 pe-10 text-card-foreground text-sm",
+          status.status === "warning"
+            ? "border-warning/32 [&_svg]:text-warning"
+            : "border-destructive/32 text-destructive-foreground [&_svg]:text-destructive",
         )}
         data-variant={status.status === "warning" ? "warning" : "error"}
         role="alert"
       >
-        <InfoIcon className={cn("size-4 shrink-0", tone.icon)} aria-hidden />
+        <InfoIcon className="size-4 shrink-0" aria-hidden />
         <div className="flex min-w-0 flex-col gap-1">
           <div className="font-medium">{title}</div>
           <Tooltip>
             <TooltipTrigger
-              render={
-                <div
-                  className={cn("line-clamp-3", tone.message)}
-                  data-provider-status-message="true"
-                >
-                  {message}
-                </div>
-              }
+              render={<div className="line-clamp-3 text-muted-foreground">{message}</div>}
             />
             <TooltipPopup side="top" className="max-w-96 whitespace-pre-wrap">
               {message}
             </TooltipPopup>
           </Tooltip>
+          {onOpenProviderSetup && hasProviderSetup(status) ? (
+            <Button
+              className="self-start px-0 text-foreground"
+              onClick={() => onOpenProviderSetup(status.instanceId)}
+              size="xs"
+              variant="link"
+            >
+              Open provider setup
+            </Button>
+          ) : null}
         </div>
         <Button
           aria-label={`Dismiss ${providerName} provider ${status.status}`}
@@ -95,7 +122,7 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
           size="icon-xs"
           variant="ghost"
         >
-          <XIcon aria-hidden className={cn("size-3.5", tone.dismiss)} />
+          <XIcon aria-hidden className="size-3.5" />
         </Button>
       </div>
     </div>

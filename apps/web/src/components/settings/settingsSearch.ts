@@ -1,23 +1,20 @@
-import { isElectron, isMacElectron } from "~/env";
-import {
-  translateInterfaceMessage,
-  type InterfaceMessageKey,
-  type InterfaceTranslator,
-} from "@t3tools/shared/interfaceLanguage";
+import { isElectron } from "~/env";
+import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
 
 export type SettingsPath =
-  | "/settings/general"
+  | "/settings/better-t3"
+  | "/settings/mcp"
+  | "/settings/skills"
+  | "/settings/import-chats"
   | "/settings/projects"
+  | "/settings/general"
   | "/settings/appearance"
   | "/settings/keybindings"
+  | "/settings/snap-shot"
   | "/settings/providers"
-  | "/settings/better-t3"
-  | "/settings/skills"
-  | "/settings/mcp"
   | "/settings/integrations"
   | "/settings/source-control"
   | "/settings/connections"
-  | "/settings/import-chats"
   | "/settings/archived";
 
 export interface SettingsSearchItem {
@@ -25,433 +22,646 @@ export interface SettingsSearchItem {
   readonly title: string;
   readonly to: SettingsPath;
   readonly targetId?: string;
+  /** Descriptions, option labels, and aliases people may remember instead of the title. */
+  readonly searchTerms?: ReadonlyArray<string>;
   // Its row only renders in the desktop app, so a browser result would land on
   // an anchor that isn't there.
   readonly desktopOnly?: boolean;
-  readonly macosOnly?: boolean;
+  readonly macOnly?: boolean;
+  // Its row only renders on Windows desktop, so other desktop platforms must
+  // not expose a result that points to a missing anchor.
+  readonly windowsOnly?: boolean;
+  readonly cloudOnly?: boolean;
+  readonly primaryOnly?: boolean;
+  readonly providerSettingsOnly?: boolean;
+  readonly localBackendManagementOnly?: boolean;
+  readonly wslAvailableOnly?: boolean;
+  readonly requiresThreadAutoSettlement?: boolean;
 }
 
-type Translate = InterfaceTranslator["message"];
-
-interface SettingsSearchItemDefinition extends Omit<SettingsSearchItem, "title"> {
-  readonly titleMessageId: InterfaceMessageKey;
+export interface SettingsSearchAvailability {
+  readonly hasCloudPublicConfig: boolean;
+  readonly hasPrimaryEnvironment: boolean;
+  readonly hasProviderSettingsEnvironment: boolean;
+  readonly canManageLocalBackend: boolean;
+  readonly isWslSettingsRowVisible: boolean;
+  readonly hasThreadAutoSettlement: boolean;
 }
-
-const translateEnglish: Translate = (key, values) => translateInterfaceMessage("en", key, values);
 
 /**
  * Section labels in sidebar order. The sidebar nav and the search-result
  * subtitles both render from this record, so each label exists once.
  */
-const SETTINGS_SECTION_MESSAGE_IDS: Readonly<Record<SettingsPath, InterfaceMessageKey>> = {
-  "/settings/general": "settings.application.section.general",
-  "/settings/projects": "settings.application.section.projects",
-  "/settings/appearance": "settings.application.section.appearance",
-  "/settings/keybindings": "settings.application.section.keybindings",
-  "/settings/providers": "settings.application.section.providers",
-  "/settings/better-t3": "settings.application.section.betterT3",
-  "/settings/skills": "settings.application.section.skills",
-  "/settings/mcp": "settings.application.section.mcp",
-  "/settings/integrations": "settings.application.section.integrations",
-  "/settings/source-control": "settings.application.section.sourceControl",
-  "/settings/connections": "settings.application.section.connections",
-  "/settings/import-chats": "settings.application.section.importChats",
-  "/settings/archived": "settings.application.section.archive",
+export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
+  "/settings/better-t3": "Better T3",
+  "/settings/general": "General",
+  "/settings/mcp": "MCP Servers",
+  "/settings/skills": "Skills",
+  "/settings/import-chats": "Import Chats",
+  "/settings/appearance": "Appearance",
+  "/settings/projects": "Projects",
+  "/settings/keybindings": "Keybindings",
+  "/settings/snap-shot": "SnapShots",
+  "/settings/providers": "Providers",
+  "/settings/integrations": "Integrations",
+  "/settings/source-control": "Source Control",
+  "/settings/connections": "Connections",
+  "/settings/archived": "Archive",
 };
 
-export function resolveSettingsSectionLabels(
-  translate: Translate,
-): Readonly<Record<SettingsPath, string>> {
-  return Object.fromEntries(
-    (
-      Object.entries(SETTINGS_SECTION_MESSAGE_IDS) as Array<
-        readonly [SettingsPath, InterfaceMessageKey]
-      >
-    ).map(([path, messageId]) => [path, translate(messageId)]),
-  ) as Readonly<Record<SettingsPath, string>>;
-}
-
-/** English compatibility projection for older consumers and behavior tests. */
-export const SETTINGS_SECTION_LABELS = resolveSettingsSectionLabels(translateEnglish);
-
 /**
- * Every searchable setting, in result order. This catalog is the single
- * source of truth for anchor ids and visible titles: panels render both via
- * `searchableSetting`, so a retitle (or, later, a translation pass) happens
- * here once instead of separately in the panel and the index.
+ * Searchable settings and stable destinations, in result order. Rows with a
+ * dedicated anchor render their id and title via `searchableSetting`; items
+ * that may not be mounted point at their nearest stable section instead.
  */
-const SETTINGS_SEARCH_ITEM_DEFINITIONS = [
+export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "better-t3",
-    titleMessageId: "settings.application.title.betterT3",
+    title: "Better T3",
     to: "/settings/better-t3",
+    searchTerms: ["features presets workflow chat visual workspace cards provider switching"],
   },
   {
-    id: "better-t3-knowledge-graph",
-    titleMessageId: "settings.application.title.knowledgeGraph",
+    id: "macos-window-transparency",
+    title: "macOS window transparency",
     to: "/settings/better-t3",
-    targetId: "knowledge.graph",
+    targetId: "macos-window-transparency",
+    searchTerms: ["vibrancy glass translucent background"],
+    desktopOnly: true,
+    macOnly: true,
   },
   {
     id: "harness-chat-sync",
-    titleMessageId: "settings.application.title.harnessChatSync",
+    title: "Harness chat synchronization",
     to: "/settings/projects",
+    targetId: "harness-chat-sync",
+    searchTerms: ["Codex Claude Cursor sessions import history sync"],
+    primaryOnly: true,
   },
   {
-    id: "checkpoints",
-    titleMessageId: "settings.application.title.checkpoints",
+    id: "mcp-servers",
+    title: "MCP Servers",
+    to: "/settings/mcp",
+    searchTerms: ["tools permissions authorization workspace servers"],
+  },
+  {
+    id: "skills",
+    title: "Skills",
+    to: "/settings/skills",
+    searchTerms: ["install skill workspace instructions"],
+  },
+  {
+    id: "import-chats",
+    title: "Import Chats",
+    to: "/settings/import-chats",
+    searchTerms: ["conversation history migration"],
+  },
+
+  {
+    id: "voice-input",
+    title: "Voice input",
+    to: "/settings/connections",
+    searchTerms: ["AssemblyAI microphone dictation transcript speech translation API key"],
+    primaryOnly: true,
+  },
+  {
+    id: "interface-language",
+    title: "Interface language",
+    to: "/settings/appearance",
+    searchTerms: ["language locale English Deutsch German français French system"],
+  },
+  {
+    id: "project-defaults",
+    title: "Project defaults and overrides",
     to: "/settings/projects",
+    searchTerms: [
+      "model workspace browser machines projects inheritance automatic pull checkout grouping actions scripts",
+    ],
   },
   {
     id: "color-scheme",
-    titleMessageId: "settings.application.title.colorScheme",
+    title: "Color scheme",
     to: "/settings/appearance",
+    searchTerms: ["appearance light dark system mode"],
     // The scheme tiles sit at the top of the Appearance section.
     targetId: "appearance",
   },
   {
     id: "theme",
-    titleMessageId: "settings.application.title.themes",
+    title: "Themes",
     to: "/settings/appearance",
+    searchTerms: ["appearance colors palette custom import"],
     // Theme cards live directly under the scheme tiles; the section is the
     // stable scroll destination for both.
     targetId: "appearance",
   },
   {
-    id: "interface-language",
-    titleMessageId: "settings.application.title.interfaceLanguage",
-    to: "/settings/better-t3",
-    targetId: "better-t3-interface-language",
-  },
-  {
     // Prefixed because the slider control already owns the `appearance-contrast` id.
     id: "setting-appearance-contrast",
-    titleMessageId: "settings.application.title.contrast",
+    title: "Contrast",
     to: "/settings/appearance",
+    searchTerms: ["colors borders interface"],
   },
   {
     // Prefixed because the slider control already owns the `glass-opacity` id.
     id: "setting-glass-opacity",
-    titleMessageId: "settings.application.title.glassOpacity",
-    to: "/settings/better-t3",
+    title: "Glass opacity",
+    to: "/settings/appearance",
+    searchTerms: ["transparent transparency solid menus dialogs composer"],
   },
   {
-    id: "model-reasoning",
-    titleMessageId: "settings.application.title.modelReasoning",
-    to: "/settings/better-t3",
-    targetId: "agent.reasoningVisibility",
-  },
-  {
-    id: "macos-window-transparency",
-    titleMessageId: "settings.application.title.macosTransparency",
-    to: "/settings/better-t3",
-    macosOnly: true,
-  },
-  {
-    id: "chat-visuals",
-    titleMessageId: "settings.application.title.chatVisuals",
-    to: "/settings/better-t3",
-    targetId: "chat.presentation",
-  },
-  {
-    id: "expanded-chat-controls",
-    titleMessageId: "settings.application.title.expandedChatControls",
-    to: "/settings/better-t3",
-    targetId: "agent.expandedComposerControls",
-  },
-  {
-    id: "better-t3-fetch",
-    titleMessageId: "betterT3.agent.fetch.label",
-    to: "/settings/better-t3",
-    targetId: "agent.fetch",
-  },
-  {
-    id: "better-t3-fetch-model",
-    titleMessageId: "betterT3.agent.fetchModel.label",
-    to: "/settings/better-t3",
-    targetId: "agent.fetchModel",
-  },
-  {
-    id: "better-t3-parallel-plan-implementation",
-    titleMessageId: "betterT3.agent.parallelPlanImplementation.label",
-    to: "/settings/better-t3",
-    targetId: "agent.parallelPlanImplementation",
-  },
-  {
-    id: "better-t3-parallel-plan-reviewer",
-    titleMessageId: "betterT3.agent.parallelPlanReviewer.label",
-    to: "/settings/better-t3",
-    targetId: "agent.parallelPlanReviewer",
-  },
-  {
-    id: "better-t3-voice-output-language",
-    titleMessageId: "betterT3.voice.outputLanguage.label",
-    to: "/settings/better-t3",
-    targetId: "voice.outputLanguage",
+    id: "panel-animations",
+    title: "Panel animations",
+    to: "/settings/appearance",
   },
   {
     id: "environment-identification",
-    titleMessageId: "settings.application.title.environmentIdentification",
+    title: "Environment identification",
     to: "/settings/appearance",
+    searchTerms: ["dev nightly artwork pill label hide none"],
     // The setting is stage-dependent, so its parent section is the stable destination.
-    targetId: "appearance",
-  },
-  {
-    id: "sidebar-layout",
-    titleMessageId: "settings.application.title.sidebarLayout",
-    to: "/settings/better-t3",
-    targetId: "chat.classicSidebar",
-  },
-  {
-    id: "chats-per-project",
-    titleMessageId: "settings.application.title.chatsPerProject",
-    to: "/settings/better-t3",
-    targetId: "chat.previewCount",
+    targetId: "appearance-interface",
   },
   {
     id: "interface-font",
-    titleMessageId: "settings.application.title.interfaceFont",
+    title: "Interface font",
     to: "/settings/appearance",
+    searchTerms: ["typography family size system sans"],
   },
   {
     id: "prompt-font",
-    titleMessageId: "settings.application.title.promptFont",
+    title: "Prompt font",
     to: "/settings/appearance",
+    searchTerms: ["typography family size composer input"],
   },
   {
     id: "code-font",
-    titleMessageId: "settings.application.title.codeFont",
+    title: "Code font",
     to: "/settings/appearance",
+    searchTerms: ["typography family size monospace code blocks diffs file previews"],
   },
   {
     id: "terminal-font",
-    titleMessageId: "settings.application.title.terminalFont",
+    title: "Terminal font",
     to: "/settings/appearance",
+    searchTerms: ["typography family size monospace output"],
   },
   {
     id: "font-smoothing",
-    titleMessageId: "settings.application.title.fontSmoothing",
+    title: "Font smoothing",
     to: "/settings/appearance",
+    searchTerms: ["typography text grayscale anti aliasing macos thin"],
+    macOnly: true,
   },
   {
     id: "word-wrap",
-    titleMessageId: "settings.application.title.wordWrap",
+    title: "Word wrap",
     to: "/settings/appearance",
+    searchTerms: ["long lines code blocks tables diffs file previews"],
   },
   {
     id: "project-grouping",
-    titleMessageId: "settings.application.title.projectGrouping",
+    title: "Project grouping",
     to: "/settings/general",
+    searchTerms: ["combine matching repositories environments sidebar"],
   },
   {
     id: "auto-settle-inactive-threads",
-    titleMessageId: "settings.application.title.autoSettleInactive",
-    to: "/settings/better-t3",
-    targetId: "chat.settling",
+    title: "Auto-settle inactive threads",
+    to: "/settings/general",
+    searchTerms: ["sidebar inactivity days no activity automatically"],
+    requiresThreadAutoSettlement: true,
   },
   {
     id: "auto-settle-merged-threads",
-    titleMessageId: "settings.application.title.autoSettleMerged",
-    to: "/settings/better-t3",
-    targetId: "chat.settling",
+    title: "Auto-settle merged threads",
+    to: "/settings/general",
+    searchTerms: ["pull request merge closed automatically sidebar"],
+    requiresThreadAutoSettlement: true,
+  },
+  {
+    id: "days-before-auto-settle",
+    title: "Days of inactivity before auto-settle",
+    to: "/settings/general",
+    targetId: "auto-settle-inactive-threads",
+    searchTerms: ["thread timeout activity sidebar"],
+    requiresThreadAutoSettlement: true,
   },
   {
     id: "time-format",
-    titleMessageId: "settings.application.title.timeFormat",
+    title: "Time format",
     to: "/settings/general",
+    searchTerms: ["timestamp clock locale system browser os 12 hour 24 hour"],
   },
   {
     id: "hide-whitespace-changes",
-    titleMessageId: "settings.application.title.hideWhitespace",
+    title: "Hide whitespace changes",
     to: "/settings/general",
+    searchTerms: ["diff ignore spaces edits default"],
+  },
+  {
+    id: "diff-layout",
+    title: "Diff layout",
+    to: "/settings/general",
+    searchTerms: ["stacked split side by side unified inline view"],
+  },
+  {
+    id: "proactive-panels",
+    title: "Proactive panels",
+    to: "/settings/general",
+    searchTerms: ["automatically open diff pull request pr right panel agent completion"],
   },
   {
     id: "skills-in-slash-menu",
-    titleMessageId: "settings.application.title.skillsSlashMenu",
-    to: "/settings/skills",
+    title: "Show skills in slash menu",
+    to: "/settings/general",
+    searchTerms: ["command menu dollar $ slash /"],
+  },
+  {
+    id: "composer-collapse",
+    title: "Collapse composer on scroll",
+    to: "/settings/general",
+    searchTerms: ["composer rest resting scroll wheel conversation timeline shrink minimize"],
   },
   {
     id: "provider-update-checks",
-    titleMessageId: "settings.application.title.providerUpdateChecks",
+    title: "Provider update checks",
     to: "/settings/general",
+    searchTerms: ["installed cli versions newer available codex claude cursor grok opencode"],
+  },
+  {
+    id: "continue-threads-after-server-update",
+    title: "Continue threads after restarts",
+    to: "/settings/general",
+    searchTerms: [
+      "resume running active interrupted work restart reboot machine crash desktop update automatically",
+    ],
+  },
+  {
+    id: "background-activity",
+    title: "Background activity",
+    to: "/settings/general",
+    searchTerms: [
+      "balanced performance battery saver advanced git fetch provider health refresh host power monitor idle policy",
+    ],
   },
   {
     id: "new-threads",
-    titleMessageId: "settings.application.title.newThreads",
-    to: "/settings/general",
+    title: "New threads",
+    to: "/settings/projects",
+    searchTerms: ["default workspace mode draft local worktree"],
   },
   {
     id: "start-from-origin",
-    titleMessageId: "settings.application.title.startFromOrigin",
+    title: "Start from origin",
     to: "/settings/general",
-    targetId: "new-threads",
+    searchTerms: ["new worktrees latest matching remote branch local"],
   },
   {
     id: "add-project-starts-in",
-    titleMessageId: "settings.application.title.addProjectStartsIn",
+    title: "Add project starts in",
     to: "/settings/general",
+    searchTerms: ["base directory folder browser path home"],
   },
   {
     id: "unpin-confirmation",
-    titleMessageId: "settings.application.title.unpinConfirmation",
+    title: "Unpin confirmation",
     to: "/settings/general",
+    searchTerms: ["ask before thread pinned section"],
   },
   {
     id: "archive-confirmation",
-    titleMessageId: "settings.application.title.archiveConfirmation",
+    title: "Archive confirmation",
     to: "/settings/general",
+    searchTerms: ["ask before thread second click inline action"],
   },
   {
     id: "delete-confirmation",
-    titleMessageId: "settings.application.title.deleteConfirmation",
+    title: "Delete confirmation",
     to: "/settings/general",
+    searchTerms: ["ask before thread chat history"],
   },
   {
     id: "quit-confirmation",
-    titleMessageId: "settings.application.title.quitConfirmation",
+    title: "Quit shortcut",
     to: "/settings/general",
+    searchTerms: ["confirmation desktop app exit direct hold double click press twice"],
     desktopOnly: true,
   },
   {
     id: "text-generation-model",
-    titleMessageId: "settings.application.title.textGenerationModel",
+    title: "Text generation model",
     to: "/settings/general",
-  },
-  {
-    id: "prompt-improvement",
-    titleMessageId: "settings.application.title.promptImprovement",
-    to: "/settings/better-t3",
-    targetId: "agent.promptImprovement",
+    searchTerms: ["generated thread titles source control content default provider"],
   },
   {
     id: "diagnostics",
-    titleMessageId: "settings.application.title.diagnostics",
+    title: "Diagnostics",
     to: "/settings/general",
+    searchTerms: ["logs traces processes resource history failures spans cpu memory"],
   },
   {
     id: "legacy-plan-mode",
-    titleMessageId: "settings.application.title.legacyPlanMode",
-    to: "/settings/better-t3",
-    targetId: "agent.planMode",
+    title: "Plan mode (legacy)",
+    to: "/settings/general",
+    searchTerms: ["build plan composer old"],
+  },
+  {
+    id: "legacy-context-window-indicator",
+    title: "Context window indicator (legacy)",
+    to: "/settings/general",
+    searchTerms: ["composer meter usage tokens circle old"],
   },
   {
     id: "legacy-token-streaming",
-    titleMessageId: "settings.application.title.legacyTokenStreaming",
+    title: "Stream token by token (legacy)",
     to: "/settings/general",
+    searchTerms: ["response output old compatibility"],
+  },
+  {
+    id: "legacy-sidebar",
+    title: "Sidebar (legacy)",
+    to: "/settings/general",
+    searchTerms: ["project thread tree old flat list"],
   },
   {
     id: "keybindings",
-    titleMessageId: "settings.application.title.keybindings",
+    title: "Keybindings",
     to: "/settings/keybindings",
+    searchTerms: ["keyboard shortcuts hotkeys commands bindings json"],
+  },
+  {
+    id: "snap-shot-enabled",
+    title: "SnapShots",
+    searchTerms: ["window capture screenshot"],
+    to: "/settings/snap-shot",
+  },
+  {
+    id: "snap-shot-accessibility",
+    title: "Include app text",
+    to: "/settings/snap-shot",
+    targetId: "snap-shot-enabled",
+    searchTerms: [
+      "capture accessibility data text UI structure elements privacy omit agent context",
+    ],
+  },
+  {
+    id: "snap-shot-shortcut",
+    title: "Capture shortcut",
+    to: "/settings/snap-shot",
+    targetId: "snap-shot-enabled",
+  },
+  {
+    id: "snap-shot-sound",
+    title: "Capture sound",
+    to: "/settings/snap-shot",
+    targetId: "snap-shot-enabled",
+  },
+  {
+    id: "snap-shot-flash",
+    title: "Capture flash",
+    to: "/settings/snap-shot",
+    targetId: "snap-shot-enabled",
+  },
+  {
+    id: "snap-shot-animations",
+    title: "Capture animations",
+    to: "/settings/snap-shot",
+    targetId: "snap-shot-enabled",
   },
   {
     id: "providers",
-    titleMessageId: "settings.application.title.providers",
+    title: "Providers",
     to: "/settings/providers",
+    searchTerms: [
+      "agents cli codex claude cursor grok opencode antigravity google sign in sign out install subscription instances authentication api key models configuration binary path config directory endpoint arguments environment variables display name accent color custom favorite hidden auto compact",
+    ],
   },
   {
-    id: "skills",
-    titleMessageId: "settings.application.title.skills",
-    to: "/settings/skills",
+    id: "usage-providers",
+    title: "Usage providers",
+    to: "/settings/providers",
+    searchTerms: [
+      "usage sources CLIProxyAPI CLI proxy hub quota subscription limits management key add remove",
+    ],
+    providerSettingsOnly: true,
   },
   {
-    id: "mcp-servers",
-    titleMessageId: "settings.application.title.mcpServers",
-    to: "/settings/mcp",
+    id: "provider-health-check-interval",
+    title: "Health check interval",
+    to: "/settings/providers",
+    searchTerms: ["refresh availability versions auth state models background probes seconds off"],
+    providerSettingsOnly: true,
   },
   {
     id: "agent-browser-access",
-    titleMessageId: "settings.application.title.agentBrowserAccess",
+    title: "Agent browser access",
+    to: "/settings/projects",
+    searchTerms: ["allow open drive preview tools sessions"],
+  },
+  {
+    id: "browser-profiles",
+    title: "Browser profiles",
     to: "/settings/integrations",
     targetId: "browser",
+  },
+  {
+    id: "browser-default-profile",
+    title: "Default browser profile",
+    to: "/settings/integrations",
+    targetId: "browser-profiles",
   },
   {
     id: "browser-default-viewport",
-    titleMessageId: "settings.application.title.browserDefaultViewport",
+    title: "Default browser viewport",
     to: "/settings/integrations",
-    targetId: "browser",
+    searchTerms: ["preview size width height device desktop mobile rotate"],
   },
   {
     id: "browser-default-zoom",
-    titleMessageId: "settings.application.title.browserDefaultZoom",
+    title: "Default browser zoom",
     to: "/settings/integrations",
-    targetId: "browser",
+    searchTerms: ["preview page scale tabs percent"],
   },
   {
     id: "browser-default-appearance",
-    titleMessageId: "settings.application.title.browserDefaultAppearance",
+    title: "Default browser appearance",
     to: "/settings/integrations",
-    targetId: "browser",
+    searchTerms: ["preview color scheme light dark system os"],
+  },
+  {
+    id: "browser-recording-frame-rate",
+    title: "Browser recording frame rate",
+    to: "/settings/integrations",
+  },
+  {
+    id: "browser-link-target",
+    title: "Open links in",
+    to: "/settings/integrations",
+    searchTerms: ["links default browser in-app browser external open"],
   },
   {
     id: "browser-auto-show-floating-preview",
-    titleMessageId: "settings.application.title.browserFloatingPreview",
+    title: "Auto-show floating preview",
     to: "/settings/integrations",
-    targetId: "browser",
+    searchTerms: ["agent opens browser pop into view hide"],
   },
   {
     id: "source-control",
-    titleMessageId: "settings.application.title.sourceControl",
+    title: "Source control",
     to: "/settings/source-control",
+    searchTerms: [
+      "version control git github gitlab bitbucket azure devops hosting integrations credentials scan server environment",
+    ],
+  },
+  {
+    id: "git-fetch-interval",
+    title: "Git fetch interval",
+    to: "/settings/source-control",
+    searchTerms: [
+      "automatic remote branch refresh background credentials security keys seconds off",
+    ],
+    primaryOnly: true,
+  },
+  {
+    id: "source-control-writing-style",
+    title: "Source control writing style",
+    to: "/settings/source-control",
+    searchTerms: [
+      "repository conventions conventional commits custom instructions change descriptions request titles",
+    ],
+    primaryOnly: true,
+  },
+  {
+    id: "follow-change-request-templates",
+    title: "Follow change request templates",
+    to: "/settings/source-control",
+    searchTerms: ["repository pr pull request description structure"],
+    primaryOnly: true,
+  },
+  {
+    id: "source-control-writer-model",
+    title: "Source control writer model",
+    to: "/settings/source-control",
+    searchTerms: [
+      "override generated commit change request pr titles descriptions branch bookmark",
+    ],
+    primaryOnly: true,
+  },
+  {
+    id: "environment-icon",
+    title: "Environment icon",
+    to: "/settings/connections",
+    targetId: "connections-environment",
+    searchTerms: ["machine glyph sidebar mac mini studio laptop desktop server cloud vm"],
+    localBackendManagementOnly: true,
+  },
+  {
+    id: "network-access",
+    title: "Network access",
+    to: "/settings/connections",
+    targetId: "connections-environment",
+    searchTerms: ["expose backend remote pairing local machine interfaces host restart"],
+    localBackendManagementOnly: true,
+  },
+  {
+    id: "tailscale-https",
+    title: "Tailscale HTTPS",
+    to: "/settings/connections",
+    targetId: "connections-environment",
+    searchTerms: ["serve magicdns endpoint remote secure network"],
+    desktopOnly: true,
+    localBackendManagementOnly: true,
+  },
+  {
+    id: "wsl-backend",
+    title: "WSL backend",
+    to: "/settings/connections",
+    searchTerms: [
+      "windows subsystem linux distro second server projects stop windows backend restart",
+    ],
+    desktopOnly: true,
+    windowsOnly: true,
+    localBackendManagementOnly: true,
+    wslAvailableOnly: true,
+  },
+  {
+    id: "t3-connect",
+    title: "T3 Connect",
+    to: "/settings/connections",
+    targetId: "connections-environment",
+    searchTerms: ["managed tunnel cloud other devices remote"],
+    desktopOnly: true,
+    cloudOnly: true,
+  },
+  {
+    id: "publish-agent-activity",
+    title: "Publish agent activity",
+    to: "/settings/connections",
+    targetId: "connections-environment",
+    searchTerms: ["mobile push notifications live activities cloud tunnel"],
+    cloudOnly: true,
+  },
+  {
+    id: "connections-environment",
+    title: "This environment",
+    to: "/settings/connections",
+    searchTerms: [
+      "connections server backend local remote access administrative permissions scope pairing links qr code authorized clients sessions revoke endpoint",
+    ],
   },
   {
     id: "remote-environments",
-    titleMessageId: "settings.application.title.remoteEnvironments",
+    title: "Remote environments",
     to: "/settings/connections",
+    searchTerms: ["add pair backend host code ssh config agent tunnel saved t3 connect"],
   },
   {
-    id: "import-chats",
-    titleMessageId: "settings.application.title.importChats",
-    to: "/settings/import-chats",
+    id: "load-balancing",
+    title: "Load balancing",
+    to: "/settings/connections",
+    searchTerms: [
+      "automatic machine environment resources cpu memory capacity preference weight shared projects",
+    ],
   },
   {
     id: "archive",
-    titleMessageId: "settings.application.title.archivedThreads",
+    title: "Archived threads",
     to: "/settings/archived",
+    searchTerms: ["restore reopen deleted history projects"],
   },
-] as const satisfies ReadonlyArray<SettingsSearchItemDefinition>;
+] as const satisfies ReadonlyArray<SettingsSearchItem>;
 
-export function localizeSettingsSearchItems(
-  translate: Translate,
-): ReadonlyArray<SettingsSearchItem> {
-  return SETTINGS_SEARCH_ITEM_DEFINITIONS.map(({ titleMessageId, ...item }) => ({
-    ...item,
-    title: translate(titleMessageId),
-  }));
-}
+export type SettingsSearchItemId = (typeof SETTINGS_SEARCH_ITEMS)[number]["id"];
 
-/** English compatibility projection for callers that do not render UI. */
-export const SETTINGS_SEARCH_ITEMS = localizeSettingsSearchItems(translateEnglish);
-
-export type SettingsSearchItemId = (typeof SETTINGS_SEARCH_ITEM_DEFINITIONS)[number]["id"];
-
-const SEARCH_ITEM_DEFINITIONS_BY_ID = Object.fromEntries(
-  SETTINGS_SEARCH_ITEM_DEFINITIONS.map((item) => [item.id, item]),
-) as Readonly<Record<SettingsSearchItemId, SettingsSearchItemDefinition>>;
+const SEARCH_ITEMS_BY_ID = new Map(SETTINGS_SEARCH_ITEMS.map((item) => [item.id, item] as const));
 
 /**
  * `id` and `title` props for the element a search item anchors to. Panels
  * spread (or pick from) this instead of restating the strings, so the catalog
  * and the rendered settings cannot drift apart.
  */
-export function searchableSetting(
-  id: SettingsSearchItemId,
-  translate: Translate = translateEnglish,
-): {
+export function searchableSetting(id: SettingsSearchItemId): {
   readonly id: string;
   readonly title: string;
 } {
-  const { id: anchorId, titleMessageId } = SEARCH_ITEM_DEFINITIONS_BY_ID[id];
-  return { id: anchorId, title: translate(titleMessageId) };
+  const { id: anchorId, title } = SEARCH_ITEMS_BY_ID.get(id)!;
+  return { id: anchorId, title };
 }
 
-function normalizeSearchText(value: string): string {
-  return value
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLocaleLowerCase()
-    .replace(/\s+/g, " ")
-    .trim();
+export function filterAvailableSettingsSearchItems(
+  availability: SettingsSearchAvailability,
+): ReadonlyArray<SettingsSearchItem> {
+  const items: ReadonlyArray<SettingsSearchItem> = SETTINGS_SEARCH_ITEMS;
+  return items.filter(
+    (item) =>
+      (!item.cloudOnly || availability.hasCloudPublicConfig) &&
+      (!item.primaryOnly || availability.hasPrimaryEnvironment) &&
+      (!item.providerSettingsOnly || availability.hasProviderSettingsEnvironment) &&
+      (!item.localBackendManagementOnly || availability.canManageLocalBackend) &&
+      (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
+      (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement),
+  );
 }
 
 export function searchSettings(
@@ -460,11 +670,38 @@ export function searchSettings(
 ): ReadonlyArray<SettingsSearchItem> {
   const normalizedQuery = normalizeSearchText(query);
   if (normalizedQuery.length === 0) return [];
+  const queryTokens = normalizedQuery.split(" ");
+  const platform = typeof navigator === "undefined" ? "" : navigator.platform;
 
-  return items.filter(
-    (item) =>
-      (isElectron || item.desktopOnly !== true) &&
-      (isMacElectron || item.macosOnly !== true) &&
-      normalizeSearchText(item.title).includes(normalizedQuery),
-  );
+  return items
+    .flatMap((item, index) => {
+      if (!isElectron && item.desktopOnly === true) return [];
+      if (item.macOnly && !isMacPlatform(platform)) return [];
+      if (item.windowsOnly && !isWindowsPlatform(platform)) return [];
+
+      const title = normalizeSearchText(item.title);
+      const fields = [
+        title,
+        normalizeSearchText(SETTINGS_SECTION_LABELS[item.to]),
+        ...(item.searchTerms ?? []).map(normalizeSearchText),
+      ];
+      if (!queryTokens.every((token) => fields.some((field) => field.includes(token)))) return [];
+
+      const exactPhraseField = fields.findIndex((field) => field.includes(normalizedQuery));
+      const rank =
+        title === normalizedQuery
+          ? 5
+          : title.startsWith(normalizedQuery)
+            ? 4
+            : title.includes(normalizedQuery)
+              ? 3
+              : queryTokens.every((token) => title.includes(token))
+                ? 2
+                : exactPhraseField >= 0
+                  ? 1
+                  : 0;
+      return [{ item, index, rank }];
+    })
+    .toSorted((left, right) => right.rank - left.rank || left.index - right.index)
+    .map(({ item }) => item);
 }

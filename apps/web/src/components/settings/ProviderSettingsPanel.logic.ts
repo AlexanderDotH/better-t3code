@@ -57,6 +57,13 @@ export interface ProviderEnvironmentOptionLike {
   readonly label: string;
 }
 
+export function isProviderSettingsEnvironmentAvailable(input: {
+  readonly connectionPhase: EnvironmentConnectionPhase;
+  readonly hasServerConfig: boolean;
+}): boolean {
+  return input.connectionPhase === "connected" && input.hasServerConfig;
+}
+
 export type ProviderAuthFlow = "browser" | "device-code";
 
 export function resolveProviderAuthFlow(input: {

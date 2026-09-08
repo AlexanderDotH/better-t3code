@@ -39,10 +39,13 @@ describe("mobile native configuration", () => {
   });
 
   it("declares Android microphone recording for runtime voice permission requests", () => {
+    expect(
+      config.plugins?.filter((plugin) => Array.isArray(plugin) && plugin[0] === "expo-audio"),
+    ).toHaveLength(1);
     expect(config.plugins).toContainEqual([
       "expo-audio",
       expect.objectContaining({
-        microphonePermission: expect.stringContaining("speech"),
+        microphonePermission: expect.stringContaining("voice"),
         recordAudioAndroid: true,
       }),
     ]);

@@ -13,20 +13,6 @@ import {
   type SkillTarget,
 } from "@t3tools/contracts";
 
-const LEGACY_PROVIDER_DRIVERS = [
-  "codex",
-  "claudeAgent",
-  "cursor",
-  "grok",
-  "opencode",
-  "gemini",
-] as const;
-type LegacyProviderDriver = (typeof LEGACY_PROVIDER_DRIVERS)[number];
-
-function isLegacyProviderDriver(driver: string): driver is LegacyProviderDriver {
-  return LEGACY_PROVIDER_DRIVERS.some((candidate) => candidate === driver);
-}
-
 export function supportsEnvironmentAgentSettings(
   capabilities: ExecutionEnvironmentCapabilities | null | undefined,
 ): boolean {
@@ -49,27 +35,12 @@ export function providerEnabledSettingsPatch(input: {
   }
 
   if (
-    !isLegacyProviderDriver(input.provider.driver) ||
+    !Object.hasOwn(input.settings.providers, input.provider.driver) ||
     input.provider.instanceId !== defaultInstanceIdForDriver(input.provider.driver)
   ) {
     return null;
   }
-
-  switch (input.provider.driver) {
-    case "codex":
-      return { providers: { codex: { enabled: input.enabled } } };
-    case "claudeAgent":
-      return { providers: { claudeAgent: { enabled: input.enabled } } };
-    case "cursor":
-      return { providers: { cursor: { enabled: input.enabled } } };
-    case "grok":
-      return { providers: { grok: { enabled: input.enabled } } };
-    case "opencode":
-      return { providers: { opencode: { enabled: input.enabled } } };
-    case "gemini":
-      return { providers: { gemini: { enabled: input.enabled } } };
-  }
-  return null;
+  return { providers: { [input.provider.driver]: { enabled: input.enabled } } };
 }
 
 export function skillMutationTarget(skill: SkillDescriptor): SkillTarget {

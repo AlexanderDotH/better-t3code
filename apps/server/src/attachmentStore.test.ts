@@ -3,7 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { describe, expect, it } from "vite-plus/test";
+import { assert, describe, expect, it } from "vite-plus/test";
 
 import {
   attachmentRelativePath,
@@ -109,7 +109,9 @@ describe("attachmentStore", () => {
       NodePath.join(NodeOS.tmpdir(), "t3code-audio-attachment-store-"),
     );
     try {
-      const audioPath = NodePath.join(attachmentsDir, attachmentRelativePath(attachment));
+      const relativePath = attachmentRelativePath(attachment);
+      assert.isNotNull(relativePath);
+      const audioPath = NodePath.join(attachmentsDir, relativePath);
       NodeFS.writeFileSync(audioPath, Buffer.from("audio"));
       expect(resolveAttachmentPathById({ attachmentsDir, attachmentId: attachment.id })).toBe(
         audioPath,

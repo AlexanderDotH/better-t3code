@@ -3,6 +3,7 @@ import * as NodeHttp from "node:http";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeChildProcess from "node:child_process";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -13,6 +14,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
@@ -26,7 +28,13 @@ import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/unstable/cli";
 
 import { cli, makeCli } from "./bin.ts";
+import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
+import {
+  SERVICE_LAUNCHER_CONTEXT_ENV,
+  SERVICE_LAUNCHER_PROTOCOL,
+} from "./cloud/serviceProtocol.ts";
 import * as ServerConfig from "./config.ts";
+import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor.ts";
@@ -43,7 +51,30 @@ import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { environmentAuthenticatedAuthLayer } from "./auth/http.ts";
 
-const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
+import { ProjectSetupScriptRunner } from "./project/ProjectSetupScriptRunner.ts";
+import { GitWorkflowService } from "./git/GitWorkflowService.ts";
+import { VcsStatusBroadcaster } from "./vcs/VcsStatusBroadcaster.ts";
+
+import packageJson from "../package.json" with { type: "json" };
+
+const CliRuntimeLayer = Layer.mergeAll(WorkspacePaths.layer, NetService.layer).pipe(
+  Layer.provideMerge(NodeServices.layer),
+);
+const DisconnectedLauncherChildLayer = Layer.mergeAll(
+  Layer.succeed(HostProcessEnvironment, {
+    ...process.env,
+    [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify({
+      protocol: SERVICE_LAUNCHER_PROTOCOL,
+      childVersion: packageJson.version,
+    }),
+  }),
+  Layer.succeed(ServiceLauncherClient.ServiceLauncherHostProcess, {
+    connected: false,
+    send: () => false,
+    on: () => undefined,
+    off: () => undefined,
+  }),
+);
 class ProjectCliHttpApi extends HttpApi.make("environment").add(EnvironmentOrchestrationHttpApi) {}
 
 const connectCli = makeCli({ cloudEnabled: true });
@@ -97,13 +128,13 @@ const makeCliTestServerConfig = (baseDir: string) =>
   });
 
 const makeProjectPersistenceLayer = (config: ServerConfig.ServerConfig["Service"]) =>
-  Layer.mergeAll(
-    OrchestrationLayerLive.pipe(
-      Layer.provideMerge(RepositoryIdentityResolver.layer),
-      Layer.provideMerge(SqlitePersistenceLayerLive),
-    ),
-    WorkspacePaths.layer,
-  ).pipe(Layer.provideMerge(NodeServices.layer), Layer.provide(ServerConfig.layer(config)));
+  OrchestrationLayerLive.pipe(
+    Layer.provideMerge(RepositoryIdentityResolver.layer),
+    Layer.provideMerge(SqlitePersistenceLayerLive),
+    Layer.provideMerge(WorkspacePaths.layer),
+    Layer.provideMerge(NodeServices.layer),
+    Layer.provide(ServerConfig.layer(config)),
+  );
 
 const readPersistedSnapshot = (baseDir: string) =>
   Effect.gen(function* () {
@@ -113,6 +144,225 @@ const readPersistedSnapshot = (baseDir: string) =>
       return yield* projectionSnapshotQuery.getSnapshot();
     }).pipe(Effect.provide(makeProjectPersistenceLayer(config)));
   });
+
+const makeProjectLookupFixture = Effect.fn("makeProjectLookupFixture")(function* (
+  withThread: boolean,
+  removeWorkspace: boolean,
+) {
+  const baseDir = NodeFS.mkdtempSync(
+    NodePath.join(NodeOS.tmpdir(), "t3-cli-project-lookup-state-"),
+  );
+  const workspaceRoot = NodeFS.mkdtempSync(
+    NodePath.join(NodeOS.tmpdir(), "t3-cli-project-lookup-git-"),
+  );
+  NodeChildProcess.execFileSync("git", ["init", "--initial-branch=main", workspaceRoot], {
+    stdio: "ignore",
+  });
+  yield* runCliWithRuntime(["project", "add", workspaceRoot, "--base-dir", baseDir]);
+  const snapshot = yield* readPersistedSnapshot(baseDir);
+  const project = snapshot.projects.find((candidate) => candidate.workspaceRoot === workspaceRoot)!;
+  assert.isDefined(project);
+  if (withThread) {
+    const config = yield* makeCliTestServerConfig(baseDir);
+    yield* Effect.gen(function* () {
+      const engine = yield* OrchestrationEngine.OrchestrationEngineService;
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-project-lookup-thread"),
+        threadId: ThreadId.make("thread-project-lookup"),
+        projectId: project.id,
+        title: "Project lookup test",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+        interactionMode: "default",
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt: DateTime.formatIso(yield* DateTime.now),
+      });
+    }).pipe(Effect.provide(makeProjectPersistenceLayer(config)));
+  }
+  if (removeWorkspace) {
+    NodeFS.renameSync(workspaceRoot, `${workspaceRoot}-removed`);
+    assert.isFalse(NodeFS.existsSync(workspaceRoot));
+  }
+  return { baseDir, workspaceRoot, project };
+});
+
+it.layer(NodeServices.layer)("project lookup with unavailable workspaces", (it) => {
+  it.effect("removes an empty project by ID without force after its directory is gone", () =>
+    Effect.gen(function* () {
+      const { baseDir, project } = yield* makeProjectLookupFixture(false, true);
+      yield* runCliWithRuntime(["project", "remove", project.id, "--base-dir", baseDir]);
+      const after = yield* readPersistedSnapshot(baseDir);
+      assert.isNotNull(after.projects.find((candidate) => candidate.id === project.id)!.deletedAt);
+    }),
+  );
+
+  it.effect.each([true, false])(
+    "requires force for child threads, then removes by ID; missing=%s",
+    (removeWorkspace) =>
+      Effect.gen(function* () {
+        const { baseDir, project } = yield* makeProjectLookupFixture(true, removeWorkspace);
+        const error = yield* runCliWithRuntime([
+          "project",
+          "remove",
+          project.id,
+          "--base-dir",
+          baseDir,
+        ]).pipe(Effect.flip);
+        assert.include(error.message, "cannot be deleted without force=true");
+        const retained = yield* readPersistedSnapshot(baseDir);
+        assert.isNull(
+          retained.projects.find((candidate) => candidate.id === project.id)!.deletedAt,
+        );
+        assert.isNull(
+          retained.threads.find((thread) => thread.id === "thread-project-lookup")!.deletedAt,
+        );
+        yield* runCliWithRuntime([
+          "project",
+          "remove",
+          project.id,
+          "--force",
+          "--base-dir",
+          baseDir,
+        ]);
+        const after = yield* readPersistedSnapshot(baseDir);
+        assert.isNotNull(
+          after.projects.find((candidate) => candidate.id === project.id)!.deletedAt,
+        );
+        assert.isNotNull(
+          after.threads.find((thread) => thread.id === "thread-project-lookup")!.deletedAt,
+        );
+      }),
+  );
+
+  it.effect("cannot remove the old environment's ID from a replacement empty database", () =>
+    Effect.gen(function* () {
+      const { baseDir, project } = yield* makeProjectLookupFixture(true, true);
+      const replacementDir = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-cli-project-lookup-new-state-"),
+      );
+      const error = yield* runCliWithRuntime([
+        "project",
+        "remove",
+        project.id,
+        "--force",
+        "--base-dir",
+        replacementDir,
+      ]).pipe(Effect.flip);
+      assert.include(error.message, "No active project found");
+      assert.include(String(error.cause), "Workspace root does not exist");
+      const original = yield* readPersistedSnapshot(baseDir);
+      assert.isNull(original.projects.find((candidate) => candidate.id === project.id)!.deletedAt);
+      const replacement = yield* readPersistedSnapshot(replacementDir);
+      assert.equal(replacement.projects.length, 0);
+    }),
+  );
+
+  it.effect("renames by ID and stored path, then force removes after the directory is gone", () =>
+    Effect.gen(function* () {
+      const { baseDir, workspaceRoot, project } = yield* makeProjectLookupFixture(true, true);
+      yield* runCliWithRuntime([
+        "project",
+        "rename",
+        project.id,
+        "Renamed by ID",
+        "--base-dir",
+        baseDir,
+      ]);
+      const afterIdRename = yield* readPersistedSnapshot(baseDir);
+      assert.equal(
+        afterIdRename.projects.find((candidate) => candidate.id === project.id)!.title,
+        "Renamed by ID",
+      );
+      yield* runCliWithRuntime([
+        "project",
+        "rename",
+        workspaceRoot,
+        "Renamed by stored path",
+        "--base-dir",
+        baseDir,
+      ]);
+      const afterPathRename = yield* readPersistedSnapshot(baseDir);
+      assert.equal(
+        afterPathRename.projects.find((candidate) => candidate.id === project.id)!.title,
+        "Renamed by stored path",
+      );
+      const error = yield* runCliWithRuntime([
+        "project",
+        "remove",
+        workspaceRoot,
+        "--base-dir",
+        baseDir,
+      ]).pipe(Effect.flip);
+      assert.include(error.message, "cannot be deleted without force=true");
+      yield* runCliWithRuntime([
+        "project",
+        "remove",
+        workspaceRoot,
+        "--force",
+        "--base-dir",
+        baseDir,
+      ]);
+      const after = yield* readPersistedSnapshot(baseDir);
+      assert.isNotNull(after.projects.find((candidate) => candidate.id === project.id)!.deletedAt);
+      assert.isNotNull(
+        after.threads.find((thread) => thread.id === "thread-project-lookup")!.deletedAt,
+      );
+      assert.isFalse(NodeFS.existsSync(workspaceRoot));
+    }),
+  );
+
+  it.effect("preserves normalized paths and distinct symlink project entries", () =>
+    Effect.gen(function* () {
+      const { baseDir, workspaceRoot, project } = yield* makeProjectLookupFixture(false, false);
+      const normalizedInput = `${workspaceRoot}${NodePath.sep}.`;
+      yield* runCliWithRuntime([
+        "project",
+        "rename",
+        normalizedInput,
+        "Normalized",
+        "--base-dir",
+        baseDir,
+      ]);
+      const renamed = yield* readPersistedSnapshot(baseDir);
+      assert.equal(
+        renamed.projects.find((candidate) => candidate.id === project.id)!.title,
+        "Normalized",
+      );
+      const aliasPath = `${workspaceRoot}-alias`;
+      NodeFS.symlinkSync(workspaceRoot, aliasPath, "junction");
+      const error = yield* runCliWithRuntime([
+        "project",
+        "remove",
+        aliasPath,
+        "--force",
+        "--base-dir",
+        baseDir,
+      ]).pipe(Effect.flip);
+      assert.include(error.message, "No active project found");
+      yield* runCliWithRuntime(["project", "add", aliasPath, "--base-dir", baseDir]);
+      const added = yield* readPersistedSnapshot(baseDir);
+      const aliasProject = added.projects.find(
+        (candidate) => candidate.workspaceRoot === aliasPath,
+      )!;
+      assert.notEqual(aliasProject.id, project.id);
+      yield* runCliWithRuntime([
+        "project",
+        "remove",
+        `${aliasPath}${NodePath.sep}.`,
+        "--base-dir",
+        baseDir,
+      ]);
+      const after = yield* readPersistedSnapshot(baseDir);
+      assert.isNotNull(
+        after.projects.find((candidate) => candidate.id === aliasProject.id)!.deletedAt,
+      );
+      assert.isNull(after.projects.find((candidate) => candidate.id === project.id)!.deletedAt);
+      assert.isTrue(NodeFS.existsSync(workspaceRoot));
+    }),
+  );
+});
 
 const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
@@ -134,10 +384,14 @@ const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Ef
       Layer.provideMerge(
         EnvironmentAuth.layer.pipe(
           Layer.provideMerge(SqlitePersistenceLayerLive),
+          Layer.provide(ServerEnvironment.identityLayer),
           Layer.provide(ServerSecretStore.layer),
         ),
       ),
       Layer.provideMerge(makeProjectPersistenceLayer(config)),
+      Layer.provide(Layer.mock(GitWorkflowService)({})),
+      Layer.provide(Layer.mock(VcsStatusBroadcaster)({})),
+      Layer.provide(Layer.mock(ProjectSetupScriptRunner)({})),
       Layer.provideMerge(
         NodeHttpServer.layer(NodeHttp.createServer, {
           host: "127.0.0.1",
@@ -169,11 +423,42 @@ const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Ef
 
 it.layer(NodeServices.layer)("bin cli parsing", (it) => {
   it.effect("accepts the built-in lowercase log-level flag values", () =>
-    runCliWithRuntime(["--log-level", "debug", "--version"]),
+    Effect.gen(function* () {
+      const { output } = yield* captureStdout(runCli(["--log-level", "debug", "--version"]));
+
+      assert.include(output, "0.0.0");
+    }),
+  );
+
+  it.effect(
+    "keeps the provider resource hook available without advertising it as a user command",
+    () =>
+      Effect.gen(function* () {
+        const help = yield* captureStdout(runCli(["--help"]));
+        assert.notInclude(help.output, "resource-governor-hook");
+        const hookHelp = yield* captureStdout(runCli(["resource-governor-hook", "--help"]));
+        assert.include(hookHelp.output, "resource-governor-hook");
+      }),
+  );
+
+  it.effect("rejects non-HTTP advertised addresses before starting the server", () =>
+    Effect.gen(function* () {
+      const error = yield* runCliWithRuntime(["--advertised-url", "ftp://code.example.com"]).pipe(
+        Effect.flip,
+      );
+      if (!(error instanceof CliError.ShowHelp)) {
+        assert.fail("Expected ShowHelp");
+      }
+      assert.include(error.errors.map((issue) => issue.message).join(" "), "HTTP(S)");
+    }),
   );
 
   it.effect("accepts canonical --no-<flag> boolean negation", () =>
-    runCliWithRuntime(["--no-log-websocket-events", "--version"]),
+    Effect.gen(function* () {
+      const { output } = yield* captureStdout(runCli(["--no-log-websocket-events", "--version"]));
+
+      assert.include(output, "0.0.0");
+    }),
   );
 
   it.effect("rejects invalid log-level casing before launching the server", () =>
@@ -198,8 +483,8 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       if (!CliError.isCliError(error)) {
         assert.fail(`Expected CliError, got ${String(error)}`);
       }
-      if (error._tag !== "ShowHelp") {
-        assert.fail(`Expected ShowHelp, got ${error._tag}`);
+      if (!(error instanceof CliError.ShowHelp)) {
+        assert.fail("Expected ShowHelp");
       }
       assert.deepEqual(error.commandPath, ["t3", "connect"]);
       assert.include(error.errors[0]?.message ?? "", "missing T3 Connect public configuration");
@@ -244,7 +529,7 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       assert.equal(status.linked, false);
       assert.equal(status.cloudUserId, null);
       assert.equal(status.relayUrl, null);
-    }),
+    }).pipe(Effect.provide(DisconnectedLauncherChildLayer)),
   );
 
   it.effect("reports actionable human-readable headless connect state", () =>
@@ -415,7 +700,7 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
         "relay:write",
       ]);
       assert.equal("token" in (listed[0] ?? {}), false);
-    }),
+    }).pipe(Effect.provide(DisconnectedLauncherChildLayer)),
   );
 
   it.effect("rejects invalid ttl values before running auth commands", () =>
@@ -427,8 +712,8 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       if (!CliError.isCliError(error)) {
         assert.fail(`Expected CliError, got ${String(error)}`);
       }
-      if (error._tag !== "ShowHelp") {
-        assert.fail(`Expected ShowHelp, got ${error._tag}`);
+      if (!(error instanceof CliError.ShowHelp)) {
+        assert.fail("Expected ShowHelp");
       }
       assert.deepEqual(error.commandPath, ["t3", "auth", "pairing", "create"]);
       const ttlError = error.errors[0] as CliError.CliError | undefined;
@@ -595,8 +880,8 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       if (!CliError.isCliError(error)) {
         assert.fail(`Expected CliError, got ${String(error)}`);
       }
-      if (error._tag !== "ShowHelp") {
-        assert.fail(`Expected ShowHelp, got ${error._tag}`);
+      if (!(error instanceof CliError.ShowHelp)) {
+        assert.fail("Expected ShowHelp");
       }
       assert.deepEqual(error.commandPath, ["t3", "project", "add"]);
       const optionError = error.errors[0] as CliError.CliError | undefined;

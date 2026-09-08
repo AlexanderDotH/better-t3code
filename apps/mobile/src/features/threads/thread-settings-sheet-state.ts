@@ -4,7 +4,7 @@ import {
 } from "@t3tools/shared/modelCatalogFilters";
 import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
 
-import type { ModelOption } from "../../lib/modelOptions";
+import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 
 export const MOBILE_MODEL_FILTER_MIN_TOUCH_TARGET = 44;
 
@@ -75,6 +75,18 @@ export function pendingModelAfterPress(input: {
     return null;
   }
   return input.current?.key === input.pressed.key ? input.current : input.pressed;
+}
+
+/** A model can disappear while the picker is open. */
+export function canCommitPendingModel(
+  pending: ModelOption,
+  groups: ReadonlyArray<ProviderGroup>,
+): boolean {
+  return groups.some((group) =>
+    group.models.some(
+      (model) => model.key === pending.key && !model.isUnavailable && model.isSelectable,
+    ),
+  );
 }
 
 /**

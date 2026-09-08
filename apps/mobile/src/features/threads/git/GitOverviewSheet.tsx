@@ -1,3 +1,6 @@
+import { GitWorkbenchSection } from "./GitWorkbenchSection";
+import { useMobileGitWorkbenchAvailability } from "./use-mobile-git-workbench";
+import { mobileGitWorkbenchCanActivate } from "./mobile-git-workbench";
 import {
   type GitActionRequestInput,
   buildMenuItems,
@@ -17,7 +20,6 @@ import { Alert, Platform, Pressable, RefreshControl, ScrollView, View } from "re
 
 import { Screen, ScreenStack, ScreenStackHeaderConfig } from "react-native-screens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useEnvironmentServerConfig } from "../../../state/entities";
 import { useUniwindTheme } from "../../../lib/useUniwindTheme";
 
 import { AndroidSheetHeader } from "../../../components/AndroidScreenHeader";
@@ -31,9 +33,7 @@ import { useSelectedThreadGitState } from "../../../state/use-selected-thread-gi
 import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-worktree";
 import { vcsEnvironment } from "../../../state/vcs";
 import { resolveGitOverviewReviewNavigationAction } from "./git-overview-navigation";
-import { GitWorkbenchSection } from "./GitWorkbenchSection";
 import { MetaCard, SheetListRow, menuItemIconName, statusSummary } from "./gitSheetComponents";
-import { useMobileInterfaceTranslator } from "../../../localization/useMobileInterfaceTranslator";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
@@ -46,7 +46,6 @@ type GitOverviewSheetProps = StaticScreenProps<{
 };
 
 export function GitOverviewSheet(props: GitOverviewSheetProps) {
-  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const presentation = props.presentation ?? "sheet";
@@ -57,10 +56,6 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
-  const serverConfig = useEnvironmentServerConfig(environmentId);
-  const gitWorkbenchEnabled =
-    (serverConfig?.environment.capabilities.gitWorkbenchVersion ?? 0) >= 1;
-
   const theme = useUniwindTheme();
   const foregroundColor = theme["--color-foreground"];
   const sheetColor = theme["--color-sheet"];
@@ -74,6 +69,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
       : null,
   );
 
+  const gitWorkbenchAvailability = useMobileGitWorkbenchAvailability({ environmentId, threadId });
   const currentBranchLabel = gitStatus.data?.refName ?? selectedThread?.branch ?? "Detached HEAD";
   const currentStatusSummary = statusSummary(gitStatus.data);
   const currentWorktreePath = selectedThreadWorktreePath;
@@ -232,11 +228,6 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
         <RefreshControl refreshing={isPullRefreshing} onRefresh={() => void handlePullRefresh()} />
       }
     >
-      <GitWorkbenchSection
-        enabled={gitWorkbenchEnabled}
-        environmentId={environmentId}
-        cwd={selectedThreadCwd}
-      />
       <View
         className={
           isInspector
@@ -261,8 +252,8 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
             <View className="ml-12 h-px bg-border" />
             <SheetListRow
               icon="arrow.down.circle"
-              title={translator.message("mobile.git.pullLatest")}
-              subtitle={translator.message("mobile.git.commitsBehind", { count: behindCount })}
+              title="Pull latest"
+              subtitle={`${behindCount} commit${behindCount === 1 ? "" : "s"} behind upstream`}
               disabled={busy || !isRepo}
               onPress={() => void gitActions.onPullSelectedThreadBranch()}
             />
@@ -271,8 +262,8 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
         <View className="ml-12 h-px bg-border" />
         <SheetListRow
           icon="text.bubble"
-          title={translator.message("mobile.review.changes")}
-          subtitle={translator.message("mobile.git.inspectDiffs")}
+          title="Review changes"
+          subtitle="Inspect turn diffs, worktree changes, and base branch diff"
           disabled={busy || !isRepo}
           onPress={() => {
             const params = { environmentId, threadId };
@@ -286,8 +277,8 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
         <View className="ml-12 h-px bg-border" />
         <SheetListRow
           icon="point.topleft.down.curvedto.point.bottomright.up"
-          title={translator.message("mobile.git.branchesWorktrees")}
-          subtitle={translator.message("mobile.git.switchBranchDescription")}
+          title="Branches & worktrees"
+          subtitle="Switch branch, create branch, or move to a worktree"
           disabled={busy || !isRepo}
           onPress={() =>
             navigation.navigate("GitBranches", {
@@ -298,9 +289,12 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
         />
       </View>
 
-      {currentWorktreePath ? (
-        <MetaCard label={translator.message("mobile.git.worktree")} value={currentWorktreePath} />
-      ) : null}
+      {currentWorktreePath ? <MetaCard label="Worktree" value={currentWorktreePath} /> : null}
+      <GitWorkbenchSection
+        enabled={mobileGitWorkbenchCanActivate(gitWorkbenchAvailability)}
+        environmentId={environmentId}
+        cwd={selectedThreadCwd}
+      />
     </ScrollView>
   );
 
@@ -405,7 +399,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
             />
           </Pressable>
           <Text className="text-xs font-t3-bold tracking-[1px] uppercase text-foreground-muted">
-            {translator.message("mobile.git.repository")}
+            Repository
           </Text>
           <Text className="pr-10 text-xl font-t3-bold">{currentBranchLabel}</Text>
           <Text className="text-foreground-secondary text-sm font-medium leading-normal">
@@ -419,7 +413,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
           onBack={() => navigation.goBack()}
           actions={[
             {
-              accessibilityLabel: translator.message("mobile.git.refreshStatus"),
+              accessibilityLabel: "Refresh repository status",
               disabled: busy,
               icon: "arrow.clockwise",
               onPress: () => void gitActions.refreshSelectedThreadGitStatus(),

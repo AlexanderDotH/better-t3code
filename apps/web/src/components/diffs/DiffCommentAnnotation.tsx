@@ -1,11 +1,10 @@
 import { MessageCircle, Trash2 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Textarea } from "~/components/ui/textarea";
 
 import { isCommentSubmitShortcut } from "./commentSubmitShortcut";
-import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 
 interface DiffCommentSecondaryAction {
   readonly label: string;
@@ -26,6 +25,7 @@ interface DiffCommentAnnotationProps {
   submitLabel?: string;
   pending?: boolean;
   secondaryAction?: DiffCommentSecondaryAction;
+  focusOnMount?: boolean;
 }
 
 /** The shared inline comment treatment for file previews, thread diffs, and pull-request diffs. */
@@ -37,17 +37,24 @@ export function DiffCommentAnnotation({
   onCancel,
   onComment,
   onDelete,
-  placeholder,
-  submitLabel,
+  placeholder = "Add a comment…",
+  submitLabel = "Comment",
   pending = false,
   secondaryAction,
+  focusOnMount = true,
 }: DiffCommentAnnotationProps) {
-  const translate = useInterfaceTranslator().message;
-  const resolvedPlaceholder = placeholder ?? translate("git.comment.placeholder");
-  const resolvedSubmitLabel = submitLabel ?? translate("git.comment.submit");
   const [localDraftText, setLocalDraftText] = useState("");
   const displayedText = kind === "draft" && !onTextChange ? localDraftText : text;
   const trimmedText = displayedText.trim();
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useLayoutEffect(() => {
+    if (kind !== "draft" || !focusOnMount) return;
+    const frame = window.requestAnimationFrame(() => {
+      textareaRef.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusOnMount, kind]);
 
   if (kind === "comment") {
     return (
@@ -64,7 +71,7 @@ export function DiffCommentAnnotation({
             className="-my-1 -mr-1 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/comment:opacity-100 focus-visible:opacity-100 max-sm:opacity-100"
             variant="ghost"
             size="icon-xs"
-            aria-label={translate("git.comment.delete")}
+            aria-label="Delete comment"
             onClick={onDelete}
           >
             <Trash2 className="size-3" />
@@ -82,13 +89,14 @@ export function DiffCommentAnnotation({
       onPointerDown={(event) => event.stopPropagation()}
     >
       <Textarea
-        autoFocus
+        ref={textareaRef}
+        autoFocus={focusOnMount}
         unstyled
-        className="relative inline-flex w-full rounded-md border border-border/50 bg-background/20 font-sans text-foreground transition-colors focus-within:border-border/70 [&_[data-slot=textarea]]:min-h-12 [&_[data-slot=textarea]]:cursor-text [&_[data-slot=textarea]]:px-2.5 [&_[data-slot=textarea]]:py-1.5 [&_[data-slot=textarea]]:font-sans [&_[data-slot=textarea]]:text-xs [&_[data-slot=textarea]]:leading-5 max-sm:[&_[data-slot=textarea]]:min-h-12"
+        className="relative inline-flex w-full rounded-md border border-border/50 bg-background/20 font-sans text-foreground transition-colors focus-within:border-border/70 [&_[data-slot=textarea]]:min-h-12 [&_[data-slot=textarea]]:cursor-text [&_[data-slot=textarea]]:caret-foreground [&_[data-slot=textarea]]:px-2.5 [&_[data-slot=textarea]]:py-1.5 [&_[data-slot=textarea]]:font-sans [&_[data-slot=textarea]]:text-xs [&_[data-slot=textarea]]:leading-5 max-sm:[&_[data-slot=textarea]]:min-h-12"
         size="sm"
         value={displayedText}
-        placeholder={resolvedPlaceholder}
-        aria-label={translate("git.comment.linesAria", { range: rangeLabel })}
+        placeholder={placeholder}
+        aria-label={`Comment on lines ${rangeLabel}`}
         onChange={(event) => (onTextChange ?? setLocalDraftText)(event.target.value)}
         onFocus={(event) => {
           const end = event.currentTarget.value.length;
@@ -106,16 +114,14 @@ export function DiffCommentAnnotation({
         }}
       />
       <div className="mt-1.5 flex items-center gap-1">
-        <span className="mr-auto text-[10px] text-muted-foreground/70">
-          {translate("git.comment.shortcut")}
-        </span>
+        <span className="mr-auto text-[10px] text-muted-foreground/70">⌘/Ctrl Enter to send</span>
         <Button
           className="text-muted-foreground hover:text-foreground"
           variant="ghost"
           size="xs"
           onClick={onCancel}
         >
-          {translate("common.cancel")}
+          Cancel
         </Button>
         {secondaryAction ? (
           <Button
@@ -129,7 +135,7 @@ export function DiffCommentAnnotation({
           </Button>
         ) : null}
         <Button size="xs" disabled={pending || !trimmedText} onClick={() => onComment(trimmedText)}>
-          {resolvedSubmitLabel}
+          {submitLabel}
         </Button>
       </div>
     </div>

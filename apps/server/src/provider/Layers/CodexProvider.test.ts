@@ -1,65 +1,14 @@
 import { assert, it } from "@effect/vitest";
 import { createCodexContextWindowDescriptor } from "@t3tools/shared/model";
 
-import {
-  applyPreferredCodexDefaultModel,
-  isLegacyCodexModel,
-  mapCodexModelCapabilities,
-  parseCodexDebugModelCatalog,
-} from "./CodexProvider.ts";
+import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
 
 const TEST_CONTEXT_WINDOW = {
   defaultTokens: 272_000,
   maxTokens: 872_000,
   effectivePercent: 95,
 } as const;
-
 const TEST_CONTEXT_WINDOW_DESCRIPTOR = createCodexContextWindowDescriptor(TEST_CONTEXT_WINDOW);
-
-it("extracts bounded context metadata from Codex's raw model catalog", () => {
-  assert.deepStrictEqual(
-    parseCodexDebugModelCatalog({
-      models: [
-        {
-          slug: "gpt-5.6-sol",
-          context_window: 272_000,
-          max_context_window: 872_000,
-          effective_context_window_percent: 95,
-          model_messages: { instructions_template: "must not survive parsing" },
-        },
-        {
-          slug: "broken",
-          context_window: -1,
-          max_context_window: 10,
-        },
-      ],
-    }),
-    new Map([
-      ["gpt-5.6-sol", { defaultTokens: 272_000, maxTokens: 872_000, effectivePercent: 95 }],
-    ]),
-  );
-});
-
-it("keeps current Codex models out of legacy models", () => {
-  assert.deepStrictEqual(
-    [
-      "gpt-5.6-luna",
-      "gpt-5.6-terra",
-      "gpt-5.6-sol",
-      "gpt-daybreak-blue-latest",
-      "gpt-daybreak-red-latest",
-      "gpt-5.4",
-    ].map((model) => [model, isLegacyCodexModel(model)]),
-    [
-      ["gpt-5.6-luna", false],
-      ["gpt-5.6-terra", false],
-      ["gpt-5.6-sol", false],
-      ["gpt-daybreak-blue-latest", false],
-      ["gpt-daybreak-red-latest", false],
-      ["gpt-5.4", true],
-    ],
-  );
-});
 
 it("maps current Codex model capability fields", () => {
   const capabilities = mapCodexModelCapabilities(

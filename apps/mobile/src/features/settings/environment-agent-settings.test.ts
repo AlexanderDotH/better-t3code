@@ -66,6 +66,21 @@ describe("environment agent settings", () => {
     ).toEqual({ providers: { gemini: { enabled: true } } });
   });
 
+  it("can toggle every registered default provider, including upstream Antigravity", () => {
+    for (const driver of ["antigravity", "chatgpt", "openrouter", "openai"] as const) {
+      expect(
+        providerEnabledSettingsPatch({
+          provider: provider({
+            instanceId: ProviderInstanceId.make(driver),
+            driver: ProviderDriverKind.make(driver),
+          }),
+          settings: DEFAULT_SERVER_SETTINGS,
+          enabled: false,
+        }),
+      ).toEqual({ providers: { [driver]: { enabled: false } } });
+    }
+  });
+
   it("replaces the provider instance map for configured instances", () => {
     const instanceId = ProviderInstanceId.make("codex_work");
     const settings = {

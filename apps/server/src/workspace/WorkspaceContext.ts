@@ -35,6 +35,7 @@ import {
   type WorkspaceContextEngineQuery,
 } from "./WorkspaceContextEngine.ts";
 import * as WorkspaceFileSystem from "./WorkspaceFileSystem.ts";
+import * as WorkspacePaths from "./WorkspacePaths.ts";
 
 export {
   WorkspaceContextPathError,
@@ -354,6 +355,7 @@ export class WorkspaceContext extends Context.Service<
 
 export const make = Effect.gen(function* () {
   const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+  const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
 
   const execute: WorkspaceContext["Service"]["execute"] = Effect.fn("WorkspaceContext.execute")(
     function* (request) {
@@ -378,18 +380,17 @@ export const make = Effect.gen(function* () {
       const cachedReads = yield* Effect.forEach(
         uniquePaths,
         (relativePath) =>
-          workspaceFileSystem.readFile({ cwd: workspaceRoot, relativePath }).pipe(
-            Effect.map(
-              (read): CachedRead => ({
-                status: "ok",
-                path: read.relativePath,
-                contents: read.contents,
-                sourceTruncated: read.truncated,
-                ...(read.truncated || read.revision === undefined
-                  ? {}
-                  : { revision: read.revision }),
-              }),
+          workspacePaths.resolveRelativePathWithinRoot({ workspaceRoot, relativePath }).pipe(
+            Effect.flatMap(() =>
+              workspaceFileSystem.readFile({ cwd: workspaceRoot, relativePath }),
             ),
+            Effect.map((read): CachedRead => ({
+              status: "ok",
+              path: read.relativePath,
+              contents: read.contents,
+              sourceTruncated: read.truncated,
+              ...(read.truncated || read.revision === undefined ? {} : { revision: read.revision }),
+            })),
             Effect.catch((error) => mapReadFailure(relativePath, error)),
             Effect.map((read) => [relativePath, read] as const),
           ),

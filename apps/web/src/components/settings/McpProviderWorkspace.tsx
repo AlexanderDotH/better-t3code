@@ -1,6 +1,6 @@
 import type { McpRuntimeAction, ProviderDriverKind } from "@t3tools/contracts";
 import type { CSSProperties } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useMemo, useState } from "react";
 import {
   ChevronDownIcon,
   BracesIcon,
@@ -267,7 +267,8 @@ function RuntimeServerRow(props: {
 }) {
   const translate = useInterfaceTranslator().message;
   const [open, setOpen] = useState(props.initiallyOpen);
-  const [autoLoadAttempted, setAutoLoadAttempted] = useState(false);
+  const autoLoadAttempted = useRef(false);
+  const { onLoadDetails } = props;
   const presentation = runtimeStatePresentation(props.server.state);
   const countLabel = runtimeCountLabel(props.server, translate);
   const hasDetails =
@@ -276,27 +277,28 @@ function RuntimeServerRow(props: {
     props.server.resourceCount !== undefined ||
     props.server.templateCount !== undefined;
 
-  useEffect(() => {
+  const [previouslyFocused, setPreviouslyFocused] = useState(props.initiallyOpen);
+  if (previouslyFocused !== props.initiallyOpen) {
+    setPreviouslyFocused(props.initiallyOpen);
     if (props.initiallyOpen) setOpen(true);
-  }, [props.initiallyOpen]);
+  }
 
   useEffect(() => {
     if (
       !props.initiallyOpen ||
-      autoLoadAttempted ||
+      autoLoadAttempted.current ||
       !hasDetails ||
       props.server.tools ||
       props.server.detailsLoading
     ) {
       return;
     }
-    setAutoLoadAttempted(true);
-    props.onLoadDetails();
+    autoLoadAttempted.current = true;
+    onLoadDetails();
   }, [
-    autoLoadAttempted,
     hasDetails,
     props.initiallyOpen,
-    props.onLoadDetails,
+    onLoadDetails,
     props.server.detailsLoading,
     props.server.tools,
   ]);
@@ -306,7 +308,7 @@ function RuntimeServerRow(props: {
       open={open}
       onOpenChange={(nextOpen) => {
         setOpen(nextOpen);
-        if (nextOpen && hasDetails && !props.server.tools) props.onLoadDetails();
+        if (nextOpen && hasDetails && !props.server.tools) onLoadDetails();
       }}
       className="mcp-runtime-server-row border-b border-border/50 last:border-b-0"
     >
@@ -514,7 +516,8 @@ function ConfiguredServerRow(props: {
   const translate = useInterfaceTranslator().message;
   const runtimePresentation = props.runtime ? runtimeStatePresentation(props.runtime.state) : null;
   const [open, setOpen] = useState(props.focused);
-  const [autoLoadAttempted, setAutoLoadAttempted] = useState(false);
+  const autoLoadAttempted = useRef(false);
+  const { onLoadDetails } = props;
   const hasDetails = Boolean(
     props.runtime &&
     (props.runtime.error ||
@@ -524,14 +527,16 @@ function ConfiguredServerRow(props: {
       props.runtime.templateCount !== undefined),
   );
 
-  useEffect(() => {
+  const [previouslyFocused, setPreviouslyFocused] = useState(props.focused);
+  if (previouslyFocused !== props.focused) {
+    setPreviouslyFocused(props.focused);
     if (props.focused) setOpen(true);
-  }, [props.focused]);
+  }
 
   useEffect(() => {
     if (
       !props.focused ||
-      autoLoadAttempted ||
+      autoLoadAttempted.current ||
       !hasDetails ||
       !props.runtime ||
       props.runtime.tools ||
@@ -539,16 +544,16 @@ function ConfiguredServerRow(props: {
     ) {
       return;
     }
-    setAutoLoadAttempted(true);
-    props.onLoadDetails();
-  }, [autoLoadAttempted, hasDetails, props.focused, props.onLoadDetails, props.runtime]);
+    autoLoadAttempted.current = true;
+    onLoadDetails();
+  }, [hasDetails, props.focused, onLoadDetails, props.runtime]);
 
   return (
     <Collapsible
       open={open}
       onOpenChange={(nextOpen) => {
         setOpen(nextOpen);
-        if (nextOpen && props.runtime && !props.runtime.tools) props.onLoadDetails();
+        if (nextOpen && props.runtime && !props.runtime.tools) onLoadDetails();
       }}
       className={cn("border-b border-border/50 last:border-b-0", props.focused && "bg-accent/25")}
     >

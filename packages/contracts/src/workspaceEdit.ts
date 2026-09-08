@@ -206,7 +206,7 @@ function workspaceEditRecoveryHint(reason: WorkspaceEditFailureReason): string {
   }
 }
 
-export class WorkspaceEditError extends Schema.TaggedErrorClass<WorkspaceEditError>()(
+export class WorkspaceEditError extends Schema.TaggedError<WorkspaceEditError>()(
   "WorkspaceEditError",
   {
     reason: WorkspaceEditFailureReason,

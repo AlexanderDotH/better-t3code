@@ -2,8 +2,8 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import { migrationEntries, runMigrations } from "../Migrations.ts";
-import * as NodeSqliteClient from "../NodeSqliteClient.ts";
+import { migrationEntries, runMigrations } from "./LegacyForkMigrations.ts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import Migration040 from "./040_ProjectionCompatibility.ts";
 
 const provideFreshDatabase = Effect.provide(NodeSqliteClient.layerMemory());
@@ -23,7 +23,7 @@ const expectedTail = [
 it("preserves the public migration registry from 33 through 41", () => {
   assert.deepStrictEqual(
     migrationEntries.filter(([id]) => id >= 33 && id <= 41).map(([id, name]) => [id, name]),
-    expectedTail,
+    expectedTail.map(([id, name]) => [id, name]),
   );
 });
 

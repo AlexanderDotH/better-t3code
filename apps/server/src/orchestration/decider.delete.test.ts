@@ -35,6 +35,7 @@ const seedReadModel = Effect.gen(function* () {
     correlationId: asCommandId("cmd-project-create"),
     metadata: {},
     payload: {
+      checkpointsEnabled: true,
       projectId: asProjectId("project-delete"),
       title: "Project Delete",
       workspaceRoot: "/tmp/project-delete",

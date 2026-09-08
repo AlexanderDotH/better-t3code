@@ -15,7 +15,6 @@ import {
   CommandShortcut,
 } from "./ui/command";
 import { cn } from "~/lib/utils";
-import { useInterfaceTranslator } from "../hooks/useInterfaceTranslator";
 
 function foldAsciiCase(value: string): string {
   return value.replace(/[A-Z]/g, (character) => character.toLowerCase());
@@ -69,14 +68,11 @@ function HighlightedSearchText(props: { text: string; query: string }) {
 function ThreadContentMatch(props: {
   match: NonNullable<CommandPaletteActionItem["threadContentMatch"]>;
 }) {
-  const translator = useInterfaceTranslator();
   const isUser = props.match.source === "user";
   return (
     <span className="truncate text-xs text-muted-foreground/85">
       <span className={isUser ? "text-blue-400" : "text-emerald-400"}>
-        {translator.message(
-          isUser ? "ui.commandPalette.youPrefix" : "ui.commandPalette.agentPrefix",
-        )}
+        {isUser ? "You:" : "Agent:"}
       </span>{" "}
       <HighlightedSearchText text={props.match.snippet} query={props.match.query} />
     </span>
@@ -93,16 +89,13 @@ interface CommandPaletteResultsProps {
 }
 
 export function CommandPaletteResults(props: CommandPaletteResultsProps) {
-  const translator = useInterfaceTranslator();
   if (props.groups.length === 0) {
     return (
       <div className="py-10 text-center text-sm text-muted-foreground">
         {props.emptyStateMessage ??
-          translator.message(
-            props.isActionsOnly
-              ? "ui.commandPalette.noMatchingActions"
-              : "ui.commandPalette.noMatchingItems",
-          )}
+          (props.isActionsOnly
+            ? "No matching actions."
+            : "No matching commands, projects, or threads.")}
       </div>
     );
   }

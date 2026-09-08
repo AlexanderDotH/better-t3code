@@ -59,7 +59,7 @@ it.effect("derives project-agent identity from the authenticated MCP credential"
 it.effect("rejects credentials without the coordination capability", () =>
   Effect.gen(function* () {
     const error = yield* Effect.flip(invokeProjectAgentList());
-    expect(error.reason).toBe("credential_not_authorized");
+    expect(error).toMatchObject({ reason: "credential_not_authorized" });
   }).pipe(
     Effect.provideService(ProjectAgentCoordinator, coordinator),
     Effect.provideService(

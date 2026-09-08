@@ -6,15 +6,12 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { HttpClient } from "effect/unstable/http";
 
+import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
-import {
-  executeEnvironmentHttpRequest,
-  makeEnvironmentHttpApiClient,
-  type RemoteEnvironmentRequestError,
-} from "../rpc/http.ts";
-import { buildEnvironmentAuthHeaders, withEnvironmentCredentials } from "./environmentHttpAuth.ts";
+import type { RemoteEnvironmentRequestError } from "../rpc/http.ts";
+import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
 
 const DEFAULT_SUBAGENT_SNAPSHOT_TIMEOUT_MS = 6_000;
 
@@ -42,31 +39,22 @@ export const fetchEnvironmentSubagentSnapshot = Effect.fn(
   readonly threadId: ThreadId;
   readonly subagentId: SubagentId;
   readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
+  readonly remoteAuthorization?: Option.Option<RemoteEnvironmentAuthorization["Service"]>;
   readonly timeoutMs?: number;
   readonly window?: SubagentSnapshotWindow;
 }) {
-  const requestUrl = environmentEndpointUrl(
-    input.prepared.httpBaseUrl,
-    environmentSubagentSnapshotPath(input.threadId, input.subagentId),
-  );
-  const client = yield* makeEnvironmentHttpApiClient(input.prepared.httpBaseUrl);
-  const headers = yield* buildEnvironmentAuthHeaders(
-    input.prepared.httpAuthorization,
-    "GET",
-    requestUrl,
-    input.signer,
-  );
-
-  return yield* executeEnvironmentHttpRequest(
-    requestUrl,
-    input.timeoutMs ?? DEFAULT_SUBAGENT_SNAPSHOT_TIMEOUT_MS,
-    withEnvironmentCredentials(
-      input.prepared.httpAuthorization,
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    ...input,
+    method: "GET",
+    url: (httpBaseUrl) =>
+      environmentEndpointUrl(
+        httpBaseUrl,
+        environmentSubagentSnapshotPath(input.threadId, input.subagentId),
+      ),
+    timeoutMs: input.timeoutMs ?? DEFAULT_SUBAGENT_SNAPSHOT_TIMEOUT_MS,
+    request: ({ client, headers }) =>
       client.orchestration.subagentSnapshot({
-        params: {
-          threadId: input.threadId,
-          subagentId: input.subagentId,
-        },
+        params: { threadId: input.threadId, subagentId: input.subagentId },
         payload: {
           ...(input.window !== undefined ? { activityLimit: input.window.activityLimit } : {}),
           ...(input.window?.beforeCursor !== undefined
@@ -75,8 +63,7 @@ export const fetchEnvironmentSubagentSnapshot = Effect.fn(
         },
         headers,
       }),
-    ),
-  );
+  });
 });
 
 export type FetchEnvironmentSubagentSnapshotError = RemoteEnvironmentRequestError;
@@ -102,6 +89,7 @@ export const subagentSnapshotLoaderLayer: Layer.Layer<
   Effect.gen(function* () {
     const httpClient = yield* HttpClient.HttpClient;
     const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+    const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
 
     return SubagentSnapshotLoader.of({
       load: (prepared, threadId, subagentId, window) =>
@@ -110,6 +98,7 @@ export const subagentSnapshotLoaderLayer: Layer.Layer<
           threadId,
           subagentId,
           signer,
+          remoteAuthorization,
           ...(window !== undefined ? { window } : {}),
         }).pipe(
           Effect.map(Option.some<OrchestrationSubagentDetailSnapshot>),

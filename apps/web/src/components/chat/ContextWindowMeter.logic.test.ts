@@ -1,11 +1,10 @@
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
   formatContextWindowCompactionMessage,
-  hasAvailableClaudeCompactionProvider,
+  hasAvailableCompactionProvider,
   hasDismissedResumeCompaction,
-  resolveManualCompactAction,
   resolveContextWindowModelDisplayName,
   shouldOfferResumeCompaction,
 } from "./ContextWindowMeter.logic";
@@ -26,12 +25,12 @@ function claudeProvider(input: {
     auth: { status: "authenticated" },
     checkedAt: "2026-08-24T12:00:00.000Z",
     models: [],
-    slashCommands: [],
+    slashCommands: [{ name: "compact", description: "" }],
     skills: [],
   };
 }
 
-describe("hasAvailableClaudeCompactionProvider", () => {
+describe("hasAvailableCompactionProvider", () => {
   const originalInstanceId = ProviderInstanceId.make("claude_original");
 
   it("rejects a fallback in a different locked continuation group", () => {
@@ -48,8 +47,9 @@ describe("hasAvailableClaudeCompactionProvider", () => {
     ]);
 
     expect(
-      hasAvailableClaudeCompactionProvider({
+      hasAvailableCompactionProvider({
         providers,
+        driverKind: ProviderDriverKind.make("claudeAgent"),
         instanceId: originalInstanceId,
         lockedInstanceId: originalInstanceId,
       }),
@@ -70,51 +70,13 @@ describe("hasAvailableClaudeCompactionProvider", () => {
     ]);
 
     expect(
-      hasAvailableClaudeCompactionProvider({
+      hasAvailableCompactionProvider({
         providers,
+        driverKind: ProviderDriverKind.make("claudeAgent"),
         instanceId: originalInstanceId,
         lockedInstanceId: originalInstanceId,
       }),
     ).toBe(true);
-  });
-});
-
-describe("resolveManualCompactAction", () => {
-  it("keeps Claude's existing compact action", () => {
-    const compactClaude = vi.fn();
-    const compactProvider = vi.fn();
-
-    resolveManualCompactAction({
-      provider: "claudeAgent",
-      canManualCompact: false,
-      compactClaude,
-      compactProvider,
-    })?.();
-
-    expect(compactClaude).toHaveBeenCalledOnce();
-    expect(compactProvider).not.toHaveBeenCalled();
-  });
-
-  it("offers provider compaction only when the capability is advertised", () => {
-    const compactProvider = vi.fn();
-
-    expect(
-      resolveManualCompactAction({
-        provider: "codex",
-        canManualCompact: false,
-        compactClaude: vi.fn(),
-        compactProvider,
-      }),
-    ).toBeUndefined();
-
-    resolveManualCompactAction({
-      provider: "codex",
-      canManualCompact: true,
-      compactClaude: vi.fn(),
-      compactProvider,
-    })?.();
-
-    expect(compactProvider).toHaveBeenCalledOnce();
   });
 });
 

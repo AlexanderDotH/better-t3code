@@ -705,6 +705,7 @@ describe("mobile Better T3 settings", () => {
   it("keeps supported, selectable Auto Reasoning evaluation models available", () => {
     for (const providerDriver of [
       "codex",
+      "antigravity",
       "claudeAgent",
       "cursor",
       "grok",

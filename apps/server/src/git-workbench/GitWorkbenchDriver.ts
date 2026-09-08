@@ -1,3 +1,5 @@
+import { HostProcessWorkingDirectory } from "@t3tools/shared/hostProcess";
+
 import * as NodeCrypto from "node:crypto";
 
 import * as Context from "effect/Context";
@@ -489,6 +491,7 @@ export class GitWorkbenchDriver extends Context.Service<
 
 export const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
+  const spawnCwd = yield* HostProcessWorkingDirectory;
   const fileSystem = yield* FileSystem.FileSystem;
   const pathService = yield* Path.Path;
   const worktreeLocks = new Map<string, Semaphore.Semaphore>();
@@ -627,7 +630,7 @@ export const make = Effect.gen(function* () {
       command: "git",
       args: ["-C", workspace.cwd, ...args],
       cwd: workspace.cwd,
-      spawnCwd: globalThis.process.cwd(),
+      spawnCwd,
       env: GIT_ENV,
       timeoutMs: 30_000,
       maxOutputBytes: options?.maxOutputBytes ?? DIFF_MAX_OUTPUT_BYTES,

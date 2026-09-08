@@ -28,9 +28,11 @@ import {
   type SpeechProfileLoadState,
 } from "./environment-data-settings";
 
-function failureMessage(result: { readonly _tag: string }, fallback: string): string {
-  if (result._tag !== "Failure") return fallback;
-  const error = squashAtomCommandFailure(result as never);
+function failureMessage(
+  result: Parameters<typeof squashAtomCommandFailure>[0],
+  fallback: string,
+): string {
+  const error = squashAtomCommandFailure(result);
   return error instanceof Error ? error.message : fallback;
 }
 

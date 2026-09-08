@@ -14,6 +14,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import type * as Scope from "effect/Scope";
 
 import { parseProjectMemoryDocument } from "./ProjectMemoryDocument.ts";
 import {
@@ -74,8 +75,9 @@ const makeHarness = Effect.fn("ProjectMemoryStoreTest.makeHarness")(function* (o
   return { root, t3Home, codexHome, store };
 });
 
-const provideNode = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>) =>
-  effect.pipe(Effect.provide(NodeServices.layer));
+const provideNode = <A, E>(
+  effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Scope.Scope>,
+) => effect.pipe(Effect.provide(NodeServices.layer));
 
 it.effect("isolates projects and rejects a request for a different bound project", () =>
   provideNode(
@@ -369,7 +371,7 @@ it.effect("atomically replaces and clears the canonical document through root-on
       expect(replacement.view).toMatchObject({
         status: "active",
         storage: "workspace",
-        effectivePath: path.join(workspaceRoot, ".t3", "MEMORY.md"),
+        effectivePath: yield* fileSystem.realPath(path.join(workspaceRoot, ".t3", "MEMORY.md")),
       });
       expect(replacement.view.rawMarkdown).toContain("[REDACTED]");
       expect(replacement.view.rawMarkdown).not.toContain("do-not-persist");

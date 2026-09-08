@@ -94,15 +94,15 @@ describe("in-process work admission", () => {
       expect(third.pollUnsafe()).toBeUndefined();
       expect((yield* governor.latest).waitingStarts).toBe(2);
 
-      yield* first?.release;
+      yield* first?.release ?? Effect.void;
       const secondLease = yield* Fiber.join(second);
       expect(order).toEqual(["second"]);
       expect(third.pollUnsafe()).toBeUndefined();
 
-      yield* secondLease?.release;
+      yield* secondLease?.release ?? Effect.void;
       const thirdLease = yield* Fiber.join(third);
       expect(order).toEqual(["second", "third"]);
-      yield* thirdLease?.release;
+      yield* thirdLease?.release ?? Effect.void;
       expect((yield* governor.latest).reservedMemoryBytes).toBe(0);
     }),
   );
@@ -186,8 +186,8 @@ describe("in-process work admission", () => {
           (yield* governor.acquireInProcessLease(request("policy-bypass")))?.reservedBytes,
         ).toBe(0);
 
-        yield* active?.release;
-        yield* drained?.release;
+        yield* active?.release ?? Effect.void;
+        yield* drained?.release ?? Effect.void;
         yield* governor.setPolicy({ adaptiveAdmission: true, processSuspension: true });
         const gatedAgain = yield* governor
           .acquireInProcessLease(request("policy-gated-again"))
@@ -222,8 +222,8 @@ describe("in-process work admission", () => {
         reservedBytes: 0,
         providers: [],
       });
-      yield* active?.release;
-      yield* active?.release;
+      yield* active?.release ?? Effect.void;
+      yield* active?.release ?? Effect.void;
       expect((yield* governor.latest).reservedMemoryBytes).toBe(0);
     }),
   );
@@ -262,11 +262,11 @@ describe("in-process work admission", () => {
         (small?.reservedBytes ?? 0) + (olderLarge?.reservedBytes ?? 0),
       );
 
-      yield* newerLarge?.release;
+      yield* newerLarge?.release ?? Effect.void;
       yield* governor.observe(sample({ availableGiB: 10, sampledAtMs: 3_000 }));
       expect(cancellations).toHaveLength(1);
-      yield* small?.release;
-      yield* olderLarge?.release;
+      yield* small?.release ?? Effect.void;
+      yield* olderLarge?.release ?? Effect.void;
     }),
   );
 
@@ -285,7 +285,7 @@ describe("in-process work admission", () => {
 
       expect(cancellations).toEqual([]);
       expect((yield* governor.inProcessUsage).activeCount).toBe(1);
-      yield* lease?.release;
+      yield* lease?.release ?? Effect.void;
     }),
   );
 
@@ -332,7 +332,7 @@ describe("in-process work admission", () => {
       expect(cancellations).toEqual([]);
       expect(signals).toEqual([{ pid: rootPid, signal: "SIGSTOP" }]);
       expect((yield* governor.inProcessUsage).activeCount).toBe(1);
-      yield* lease?.release;
+      yield* lease?.release ?? Effect.void;
       yield* governor.shutdown;
     }),
   );
@@ -385,7 +385,7 @@ describe("in-process work admission", () => {
           },
         ]);
 
-        yield* leases[0]?.release;
+        yield* leases[0]?.release ?? Effect.void;
         const replacement = yield* Fiber.join(fortyFirst);
         expect(replacement).toBeDefined();
         const afterReplacement = yield* governor.inProcessUsage;
@@ -396,10 +396,10 @@ describe("in-process work admission", () => {
           2 * GIBIBYTE,
         );
 
-        yield* leases[0]?.release;
+        yield* leases[0]?.release ?? Effect.void;
         yield* Effect.forEach(leases, (lease) => lease?.release ?? Effect.void, { discard: true });
-        yield* otherProviderLease?.release;
-        yield* replacement?.release;
+        yield* otherProviderLease?.release ?? Effect.void;
+        yield* replacement?.release ?? Effect.void;
         const released = yield* governor.inProcessUsage;
         expect(released).toEqual({
           activeCount: 0,

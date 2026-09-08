@@ -5,7 +5,7 @@ import {
   resolveScopedWorkspaceDeckActiveCard,
   shouldLoadGitRepositoryInsights,
   shouldLoadGitWorkbenchData,
-} from "./GitWorkspaceDeckController";
+} from "./GitWorkspaceDeckController.model";
 
 describe("workspace deck controller policy", () => {
   it("does not render the previous chat's workspace card while the next chat loads", () => {

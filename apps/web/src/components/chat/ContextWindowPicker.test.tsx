@@ -3,12 +3,12 @@ import {
   type ProviderOptionDescriptor,
   type ServerProviderModel,
 } from "@t3tools/contracts";
-import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
 import { DraftId } from "../../composerDraftStore";
 import {
-  ContextWindowMenuContent,
+  buildContextWindowSliderState,
+  shouldRenderContextWindowControl,
   shouldStopContextWindowSliderKeyPropagation,
 } from "./ContextWindowPicker";
 
@@ -36,29 +36,32 @@ const MODELS: ReadonlyArray<ServerProviderModel> = [
 ];
 
 describe("ContextWindowMenuContent", () => {
-  it("renders the current value and native slider inline without a nested popover", () => {
-    const markup = renderToStaticMarkup(
-      <ContextWindowMenuContent
-        provider={CODEX}
-        draftId={DraftId.make("context-menu")}
-        models={MODELS}
-        model={MODEL}
-        modelOptions={[{ id: "contextWindow", value: "262144" }]}
-      />,
-    );
+  it("tracks the selected context size and falls back to the model default", () => {
+    expect(
+      buildContextWindowSliderState({ ...CONTEXT_WINDOW_DESCRIPTOR, currentValue: "262144" }),
+    ).toMatchObject({ currentIndex: 1, currentLabel: "256K", progressPercent: 100 });
+    expect(
+      buildContextWindowSliderState({ ...CONTEXT_WINDOW_DESCRIPTOR, currentValue: "removed" }),
+    ).toMatchObject({ currentIndex: 0, currentLabel: "Model default", progressPercent: 0 });
+  });
 
-    expect(markup).toContain('data-chat-context-window-menu-content="true"');
-    expect(markup).toContain('class="w-full px-2 py-1.5"');
-    expect(markup).not.toContain('class="w-72 px-2 py-1.5"');
-    expect(markup).toContain("Context window");
-    expect(markup).toContain("256K");
-    expect(markup).toContain('type="range"');
-    expect(markup).toContain('aria-label="Context window size"');
-    expect(markup).toContain('min="0"');
-    expect(markup).toContain('max="1"');
-    expect(markup).toContain("Model default");
-    expect(markup).not.toContain('data-slot="popover-trigger"');
-    expect(markup).not.toContain('data-slot="popover-popup"');
+  it("offers the control only when the selected Codex model advertises context choices", () => {
+    const input = {
+      provider: CODEX,
+      draftId: DraftId.make("context-menu"),
+      models: MODELS,
+      model: MODEL,
+    };
+    expect(shouldRenderContextWindowControl(input)).toBe(true);
+    expect(
+      shouldRenderContextWindowControl({
+        ...input,
+        provider: ProviderDriverKind.make("claudeAgent"),
+      }),
+    ).toBe(false);
+    expect(
+      shouldRenderContextWindowControl({ ...input, models: [{ ...MODELS[0]!, capabilities: {} }] }),
+    ).toBe(false);
   });
 
   it.each(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"])(

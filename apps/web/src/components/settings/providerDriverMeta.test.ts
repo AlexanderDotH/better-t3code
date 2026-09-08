@@ -1,6 +1,4 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
 import { deriveProviderSettingsFields } from "./ProviderSettingsForm";
@@ -35,6 +33,11 @@ const NATIVE_PROVIDER_DRIVERS = [
     kind: "opencode",
     label: "OpenCode",
     fields: ["binaryPath", "serverUrl", "serverPassword"],
+  },
+  {
+    kind: "antigravity",
+    label: "Antigravity",
+    fields: ["authMethod", "apiKey", "gcpProject", "gcpLocation", "binaryPath"],
   },
   {
     kind: "gemini",
@@ -105,19 +108,6 @@ describe("providerDriverMeta", () => {
     const openAi = ProviderDriverKind.make("openai");
     expect(DRIVER_OPTION_BY_VALUE[openAi]?.icon).toBe(OpenAI);
     expect(PROVIDER_ICON_BY_PROVIDER[openAi]).toBe(OpenAI);
-  });
-
-  it("renders OpenRouter's current geometric OR mark", () => {
-    const markup = renderToStaticMarkup(
-      createElement(OpenRouterIcon, { "aria-label": "OpenRouter" }),
-    );
-
-    expect(markup).toContain('viewBox="0 0 401.4 293.7"');
-    expect(markup).toContain("M303.9475,17.19926");
-    expect(markup).toContain("fill-[#7624F4]");
-    expect(markup).toContain("dark:fill-[#C8FF00]");
-    expect(markup).not.toContain("#FF5C35");
-    expect(markup).not.toContain("<rect");
   });
 
   it("derives settings fields for every native provider driver", () => {

@@ -25,27 +25,24 @@ const CompactionResponse = Schema.Struct({ output: Schema.Array(Schema.Unknown) 
 const decodeCompactionResponse = HttpClientResponse.schemaBodyJson(CompactionResponse);
 const decodeUnknownJson = HttpClientResponse.schemaBodyJson(Schema.Unknown);
 
-export class ChatGptTransportSecurityError extends Schema.TaggedErrorClass<ChatGptTransportSecurityError>()(
+export class ChatGptTransportSecurityError extends Schema.TaggedError<ChatGptTransportSecurityError>()(
   "ChatGptTransportSecurityError",
   { message: Schema.String },
 ) {}
 
-export class ChatGptAuthenticationError extends Schema.TaggedErrorClass<ChatGptAuthenticationError>()(
+export class ChatGptAuthenticationError extends Schema.TaggedError<ChatGptAuthenticationError>()(
   "ChatGptAuthenticationError",
   { message: Schema.String },
 ) {}
 
-export class ChatGptHttpError extends Schema.TaggedErrorClass<ChatGptHttpError>()(
-  "ChatGptHttpError",
-  {
-    operation: Schema.Literals(["models", "response", "compaction"]),
-    status: Schema.optionalKey(Schema.Number),
-    retryAfterSeconds: Schema.optionalKey(Schema.Number),
-    message: Schema.String,
-  },
-) {}
+export class ChatGptHttpError extends Schema.TaggedError<ChatGptHttpError>()("ChatGptHttpError", {
+  operation: Schema.Literals(["models", "response", "compaction"]),
+  status: Schema.optionalKey(Schema.Number),
+  retryAfterSeconds: Schema.optionalKey(Schema.Number),
+  message: Schema.String,
+}) {}
 
-export class ChatGptRateLimitError extends Schema.TaggedErrorClass<ChatGptRateLimitError>()(
+export class ChatGptRateLimitError extends Schema.TaggedError<ChatGptRateLimitError>()(
   "ChatGptRateLimitError",
   {
     retryAfterSeconds: Schema.optionalKey(Schema.Number),
@@ -53,7 +50,7 @@ export class ChatGptRateLimitError extends Schema.TaggedErrorClass<ChatGptRateLi
   },
 ) {}
 
-export class ChatGptCompactionError extends Schema.TaggedErrorClass<ChatGptCompactionError>()(
+export class ChatGptCompactionError extends Schema.TaggedError<ChatGptCompactionError>()(
   "ChatGptCompactionError",
   { message: Schema.String },
 ) {}
@@ -360,11 +357,10 @@ export const makeChatGptSubscriptionTransport = Effect.fn("makeChatGptSubscripti
             }),
       ),
       Effect.flatMap(decodeChatGptModelCatalog),
-      Effect.mapError(
-        (error): ChatGptSubscriptionTransportError =>
-          error._tag === "ChatGptModelCatalogError"
-            ? new ChatGptHttpError({ operation: "models", message: error.message })
-            : error,
+      Effect.mapError((error): ChatGptSubscriptionTransportError =>
+        error._tag === "ChatGptModelCatalogError"
+          ? new ChatGptHttpError({ operation: "models", message: error.message })
+          : error,
       ),
     );
 
@@ -376,16 +372,15 @@ export const makeChatGptSubscriptionTransport = Effect.fn("makeChatGptSubscripti
       }).pipe(
         Effect.flatMap((response) => requireSuccess("compaction", response)),
         Effect.flatMap(decodeCompactionResponse),
-        Effect.mapError(
-          (error): ChatGptSubscriptionTransportError =>
-            error._tag === "ChatGptTransportSecurityError" ||
-            error._tag === "ChatGptAuthenticationError" ||
-            error._tag === "ChatGptHttpError" ||
-            error._tag === "ChatGptRateLimitError"
-              ? error
-              : new ChatGptCompactionError({
-                  message: "ChatGPT compaction response schema is invalid",
-                }),
+        Effect.mapError((error): ChatGptSubscriptionTransportError =>
+          error._tag === "ChatGptTransportSecurityError" ||
+          error._tag === "ChatGptAuthenticationError" ||
+          error._tag === "ChatGptHttpError" ||
+          error._tag === "ChatGptRateLimitError"
+            ? error
+            : new ChatGptCompactionError({
+                message: "ChatGPT compaction response schema is invalid",
+              }),
         ),
         Effect.flatMap((response) =>
           response.output.length === 0
@@ -408,14 +403,13 @@ export const makeChatGptSubscriptionTransport = Effect.fn("makeChatGptSubscripti
           Effect.flatMap((response) => requireSuccess("response", response)),
           Effect.map((response) =>
             decodeChatGptResponseSse(response.stream).pipe(
-              Stream.mapError(
-                (error): ChatGptSubscriptionTransportError =>
-                  error._tag === "ChatGptProtocolDriftError"
-                    ? new ChatGptHttpError({ operation: "response", message: error.message })
-                    : new ChatGptHttpError({
-                        operation: "response",
-                        message: "ChatGPT response stream failed",
-                      }),
+              Stream.mapError((error): ChatGptSubscriptionTransportError =>
+                error._tag === "ChatGptProtocolDriftError"
+                  ? new ChatGptHttpError({ operation: "response", message: error.message })
+                  : new ChatGptHttpError({
+                      operation: "response",
+                      message: "ChatGPT response stream failed",
+                    }),
               ),
             ),
           ),

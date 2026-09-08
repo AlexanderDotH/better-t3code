@@ -103,10 +103,8 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
     ? incomingShare.attachments.length === 0
       ? translator.message("mobile.thread.chooseShared")
       : incomingShare.attachments.length === 1
-        ? translator.message("mobile.thread.chooseSharedImage")
-        : translator.message("mobile.thread.chooseSharedImages", {
-            count: incomingShare.attachments.length,
-          })
+        ? `Choose a project for the ${incomingShare.attachments[0]?.type === "image" ? "image" : "file"} you shared`
+        : `Choose a project for the ${incomingShare.attachments.length} ${incomingShare.attachments.every((attachment) => attachment.type === "image") ? "images" : "files"} you shared`
     : null;
   const screenTitle = translator.message(
     incomingShare ? "mobile.thread.startTaskTitle" : "mobile.thread.chooseProject",

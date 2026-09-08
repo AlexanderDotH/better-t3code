@@ -126,7 +126,7 @@ it.layer(NodeServices.layer)("agent import sources", (it) => {
       });
       assert.deepEqual(importedGithub.providerRouting, {
         mode: "selected",
-        instanceIds: ["codex_work"],
+        instanceIds: [ProviderInstanceId.make("codex_work")],
       });
 
       const importedWithoutDedupe = yield* importMcpServersFromAgentSources({

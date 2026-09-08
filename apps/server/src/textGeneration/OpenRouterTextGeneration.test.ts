@@ -140,7 +140,7 @@ describe("OpenRouterTextGeneration", () => {
   );
 });
 
-class TextCompletionTestError extends Schema.TaggedErrorClass<TextCompletionTestError>()(
+class TextCompletionTestError extends Schema.TaggedError<TextCompletionTestError>()(
   "TextCompletionTestError",
   { message: Schema.String },
 ) {}

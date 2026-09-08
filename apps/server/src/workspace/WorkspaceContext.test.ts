@@ -30,6 +30,7 @@ const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 const NoopWorkspaceEntriesLayer = Layer.succeed(
   WorkspaceEntries.WorkspaceEntries,
   WorkspaceEntries.WorkspaceEntries.of({
+    searchContents: () => Effect.die("Workspace content search is not used by this test."),
     browse: () => Effect.die("Workspace entries browse must not be used by workspace context."),
     invalidate: () => Effect.void,
     list: () => Effect.die("Native workspace index list must not be used by workspace context."),
@@ -94,6 +95,30 @@ const gitAdd = Effect.fn("WorkspaceContextTest.gitAdd")(function* (
 });
 
 it.layer(TestLayer, { excludeTestServices: true })("WorkspaceContextLive", (it) => {
+  it.effect("rejects absolute MCP reads while host file reads remain available", () =>
+    Effect.gen(function* () {
+      const context = yield* WorkspaceContext.WorkspaceContext;
+      const fileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* makeTempDir;
+      const outside = yield* makeTempDir;
+      yield* writeTextFile(outside, "private.txt", "host file");
+      const absolutePath = path.join(outside, "private.txt");
+      const hostRead = yield* fileSystem.readFile({ cwd, relativePath: absolutePath });
+      expect(hostRead.contents).toBe("host file");
+      const failure = yield* context
+        .execute({
+          workspaceRoot: cwd,
+          input: { reads: [{ path: absolutePath }] },
+        })
+        .pipe(Effect.flip);
+      expect(failure).toMatchObject({
+        _tag: "WorkspaceContextPathError",
+        reason: "path_outside_root",
+      });
+    }),
+  );
+
   describe("Git discovery", () => {
     it.effect(
       "finds tracked and untracked files with fuzzy, literal, and token-fallback queries",
@@ -209,8 +234,10 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceContextLive", (it) 
         yield* writeTextFile(
           cwd,
           "src/context.ts",
-          Array.from({ length: markerLine + WORKSPACE_CONTEXT_MAX_CONTEXT_LINES + 2 }, (_, index) =>
-            index + 1 === markerLine ? "oversizedContextMarker" : `line-${index + 1}`,
+          Array.from(
+            { length: markerLine + WORKSPACE_CONTEXT_MAX_CONTEXT_LINES + 2 },
+            (_, index) =>
+              index + 1 === markerLine ? "oversizedContextMarker" : `line-${index + 1}`,
           ).join("\n"),
         );
 

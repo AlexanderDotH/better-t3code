@@ -1,13 +1,13 @@
-import { Loader2Icon } from "lucide-react";
-import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
+import { LoaderCircleIcon } from "lucide-react";
+import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 import { cn } from "~/lib/utils";
 
-function Spinner({ className, ...props }: React.ComponentProps<typeof Loader2Icon>) {
-  const translator = useInterfaceTranslator();
+function Spinner({ className, ...props }: React.ComponentPropsWithoutRef<typeof LoaderCircleIcon>) {
   return (
-    <Loader2Icon
-      aria-label={translator.message("ui.loading")}
-      className={cn("animate-spin", className)}
+    <LoaderCircleIcon
+      aria-label="Loading"
+      ref={observeVisibleAnimation}
+      className={cn("motion-safe:visible-animate-spin", className)}
       role="status"
       {...props}
     />

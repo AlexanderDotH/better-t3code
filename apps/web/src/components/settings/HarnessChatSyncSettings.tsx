@@ -10,7 +10,10 @@ import type {
   ServerConfig,
 } from "@t3tools/contracts";
 import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSettingsCommand, useSettingsMutation } from "./useSettingsMutation";
+import { useHarnessChatPages } from "./HarnessChatSyncSettings.query";
+import { agentSettingsEnvironment } from "../../state/agentSettings";
+import { useEnvironmentQuery } from "../../state/query";
 import {
   ArchiveIcon,
   CloudDownloadIcon,
@@ -22,7 +25,6 @@ import {
 } from "lucide-react";
 import { type ChangeEvent, type ReactNode, useDeferredValue, useMemo, useState } from "react";
 
-import { ensureEnvironmentApi } from "../../environmentApi";
 import { cn } from "../../lib/utils";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
@@ -52,7 +54,6 @@ import {
   toHarnessChatSelection,
 } from "./HarnessChatSyncSettings.logic";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
 
 export const HARNESS_CHAT_PAGE_SIZE = 10;
 
@@ -746,8 +747,6 @@ function HarnessChatSyncSourceController({
   readonly active: boolean;
 }) {
   const translator = useInterfaceTranslator();
-  const api = useMemo(() => ensureEnvironmentApi(environmentId), [environmentId]);
-  const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState("");
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const [includeArchived, setIncludeArchived] = useState(false);
@@ -768,46 +767,46 @@ function HarnessChatSyncSourceController({
   const [resolverOpen, setResolverOpen] = useState(false);
   const [resolverTargetProjectId, setResolverTargetProjectId] = useState<ProjectId | null>(null);
 
-  const listQuery = useInfiniteQuery({
-    queryKey: [
-      "harnessChatSync",
-      environmentId,
-      source.id,
-      "list",
-      deferredSearchQuery,
+  const listInput = useMemo(
+    () => ({
+      sourceId: source.id,
+      query: deferredSearchQuery,
       includeArchived,
-    ],
-    queryFn: ({ pageParam }) =>
-      api.harnessChatSync.list({
-        sourceId: source.id,
-        query: deferredSearchQuery,
-        includeArchived,
-        ...(pageParam ? { cursor: pageParam } : {}),
-        limit: HARNESS_CHAT_PAGE_SIZE,
-      }),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
-    enabled: active && source.status.kind === "supported",
-  });
-  const chats = useMemo(() => uniqueChats(listQuery.data?.pages ?? []), [listQuery.data?.pages]);
+      limit: HARNESS_CHAT_PAGE_SIZE,
+    }),
+    [source.id, deferredSearchQuery, includeArchived],
+  );
+  const listQuery = useHarnessChatPages(
+    environmentId,
+    listInput,
+    active && source.status.kind === "supported",
+  );
+  const runSync = useSettingsCommand(agentSettingsEnvironment.harnessChatSync.run);
+  const readStatus = useSettingsCommand(agentSettingsEnvironment.harnessChatSync.status);
+  const chats = useMemo(() => uniqueChats(listQuery.pages), [listQuery.pages]);
   const displayedChats = useMemo(
     () => applyStatusOverrides(chats, statusBySessionId),
     [chats, statusBySessionId],
   );
-  const pages = listQuery.data?.pages ?? [];
+  const pages = listQuery.pages;
   const lastPage = pages[pages.length - 1];
   const unresolvedSelectedChats = getSelectedUnresolvedHarnessChats(displayedChats, selection);
   const unresolvedFailureCount =
     lastResult?.failures.filter((failure) => failure.code === "target-unresolved").length ?? 0;
 
-  const runMutation = useMutation({
+  const runMutation = useSettingsMutation({
     mutationFn: (unresolvedTargetProjectId?: ProjectId) =>
-      api.harnessChatSync.run({
-        sourceId: source.id,
-        selection: toHarnessChatSelection(selection, { includeArchived }),
-        ...(effectiveProviderInstanceId ? { providerInstanceId: effectiveProviderInstanceId } : {}),
-        targetResolutions: [],
-        ...(unresolvedTargetProjectId ? { unresolvedTargetProjectId } : {}),
+      runSync({
+        environmentId,
+        input: {
+          sourceId: source.id,
+          selection: toHarnessChatSelection(selection, { includeArchived }),
+          ...(effectiveProviderInstanceId
+            ? { providerInstanceId: effectiveProviderInstanceId }
+            : {}),
+          targetResolutions: [],
+          ...(unresolvedTargetProjectId ? { unresolvedTargetProjectId } : {}),
+        },
       }),
     onMutate: () => {
       setErrorMessage(null);
@@ -820,7 +819,7 @@ function HarnessChatSyncSourceController({
       } else {
         setResolverOpen(false);
       }
-      void queryClient.invalidateQueries({ queryKey: ["harnessChatSync", environmentId] });
+      listQuery.refresh();
     },
     onError: (error) => {
       setErrorMessage(
@@ -828,11 +827,14 @@ function HarnessChatSyncSourceController({
       );
     },
   });
-  const statusMutation = useMutation({
+  const statusMutation = useSettingsMutation({
     mutationFn: () =>
-      api.harnessChatSync.status({
-        sourceId: source.id,
-        sessionIds: displayedChats.map((chat) => chat.sessionId),
+      readStatus({
+        environmentId,
+        input: {
+          sourceId: source.id,
+          sessionIds: displayedChats.map((chat) => chat.sessionId),
+        },
       }),
     onMutate: () => setErrorMessage(null),
     onSuccess: (result) =>
@@ -845,7 +847,7 @@ function HarnessChatSyncSourceController({
           ? error.message
           : translator.message("settings.harness.refreshFailed"),
       ),
-    onSettled: () => void listQuery.refetch(),
+    onSettled: () => void listQuery.refresh(),
   });
 
   const beginSync = () => {
@@ -872,17 +874,15 @@ function HarnessChatSyncSourceController({
         changedMatching={lastPage?.changedMatching ?? source.changedCount}
         countsAreComplete={lastPage?.countsAreComplete ?? true}
         hasNextPage={listQuery.hasNextPage}
-        isLoading={listQuery.isLoading}
-        isFetching={
-          listQuery.isFetching || listQuery.isFetchingNextPage || statusMutation.isPending
-        }
+        isLoading={listQuery.isPending}
+        isFetching={listQuery.isPending || statusMutation.isPending}
         isSyncing={runMutation.isPending}
         result={lastResult}
         errorMessage={
           errorMessage ??
-          (listQuery.isError
-            ? listQuery.error instanceof Error
-              ? listQuery.error.message
+          (listQuery.error
+            ? listQuery.error
+              ? listQuery.error
               : translator.message("settings.harness.readFailed")
             : null)
         }
@@ -895,10 +895,10 @@ function HarnessChatSyncSourceController({
         }
         onSelectAll={() => setSelection(selectAllHarnessChats())}
         onClearAll={() => setSelection(clearHarnessChatSelection())}
-        onLoadMore={() => void listQuery.fetchNextPage()}
+        onLoadMore={() => void listQuery.loadNext()}
         onRefresh={() => {
           if (displayedChats.length === 0) {
-            void listQuery.refetch();
+            void listQuery.refresh();
             return;
           }
           statusMutation.mutate();
@@ -927,14 +927,12 @@ function HarnessChatSyncEnvironment({
   readonly projects: ReadonlyArray<ProjectOption>;
 }) {
   const translator = useInterfaceTranslator();
-  const api = useMemo(
-    () => ensureEnvironmentApi(environment.environmentId),
-    [environment.environmentId],
+  const sourcesQuery = useEnvironmentQuery(
+    agentSettingsEnvironment.harnessChatSync.sourcesQuery({
+      environmentId: environment.environmentId,
+      input: {},
+    }),
   );
-  const sourcesQuery = useQuery({
-    queryKey: ["harnessChatSync", environment.environmentId, "sources"],
-    queryFn: () => api.harnessChatSync.sources({}),
-  });
   const sources = sourcesQuery.data?.sources ?? [];
   const [activeSourceId, setActiveSourceId] = useState<HarnessChatSyncSource["id"] | null>(null);
   const activeSource =
@@ -947,17 +945,17 @@ function HarnessChatSyncEnvironment({
     <HarnessChatSyncEnvironmentView
       label={environment.label}
       detail={environment.displayUrl ?? translator.message("settings.harness.primaryEnvironment")}
-      isRefreshing={sourcesQuery.isFetching}
-      onRefresh={() => void sourcesQuery.refetch()}
+      isRefreshing={sourcesQuery.isPending}
+      onRefresh={() => void sourcesQuery.refresh()}
     >
-      {sourcesQuery.isLoading ? (
+      {sourcesQuery.isPending ? (
         <div className="rounded-xl border border-border/50 px-4 py-8 text-center text-xs text-muted-foreground">
           {translator.message("settings.harness.discovering")}
         </div>
-      ) : sourcesQuery.isError ? (
+      ) : sourcesQuery.error ? (
         <div className="rounded-xl border border-destructive/25 bg-destructive/8 px-4 py-3 text-xs text-destructive">
-          {sourcesQuery.error instanceof Error
-            ? sourcesQuery.error.message
+          {sourcesQuery.error
+            ? sourcesQuery.error
             : translator.message("settings.harness.discoverFailed")}
         </div>
       ) : sources.length === 0 ? (
@@ -1053,7 +1051,8 @@ export function HarnessChatSyncSettings() {
 
   return (
     <SettingsSection
-      {...searchableSetting("harness-chat-sync")}
+      id="harness-chat-sync"
+      title={translator.message("settings.harness.title")}
       icon={<CloudDownloadIcon className="size-4" />}
     >
       <SettingsRow

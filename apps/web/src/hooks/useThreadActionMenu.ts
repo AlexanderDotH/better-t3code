@@ -5,14 +5,10 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import {
-  canSnooze,
-  effectiveSettled,
-  effectiveSnoozed,
-  type ChangeRequestSettleSource,
-} from "@t3tools/client-runtime/state/thread-settled";
+import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
-import { useCallback } from "react";
+import { useRouter } from "@tanstack/react-router";
+import { useCallback, useMemo } from "react";
 
 import { resolveSnoozePresets, snoozeWakeDescription } from "../components/Sidebar.snooze";
 import {
@@ -28,21 +24,28 @@ import {
   readEnvironmentSupportsSnooze,
   readEnvironmentSupportsTitleRegeneration,
   readThreadShell,
+  useProjects,
 } from "../state/entities";
+import { usePrimaryEnvironmentId } from "../state/environments";
 import { readLocalApi } from "../localApi";
+import {
+  deriveLogicalProjectKeyFromSettings,
+  derivePhysicalProjectKey,
+  selectProjectGroupingSettings,
+} from "../logicalProject";
+import { buildPhysicalToLogicalProjectKeyMap } from "../sidebarProjectGrouping";
 import { useUiStateStore } from "../uiStateStore";
 import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { useClientSettings } from "./useSettings";
 import { useThreadActions } from "./useThreadActions";
-import { useInterfaceTranslator } from "./useInterfaceTranslator";
 
-function failureToast(title: string, error: unknown, fallbackDescription = "An error occurred.") {
+function failureToast(title: string, error: unknown) {
   toastManager.add(
     stackedThreadToast({
       type: "error",
       title,
-      description: error instanceof Error ? error.message : fallbackDescription,
+      description: error instanceof Error ? error.message : "An error occurred.",
     }),
   );
 }
@@ -61,12 +64,22 @@ export function useThreadActionMenu(input: {
   readonly threadRef: ScopedThreadRef | null;
   /** Fallback for "Copy path" when the thread has no worktree. */
   readonly projectCwd: string | null;
-  /** PR feeding auto-settle classification, as resolved by the caller. */
-  readonly changeRequest: ChangeRequestSettleSource | null;
   readonly onStartRename: () => void;
 }) {
-  const translate = useInterfaceTranslator().message;
-  const { threadRef, projectCwd, changeRequest, onStartRename } = input;
+  const { threadRef, projectCwd, onStartRename } = input;
+  const router = useRouter();
+  const projects = useProjects();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const logicalProjectKeyByPhysicalKey = useMemo(
+    () =>
+      buildPhysicalToLogicalProjectKeyMap({
+        projects,
+        settings: projectGroupingSettings,
+        primaryEnvironmentId,
+      }),
+    [primaryEnvironmentId, projectGroupingSettings, projects],
+  );
   const {
     settleThread,
     unsettleThread,
@@ -82,56 +95,27 @@ export function useThreadActionMenu(input: {
   });
   const handleNewThread = useNewThreadHandler();
   const markThreadUnread = useUiStateStore((s) => s.markThreadUnread);
-  const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
-  const autoSettleOnMerge = useClientSettings((s) => s.sidebarAutoSettleOnMerge);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
     onCopy: ({ path }) => {
-      toastManager.add({
-        type: "success",
-        title: translate("chat.action.pathCopied"),
-        description: path,
-      });
+      toastManager.add({ type: "success", title: "Path copied", description: path });
     },
-    onError: (error) =>
-      failureToast(
-        translate("chat.action.pathCopyFailed"),
-        error,
-        translate("chat.header.genericError"),
-      ),
+    onError: (error) => failureToast("Failed to copy path", error),
   });
   const { copyToClipboard: copyBranchToClipboard } = useCopyToClipboard<{ branch: string }>({
     target: "branch name",
     onCopy: ({ branch }) => {
-      toastManager.add({
-        type: "success",
-        title: translate("chat.action.branchCopied"),
-        description: branch,
-      });
+      toastManager.add({ type: "success", title: "Branch copied", description: branch });
     },
-    onError: (error) =>
-      failureToast(
-        translate("chat.action.branchCopyFailed"),
-        error,
-        translate("chat.header.genericError"),
-      ),
+    onError: (error) => failureToast("Failed to copy branch", error),
   });
   const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{ threadId: ThreadId }>({
     onCopy: ({ threadId }) => {
-      toastManager.add({
-        type: "success",
-        title: translate("chat.action.threadIdCopied"),
-        description: threadId,
-      });
+      toastManager.add({ type: "success", title: "Thread ID copied", description: threadId });
     },
-    onError: (error) =>
-      failureToast(
-        translate("chat.action.threadIdCopyFailed"),
-        error,
-        translate("chat.header.genericError"),
-      ),
+    onError: (error) => failureToast("Failed to copy thread ID", error),
   });
 
   const openMenu = useCallback(
@@ -156,17 +140,7 @@ export function useThreadActionMenu(input: {
         const items = buildThreadActionMenuItems({
           branch: thread.branch ?? null,
           isPinned: thread.pinnedAt != null,
-          isSettled:
-            supports.settlement &&
-            effectiveSettled(thread, {
-              // Minute-quantized like useNowMinute, so this classification
-              // can never disagree with the sidebar partition or ChatView's
-              // parked-thread banner within the same minute.
-              now: `${now.toISOString().slice(0, 16)}:00.000Z`,
-              autoSettleAfterDays,
-              autoSettleOnMerge,
-              changeRequest,
-            }),
+          isSettled: supports.settlement && thread.settledOverride === "settled",
           isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
           canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
           isRegeneratingTitle,
@@ -216,6 +190,22 @@ export function useThreadActionMenu(input: {
           }
         };
         switch (action) {
+          case "project-settings": {
+            const project = projects.find(
+              (candidate) =>
+                candidate.environmentId === thread.environmentId &&
+                candidate.id === thread.projectId,
+            );
+            if (!project) return;
+            const projectKey =
+              logicalProjectKeyByPhysicalKey.get(derivePhysicalProjectKey(project)) ??
+              deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings);
+            void router.navigate({
+              to: "/projects/$projectKey",
+              params: { projectKey },
+            });
+            return;
+          }
           case "new-thread-on-branch": {
             // Explicit branch carry-over: reuse the thread's worktree when it
             // has one, otherwise its branch on the local checkout.
@@ -340,9 +330,6 @@ export function useThreadActionMenu(input: {
     },
     [
       archiveThread,
-      autoSettleAfterDays,
-      autoSettleOnMerge,
-      changeRequest,
       confirmThreadArchive,
       confirmThreadDelete,
       confirmAndUnpinThread,
@@ -351,10 +338,14 @@ export function useThreadActionMenu(input: {
       copyThreadIdToClipboard,
       deleteThread,
       handleNewThread,
+      logicalProjectKeyByPhysicalKey,
       markThreadUnread,
       onStartRename,
       pinThread,
       projectCwd,
+      projectGroupingSettings,
+      projects,
+      router,
       settleThread,
       snoozeThread,
       threadRef,

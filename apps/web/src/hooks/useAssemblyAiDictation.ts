@@ -1,3 +1,5 @@
+import { renderAssemblyAiDictationDraft } from "@t3tools/client-runtime/assembly-ai";
+export { renderAssemblyAiDictationDraft } from "@t3tools/client-runtime/assembly-ai";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import {
@@ -31,12 +33,6 @@ const AUDIO_WAVEFORM_SAMPLE_COUNT = 14;
 const EMPTY_AUDIO_WAVEFORM = Object.freeze(
   Array.from({ length: AUDIO_WAVEFORM_SAMPLE_COUNT }, () => 0),
 );
-
-export function renderAssemblyAiDictationDraft(original: string, transcript: string): string {
-  if (transcript.length === 0) return original;
-  const separator = original.length === 0 || /\s$/u.test(original) ? "" : " ";
-  return `${original}${separator}${transcript}`;
-}
 
 export async function resolveAssemblyAiDictationTranscript(
   transcript: string,
@@ -81,12 +77,14 @@ export function useAssemblyAiDictation(input: {
   const createTokenRef = useRef(input.createToken);
   const transformTranscriptRef = useRef(input.transformTranscript);
 
-  getDraftSnapshotRef.current = input.getDraftSnapshot;
-  applyDraftSnapshotRef.current = input.applyDraftSnapshot;
-  onNoticeRef.current = input.onNotice;
-  startTransportRef.current = input.startTransport ?? startAssemblyAiStreamingTranscription;
-  createTokenRef.current = input.createToken;
-  transformTranscriptRef.current = input.transformTranscript;
+  useLayoutEffect(() => {
+    getDraftSnapshotRef.current = input.getDraftSnapshot;
+    applyDraftSnapshotRef.current = input.applyDraftSnapshot;
+    onNoticeRef.current = input.onNotice;
+    startTransportRef.current = input.startTransport ?? startAssemblyAiStreamingTranscription;
+    createTokenRef.current = input.createToken;
+    transformTranscriptRef.current = input.transformTranscript;
+  });
 
   const transition = useCallback((next: AssemblyAiDictationState) => {
     stateRef.current = next;

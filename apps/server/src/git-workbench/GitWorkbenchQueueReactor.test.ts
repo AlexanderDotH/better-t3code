@@ -1,3 +1,4 @@
+import { ThreadId, TurnId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -40,8 +41,8 @@ it.effect("recovers persisted workflows before consuming production quiescence e
       yield* reactor.start;
       yield* notifier.publish({
         type: "turn.processing.quiesced",
-        threadId: "thread-1",
-        turnId: "turn-1",
+        threadId: ThreadId.make("thread-1"),
+        turnId: TurnId.make("turn-1"),
         checkpointTurnCount: 1,
         createdAt: "2026-08-02T10:00:00.000Z",
       });

@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "@effect/vitest";
 import {
   ProjectId,
@@ -23,6 +24,7 @@ const project: OrchestrationProjectShell = {
   title: "Text transforms",
   workspaceRoot: "/trusted/project-root",
   defaultModelSelection: null,
+  checkpointsEnabled: true,
   scripts: [],
   createdAt: "2026-07-20T10:00:00.000Z",
   updatedAt: "2026-07-20T10:00:00.000Z",
@@ -39,42 +41,13 @@ const voiceTranslationModelSelection = createModelSelection(
 );
 
 function projectionLayer(projectResult: Option.Option<OrchestrationProjectShell>) {
-  return Layer.succeed(
-    ProjectionSnapshotQuery,
-    ProjectionSnapshotQuery.of({
-      getCommandReadModel: () => Effect.die("unused"),
-      getSnapshot: () => Effect.die("unused"),
-      getShellSnapshot: () => Effect.die("unused"),
-      getArchivedShellSnapshot: () => Effect.die("unused"),
-      getSnapshotSequence: () => Effect.die("unused"),
-      getCounts: () => Effect.die("unused"),
-      getActiveProjectByWorkspaceRoot: () => Effect.die("unused"),
-      getProjectShellById: () => Effect.succeed(projectResult),
-      getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
-      hasActiveProjectAgentPeer: () => Effect.die("unused"),
-      getThreadCheckpointContext: () => Effect.die("unused"),
-      getFullThreadDiffContext: () => Effect.die("unused"),
-      getThreadShellById: () => Effect.die("unused"),
-      getThreadDetailById: () => Effect.die("unused"),
-      getThreadDetailSnapshot: () => Effect.die("unused"),
-    }),
-  );
+  return Layer.mock(ProjectionSnapshotQuery, {
+    getProjectShellById: () => Effect.succeed(projectResult),
+  });
 }
 
 function textGenerationLayer(overrides: Partial<TextGeneration.TextGeneration["Service"]>) {
-  return Layer.succeed(
-    TextGeneration.TextGeneration,
-    TextGeneration.TextGeneration.of({
-      generateCommitMessage: () => Effect.die("unused"),
-      generatePrContent: () => Effect.die("unused"),
-      generateBranchName: () => Effect.die("unused"),
-      generateThreadTitle: () => Effect.die("unused"),
-      translateTranscriptToEnglish: () => Effect.die("unused"),
-      improvePrompt: () => Effect.die("unused"),
-      reviewPlanParallelism: () => Effect.die("unused"),
-      ...overrides,
-    }),
-  );
+  return Layer.mock(TextGeneration.TextGeneration, overrides);
 }
 
 function serviceLayer(input: {
@@ -180,7 +153,9 @@ describe("ProjectTextTransforms", () => {
       expect(error.operation).toBe("translate-transcript");
       expect(error.projectId).toBe(projectId);
       expect(error.reason).toBe("The project was not found.");
-      expect(JSON.stringify(error)).not.toContain(inputText);
+      expect(
+        yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(error),
+      ).not.toContain(inputText);
     }).pipe(Effect.provide(layer));
   });
 
@@ -208,7 +183,9 @@ describe("ProjectTextTransforms", () => {
       expect(error.operation).toBe("improve-prompt");
       expect(error.reason).toBe("Text generation failed.");
       expect(error.cause).toBeUndefined();
-      expect(JSON.stringify(error)).not.toContain(inputText);
+      expect(
+        yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(error),
+      ).not.toContain(inputText);
     }).pipe(Effect.provide(layer));
   });
 

@@ -284,12 +284,10 @@ export const requestFetchExplorationPlan = Effect.fn("FetchExplorationPlanner.re
   ): Effect.fn.Return<FetchExplorationPlanningOutcome, never, TextGeneration.TextGeneration> {
     const textGeneration = yield* TextGeneration.TextGeneration;
     const attempted = yield* textGeneration.planFetchExploration(input).pipe(
-      Effect.map(
-        (plan): PlannerAttempt => ({
-          status: "success",
-          plan,
-        }),
-      ),
+      Effect.map((plan): PlannerAttempt => ({
+        status: "success",
+        plan,
+      })),
       Effect.catch((error) =>
         Effect.succeed<PlannerAttempt>({
           status: "failure",

@@ -21,12 +21,21 @@ import { memo, type CSSProperties, useCallback, useEffect, useMemo, useRef, useS
 import { type DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { ComposerControl, ComposerControlChevron } from "./ComposerControl";
+import { useComposerMenuState } from "./useComposerMenuState";
+import { composerFloatingLayerProps } from "./composerEventScope";
+import {
+  ComposerControl,
+  ComposerControlChevron,
+  type ComposerControlSize,
+} from "./ComposerControl";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 type SelectDescriptor = Extract<ProviderOptionDescriptor, { type: "select" }>;
 
 export interface ContextWindowPickerProps {
+  readonly size?: ComposerControlSize;
+  readonly hidden?: boolean;
+  readonly isComposerOwned?: boolean;
   readonly provider: ProviderDriverKind;
   readonly instanceId?: ProviderInstanceId;
   readonly models: ReadonlyArray<ServerProviderModel>;
@@ -316,15 +325,17 @@ export const ContextWindowPicker = memo(function ContextWindowPicker(
 ) {
   const translate = useInterfaceTranslator().message;
   const selection = useContextWindowSelection(props);
+  const [open, setOpen] = useComposerMenuState(props.hidden);
   if (!selection) {
     return null;
   }
 
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         render={
           <ComposerControl
+            size={props.size ?? "sm"}
             aria-label={translate("chat.contextWindow.pickerLabel", {
               label: selection.slider.currentLabel,
             })}
@@ -335,14 +346,12 @@ export const ContextWindowPicker = memo(function ContextWindowPicker(
         }
       >
         <span className="tabular-nums">{selection.slider.triggerLabel}</span>
-        <ComposerControlChevron />
+        <ComposerControlChevron size={props.size ?? "sm"} />
       </PopoverTrigger>
       <PopoverPopup
         align="start"
         side="top"
-        collisionAvoidance={{ side: "shift", align: "shift", fallbackAxisSide: "none" }}
-        collisionPadding={12}
-        positionMethod="fixed"
+        {...(props.isComposerOwned ? composerFloatingLayerProps : {})}
         className="w-80 max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-xl"
         viewportClassName="p-0"
       >

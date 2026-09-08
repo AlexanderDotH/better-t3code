@@ -32,13 +32,13 @@ function presentation(
     entry: { target: target(environmentId, endpoint), profile: Option.none() },
     connection: {
       phase: "connected",
-      network: "online",
-      stage: null,
-      attempt: 0,
-      failure: null,
-      retry: { mode: "none", at: null },
       error: null,
       traceId: null,
+      network: "online",
+      stage: null,
+      attempt: 1,
+      failure: null,
+      retry: { mode: "none", at: null },
     },
     serverConfig,
   };

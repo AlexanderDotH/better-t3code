@@ -1,32 +1,23 @@
 import {
-  CODEX_REASONING_EFFORT_OPTION_ID,
-  defaultInstanceIdForDriver,
-  type ModelSelection,
   type ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
   type ScopedThreadRef,
   type ServerProviderModel,
-  T3_AUTO_REASONING_OPTION_ID,
 } from "@t3tools/contracts";
 import {
   applyClaudePromptEffortPrefix,
   buildProviderOptionSelectionsFromDescriptors,
-  CODEX_CONTEXT_WINDOW_OPTION_ID,
-  enableAutoReasoning,
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
-  isAutoReasoningEnabled,
   isClaudeUltrathinkPrompt,
   normalizeModelSlug,
-  selectManualReasoningEffort,
 } from "@t3tools/shared/model";
-import { memo, useCallback, useState } from "react";
+import { memo, useCallback } from "react";
 import type { VariantProps } from "class-variance-authority";
 import { ZapIcon } from "lucide-react";
-import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { buttonVariants } from "../ui/button";
 import {
   Menu,
@@ -41,7 +32,14 @@ import { useComposerDraftStore, DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
-import { ComposerControl, ComposerControlChevron, ComposerControlIcon } from "./ComposerControl";
+import {
+  ComposerControl,
+  ComposerControlChevron,
+  ComposerControlIcon,
+  type ComposerControlSize,
+} from "./ComposerControl";
+import { composerFloatingLayerProps } from "./composerEventScope";
+import { useComposerMenuState } from "./useComposerMenuState";
 
 type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
 
@@ -49,7 +47,7 @@ const SAVED_OPTION_LABELS: Readonly<Record<string, string>> = {
   agent: "Agent",
   effort: "Effort",
   reasoningEffort: "Reasoning effort",
-  variant: "Variant",
+  variant: "Reasoning",
 };
 
 function savedOptionLabel(id: string): string {
@@ -95,13 +93,12 @@ type TraitsPersistence =
 const ULTRATHINK_PROMPT_PREFIX = "Ultrathink:\n";
 
 function DefaultBadge() {
-  const translate = useInterfaceTranslator().message;
   return (
     <Badge
       variant="outline"
       className="inline-flex h-4 w-fit min-w-0 items-center justify-center gap-0 border-border/70 bg-muted/60 px-1.5 py-0 font-semibold text-[10px] text-muted-foreground leading-none sm:h-4"
     >
-      {translate("chat.traits.default")}
+      Default
     </Badge>
   );
 }
@@ -136,23 +133,6 @@ function getDescriptorStringValue(
   return typeof value === "string" ? value : null;
 }
 
-export function shouldOfferAutoReasoning(
-  provider: ProviderDriverKind,
-  descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
-): boolean {
-  return (
-    provider === "codex" &&
-    descriptor.id === CODEX_REASONING_EFFORT_OPTION_ID &&
-    descriptor.options.length > 0
-  );
-}
-
-export function applyReasoningChoice(selection: ModelSelection, value: string): ModelSelection {
-  return value === T3_AUTO_REASONING_OPTION_ID
-    ? enableAutoReasoning(selection)
-    : selectManualReasoningEffort(selection, value);
-}
-
 function getSelectedTraits(
   provider: ProviderDriverKind,
   models: ReadonlyArray<ServerProviderModel>,
@@ -176,7 +156,7 @@ function getSelectedTraits(
         caps,
         selections: modelOptions,
       });
-  const allSelectDescriptors = descriptors.filter(
+  const selectDescriptors = descriptors.filter(
     (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> =>
       descriptor.type === "select",
   );
@@ -184,19 +164,9 @@ function getSelectedTraits(
     (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "boolean" }> =>
       descriptor.type === "boolean",
   );
-  const contextWindowDescriptor =
-    provider === "codex"
-      ? (allSelectDescriptors.find(
-          (descriptor) => descriptor.id === CODEX_CONTEXT_WINDOW_OPTION_ID,
-        ) ?? null)
-      : null;
-  const selectDescriptors =
-    provider === "codex"
-      ? allSelectDescriptors.filter(
-          (descriptor) => descriptor.id !== CODEX_CONTEXT_WINDOW_OPTION_ID,
-        )
-      : allSelectDescriptors;
   const primarySelectDescriptor = selectDescriptors[0] ?? null;
+  const contextWindowDescriptor =
+    selectDescriptors.find((descriptor) => descriptor.id === "contextWindow") ?? null;
   const agentDescriptor = selectDescriptors.find((descriptor) => descriptor.id === "agent") ?? null;
   const fastModeDescriptor =
     booleanDescriptors.find((descriptor) => descriptor.id === "fastMode") ?? null;
@@ -223,11 +193,6 @@ function getSelectedTraits(
   const selectedAgentLabel = agentDescriptor
     ? getProviderOptionCurrentLabel(agentDescriptor)
     : null;
-  const autoReasoningEnabled = isAutoReasoningEnabled({
-    instanceId: defaultInstanceIdForDriver(provider),
-    model: model?.trim() || "unknown",
-    ...(modelOptions ? { options: modelOptions } : {}),
-  });
 
   return {
     caps,
@@ -247,7 +212,6 @@ function getSelectedTraits(
     selectedAgent,
     selectedAgentLabel,
     modelIsUnavailable,
-    autoReasoningEnabled,
   };
 }
 
@@ -287,6 +251,7 @@ function getTraitsSectionVisibility(input: {
       showEffort ||
       showThinking ||
       showFastMode ||
+      showContextWindow ||
       showAgent ||
       (selected.modelIsUnavailable && selected.descriptors.length > 0),
   };
@@ -316,7 +281,7 @@ export interface TraitsMenuContentProps {
   planModeEnabled: boolean;
   triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
   triggerClassName?: string;
-  autoReasoningEffort?: string | null | undefined;
+  isComposerOwned?: boolean;
 }
 
 export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
@@ -331,7 +296,6 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   planModeEnabled,
   ...persistence
 }: TraitsMenuContentProps & TraitsPersistence) {
-  const translate = useInterfaceTranslator().message;
   const setProviderModelOptions = useComposerDraftStore((store) => store.setProviderModelOptions);
   const updateModelOptions = useCallback(
     (nextOptions: ProviderOptions | undefined) => {
@@ -360,7 +324,6 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     ultrathinkInBodyText,
     hasAnyControls,
     modelIsUnavailable,
-    autoReasoningEnabled,
   } = getTraitsSectionVisibility({
     provider,
     models,
@@ -370,19 +333,8 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     allowPromptInjectedEffort,
     planModeEnabled,
   });
-  const selectionFromDescriptors = (
-    nextDescriptors: ReadonlyArray<ProviderOptionDescriptor>,
-  ): ModelSelection => {
-    const options = buildProviderOptionSelectionsFromDescriptors(nextDescriptors);
-    return {
-      instanceId: instanceId ?? defaultInstanceIdForDriver(provider),
-      model: model?.trim() || "unknown",
-      ...(options ? { options } : {}),
-    };
-  };
   const updateDescriptors = (nextDescriptors: ReadonlyArray<ProviderOptionDescriptor>) => {
-    const selection = selectionFromDescriptors(nextDescriptors);
-    updateModelOptions((autoReasoningEnabled ? enableAutoReasoning(selection) : selection).options);
+    updateModelOptions(buildProviderOptionSelectionsFromDescriptors(nextDescriptors));
   };
 
   const handleSelectChange = (
@@ -390,12 +342,6 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     value: string,
   ) => {
     if (!value) return;
-    if (shouldOfferAutoReasoning(provider, descriptor)) {
-      updateModelOptions(
-        applyReasoningChoice(selectionFromDescriptors(descriptors), value).options,
-      );
-      return;
-    }
     if (descriptor.promptInjectedValues?.includes(value)) {
       const nextPrompt =
         prompt.trim().length === 0
@@ -442,11 +388,9 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     <>
       {selectDescriptors.map((descriptor, index) => {
         const selectedValue =
-          autoReasoningEnabled && shouldOfferAutoReasoning(provider, descriptor)
-            ? T3_AUTO_REASONING_OPTION_ID
-            : ultrathinkPromptControlled && descriptor.id === primarySelectDescriptor?.id
-              ? "ultrathink"
-              : (getDescriptorStringValue(descriptor) ?? "");
+          ultrathinkPromptControlled && descriptor.id === primarySelectDescriptor?.id
+            ? "ultrathink"
+            : (getDescriptorStringValue(descriptor) ?? "");
 
         return (
           <div key={descriptor.id}>
@@ -457,23 +401,14 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
               </div>
               {ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id ? (
                 <div className="px-2 pb-1.5 text-muted-foreground/80 text-xs">
-                  {translate("chat.traits.ultrathinkLocked")}
+                  Your prompt contains &quot;ultrathink&quot; in the text. Remove it to change this
+                  option.
                 </div>
               ) : null}
               <MenuRadioGroup
                 value={selectedValue}
                 onValueChange={(value) => handleSelectChange(descriptor, value)}
               >
-                {shouldOfferAutoReasoning(provider, descriptor) ? (
-                  <MenuRadioItem value={T3_AUTO_REASONING_OPTION_ID} hideIndicator closeOnClick>
-                    <span className="flex w-full min-w-0 flex-col">
-                      <span className="font-medium">{translate("chat.traits.auto")}</span>
-                      <span className="max-w-56 text-pretty text-muted-foreground/80 text-xs">
-                        {translate("chat.traits.autoDescription")}
-                      </span>
-                    </span>
-                  </MenuRadioItem>
-                ) : null}
                 {descriptor.options.map((option) => (
                   <MenuRadioItem
                     key={option.id}
@@ -556,17 +491,11 @@ export function buildTraitsTriggerDisplay(input: {
   descriptors: ReadonlyArray<ProviderOptionDescriptor>;
   primarySelectDescriptorId: string | null;
   ultrathinkPromptControlled: boolean;
-  autoReasoningEnabled?: boolean;
-  autoReasoningEffort?: string | null | undefined;
-  autoLabel?: string;
 }): { label: string; showFastModeIcon: boolean } {
   let fastModeFallbackLabel: string | null = null;
   let fastModeEnabled = false;
   const labels: Array<string> = [];
   for (const descriptor of input.descriptors) {
-    if (input.provider === "codex" && descriptor.id === CODEX_CONTEXT_WINDOW_OPTION_ID) {
-      continue;
-    }
     if (descriptor.id === "fastMode" && descriptor.type === "boolean") {
       fastModeEnabled = descriptor.currentValue === true;
       fastModeFallbackLabel = fastModeEnabled ? "Fast" : "Normal";
@@ -586,19 +515,6 @@ export function buildTraitsTriggerDisplay(input: {
           (fastModeEnabled ? "Fast" : "Normal");
         continue;
       }
-    }
-    if (
-      input.provider === "codex" &&
-      descriptor.id === CODEX_REASONING_EFFORT_OPTION_ID &&
-      descriptor.type === "select" &&
-      input.autoReasoningEnabled
-    ) {
-      const autoLabel = input.autoLabel ?? "Auto";
-      const effortLabel = input.autoReasoningEffort
-        ? descriptor.options.find(({ id }) => id === input.autoReasoningEffort)?.label
-        : null;
-      labels.push(effortLabel ? `${autoLabel} · ${effortLabel}` : autoLabel);
-      continue;
     }
     const label =
       input.ultrathinkPromptControlled && descriptor.id === input.primarySelectDescriptorId
@@ -632,12 +548,17 @@ export const TraitsPicker = memo(function TraitsPicker({
   planModeEnabled,
   triggerVariant,
   triggerClassName,
-  autoReasoningEffort,
+  isComposerOwned,
+  size = "sm",
+  hidden = false,
   ...persistence
-}: TraitsMenuContentProps & TraitsPersistence) {
-  const translate = useInterfaceTranslator().message;
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const { descriptors, primarySelectDescriptor, ultrathinkPromptControlled, autoReasoningEnabled } =
+}: TraitsMenuContentProps &
+  TraitsPersistence & {
+    size?: ComposerControlSize;
+    hidden?: boolean;
+  }) {
+  const [isMenuOpen, setIsMenuOpen] = useComposerMenuState(hidden);
+  const { descriptors, primarySelectDescriptor, ultrathinkPromptControlled } =
     getTraitsSectionVisibility({
       provider,
       models,
@@ -666,20 +587,22 @@ export const TraitsPicker = memo(function TraitsPicker({
     descriptors,
     primarySelectDescriptorId: primarySelectDescriptor?.id ?? null,
     ultrathinkPromptControlled,
-    autoReasoningEnabled,
-    autoReasoningEffort,
-    autoLabel: translate("chat.traits.auto"),
   });
   const fastModeIcon = showFastModeIcon ? (
     <>
       <ComposerControlIcon
         icon={ZapIcon}
+        size={size}
         className={cn(
           "fill-current opacity-80",
-          provider === "claudeAgent" ? "text-[#d97757]" : "text-foreground",
+          size === "xs"
+            ? "text-current"
+            : provider === "claudeAgent"
+              ? "text-[#d97757]"
+              : "text-foreground",
         )}
       />
-      <span className="sr-only">{translate("chat.composer.fastModeOn")}</span>
+      <span className="sr-only">Fast mode on</span>
     </>
   ) : null;
 
@@ -696,6 +619,7 @@ export const TraitsPicker = memo(function TraitsPicker({
         render={
           <ComposerControl
             variant={triggerVariant ?? "ghost"}
+            size={size}
             className={cn(
               isCodexStyle
                 ? "min-w-0 max-w-40 shrink justify-start overflow-hidden whitespace-nowrap sm:max-w-48"
@@ -706,20 +630,24 @@ export const TraitsPicker = memo(function TraitsPicker({
         }
       >
         {isCodexStyle ? (
-          <span className="flex min-w-0 w-full items-center gap-1.5 overflow-hidden">
+          // The label truncates itself; clipping the wrapper too would cut off
+          // the chevron, whose negative end margin overhangs the wrapper edge.
+          <span
+            className={cn("flex min-w-0 w-full items-center", size === "xs" ? "gap-1" : "gap-1.5")}
+          >
             {fastModeIcon}
             <span className="min-w-0 truncate">{triggerLabel}</span>
-            <ComposerControlChevron />
+            <ComposerControlChevron size={size} />
           </span>
         ) : (
           <>
             {fastModeIcon}
             <span>{triggerLabel}</span>
-            <ComposerControlChevron />
+            <ComposerControlChevron size={size} />
           </>
         )}
       </MenuTrigger>
-      <MenuPopup align="start">
+      <MenuPopup align="start" {...(isComposerOwned ? composerFloatingLayerProps : {})}>
         <TraitsMenuContent
           provider={provider}
           {...(instanceId ? { instanceId } : {})}

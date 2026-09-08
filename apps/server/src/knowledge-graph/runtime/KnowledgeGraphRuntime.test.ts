@@ -17,6 +17,7 @@ import {
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import type * as Scope from "effect/Scope";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -423,7 +424,9 @@ it.effect("blocks every activating RPC while disabled but leaves destructive cle
       ] as const;
 
       for (const [operation, attempt] of attempts) {
-        const error = yield* attempt.pipe(Effect.flip);
+        const error = yield* Effect.flip<unknown, KnowledgeGraphOperationError, Scope.Scope>(
+          attempt,
+        );
         assert.instanceOf(error, KnowledgeGraphOperationError);
         assert.strictEqual(error.operation, operation);
         assert.strictEqual(error.code, "disabled");

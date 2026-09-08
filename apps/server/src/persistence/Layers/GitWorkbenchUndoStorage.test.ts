@@ -1,13 +1,11 @@
+import type { GitWorkbenchUndoSnapshot } from "../../git-workbench/GitWorkbenchUndoService.ts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import {
-  GitWorkbenchUndoStorage,
-  type GitWorkbenchUndoSnapshot,
-} from "../../git-workbench/GitWorkbenchUndoStorage.ts";
+import { GitWorkbenchUndoStorage } from "../../git-workbench/GitWorkbenchUndoStorage.ts";
 import Migration0042 from "../Migrations/042_GitWorkbenchState.ts";
-import * as NodeSqliteClient from "../NodeSqliteClient.ts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { GitWorkbenchUndoStorageLive } from "./GitWorkbenchUndoStorage.ts";
 
 const migratedSqlite = Layer.effectDiscard(Migration0042).pipe(

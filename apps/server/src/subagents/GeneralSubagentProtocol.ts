@@ -151,7 +151,7 @@ export const GeneralSubagentInterruptResult = Schema.Struct({
 });
 export type GeneralSubagentInterruptResult = typeof GeneralSubagentInterruptResult.Type;
 
-export class GeneralSubagentError extends Schema.TaggedErrorClass<GeneralSubagentError>()(
+export class GeneralSubagentError extends Schema.TaggedError<GeneralSubagentError>()(
   "GeneralSubagentError",
   {
     reason: Schema.Literals([

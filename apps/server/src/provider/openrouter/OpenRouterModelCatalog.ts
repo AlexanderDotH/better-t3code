@@ -27,7 +27,7 @@ export interface OpenRouterCatalogModel {
   readonly isVerified: boolean;
 }
 
-export class OpenRouterModelCatalogError extends Schema.TaggedErrorClass<OpenRouterModelCatalogError>()(
+export class OpenRouterModelCatalogError extends Schema.TaggedError<OpenRouterModelCatalogError>()(
   "OpenRouterModelCatalogError",
   { message: Schema.String },
 ) {}

@@ -2,8 +2,13 @@ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { CheckIcon, CopyIcon, LoaderCircleIcon } from "lucide-react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 
-import { readEnvironmentApi } from "~/environmentApi";
-import { writeClipboardText } from "~/lib/clipboard";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import { orchestrationEnvironment } from "~/state/orchestration";
+import { useAtomCommand } from "~/state/use-atom-command";
+import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { copyThreadTranscript } from "~/lib/copyThreadTranscript";
 import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 import { Button } from "../ui/button";
@@ -26,6 +31,9 @@ export const ChatTranscriptCopyButton = memo(function ChatTranscriptCopyButton({
   readonly environmentUnavailable: boolean;
 }) {
   const translate = useInterfaceTranslator().message;
+  const exportTranscript = useAtomCommand(orchestrationEnvironment.exportThreadTranscript, {
+    reportFailure: false,
+  });
   const [state, setState] = useState<CopyState>("idle");
   const requestInFlightRef = useRef(false);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -42,40 +50,27 @@ export const ChatTranscriptCopyButton = memo(function ChatTranscriptCopyButton({
     };
   }, []);
 
-  useEffect(() => {
-    if (copiedTimerRef.current) {
-      clearTimeout(copiedTimerRef.current);
-      copiedTimerRef.current = null;
-    }
-    if (!requestInFlightRef.current) {
-      setState("idle");
-    }
-  }, [environmentId, threadId]);
-
   const handleCopy = useCallback(async () => {
     if (requestInFlightRef.current || activeTurnInProgress || environmentUnavailable) return;
-
-    const api = readEnvironmentApi(environmentId);
-    if (!api) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: translate("chat.transcript.exportFailed"),
-          description: translate("chat.transcript.environmentDisconnected"),
-          data: { threadRef: { environmentId, threadId } },
-        }),
-      );
-      return;
-    }
 
     requestInFlightRef.current = true;
     setState("loading");
 
+    let interrupted = false;
     try {
       const transcript = await copyThreadTranscript({
         threadId,
-        exportThreadTranscript: api.orchestration.exportThreadTranscript,
-        writeText: writeClipboardText,
+        exportThreadTranscript: async (input) => {
+          const result = await exportTranscript({ environmentId, input });
+          if (result._tag === "Failure") {
+            interrupted = isAtomCommandInterrupted(result);
+            throw squashAtomCommandFailure(result);
+          }
+          return result.value;
+        },
+        writeText: async (content) => {
+          await writeTextToClipboard(content, "thread transcript");
+        },
       });
 
       if (mountedRef.current) {
@@ -100,6 +95,7 @@ export const ChatTranscriptCopyButton = memo(function ChatTranscriptCopyButton({
       if (mountedRef.current) {
         setState("idle");
       }
+      if (interrupted) return;
       toastManager.add(
         stackedThreadToast({
           type: "error",
@@ -112,7 +108,14 @@ export const ChatTranscriptCopyButton = memo(function ChatTranscriptCopyButton({
     } finally {
       requestInFlightRef.current = false;
     }
-  }, [activeTurnInProgress, environmentId, environmentUnavailable, threadId, translate]);
+  }, [
+    activeTurnInProgress,
+    environmentId,
+    environmentUnavailable,
+    exportTranscript,
+    threadId,
+    translate,
+  ]);
 
   const disabled = environmentUnavailable || activeTurnInProgress || state !== "idle";
   const tooltip = environmentUnavailable

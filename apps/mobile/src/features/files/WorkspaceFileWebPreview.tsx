@@ -4,10 +4,8 @@ import { WebView } from "react-native-webview";
 
 import { AppText as Text } from "../../components/AppText";
 import { LoadingStrip } from "../../components/LoadingStrip";
-import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function WorkspaceFileWebPreview(props: { readonly uri: string | null }) {
-  const translator = useMobileInterfaceTranslator();
   const [loadProgress, setLoadProgress] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -15,9 +13,7 @@ export function WorkspaceFileWebPreview(props: { readonly uri: string | null }) 
     return (
       <View className="flex-1 items-center justify-center gap-3 bg-card px-6">
         <ActivityIndicator />
-        <Text className="text-center text-sm text-foreground-muted">
-          {translator.message("mobile.files.preparingPreview")}
-        </Text>
+        <Text className="text-center text-sm text-foreground-muted">Preparing preview...</Text>
       </View>
     );
   }
@@ -27,9 +23,7 @@ export function WorkspaceFileWebPreview(props: { readonly uri: string | null }) 
       {loadProgress > 0 && loadProgress < 1 ? <LoadingStrip progress={loadProgress} /> : null}
       {loadError ? (
         <View className="border-b border-border bg-card px-4 py-2">
-          <Text className="text-xs font-t3-bold text-foreground">
-            {translator.message("mobile.files.previewFailed")}
-          </Text>
+          <Text className="text-xs font-t3-bold text-foreground">Preview failed</Text>
           <Text className="mt-0.5 text-xs leading-snug text-foreground-muted">{loadError}</Text>
         </View>
       ) : null}
@@ -52,9 +46,7 @@ export function WorkspaceFileWebPreview(props: { readonly uri: string | null }) 
         }}
         onError={(event) => {
           setLoadProgress(0);
-          setLoadError(
-            event.nativeEvent.description || translator.message("mobile.files.fileRenderFailed"),
-          );
+          setLoadError(event.nativeEvent.description || "The file could not be rendered.");
         }}
         renderLoading={() => (
           <View className="absolute inset-0 items-center justify-center bg-card">

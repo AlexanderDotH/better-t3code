@@ -1,16 +1,16 @@
+import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { LinkIcon, PlusIcon, RotateCcwIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { LinkIcon, PlusIcon } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import { openCommandPalette } from "../commandPaletteBus";
+import { NoProjectsHero } from "../components/NoProjectsHero";
 import { sortScopedProjectsForSidebar } from "../components/Sidebar.logic";
 import { Button } from "../components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
 import { SidebarInset } from "../components/ui/sidebar";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
-import { useInterfaceTranslator } from "../hooks/useInterfaceTranslator";
 import {
   useAllEnvironmentShellsBootstrapped,
   useProjects,
@@ -22,10 +22,11 @@ import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 
 function ChatIndexRouteView() {
   const { authGateState } = Route.useRouteContext();
-  const { environments } = useEnvironments();
+  const { environments, isReady } = useEnvironments();
 
-  if (authGateState.status === "hosted-static" && environments.length === 0) {
-    return <HostedStaticOnboardingState />;
+  if (authGateState.status === "hosted-static") {
+    if (!isReady) return null;
+    if (environments.length === 0) return <HostedStaticOnboardingState />;
   }
 
   return <IndexDraftLanding />;
@@ -80,59 +81,28 @@ function IndexDraftLanding() {
       />
     ) : null;
   }
+  // First-run routing to the welcome wizard happens in FirstRunGate at the
+  // root, before this route ever renders.
   return <NoProjectsHero />;
 }
 
 function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {
-  const translator = useInterfaceTranslator();
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none window-surface bg-background text-foreground">
       <Empty className="flex-1">
         <EmptyHeader className="max-w-md">
-          <EmptyTitle className="text-foreground text-xl">
-            {translator.message("ui.thread.startFailed")}
-          </EmptyTitle>
+          <EmptyTitle className="text-foreground text-xl">Couldn’t start a new thread</EmptyTitle>
           <EmptyDescription className="mt-2 text-sm text-muted-foreground/78">
-            {translator.message("ui.thread.startFailedDescription")}
+            The project is still available. Try opening the draft again.
           </EmptyDescription>
           <div className="mt-5 flex justify-center">
             <Button size="sm" onClick={onRetry}>
-              <RotateCcwIcon className="size-4" />
-              {translator.message("ui.thread.tryAgain")}
+              <RefreshIcon className="size-4" />
+              Try again
             </Button>
           </div>
         </EmptyHeader>
       </Empty>
-    </SidebarInset>
-  );
-}
-
-function NoProjectsHero() {
-  const translator = useInterfaceTranslator();
-  const openAddProject = useCallback(() => openCommandPalette({ open: "add-project" }), []);
-
-  return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background window-surface">
-        <Empty className="flex-1">
-          <div className="w-full max-w-lg px-8 py-12">
-            <EmptyHeader className="max-w-none">
-              <EmptyTitle className="text-foreground text-2xl sm:text-3xl">
-                {translator.message("ui.project.emptyTitle")}
-              </EmptyTitle>
-              <EmptyDescription className="mt-2 text-sm text-muted-foreground/78">
-                {translator.message("ui.project.emptyDescription")}
-              </EmptyDescription>
-              <div className="mt-6 flex justify-center">
-                <Button size="sm" onClick={openAddProject}>
-                  <PlusIcon className="size-4" />
-                  {translator.message("ui.project.add")}
-                </Button>
-              </div>
-            </EmptyHeader>
-          </div>
-        </Empty>
-      </div>
     </SidebarInset>
   );
 }
@@ -143,11 +113,10 @@ export const Route = createFileRoute("/_chat/")({
 
 function HostedStaticOnboardingState() {
   const cloudEnabled = hasCloudPublicConfig();
-  const translator = useInterfaceTranslator();
 
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background window-surface">
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none window-surface bg-background text-foreground">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden window-surface bg-background">
         <WorkspacePageHeader className="border-b border-border">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-foreground md:text-muted-foreground/60">
@@ -163,21 +132,21 @@ function HostedStaticOnboardingState() {
                 <LinkIcon className="size-5" />
               </div>
               <EmptyTitle className="text-foreground text-xl">
-                {translator.message("cloud.onboarding.title")}
+                Connect to a computer running T3 Code
               </EmptyTitle>
               <EmptyDescription className="mt-2 text-sm leading-relaxed text-muted-foreground/78">
+                This browser connects to T3 Code running on your computer or a server. Start the T3
+                Code desktop app or command-line server on that machine and keep it running.
+              </EmptyDescription>
+              <EmptyDescription className="mt-2 text-sm leading-relaxed text-muted-foreground/78">
                 {cloudEnabled
-                  ? translator.message("cloud.onboarding.cloudDescription")
-                  : translator.message("cloud.onboarding.manualDescription")}
+                  ? "Enable T3 Connect on that machine, then open Connections here to sign in with the same account. You can also add the machine using a pairing link."
+                  : "Open Connections and add that machine using its pairing link. This browser must be able to reach it."}
               </EmptyDescription>
               <div className="mt-6 flex justify-center">
                 <Button render={<Link to="/settings/connections" />} size="sm">
                   <PlusIcon className="size-4" />
-                  {translator.message(
-                    cloudEnabled
-                      ? "cloud.onboarding.openConnections"
-                      : "cloud.onboarding.addEnvironment",
-                  )}
+                  Open Connections
                 </Button>
               </div>
             </EmptyHeader>

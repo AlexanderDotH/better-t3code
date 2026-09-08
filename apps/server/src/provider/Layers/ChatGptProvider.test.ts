@@ -6,7 +6,18 @@ import type { ChatGptAuthBroker } from "../chatgpt/ChatGptAuthBroker.ts";
 import { ChatGptAdapterBoundaryError, type ChatGptAdapterTransport } from "./ChatGptAdapter.ts";
 import { checkChatGptProviderStatus } from "./ChatGptProvider.ts";
 
-const authenticatedBroker = {
+const authenticatedBroker: ChatGptAuthBroker = {
+  credentialStore: {
+    home: "/unused/chatgpt",
+    authFilePath: "/unused/chatgpt/auth.json",
+    prepare: Effect.die("Unexpected credential preparation"),
+    read: Effect.die("Unexpected credential read"),
+    remove: Effect.die("Unexpected credential removal"),
+  },
+  connect: () => Stream.die("Unexpected connection"),
+  refresh: Effect.die("Unexpected credential refresh"),
+  disconnect: Effect.die("Unexpected disconnect"),
+  invalidate: Effect.die("Unexpected invalidation"),
   status: Effect.succeed({
     status: "authenticated",
     type: "subscription",
@@ -15,7 +26,7 @@ const authenticatedBroker = {
     capabilities: { flows: ["browser", "device-code"], canDisconnect: true },
     plan: { id: "plus", label: "Plus" },
   }),
-} as ChatGptAuthBroker;
+};
 
 describe("ChatGptProvider", () => {
   it.effect("publishes only the connected account's live model catalog", () =>
@@ -57,7 +68,7 @@ describe("ChatGptProvider", () => {
         rateLimit: { status: "limited", retryAfterSeconds: 30 },
       });
       expect(snapshot.models.map((model) => model.slug)).toEqual(["gpt-5.6-codex"]);
-      expect(snapshot.models[0]?.capabilities.contextWindow).toEqual({
+      expect(snapshot.models[0]?.capabilities?.contextWindow).toEqual({
         defaultTokens: 400_000,
         maxTokens: 400_000,
       });

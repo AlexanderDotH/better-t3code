@@ -65,12 +65,16 @@ export function ComposerActivityIcon({ status }: { readonly status: ComposerActi
   }
   return (
     <ComposerBanner.Icon>
-      <LoaderCircleIcon className="motion-safe:animate-spin" />
+      <LoaderCircleIcon className="size-3" />
     </ComposerBanner.Icon>
   );
 }
 
-export function ComposerActivityRow({ status }: { readonly status: ComposerActivityStatus }) {
+export function ComposerActivityRow(
+  props: { readonly status: ComposerActivityStatus } | { readonly phase: ThreadSyncPhase },
+) {
+  const status: ComposerActivityStatus =
+    "status" in props ? props.status : { kind: "sync", phase: props.phase };
   const showTokenUsage =
     status.kind === "working" &&
     (status.inputTokens !== undefined || status.outputTokens !== undefined);
@@ -191,7 +195,7 @@ function WorkingTimer({ createdAt }: { createdAt: string }) {
   );
 }
 
-function formatWorkingTimer(startIso: string, endIso: string): string | null {
+export function formatWorkingTimer(startIso: string, endIso: string): string | null {
   const startedAtMs = Date.parse(startIso);
   const endedAtMs = Date.parse(endIso);
   if (!Number.isFinite(startedAtMs) || !Number.isFinite(endedAtMs)) {

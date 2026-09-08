@@ -32,7 +32,7 @@ const invocation = McpInvocationContext.McpInvocationContext.of({
   issuedAt: 1,
 });
 
-const projection = Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+const projection = Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
   getThreadCheckpointContext: () =>
     Effect.succeed(
       Option.some({
@@ -54,7 +54,7 @@ const projection = Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery
         ],
       }),
     ),
-} as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape);
+});
 
 const readResult: ProjectMemoryReadResponse = {
   mode: "project",
@@ -208,9 +208,9 @@ it.effect(
 );
 
 it.effect("fails closed when the authenticated thread has no project context", () => {
-  const missing = Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+  const missing = Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
     getThreadCheckpointContext: () => Effect.succeed(Option.none()),
-  } as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape);
+  });
   const policy = ProjectMemoryPolicy.ProjectMemoryPolicy.of({
     resolve: () => Effect.succeed({ actor: "root" }),
   });

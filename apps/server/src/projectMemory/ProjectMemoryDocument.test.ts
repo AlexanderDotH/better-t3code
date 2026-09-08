@@ -32,7 +32,9 @@ describe("project memory Markdown", () => {
       entry("pitfall.shared-tree", "Preserve unrelated dirty changes.", "known-pitfalls"),
       {
         ...entry("outcome.contracts", "Project memory contracts passed.", "recent-outcomes"),
-        checkpointRef: "refs/checkpoints/memory" as ProjectMemoryEntry["checkpointRef"],
+        checkpointRef: "refs/checkpoints/memory" as NonNullable<
+          ProjectMemoryEntry["checkpointRef"]
+        >,
       },
     ];
 

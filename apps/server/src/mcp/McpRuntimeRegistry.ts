@@ -125,7 +125,7 @@ export const makeMcpRuntimeRegistry = Effect.fn("makeMcpRuntimeRegistry")(functi
 
   const providerCapability: McpRuntimeRegistryShape["providerCapability"] = (providerInstanceId) =>
     adapters.getByInstance(providerInstanceId).pipe(
-      Effect.map((adapter) => adapter.capabilities.mcp),
+      Effect.map((adapter) => adapter.capabilities.mcp ?? "unsupported"),
       Effect.orElseSucceed(() => "unsupported" as const),
     );
 

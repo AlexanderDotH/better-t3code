@@ -55,15 +55,35 @@ export type ProviderForceStopResult =
       readonly detail: string;
     };
 
+/**
+ * How ProviderService runs manual context compaction for an adapter.
+ * Native adapters expose a start call and must emit a compacted thread state
+ * when they finish. Slash-command adapters get the command sent as a turn.
+ */
+export type ProviderCompaction<TError> =
+  | {
+      readonly type: "native";
+      readonly start: (
+        threadId: ThreadId,
+        modelSelection?: ProviderSendTurnInput["modelSelection"],
+      ) => Effect.Effect<void, TError>;
+    }
+  | { readonly type: "slash-command"; readonly command: `/${string}` };
+
 export interface ProviderAdapterCapabilities {
   /**
    * Declares whether changing the model on an existing session is supported.
    */
   readonly sessionModelSwitch: ProviderSessionModelSwitchMode;
+  /** Starts a resumed turn with no synthetic user prompt. Omitted means the
+      adapter needs an explicit continuation instruction. */
+  readonly promptlessTurnContinuation?: boolean;
+  /** False when native conversation history cannot be rewound. */
+  readonly supportsConversationRollback?: boolean;
   /**
    * Declares how this adapter consumes T3-owned MCP server settings.
    */
-  readonly mcp: ProviderMcpSupportMode;
+  readonly mcp?: ProviderMcpSupportMode;
   /** Whether the adapter can fork a provider thread without replaying its transcript. */
   readonly nativeThreadFork?: boolean;
   /** Whether the adapter exposes provider-native manual compaction. */
@@ -154,6 +174,9 @@ export interface ProviderAdapterShape<TError> {
   readonly sendTurn: (
     input: ProviderSendTurnInput,
   ) => Effect.Effect<ProviderTurnStartResult, TError>;
+
+  /** Omitted when this adapter does not support manual context compaction. */
+  readonly compaction?: ProviderCompaction<TError>;
 
   /** Compact the active provider thread when supported. */
   readonly compactThread?: (

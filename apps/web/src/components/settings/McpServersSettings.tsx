@@ -12,7 +12,7 @@ import type {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import { mcpRuntimeSelectorKey, mcpRuntimeServerDetailsKey } from "@t3tools/client-runtime/mcp";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useSettingsCommand, useSettingsMutation } from "./useSettingsMutation";
 import * as Cause from "effect/Cause";
 import {
   CopyIcon,
@@ -22,7 +22,7 @@ import {
   Trash2Icon,
   UploadIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { ensureLocalApi } from "../../localApi";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
@@ -1181,20 +1181,17 @@ export function McpServersSettingsPanel(props: {
   const filterEnvironmentId = resolveSettingsEnvironmentId(filterEnvironmentSelection);
   const filterEnvironment = useEnvironment(filterEnvironmentId);
   const authorizationAvailable = filterEnvironment?.entry.target._tag === "PrimaryConnectionTarget";
-  const mcpApi =
-    filterEnvironmentId === null
-      ? null
-      : requireSettingsEnvironment(filterEnvironmentSelection).api.mcp;
   const selectedServerConfig =
     filterEnvironmentId === null ? undefined : serverConfigs.get(filterEnvironmentId);
   const providers = selectedServerConfig?.providers ?? [];
-  const providerStatusQuery = useQuery({
-    queryKey: ["mcp", filterEnvironmentId, "provider-status"],
-    queryFn: () => mcpApi!.providerStatus({}),
-    enabled: mcpApi !== null,
-    staleTime: 30_000,
-    retry: false,
-  });
+  const providerStatusQuery = useEnvironmentQuery(
+    filterEnvironmentId === null
+      ? null
+      : agentSettingsEnvironment.mcp.providerStatusQuery({
+          environmentId: filterEnvironmentId,
+          input: {},
+        }),
+  );
   const providerCapabilities = useMemo(
     () =>
       new Map(
@@ -1221,7 +1218,7 @@ export function McpServersSettingsPanel(props: {
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(
     props.search?.provider ?? null,
   );
-  const appliedProviderDeepLinkRef = useRef<string | null>(null);
+  const [appliedProviderDeepLink, setAppliedProviderDeepLink] = useState<string | null>(null);
   const selectedProvider =
     providerTabs.find((provider) => provider.instanceId === selectedProviderId) ??
     providerTabs[0] ??
@@ -1229,7 +1226,7 @@ export function McpServersSettingsPanel(props: {
   const selectedProviderInstanceId = selectedProvider?.instanceId as ProviderInstanceId | undefined;
   const servers = selectedServerConfig?.settings.mcp.servers ?? [];
   const existingIds = useMemo(() => new Set(servers.map((server) => server.id)), [servers]);
-  const appliedServerDeepLinkRef = useRef<string | null>(null);
+  const [appliedServerDeepLink, setAppliedServerDeepLink] = useState<string | null>(null);
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorMode, setEditorMode] = useState<EditorMode>("create");
@@ -1240,7 +1237,8 @@ export function McpServersSettingsPanel(props: {
   const [editorError, setEditorError] = useState<string | null>(null);
 
   const [importOpen, setImportOpen] = useState(false);
-  const [selectedImportSourceIds, setSelectedImportSourceIds] = useState<ReadonlyArray<string>>([]);
+  const [importSourceSelection, setSelectedImportSourceIds] =
+    useState<ReadonlyArray<string> | null>(null);
   const [importScope, setImportScope] = useState<McpServerScope>("global");
   const [importProviderRouting, setImportProviderRouting] = useState<McpProviderRouting>(() =>
     props.search?.provider
@@ -1288,7 +1286,7 @@ export function McpServersSettingsPanel(props: {
       String(context.threadId) === props.search?.thread &&
       String(context.runtimeSessionId) === props.search?.runtime,
   );
-  const appliedRuntimeDeepLinkRef = useRef<string | null>(null);
+  const [appliedRuntimeDeepLink, setAppliedRuntimeDeepLink] = useState<string | null>(null);
   const selectedRuntimeContext = runtimeState.selectedContext;
   const [runtimeDetails, setRuntimeDetails] = useState<
     ReadonlyMap<string, McpRuntimeServerDetailsResult>
@@ -1297,7 +1295,7 @@ export function McpServersSettingsPanel(props: {
     () => new Set(),
   );
   const currentRuntimeSelectorKeyRef = useRef<string | null>(null);
-  currentRuntimeSelectorKeyRef.current =
+  const currentRuntimeSelectorKey =
     filterEnvironmentId && selectedProviderInstanceId && selectedRuntimeContext
       ? mcpRuntimeSelectorKey({
           environmentId: filterEnvironmentId,
@@ -1306,6 +1304,9 @@ export function McpServersSettingsPanel(props: {
           runtimeSessionId: selectedRuntimeContext.runtimeSessionId,
         })
       : null;
+  useLayoutEffect(() => {
+    currentRuntimeSelectorKeyRef.current = currentRuntimeSelectorKey;
+  }, [currentRuntimeSelectorKey]);
   const sessionAccessQuery = useEnvironmentQuery(
     filterEnvironmentId === null
       ? null
@@ -1318,71 +1319,55 @@ export function McpServersSettingsPanel(props: {
     sessionAccessQuery.data?.scopes !== undefined &&
     !sessionAccessQuery.data.scopes.includes("orchestration:operate");
 
-  const importSourcesQuery = useQuery({
-    queryKey: ["mcp", importEnvironmentId, "importSources"],
-    queryFn: () =>
-      requireSettingsEnvironment(importEnvironmentSelection).api.mcp.discoverImportSources(),
-    enabled: importOpen && importEnvironmentId !== null,
-  });
+  const importSourcesQuery = useEnvironmentQuery(
+    importOpen && importEnvironmentId !== null
+      ? agentSettingsEnvironment.mcp.importSourcesQuery({
+          environmentId: importEnvironmentId,
+          input: {},
+        })
+      : null,
+  );
 
-  useEffect(() => {
-    if (!importOpen || selectedImportSourceIds.length > 0) return;
-    const sourceIds =
-      importSourcesQuery.data?.sources
-        .filter((source) => source.mcpServerCount > 0)
-        .map((source) => source.id) ?? [];
-    if (sourceIds.length > 0) {
-      setSelectedImportSourceIds(sourceIds);
-    }
-  }, [importOpen, importSourcesQuery.data?.sources, selectedImportSourceIds.length]);
+  const selectedImportSourceIds =
+    importSourceSelection ??
+    importSourcesQuery.data?.sources
+      .filter((source) => source.mcpServerCount > 0)
+      .map((source) => source.id) ??
+    [];
 
-  useEffect(() => {
-    if (
-      props.search?.provider &&
-      props.search.provider !== appliedProviderDeepLinkRef.current &&
-      providerTabs.some((provider) => provider.instanceId === props.search?.provider)
-    ) {
-      appliedProviderDeepLinkRef.current = props.search.provider;
-      setSelectedProviderId(props.search.provider);
-    }
-  }, [props.search?.provider, providerTabs]);
-
-  useEffect(() => {
-    if (selectedProvider && selectedProvider.instanceId !== selectedProviderId) {
-      setSelectedProviderId(selectedProvider.instanceId);
-    }
-  }, [selectedProvider, selectedProviderId]);
-
-  useEffect(() => {
-    const serverKey = props.search?.server;
-    if (!serverKey || appliedServerDeepLinkRef.current === serverKey) return;
-    const server = servers.find((candidate) => candidate.id === serverKey);
-    if (!server) return;
-    appliedServerDeepLinkRef.current = serverKey;
-    setScopeFilter(server.scope);
-    if (server.scope === "project") {
+  if (
+    props.search?.provider &&
+    props.search.provider !== appliedProviderDeepLink &&
+    providerTabs.some((provider) => provider.instanceId === props.search?.provider)
+  ) {
+    setAppliedProviderDeepLink(props.search.provider);
+    setSelectedProviderId(props.search.provider);
+  }
+  const deepLinkedServer = servers.find((server) => server.id === props.search?.server);
+  if (deepLinkedServer && deepLinkedServer.id !== appliedServerDeepLink) {
+    setAppliedServerDeepLink(deepLinkedServer.id);
+    setScopeFilter(deepLinkedServer.scope);
+    if (deepLinkedServer.scope === "project") {
       const project = projectEntries.find(
-        (candidate) => candidate.cwd === server.projectCwd || candidate.id === server.projectId,
+        (candidate) =>
+          candidate.cwd === deepLinkedServer.projectCwd ||
+          candidate.id === deepLinkedServer.projectId,
       );
       if (project) setProjectFilterKey(project.key);
     }
-  }, [projectEntries, props.search?.server, servers]);
-
-  useEffect(() => {
-    if (!deepLinkedRuntimeContext) return;
-    const deepLinkKey = `${props.search?.thread ?? ""}:${props.search?.runtime ?? ""}`;
-    if (deepLinkKey === appliedRuntimeDeepLinkRef.current) return;
-    appliedRuntimeDeepLinkRef.current = deepLinkKey;
+  }
+  const runtimeDeepLink = `${props.search?.thread ?? ""}:${props.search?.runtime ?? ""}`;
+  if (deepLinkedRuntimeContext && runtimeDeepLink !== appliedRuntimeDeepLink) {
+    setAppliedRuntimeDeepLink(runtimeDeepLink);
     setSelectedRuntimeContextId(mcpRuntimeContextId(deepLinkedRuntimeContext));
     setRuntimeDetails(new Map());
     setLoadingRuntimeDetails(new Set());
-  }, [deepLinkedRuntimeContext, props.search?.runtime, props.search?.thread]);
-
-  useEffect(() => {
-    if (!selectedRuntimeContext) return;
-    const nextId = mcpRuntimeContextId(selectedRuntimeContext);
-    if (nextId !== selectedRuntimeContextId) setSelectedRuntimeContextId(nextId);
-  }, [selectedRuntimeContext, selectedRuntimeContextId]);
+  } else if (
+    selectedRuntimeContext &&
+    mcpRuntimeContextId(selectedRuntimeContext) !== selectedRuntimeContextId
+  ) {
+    setSelectedRuntimeContextId(mcpRuntimeContextId(selectedRuntimeContext));
+  }
 
   const visibleServers = useMemo(
     () =>
@@ -1398,19 +1383,24 @@ export function McpServersSettingsPanel(props: {
     [scopeFilter, selectedFilterProject, servers],
   );
 
-  const upsertMutation = useMutation({
+  const createServer = useSettingsCommand(agentSettingsEnvironment.mcp.create);
+  const updateServer = useSettingsCommand(agentSettingsEnvironment.mcp.update);
+  const setProviderEnabled = useSettingsCommand(agentSettingsEnvironment.mcp.setProviderEnabled);
+  const deleteServer = useSettingsCommand(agentSettingsEnvironment.mcp.delete);
+  const importServers = useSettingsCommand(agentSettingsEnvironment.mcp.importSources);
+  const exportServers = useSettingsCommand(agentSettingsEnvironment.mcp.exportCursorJson);
+  const runRuntimeAction = useSettingsCommand(agentSettingsEnvironment.mcp.runtimeAction);
+
+  const upsertMutation = useSettingsMutation({
     mutationFn: (input: {
       readonly environmentId: ProjectOption["environmentId"];
       readonly mode: EditorMode;
       readonly server: McpServerDefinition;
     }) => {
-      const mcpApi = requireSettingsEnvironment({
-        primaryEnvironmentId: null,
-        selectedEnvironmentId: input.environmentId,
-      }).api.mcp;
-      return input.mode === "create"
-        ? mcpApi.create({ server: input.server })
-        : mcpApi.update({ server: input.server });
+      return (input.mode === "create" ? createServer : updateServer)({
+        environmentId: input.environmentId,
+        input: { server: input.server },
+      });
     },
     onSuccess: (result, input) => {
       setEditorOpen(false);
@@ -1427,20 +1417,20 @@ export function McpServersSettingsPanel(props: {
     },
   });
 
-  const setProviderEnabledMutation = useMutation({
+  const setProviderEnabledMutation = useSettingsMutation({
     mutationFn: (input: {
       readonly environmentId: ProjectOption["environmentId"];
       readonly serverId: McpServerId;
       readonly providerInstanceId: ProviderInstanceId;
       readonly enabled: boolean;
     }) =>
-      requireSettingsEnvironment({
-        primaryEnvironmentId: null,
-        selectedEnvironmentId: input.environmentId,
-      }).api.mcp.setProviderEnabled({
-        serverId: input.serverId,
-        providerInstanceId: input.providerInstanceId,
-        enabled: input.enabled,
+      setProviderEnabled({
+        environmentId: input.environmentId,
+        input: {
+          serverId: input.serverId,
+          providerInstanceId: input.providerInstanceId,
+          enabled: input.enabled,
+        },
       }),
     onSuccess: (result) => {
       toastManager.add(mcpMutationToastPresentation(result, "MCP assignment updated"));
@@ -1454,7 +1444,7 @@ export function McpServersSettingsPanel(props: {
     },
   });
 
-  const deleteMutation = useMutation({
+  const deleteMutation = useSettingsMutation({
     mutationFn: async (input: {
       readonly environmentId: ProjectOption["environmentId"];
       readonly server: McpServerDefinition;
@@ -1463,10 +1453,7 @@ export function McpServersSettingsPanel(props: {
         `Delete MCP server '${input.server.name}'?`,
       );
       if (!confirmed) return null;
-      return requireSettingsEnvironment({
-        primaryEnvironmentId: null,
-        selectedEnvironmentId: input.environmentId,
-      }).api.mcp.delete({ id: input.server.id });
+      return deleteServer({ environmentId: input.environmentId, input: { id: input.server.id } });
     },
     onSuccess: (result) => {
       if (result) toastManager.add(mcpMutationToastPresentation(result, "MCP server deleted"));
@@ -1480,28 +1467,28 @@ export function McpServersSettingsPanel(props: {
     },
   });
 
-  const importMutation = useMutation({
+  const importMutation = useSettingsMutation({
     mutationFn: (input: {
       readonly environmentId: ProjectOption["environmentId"];
       readonly project: ProjectOption | null;
     }) =>
-      requireSettingsEnvironment({
-        primaryEnvironmentId: null,
-        selectedEnvironmentId: input.environmentId,
-      }).api.mcp.importSources({
-        sourceIds: selectedImportSourceIds,
-        providerRouting: importProviderRouting,
-        scope: importScope,
-        replace: replaceOnImport,
-        deduplicate: deduplicateOnImport,
-        ...(importScope === "project" && input.project
-          ? { projectId: input.project.id, projectCwd: input.project.cwd }
-          : {}),
+      importServers({
+        environmentId: input.environmentId,
+        input: {
+          sourceIds: selectedImportSourceIds,
+          providerRouting: importProviderRouting,
+          scope: importScope,
+          replace: replaceOnImport,
+          deduplicate: deduplicateOnImport,
+          ...(importScope === "project" && input.project
+            ? { projectId: input.project.id, projectCwd: input.project.cwd }
+            : {}),
+        },
       }),
     onSuccess: (result) => {
       setImportOpen(false);
       setImportError(null);
-      setSelectedImportSourceIds([]);
+      setSelectedImportSourceIds(null);
       toastManager.add(mcpMutationToastPresentation(result, "MCP servers imported"));
     },
     onError: (error) => {
@@ -1574,7 +1561,7 @@ export function McpServersSettingsPanel(props: {
   };
 
   const openImportDialog = () => {
-    setSelectedImportSourceIds([]);
+    setSelectedImportSourceIds(null);
     setImportScope(scopeFilter);
     setImportProjectKey(selectedFilterProject?.key ?? projectEntries[0]?.key ?? "");
     setImportError(null);
@@ -1654,13 +1641,16 @@ export function McpServersSettingsPanel(props: {
           deepLinkedEnvironmentId ??
           (input.scope === "project" ? (project?.environmentId ?? null) : null),
       });
-      const result = await target.api.mcp.exportCursorJson({
-        ...buildExportInput({
-          scope: input.scope,
-          project,
-          includeDisabled: input.includeDisabled,
-        }),
-        ...(selectedProviderInstanceId ? { providerInstanceId: selectedProviderInstanceId } : {}),
+      const result = await exportServers({
+        environmentId: target.environmentId,
+        input: {
+          ...buildExportInput({
+            scope: input.scope,
+            project,
+            includeDisabled: input.includeDisabled,
+          }),
+          ...(selectedProviderInstanceId ? { providerInstanceId: selectedProviderInstanceId } : {}),
+        },
       });
       setExportJson(result.json);
     } catch (error) {
@@ -1700,21 +1690,21 @@ export function McpServersSettingsPanel(props: {
       });
   };
 
-  const runtimeActionMutation = useMutation({
+  const runtimeActionMutation = useSettingsMutation({
     mutationFn: (input: {
       readonly action: McpRuntimeAction;
       readonly selectorKey: string;
       readonly target: McpRuntimeDetailsTarget;
     }) =>
-      requireSettingsEnvironment({
-        primaryEnvironmentId: null,
-        selectedEnvironmentId: input.target.environmentId,
-      }).api.mcp.runtimeAction({
-        providerInstanceId: input.target.providerInstanceId,
-        threadId: input.target.threadId,
-        runtimeSessionId: input.target.runtimeSessionId,
-        providerKey: input.target.providerKey,
-        action: input.action,
+      runRuntimeAction({
+        environmentId: input.target.environmentId,
+        input: {
+          providerInstanceId: input.target.providerInstanceId,
+          threadId: input.target.threadId,
+          runtimeSessionId: input.target.runtimeSessionId,
+          providerKey: input.target.providerKey,
+          action: input.action,
+        },
       }),
     onSuccess: (result, input) => {
       if (currentRuntimeSelectorKeyRef.current !== input.selectorKey) return;
@@ -1989,7 +1979,7 @@ export function McpServersSettingsPanel(props: {
         projects={projectEntries}
         sources={importSourcesQuery.data?.sources ?? []}
         selectedSourceIds={selectedImportSourceIds}
-        isLoadingSources={importSourcesQuery.isLoading}
+        isLoadingSources={importSourcesQuery.isPending}
         isImporting={importMutation.isPending}
         error={importError}
         scope={importScope}

@@ -25,7 +25,7 @@ import type {
   NativeProviderUsage,
 } from "./NativeProviderTypes.ts";
 
-class NativeProviderTurnInterruptedError extends Schema.TaggedErrorClass<NativeProviderTurnInterruptedError>()(
+class NativeProviderTurnInterruptedError extends Schema.TaggedError<NativeProviderTurnInterruptedError>()(
   "NativeProviderTurnInterruptedError",
   {},
 ) {}

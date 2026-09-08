@@ -32,11 +32,11 @@ describe("grokAcpSpawnArgs", () => {
     ]);
   });
 
-  it("maps Full to Grok always-approve", () => {
+  it("maps Full access to Grok always-approve", () => {
     expect(grokAcpSpawnArgs("full-access")).toEqual(["agent", "--always-approve", "stdio"]);
   });
 
-  it("maps Ruled and Auto onto Grok permission modes", () => {
+  it("maps Auto-accept edits and Auto onto Grok permission modes", () => {
     expect(grokAcpSpawnArgs("auto-accept-edits")).toEqual([
       "--permission-mode",
       "acceptEdits",
@@ -175,6 +175,36 @@ describe("applyGrokAcpModelSelection", () => {
       });
       expect(modelCalls).toEqual([]);
       expect(result).toBe("grok-build");
+    }),
+  );
+
+  it.effect("keeps the session's current model when the product slug is requested", () =>
+    Effect.gen(function* () {
+      const { runtime, modelCalls } = makeRecordingRuntime();
+      const result = yield* applyGrokAcpModelSelection({
+        runtime,
+        currentModelId: "grok-4.6",
+        requestedModelId: "grok-build",
+        mapError: (cause) => cause.message,
+      });
+      expect(modelCalls).toEqual([]);
+      expect(result).toBe("grok-4.6");
+    }),
+  );
+
+  it.effect("applies reasoning to the current model when the product slug is requested", () =>
+    Effect.gen(function* () {
+      const { runtime, modelCalls } = makeRecordingRuntime();
+      const result = yield* applyGrokAcpModelSelection({
+        runtime,
+        currentModelId: "grok-4.6",
+        currentReasoningEffort: "high",
+        requestedModelId: "grok-build",
+        requestedReasoningEffort: "xhigh",
+        mapError: (cause) => cause.message,
+      });
+      expect(modelCalls).toEqual([{ modelId: "grok-4.6", meta: { reasoningEffort: "xhigh" } }]);
+      expect(result).toBe("grok-4.6");
     }),
   );
 

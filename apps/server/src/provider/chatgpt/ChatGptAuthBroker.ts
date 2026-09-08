@@ -45,7 +45,7 @@ const ChatGptIdentityClaims = Schema.fromJsonString(
 );
 const decodeChatGptIdentityClaims = Schema.decodeUnknownOption(ChatGptIdentityClaims);
 
-export class ChatGptAuthBrokerError extends Schema.TaggedErrorClass<ChatGptAuthBrokerError>()(
+export class ChatGptAuthBrokerError extends Schema.TaggedError<ChatGptAuthBrokerError>()(
   "ChatGptAuthBrokerError",
   {
     operation: Schema.Literals(["spawn", "initialize", "connect", "status", "refresh", "logout"]),

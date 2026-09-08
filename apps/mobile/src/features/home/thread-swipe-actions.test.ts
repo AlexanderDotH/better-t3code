@@ -16,7 +16,7 @@ describe("thread swipe secondary action", () => {
 
     expect(action).toMatchObject({
       accessibilityLabel: "Thread Alpha löschen",
-      backgroundColor: "#ff2d55",
+      tone: "danger",
       icon: "trash",
       label: "Löschen",
     });

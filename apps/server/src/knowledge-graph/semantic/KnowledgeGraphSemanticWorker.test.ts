@@ -1,3 +1,9 @@
+import {
+  KnowledgeGraphModelGeneration,
+  KnowledgeGraphNodeId,
+  KnowledgeGraphScopeId,
+  ProjectId,
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import {
   KnowledgeGraphDeterministicPatchV1,
@@ -11,7 +17,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import * as NodeSqliteClient from "../../persistence/NodeSqliteClient.ts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import Migration0059 from "../../persistence/Migrations/059_KnowledgeGraphDerivedData.ts";
 import {
   KnowledgeGraphRepository,
@@ -42,9 +48,9 @@ const decodeDeterministicPatch = Schema.decodeUnknownSync(KnowledgeGraphDetermin
 const makeScope = (suffix: string) =>
   decodeScope({
     version: 1,
-    scopeId: `scope-worker-${suffix}`,
+    scopeId: KnowledgeGraphScopeId.make(`scope-worker-${suffix}`),
     environmentId: `environment-worker-${suffix}`,
-    projectId: `project-worker-${suffix}`,
+    projectId: ProjectId.make(`project-worker-${suffix}`),
     effectiveWorkspaceRoot: `/workspace/worker-${suffix}`,
     isWorktree: false,
   });
@@ -60,7 +66,7 @@ const prepareScope = Effect.fnUntraced(function* (suffix: string) {
     nodes: [
       {
         version: 1,
-        nodeId: `node-source-${suffix}`,
+        nodeId: KnowledgeGraphNodeId.make(`node-source-${suffix}`),
         scopeId: scope.scopeId,
         kind: "file",
         label: "source.ts",
@@ -72,7 +78,7 @@ const prepareScope = Effect.fnUntraced(function* (suffix: string) {
       },
       {
         version: 1,
-        nodeId: `node-target-${suffix}`,
+        nodeId: KnowledgeGraphNodeId.make(`node-target-${suffix}`),
         scopeId: scope.scopeId,
         kind: "file",
         label: "target.ts",
@@ -126,15 +132,15 @@ const prepareScope = Effect.fnUntraced(function* (suffix: string) {
     version: 1,
     environmentId: scope.environmentId,
     scopeId: scope.scopeId,
-    modelGeneration: 3,
+    modelGeneration: KnowledgeGraphModelGeneration.make(3),
     nodes: [
       {
-        nodeId: patch.nodes[0].nodeId,
-        nodeRevision: patch.nodes[0].nodeRevision,
+        nodeId: patch.nodes[0]!.nodeId,
+        nodeRevision: patch.nodes[0]!.nodeRevision,
         candidates: [
           {
-            sourceNodeId: patch.nodes[0].nodeId,
-            candidateNodeId: patch.nodes[1].nodeId,
+            sourceNodeId: patch.nodes[0]!.nodeId,
+            candidateNodeId: patch.nodes[1]!.nodeId,
             evidenceIds: patch.evidence.map(({ evidenceId }) => evidenceId),
             score: 0.9,
           },
@@ -150,8 +156,8 @@ const semanticOutput = (suffix: string) => ({
   edges: [
     {
       kind: "relates-to" as const,
-      sourceNodeId: `node-source-${suffix}`,
-      targetNodeId: `node-target-${suffix}`,
+      sourceNodeId: KnowledgeGraphNodeId.make(`node-source-${suffix}`),
+      targetNodeId: KnowledgeGraphNodeId.make(`node-target-${suffix}`),
       confidence: 0.8,
       summary: "Source and target collaborate.",
       evidenceIds: [`evidence-source-${suffix}`, `evidence-target-${suffix}`],
@@ -301,15 +307,15 @@ it.layer(layer)("KnowledgeGraphSemanticWorker", (it) => {
         version: 1,
         environmentId: scope.environmentId,
         scopeId: scope.scopeId,
-        modelGeneration: 4,
+        modelGeneration: KnowledgeGraphModelGeneration.make(4),
         nodes: [
           {
-            nodeId: patch.nodes[0].nodeId,
-            nodeRevision: patch.nodes[0].nodeRevision,
+            nodeId: patch.nodes[0]!.nodeId,
+            nodeRevision: patch.nodes[0]!.nodeRevision,
             candidates: [
               {
-                sourceNodeId: patch.nodes[0].nodeId,
-                candidateNodeId: patch.nodes[1].nodeId,
+                sourceNodeId: patch.nodes[0]!.nodeId,
+                candidateNodeId: patch.nodes[1]!.nodeId,
                 evidenceIds: patch.evidence.map(({ evidenceId }) => evidenceId),
                 score: 0.9,
               },
@@ -419,15 +425,15 @@ it.layer(layer)("KnowledgeGraphSemanticWorker", (it) => {
           version: 1,
           environmentId: scope.environmentId,
           scopeId: scope.scopeId,
-          modelGeneration: 4,
+          modelGeneration: KnowledgeGraphModelGeneration.make(4),
           nodes: [
             {
-              nodeId: patch.nodes[0].nodeId,
-              nodeRevision: patch.nodes[0].nodeRevision,
+              nodeId: patch.nodes[0]!.nodeId,
+              nodeRevision: patch.nodes[0]!.nodeRevision,
               candidates: [
                 {
-                  sourceNodeId: patch.nodes[0].nodeId,
-                  candidateNodeId: patch.nodes[1].nodeId,
+                  sourceNodeId: patch.nodes[0]!.nodeId,
+                  candidateNodeId: patch.nodes[1]!.nodeId,
                   evidenceIds: patch.evidence.map(({ evidenceId }) => evidenceId),
                   score: 0.9,
                 },

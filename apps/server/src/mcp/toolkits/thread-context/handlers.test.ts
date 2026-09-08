@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  EventId,
   MessageId,
   ProjectId,
   ProviderInstanceId,
@@ -12,6 +13,7 @@ import {
   type OrchestrationThreadShell,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -84,7 +86,7 @@ function projection(input: {
   readonly ancestors?: ReadonlyMap<ThreadId, OrchestrationThreadShell>;
   readonly subagents?: ReadonlyMap<SubagentId, OrchestrationSubagentDetail>;
 }) {
-  return ProjectionSnapshotQuery.ProjectionSnapshotQuery.of({
+  return Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
     getThreadDetailById: (requestedThreadId) =>
       Effect.succeed(requestedThreadId === input.root.id ? Option.some(input.root) : Option.none()),
     getThreadShellById: (requestedThreadId) =>
@@ -95,21 +97,21 @@ function projection(input: {
           ? Option.fromNullishOr(input.subagents?.get(subagentId))
           : Option.none(),
       ),
-  } as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape);
+  });
 }
 
-const provide = (
+const provide = <A, E>(
   effect: Effect.Effect<
-    unknown,
-    unknown,
+    A,
+    E,
     McpInvocationContext.McpInvocationContext | ProjectionSnapshotQuery.ProjectionSnapshotQuery
   >,
-  query: ProjectionSnapshotQuery.ProjectionSnapshotQueryShape,
+  query: ReturnType<typeof projection>,
   activeInvocation: McpInvocationContext.McpInvocationScope = invocation,
 ) =>
   effect.pipe(
     Effect.provideService(McpInvocationContext.McpInvocationContext, activeInvocation),
-    Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, query),
+    Effect.provide(query),
   );
 
 it.effect("paginates exact completed messages newest-first with a stable cursor", () => {
@@ -229,7 +231,7 @@ it.effect("retrieves an exact one MiB tool result through paginated references",
     root: thread({
       activities: [
         {
-          id: "event-large-tool",
+          id: EventId.make("event-large-tool"),
           tone: "tool",
           kind: "tool.completed",
           summary: "Large command",
@@ -305,7 +307,7 @@ it.effect("denies a reference cursor from another project", () => {
     root: thread({
       activities: [
         {
-          id: "event-project-a",
+          id: EventId.make("event-project-a"),
           tone: "tool",
           kind: "tool.completed",
           summary: "Tool",
@@ -349,7 +351,7 @@ it.effect("resolves a tool result inherited from authenticated fork ancestry", (
       sourceThreadId,
       activities: [
         {
-          id: "event-inherited-tool",
+          id: EventId.make("event-inherited-tool"),
           tone: "tool",
           kind: "tool.completed",
           summary: "Inherited tool",

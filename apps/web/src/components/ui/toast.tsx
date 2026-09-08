@@ -1,5 +1,7 @@
 "use client";
 
+import { Spinner } from "~/components/ui/spinner";
+
 import { Toast } from "@base-ui/react/toast";
 import {
   useEffect,
@@ -20,7 +22,6 @@ import {
   CircleCheckIcon,
   CopyIcon,
   InfoIcon,
-  LoaderCircleIcon,
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
@@ -29,7 +30,6 @@ import { cn } from "~/lib/utils";
 import { Button, buttonVariants } from "~/components/ui/button";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
-import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 import { resolveThreadRouteTarget } from "~/threadRoutes";
 import {
   buildVisibleToastLayout,
@@ -84,7 +84,7 @@ const threadToastVisibleTimeoutRemainingMs = new Map<ToastId, number>();
 const TOAST_ICONS = {
   error: CircleAlertIcon,
   info: InfoIcon,
-  loading: LoaderCircleIcon,
+  loading: Spinner,
   success: CircleCheckIcon,
   warning: TriangleAlertIcon,
 } as const;
@@ -358,7 +358,7 @@ function ToastBodyContent({
             className="[&>svg]:h-lh [&>svg]:w-4 [&_svg]:pointer-events-none [&_svg]:shrink-0"
             data-slot="toast-icon"
           >
-            <Icon className="in-data-[type=loading]:animate-spin in-data-[type=error]:text-destructive in-data-[type=info]:text-info in-data-[type=success]:text-success in-data-[type=warning]:text-warning in-data-[type=loading]:opacity-80" />
+            <Icon className="in-data-[type=error]:text-destructive in-data-[type=info]:text-info in-data-[type=success]:text-success in-data-[type=warning]:text-warning in-data-[type=loading]:opacity-80" />
           </div>
         ) : null}
         <div
@@ -539,7 +539,6 @@ function ToastProvider({ children, position = "top-right", ...props }: ToastProv
 }
 
 function Toasts({ position }: { position: ToastPosition }) {
-  const translator = useInterfaceTranslator();
   const { toasts } = Toast.useToastManager<ThreadToastData>();
   const activeThreadRef = useActiveThreadRefFromRoute();
   const isTop = position.startsWith("top");
@@ -664,7 +663,7 @@ function Toasts({ position }: { position: ToastPosition }) {
               />
               <div className={toastCornerDismissClass}>
                 <button
-                  aria-label={translator.message("ui.notification.dismiss")}
+                  aria-label="Dismiss notification"
                   className={toastCornerOrbClass}
                   data-slot="toast-close"
                   onClick={() =>
@@ -713,7 +712,6 @@ function AnchoredToastProvider({ children, ...props }: Toast.Provider.Props) {
 }
 
 function AnchoredToasts() {
-  const translator = useInterfaceTranslator();
   const { toasts } = Toast.useToastManager<ThreadToastData>();
   const activeThreadRef = useActiveThreadRefFromRoute();
 
@@ -756,7 +754,7 @@ function AnchoredToasts() {
                     <>
                       <div className={toastCornerDismissClass}>
                         <button
-                          aria-label={translator.message("ui.notification.dismiss")}
+                          aria-label="Dismiss notification"
                           className={toastCornerOrbClass}
                           data-slot="toast-close"
                           onClick={() =>

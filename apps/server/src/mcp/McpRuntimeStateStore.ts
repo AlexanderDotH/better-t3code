@@ -324,13 +324,11 @@ export const makeMcpRuntimeStateStore = Effect.fn("makeMcpRuntimeStateStore")(fu
             }
             const revision = current.revision + 1;
             const servers = new Map(current.servers);
-            const driftedServers = matching.map(
-              (currentServer): McpRuntimeServer => ({
-                ...currentServer,
-                observedAt,
-                configDrift: input.enabled ? "pending-enable" : "pending-disable",
-              }),
-            );
+            const driftedServers = matching.map((currentServer): McpRuntimeServer => ({
+              ...currentServer,
+              observedAt,
+              configDrift: input.enabled ? "pending-enable" : "pending-disable",
+            }));
             if (driftedServers.length === 0 && definition !== undefined) {
               driftedServers.push({
                 serverId: definition.id,

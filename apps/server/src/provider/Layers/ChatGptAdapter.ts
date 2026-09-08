@@ -37,7 +37,7 @@ const decodeJsonUnknown = Schema.decodeUnknownEffect(Schema.fromJsonString(Schem
 const decodeJsonUnknownSync = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const encodeJsonUnknown = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
-export class ChatGptAdapterBoundaryError extends Schema.TaggedErrorClass<ChatGptAdapterBoundaryError>()(
+export class ChatGptAdapterBoundaryError extends Schema.TaggedError<ChatGptAdapterBoundaryError>()(
   "ChatGptAdapterBoundaryError",
   {
     operation: Schema.String,

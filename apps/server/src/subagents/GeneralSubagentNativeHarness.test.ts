@@ -1,5 +1,5 @@
 import { expect, it, vi } from "@effect/vitest";
-import { ProviderInstanceId, SubagentId, ThreadId } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, SubagentId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import { GeneralSubagentCoordinator } from "./GeneralSubagentCoordinator.ts";
@@ -19,7 +19,7 @@ it.effect("publishes the six direct-agent aliases and binds execution to its roo
         agentId,
         status: "running" as const,
         providerInstanceId,
-        providerDriver: "chatgpt",
+        providerDriver: ProviderDriverKind.make("chatgpt"),
         model: "gpt-5.6-sol",
         reasoningEffort: "high",
         task: "Run the follow-up.",

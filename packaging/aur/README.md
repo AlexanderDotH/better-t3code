@@ -4,10 +4,6 @@ This directory maintains the [`t3code-bin`](https://aur.archlinux.org/packages/t
 [`t3code-nightly-bin`](https://aur.archlinux.org/packages/t3code-nightly-bin) packages. Both
 repackage the official x86_64 AppImage from GitHub Releases.
 
-These package names track official `pingdotgg/t3code` releases; they do not install Better T3 Code
-fork artifacts. On a fork, the publication workflow remains disabled unless production automation
-is explicitly enabled.
-
 ## Publishing
 
 The release workflow calls `.github/workflows/publish-aur.yml` after publishing a GitHub release;

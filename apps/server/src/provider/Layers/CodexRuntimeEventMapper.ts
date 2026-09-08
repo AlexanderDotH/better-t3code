@@ -1,3 +1,4 @@
+import { codexRateLimitsToUpdate } from "./codexUsageLimits.ts";
 import { type ProviderEvent, type ProviderRuntimeEvent, type ThreadId } from "@t3tools/contracts";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
@@ -792,16 +793,19 @@ function mapCanonicalRuntimeEvents(
   }
 
   if (event.method === "account/rateLimits/updated") {
-    if (!readPayload(EffectCodexSchema.V2AccountRateLimitsUpdatedNotification, event.payload)) {
+    const payload = readPayload(
+      EffectCodexSchema.V2AccountRateLimitsUpdatedNotification,
+      event.payload,
+    );
+    const limits = payload ? codexRateLimitsToUpdate(payload.rateLimits) : undefined;
+    if (!limits) {
       return [];
     }
     return [
       {
         type: "account.rate-limits.updated",
         ...runtimeEventBase(event, canonicalThreadId),
-        payload: {
-          rateLimits: event.payload ?? {},
-        },
+        payload: { limits },
       },
     ];
   }

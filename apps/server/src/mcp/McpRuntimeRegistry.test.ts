@@ -1,6 +1,7 @@
 import {
   EventId,
   McpRuntimeServerKey,
+  McpServerId,
   ProviderDriverKind,
   ProviderInstanceId,
   RuntimeSessionId,
@@ -44,7 +45,7 @@ function session(
     provider: driver,
     providerInstanceId,
     status: "ready",
-    runtimeMode: "local",
+    runtimeMode: "approval-required",
     cwd: "/workspace",
     threadId,
     runtimeSessionId,
@@ -59,7 +60,7 @@ function runtimeServer(
   overrides: Partial<McpRuntimeServer> = {},
 ): McpRuntimeServer {
   return {
-    serverId: "notion",
+    serverId: McpServerId.make("notion"),
     providerKey,
     source: "t3-managed",
     providerInstanceId,
@@ -81,10 +82,10 @@ function runtimeServer(
 
 function serverDefinition(
   id: string,
-  overrides: Partial<McpServerDefinition> = {},
+  overrides: Partial<Extract<McpServerDefinition, { transport: "http" }>> = {},
 ): McpServerDefinition {
   return {
-    id,
+    id: McpServerId.make(id),
     name: id === "notion" ? "Notion" : "Linear",
     enabled: true,
     providerRouting: { mode: "selected", instanceIds: [providerInstanceId] },
@@ -93,7 +94,7 @@ function serverDefinition(
     url: `https://${id}.example.test/mcp`,
     headers: {},
     ...overrides,
-  } as McpServerDefinition;
+  };
 }
 
 function makeAdapter(
@@ -145,7 +146,7 @@ function registryLayer(adapter: ProviderAdapterShape<ProviderAdapterError>) {
     Layer.provide(
       Layer.succeed(
         ProviderAdapterRegistry.ProviderAdapterRegistry,
-        makeAdapterRegistryMock({ codex: adapter }),
+        makeAdapterRegistryMock({ [driver]: adapter }),
       ),
     ),
   );
@@ -156,7 +157,7 @@ function makeRegistry(adapter: ProviderAdapterShape<ProviderAdapterError>) {
     Effect.provide(
       Layer.succeed(
         ProviderAdapterRegistry.ProviderAdapterRegistry,
-        makeAdapterRegistryMock({ codex: adapter }),
+        makeAdapterRegistryMock({ [driver]: adapter }),
       ),
     ),
   );
@@ -228,7 +229,7 @@ describe("McpRuntimeRegistry", () => {
     let servers: ReadonlyArray<McpRuntimeServer> = [
       runtimeServer(firstRuntimeSessionId),
       runtimeServer(firstRuntimeSessionId, {
-        serverId: "linear",
+        serverId: McpServerId.make("linear"),
         providerKey: secondProviderKey,
         name: "Linear",
       }),
@@ -243,7 +244,7 @@ describe("McpRuntimeRegistry", () => {
 
       servers = [
         runtimeServer(firstRuntimeSessionId, {
-          serverId: "linear",
+          serverId: McpServerId.make("linear"),
           providerKey: secondProviderKey,
           name: "Linear",
           state: "auth-required",
@@ -280,7 +281,7 @@ describe("McpRuntimeRegistry", () => {
         : Effect.succeed([
             runtimeServer(input.runtimeSessionId),
             runtimeServer(input.runtimeSessionId, {
-              serverId: "linear",
+              serverId: McpServerId.make("linear"),
               providerKey: secondProviderKey,
               name: "Linear",
             }),
@@ -314,7 +315,7 @@ describe("McpRuntimeRegistry", () => {
       Effect.succeed([
         runtimeServer(input.runtimeSessionId),
         runtimeServer(input.runtimeSessionId, {
-          serverId: "linear",
+          serverId: McpServerId.make("linear"),
           providerKey: secondProviderKey,
           name: "Linear",
         }),
@@ -513,7 +514,7 @@ describe("McpRuntimeRegistry", () => {
       Effect.succeed([
         runtimeServer(input.runtimeSessionId),
         runtimeServer(input.runtimeSessionId, {
-          serverId: "linear",
+          serverId: McpServerId.make("linear"),
           providerKey: secondProviderKey,
           name: "Linear",
         }),
@@ -546,7 +547,7 @@ describe("McpRuntimeRegistry", () => {
       Effect.succeed([
         runtimeServer(input.runtimeSessionId),
         runtimeServer(input.runtimeSessionId, {
-          serverId: "linear",
+          serverId: McpServerId.make("linear"),
           providerKey: secondProviderKey,
           name: "Linear",
         }),
@@ -665,7 +666,7 @@ describe("McpRuntimeRegistry", () => {
       yield* registry.registerSession(session(firstRuntimeSessionId));
 
       const results = yield* registry.applyConfiguration({
-        serverId: "notion",
+        serverId: McpServerId.make("notion"),
         providerInstanceId,
         enabled: true,
       });
@@ -696,7 +697,7 @@ describe("McpRuntimeRegistry", () => {
       getSnapshot.mockClear();
 
       const results = yield* registry.applyConfiguration({
-        serverId: "notion",
+        serverId: McpServerId.make("notion"),
         providerInstanceId,
         enabled: true,
       });
@@ -723,7 +724,7 @@ describe("McpRuntimeRegistry", () => {
       applyConfiguration: () => Effect.void,
     });
     const definition: McpServerDefinition = {
-      id: "notion",
+      id: McpServerId.make("notion"),
       name: "Notion",
       enabled: true,
       providerRouting: { mode: "selected", instanceIds: [providerInstanceId] },
@@ -742,7 +743,7 @@ describe("McpRuntimeRegistry", () => {
       });
 
       const results = yield* registry.applyConfiguration(
-        { serverId: "notion", providerInstanceId, enabled: true },
+        { serverId: McpServerId.make("notion"), providerInstanceId, enabled: true },
         definition,
       );
 
@@ -762,7 +763,7 @@ describe("McpRuntimeRegistry", () => {
       });
       expect(pending.servers).toEqual([
         expect.objectContaining({
-          serverId: "notion",
+          serverId: McpServerId.make("notion"),
           providerKey: "notion",
           state: "not-started",
           statusSource: "configuration",
@@ -788,7 +789,7 @@ describe("McpRuntimeRegistry", () => {
       { applyConfiguration: () => Effect.void },
     );
     const definition: McpServerDefinition = {
-      id: "notion",
+      id: McpServerId.make("notion"),
       name: "Notion",
       enabled: true,
       providerRouting: { mode: "all" },
@@ -805,7 +806,7 @@ describe("McpRuntimeRegistry", () => {
       shouldFail = true;
 
       const results = yield* registry.applyConfiguration(
-        { serverId: "notion", providerInstanceId, enabled: true },
+        { serverId: McpServerId.make("notion"), providerInstanceId, enabled: true },
         definition,
       );
 
@@ -824,7 +825,7 @@ describe("McpRuntimeRegistry", () => {
     const applyConfiguration = vi.fn(() => Effect.void);
     const adapter = makeAdapter(() => Effect.succeed([]), { applyConfiguration });
     const projectServer: McpServerDefinition = {
-      id: "notion",
+      id: McpServerId.make("notion"),
       name: "Notion",
       enabled: true,
       providerRouting: { mode: "all" },
@@ -843,7 +844,7 @@ describe("McpRuntimeRegistry", () => {
       );
 
       const results = yield* registry.applyConfiguration(
-        { serverId: "notion", providerInstanceId, enabled: false },
+        { serverId: McpServerId.make("notion"), providerInstanceId, enabled: false },
         projectServer,
       );
 

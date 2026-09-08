@@ -1,5 +1,4 @@
 import type {
-  ChatAudioAttachment as ContractChatAudioAttachment,
   ChatFileAttachment as ContractChatFileAttachment,
   ChatImageAttachment as ContractChatImageAttachment,
   ChatUnknownAttachment as ContractChatUnknownAttachment,
@@ -18,6 +17,9 @@ import type {
   EnvironmentThread,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
+import { videoMimeType } from "@t3tools/shared/video";
+
+export { videoMimeType } from "@t3tools/shared/video";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
@@ -38,10 +40,6 @@ export interface ChatImageAttachment extends ContractChatImageAttachment {
   readonly previewUrl?: string;
 }
 
-export interface ChatAudioAttachment extends ContractChatAudioAttachment {
-  readonly previewUrl?: string;
-}
-
 export interface ChatFileAttachment extends ContractChatFileAttachment {
   readonly previewUrl?: string;
   readonly downloadable?: boolean;
@@ -52,11 +50,7 @@ export interface ChatFileAttachment extends ContractChatFileAttachment {
 // older client.
 export type ChatUnknownAttachment = ContractChatUnknownAttachment;
 
-export type ChatAttachment =
-  | ChatImageAttachment
-  | ChatAudioAttachment
-  | ChatFileAttachment
-  | ChatUnknownAttachment;
+export type ChatAttachment = ChatImageAttachment | ChatFileAttachment | ChatUnknownAttachment;
 
 // The union has an open member (`type: string`), so a literal comparison does
 // not narrow. Use these guards wherever type-specific fields are read.
@@ -68,8 +62,17 @@ export function isFileAttachment(attachment: ChatAttachment): attachment is Chat
   return attachment.type === "file";
 }
 
-export function isAudioAttachment(attachment: ChatAttachment): attachment is ChatAudioAttachment {
-  return attachment.type === "audio";
+export function isVideoAttachment(attachment: ChatFileAttachment): boolean {
+  return videoMimeType(attachment) !== null;
+}
+
+export function isBrowserPreviewAttachment(attachment: ChatFileAttachment): boolean {
+  const mimeType = attachment.mimeType.split(";", 1)[0]?.trim().toLowerCase();
+  return (
+    /\.(?:html?|pdf)$/i.test(attachment.name) ||
+    mimeType === "application/pdf" ||
+    mimeType === "text/html"
+  );
 }
 
 export interface ChatMessage extends Omit<OrchestrationMessage, "attachments"> {

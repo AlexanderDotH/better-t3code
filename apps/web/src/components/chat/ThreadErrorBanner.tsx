@@ -3,7 +3,6 @@ import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { CircleAlertIcon, XIcon } from "lucide-react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 export function getThreadErrorBannerKey(threadKey: string, error: string | null): string | null {
   return error === null ? null : `${threadKey}\u0000${error}`;
@@ -41,11 +40,15 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   error: string | null;
   onDismiss?: () => void;
 }) {
-  const translate = useInterfaceTranslator().message;
   if (!error) return null;
   return (
-    <div className="mx-auto w-fit max-w-[min(48rem,calc(100%-2rem))] pt-3">
-      <Alert variant="error" controlAlignment="first-line">
+    <div className="pointer-events-auto mx-auto w-fit max-w-[min(48rem,calc(100%-2rem))] pt-3">
+      <Alert
+        variant="error"
+        controlAlignment="first-line"
+        className="alert-glass"
+        data-variant="error"
+      >
         <CircleAlertIcon />
         <AlertDescription>
           <Tooltip>
@@ -57,12 +60,7 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
         </AlertDescription>
         {onDismiss && (
           <AlertAction>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              aria-label={translate("chat.composer.dismissError")}
-              onClick={onDismiss}
-            >
+            <Button variant="ghost" size="icon-xs" aria-label="Dismiss error" onClick={onDismiss}>
               <XIcon className="text-destructive" />
             </Button>
           </AlertAction>

@@ -1,104 +1,77 @@
 import {
-  defaultInstanceIdForDriver,
   ProviderDriverKind,
-  type ServerProvider,
+  type ModelCapabilities,
+  type ServerProviderModel,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { getDefaultServerModel, isPlanModeAvailable } from "./providerModels";
+import { getProviderModelCapabilities } from "./providerModels";
 
-const CODEX = ProviderDriverKind.make("codex");
-const CLAUDE = ProviderDriverKind.make("claudeAgent");
-const OPENCODE = ProviderDriverKind.make("opencode");
+const PROVIDER = ProviderDriverKind.make("claudeAgent");
 
-function provider(driver: ProviderDriverKind, showInteractionModeToggle: boolean): ServerProvider {
+function capabilities(id: string): ModelCapabilities {
   return {
-    instanceId: defaultInstanceIdForDriver(driver),
-    driver,
-    enabled: true,
-    installed: true,
-    version: "test",
-    status: "ready",
-    auth: { status: "authenticated" },
-    checkedAt: "2026-08-11T00:00:00.000Z",
-    models: [],
-    slashCommands: [],
-    skills: [],
-    showInteractionModeToggle,
+    optionDescriptors: [{ id, label: id, type: "boolean" }],
   };
 }
 
-describe("isPlanModeAvailable", () => {
-  it("requires the legacy setting for Codex plan mode", () => {
-    const providers = [provider(CODEX, true)];
+function model(input: {
+  slug: string;
+  capabilities: ModelCapabilities;
+  aliases?: ReadonlyArray<string>;
+  isCustom?: boolean;
+}): ServerProviderModel {
+  return {
+    slug: input.slug,
+    name: input.slug,
+    ...(input.aliases ? { aliases: [...input.aliases] } : {}),
+    isCustom: input.isCustom ?? false,
+    capabilities: input.capabilities,
+  };
+}
 
-    expect(
-      isPlanModeAvailable({
-        providers,
-        provider: CODEX,
-        legacyPlanModeEnabled: false,
+describe("getProviderModelCapabilities", () => {
+  it("resolves model-declared aliases", () => {
+    const aliasCapabilities = capabilities("aliased-option");
+    const models = [
+      model({
+        slug: "synthetic-model",
+        aliases: ["Legacy-Synthetic-Model"],
+        capabilities: aliasCapabilities,
       }),
-    ).toBe(false);
-    expect(
-      isPlanModeAvailable({
-        providers,
-        provider: CODEX,
-        legacyPlanModeEnabled: true,
-      }),
-    ).toBe(true);
+    ];
+
+    expect(getProviderModelCapabilities(models, "legacy-synthetic-model", PROVIDER)).toEqual(
+      aliasCapabilities,
+    );
   });
 
-  it("keeps the legacy setting for other providers that support plan mode", () => {
-    const providers = [provider(CLAUDE, true)];
+  it("prefers an exact custom slug over a built-in model alias", () => {
+    const customCapabilities = capabilities("custom-option");
+    const models = [
+      model({
+        slug: "synthetic-model",
+        aliases: ["custom-model"],
+        capabilities: capabilities("built-in-option"),
+      }),
+      model({ slug: "custom-model", capabilities: customCapabilities, isCustom: true }),
+    ];
 
-    expect(
-      isPlanModeAvailable({
-        providers,
-        provider: CLAUDE,
-        legacyPlanModeEnabled: false,
-      }),
-    ).toBe(false);
-    expect(
-      isPlanModeAvailable({
-        providers,
-        provider: CLAUDE,
-        legacyPlanModeEnabled: true,
-      }),
-    ).toBe(true);
+    expect(getProviderModelCapabilities(models, " custom-model ", PROVIDER)).toEqual(
+      customCapabilities,
+    );
   });
 
-  it("respects providers that do not implement plan mode", () => {
-    expect(
-      isPlanModeAvailable({
-        providers: [provider(OPENCODE, false)],
-        provider: OPENCODE,
-        legacyPlanModeEnabled: true,
+  it("returns empty capabilities for an unknown slug", () => {
+    const models = [
+      model({
+        slug: "default-model",
+        capabilities: capabilities("default-option"),
       }),
-    ).toBe(false);
-  });
-});
+    ];
 
-describe("getDefaultServerModel", () => {
-  it("skips provider models marked non-selectable", () => {
-    const openRouter = {
-      ...provider(ProviderDriverKind.make("openrouter"), true),
-      models: [
-        {
-          slug: "openai/no-tools",
-          name: "No tools",
-          isCustom: false,
-          isSelectable: false,
-          capabilities: null,
-        },
-        {
-          slug: "openai/gpt-agent",
-          name: "GPT Agent",
-          isCustom: false,
-          capabilities: null,
-        },
-      ],
-    } satisfies ServerProvider;
-
-    expect(getDefaultServerModel([openRouter], openRouter.driver)).toBe("openai/gpt-agent");
+    expect(getProviderModelCapabilities(models, "unknown-model", PROVIDER)).toEqual({
+      optionDescriptors: [],
+    });
   });
 });

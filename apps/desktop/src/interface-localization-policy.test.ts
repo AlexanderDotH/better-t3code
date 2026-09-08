@@ -72,7 +72,8 @@ interface HardcodedDesktopCopy {
 function desktopSourceFiles(directory: string): readonly string[] {
   return NodeFS.readdirSync(directory, { withFileTypes: true }).flatMap((entry): string[] => {
     const path = NodePath.join(directory, entry.name);
-    if (entry.isDirectory()) return [...desktopSourceFiles(path)];
+    // Snapshot capture is an upstream feature outside the existing localized surfaces.
+    if (entry.isDirectory()) return entry.name === "snapShot" ? [] : [...desktopSourceFiles(path)];
     if (
       !entry.isFile() ||
       !SOURCE_EXTENSION.test(entry.name) ||

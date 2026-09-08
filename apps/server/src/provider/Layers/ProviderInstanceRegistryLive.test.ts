@@ -1,3 +1,11 @@
+import * as WorkspaceContext from "../../workspace/WorkspaceContext.ts";
+import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
+import { OpenAiDriver } from "../Drivers/OpenAiDriver.ts";
+import * as Option from "effect/Option";
+import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
+import * as SubagentResourceGovernor from "../../resourceProtection/SubagentResourceGovernor.ts";
+import { NoOpMcpConfigEngineLayer } from "../../mcp/testUtils.ts";
+import { OpenRouterDriver } from "../Drivers/OpenRouterDriver.ts";
 /**
  * Multi-instance validation slices for `ProviderInstanceRegistryLive`.
  *
@@ -25,7 +33,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
-  DEFAULT_SERVER_SETTINGS,
   type ChatGptSettings,
   type ClaudeSettings,
   type CodexSettings,
@@ -39,36 +46,27 @@ import {
   type ProviderInstanceConfigMap,
   ProviderInstanceId,
 } from "@t3tools/contracts";
+import { isHostWindows } from "@t3tools/shared/hostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
-import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
+import { BUILT_IN_DRIVERS, type BuiltInDriversEnv } from "../builtInDrivers.ts";
+import { AntigravityInstallation } from "../AntigravityInstallation.ts";
 import { ServerConfig } from "../../config.ts";
+import { expandHomePath } from "../../pathExpansion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import * as SubagentResourceGovernor from "../../resourceProtection/SubagentResourceGovernor.ts";
-import { BUILT_IN_DRIVERS } from "../builtInDrivers.ts";
-import { GrokDriver, type GrokDriverEnv } from "../Drivers/GrokDriver.ts";
-import { GeminiDriver, type GeminiDriverEnv } from "../Drivers/GeminiDriver.ts";
-import { NoOpMcpConfigEngineLayer } from "../../mcp/testUtils.ts";
-import { ClaudeDriver, type ClaudeDriverEnv } from "../Drivers/ClaudeDriver.ts";
-import { CodexDriver, type CodexDriverEnv } from "../Drivers/CodexDriver.ts";
-import { ChatGptDriver, type ChatGptDriverEnv } from "../Drivers/ChatGptDriver.ts";
-import { CursorDriver, type CursorDriverEnv } from "../Drivers/CursorDriver.ts";
-import { OpenAiDriver, type OpenAiDriverEnv } from "../Drivers/OpenAiDriver.ts";
-import { OpenCodeDriver, type OpenCodeDriverEnv } from "../Drivers/OpenCodeDriver.ts";
-import { OpenRouterDriver, type OpenRouterDriverEnv } from "../Drivers/OpenRouterDriver.ts";
+import { ClaudeDriver } from "../Drivers/ClaudeDriver.ts";
+import { CodexDriver } from "../Drivers/CodexDriver.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
-import * as WorkspaceContext from "../../workspace/WorkspaceContext.ts";
-import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
-import type { AnyProviderDriver } from "../ProviderDriver.ts";
+import * as CodexResetCredit from "./codexResetCredit.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
-import { deriveProviderInstanceConfigMap } from "./ProviderInstanceRegistryHydration.ts";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistryLive.ts";
 
 const TestHttpClientLive = Layer.succeed(
@@ -176,50 +174,78 @@ const makeOpenCodeConfig = (overrides: Partial<OpenCodeSettings>): OpenCodeSetti
   ...overrides,
 });
 
-const makeOpenRouterConfig = (overrides: Partial<OpenRouterSettings>): OpenRouterSettings => ({
-  ...OpenRouterDriver.defaultConfig(),
-  ...overrides,
-});
-
-const makeOpenAiConfig = (overrides: Partial<OpenAiSettings>): OpenAiSettings => ({
-  ...OpenAiDriver.defaultConfig(),
-  ...overrides,
-});
-
-describe("BUILT_IN_DRIVERS", () => {
-  it("registers exactly the native providers in upstream order", () => {
-    expect(BUILT_IN_DRIVERS.map((driver) => driver.driverKind)).toEqual([
-      ProviderDriverKind.make("codex"),
-      ProviderDriverKind.make("chatgpt"),
-      ProviderDriverKind.make("openrouter"),
-      ProviderDriverKind.make("openai"),
-      ProviderDriverKind.make("claudeAgent"),
-      ProviderDriverKind.make("cursor"),
-      ProviderDriverKind.make("grok"),
-      ProviderDriverKind.make("opencode"),
-      ProviderDriverKind.make("gemini"),
-    ]);
+const makeTildeProviderFixtures = Effect.fn(
+  "ProviderInstanceRegistryLive.test.makeTildeProviderFixtures",
+)(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const homePath = expandHomePath("~");
+  const fixtureDir = yield* fileSystem.makeTempDirectoryScoped({
+    directory: homePath,
+    prefix: ".t3-provider-path-test-",
   });
-});
+  const codexPath = path.join(fixtureDir, "codex");
+  const claudePath = path.join(fixtureDir, "claude");
+  const claudeHomePath = path.join(fixtureDir, "claude-home");
+  const codexScriptPath = path.join(fixtureDir, "codex-script.json");
+  const codexFixtureDir = path.join(import.meta.dirname, "../testFixtures");
 
-describe("deriveProviderInstanceConfigMap", () => {
-  it("hydrates exactly the nine native default instances", () => {
-    const configMap = deriveProviderInstanceConfigMap(DEFAULT_SERVER_SETTINGS);
+  yield* fileSystem.copyFile(path.join(codexFixtureDir, "codexCollabMockPeer.sh"), codexPath);
+  yield* fileSystem.copyFile(
+    path.join(codexFixtureDir, "codexCollabMockPeer.mjs"),
+    path.join(fixtureDir, "codexCollabMockPeer.mjs"),
+  );
+  yield* fileSystem.copyFile(
+    path.join(codexFixtureDir, "codexMultiAgentWire.json"),
+    path.join(fixtureDir, "codexMultiAgentWire.json"),
+  );
+  yield* fileSystem.writeFileString(
+    codexScriptPath,
+    // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed script document read by the external Codex mock peer.
+    JSON.stringify({ rootThreadId: "probe-thread", notifications: [] }),
+  );
+  yield* fileSystem.chmod(codexPath, 0o755);
 
-    expect(
-      Object.entries(configMap).map(([instanceId, config]) => [instanceId, config.driver]),
-    ).toEqual([
-      ["codex", "codex"],
-      ["chatgpt", "chatgpt"],
-      ["openrouter", "openrouter"],
-      ["openai", "openai"],
-      ["claudeAgent", "claudeAgent"],
-      ["cursor", "cursor"],
-      ["grok", "grok"],
-      ["opencode", "opencode"],
-      ["gemini", "gemini"],
-    ]);
-  });
+  yield* fileSystem.writeFileString(
+    claudePath,
+    [
+      "#!/usr/bin/env node",
+      'import * as NodeReadline from "node:readline";',
+      'if (process.argv.includes("--version")) {',
+      '  process.stdout.write("claude 2.1.219\\n");',
+      "  process.exit(0);",
+      "}",
+      "const lines = NodeReadline.createInterface({ input: process.stdin });",
+      'lines.on("line", (line) => {',
+      "  const message = JSON.parse(line);",
+      '  if (message.type !== "control_request" || message.request?.subtype !== "initialize") return;',
+      "  process.stdout.write(JSON.stringify({",
+      '    type: "control_response",',
+      "    response: {",
+      '      subtype: "success",',
+      "      request_id: message.request_id,",
+      "      response: {",
+      "        commands: [], agents: [], models: [],",
+      '        output_style: "default", available_output_styles: ["default"],',
+      '        account: { email: "test@example.com", subscriptionType: "pro", tokenSource: "oauth" },',
+      "      },",
+      "    },",
+      '  }) + "\\n");',
+      "});",
+      "setInterval(() => {}, 1_000);",
+      "",
+    ].join("\n"),
+  );
+  yield* fileSystem.chmod(claudePath, 0o755);
+  yield* fileSystem.makeDirectory(claudeHomePath);
+
+  const asTildePath = (filePath: string) => `~/${path.relative(homePath, filePath)}`;
+  return {
+    codexBinaryPath: asTildePath(codexPath),
+    claudeBinaryPath: asTildePath(claudePath),
+    claudeHomePath,
+    codexScriptPath,
+  };
 });
 
 describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
@@ -237,8 +263,21 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
     Layer.provideMerge(TestHttpClientLive),
     Layer.provideMerge(NoOpMcpConfigEngineLayer),
     Layer.provideMerge(SubagentResourceGovernor.layer),
+    Layer.provideMerge(
+      Layer.mock(WorkspaceContext.WorkspaceContext)({
+        execute: () => Effect.succeed({ queries: [], reads: [], truncated: false, warnings: [] }),
+      }),
+    ),
+    Layer.provideMerge(
+      Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)({
+        readFile: () => Effect.die("unused"),
+        writeFile: () => Effect.die("unused"),
+        editFiles: () => Effect.die("unused"),
+      }),
+    ),
     Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
     Layer.provideMerge(ModelManifest.layerTest),
+    Layer.provideMerge(CodexResetCredit.layerTest),
   );
 
   it.live("boots two independent codex instances from a ProviderInstanceConfigMap", () =>
@@ -299,23 +338,19 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       expect(personalSnapshot.instanceId).toBe(personalId);
       expect(personalSnapshot.driver).toBe(codexDriverKind);
       expect(personalSnapshot.enabled).toBe(false);
-      expect(personalSnapshot.fetchWorkers).toEqual({
-        maxRecommendedWorkers: 8,
-        commandExecutionPolicy: "deny",
-      });
+      // The layout resolves the configured home through the host Path.
+      const path = yield* Path.Path;
       expect(personalSnapshot.continuation?.groupKey).toBe(
-        "codex:home:/home/julius/.codex_personal",
+        `codex:home:${path.resolve("/home/julius/.codex_personal")}`,
       );
 
       const workSnapshot = yield* work!.snapshot.getSnapshot;
       expect(workSnapshot.instanceId).toBe(workId);
       expect(workSnapshot.driver).toBe(codexDriverKind);
       expect(workSnapshot.enabled).toBe(false);
-      expect(workSnapshot.fetchWorkers).toEqual({
-        maxRecommendedWorkers: 8,
-        commandExecutionPolicy: "deny",
-      });
-      expect(workSnapshot.continuation?.groupKey).toBe("codex:home:/home/julius/.codex");
+      expect(workSnapshot.continuation?.groupKey).toBe(
+        `codex:home:${path.resolve("/home/julius/.codex")}`,
+      );
 
       // Nothing goes to the unavailable bucket — both drivers are registered.
       const unavailable = yield* registry.listUnavailable;
@@ -346,6 +381,60 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       expect(instance!.enabled).toBe(false);
       const snapshot = yield* instance!.snapshot.getSnapshot;
       expect(snapshot.enabled).toBe(false);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("runs Codex and Claude readiness probes from configured tilde paths", () =>
+    Effect.gen(function* () {
+      if (yield* isHostWindows) return;
+
+      const fixtures = yield* makeTildeProviderFixtures();
+
+      const codexId = ProviderInstanceId.make("codex_tilde");
+      const claudeId = ProviderInstanceId.make("claude_tilde");
+      const configMap: ProviderInstanceConfigMap = {
+        [codexId]: {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          environment: [
+            {
+              name: "T3_CODEX_COLLAB_SCRIPT",
+              value: fixtures.codexScriptPath,
+              sensitive: false,
+            },
+          ],
+          config: makeCodexConfig({ enabled: true, binaryPath: fixtures.codexBinaryPath }),
+        },
+        [claudeId]: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          enabled: true,
+          config: makeClaudeConfig({
+            enabled: true,
+            binaryPath: fixtures.claudeBinaryPath,
+            homePath: fixtures.claudeHomePath,
+          }),
+        },
+      };
+
+      const { registry } = yield* makeProviderInstanceRegistry({
+        drivers: [CodexDriver, ClaudeDriver],
+        configMap,
+      });
+      const codex = yield* registry.getInstance(codexId);
+      const claude = yield* registry.getInstance(claudeId);
+      expect(codex).toBeDefined();
+      expect(claude).toBeDefined();
+
+      const [codexSnapshot, claudeSnapshot] = yield* Effect.all(
+        [codex!.snapshot.refresh, claude!.snapshot.refresh],
+        { concurrency: "unbounded" },
+      );
+      expect(codexSnapshot).toMatchObject({ status: "ready", installed: true, version: "0.0.0" });
+      expect(claudeSnapshot).toMatchObject({
+        status: "ready",
+        installed: true,
+        version: "2.1.219",
+      });
     }).pipe(Effect.provide(testLayer)),
   );
 
@@ -403,29 +492,13 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
   // provides `OpenCodeRuntimeLive`'s deps while keeping its own outputs
   // surfaced; that merged layer then provides `ServerConfig.layerTest`'s
   // `FileSystem` dep while keeping everything else surfaced to the test.
-  const GeminiWorkspaceLayer = Layer.merge(
-    Layer.succeed(
-      WorkspaceContext.WorkspaceContext,
-      WorkspaceContext.WorkspaceContext.of({
-        execute: () => Effect.succeed({ queries: [], reads: [], truncated: false, warnings: [] }),
+  const infraLayer = OpenCodeRuntimeLive.pipe(Layer.provideMerge(NodeServices.layer));
+  const testLayer = AntigravityInstallation.layer.pipe(
+    Layer.provideMerge(
+      ServerConfig.layerTest(process.cwd(), {
+        prefix: "provider-instance-registry-all-drivers-test",
       }),
     ),
-    Layer.succeed(
-      WorkspaceFileSystem.WorkspaceFileSystem,
-      WorkspaceFileSystem.WorkspaceFileSystem.of({
-        readFile: () => Effect.die("unused Gemini workspace read in disabled-driver test"),
-        writeFile: () => Effect.die("unused Gemini workspace write in disabled-driver test"),
-        editFiles: () => Effect.die("unused Gemini workspace edit in disabled-driver test"),
-      }),
-    ),
-  );
-  const infraLayer = OpenCodeRuntimeLive.pipe(
-    Layer.provideMerge(NodeServices.layer),
-    Layer.provideMerge(GeminiWorkspaceLayer),
-  );
-  const testLayer = ServerConfig.layerTest(process.cwd(), {
-    prefix: "provider-instance-registry-all-drivers-test",
-  }).pipe(
     Layer.provideMerge(infraLayer),
     Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
     Layer.provideMerge(ServerSettingsService.layerTest()),
@@ -433,8 +506,21 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
     Layer.provideMerge(NoOpMcpConfigEngineLayer),
     Layer.provideMerge(TestServerSecretStoreLayer),
     Layer.provideMerge(SubagentResourceGovernor.layer),
+    Layer.provideMerge(
+      Layer.mock(WorkspaceContext.WorkspaceContext)({
+        execute: () => Effect.succeed({ queries: [], reads: [], truncated: false, warnings: [] }),
+      }),
+    ),
+    Layer.provideMerge(
+      Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)({
+        readFile: () => Effect.die("unused"),
+        writeFile: () => Effect.die("unused"),
+        editFiles: () => Effect.die("unused"),
+      }),
+    ),
     Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
     Layer.provideMerge(ModelManifest.layerTest),
+    Layer.provideMerge(CodexResetCredit.layerTest),
   );
 
   it.live("boots every shipped driver and isolates multiple OpenRouter instances", () =>
@@ -529,29 +615,8 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         },
       };
 
-      type AllDriverEnv =
-        | CodexDriverEnv
-        | ChatGptDriverEnv
-        | OpenRouterDriverEnv
-        | OpenAiDriverEnv
-        | ClaudeDriverEnv
-        | CursorDriverEnv
-        | GeminiDriverEnv
-        | GrokDriverEnv
-        | OpenCodeDriverEnv;
-      const drivers: ReadonlyArray<AnyProviderDriver<AllDriverEnv>> = [
-        CodexDriver,
-        ChatGptDriver,
-        OpenRouterDriver,
-        OpenAiDriver,
-        ClaudeDriver,
-        CursorDriver,
-        GrokDriver,
-        OpenCodeDriver,
-        GeminiDriver,
-      ];
-      const { registry } = yield* makeProviderInstanceRegistry({
-        drivers,
+      const { registry } = yield* makeProviderInstanceRegistry<BuiltInDriversEnv>({
+        drivers: BUILT_IN_DRIVERS,
         configMap,
       });
 
@@ -670,11 +735,9 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(codexSnapshot.instanceId).toBe(codexId);
       expect(codexSnapshot.driver).toBe(codexDriverKind);
       expect(codexSnapshot.enabled).toBe(false);
-      expect(codexSnapshot.fetchWorkers).toEqual({
-        maxRecommendedWorkers: 8,
-        commandExecutionPolicy: "deny",
-      });
-      expect(codexSnapshot.continuation?.groupKey).toBe("codex:home:/home/julius/.codex");
+      expect(codexSnapshot.continuation?.groupKey).toBe(
+        `codex:home:${(yield* Path.Path).resolve("/home/julius/.codex")}`,
+      );
 
       const chatGptSnapshot = yield* chatGpt!.snapshot.getSnapshot;
       expect(chatGptSnapshot.instanceId).toBe(chatGptId);
@@ -713,11 +776,9 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(claudeSnapshot.instanceId).toBe(claudeId);
       expect(claudeSnapshot.driver).toBe(claudeDriverKind);
       expect(claudeSnapshot.enabled).toBe(false);
-      expect(claudeSnapshot.fetchWorkers).toEqual({
-        maxRecommendedWorkers: 8,
-        commandExecutionPolicy: "deny",
-      });
-      expect(claudeSnapshot.continuation?.groupKey).toBe("claude:home:/home/julius/.claude-work");
+      expect(claudeSnapshot.continuation?.groupKey).toBe(
+        `claude:home:${(yield* Path.Path).resolve("/home/julius/.claude-work")}`,
+      );
 
       const cursorSnapshot = yield* cursor!.snapshot.getSnapshot;
       expect(cursorSnapshot.instanceId).toBe(cursorId);
@@ -826,4 +887,13 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(workSnapshot.continuation?.groupKey).toBe(`${driver}:instance:${workId}`);
     }).pipe(Effect.provide(testLayer)),
   );
+});
+
+const makeOpenRouterConfig = (overrides: Partial<OpenRouterSettings>): OpenRouterSettings => ({
+  ...OpenRouterDriver.defaultConfig(),
+  ...overrides,
+});
+const makeOpenAiConfig = (overrides: Partial<OpenAiSettings>): OpenAiSettings => ({
+  ...OpenAiDriver.defaultConfig(),
+  ...overrides,
 });

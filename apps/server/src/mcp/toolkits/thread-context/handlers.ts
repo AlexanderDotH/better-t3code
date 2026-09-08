@@ -272,15 +272,13 @@ export const invokeThreadContext = Effect.fn("ThreadContextToolkit.invoke")(func
         message.role !== "system" &&
         (lexicalQuery === undefined || message.text.toLowerCase().includes(lexicalQuery)),
     )
-    .map(
-      (message): ThreadContextMessage => ({
-        threadId: message.historyOrigin?.sourceThreadId ?? root.id,
-        messageId: MessageId.make(message.historyOrigin?.sourceId ?? message.id),
-        role: message.role,
-        text: message.text,
-        createdAt: message.createdAt,
-      }),
-    )
+    .map((message): ThreadContextMessage => ({
+      threadId: message.historyOrigin?.sourceThreadId ?? root.id,
+      messageId: MessageId.make(message.historyOrigin?.sourceId ?? message.id),
+      role: message.role,
+      text: message.text,
+      createdAt: message.createdAt,
+    }))
     .filter(
       (message) =>
         messageCursor === undefined || compareMessages(message, messageCursor.before) < 0,

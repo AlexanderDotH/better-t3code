@@ -36,6 +36,7 @@ const makeStubTextGeneration = (
       Effect.die("reviewPlanParallelism stub not configured for this test"),
     planFetchExploration: () =>
       Effect.die("planFetchExploration stub not configured for this test"),
+    enrichKnowledgeGraph: () => Effect.die("enrichKnowledgeGraph stub not configured"),
     ...overrides,
   });
 

@@ -130,7 +130,10 @@ it.effect("replays contiguous patches and falls back to invalidate plus snapshot
       });
       const replay = yield* contiguousStream.pipe(Stream.take(2), Stream.runCollect);
       assert.deepStrictEqual(
-        Array.from(replay, ({ type, ...event }) => ({ type, revision: event.revision })),
+        Array.from(replay, (event) => ({
+          type: event.type,
+          revision: "revision" in event ? event.revision : undefined,
+        })),
         [
           { type: "patch", revision: 1 },
           { type: "patch", revision: 2 },

@@ -7,12 +7,12 @@ import {
   type ProviderInteractionMode,
   type RuntimeMode,
 } from "@t3tools/contracts";
+import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 
-import type { DraftComposerImageAttachment } from "./composerImages";
-import { toUploadChatImageAttachments } from "./composerImageUploads";
+import type { UploadedMobileAttachment } from "./attachmentUpload";
 
 export function deriveThreadTitleFromPrompt(value: string): string {
-  const trimmed = value.trim();
+  const trimmed = assistantCitationsToPlainText(value).trim();
   if (trimmed.length === 0) {
     return "New thread";
   }
@@ -29,8 +29,9 @@ export interface ProjectThreadStartTurnSpec {
   readonly messageId: string;
   readonly createdAt: string;
   readonly text: string;
-  readonly attachments: ReadonlyArray<DraftComposerImageAttachment>;
-  readonly durableModelSelection: ModelSelection;
+  /** Wire attachments from `prepareTurnAttachments`, in composer order. */
+  readonly uploadedAttachments: ReadonlyArray<UploadedMobileAttachment>;
+  readonly modelSelection: ModelSelection;
   readonly turnModelSelection?: ModelSelection;
   readonly fetchMode?: "repository-exploration";
   readonly runtimeMode: RuntimeMode;
@@ -58,10 +59,10 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
       messageId: MessageId.make(spec.messageId),
       role: "user" as const,
       text: spec.text,
-      attachments: toUploadChatImageAttachments(spec.attachments),
+      attachments: spec.uploadedAttachments,
     },
+    modelSelection: spec.turnModelSelection ?? spec.modelSelection,
     ...(spec.fetchMode === undefined ? {} : { fetchMode: spec.fetchMode }),
-    modelSelection: spec.turnModelSelection ?? spec.durableModelSelection,
     titleSeed: title,
     runtimeMode: spec.runtimeMode,
     interactionMode: spec.interactionMode,
@@ -69,7 +70,7 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
       createThread: {
         projectId: spec.projectId,
         title,
-        modelSelection: spec.durableModelSelection,
+        modelSelection: spec.modelSelection,
         runtimeMode: spec.runtimeMode,
         interactionMode: spec.interactionMode,
         branch: spec.branch,

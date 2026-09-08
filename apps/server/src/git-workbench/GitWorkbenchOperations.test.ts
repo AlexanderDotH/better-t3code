@@ -12,6 +12,7 @@ import {
   GitWorkbenchOperationStateReader,
   layer,
   type GitWorkbenchOperationState,
+  type GitWorkbenchOperationCommandInput,
 } from "./GitWorkbenchOperations.ts";
 import { GitRebaseControlledEditor } from "./GitRebaseControlledEditor.ts";
 import { GitWorkbenchUndoService } from "./GitWorkbenchUndoService.ts";
@@ -151,8 +152,8 @@ describe("GitWorkbenchOperations", () => {
         })
         .pipe(Effect.flip);
 
-      assert.equal(error._tag, "GitWorkbenchOperationInputError");
-      assert.match(error.detail, /status is truncated/i);
+      assert.strictEqual(error._tag, "GitWorkbenchOperationInputError");
+      expect(error).toMatchObject({ detail: expect.stringMatching(/status is truncated/i) });
       expect(run).not.toHaveBeenCalled();
     }).pipe(
       Effect.provide(
@@ -379,7 +380,9 @@ describe("GitWorkbenchOperations", () => {
         args: ["rebase", "--rebase-merges", "refs/heads/main"],
       },
     ];
-    const run = vi.fn(() => Effect.succeed({ exitCode: 0 as const, stdout: "", stderr: "" }));
+    const run = vi.fn((_input: GitWorkbenchOperationCommandInput) =>
+      Effect.succeed({ exitCode: 0 as const, stdout: "", stderr: "" }),
+    );
 
     return Effect.gen(function* () {
       const operations = yield* GitWorkbenchOperations;
@@ -408,7 +411,9 @@ describe("GitWorkbenchOperations", () => {
       cases,
       (testCase) => {
         let reads = 0;
-        const run = vi.fn(() => Effect.succeed({ exitCode: 0 as const, stdout: "", stderr: "" }));
+        const run = vi.fn((_input: GitWorkbenchOperationCommandInput) =>
+          Effect.succeed({ exitCode: 0 as const, stdout: "", stderr: "" }),
+        );
         const read = () =>
           Effect.sync(() => {
             reads += 1;

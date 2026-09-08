@@ -24,6 +24,7 @@ import type {
   RuntimeSessionId,
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
+  MessageId,
   ThreadId,
   TurnId,
   ProviderTurnStartResult,
@@ -101,10 +102,10 @@ export interface ProviderServiceShape {
     input: ProviderSendTurnInput,
   ) => Effect.Effect<ProviderTurnStartResult, ProviderServiceError>;
 
-  /** Request provider-native compaction for an active thread. */
   readonly compactThread: (
     threadId: ThreadId,
-    expectedRuntimeSessionId?: RuntimeSessionId,
+    modelSelection?: ProviderSendTurnInput["modelSelection"] | RuntimeSessionId,
+    requestId?: MessageId,
   ) => Effect.Effect<void, ProviderServiceError>;
 
   /**
@@ -171,6 +172,13 @@ export interface ProviderServiceShape {
   readonly getInstanceInfo: (
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ProviderInstanceRoutingInfo, ProviderServiceError>;
+
+  /**
+   * Reject unsupported rewind before files change, without resuming the session.
+   */
+  readonly assertConversationRollbackSupported: (
+    threadId: ThreadId,
+  ) => Effect.Effect<void, ProviderServiceError>;
 
   /**
    * Roll back provider conversation state by a number of turns.

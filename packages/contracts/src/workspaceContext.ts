@@ -132,7 +132,7 @@ export const WorkspaceContextUnavailableReason = Schema.Literals([
 ]);
 export type WorkspaceContextUnavailableReason = typeof WorkspaceContextUnavailableReason.Type;
 
-export class WorkspaceContextUnavailableError extends Schema.TaggedErrorClass<WorkspaceContextUnavailableError>()(
+export class WorkspaceContextUnavailableError extends Schema.TaggedError<WorkspaceContextUnavailableError>()(
   "WorkspaceContextUnavailableError",
   {
     reason: WorkspaceContextUnavailableReason,
@@ -144,7 +144,7 @@ export class WorkspaceContextUnavailableError extends Schema.TaggedErrorClass<Wo
   }
 }
 
-export class WorkspaceContextPathError extends Schema.TaggedErrorClass<WorkspaceContextPathError>()(
+export class WorkspaceContextPathError extends Schema.TaggedError<WorkspaceContextPathError>()(
   "WorkspaceContextPathError",
   {
     relativePath: TrimmedNonEmptyString,
@@ -156,7 +156,7 @@ export class WorkspaceContextPathError extends Schema.TaggedErrorClass<Workspace
   }
 }
 
-export class WorkspaceContextSearchError extends Schema.TaggedErrorClass<WorkspaceContextSearchError>()(
+export class WorkspaceContextSearchError extends Schema.TaggedError<WorkspaceContextSearchError>()(
   "WorkspaceContextSearchError",
   {
     backend: Schema.Literals(["git", "filesystem"]),

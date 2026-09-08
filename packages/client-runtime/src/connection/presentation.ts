@@ -133,7 +133,8 @@ export function presentConnectionState(
   }
 }
 
-type EnvironmentConnectionStatus = Pick<EnvironmentConnectionPresentation, "phase" | "error">;
+type EnvironmentConnectionStatus = Pick<EnvironmentConnectionPresentation, "phase" | "error"> &
+  Partial<Pick<EnvironmentConnectionPresentation, "traceId">>;
 
 export function connectionStatusText(connection: EnvironmentConnectionStatus): string {
   switch (connection.phase) {

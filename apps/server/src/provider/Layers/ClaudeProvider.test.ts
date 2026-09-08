@@ -1,9 +1,12 @@
+import {
+  BUNDLED_CLAUDE_MODEL_CATALOG,
+  getClaudeCatalogModelCapabilities,
+} from "../ClaudeModelCatalog.ts";
 import type { ModelCapabilities } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { assert, describe, it } from "@effect/vitest";
 
 import {
-  getClaudeModelCapabilities,
   normalizeClaudeCliEffort,
   parseClaudeInitializationModels,
   resolveClaudeEffort,
@@ -106,11 +109,11 @@ describe("ClaudeProvider helpers", () => {
       normalizeClaudeCliEffort(
         "xhigh",
         "claude-opus-4-7",
-        getClaudeModelCapabilities("claude-opus-4-7"),
+        getClaudeCatalogModelCapabilities(BUNDLED_CLAUDE_MODEL_CATALOG, "claude-opus-4-7"),
       ),
       "max",
     );
-    assert.strictEqual(normalizeClaudeCliEffort("xhigh", "custom-model"), "max");
+    assert.strictEqual(normalizeClaudeCliEffort("xhigh", "custom-model"), "xhigh");
     assert.strictEqual(normalizeClaudeCliEffort("max", "claude-sonnet-4-6"), "high");
   });
 });

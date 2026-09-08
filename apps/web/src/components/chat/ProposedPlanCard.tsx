@@ -1,4 +1,4 @@
-import { memo, useState, useId, type ReactNode } from "react";
+import { memo, useState, useId } from "react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -32,7 +32,6 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { projectEnvironment } from "~/state/projects";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 
 export const ProposedPlanCard = memo(function ProposedPlanCard({
   planMarkdown,
@@ -40,18 +39,13 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   threadRef,
   cwd,
   workspaceRoot,
-  readOnly = false,
-  forkAction,
 }: {
   planMarkdown: string;
   environmentId: EnvironmentId;
   threadRef?: ScopedThreadRef | undefined;
   cwd: string | undefined;
   workspaceRoot: string | undefined;
-  readOnly?: boolean;
-  forkAction?: ReactNode;
 }) {
-  const translate = useInterfaceTranslator().message;
   const [expanded, setExpanded] = useState(false);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
   const [savePath, setSavePath] = useState("");
@@ -65,14 +59,14 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: translate("chat.plan.copyFailed"),
-          description: error instanceof Error ? error.message : translate("chat.plan.copyError"),
+          title: "Could not copy plan",
+          description: error instanceof Error ? error.message : "An error occurred while copying.",
         }),
       );
     },
   });
   const savePathInputId = useId();
-  const title = proposedPlanTitle(planMarkdown) ?? translate("chat.agent.proposedPlan");
+  const title = proposedPlanTitle(planMarkdown) ?? "Proposed plan";
   const lineCount = planMarkdown.split("\n").length;
   const canCollapse = planMarkdown.length > 900 || lineCount > 20;
   const displayedPlanMarkdown = stripDisplayedPlanMarkdown(planMarkdown);
@@ -95,8 +89,8 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: translate("chat.plan.workspaceUnavailable"),
-          description: translate("chat.plan.workspaceUnavailableDescription"),
+          title: "Workspace path is unavailable",
+          description: "This thread does not have a workspace path to save into.",
         }),
       );
       return;
@@ -113,7 +107,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
     if (!relativePath) {
       toastManager.add({
         type: "warning",
-        title: translate("chat.plan.enterWorkspacePath"),
+        title: "Enter a workspace path",
       });
       return;
     }
@@ -133,7 +127,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
         setIsSaveDialogOpen(false);
         toastManager.add({
           type: "success",
-          title: translate("chat.plan.saved"),
+          title: "Plan saved to workspace",
           description: result.value.relativePath,
         });
         return;
@@ -143,8 +137,8 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: translate("chat.plan.saveFailed"),
-            description: error instanceof Error ? error.message : translate("chat.plan.saveError"),
+            title: "Could not save plan",
+            description: error instanceof Error ? error.message : "An error occurred while saving.",
           }),
         );
       }
@@ -152,47 +146,28 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   };
 
   return (
-    <div
-      className="rounded-[24px] border border-border/80 p-4 sm:p-5"
-      data-chat-context-bubble="plan"
-      data-history-read-only={readOnly || undefined}
-    >
+    <div className="rounded-[24px] border border-border/80 bg-card/70 p-4 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
-          <Badge variant="secondary">{translate("chat.plan.label")}</Badge>
+          <Badge variant="secondary">Plan</Badge>
           <p className="truncate text-sm font-medium text-foreground">{title}</p>
         </div>
-        <div className="flex items-center gap-1">
-          {forkAction}
-          <Menu>
-            <MenuTrigger
-              render={
-                <Button
-                  aria-label={translate("chat.plan.actions")}
-                  size="icon-xs"
-                  variant="outline"
-                />
-              }
-            >
-              <EllipsisIcon aria-hidden="true" className="size-4" />
-            </MenuTrigger>
-            <MenuPopup align="end">
-              <MenuItem onClick={handleCopyPlan}>
-                {isCopied
-                  ? translate("chat.plan.copied")
-                  : translate("chat.composer.copyClipboard")}
-              </MenuItem>
-              <MenuItem onClick={handleDownload}>
-                {translate("chat.plan.downloadMarkdown")}
-              </MenuItem>
-              {!readOnly ? (
-                <MenuItem onClick={openSaveDialog} disabled={!workspaceRoot || isSavingToWorkspace}>
-                  {translate("chat.plan.saveWorkspace")}
-                </MenuItem>
-              ) : null}
-            </MenuPopup>
-          </Menu>
-        </div>
+        <Menu>
+          <MenuTrigger
+            render={<Button aria-label="Plan actions" size="icon-xs" variant="outline" />}
+          >
+            <EllipsisIcon aria-hidden="true" className="size-4" />
+          </MenuTrigger>
+          <MenuPopup align="end">
+            <MenuItem onClick={handleCopyPlan}>
+              {isCopied ? "Copied!" : "Copy to clipboard"}
+            </MenuItem>
+            <MenuItem onClick={handleDownload}>Download as markdown</MenuItem>
+            <MenuItem onClick={openSaveDialog} disabled={!workspaceRoot || isSavingToWorkspace}>
+              Save to workspace
+            </MenuItem>
+          </MenuPopup>
+        </Menu>
       </div>
       <div className="mt-4">
         <div className={cn("relative", canCollapse && !expanded && "max-h-104 overflow-hidden")}>
@@ -223,7 +198,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               data-scroll-anchor-ignore
               onClick={() => setExpanded((value) => !value)}
             >
-              {expanded ? translate("chat.plan.collapse") : translate("chat.plan.expand")}
+              {expanded ? "Collapse plan" : "Expand plan"}
             </Button>
           </div>
         ) : null}
@@ -239,18 +214,14 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
       >
         <DialogPopup className="max-w-xl">
           <DialogHeader>
-            <DialogTitle>{translate("chat.plan.saveTitle")}</DialogTitle>
+            <DialogTitle>Save plan to workspace</DialogTitle>
             <DialogDescription>
-              {translate("chat.plan.relativePath", {
-                workspace: workspaceRoot ?? translate("chat.plan.workspace"),
-              })}
+              Enter a path relative to <code>{workspaceRoot ?? "the workspace"}</code>.
             </DialogDescription>
           </DialogHeader>
           <DialogPanel className="space-y-3">
             <label htmlFor={savePathInputId} className="grid gap-1.5">
-              <span className="text-xs font-medium text-foreground">
-                {translate("chat.plan.workspacePath")}
-              </span>
+              <span className="text-xs font-medium text-foreground">Workspace path</span>
               <Input
                 id={savePathInputId}
                 value={savePath}
@@ -268,14 +239,14 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               onClick={() => setIsSaveDialogOpen(false)}
               disabled={isSavingToWorkspace}
             >
-              {translate("common.cancel")}
+              Cancel
             </Button>
             <Button
               size="sm"
               onClick={() => void handleSaveToWorkspace()}
               disabled={isSavingToWorkspace}
             >
-              {isSavingToWorkspace ? translate("chat.plan.saving") : translate("chat.plan.save")}
+              {isSavingToWorkspace ? "Saving..." : "Save"}
             </Button>
           </DialogFooter>
         </DialogPopup>

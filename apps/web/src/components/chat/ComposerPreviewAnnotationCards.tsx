@@ -10,7 +10,6 @@ import {
 } from "~/lib/attachmentUploadState";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
-import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 interface ComposerPreviewAnnotationCardsProps {
@@ -49,7 +48,6 @@ export function ComposerPreviewAnnotationCards({
   onRetryUpload,
   className,
 }: ComposerPreviewAnnotationCardsProps) {
-  const translate = useInterfaceTranslator().message;
   if (annotations.length === 0) return null;
   const imagesById = new Map(images.map((image) => [image.id, image]));
 
@@ -70,13 +68,13 @@ export function ComposerPreviewAnnotationCards({
             {image?.previewUrl ? (
               <button
                 type="button"
-                aria-label={translate("chat.preview.openImage", { name: image.name })}
+                aria-label={`Preview ${image.name}`}
                 className="size-14 shrink-0 cursor-zoom-in overflow-hidden border-r border-border/70 bg-muted"
                 onClick={() => onExpandImage(image.id)}
               >
                 <img
                   src={image.previewUrl}
-                  alt={translate("chat.preview.cropAlt")}
+                  alt="Annotated preview crop"
                   className="size-full object-cover transition duration-200 group-hover/preview-annotation:scale-[1.03]"
                 />
               </button>
@@ -119,28 +117,28 @@ export function ComposerPreviewAnnotationCards({
                     <TargetStat
                       icon={<MousePointerClick className="size-3" />}
                       count={annotation.elements.length}
-                      label={translate("chat.preview.annotation.element")}
+                      label="element"
                     />
                   ) : null}
                   {annotation.regions.length > 0 ? (
                     <TargetStat
                       icon={<Frame className="size-3" />}
                       count={annotation.regions.length}
-                      label={translate("chat.preview.annotation.region")}
+                      label="region"
                     />
                   ) : null}
                   {annotation.strokes.length > 0 ? (
                     <TargetStat
                       icon={<PenLine className="size-3" />}
                       count={annotation.strokes.length}
-                      label={translate("chat.preview.annotation.drawing")}
+                      label="drawing"
                     />
                   ) : null}
                   {annotation.styleChanges.length > 0 ? (
                     <TargetStat
                       icon={<Paintbrush className="size-3" />}
                       count={annotation.styleChanges.length}
-                      label={translate("chat.preview.annotation.style")}
+                      label="style change"
                     />
                   ) : null}
                   {upload?.status === "uploading" ? (
@@ -155,7 +153,7 @@ export function ComposerPreviewAnnotationCards({
                           <Button
                             size="icon-micro"
                             variant="ghost-muted"
-                            aria-label={translate("chat.preview.retryUpload", { name: image.name })}
+                            aria-label={`Retry upload for ${image.name}`}
                             onClick={() => onRetryUpload(image)}
                           />
                         }
@@ -171,7 +169,7 @@ export function ComposerPreviewAnnotationCards({
             <Button
               size="icon-micro"
               variant="ghost-muted"
-              aria-label={translate("chat.preview.annotation.remove")}
+              aria-label="Remove preview annotation"
               className="absolute right-1.5 top-1.5 [--control-icon-color:currentColor] rounded text-icon-muted hover:bg-muted"
               onClick={() => onRemove(annotation.id)}
             >

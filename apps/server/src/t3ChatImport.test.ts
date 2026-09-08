@@ -204,6 +204,11 @@ describe("T3 chat import", () => {
     const commands: OrchestrationCommand[] = [];
     const orchestrationLayer = Layer.succeed(OrchestrationEngineService, {
       readEvents: () => Stream.empty,
+      readThreadEvents: () => Stream.empty,
+      getThreadReplayStats: () =>
+        Effect.succeed({ eventCount: 0, payloadBytes: 0, hasCreateEvent: false }),
+      subscribeDomainEvents: Effect.succeed(Stream.empty),
+      latestSequence: Effect.succeed(0),
       dispatch: (command) =>
         Effect.sync(() => {
           commands.push(command);

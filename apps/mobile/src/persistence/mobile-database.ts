@@ -16,7 +16,13 @@ const LEGACY_CACHE_DIRECTORIES = [
   "connection-vcs-refs",
 ] as const;
 
-export const ClientCacheKind = Schema.Literals(["shell", "thread", "server-config", "vcs-refs"]);
+export const ClientCacheKind = Schema.Literals([
+  "shell",
+  "thread",
+  "server-config",
+  "vcs-refs",
+  "project-favicon",
+]);
 export type ClientCacheKind = typeof ClientCacheKind.Type;
 
 export interface ClientCacheSummaryRow {
@@ -44,6 +50,7 @@ const MobileDatabaseOperation = Schema.Literals([
   "open",
   "migrate",
   "load-cache",
+  "list-cache",
   "load-environment-cache-freshness",
   "save-cache",
   "remove-cache",
@@ -55,7 +62,7 @@ const MobileDatabaseOperation = Schema.Literals([
   "save-preferences",
 ]);
 
-export class MobileDatabaseError extends Schema.TaggedErrorClass<MobileDatabaseError>()(
+export class MobileDatabaseError extends Schema.TaggedError<MobileDatabaseError>()(
   "MobileDatabaseError",
   {
     operation: MobileDatabaseOperation,
@@ -193,6 +200,9 @@ export class MobileDatabase extends Context.Service<
       kind: ClientCacheKind,
       cacheKey: string,
     ) => Effect.Effect<Option.Option<string>, MobileDatabaseError>;
+    readonly listCache: (
+      kind: ClientCacheKind,
+    ) => Effect.Effect<ReadonlyArray<string>, MobileDatabaseError>;
     readonly loadEnvironmentCacheUpdatedAt: (
       environmentId: EnvironmentId,
     ) => Effect.Effect<Option.Option<number>, MobileDatabaseError>;
@@ -296,6 +306,16 @@ const makeAvailable = Effect.gen(function* () {
         catch: databaseError("load-cache"),
       }).pipe(Effect.map((row) => Option.fromNullishOr(row?.payload))),
     ),
+    listCache: Effect.fn("MobileDatabase.listCache")((kind) =>
+      Effect.tryPromise({
+        try: () =>
+          database.getAllAsync<{ readonly payload: string }>(
+            "SELECT payload FROM client_cache WHERE kind = ? ORDER BY updated_at",
+            kind,
+          ),
+        catch: databaseError("list-cache"),
+      }).pipe(Effect.map((rows) => rows.map((row) => row.payload))),
+    ),
     loadEnvironmentCacheUpdatedAt: Effect.fn("MobileDatabase.loadEnvironmentCacheUpdatedAt")(
       (environmentId) =>
         Effect.tryPromise({
@@ -382,14 +402,13 @@ const makeAvailable = Effect.gen(function* () {
     }).pipe(
       Effect.flatMap(Schema.decodeUnknownEffect(ClientCacheSummaryRows)),
       Effect.mapError(databaseError("inspect-caches")),
-      Effect.map(
-        (rows): ReadonlyArray<ClientCacheSummaryRow> =>
-          rows.map((row) => ({
-            environmentId: row.environmentId as EnvironmentId,
-            kind: row.kind,
-            recordCount: row.recordCount,
-            payloadBytes: row.payloadBytes,
-          })),
+      Effect.map((rows): ReadonlyArray<ClientCacheSummaryRow> =>
+        rows.map((row) => ({
+          environmentId: row.environmentId as EnvironmentId,
+          kind: row.kind,
+          recordCount: row.recordCount,
+          payloadBytes: row.payloadBytes,
+        })),
       ),
     ),
     loadPreferencesJson: Effect.tryPromise({
@@ -423,6 +442,7 @@ function makeUnavailable(error: MobileDatabaseError): MobileDatabase["Service"] 
   const fail = Effect.fail(error);
   return MobileDatabase.of({
     loadCache: () => fail,
+    listCache: () => fail,
     loadEnvironmentCacheUpdatedAt: () => fail,
     saveCache: () => fail,
     removeCache: () => fail,

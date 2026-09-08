@@ -1,5 +1,6 @@
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { Argument, Command } from "effect/unstable/cli";
@@ -8,6 +9,7 @@ import * as CliError from "effect/unstable/cli/CliError";
 import * as NetService from "@t3tools/shared/Net";
 import packageJson from "../package.json" with { type: "json" };
 import { authCommand } from "./cli/auth.ts";
+import { appCommand } from "./cli/app.ts";
 import { connectCommand } from "./cli/connect.ts";
 import { pairCommand } from "./cli/pair.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
@@ -21,7 +23,9 @@ import { runCodexResourceGovernorHook } from "./resourceProtection/CodexResource
 import { themeCommand } from "./cli/theme.ts";
 import { triageCommand } from "./cli/triage.ts";
 
-const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
+const CliRuntimeLayer = Layer.mergeAll(NetService.layer, WorkspacePaths.layer).pipe(
+  Layer.provideMerge(NodeServices.layer),
+);
 
 const connectPublicConfigMissingMessage =
   "T3 Connect commands are unavailable: this build is missing T3 Connect public configuration.";
@@ -36,7 +40,7 @@ const connectUnavailableCommand = Command.make("connect", {
   command: Argument.string("command").pipe(Argument.variadic),
 }).pipe(
   Command.withDescription("T3 Connect is unavailable in builds without public configuration."),
-  Command.withHidden,
+  Command.unlisted,
   Command.withHandler(() =>
     Effect.fail(
       new CliError.ShowHelp({
@@ -48,7 +52,7 @@ const connectUnavailableCommand = Command.make("connect", {
 );
 
 const resourceGovernorHookCommand = Command.make("resource-governor-hook").pipe(
-  Command.withHidden,
+  Command.unlisted,
   Command.withHandler(() => Effect.promise(() => runCodexResourceGovernorHook())),
 );
 
@@ -59,6 +63,7 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
     Command.withSubcommands([
       startCommand,
       serveCommand,
+      appCommand,
       pairCommand,
       authCommand,
       projectCommand,

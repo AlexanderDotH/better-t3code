@@ -20,6 +20,9 @@ const threadId = ThreadId.make("thread-subagents");
 const subagentId = SubagentId.make("agent-contracts");
 
 const subagent = {
+  origin: "provider-native",
+  providerInstanceId: null,
+  providerDriver: null,
   id: subagentId,
   providerThreadId: "provider-thread-contracts",
   parentId: null,
@@ -177,6 +180,8 @@ it.layer(NodeServices.layer)("subagent orchestration decisions", (it) => {
           subagentId,
           proposedPlan: {
             id: "plan-agent",
+            implementedAt: null,
+            implementationThreadId: null,
             turnId: null,
             planMarkdown: "# Agent plan",
             createdAt: updatedAt,
@@ -193,7 +198,7 @@ it.layer(NodeServices.layer)("subagent orchestration decisions", (it) => {
           threadId,
           subagentId,
           activity: {
-            id: "activity-agent",
+            id: EventId.make("activity-agent"),
             tone: "tool",
             kind: "tool.started",
             summary: "Running tests",

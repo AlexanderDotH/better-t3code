@@ -34,7 +34,7 @@ export interface ExtractKnowledgeGraphInventoryInput {
   readonly seenGeneration?: number;
 }
 
-export class KnowledgeGraphInventoryError extends Schema.TaggedErrorClass<KnowledgeGraphInventoryError>()(
+export class KnowledgeGraphInventoryError extends Schema.TaggedError<KnowledgeGraphInventoryError>()(
   "KnowledgeGraphInventoryError",
   {
     operation: Schema.Literals(["validate-root", "scan", "read"]),

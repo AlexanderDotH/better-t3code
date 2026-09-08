@@ -12,11 +12,12 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import {
-  createBasicProjectSpeechProfileForEnvironment,
-  indexProjectSpeechProfileForEnvironment,
-  listProjectSpeechProfilesForEnvironment,
-} from "../../environmentApi";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { resolveBetterT3FeatureFlag } from "@t3tools/contracts";
+import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { Switch } from "../ui/switch";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { cn } from "../../lib/utils";
@@ -295,6 +296,15 @@ export function VoiceInputSettings() {
   const translate = translator.message;
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
+  const listProfiles = useAtomCommand(serverEnvironment.listProjectSpeechProfiles, {
+    reportFailure: false,
+  });
+  const indexProfile = useAtomCommand(serverEnvironment.indexProjectSpeechProfile, {
+    reportFailure: false,
+  });
+  const createBasicProfile = useAtomCommand(serverEnvironment.createBasicProjectSpeechProfile, {
+    reportFailure: false,
+  });
   const projects = useProjects();
   const { environments } = useEnvironments();
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
@@ -365,39 +375,44 @@ export function VoiceInputSettings() {
       );
   }, [environments, projects]);
 
-  const refreshEnvironmentProfiles = useCallback(async (environmentId: EnvironmentId) => {
-    const requestSequence =
-      (profileRequestSequenceByEnvironment.current.get(environmentId) ?? 0) + 1;
-    profileRequestSequenceByEnvironment.current.set(environmentId, requestSequence);
-    setProfileStateByEnvironment((current) => {
-      const next = new Map(current);
-      next.set(environmentId, {
-        status: "loading",
-        profiles: current.get(environmentId)?.profiles ?? EMPTY_PROFILES,
+  const refreshEnvironmentProfiles = useCallback(
+    async (environmentId: EnvironmentId) => {
+      const requestSequence =
+        (profileRequestSequenceByEnvironment.current.get(environmentId) ?? 0) + 1;
+      profileRequestSequenceByEnvironment.current.set(environmentId, requestSequence);
+      setProfileStateByEnvironment((current) => {
+        const next = new Map(current);
+        next.set(environmentId, {
+          status: "loading",
+          profiles: current.get(environmentId)?.profiles ?? EMPTY_PROFILES,
+        });
+        return next;
       });
-      return next;
-    });
 
-    try {
-      const result = await listProjectSpeechProfilesForEnvironment(environmentId);
-      if (profileRequestSequenceByEnvironment.current.get(environmentId) !== requestSequence)
-        return;
-      const profiles = new Map(result.profiles.map((profile) => [profile.projectId, profile]));
-      setProfileStateByEnvironment((current) => {
-        const next = new Map(current);
-        next.set(environmentId, { status: "ready", profiles });
-        return next;
-      });
-    } catch {
-      if (profileRequestSequenceByEnvironment.current.get(environmentId) !== requestSequence)
-        return;
-      setProfileStateByEnvironment((current) => {
-        const next = new Map(current);
-        next.set(environmentId, { status: "error", profiles: EMPTY_PROFILES });
-        return next;
-      });
-    }
-  }, []);
+      try {
+        const response = await listProfiles({ environmentId, input: {} });
+        if (response._tag === "Failure") throw squashAtomCommandFailure(response);
+        const result = response.value;
+        if (profileRequestSequenceByEnvironment.current.get(environmentId) !== requestSequence)
+          return;
+        const profiles = new Map(result.profiles.map((profile) => [profile.projectId, profile]));
+        setProfileStateByEnvironment((current) => {
+          const next = new Map(current);
+          next.set(environmentId, { status: "ready", profiles });
+          return next;
+        });
+      } catch {
+        if (profileRequestSequenceByEnvironment.current.get(environmentId) !== requestSequence)
+          return;
+        setProfileStateByEnvironment((current) => {
+          const next = new Map(current);
+          next.set(environmentId, { status: "error", profiles: EMPTY_PROFILES });
+          return next;
+        });
+      }
+    },
+    [listProfiles],
+  );
 
   const refreshProfiles = useCallback(async () => {
     await Promise.all(
@@ -425,11 +440,11 @@ export function VoiceInputSettings() {
       setActionErrorByProject((current) => ({ ...current, [key]: undefined }));
 
       try {
-        if (action === "index") {
-          await indexProjectSpeechProfileForEnvironment(project.environmentId, project.id);
-        } else {
-          await createBasicProjectSpeechProfileForEnvironment(project.environmentId, project.id);
-        }
+        const response = await (action === "index" ? indexProfile : createBasicProfile)({
+          environmentId: project.environmentId,
+          input: { projectId: project.id },
+        });
+        if (response._tag === "Failure") throw squashAtomCommandFailure(response);
         await refreshEnvironmentProfiles(project.environmentId);
       } catch {
         setActionErrorByProject((current) => ({
@@ -443,7 +458,7 @@ export function VoiceInputSettings() {
         setBusyActionByProject((current) => ({ ...current, [key]: undefined }));
       }
     },
-    [refreshEnvironmentProfiles, translate],
+    [createBasicProfile, indexProfile, refreshEnvironmentProfiles, translate],
   );
 
   const isRefreshing = projectEnvironmentIds.some(
@@ -456,6 +471,57 @@ export function VoiceInputSettings() {
         title={translate("settings.voice.title")}
         icon={<MicIcon className="size-3.5" />}
       >
+        <SettingsRow
+          id="voice-input"
+          title="Voice input"
+          description="Dictate into the composer using AssemblyAI."
+          control={
+            <Switch
+              checked={resolveBetterT3FeatureFlag(settings.betterT3Environment, "voice.assemblyAi")}
+              onCheckedChange={(enabled) =>
+                updateSettings({
+                  betterT3Environment: {
+                    ...settings.betterT3Environment,
+                    flags: { ...settings.betterT3Environment.flags, "voice.assemblyAi": enabled },
+                  },
+                })
+              }
+              aria-label="Voice input"
+            />
+          }
+        />
+        <SettingsRow
+          title="Improve prompts before sending"
+          description="Use the text generation model to clarify your prompt before starting a turn."
+          control={
+            <Switch
+              checked={settings.improvePromptBeforeSend}
+              onCheckedChange={(enabled) => updateSettings({ improvePromptBeforeSend: enabled })}
+              aria-label="Improve prompts before sending"
+            />
+          }
+        />
+        <SettingsRow
+          title="Dictation output"
+          description="Keep the spoken language or translate the finished transcript into English."
+          control={
+            <Select
+              value={settings.voiceInputOutputLanguage}
+              onValueChange={(value) => {
+                if (value === "native" || value === "english")
+                  updateSettings({ voiceInputOutputLanguage: value });
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Dictation output">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectPopup>
+                <SelectItem value="native">Spoken language</SelectItem>
+                <SelectItem value="english">English</SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
         <SettingsRow
           title={translate("settings.voice.apiKey.title")}
           description={translate("settings.voice.apiKey.description")}

@@ -124,9 +124,12 @@ export function useHomeListOptions(availableEnvironmentIds: ReadonlySet<Environm
     projectGroupingMode: shared?.projectGroupingMode ?? "repository",
   };
 
-  const setSelectedEnvironmentId = useCallback((value: EnvironmentId | null) => {
-    setOptions((current) => ({ ...current, selectedEnvironmentId: value }));
-  }, []);
+  const setSelectedEnvironmentId = useCallback(
+    (value: EnvironmentId | null) => {
+      setOptions((current) => ({ ...current, selectedEnvironmentId: value }));
+    },
+    [setOptions],
+  );
   const setProjectSortOrder = useCallback(
     (value: HomeProjectSortOrder) => {
       setOptions((current) => ({ ...current, projectSortOrder: value }));

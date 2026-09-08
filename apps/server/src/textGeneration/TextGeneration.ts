@@ -191,32 +191,6 @@ export const unsupportedKnowledgeGraphEnrichment = (
     });
   });
 
-export interface TextGenerationService {
-  decideAutoReasoning(input: AutoReasoningGenerationInput): Promise<AutoReasoningGenerationResult>;
-  generateCommitMessage(
-    input: CommitMessageGenerationInput,
-  ): Promise<CommitMessageGenerationResult>;
-  generatePrContent(input: PrContentGenerationInput): Promise<PrContentGenerationResult>;
-  generateBranchName(input: BranchNameGenerationInput): Promise<BranchNameGenerationResult>;
-  generateThreadMetadata(
-    input: ThreadMetadataGenerationInput,
-  ): Promise<ThreadMetadataGenerationResult>;
-  generateThreadTitle(input: ThreadTitleGenerationInput): Promise<ThreadTitleGenerationResult>;
-  translateTranscriptToEnglish(
-    input: TranscriptTranslationInput,
-  ): Promise<TranscriptTranslationResult>;
-  improvePrompt(input: PromptImprovementInput): Promise<PromptImprovementResult>;
-  reviewPlanParallelism(
-    input: PlanParallelismReviewGenerationInput,
-  ): Promise<PlanParallelismReviewGenerationResult>;
-  planFetchExploration(
-    input: FetchExplorationGenerationInput,
-  ): Promise<FetchExplorationGenerationResult>;
-  enrichKnowledgeGraph(
-    input: KnowledgeGraphEnrichmentGenerationInput,
-  ): Promise<KnowledgeGraphEnrichmentGenerationResult>;
-}
-
 /**
  * TextGeneration - Service tag for commit and change request text generation.
  */
@@ -279,9 +253,6 @@ export class TextGeneration extends Context.Service<
     ) => Effect.Effect<KnowledgeGraphEnrichmentGenerationResult, TextGenerationError>;
   }
 >()("t3/textGeneration/TextGeneration") {}
-
-/** @deprecated Use `TextGeneration["Service"]`. */
-export type TextGenerationShape = TextGeneration["Service"];
 
 type TextGenerationOp =
   | "decideAutoReasoning"
@@ -368,6 +339,7 @@ export const makeTextGenerationFromRegistry = (
       ),
   });
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   return makeTextGenerationFromRegistry(registry);

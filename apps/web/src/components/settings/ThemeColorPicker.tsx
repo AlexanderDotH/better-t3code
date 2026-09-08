@@ -2,7 +2,6 @@ import type { KeyboardEvent, PointerEvent } from "react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { isThemeColor, themeColorToHex, type ThemeColorRole } from "../../themePalette";
 import { cn } from "../../lib/utils";
-import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { Input } from "../ui/input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -147,7 +146,6 @@ function ThemeColorPickerPanel({
   value: string;
   onChange: (value: string) => void;
 }) {
-  const translate = useInterfaceTranslator().message;
   const normalizedValue = normalizeThemePickerColor(value);
   const alphaSuffix = themePickerAlphaSuffix(value);
   const [hsv, setHsv] = useState(() => themeHexToHsv(normalizedValue));
@@ -299,9 +297,7 @@ function ThemeColorPickerPanel({
       <div className="flex items-center justify-between border-b border-border/70 px-4 py-3">
         <div className="min-w-0">
           <p className="truncate text-xs font-semibold text-foreground">{label}</p>
-          <p className="text-[11px] text-muted-foreground">
-            {translate("settings.theme.color.choose")}
-          </p>
+          <p className="text-[11px] text-muted-foreground">Choose a color</p>
         </div>
         <span
           className="size-7 shrink-0 rounded-full shadow-sm"
@@ -310,11 +306,8 @@ function ThemeColorPickerPanel({
       </div>
       <div className="grid gap-3 px-3 pb-3 pt-3">
         <div
-          aria-label={translate("settings.theme.picker.planeAria", { label })}
-          aria-valuetext={translate("settings.theme.picker.planeValue", {
-            saturation: Math.round(hsv.s * 100),
-            brightness: Math.round(hsv.v * 100),
-          })}
+          aria-label={`${label} saturation and brightness`}
+          aria-valuetext={`saturation ${Math.round(hsv.s * 100)}%, brightness ${Math.round(hsv.v * 100)}%`}
           className="relative h-32 cursor-crosshair touch-none overflow-hidden rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-popover"
           role="slider"
           style={{
@@ -341,7 +334,7 @@ function ThemeColorPickerPanel({
           />
         </div>
         <div
-          aria-label={translate("settings.theme.picker.hueAria", { label })}
+          aria-label={`${label} hue`}
           aria-valuemax={360}
           aria-valuemin={0}
           aria-valuenow={Math.round(hsv.h)}
@@ -377,7 +370,7 @@ function ThemeColorPickerPanel({
         <div className="grid grid-cols-[1fr_1.2fr] gap-2">
           <label className="grid min-w-0 gap-1">
             <span className="px-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-              {translate("settings.theme.format.hex")}
+              HEX
             </span>
             <span className="flex min-w-0 items-center gap-2 rounded-lg border border-input bg-background px-2 focus-within:border-ring">
               <span
@@ -385,7 +378,7 @@ function ThemeColorPickerPanel({
                 style={{ backgroundColor: currentColor }}
               />
               <input
-                aria-label={translate("settings.theme.picker.hexAria", { label })}
+                aria-label={`${label} picker hex value`}
                 className="h-8 min-w-0 flex-1 bg-transparent font-mono text-xs text-foreground outline-none"
                 onBlur={() => {
                   isEditingTextRef.current = false;
@@ -403,11 +396,11 @@ function ThemeColorPickerPanel({
           </label>
           <label className="grid min-w-0 gap-1">
             <span className="px-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-              {translate("settings.theme.format.rgb")}
+              RGB
             </span>
             <span className="flex min-w-0 items-center rounded-lg border border-input bg-background px-2 focus-within:border-ring">
               <input
-                aria-label={translate("settings.theme.picker.rgbAria", { label })}
+                aria-label={`${label} picker RGB value`}
                 className="h-8 min-w-0 flex-1 bg-transparent font-mono text-xs text-foreground outline-none"
                 onBlur={() => {
                   isEditingTextRef.current = false;
@@ -440,8 +433,6 @@ function ThemeColorPicker({
   onChange: (value: string) => void;
   onInteract?: () => void;
 }) {
-  const translate = useInterfaceTranslator().message;
-  const chooseColorLabel = translate("settings.theme.picker.chooseAria", { label });
   return (
     <Popover>
       <Tooltip>
@@ -450,7 +441,7 @@ function ThemeColorPicker({
             <PopoverTrigger
               render={
                 <button
-                  aria-label={chooseColorLabel}
+                  aria-label={`Choose ${label} color`}
                   className="relative flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full border border-foreground/30 transition-transform hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                   onFocus={onInteract}
                   onPointerDown={onInteract}
@@ -465,7 +456,7 @@ function ThemeColorPicker({
             />
           }
         />
-        <TooltipPopup side="top">{chooseColorLabel}</TooltipPopup>
+        <TooltipPopup side="top">{`Choose ${label} color`}</TooltipPopup>
       </Tooltip>
       <PopoverPopup
         align="end"

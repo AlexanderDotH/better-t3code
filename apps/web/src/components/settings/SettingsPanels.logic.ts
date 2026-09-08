@@ -1,3 +1,4 @@
+import type { ServerSettingsPatch } from "@t3tools/contracts";
 import type {
   BackgroundActivityProfile,
   BackgroundActivitySettings,
@@ -6,7 +7,6 @@ import type {
   PreviewViewportSetting,
   ProviderInstanceId,
   ServerSettings,
-  ServerSettingsPatch,
   SidebarProjectGroupingMode,
   UnifiedSettings,
 } from "@t3tools/contracts";
@@ -19,13 +19,6 @@ import {
 } from "@t3tools/shared/backgroundActivitySettings";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
-import {
-  translateInterfaceMessage,
-  type InterfaceTranslator,
-} from "@t3tools/shared/interfaceLanguage";
-
-const translateEnglish: InterfaceTranslator["message"] = (key, values) =>
-  translateInterfaceMessage("en", key, values);
 
 export function isProjectGroupingEnabled(mode: SidebarProjectGroupingMode): boolean {
   return mode !== "separate";
@@ -96,26 +89,23 @@ type TypographySettings = Pick<
 >;
 
 /** Labels the font rows whose family or size differs from the defaults. */
-export function getChangedTypographySettingLabels(
-  settings: TypographySettings,
-  translate: InterfaceTranslator["message"] = translateEnglish,
-): string[] {
+export function getChangedTypographySettingLabels(settings: TypographySettings): string[] {
   return [
     ...(settings.fontFamilySans !== DEFAULT_UNIFIED_SETTINGS.fontFamilySans ||
     settings.fontSizeInterface !== DEFAULT_UNIFIED_SETTINGS.fontSizeInterface
-      ? [translate("settings.application.title.interfaceFont")]
+      ? ["Interface font"]
       : []),
     ...(settings.fontFamilyComposer !== DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer ||
     settings.fontSizePrompt !== DEFAULT_UNIFIED_SETTINGS.fontSizePrompt
-      ? [translate("settings.application.title.promptFont")]
+      ? ["Prompt font"]
       : []),
     ...(settings.fontFamilyCode !== DEFAULT_UNIFIED_SETTINGS.fontFamilyCode ||
     settings.fontSizeCode !== DEFAULT_UNIFIED_SETTINGS.fontSizeCode
-      ? [translate("settings.application.title.codeFont")]
+      ? ["Code font"]
       : []),
     ...(settings.fontFamilyTerminal !== DEFAULT_UNIFIED_SETTINGS.fontFamilyTerminal ||
     settings.fontSizeTerminal !== DEFAULT_UNIFIED_SETTINGS.fontSizeTerminal
-      ? [translate("settings.application.title.terminalFont")]
+      ? ["Terminal font"]
       : []),
   ];
 }
@@ -125,6 +115,8 @@ export type BrowserDefaultSettings = Pick<
   | "browserDefaultViewport"
   | "browserDefaultZoomFactor"
   | "browserDefaultAppearance"
+  | "browserRecordingFrameRate"
+  | "browserLinkTarget"
   | "browserAutoShowFloatingPreview"
 >;
 
@@ -135,7 +127,7 @@ export type BrowserDefaultSettings = Pick<
  * reports every stored viewport as changed — including one that matches the
  * default.
  */
-export function isSamePreviewViewport(
+function isSamePreviewViewport(
   left: PreviewViewportSetting,
   right: PreviewViewportSetting,
 ): boolean {
@@ -148,26 +140,29 @@ export function isSamePreviewViewport(
 }
 
 /** Labels the browser-default rows that differ from the defaults. */
-export function getChangedBrowserSettingLabels(
-  settings: BrowserDefaultSettings,
-  translate: InterfaceTranslator["message"] = translateEnglish,
-): string[] {
+export function getChangedBrowserSettingLabels(settings: BrowserDefaultSettings): string[] {
   return [
     ...(isSamePreviewViewport(
       settings.browserDefaultViewport,
       DEFAULT_UNIFIED_SETTINGS.browserDefaultViewport,
     )
       ? []
-      : [translate("settings.application.restore.browserViewport")]),
+      : ["Browser viewport"]),
     ...(settings.browserDefaultZoomFactor !== DEFAULT_UNIFIED_SETTINGS.browserDefaultZoomFactor
-      ? [translate("settings.application.restore.browserZoom")]
+      ? ["Browser zoom"]
       : []),
     ...(settings.browserDefaultAppearance !== DEFAULT_UNIFIED_SETTINGS.browserDefaultAppearance
-      ? [translate("settings.application.restore.browserAppearance")]
+      ? ["Browser appearance"]
+      : []),
+    ...(settings.browserRecordingFrameRate !== DEFAULT_UNIFIED_SETTINGS.browserRecordingFrameRate
+      ? ["Recording frame rate"]
+      : []),
+    ...(settings.browserLinkTarget !== DEFAULT_UNIFIED_SETTINGS.browserLinkTarget
+      ? ["Open links in"]
       : []),
     ...(settings.browserAutoShowFloatingPreview !==
     DEFAULT_UNIFIED_SETTINGS.browserAutoShowFloatingPreview
-      ? [translate("settings.application.restore.floatingPreview")]
+      ? ["Floating preview"]
       : []),
   ];
 }
@@ -227,47 +222,33 @@ function collapseOtelSignalsUrl(input: {
   return `${tracesBase}/{traces,metrics}`;
 }
 
-export function formatDiagnosticsDescription(
-  input: {
-    readonly localTracingEnabled: boolean;
-    readonly otlpTracesEnabled: boolean;
-    readonly otlpTracesUrl?: string | undefined;
-    readonly otlpMetricsEnabled: boolean;
-    readonly otlpMetricsUrl?: string | undefined;
-  },
-  translate: InterfaceTranslator["message"] = translateEnglish,
-): string {
-  const mode = translate(
-    input.localTracingEnabled
-      ? "settings.application.diagnostics.localTrace"
-      : "settings.application.diagnostics.terminalLogs",
-  );
+export function formatDiagnosticsDescription(input: {
+  readonly localTracingEnabled: boolean;
+  readonly otlpTracesEnabled: boolean;
+  readonly otlpTracesUrl?: string | undefined;
+  readonly otlpMetricsEnabled: boolean;
+  readonly otlpMetricsUrl?: string | undefined;
+}): string {
+  const mode = input.localTracingEnabled ? "Local trace file" : "Terminal logs only";
   const tracesUrl = input.otlpTracesEnabled ? input.otlpTracesUrl : undefined;
   const metricsUrl = input.otlpMetricsEnabled ? input.otlpMetricsUrl : undefined;
 
   if (tracesUrl && metricsUrl) {
     const collapsedUrl = collapseOtelSignalsUrl({ tracesUrl, metricsUrl });
     return collapsedUrl
-      ? translate("settings.application.diagnostics.exportCombined", {
-          mode,
-          url: collapsedUrl,
-        })
-      : translate("settings.application.diagnostics.exportSeparate", {
-          mode,
-          tracesUrl,
-          metricsUrl,
-        });
+      ? `${mode}. Exporting OTEL to ${collapsedUrl}.`
+      : `${mode}. Exporting OTEL traces to ${tracesUrl} and metrics to ${metricsUrl}.`;
   }
 
   if (tracesUrl) {
-    return translate("settings.application.diagnostics.exportTraces", { mode, url: tracesUrl });
+    return `${mode}. Exporting OTEL traces to ${tracesUrl}.`;
   }
 
   if (metricsUrl) {
-    return translate("settings.application.diagnostics.exportMetrics", { mode, url: metricsUrl });
+    return `${mode}. Exporting OTEL metrics to ${metricsUrl}.`;
   }
 
-  return translate("settings.application.diagnostics.modeOnly", { mode });
+  return `${mode}.`;
 }
 
 export function buildProviderInstanceUpdatePatch(input: {

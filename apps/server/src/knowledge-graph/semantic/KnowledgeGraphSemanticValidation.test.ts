@@ -1,3 +1,9 @@
+import {
+  KnowledgeGraphModelGeneration,
+  KnowledgeGraphNodeId,
+  KnowledgeGraphScopeId,
+  ProjectId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import { KnowledgeGraphSemanticClaimV1, KnowledgeGraphSnapshotV1 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -10,9 +16,9 @@ const snapshot = Schema.decodeUnknownSync(KnowledgeGraphSnapshotV1)({
   type: "snapshot",
   scope: {
     version: 1,
-    scopeId: "scope-validation",
+    scopeId: KnowledgeGraphScopeId.make("scope-validation"),
     environmentId: "environment-validation",
-    projectId: "project-validation",
+    projectId: ProjectId.make("project-validation"),
     effectiveWorkspaceRoot: "/workspace/validation",
     isWorktree: false,
   },
@@ -20,8 +26,8 @@ const snapshot = Schema.decodeUnknownSync(KnowledgeGraphSnapshotV1)({
   nodes: [
     {
       version: 1,
-      nodeId: "node-source",
-      scopeId: "scope-validation",
+      nodeId: KnowledgeGraphNodeId.make("node-source"),
+      scopeId: KnowledgeGraphScopeId.make("scope-validation"),
       kind: "file",
       label: "source.ts",
       source: { path: "src/source.ts" },
@@ -32,8 +38,8 @@ const snapshot = Schema.decodeUnknownSync(KnowledgeGraphSnapshotV1)({
     },
     {
       version: 1,
-      nodeId: "node-target",
-      scopeId: "scope-validation",
+      nodeId: KnowledgeGraphNodeId.make("node-target"),
+      scopeId: KnowledgeGraphScopeId.make("scope-validation"),
       kind: "file",
       label: "target.ts",
       source: { path: "src/target.ts" },
@@ -44,8 +50,8 @@ const snapshot = Schema.decodeUnknownSync(KnowledgeGraphSnapshotV1)({
     },
     {
       version: 1,
-      nodeId: "node-not-candidate",
-      scopeId: "scope-validation",
+      nodeId: KnowledgeGraphNodeId.make("node-not-candidate"),
+      scopeId: KnowledgeGraphScopeId.make("scope-validation"),
       kind: "file",
       label: "other.ts",
       source: { path: "other/other.ts" },
@@ -60,7 +66,7 @@ const snapshot = Schema.decodeUnknownSync(KnowledgeGraphSnapshotV1)({
     {
       version: 1,
       evidenceId: "evidence-source",
-      scopeId: "scope-validation",
+      scopeId: KnowledgeGraphScopeId.make("scope-validation"),
       kind: "source",
       source: { path: "src/source.ts" },
       excerpt: "export const source = target;",
@@ -71,7 +77,7 @@ const snapshot = Schema.decodeUnknownSync(KnowledgeGraphSnapshotV1)({
     {
       version: 1,
       evidenceId: "evidence-target",
-      scopeId: "scope-validation",
+      scopeId: KnowledgeGraphScopeId.make("scope-validation"),
       kind: "source",
       source: { path: "src/target.ts" },
       excerpt: "export const target = true;",
@@ -82,7 +88,7 @@ const snapshot = Schema.decodeUnknownSync(KnowledgeGraphSnapshotV1)({
     {
       version: 1,
       evidenceId: "evidence-other",
-      scopeId: "scope-validation",
+      scopeId: KnowledgeGraphScopeId.make("scope-validation"),
       kind: "source",
       source: { path: "other/other.ts" },
       fingerprint: "sha256:other",
@@ -92,7 +98,7 @@ const snapshot = Schema.decodeUnknownSync(KnowledgeGraphSnapshotV1)({
   ],
   status: {
     version: 1,
-    scopeId: "scope-validation",
+    scopeId: KnowledgeGraphScopeId.make("scope-validation"),
     state: "ready",
     revision: 9,
     indexedFileCount: 3,
@@ -122,13 +128,13 @@ const claim = Schema.decodeUnknownSync(KnowledgeGraphSemanticClaimV1)({
       jobId: "job-validation",
       environmentId: snapshot.scope.environmentId,
       scopeId: snapshot.scope.scopeId,
-      nodeId: "node-source",
+      nodeId: KnowledgeGraphNodeId.make("node-source"),
       desiredNodeRevision: 4,
-      modelGeneration: 6,
+      modelGeneration: KnowledgeGraphModelGeneration.make(6),
       candidates: [
         {
-          sourceNodeId: "node-source",
-          candidateNodeId: "node-target",
+          sourceNodeId: KnowledgeGraphNodeId.make("node-source"),
+          candidateNodeId: KnowledgeGraphNodeId.make("node-target"),
           evidenceIds: ["evidence-source", "evidence-target"],
           score: 0.9,
         },
@@ -146,8 +152,8 @@ const validOutput = {
   edges: [
     {
       kind: "relates-to",
-      sourceNodeId: "node-source",
-      targetNodeId: "node-target",
+      sourceNodeId: KnowledgeGraphNodeId.make("node-source"),
+      targetNodeId: KnowledgeGraphNodeId.make("node-target"),
       confidence: 0.82,
       summary: "Source uses the target abstraction.",
       evidenceIds: ["evidence-source", "evidence-target"],
@@ -169,7 +175,7 @@ describe("Knowledge Graph semantic output validation", () => {
         version: 1,
         scopeId: snapshot.scope.scopeId,
         baseRevision: 9,
-        modelGeneration: 6,
+        modelGeneration: KnowledgeGraphModelGeneration.make(6),
         nodes: [],
         evidence: [],
         changedNodeIds: ["node-source", "node-target"],
@@ -205,7 +211,7 @@ describe("Knowledge Graph semantic output validation", () => {
             edges: [
               {
                 ...validOutput.edges[0],
-                targetNodeId: "node-not-candidate",
+                targetNodeId: KnowledgeGraphNodeId.make("node-not-candidate"),
                 evidenceIds: ["evidence-other"],
               },
             ],

@@ -14,7 +14,6 @@ import { createNativeReviewDiffTheme } from "../review/nativeReviewDiffAdapter";
 import { REVIEW_MONO_FONT_FAMILY, renderVisibleWhitespace } from "../review/reviewDiffRendering";
 import type { ReviewHighlightedToken } from "../review/shikiReviewHighlighter";
 import { cn } from "../../lib/cn";
-import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import type { ResolvedMobileCodeSurface } from "../../lib/appearancePreferences";
 import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
@@ -134,16 +133,13 @@ function useSourceFileModel(props: SourceFileSurfaceProps) {
 }
 
 function SourceHighlightStatusView(props: { readonly status: SourceHighlightStatus }) {
-  const translator = useMobileInterfaceTranslator();
   if (props.status === "highlighting") {
     return <LoadingStrip />;
   }
   if (props.status === "error") {
     return (
       <View className="border-b border-border bg-card px-4 py-2">
-        <Text className="text-2xs font-t3-medium uppercase text-foreground-muted">
-          {translator.message("mobile.files.plainText")}
-        </Text>
+        <Text className="text-2xs font-t3-medium uppercase text-foreground-muted">Plain text</Text>
       </View>
     );
   }

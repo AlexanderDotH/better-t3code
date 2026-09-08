@@ -7,13 +7,16 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import {
+  isImportedAgentSessionMessageId,
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
   OrchestrationSession,
   OrchestrationThread,
 } from "@t3tools/contracts";
+import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Predicate from "effect/Predicate";
 
 import { toProjectorDecodeError, type OrchestrationProjectorDecodeError } from "./Errors.ts";
 import {
@@ -206,9 +209,31 @@ function setSubagentProgress(
   return upsertSubagent(subagents, updated);
 }
 
+// Async questions can stay open while the agent produces more activity.
+// Match the database snapshot's pending-question retention.
+function retainThreadActivities(activities: OrchestrationThread["activities"]) {
+  const recentStart = activities.length - 500;
+  if (recentStart <= 0) return activities;
+  const pending = new Map<string, OrchestrationThread["activities"][number]>();
+  for (const activity of activities) {
+    if (!Predicate.isObject(activity.payload)) continue;
+    const requestId = activity.payload.requestId;
+    if (typeof requestId !== "string") continue;
+    if (activity.kind === "user-input.requested" && activity.payload.responseMode === "message") {
+      pending.set(requestId, activity);
+    } else if (activity.kind === "user-input.resolved") {
+      pending.delete(requestId);
+    }
+  }
+  const pendingActivities = new Set(pending.values());
+  return activities.filter(
+    (activity, index) => activity.historyOrigin !== undefined || index >= recentStart || pendingActivities.has(activity),
+  );
+}
+
 function checkpointStatusToLatestTurnState(status: "ready" | "missing" | "error") {
   if (status === "error") return "error" as const;
-  if (status === "missing") return "interrupted" as const;
+  // Match SQL and client projections: a missing git ref is not an interruption.
   return "completed" as const;
 }
 
@@ -266,7 +291,7 @@ export function retainThreadMessagesAfterRevert<T extends OrchestrationMessage>(
       retainedMessageIds.add(message.id);
       continue;
     }
-    if (message.role === "system") {
+    if (message.role === "system" || isImportedAgentSessionMessageId(message.id)) {
       retainedMessageIds.add(message.id);
       continue;
     }
@@ -277,7 +302,9 @@ export function retainThreadMessagesAfterRevert<T extends OrchestrationMessage>(
 
   const retainedUserCount = messages.filter(
     (message) =>
-      message.role === "user" && !isFrozen(message) && retainedMessageIds.has(message.id),
+      message.role === "user" &&
+      !isImportedAgentSessionMessageId(message.id) && !isFrozen(message) &&
+      retainedMessageIds.has(message.id),
   ).length;
   const missingUserCount = Math.max(0, turnCount - retainedUserCount);
   if (missingUserCount > 0) {
@@ -291,7 +318,8 @@ export function retainThreadMessagesAfterRevert<T extends OrchestrationMessage>(
       )
       .toSorted(
         (left, right) =>
-          left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+          compareDateTimeStrings(left.createdAt, right.createdAt) ||
+          left.id.localeCompare(right.id),
       )
       .slice(0, missingUserCount);
     for (const message of fallbackUserMessages) {
@@ -301,7 +329,9 @@ export function retainThreadMessagesAfterRevert<T extends OrchestrationMessage>(
 
   const retainedAssistantCount = messages.filter(
     (message) =>
-      message.role === "assistant" && !isFrozen(message) && retainedMessageIds.has(message.id),
+      message.role === "assistant" &&
+      !isImportedAgentSessionMessageId(message.id) && !isFrozen(message) &&
+      retainedMessageIds.has(message.id),
   ).length;
   const missingAssistantCount = Math.max(0, turnCount - retainedAssistantCount);
   if (missingAssistantCount > 0) {
@@ -315,7 +345,8 @@ export function retainThreadMessagesAfterRevert<T extends OrchestrationMessage>(
       )
       .toSorted(
         (left, right) =>
-          left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+          compareDateTimeStrings(left.createdAt, right.createdAt) ||
+          left.id.localeCompare(right.id),
       )
       .slice(0, missingAssistantCount);
     for (const message of fallbackAssistantMessages) {
@@ -401,8 +432,10 @@ export function projectEvent(
             workspaceRoot: payload.workspaceRoot,
             defaultModelSelection: payload.defaultModelSelection,
             defaultThreadEnvMode: null,
+            autoPull: false,
             checkpointsEnabled: payload.checkpointsEnabled,
             faviconPath: payload.faviconPath ?? null,
+            projectIcon: payload.projectIcon ?? null,
             scripts: payload.scripts,
             coordinationClaims: [],
             createdAt: payload.createdAt,
@@ -439,11 +472,15 @@ export function projectEvent(
                   ...(payload.defaultThreadEnvMode !== undefined
                     ? { defaultThreadEnvMode: payload.defaultThreadEnvMode }
                     : {}),
+                  ...(payload.autoPull !== undefined ? { autoPull: payload.autoPull } : {}),
                   ...(payload.checkpointsEnabled !== undefined
                     ? { checkpointsEnabled: payload.checkpointsEnabled }
                     : {}),
                   ...(payload.faviconPath !== undefined
                     ? { faviconPath: payload.faviconPath }
+                    : {}),
+                  ...(payload.projectIcon !== undefined
+                    ? { projectIcon: payload.projectIcon }
                     : {}),
                   ...(payload.scripts !== undefined ? { scripts: payload.scripts } : {}),
                   updatedAt: payload.updatedAt,
@@ -541,6 +578,7 @@ export function projectEvent(
             interactionMode: payload.interactionMode,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
+            branchPullRequest: null,
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -548,6 +586,7 @@ export function projectEvent(
             settledOverride: null,
             settledAt: null,
             unsettledAt: null,
+            activeOrderKey: null,
             snoozedUntil: null,
             snoozedAt: null,
             deletedAt: null,
@@ -688,6 +727,7 @@ export function projectEvent(
             settledOverride: "settled",
             settledAt: payload.settledAt,
             unsettledAt: null,
+            activeOrderKey: null,
             updatedAt: payload.updatedAt,
           }),
         })),
@@ -782,6 +822,9 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             ...(payload.title !== undefined ? { title: payload.title } : {}),
+            ...(payload.activeOrderKey !== undefined
+              ? { activeOrderKey: payload.activeOrderKey }
+              : {}),
             ...(payload.titleRegeneration !== undefined
               ? { titleRegeneration: payload.titleRegeneration }
               : {}),
@@ -792,6 +835,9 @@ export function projectEvent(
             ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
             ...(payload.linkedPullRequest !== undefined
               ? { linkedPullRequest: payload.linkedPullRequest }
+              : {}),
+            ...(payload.branchPullRequest !== undefined
+              ? { branchPullRequest: payload.branchPullRequest }
               : {}),
             updatedAt: payload.updatedAt,
           }),
@@ -1158,7 +1204,11 @@ export function projectEvent(
               ? thread.latestTurn
               : {
                   turnId: payload.turnId,
-                  state: checkpointStatusToLatestTurnState(payload.status),
+                  state:
+                    thread.latestTurn?.turnId === payload.turnId &&
+                    thread.latestTurn.state === "interrupted"
+                      ? "interrupted"
+                      : checkpointStatusToLatestTurnState(payload.status),
                   requestedAt:
                     thread.latestTurn?.turnId === payload.turnId
                       ? thread.latestTurn.requestedAt
@@ -1251,12 +1301,11 @@ export function projectEvent(
             return nextBase;
           }
 
-          const activities = retainFrozenWithNativeLimit(
+          const activities = retainThreadActivities(
             [
               ...thread.activities.filter((entry) => entry.id !== payload.activity.id),
               payload.activity,
             ].toSorted(compareThreadActivities),
-            500,
           );
 
           return {

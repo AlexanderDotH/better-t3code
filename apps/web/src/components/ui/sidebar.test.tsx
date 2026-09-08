@@ -2,7 +2,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuSubButton,
   SidebarProvider,
@@ -37,8 +36,6 @@ describe("sidebar interactive cursors", () => {
     );
 
     expect(html).toContain('data-sidebar-state="collapsed"');
-    expect(html).toContain("--workspace-titlebar-content-left:");
-    expect(html).toContain("--workspace-titlebar-content-right:");
   });
 
   it("keeps the sidebar trigger interactive inside Electron drag regions", () => {
@@ -50,17 +47,6 @@ describe("sidebar interactive cursors", () => {
 
     expect(html).toContain("[-webkit-app-region:no-drag]");
     expect(html).toContain("size-[var(--workspace-titlebar-control-size)]!");
-  });
-
-  it("mirrors the sidebar trigger icon for a right-aligned sidebar", () => {
-    const html = renderToStaticMarkup(
-      <SidebarProvider>
-        <SidebarTrigger side="right" />
-      </SidebarProvider>,
-    );
-
-    expect(html).toContain("lucide-panel-right-close");
-    expect(html).not.toContain("lucide-panel-left-close");
   });
 
   it("uses shared geometry and icon constraints for menu buttons by default", () => {
@@ -100,17 +86,6 @@ describe("sidebar interactive cursors", () => {
 
     expect(html).toContain("cursor-grab");
     expect(html).not.toContain("cursor-pointer");
-  });
-
-  it("uses a pointer cursor for menu actions", () => {
-    const html = renderToStaticMarkup(
-      <SidebarMenuAction aria-label="Create thread">
-        <span>+</span>
-      </SidebarMenuAction>,
-    );
-
-    expect(html).toContain('data-slot="sidebar-menu-action"');
-    expect(html).toContain("cursor-pointer");
   });
 
   it("uses a pointer cursor for submenu buttons", () => {

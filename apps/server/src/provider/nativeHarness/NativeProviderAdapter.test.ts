@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import {
   ApprovalRequestId,
   ProviderDriverKind,
@@ -64,7 +64,9 @@ function makeTestAdapter(input: {
       turnSettled: "Native test turn settled",
     },
     limits: {
-      maxIdleWorkingSets: input.maxIdleWorkingSets,
+      ...(input.maxIdleWorkingSets !== undefined
+        ? { maxIdleWorkingSets: input.maxIdleWorkingSets }
+        : {}),
       maxToolDefinitions: 8,
       maxToolOutputBytes: 1024,
       maxParallelToolCalls: input.maxParallelToolCalls ?? 2,
@@ -487,7 +489,8 @@ describe("NativeProviderAdapter", () => {
           .pipe(Effect.forkChild);
         const opened = yield* Fiber.join(openedFiber);
         expect(Option.isSome(opened)).toBe(true);
-        if (Option.isNone(opened) || opened.value.type !== "request.opened") return;
+        assert.isOk(Option.isSome(opened) && opened.value.type === "request.opened");
+        assert.isDefined(opened.value.requestId);
         expect(executed).toEqual([]);
         yield* adapter.respondToRequest(
           threadId,
@@ -726,7 +729,8 @@ describe("NativeProviderAdapter", () => {
           .pipe(Effect.forkChild);
         const opened = yield* Fiber.join(openedFiber);
         expect(Option.isSome(opened)).toBe(true);
-        if (Option.isNone(opened) || opened.value.type !== "request.opened") return;
+        assert.isOk(Option.isSome(opened) && opened.value.type === "request.opened");
+        assert.isDefined(opened.value.requestId);
         yield* adapter.respondToRequest(
           threadId,
           ApprovalRequestId.make(opened.value.requestId),

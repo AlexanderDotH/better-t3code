@@ -113,6 +113,7 @@ function rpcSession(client: WsRpcProtocolClient): RpcSession {
   return {
     client,
     initialConfig: Effect.never,
+    subscribeServerConfig: () => Stream.never,
     ready: Effect.void,
     probe: Effect.void,
     closed: Effect.never,

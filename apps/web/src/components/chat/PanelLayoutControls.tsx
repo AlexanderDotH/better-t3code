@@ -3,7 +3,6 @@ import { memo } from "react";
 
 import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 interface PanelLayoutControlsProps {
   showTerminalControl?: boolean;
@@ -14,6 +13,8 @@ interface PanelLayoutControlsProps {
   rightPanelOpen: boolean;
   rightPanelShortcutLabel: string | null;
   rightPanelUnavailableLabel?: string;
+  /** Running + waiting subagents in this thread; badges the right panel toggle. */
+  liveAgentCount: number;
   onToggleTerminal: () => void;
   onToggleRightPanel: () => void;
 }
@@ -26,13 +27,11 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   rightPanelAvailable,
   rightPanelOpen,
   rightPanelShortcutLabel,
-  rightPanelUnavailableLabel,
+  rightPanelUnavailableLabel = "Right panel is unavailable",
+  liveAgentCount,
   onToggleTerminal,
   onToggleRightPanel,
 }: PanelLayoutControlsProps) {
-  const translate = useInterfaceTranslator().message;
-  const resolvedRightPanelUnavailableLabel =
-    rightPanelUnavailableLabel ?? translate("chat.composer.rightPanelUnavailable");
   return (
     <div
       className="flex h-full shrink-0 items-center gap-1 [-webkit-app-region:no-drag]"
@@ -45,7 +44,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               className="shrink-0 [-webkit-app-region:no-drag]"
               pressed={terminalOpen}
               onPressedChange={onToggleTerminal}
-              aria-label={translate("chat.composer.toggleTerminal")}
+              aria-label="Toggle terminal drawer"
               variant="ghost"
               size="sm"
               disabled={!terminalAvailable}
@@ -55,8 +54,8 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
           </TooltipTrigger>
           <TooltipPopup side="bottom">
             {terminalAvailable
-              ? `${translate("chat.composer.toggleTerminal")}${terminalShortcutLabel ? ` (${terminalShortcutLabel})` : ""}`
-              : translate("chat.composer.terminalUnavailable")}
+              ? `Toggle terminal drawer${terminalShortcutLabel ? ` (${terminalShortcutLabel})` : ""}`
+              : "Terminal drawer is unavailable"}
           </TooltipPopup>
         </Tooltip>
       ) : null}
@@ -66,18 +65,34 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
             className="shrink-0 [-webkit-app-region:no-drag]"
             pressed={rightPanelOpen}
             onPressedChange={onToggleRightPanel}
-            aria-label={translate("chat.composer.toggleRightPanel")}
+            aria-label={
+              liveAgentCount > 0
+                ? `Toggle right panel, ${liveAgentCount} ${liveAgentCount === 1 ? "agent" : "agents"} working`
+                : "Toggle right panel"
+            }
             variant="ghost"
             size="sm"
             disabled={!rightPanelAvailable}
           >
             <PanelRightIcon className="size-4" />
+            {liveAgentCount > 0 ? (
+              <span
+                aria-hidden
+                className="absolute -top-1 -right-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-info px-1 text-[9px] font-semibold tabular-nums text-white"
+              >
+                {liveAgentCount}
+              </span>
+            ) : null}
           </Toggle>
         </TooltipTrigger>
         <TooltipPopup side="bottom">
           {rightPanelAvailable
-            ? `${translate("chat.composer.toggleRightPanel")}${rightPanelShortcutLabel ? ` (${rightPanelShortcutLabel})` : ""}`
-            : resolvedRightPanelUnavailableLabel}
+            ? `Toggle right panel${rightPanelShortcutLabel ? ` (${rightPanelShortcutLabel})` : ""}${
+                liveAgentCount > 0
+                  ? ` · ${liveAgentCount} ${liveAgentCount === 1 ? "agent" : "agents"} working`
+                  : ""
+              }`
+            : rightPanelUnavailableLabel}
         </TooltipPopup>
       </Tooltip>
     </div>
@@ -91,10 +106,7 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
   maximized: boolean;
   onToggle: () => void;
 }) {
-  const translate = useInterfaceTranslator().message;
-  const label = maximized
-    ? translate("chat.composer.restorePanel")
-    : translate("chat.composer.maximizePanel");
+  const label = maximized ? "Restore panel size" : "Maximize panel";
   return (
     <Tooltip>
       <TooltipTrigger

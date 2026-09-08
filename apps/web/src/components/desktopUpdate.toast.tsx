@@ -1,5 +1,4 @@
 import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
-import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { ArrowRightIcon } from "lucide-react";
 
 import {
@@ -10,34 +9,34 @@ import { toastManager } from "./ui/toast";
 
 type DesktopUpdateShell = Pick<DesktopBridge, "openExternal">;
 
+export async function openDesktopUpdateReleaseNotes(
+  shell: DesktopUpdateShell | undefined,
+  releaseUrl: string,
+): Promise<void> {
+  try {
+    if (shell && (await shell.openExternal(releaseUrl))) return;
+  } catch {
+    // Surface rejected IPC calls through the same user-visible fallback.
+  }
+  toastManager.add({ type: "error", title: "Unable to open release notes" });
+}
+
 function ReleaseNotesLink({
   shell,
   releaseUrl,
-  translator,
 }: {
   shell: DesktopUpdateShell;
   releaseUrl: string;
-  translator: Pick<InterfaceTranslator, "message">;
 }) {
   return (
     <button
       className="ml-2 inline cursor-pointer text-muted-foreground underline decoration-dotted underline-offset-4 transition-colors hover:text-foreground"
       onClick={() => {
-        void (async () => {
-          try {
-            if (await shell.openExternal(releaseUrl)) return;
-          } catch {
-            // Surface rejected IPC calls through the same user-visible fallback.
-          }
-          toastManager.add({
-            type: "error",
-            title: translator.message("desktopUpdate.openNotesFailed"),
-          });
-        })();
+        void openDesktopUpdateReleaseNotes(shell, releaseUrl);
       }}
       type="button"
     >
-      {translator.message("desktopUpdate.readMore")}
+      Read more
       <ArrowRightIcon
         aria-hidden
         className="ml-1 inline size-3 -rotate-45 align-[-0.125em]"
@@ -50,18 +49,15 @@ function ReleaseNotesLink({
 export function showDesktopUpdateDownloadedToast(
   shell: DesktopUpdateShell,
   state: DesktopUpdateState,
-  translator: Pick<InterfaceTranslator, "message">,
 ): void {
   const releaseUrl = getDesktopUpdateReleaseUrl(getDesktopUpdateDownloadedVersion(state));
   toastManager.add({
     type: "success",
-    title: translator.message("desktopUpdate.downloadedTitle"),
+    title: "Update downloaded",
     description: (
       <>
-        {translator.message("desktopUpdate.downloadedDescription")}
-        {releaseUrl ? (
-          <ReleaseNotesLink releaseUrl={releaseUrl} shell={shell} translator={translator} />
-        ) : null}
+        Restart the app from the update button to install it.
+        {releaseUrl ? <ReleaseNotesLink releaseUrl={releaseUrl} shell={shell} /> : null}
       </>
     ),
   });

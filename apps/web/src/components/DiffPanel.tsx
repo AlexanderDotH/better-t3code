@@ -1,3 +1,4 @@
+import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
 import type { FileDiffContentsLoader } from "@pierre/diffs";
 import { useParams } from "@tanstack/react-router";
@@ -15,38 +16,46 @@ import {
   ChevronsDownUpIcon,
   ChevronsUpDownIcon,
   Columns2Icon,
+  FolderTreeIcon,
   PilcrowIcon,
-  RefreshCwIcon,
   Rows3Icon,
   SearchIcon,
   TextWrapIcon,
 } from "lucide-react";
+import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCodeViewFileReveal } from "./diffs/useCodeViewFileReveal";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { type DraftId } from "../composerDraftStore";
 import { openDiffFilePrimaryAction } from "../diffFileActions";
 import { useCheckpointDiff } from "~/lib/checkpointDiffState";
 import { cn } from "~/lib/utils";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "../diffPanelStore";
+import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useTheme } from "../hooks/useTheme";
-import { useInterfaceTranslator } from "../hooks/useInterfaceTranslator";
 import {
-  buildFileDiffRenderKey,
+  buildFileDiffContentVersion,
+  buildFileDiffIdentityKey,
   getDiffCollapseIconClassName,
   getDiffLineStat,
   getRenderablePatch,
   resolveDiffThemeName,
   resolveFileDiffPath,
 } from "../lib/diffRendering";
+import { PREFERRED_HIGHLIGHTER } from "../lib/syntaxHighlighting";
 import { areAllDiffFilesCollapsed, toggleAllDiffFiles } from "../lib/diffCollapse";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
+import { useWorkspaceMutationRefresh } from "../hooks/useWorkspaceMutationRefresh";
 import { useProject, useThread } from "../state/entities";
 import { resolveThreadRouteRef } from "../threadRoutes";
-import { useClientSettings } from "../hooks/useSettings";
+import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
+import { DiffFilePathCopyButton } from "./DiffFilePathCopyButton";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { DiffStatLabel } from "./chat/DiffStatLabel";
 import { AnnotatableCodeView, type AnnotatableCodeViewHandle } from "./diffs/AnnotatableCodeView";
+import { DiffFileTree } from "./diffs/DiffFileTree";
+import { diffFileTreeEntries } from "./diffs/diffFileTree.logic";
 import { Button } from "./ui/button";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 import { Switch } from "./ui/switch";
@@ -79,6 +88,7 @@ import { createGitDiffFileContentsLoader } from "../lib/diffFileContents";
 
 type DiffThemeType = "light" | "dark";
 const AUTOMATIC_BASE_REF = "__automatic_base_ref__";
+const DIFF_FILE_TREE_STORAGE_KEY = "t3code.diffFileTreeOpen";
 
 interface CollapsedDiffFilesState {
   readonly scopeKey: string | null;
@@ -91,36 +101,34 @@ interface DiffPanelProps {
   mode?: DiffPanelMode;
   composerDraftTarget: ScopedThreadRef | DraftId;
   initialGitScope: "branch" | "unstaged";
-  onOpenFile?: (filePath: string) => void;
+  workspaceMutationId: string | null;
 }
-
-export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 
 export default function DiffPanel({
   mode = "inline",
   composerDraftTarget,
   initialGitScope: initialGitScopeProp,
-  onOpenFile,
+  workspaceMutationId,
 }: DiffPanelProps) {
-  const translate = useInterfaceTranslator().message;
   const { resolvedTheme } = useTheme();
   const settings = useClientSettings();
   const [initialGitScope] = useState(initialGitScopeProp);
-  const diffRenderMode = useDiffPanelStore((state) => state.diffRenderMode);
-  const setDiffRenderMode = useDiffPanelStore((state) => state.setDiffRenderMode);
+  const diffLayout = settings.diffLayout;
+  const updateClientSettings = useUpdateClientSettings();
   const [wordWrap, setWordWrap] = useState(settings.wordWrap);
   const [diffIgnoreWhitespace, setDiffIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
+  const [fileTreeOpen, setFileTreeOpen] = useLocalStorage(
+    DIFF_FILE_TREE_STORAGE_KEY,
+    false,
+    Schema.Boolean,
+  );
   const [baseRefQuery, setBaseRefQuery] = useState("");
   const [collapsedDiffFiles, setCollapsedDiffFiles] = useState<CollapsedDiffFilesState>(() => ({
     scopeKey: null,
     fileKeys: EMPTY_COLLAPSED_DIFF_FILE_KEYS,
   }));
   const [codeViewRevision, setCodeViewRevision] = useState(0);
-  const codeViewRef = useRef<AnnotatableCodeViewHandle>(null);
-  const lastCompletedTurnRefreshRef = useRef<{
-    readonly threadKey: string | null;
-    readonly turnId: TurnId | null;
-  } | null>(null);
+  const [codeView, setCodeView] = useState<AnnotatableCodeViewHandle | null>(null);
 
   const routeThreadRef = useParams({
     strict: false,
@@ -208,11 +216,11 @@ export default function DiffPanel({
   const selectedScopeLabel =
     selectedTurnId === null
       ? selectedGitScope === "unstaged"
-        ? translate("git.diff.workingTree")
-        : translate("git.diff.branchChanges")
+        ? "Working tree"
+        : "Branch changes"
       : selectedTurn?.turnId === latestTurn?.turnId
-        ? translate("git.diff.latestTurn")
-        : translate("git.diff.turnNumber", { count: selectedCheckpointTurnCount ?? "?" });
+        ? "Latest turn"
+        : `Turn ${selectedCheckpointTurnCount ?? "?"}`;
   const reviewSectionId = selectedTurn ? `turn:${selectedTurn.turnId}` : selectedGitScope;
   const collapseScopeKey = routeThreadRef
     ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}:${reviewSectionId}`
@@ -223,10 +231,10 @@ export default function DiffPanel({
       ? collapsedDiffFiles.fileKeys
       : EMPTY_COLLAPSED_DIFF_FILE_KEYS;
   const reviewSectionTitle = selectedTurn
-    ? translate("git.diff.turnNumber", { count: selectedCheckpointTurnCount ?? "?" })
+    ? `Turn ${selectedCheckpointTurnCount ?? "?"}`
     : selectedGitScope === "unstaged"
-      ? translate("git.diff.workingTree")
-      : translate("git.diff.branchChanges");
+      ? "Working tree"
+      : "Branch changes";
   const selectedCheckpointRange = useMemo(
     () =>
       typeof selectedCheckpointTurnCount === "number"
@@ -294,28 +302,17 @@ export default function DiffPanel({
     return () => window.removeEventListener("focus", refreshOnFocus);
   }, [canRefreshGitDiff, refreshBranchDiffPreview]);
 
-  useEffect(() => {
-    const current = {
-      threadKey: activeThreadRefreshKey,
-      turnId: latestTurn?.turnId ?? null,
-    };
-    const previous = lastCompletedTurnRefreshRef.current;
-    if (!canRefreshGitDiff) {
-      return;
-    }
-    if (previous === null || previous.threadKey !== current.threadKey) {
-      lastCompletedTurnRefreshRef.current = current;
-      return;
-    }
-    if (previous.turnId === current.turnId) return;
-    refreshBranchDiffPreview();
-    lastCompletedTurnRefreshRef.current = current;
-  }, [activeThreadRefreshKey, canRefreshGitDiff, latestTurn?.turnId, refreshBranchDiffPreview]);
+  useWorkspaceMutationRefresh({
+    enabled: canRefreshGitDiff,
+    mutationId: workspaceMutationId,
+    refresh: refreshBranchDiffPreview,
+    resourceKey: `diff:${activeThreadRefreshKey ?? ""}`,
+  });
 
   const selectedGitSource = branchDiffPreview.data?.sources.find(
     (source) => source.kind === (selectedGitScope === "unstaged" ? "working-tree" : "branch-range"),
   );
-  const loadDiffFiles = useMemo<FileDiffContentsLoader | undefined>(() => {
+  const currentLoadDiffFiles = useMemo<FileDiffContentsLoader | undefined>(() => {
     const preview = branchDiffPreview.data;
     if (selectedTurnId !== null || !activeThread || !preview || !selectedGitSource) {
       return undefined;
@@ -336,6 +333,13 @@ export default function DiffPanel({
     selectedGitSource,
     selectedTurnId,
   ]);
+  const loadDiffFilesRef = useRef(currentLoadDiffFiles);
+  loadDiffFilesRef.current = currentLoadDiffFiles;
+  const loadDiffFiles = useCallback<FileDiffContentsLoader>(async (fileDiff) => {
+    const loader = loadDiffFilesRef.current;
+    if (!loader) throw new Error("Diff file contents are unavailable for this selection.");
+    return loader(fileDiff);
+  }, []);
   const localBranchRefs = useEnvironmentQuery(
     selectedTurnId === null &&
       selectedGitScope === "branch" &&
@@ -416,17 +420,19 @@ export default function DiffPanel({
     () =>
       renderableFiles.map((fileDiff) => ({
         fileDiff,
-        fileKey: buildFileDiffRenderKey(fileDiff),
+        fileKey: buildFileDiffIdentityKey(fileDiff),
+        fileVersion: buildFileDiffContentVersion(fileDiff),
       })),
     [renderableFiles],
   );
   const codeViewFiles = useMemo(
     () =>
-      renderableFileEntries.map(({ fileDiff, fileKey }) => {
+      renderableFileEntries.map(({ fileDiff, fileKey, fileVersion }) => {
         return {
           fileDiff,
           filePath: resolveFileDiffPath(fileDiff),
           fileKey,
+          fileVersion,
           collapsed: collapsedDiffFileKeys.has(fileKey),
         };
       }),
@@ -435,21 +441,39 @@ export default function DiffPanel({
   const diffFileKeys = useMemo(() => codeViewFiles.map((file) => file.fileKey), [codeViewFiles]);
   const allDiffFilesCollapsed = areAllDiffFilesCollapsed(diffFileKeys, collapsedDiffFileKeys);
   const diffLineStat = useMemo(() => getDiffLineStat(renderableFiles), [renderableFiles]);
+  const fileTreeEntries = useMemo(() => diffFileTreeEntries(renderableFiles), [renderableFiles]);
   const selectedDiffFileKey = selectedFilePath
     ? (codeViewFiles.find((candidate) => candidate.filePath === selectedFilePath)?.fileKey ?? null)
     : null;
 
   useEffect(() => {
-    if (!selectedDiffFileKey) return;
-    codeViewRef.current?.scrollTo({ type: "item", id: selectedDiffFileKey, align: "start" });
-  }, [codeViewMountKey, selectedDiffFileKey, selectedFileRevealRequestId]);
+    if (!selectedDiffFileKey || !codeView?.getInstance()) return;
+    codeView.scrollTo({ type: "item", id: selectedDiffFileKey, align: "start" });
+  }, [codeView, codeViewMountKey, selectedDiffFileKey, selectedFileRevealRequestId]);
+
+  const treeRevealScope = useMemo(
+    () => ({ collapseScopeKey, diffSelection }),
+    [collapseScopeKey, diffSelection],
+  );
+  const requestTreeReveal = useCodeViewFileReveal(codeView, treeRevealScope);
+  const revealDiffFile = useCallback(
+    (filePath: string) => {
+      const file = codeViewFiles.find((candidate) => candidate.filePath === filePath);
+      if (!file) return;
+      if (file.collapsed) {
+        setCollapsedDiffFiles((current) => {
+          const next = new Set(current.scopeKey === collapseScopeKey ? current.fileKeys : []);
+          next.delete(file.fileKey);
+          return { scopeKey: collapseScopeKey, fileKeys: next };
+        });
+      }
+      requestTreeReveal(file.fileKey);
+    },
+    [codeViewFiles, collapseScopeKey, requestTreeReveal],
+  );
 
   const openDiffFile = useCallback(
     (filePath: string) => {
-      if (onOpenFile) {
-        onOpenFile(filePath);
-        return;
-      }
       openDiffFilePrimaryAction({
         threadRef: routeThreadRef,
         filePath,
@@ -474,7 +498,7 @@ export default function DiffPanel({
         },
       });
     },
-    [activeCwd, activeRepositoryRoot, onOpenFile, openInPreferredEditor, routeThreadRef],
+    [activeCwd, activeRepositoryRoot, openInPreferredEditor, routeThreadRef],
   );
   const toggleDiffFileCollapsed = useCallback(
     (fileKey: string) => {
@@ -523,7 +547,7 @@ export default function DiffPanel({
         <DropdownMenu>
           <DropdownMenuTrigger
             className="inline-flex h-6 max-w-full items-center gap-1 rounded-md bg-accent px-2 text-xs font-medium text-accent-foreground outline-none transition-colors hover:bg-accent/80 focus-visible:ring-2 focus-visible:ring-ring"
-            aria-label={translate("git.diff.scopeAria", { scope: selectedScopeLabel })}
+            aria-label={`Diff scope: ${selectedScopeLabel}`}
           >
             <span className="truncate">{selectedScopeLabel}</span>
             <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
@@ -537,7 +561,7 @@ export default function DiffPanel({
               }
               onClick={() => selectGitScope("unstaged")}
             >
-              <span>{translate("git.diff.workingTree")}</span>
+              <span>Working tree</span>
             </DropdownMenuItem>
             <DropdownMenuItem
               className={
@@ -547,7 +571,7 @@ export default function DiffPanel({
               }
               onClick={() => selectGitScope("branch")}
             >
-              <span>{translate("git.diff.branchChanges")}</span>
+              <span>Branch changes</span>
             </DropdownMenuItem>
             <DropdownMenuItem
               className={
@@ -559,10 +583,10 @@ export default function DiffPanel({
                 if (latestTurn) selectTurn(latestTurn.turnId);
               }}
             >
-              <span>{translate("git.diff.latestTurn")}</span>
+              <span>Latest turn</span>
             </DropdownMenuItem>
             <DropdownMenuSub>
-              <DropdownMenuSubTrigger>{translate("git.diff.turn")}</DropdownMenuSubTrigger>
+              <DropdownMenuSubTrigger>Turn</DropdownMenuSubTrigger>
               <DropdownMenuSubContent className="w-64">
                 {orderedTurnDiffSummaries.map((summary) => {
                   const turnCount =
@@ -577,7 +601,7 @@ export default function DiffPanel({
                       }
                       onClick={() => selectTurn(summary.turnId)}
                     >
-                      <span>{translate("git.diff.turnNumber", { count: turnCount })}</span>
+                      <span>Turn {turnCount}</span>
                       <span className="ml-auto text-xs tabular-nums text-muted-foreground">
                         {formatShortTimestamp(summary.completedAt, settings.timestampFormat)}
                       </span>
@@ -591,10 +615,7 @@ export default function DiffPanel({
         {selectedTurnId === null && selectedGitScope === "branch" && selectedGitSource?.baseRef && (
           <div
             className="flex min-w-0 max-w-full items-center gap-2 overflow-hidden text-xs text-muted-foreground"
-            aria-label={translate("git.diff.comparing", {
-              head: selectedGitSource.headRef ?? "HEAD",
-              base: selectedGitSource.baseRef,
-            })}
+            aria-label={`Comparing ${selectedGitSource.headRef ?? "HEAD"} against ${selectedGitSource.baseRef}`}
           >
             <Tooltip>
               <TooltipTrigger render={<span className="flex min-w-0 items-center gap-2" />}>
@@ -621,9 +642,7 @@ export default function DiffPanel({
             >
               <ComboboxTrigger
                 className="inline-flex min-w-0 max-w-48 items-center gap-1 overflow-hidden rounded-md px-1.5 py-1 outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                aria-label={translate("git.diff.changeTarget", {
-                  target: selectedGitSource.baseRef,
-                })}
+                aria-label={`Change comparison target. Currently ${selectedGitSource.baseRef}`}
               >
                 <span className="min-w-0 truncate">{selectedGitSource.baseRef}</span>
                 <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
@@ -641,7 +660,7 @@ export default function DiffPanel({
                     <ComboboxInput
                       className="[&_input]:h-6.5 [&_input]:ps-5 [&_input]:font-sans [&_input]:leading-6.5"
                       inputClassName="rounded-none bg-transparent text-sm"
-                      placeholder={translate("git.diff.searchRefs")}
+                      placeholder="Search refs..."
                       showTrigger={false}
                       size="sm"
                       unstyled
@@ -653,20 +672,18 @@ export default function DiffPanel({
                 <div className="grid shrink-0 grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 border-b border-border/70 ps-3 pe-6.5 pt-2 pb-1.5 font-medium text-[10px] text-muted-foreground uppercase tracking-wide">
                   <span aria-hidden="true" />
                   <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_2rem] items-center">
-                    <span>{translate("git.common.branch")}</span>
-                    <span className="text-right">{translate("git.common.remote")}</span>
+                    <span>Branch</span>
+                    <span className="text-right">Remote</span>
                   </div>
                 </div>
-                <ComboboxEmpty>{translate("git.diff.noMatchingRefs")}</ComboboxEmpty>
+                <ComboboxEmpty>No matching refs.</ComboboxEmpty>
                 <ComboboxList className="max-h-64 min-w-0 overflow-x-hidden">
                   <ComboboxItem
                     className="h-8 w-full min-w-0 grid-cols-[1rem_minmax(0,1fr)] py-0"
                     contentClassName="w-full min-w-0 overflow-hidden"
                     value={AUTOMATIC_BASE_REF}
                   >
-                    <span className="block min-w-0 truncate">
-                      {translate("git.diff.automatic")}
-                    </span>
+                    <span className="block min-w-0 truncate">Automatic</span>
                   </ComboboxItem>
                   {baseRefChoices.map((choice) => {
                     const item = valueForBaseRefChoice(choice);
@@ -688,9 +705,7 @@ export default function DiffPanel({
                               onPointerDown={(event) => event.stopPropagation()}
                             >
                               <Switch
-                                aria-label={translate("git.diff.useRemote", {
-                                  label: choice.label,
-                                })}
+                                aria-label={`Use remote version of ${choice.label}`}
                                 checked={useRemote}
                                 className="[--thumb-size:--spacing(3)]"
                                 onCheckedChange={(checked) => {
@@ -708,15 +723,13 @@ export default function DiffPanel({
                                   <span className="flex justify-end text-muted-foreground">
                                     <CheckIcon
                                       role="img"
-                                      aria-label={translate("git.diff.remoteOnly")}
+                                      aria-label="Remote only"
                                       className="size-3"
                                     />
                                   </span>
                                 }
                               />
-                              <TooltipPopup side="top">
-                                {translate("git.diff.remoteOnly")}
-                              </TooltipPopup>
+                              <TooltipPopup side="top">Remote only</TooltipPopup>
                             </Tooltip>
                           ) : null}
                         </div>
@@ -746,23 +759,15 @@ export default function DiffPanel({
                   type="button"
                   size="icon-sm"
                   variant="ghost"
-                  aria-label={
-                    branchDiffPreview.isPending
-                      ? translate("git.diff.refreshing")
-                      : translate("git.diff.refresh")
-                  }
+                  aria-label={branchDiffPreview.isPending ? "Refreshing diff" : "Refresh diff"}
                   onClick={refreshBranchDiffPreview}
                 />
               }
             >
-              <RefreshCwIcon
-                className={cn("size-3.5", branchDiffPreview.isPending && "animate-spin")}
-              />
+              <RefreshIcon className="size-3.5" refreshing={branchDiffPreview.isPending} />
             </TooltipTrigger>
             <TooltipPopup side="top">
-              {branchDiffPreview.isPending
-                ? translate("git.diff.refreshing")
-                : translate("git.diff.refresh")}
+              {branchDiffPreview.isPending ? "Refreshing diff…" : "Refresh diff"}
             </TooltipPopup>
           </Tooltip>
         )}
@@ -774,11 +779,7 @@ export default function DiffPanel({
                   type="button"
                   size="icon-sm"
                   variant="ghost"
-                  aria-label={
-                    allDiffFilesCollapsed
-                      ? translate("git.diff.expandAll")
-                      : translate("git.diff.collapseAll")
-                  }
+                  aria-label={allDiffFilesCollapsed ? "Expand all files" : "Collapse all files"}
                   onClick={toggleDiffFileCollapse}
                 />
               }
@@ -790,27 +791,26 @@ export default function DiffPanel({
               )}
             </TooltipTrigger>
             <TooltipPopup side="top">
-              {allDiffFilesCollapsed
-                ? translate("git.diff.expandAll")
-                : translate("git.diff.collapseAll")}
+              {allDiffFilesCollapsed ? "Expand all files" : "Collapse all files"}
             </TooltipPopup>
           </Tooltip>
         )}
         <ToggleGroup
-          className="shrink-0 gap-1"
-          size="sm"
-          value={[diffRenderMode]}
+          aria-label="Diff layout"
+          className="shrink-0"
+          variant="segmented"
+          value={[diffLayout]}
           onValueChange={(value) => {
             const next = value[0];
             if (next === "stacked" || next === "split") {
-              setDiffRenderMode(next);
+              updateClientSettings({ diffLayout: next });
             }
           }}
         >
-          <Toggle aria-label={translate("git.diff.view.stacked")} value="stacked" variant="ghost">
+          <Toggle aria-label="Stacked diff view" value="stacked">
             <Rows3Icon className="size-3.5" />
           </Toggle>
-          <Toggle aria-label={translate("git.diff.view.split")} value="split" variant="ghost">
+          <Toggle aria-label="Split diff view" value="split">
             <Columns2Icon className="size-3.5" />
           </Toggle>
         </ToggleGroup>
@@ -818,11 +818,7 @@ export default function DiffPanel({
           <TooltipTrigger
             render={
               <Toggle
-                aria-label={
-                  wordWrap
-                    ? translate("git.diff.disableWrapAria")
-                    : translate("git.diff.enableWrapAria")
-                }
+                aria-label={wordWrap ? "Disable diff line wrapping" : "Enable diff line wrapping"}
                 variant="ghost"
                 size="sm"
                 pressed={wordWrap}
@@ -835,7 +831,7 @@ export default function DiffPanel({
             <TextWrapIcon className="size-3.5" />
           </TooltipTrigger>
           <TooltipPopup side="top">
-            {wordWrap ? translate("git.diff.disableWrap") : translate("git.diff.enableWrap")}
+            {wordWrap ? "Disable line wrapping" : "Enable line wrapping"}
           </TooltipPopup>
         </Tooltip>
         <Tooltip>
@@ -843,9 +839,7 @@ export default function DiffPanel({
             render={
               <Toggle
                 aria-label={
-                  diffIgnoreWhitespace
-                    ? translate("git.diff.showWhitespace")
-                    : translate("git.diff.hideWhitespace")
+                  diffIgnoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"
                 }
                 variant="ghost"
                 size="sm"
@@ -859,11 +853,29 @@ export default function DiffPanel({
             <PilcrowIcon className="size-3.5" />
           </TooltipTrigger>
           <TooltipPopup side="top">
-            {diffIgnoreWhitespace
-              ? translate("git.diff.showWhitespace")
-              : translate("git.diff.hideWhitespace")}
+            {diffIgnoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"}
           </TooltipPopup>
         </Tooltip>
+        {codeViewFiles.length > 0 && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  aria-label={fileTreeOpen ? "Hide file tree" : "Show file tree"}
+                  variant="ghost"
+                  size="sm"
+                  pressed={fileTreeOpen}
+                  onPressedChange={(pressed) => setFileTreeOpen(Boolean(pressed))}
+                />
+              }
+            >
+              <FolderTreeIcon className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {fileTreeOpen ? "Hide file tree" : "Show file tree"}
+            </TooltipPopup>
+          </Tooltip>
+        )}
       </div>
     </>
   );
@@ -872,22 +884,23 @@ export default function DiffPanel({
     <DiffPanelShell mode={mode} header={headerRow}>
       {!activeThread ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
-          {translate("git.diff.selectThread")}
+          Select a thread to inspect turn diffs.
         </div>
       ) : !isGitRepo ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
-          {translate("git.diff.notRepository")}
+          Turn diffs are unavailable because this project is not a git repository.
         </div>
       ) : selectedTurnId !== null && orderedTurnDiffSummaries.length === 0 ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
-          {translate("git.diff.noCompletedTurns")}
+          No completed turns yet.
         </div>
       ) : (
         <>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
             {isSelectedPatchTruncated && (
               <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-[11px] text-muted-foreground">
-                {translate("git.diff.truncatedDescription")}
+                This diff was truncated because it exceeded the preview limit. The changes shown are
+                incomplete.
               </p>
             )}
             {selectedPatchError && !renderablePatch && (
@@ -900,115 +913,130 @@ export default function DiffPanel({
                 <DiffPanelLoadingState
                   label={
                     selectedTurn
-                      ? translate("git.diff.loadingCheckpoint")
+                      ? "Loading checkpoint diff..."
                       : selectedGitScope === "unstaged"
-                        ? translate("git.diff.loadingWorkingTree")
-                        : translate("git.diff.loadingBranch")
+                        ? "Loading working tree diff..."
+                        : "Loading branch diff..."
                   }
                 />
               ) : (
                 <div className="flex h-full items-center justify-center px-3 py-2 text-xs text-muted-foreground/70">
                   <p>
                     {hasNoNetChanges
-                      ? translate("git.diff.noNetChanges")
-                      : translate("git.diff.noPatchSelection")}
+                      ? "No net changes in this selection."
+                      : "No patch available for this selection."}
                   </p>
                 </div>
               )
             ) : renderablePatch.kind === "files" ? (
-              <div
-                className="min-h-0 flex-1"
-                onClickCapture={(event) => {
-                  const composedPath = event.nativeEvent.composedPath?.() ?? [];
-                  for (const node of composedPath) {
-                    if (!(node instanceof HTMLElement)) continue;
-                    // Header controls keep their own actions. In particular, the chevron must
-                    // not also trigger the row handler or the two toggles cancel each other.
-                    if (node instanceof HTMLButtonElement || node instanceof HTMLAnchorElement) {
+              <div className="flex min-h-0 flex-1 overflow-hidden">
+                <div
+                  className="min-h-0 min-w-0 flex-1"
+                  onClickCapture={(event) => {
+                    const composedPath = event.nativeEvent.composedPath?.() ?? [];
+                    for (const node of composedPath) {
+                      if (!(node instanceof HTMLElement)) continue;
+                      // Header controls keep their own actions. In particular, the chevron must
+                      // not also trigger the row handler or the two toggles cancel each other.
+                      if (node instanceof HTMLButtonElement || node instanceof HTMLAnchorElement) {
+                        return;
+                      }
+                    }
+                    const title = composedPath.find(
+                      (node): node is HTMLElement =>
+                        node instanceof HTMLElement && node.hasAttribute("data-title"),
+                    );
+                    const filePath = title?.textContent?.trim();
+                    // The filename remains the explicit "open in editor" affordance.
+                    if (filePath) {
+                      openDiffFile(filePath);
                       return;
                     }
-                  }
-                  const title = composedPath.find(
-                    (node): node is HTMLElement =>
-                      node instanceof HTMLElement && node.hasAttribute("data-title"),
-                  );
-                  const filePath = title?.textContent?.trim();
-                  // The filename remains the explicit "open in editor" affordance.
-                  if (filePath) {
-                    openDiffFile(filePath);
-                    return;
-                  }
-                  const header = composedPath.find(
-                    (node): node is HTMLElement =>
-                      node instanceof HTMLElement && node.hasAttribute("data-diffs-header"),
-                  );
-                  const headerFilePath = header?.querySelector("[data-title]")?.textContent?.trim();
-                  if (!headerFilePath) return;
-                  const file = codeViewFiles.find(
-                    (candidate) => candidate.filePath === headerFilePath,
-                  );
-                  if (file) toggleDiffFileCollapsed(file.fileKey);
-                }}
-              >
-                <AnnotatableCodeView
-                  key={collapseScopeKey ?? reviewSectionId}
-                  viewerRef={codeViewRef}
-                  codeViewKey={codeViewMountKey}
-                  className="h-full min-h-0 overflow-auto"
-                  files={codeViewFiles}
-                  sectionId={reviewSectionId}
-                  sectionTitle={reviewSectionTitle}
-                  composerDraftTarget={composerDraftTarget}
-                  renderHeaderPrefix={(fileDiff, fileKey, collapsed) => {
-                    const filePath = resolveFileDiffPath(fileDiff);
-                    return (
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <Button
-                              size="icon-micro"
-                              variant="ghost"
-                              className={cn(
-                                "-ms-0.5 [--control-icon-color:currentColor] bg-transparent hover:bg-foreground/10",
-                                getDiffCollapseIconClassName(fileDiff),
-                              )}
-                              aria-label={
-                                collapsed
-                                  ? translate("git.diff.expandFile", { path: filePath })
-                                  : translate("git.diff.collapseFile", { path: filePath })
-                              }
-                              aria-expanded={!collapsed}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                toggleDiffFileCollapsed(fileKey);
-                              }}
-                            />
-                          }
-                        >
-                          {collapsed ? (
-                            <ChevronRightIcon className="size-4" />
-                          ) : (
-                            <ChevronDownIcon className="size-4" />
-                          )}
-                        </TooltipTrigger>
-                        <TooltipPopup side="top">
-                          {collapsed
-                            ? translate("git.diff.expand")
-                            : translate("git.diff.collapse")}
-                        </TooltipPopup>
-                      </Tooltip>
+                    const header = composedPath.find(
+                      (node): node is HTMLElement =>
+                        node instanceof HTMLElement && node.hasAttribute("data-diffs-header"),
                     );
+                    const headerFilePath = header
+                      ?.querySelector("[data-title]")
+                      ?.textContent?.trim();
+                    if (!headerFilePath) return;
+                    const file = codeViewFiles.find(
+                      (candidate) => candidate.filePath === headerFilePath,
+                    );
+                    if (file) toggleDiffFileCollapsed(file.fileKey);
                   }}
-                  options={{
-                    diffStyle: diffRenderMode === "split" ? "split" : "unified",
-                    lineDiffType: "none",
-                    overflow: wordWrap ? "wrap" : "scroll",
-                    theme: resolveDiffThemeName(resolvedTheme),
-                    themeType: resolvedTheme as DiffThemeType,
-                    stickyHeaders: true,
-                    ...(loadDiffFiles ? { loadDiffFiles } : {}),
-                  }}
-                />
+                >
+                  <AnnotatableCodeView
+                    key={collapseScopeKey ?? reviewSectionId}
+                    viewerRef={setCodeView}
+                    codeViewKey={codeViewMountKey}
+                    className="h-full min-h-0 overflow-auto"
+                    files={codeViewFiles}
+                    sectionId={reviewSectionId}
+                    sectionTitle={reviewSectionTitle}
+                    composerDraftTarget={composerDraftTarget}
+                    renderHeaderFilenameSuffix={(fileDiff) => (
+                      <DiffFilePathCopyButton filePath={resolveFileDiffPath(fileDiff)} />
+                    )}
+                    renderHeaderPrefix={(fileDiff, fileKey, collapsed) => {
+                      const filePath = resolveFileDiffPath(fileDiff);
+                      return (
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <Button
+                                size="icon-micro"
+                                variant="ghost"
+                                className={cn(
+                                  "-ms-0.5 [--control-icon-color:currentColor] bg-transparent hover:bg-foreground/10",
+                                  getDiffCollapseIconClassName(fileDiff),
+                                )}
+                                aria-label={
+                                  collapsed ? `Expand ${filePath}` : `Collapse ${filePath}`
+                                }
+                                aria-expanded={!collapsed}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  toggleDiffFileCollapsed(fileKey);
+                                }}
+                              />
+                            }
+                          >
+                            {collapsed ? (
+                              <ChevronRightIcon className="size-4" />
+                            ) : (
+                              <ChevronDownIcon className="size-4" />
+                            )}
+                          </TooltipTrigger>
+                          <TooltipPopup side="top">
+                            {collapsed ? "Expand diff" : "Collapse diff"}
+                          </TooltipPopup>
+                        </Tooltip>
+                      );
+                    }}
+                    options={{
+                      diffStyle: diffLayout === "split" ? "split" : "unified",
+                      lineDiffType: "none",
+                      overflow: wordWrap ? "wrap" : "scroll",
+                      theme: resolveDiffThemeName(resolvedTheme),
+                      preferredHighlighter: PREFERRED_HIGHLIGHTER,
+                      themeType: resolvedTheme as DiffThemeType,
+                      stickyHeaders: true,
+                      ...(currentLoadDiffFiles ? { loadDiffFiles } : {}),
+                    }}
+                  />
+                </div>
+                {fileTreeOpen ? (
+                  <aside className="flex w-[min(16rem,40%)] min-w-40 shrink-0 border-l border-border/60">
+                    <DiffFileTree
+                      ariaLabel={`${reviewSectionTitle} files`}
+                      entries={fileTreeEntries}
+                      selectedPath={selectedFilePath}
+                      revealRequestId={selectedFileRevealRequestId}
+                      onSelectFile={revealDiffFile}
+                    />
+                  </aside>
+                ) : null}
               </div>
             ) : (
               <div className="min-h-0 flex-1 overflow-auto p-2">

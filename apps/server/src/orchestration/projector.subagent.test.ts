@@ -1,3 +1,4 @@
+import { ProviderDriverKind } from "@t3tools/contracts";
 import {
   CommandId,
   EventId,
@@ -70,7 +71,7 @@ function makeSubagent(
     id: subagentId,
     origin: "t3-fetch",
     providerInstanceId: ProviderInstanceId.make("claude-work"),
-    providerDriver: "claudeAgent",
+    providerDriver: ProviderDriverKind.make("claudeAgent"),
     providerThreadId: "provider-thread-contracts",
     parentId: null,
     path: "/root/contracts",

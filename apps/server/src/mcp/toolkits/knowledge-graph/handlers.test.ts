@@ -69,7 +69,7 @@ it.effect("rejects a provider credential without workspace capability", () =>
   Effect.gen(function* () {
     const error = yield* invokeKnowledgeGraphQuery(query).pipe(Effect.flip);
     expect(error).toBeInstanceOf(WorkspaceContextUnavailableError);
-    expect(error.reason).toBe("credential_not_authorized");
+    expect(error).toMatchObject({ reason: "credential_not_authorized" });
   }).pipe(
     Effect.provideService(
       McpInvocationContext.McpInvocationContext,

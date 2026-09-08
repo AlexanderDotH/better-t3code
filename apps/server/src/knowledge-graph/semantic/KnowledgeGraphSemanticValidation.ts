@@ -19,7 +19,7 @@ export const KnowledgeGraphSemanticValidationReason = Schema.Literals([
 export type KnowledgeGraphSemanticValidationReason =
   typeof KnowledgeGraphSemanticValidationReason.Type;
 
-export class KnowledgeGraphSemanticValidationError extends Schema.TaggedErrorClass<KnowledgeGraphSemanticValidationError>()(
+export class KnowledgeGraphSemanticValidationError extends Schema.TaggedError<KnowledgeGraphSemanticValidationError>()(
   "KnowledgeGraphSemanticValidationError",
   {
     reason: KnowledgeGraphSemanticValidationReason,

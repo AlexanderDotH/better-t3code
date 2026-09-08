@@ -117,7 +117,7 @@ export interface ProviderHistoryResumeBinding {
   readonly adapterKey?: string | undefined;
 }
 
-export class ProviderHistorySyncError extends Schema.TaggedErrorClass<ProviderHistorySyncError>()(
+export class ProviderHistorySyncError extends Schema.TaggedError<ProviderHistorySyncError>()(
   "ProviderHistorySyncError",
   {
     sourceId: Schema.String,

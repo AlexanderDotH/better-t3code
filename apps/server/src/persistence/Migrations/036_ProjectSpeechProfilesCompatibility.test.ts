@@ -2,8 +2,8 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import { runMigrations } from "../Migrations.ts";
-import * as NodeSqliteClient from "../NodeSqliteClient.ts";
+import { runMigrations } from "./LegacyForkMigrations.ts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import Migration036 from "./036_ProjectSpeechProfilesCompatibility.ts";
 
 const provideFreshDatabase = Effect.provide(NodeSqliteClient.layerMemory());
@@ -75,7 +75,7 @@ const assertCompleteSchema = Effect.fn("assertCompleteSchema")(function* () {
   }
   assert.deepStrictEqual(
     speechColumns.map(({ name }) => name),
-    expectedSpeechColumns,
+    [...expectedSpeechColumns],
   );
   assert.strictEqual(speechColumns.find(({ name }) => name === "project_id")?.pk, 1);
   assert.strictEqual(speechColumns.find(({ name }) => name === "repository_key")?.notnull, 0);

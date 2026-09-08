@@ -117,7 +117,7 @@ export const GeminiDriver: ProviderDriver<GeminiSettings, GeminiDriverEnv> = {
       );
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<GeminiSettings>>({
-        maintenanceCapabilities: MAINTENANCE,
+        resolveMaintenance: () => Effect.succeed(MAINTENANCE),
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,

@@ -1,38 +1,38 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  revealInFileExplorerMessageKey,
-  revealInFileExplorerMessageKeyForKind,
-  revealInFileExplorerMessageKeyForOs,
+  revealInFileExplorerLabel,
+  revealInFileExplorerLabelForKind,
+  revealInFileExplorerLabelForOs,
 } from "./fileExplorerLabel";
 
-describe("revealInFileExplorerMessageKey", () => {
+describe("revealInFileExplorerLabel", () => {
   it.each([
-    ["MacIntel", "browser.files.revealFinder"],
-    ["Win32", "browser.files.revealFileExplorer"],
-    ["Linux x86_64", "browser.files.revealFiles"],
+    ["MacIntel", "Reveal in Finder"],
+    ["Win32", "Reveal in File Explorer"],
+    ["Linux x86_64", "Reveal in Files"],
   ])("maps %s to %s", (platform, expected) => {
-    expect(revealInFileExplorerMessageKey(platform)).toBe(expected);
+    expect(revealInFileExplorerLabel(platform)).toBe(expected);
   });
 });
 
-describe("revealInFileExplorerMessageKeyForOs", () => {
+describe("revealInFileExplorerLabelForOs", () => {
   it.each([
-    ["darwin", "browser.files.revealFinder"],
-    ["windows", "browser.files.revealFileExplorer"],
-    ["linux", "browser.files.revealFiles"],
-    ["unknown", "browser.files.revealFiles"],
+    ["darwin", "Reveal in Finder"],
+    ["windows", "Reveal in File Explorer"],
+    ["linux", "Reveal in Files"],
+    ["unknown", "Reveal in Files"],
   ] as const)("maps %s to %s", (os, expected) => {
-    expect(revealInFileExplorerMessageKeyForOs(os)).toBe(expected);
+    expect(revealInFileExplorerLabelForOs(os)).toBe(expected);
   });
 });
 
-describe("revealInFileExplorerMessageKeyForKind", () => {
+describe("revealInFileExplorerLabelForKind", () => {
   it.each([
-    ["finder", "browser.files.revealFinder"],
-    ["file-explorer", "browser.files.revealFileExplorer"],
-    ["files", "browser.files.revealFiles"],
+    ["finder", "Reveal in Finder"],
+    ["file-explorer", "Reveal in File Explorer"],
+    ["files", "Reveal in Files"],
   ] as const)("maps %s to %s", (kind, expected) => {
-    expect(revealInFileExplorerMessageKeyForKind(kind)).toBe(expected);
+    expect(revealInFileExplorerLabelForKind(kind)).toBe(expected);
   });
 });

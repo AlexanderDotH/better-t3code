@@ -1,18 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
-import {
-  ProviderDriverKind,
-  ProviderInstanceId,
-  T3_AUTO_REASONING_OPTION_ID,
-  type ProviderOptionDescriptor,
-} from "@t3tools/contracts";
-import { CODEX_CONTEXT_WINDOW_DESCRIPTOR, isAutoReasoningEnabled } from "@t3tools/shared/model";
-import { buildContextWindowSliderState } from "./ContextWindowPicker";
-import {
-  applyReasoningChoice,
-  buildTraitsTriggerDisplay,
-  buildUnavailableModelOptionDescriptors,
-  shouldOfferAutoReasoning,
-} from "./TraitsPicker";
+import { ProviderDriverKind, type ProviderOptionDescriptor } from "@t3tools/contracts";
+import { buildTraitsTriggerDisplay, buildUnavailableModelOptionDescriptors } from "./TraitsPicker";
 
 function selectDescriptor(
   id: string,
@@ -47,7 +35,6 @@ function serviceTierDescriptor(
 const EFFORT = selectDescriptor(
   "reasoningEffort",
   [
-    { id: "low", label: "Low" },
     { id: "high", label: "High" },
     { id: "max", label: "Max" },
   ],
@@ -64,53 +51,27 @@ const CONTEXT_WINDOW = selectDescriptor(
 
 const CODEX = ProviderDriverKind.make("codex");
 
-function display(
-  descriptors: ReadonlyArray<ProviderOptionDescriptor>,
-  autoReasoningEnabled = false,
-  autoReasoningEffort?: string,
-) {
+function display(descriptors: ReadonlyArray<ProviderOptionDescriptor>) {
   return buildTraitsTriggerDisplay({
     provider: CODEX,
     descriptors,
     primarySelectDescriptorId: "reasoningEffort",
     ultrathinkPromptControlled: false,
-    autoReasoningEnabled,
-    autoReasoningEffort,
   });
 }
 
 describe("buildTraitsTriggerDisplay", () => {
   it("omits fast mode from the label entirely when it is off", () => {
     expect(display([EFFORT, fastModeDescriptor(false), CONTEXT_WINDOW])).toEqual({
-      label: "High",
+      label: "High · 1M",
       showFastModeIcon: false,
     });
   });
 
   it("shows the bolt instead of a text label when fast mode is on", () => {
     expect(display([EFFORT, fastModeDescriptor(true), CONTEXT_WINDOW])).toEqual({
-      label: "High",
+      label: "High · 1M",
       showFastModeIcon: true,
-    });
-  });
-
-  it("maps the selected context choice to a stepped slider chip", () => {
-    expect(buildContextWindowSliderState(CONTEXT_WINDOW)).toEqual({
-      currentIndex: 1,
-      currentLabel: "1M",
-      maxIndex: 1,
-      progressPercent: 100,
-      triggerLabel: "1M",
-    });
-  });
-
-  it("shows the numeric model default at its ordered context slider position", () => {
-    expect(buildContextWindowSliderState(CODEX_CONTEXT_WINDOW_DESCRIPTOR)).toEqual({
-      currentIndex: 10,
-      currentLabel: "272K",
-      maxIndex: 19,
-      progressPercent: (10 / 19) * 100,
-      triggerLabel: "272K",
     });
   });
 
@@ -193,50 +154,6 @@ describe("buildTraitsTriggerDisplay", () => {
       }),
     ).toEqual({ label: "Ultrathink", showFastModeIcon: true });
   });
-
-  it("shows Auto until a resolution exists, then appends only the resolved effort", () => {
-    expect(display([EFFORT], true)).toEqual({
-      label: "Auto",
-      showFastModeIcon: false,
-    });
-    expect(display([{ ...EFFORT, currentValue: "max" }], true)).toEqual({
-      label: "Auto",
-      showFastModeIcon: false,
-    });
-    expect(display([EFFORT], true, "low")).toEqual({
-      label: "Auto · Low",
-      showFastModeIcon: false,
-    });
-    expect(display([EFFORT], true, "max")).toEqual({
-      label: "Auto · Max",
-      showFastModeIcon: false,
-    });
-  });
-});
-
-describe("Auto reasoning choices", () => {
-  const selection = {
-    instanceId: ProviderInstanceId.make("codex_work"),
-    model: "gpt-5.6-sol",
-    options: [{ id: "reasoningEffort", value: "high" }],
-  } as const;
-
-  it("is offered only for a Codex reasoning-effort descriptor", () => {
-    expect(shouldOfferAutoReasoning(CODEX, EFFORT)).toBe(true);
-    expect(shouldOfferAutoReasoning(CODEX, { ...EFFORT, options: [] })).toBe(false);
-    expect(shouldOfferAutoReasoning(ProviderDriverKind.make("claudeAgent"), EFFORT)).toBe(false);
-    expect(shouldOfferAutoReasoning(CODEX, serviceTierDescriptor("default"))).toBe(false);
-  });
-
-  it("keeps the concrete fallback under Auto and removes Auto on a manual choice", () => {
-    const automatic = applyReasoningChoice(selection, T3_AUTO_REASONING_OPTION_ID);
-    expect(isAutoReasoningEnabled(automatic)).toBe(true);
-    expect(automatic.options).toContainEqual({ id: "reasoningEffort", value: "high" });
-
-    const manual = applyReasoningChoice(automatic, "max");
-    expect(isAutoReasoningEnabled(manual)).toBe(false);
-    expect(manual.options).toContainEqual({ id: "reasoningEffort", value: "max" });
-  });
 });
 
 describe("buildUnavailableModelOptionDescriptors", () => {
@@ -250,7 +167,7 @@ describe("buildUnavailableModelOptionDescriptors", () => {
     ).toEqual([
       {
         id: "variant",
-        label: "Variant",
+        label: "Reasoning",
         type: "select",
         options: [{ id: "max", label: "max" }],
         currentValue: "max",

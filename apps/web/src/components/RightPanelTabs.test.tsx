@@ -4,17 +4,17 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   RightPanelTabs,
-  rightPanelSurfaceTitle,
+  shouldOpenDefaultBrowserProfileFromMenuClick,
   surfaceShortcutActionForKey,
   surfaceShortcutTargetsTypingContext,
   tabMuteMenuItem,
 } from "./RightPanelTabs";
 
-describe("Knowledge Graph surface", () => {
-  it("uses the project graph title without requiring provider or preview state", () => {
-    expect(
-      rightPanelSurfaceTitle({ id: "knowledge-graph", kind: "knowledge-graph" }, {}, new Map()),
-    ).toBe("Knowledge Graph");
+describe("browser profile submenu", () => {
+  it("reserves touch clicks for opening the choices while mouse clicks use the default", () => {
+    expect(shouldOpenDefaultBrowserProfileFromMenuClick("touch")).toBe(false);
+    expect(shouldOpenDefaultBrowserProfileFromMenuClick("mouse")).toBe(true);
+    expect(shouldOpenDefaultBrowserProfileFromMenuClick(undefined)).toBe(true);
   });
 });
 
@@ -92,13 +92,13 @@ function renderTabs(
   second?: DesktopPreviewFavicon,
   audio?: { audible?: boolean; audioMuted?: boolean },
   previewRuntimeTabId: ((tabId: string) => string) | null = (tabId) => `runtime:${tabId}`,
-  options: { readonly empty?: boolean; readonly knowledgeGraph?: boolean } = {},
 ) {
   return renderToStaticMarkup(
     <RightPanelTabs
       mode="inline"
-      surfaces={options.empty ? [] : second ? [previewSurface, secondSurface] : [previewSurface]}
-      activeSurfaceId={options.empty ? null : previewSurface.id}
+      surfaces={second ? [previewSurface, secondSurface] : [previewSurface]}
+      environmentId={null}
+      activeSurfaceId={previewSurface.id}
       pendingSurfaceIds={new Set()}
       previewSessions={sessions}
       desktopByTabId={{
@@ -114,23 +114,19 @@ function renderTabs(
       onCloseAllSurfaces={() => undefined}
       onCopyFilePath={() => undefined}
       onAddBrowser={() => undefined}
+      onAddBrowserInProfile={() => undefined}
       onAddTerminal={() => undefined}
       onAddPullRequest={() => undefined}
       onAddDiff={() => undefined}
       onAddFiles={() => undefined}
-      {...(options.knowledgeGraph
-        ? {
-            onAddKnowledgeGraph: () => undefined,
-            knowledgeGraphAvailable: true,
-            knowledgeGraphTitle: "Project Graph",
-            knowledgeGraphDescription: "Explore project relationships.",
-          }
-        : {})}
+      onAddAgents={() => undefined}
+      liveAgentCount={0}
       browserAvailable
       terminalAvailable={false}
       diffAvailable={false}
       filesAvailable={false}
       pullRequestAvailable={false}
+      agentsAvailable={false}
     >
       <div>content</div>
     </RightPanelTabs>,
@@ -157,22 +153,6 @@ describe("RightPanelTabs preview favicon", () => {
   it("hides a capture while the server session still describes another origin", () => {
     const html = renderTabs(favicon("data:image/png;base64,AAAA", "https://example.com/"));
     expect(html).not.toContain("data:image/png;base64,AAAA");
-  });
-});
-
-describe("Knowledge Graph launcher", () => {
-  it("appears as a first right-panel surface only while the feature is available", () => {
-    const enabled = renderTabs(null, undefined, undefined, null, {
-      empty: true,
-      knowledgeGraph: true,
-    });
-    const disabled = renderTabs(null, undefined, undefined, null, { empty: true });
-
-    expect(enabled).toContain('data-surface-launcher-keys="BK"');
-    expect(enabled).toContain("Project Graph");
-    expect(enabled).toContain("Explore project relationships.");
-    expect(disabled).toContain('data-surface-launcher-keys="B"');
-    expect(disabled).not.toContain("Project Graph");
   });
 });
 

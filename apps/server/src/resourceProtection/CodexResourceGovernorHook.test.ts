@@ -65,7 +65,10 @@ describe("CodexResourceGovernorHook", () => {
 
   it("holds root turns from prompt submission through Stop", async () => {
     const requests: Array<Record<string, unknown>> = [];
-    const fetchImpl: typeof fetch = async (_input, init) => {
+    const fetchImpl: (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch> = async (
+      _input,
+      init,
+    ) => {
       requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
       return Response.json({ admitted: true });
     };
@@ -124,7 +127,10 @@ describe("CodexResourceGovernorHook", () => {
   it("confirms and releases native subagents by their stable agent id", async () => {
     const requests: Array<Record<string, unknown>> = [];
     const output: string[] = [];
-    const fetchImpl: typeof fetch = async (_input, init) => {
+    const fetchImpl: (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch> = async (
+      _input,
+      init,
+    ) => {
       requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
       return Response.json({ admitted: true });
     };
@@ -158,7 +164,10 @@ describe("CodexResourceGovernorHook", () => {
     const waits: number[] = [];
     const requests: Array<{ readonly url: string; readonly init?: RequestInit }> = [];
     let attempts = 0;
-    const fetchImpl: typeof fetch = async (input, init) => {
+    const fetchImpl: (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch> = async (
+      input,
+      init,
+    ) => {
       requests.push({ url: String(input), ...(init ? { init } : {}) });
       attempts += 1;
       return attempts === 1

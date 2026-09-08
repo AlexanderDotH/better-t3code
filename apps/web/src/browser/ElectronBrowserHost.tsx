@@ -5,8 +5,8 @@ import { FILL_PREVIEW_VIEWPORT } from "@t3tools/contracts";
 import { useEffect, useMemo } from "react";
 
 import { isElectron } from "~/env";
-import { useTheme } from "~/hooks/useTheme";
 import { useInterfaceLanguage } from "~/interfaceLanguageSync";
+import { useTheme } from "~/hooks/useTheme";
 import { useActivePreviewSessions } from "~/previewStateStore";
 
 import { readPreviewAnnotationTheme } from "./annotationTheme";
@@ -95,6 +95,7 @@ export function ElectronBrowserHost() {
             initialUrl={url}
             viewport={snapshot.viewport ?? FILL_PREVIEW_VIEWPORT}
             pictureInPicture={pictureInPicture}
+            profileId={snapshot.profileId}
             zoomFactor={zoomFactor}
           />
         );

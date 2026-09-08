@@ -704,7 +704,7 @@ export type GitWorkbenchStreamEvent = typeof GitWorkbenchStreamEvent.Type;
 // Structured failures let clients refresh only stale projections instead of treating every
 // rejected mutation as a transport failure.
 
-export class GitWorkbenchStaleStateError extends Schema.TaggedErrorClass<GitWorkbenchStaleStateError>()(
+export class GitWorkbenchStaleStateError extends Schema.TaggedError<GitWorkbenchStaleStateError>()(
   "GitWorkbenchStaleStateError",
   {
     cwd: GitPath,
@@ -725,7 +725,7 @@ export class GitWorkbenchStaleStateError extends Schema.TaggedErrorClass<GitWork
   }
 }
 
-export class GitWorkbenchRestrictionError extends Schema.TaggedErrorClass<GitWorkbenchRestrictionError>()(
+export class GitWorkbenchRestrictionError extends Schema.TaggedError<GitWorkbenchRestrictionError>()(
   "GitWorkbenchRestrictionError",
   {
     cwd: GitPath,
@@ -748,7 +748,7 @@ export class GitWorkbenchRestrictionError extends Schema.TaggedErrorClass<GitWor
   }
 }
 
-export class GitWorkbenchError extends Schema.TaggedErrorClass<GitWorkbenchError>()(
+export class GitWorkbenchError extends Schema.TaggedError<GitWorkbenchError>()(
   "GitWorkbenchError",
   {
     cwd: GitPath,

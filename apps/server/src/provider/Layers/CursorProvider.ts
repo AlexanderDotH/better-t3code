@@ -10,6 +10,8 @@ import type {
 } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { causeErrorTag } from "@t3tools/shared/observability";
+import * as Cache from "effect/Cache";
+import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -35,6 +37,7 @@ import {
   buildBooleanOptionDescriptor,
   buildSelectOptionDescriptor,
   buildServerProvider,
+  COMPACT_SLASH_COMMAND,
   collectStreamAsString,
   isCommandMissingCause,
   providerModelsFromSettings,
@@ -588,6 +591,23 @@ export const discoverCursorModelsViaAcp = (
   environment?: NodeJS.ProcessEnv,
 ) => discoverCursorModelsViaListAvailableModels(cursorSettings, environment);
 
+// Each driver instance owns its cache; version and account changes invalidate it.
+export const makeCursorModelDiscovery = Effect.fn("makeCursorModelDiscovery")(function* (
+  cursorSettings: CursorSettings,
+  environment?: NodeJS.ProcessEnv,
+) {
+  const cache = yield* Cache.makeWith(
+    (_key: string) => discoverCursorModelsViaAcp(cursorSettings, environment),
+    {
+      capacity: 1,
+      timeToLive: (exit) =>
+        Exit.isSuccess(exit) && exit.value.length > 0 ? Duration.minutes(30) : Duration.zero,
+    },
+  );
+  return (about: Pick<CursorAboutResult, "version" | "auth">) =>
+    Cache.get(cache, JSON.stringify([about.version, about.auth]));
+});
+
 export const discoverCursorModelCapabilitiesViaAcp = (
   cursorSettings: CursorSettings,
   existingModels: ReadonlyArray<ServerProviderModel>,
@@ -775,6 +795,7 @@ export function buildCursorProviderSnapshot(input: {
       input.cursorSettings.customModels,
       EMPTY_CAPABILITIES,
     ),
+    slashCommands: [COMPACT_SLASH_COMMAND],
     probe: {
       installed: true,
       version: input.parsed.version,
@@ -1123,6 +1144,7 @@ const runCursorAboutCommand = (cursorSettings: CursorSettings, environment?: Nod
 export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(function* (
   cursorSettings: CursorSettings,
   environment?: NodeJS.ProcessEnv,
+  discoverModels?: (about: CursorAboutResult) => ReturnType<typeof discoverCursorModelsViaAcp>,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -1220,9 +1242,10 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
   let discoveryWarning: string | undefined;
   if (parsed.auth.status !== "unauthenticated") {
     const discoveryExit = yield* Effect.exit(
-      discoverCursorModelsViaAcp(cursorSettings, environment).pipe(
-        Effect.timeoutOption(CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS),
-      ),
+      (discoverModels
+        ? discoverModels(parsed)
+        : discoverCursorModelsViaAcp(cursorSettings, environment)
+      ).pipe(Effect.timeoutOption(CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS)),
     );
     if (Exit.isFailure(discoveryExit)) {
       yield* Effect.logWarning("Cursor ACP model discovery failed", {

@@ -1,3 +1,4 @@
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -24,7 +25,7 @@ const TestLayer = layer.pipe(
 );
 
 const TEST_GIT_ENV = {
-  ...process.env,
+  ...HostProcessEnvironment.defaultValue(),
   GIT_CONFIG_COUNT: "1",
   GIT_CONFIG_KEY_0: "commit.gpgsign",
   GIT_CONFIG_VALUE_0: "false",
@@ -682,7 +683,7 @@ describe("GitWorkbenchDriver", () => {
         git(cwd, ["add", "--", "delete-me.txt", "nested"]);
         git(cwd, ["commit", "-m", "classification fixtures"]);
 
-        NodeFS.chmodSync(NodePath.join(cwd, "example.txt"), 0o755);
+        git(cwd, ["update-index", "--chmod=+x", "--", "example.txt"]);
         git(cwd, ["rm", "--", "delete-me.txt"]);
         write(nested, "nested.txt", "nested dirty\n");
 

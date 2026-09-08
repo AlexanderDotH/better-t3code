@@ -237,7 +237,7 @@ export const HarnessChatSyncErrorCode = Schema.Literals([
 ]);
 export type HarnessChatSyncErrorCode = typeof HarnessChatSyncErrorCode.Type;
 
-export class HarnessChatSyncError extends Schema.TaggedErrorClass<HarnessChatSyncError>()(
+export class HarnessChatSyncError extends Schema.TaggedError<HarnessChatSyncError>()(
   "HarnessChatSyncError",
   {
     code: HarnessChatSyncErrorCode,

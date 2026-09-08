@@ -1,19 +1,21 @@
+import {
+  KnowledgeGraphModelGeneration,
+  KnowledgeGraphNodeId,
+  KnowledgeGraphScopeId,
+  ProjectId,
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import {
   KnowledgeGraphRepository,
   KnowledgeGraphRepositoryLive,
 } from "./KnowledgeGraphRepository.ts";
-import {
-  KnowledgeGraphNodeId,
-  KnowledgeGraphSemanticEnqueueV1,
-  KnowledgeGraphScopeV1,
-} from "@t3tools/contracts";
+import { KnowledgeGraphSemanticEnqueueV1, KnowledgeGraphScopeV1 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import * as NodeSqliteClient from "../../persistence/NodeSqliteClient.ts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import Migration0059 from "../../persistence/Migrations/059_KnowledgeGraphDerivedData.ts";
 import {
   KnowledgeGraphSemanticQueueRepository,
@@ -30,9 +32,9 @@ const layer = Layer.merge(
 
 const scope = Schema.decodeUnknownSync(KnowledgeGraphScopeV1)({
   version: 1,
-  scopeId: "scope-main",
+  scopeId: KnowledgeGraphScopeId.make("scope-main"),
   environmentId: "environment-1",
-  projectId: "project-1",
+  projectId: ProjectId.make("project-1"),
   effectiveWorkspaceRoot: "/workspace/project",
   isWorktree: false,
 });
@@ -41,8 +43,8 @@ const enqueue = Schema.decodeUnknownSync(KnowledgeGraphSemanticEnqueueV1)({
   version: 1,
   environmentId: scope.environmentId,
   scopeId: scope.scopeId,
-  modelGeneration: 1,
-  nodes: [{ nodeId: "node-1", nodeRevision: 1, candidates: [] }],
+  modelGeneration: KnowledgeGraphModelGeneration.make(1),
+  nodes: [{ nodeId: KnowledgeGraphNodeId.make("node-1"), nodeRevision: 1, candidates: [] }],
 });
 const decodeScope = Schema.decodeUnknownSync(KnowledgeGraphScopeV1);
 const decodeEnqueue = Schema.decodeUnknownSync(KnowledgeGraphSemanticEnqueueV1);
@@ -50,9 +52,9 @@ const decodeEnqueue = Schema.decodeUnknownSync(KnowledgeGraphSemanticEnqueueV1);
 const makeScope = (suffix: string) =>
   decodeScope({
     version: 1,
-    scopeId: `scope-${suffix}`,
+    scopeId: KnowledgeGraphScopeId.make(`scope-${suffix}`),
     environmentId: `environment-${suffix}`,
-    projectId: `project-${suffix}`,
+    projectId: ProjectId.make(`project-${suffix}`),
     effectiveWorkspaceRoot: `/workspace/${suffix}`,
     isWorktree: false,
   });
@@ -93,8 +95,8 @@ it.layer(layer)("KnowledgeGraphSemanticQueueRepository", (it) => {
 
       yield* queue.enqueueChangedNodes({
         ...enqueue,
-        modelGeneration: 2,
-        nodes: [{ nodeId: "node-1", nodeRevision: 2, candidates: [] }],
+        modelGeneration: KnowledgeGraphModelGeneration.make(2),
+        nodes: [{ nodeId: KnowledgeGraphNodeId.make("node-1"), nodeRevision: 2, candidates: [] }],
       });
       const completion = yield* queue.completeClaimExpected({
         version: 1,
@@ -103,7 +105,7 @@ it.layer(layer)("KnowledgeGraphSemanticQueueRepository", (it) => {
           version: 1,
           scopeId: scope.scopeId,
           baseRevision: 0,
-          modelGeneration: 1,
+          modelGeneration: KnowledgeGraphModelGeneration.make(1),
           nodes: [],
           edges: [],
           evidence: [],
@@ -161,7 +163,7 @@ it.layer(layer)("KnowledgeGraphSemanticQueueRepository", (it) => {
       const graph = yield* KnowledgeGraphRepository;
       const pausedScope = {
         ...scope,
-        scopeId: "scope-paused",
+        scopeId: KnowledgeGraphScopeId.make("scope-paused"),
         effectiveWorkspaceRoot: "/workspace/paused",
       };
       yield* graph.ensureScope(pausedScope);
@@ -248,8 +250,8 @@ it.layer(layer)("KnowledgeGraphSemanticQueueRepository", (it) => {
       const firstScope = makeScope("grouped-first");
       const secondScope = {
         ...firstScope,
-        scopeId: "scope-grouped-second",
-        projectId: "project-grouped-second",
+        scopeId: KnowledgeGraphScopeId.make("scope-grouped-second"),
+        projectId: ProjectId.make("project-grouped-second"),
         effectiveWorkspaceRoot: "/workspace/grouped-second",
       };
       yield* graph.ensureScope(firstScope);
@@ -258,7 +260,11 @@ it.layer(layer)("KnowledgeGraphSemanticQueueRepository", (it) => {
         makeEnqueue({ scope: firstScope, nodeIds: ["node-a", "node-b"] }),
       );
       yield* queue.enqueueChangedNodes(
-        makeEnqueue({ scope: secondScope, modelGeneration: 2, nodeIds: ["node-c"] }),
+        makeEnqueue({
+          scope: secondScope,
+          modelGeneration: KnowledgeGraphModelGeneration.make(2),
+          nodeIds: ["node-c"],
+        }),
       );
 
       const firstClaim = Option.getOrThrow(
@@ -330,7 +336,7 @@ it.layer(layer)("KnowledgeGraphSemanticQueueRepository", (it) => {
       yield* queue.enqueueChangedNodes(
         makeEnqueue({
           scope: rateScope,
-          modelGeneration: 2,
+          modelGeneration: KnowledgeGraphModelGeneration.make(2),
           nodeIds: ["node-rate-limited"],
         }),
       );
@@ -398,7 +404,11 @@ it.layer(layer)("KnowledgeGraphSemanticQueueRepository", (it) => {
       const now = 1_788_000_000_000;
       yield* graph.ensureScope(modelScope);
       yield* queue.enqueueChangedNodes(
-        makeEnqueue({ scope: modelScope, modelGeneration: 1, nodeIds: ["node-model-change"] }),
+        makeEnqueue({
+          scope: modelScope,
+          modelGeneration: KnowledgeGraphModelGeneration.make(1),
+          nodeIds: ["node-model-change"],
+        }),
       );
       const running = Option.getOrThrow(
         yield* queue.claimNextBatch({
@@ -409,7 +419,11 @@ it.layer(layer)("KnowledgeGraphSemanticQueueRepository", (it) => {
       );
 
       yield* queue.enqueueChangedNodes(
-        makeEnqueue({ scope: modelScope, modelGeneration: 2, nodeIds: ["node-model-change"] }),
+        makeEnqueue({
+          scope: modelScope,
+          modelGeneration: KnowledgeGraphModelGeneration.make(2),
+          nodeIds: ["node-model-change"],
+        }),
       );
 
       assert.isTrue(
@@ -478,7 +492,7 @@ it.layer(layer)("KnowledgeGraphSemanticQueueRepository", (it) => {
         version: 1,
         environmentId: capacityScope.environmentId,
         scopeId: capacityScope.scopeId,
-        modelGeneration: 1,
+        modelGeneration: KnowledgeGraphModelGeneration.make(1),
         nodes: nodeIds.map((nodeId, index) => ({
           nodeId,
           nodeRevision: index + 1,

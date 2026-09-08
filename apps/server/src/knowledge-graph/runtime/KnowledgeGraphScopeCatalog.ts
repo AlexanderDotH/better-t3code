@@ -29,7 +29,7 @@ export const KnowledgeGraphScopeResolutionReason = Schema.Literals([
 ]);
 export type KnowledgeGraphScopeResolutionReason = typeof KnowledgeGraphScopeResolutionReason.Type;
 
-export class KnowledgeGraphScopeResolutionError extends Schema.TaggedErrorClass<KnowledgeGraphScopeResolutionError>()(
+export class KnowledgeGraphScopeResolutionError extends Schema.TaggedError<KnowledgeGraphScopeResolutionError>()(
   "KnowledgeGraphScopeResolutionError",
   {
     reason: KnowledgeGraphScopeResolutionReason,
