@@ -1,4 +1,4 @@
-import { OrchestrationCheckpointFile } from "@t3tools/contracts";
+import { OrchestrationCheckpointFile, OrchestrationHistoryOrigin } from "@t3tools/contracts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as Effect from "effect/Effect";
@@ -20,8 +20,19 @@ import {
 const ProjectionCheckpointDbRowSchema = ProjectionCheckpoint.mapFields(
   Struct.assign({
     files: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
+    historyOrigin: Schema.NullOr(Schema.fromJsonString(OrchestrationHistoryOrigin)),
   }),
 );
+
+function toProjectionCheckpoint(
+  row: typeof ProjectionCheckpointDbRowSchema.Type,
+): ProjectionCheckpoint {
+  const { historyOrigin, ...checkpoint } = row;
+  return {
+    ...checkpoint,
+    ...(historyOrigin !== null ? { historyOrigin } : {}),
+  };
+}
 
 function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
   return (cause: unknown) =>
@@ -92,24 +103,77 @@ const makeProjectionCheckpointRepository = Effect.gen(function* () {
       `,
   });
 
+  const upsertHistoricalCheckpointRow = SqlSchema.void({
+    Request: ProjectionCheckpointDbRowSchema,
+    execute: (row) => sql`
+      INSERT INTO projection_thread_fork_checkpoints (
+        thread_id,
+        turn_id,
+        checkpoint_turn_count,
+        checkpoint_ref,
+        checkpoint_status,
+        checkpoint_files_json,
+        assistant_message_id,
+        completed_at,
+        history_origin_json
+      ) VALUES (
+        ${row.threadId},
+        ${row.turnId},
+        ${row.checkpointTurnCount},
+        ${row.checkpointRef},
+        ${row.status},
+        ${row.files},
+        ${row.assistantMessageId},
+        ${row.completedAt},
+        ${row.historyOrigin}
+      )
+      ON CONFLICT (thread_id, turn_id)
+      DO UPDATE SET
+        checkpoint_turn_count = excluded.checkpoint_turn_count,
+        checkpoint_ref = excluded.checkpoint_ref,
+        checkpoint_status = excluded.checkpoint_status,
+        checkpoint_files_json = excluded.checkpoint_files_json,
+        assistant_message_id = excluded.assistant_message_id,
+        completed_at = excluded.completed_at,
+        history_origin_json = excluded.history_origin_json
+    `,
+  });
+
   const listProjectionCheckpointRows = SqlSchema.findAll({
     Request: ListByThreadIdInput,
     Result: ProjectionCheckpointDbRowSchema,
     execute: ({ threadId }) =>
       sql`
-        SELECT
-          thread_id AS "threadId",
-          turn_id AS "turnId",
-          checkpoint_turn_count AS "checkpointTurnCount",
-          checkpoint_ref AS "checkpointRef",
-          checkpoint_status AS "status",
-          checkpoint_files_json AS "files",
-          assistant_message_id AS "assistantMessageId",
-          completed_at AS "completedAt"
-        FROM projection_turns
-        WHERE thread_id = ${threadId}
-          AND checkpoint_turn_count IS NOT NULL
-        ORDER BY checkpoint_turn_count ASC
+        SELECT * FROM (
+          SELECT
+            thread_id AS "threadId",
+            turn_id AS "turnId",
+            checkpoint_turn_count AS "checkpointTurnCount",
+            checkpoint_ref AS "checkpointRef",
+            checkpoint_status AS "status",
+            checkpoint_files_json AS "files",
+            assistant_message_id AS "assistantMessageId",
+            completed_at AS "completedAt",
+            NULL AS "historyOrigin"
+          FROM projection_turns
+          WHERE thread_id = ${threadId}
+            AND checkpoint_turn_count IS NOT NULL
+            AND history_origin_json IS NULL
+          UNION ALL
+          SELECT
+            thread_id AS "threadId",
+            turn_id AS "turnId",
+            checkpoint_turn_count AS "checkpointTurnCount",
+            checkpoint_ref AS "checkpointRef",
+            checkpoint_status AS "status",
+            checkpoint_files_json AS "files",
+            assistant_message_id AS "assistantMessageId",
+            completed_at AS "completedAt",
+            history_origin_json AS "historyOrigin"
+          FROM projection_thread_fork_checkpoints
+          WHERE thread_id = ${threadId}
+        )
+        ORDER BY "checkpointTurnCount" ASC, "historyOrigin" DESC
       `,
   });
 
@@ -126,10 +190,12 @@ const makeProjectionCheckpointRepository = Effect.gen(function* () {
           checkpoint_status AS "status",
           checkpoint_files_json AS "files",
           assistant_message_id AS "assistantMessageId",
-          completed_at AS "completedAt"
+          completed_at AS "completedAt",
+          NULL AS "historyOrigin"
         FROM projection_turns
         WHERE thread_id = ${threadId}
           AND checkpoint_turn_count = ${checkpointTurnCount}
+          AND history_origin_json IS NULL
       `,
   });
 
@@ -145,6 +211,7 @@ const makeProjectionCheckpointRepository = Effect.gen(function* () {
           checkpoint_files_json = '[]'
         WHERE thread_id = ${threadId}
           AND checkpoint_turn_count IS NOT NULL
+          AND history_origin_json IS NULL
       `,
   });
 
@@ -157,11 +224,21 @@ const makeProjectionCheckpointRepository = Effect.gen(function* () {
     );
 
   const upsert: ProjectionCheckpointRepositoryShape["upsert"] = (row) =>
-    upsertCheckpointRow(row).pipe(
+    upsertCheckpointRow({ ...row, historyOrigin: null }).pipe(
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "ProjectionCheckpointRepository.upsert:query",
           "ProjectionCheckpointRepository.upsert:encodeRequest",
+        ),
+      ),
+    );
+
+  const upsertHistorical: ProjectionCheckpointRepositoryShape["upsertHistorical"] = (row) =>
+    upsertHistoricalCheckpointRow({ ...row, historyOrigin: row.historyOrigin }).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionCheckpointRepository.upsertHistorical:query",
+          "ProjectionCheckpointRepository.upsertHistorical:encodeRequest",
         ),
       ),
     );
@@ -174,7 +251,7 @@ const makeProjectionCheckpointRepository = Effect.gen(function* () {
           "ProjectionCheckpointRepository.listByThreadId:decodeRows",
         ),
       ),
-      Effect.map((rows) => rows as ReadonlyArray<Schema.Schema.Type<typeof ProjectionCheckpoint>>),
+      Effect.map((rows) => rows.map(toProjectionCheckpoint)),
     );
 
   const getByThreadAndTurnCount: ProjectionCheckpointRepositoryShape["getByThreadAndTurnCount"] = (
@@ -190,8 +267,7 @@ const makeProjectionCheckpointRepository = Effect.gen(function* () {
       Effect.flatMap((rowOption) =>
         Option.match(rowOption, {
           onNone: () => Effect.succeed(Option.none()),
-          onSome: (row) =>
-            Effect.succeed(Option.some(row as Schema.Schema.Type<typeof ProjectionCheckpoint>)),
+          onSome: (row) => Effect.succeed(Option.some(toProjectionCheckpoint(row))),
         }),
       ),
     );
@@ -205,6 +281,7 @@ const makeProjectionCheckpointRepository = Effect.gen(function* () {
 
   return {
     upsert,
+    upsertHistorical,
     listByThreadId,
     getByThreadAndTurnCount,
     deleteByThreadId,

@@ -38,6 +38,7 @@ import type { OrchestrationDispatchError } from "../Errors.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 import * as PullRequestService from "../../pullRequest/PullRequestService.ts";
+import { TurnQuiescenceNotifier } from "../../git-workbench/TurnQuiescenceNotifier.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -75,6 +76,38 @@ function checkpointStatusFromRuntime(status: string | undefined): "ready" | "mis
   }
 }
 
+export function isProjectCheckpointCaptureEnabled(
+  project: { readonly checkpointsEnabled: boolean } | undefined,
+): boolean {
+  return project?.checkpointsEnabled === true;
+}
+
+export function nextCheckpointTurnCount(
+  checkpoints: ReadonlyArray<{
+    readonly turnId: TurnId;
+    readonly checkpointTurnCount: number;
+    readonly status: string;
+    readonly historyOrigin?: unknown;
+  }>,
+  turnId: TurnId,
+): number {
+  const placeholder = checkpoints.find(
+    (checkpoint) =>
+      checkpoint.turnId === turnId &&
+      checkpoint.status === "missing" &&
+      checkpoint.historyOrigin === undefined,
+  );
+  if (placeholder !== undefined) {
+    return placeholder.checkpointTurnCount;
+  }
+  return (
+    checkpoints.reduce(
+      (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
+      0,
+    ) + 1
+  );
+}
+
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const randomUUID = crypto.randomUUIDv4;
@@ -86,11 +119,31 @@ const make = Effect.gen(function* () {
   const providerService = yield* ProviderService;
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
   const receiptBus = yield* RuntimeReceiptBus;
+  const turnQuiescenceNotifier = yield* TurnQuiescenceNotifier;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const startedTurns = new Map<ThreadId, TurnId>();
   const pending = new Set<ThreadId>();
+
+  const publishTurnProcessingQuiesced = Effect.fn("publishTurnProcessingQuiesced")(
+    function* (input: {
+      readonly threadId: ThreadId;
+      readonly turnId: TurnId;
+      readonly checkpointTurnCount: number;
+      readonly createdAt: string;
+    }) {
+      const receipt = {
+        type: "turn.processing.quiesced",
+        threadId: input.threadId,
+        turnId: input.turnId,
+        checkpointTurnCount: input.checkpointTurnCount,
+        createdAt: input.createdAt,
+      } as const;
+      yield* receiptBus.publish(receipt);
+      yield* turnQuiescenceNotifier.publish(receipt);
+    },
+  );
 
   const appendRevertFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -171,13 +224,10 @@ const make = Effect.gen(function* () {
       .pipe(Effect.map(Option.getOrUndefined));
   });
 
-  const resolveThreadProjects = Effect.fn("resolveThreadProjects")(function* (
-    projectId: ProjectId,
-  ) {
-    const project = yield* projectionSnapshotQuery
+  const resolveThreadProject = Effect.fn("resolveThreadProject")(function* (projectId: ProjectId) {
+    return yield* projectionSnapshotQuery
       .getProjectShellById(projectId)
       .pipe(Effect.map(Option.getOrUndefined));
-    return project ? [project] : [];
   });
 
   // Resolves the workspace CWD for checkpoint operations, preferring the
@@ -187,14 +237,16 @@ const make = Effect.gen(function* () {
   const resolveCheckpointCwd = Effect.fn("resolveCheckpointCwd")(function* (input: {
     readonly threadId: ThreadId;
     readonly thread: { readonly projectId: ProjectId; readonly worktreePath: string | null };
-    readonly projects: ReadonlyArray<{ readonly id: ProjectId; readonly workspaceRoot: string }>;
+    readonly project: { readonly id: ProjectId; readonly workspaceRoot: string } | undefined;
     readonly preferSessionRuntime: boolean;
   }): Effect.fn.Return<string | undefined, CheckpointStoreError> {
     const fromSession = yield* resolveSessionRuntimeForThread(input.threadId);
-    const fromThread = resolveThreadWorkspaceCwd({
-      thread: input.thread,
-      projects: input.projects,
-    });
+    const fromThread = input.project
+      ? resolveThreadWorkspaceCwd({
+          thread: input.thread,
+          projects: [input.project],
+        })
+      : undefined;
 
     const cwd = input.preferSessionRuntime
       ? (Option.match(fromSession, {
@@ -254,9 +306,16 @@ const make = Effect.gen(function* () {
       checkpointRef: targetCheckpointRef,
     });
 
-    // Refresh the workspace entry index so the @-mention file picker
-    // reflects files created or deleted during this turn.
-    yield* workspaceEntries.refresh(input.cwd);
+    // Evict the workspace entry index without delaying checkpoint completion.
+    // The next @-mention file picker lookup rebuilds it from current files.
+    yield* workspaceEntries.invalidate(input.cwd).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Failed to invalidate workspace search index after checkpoint capture", {
+          cwd: input.cwd,
+          cause,
+        }),
+      ),
+    );
 
     // Git may have been initialized during this turn, leaving no pre-turn
     // snapshot. Keep the completion checkpoint for future turns, but do not
@@ -328,8 +387,7 @@ const make = Effect.gen(function* () {
       status: input.status,
       createdAt: input.createdAt,
     });
-    yield* receiptBus.publish({
-      type: "turn.processing.quiesced",
+    yield* publishTurnProcessingQuiesced({
       threadId: input.threadId,
       turnId: input.turnId,
       checkpointTurnCount: input.turnCount,
@@ -385,11 +443,24 @@ const make = Effect.gen(function* () {
         return;
       }
 
-      const projects = yield* resolveThreadProjects(thread.projectId);
+      const project = yield* resolveThreadProject(thread.projectId);
+      const currentTurnCount = thread.checkpoints.reduce(
+        (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
+        0,
+      );
+      if (!isProjectCheckpointCaptureEnabled(project)) {
+        yield* publishTurnProcessingQuiesced({
+          threadId: thread.id,
+          turnId,
+          checkpointTurnCount: currentTurnCount,
+          createdAt: event.createdAt,
+        });
+        return;
+      }
       const checkpointCwd = yield* resolveCheckpointCwd({
         threadId: thread.id,
         thread,
-        projects,
+        project,
         preferSessionRuntime: true,
       });
       if (!checkpointCwd) {
@@ -398,16 +469,7 @@ const make = Effect.gen(function* () {
 
       // If a placeholder checkpoint exists for this turn, reuse its turn count
       // instead of incrementing past it.
-      const existingPlaceholder = thread.checkpoints.find(
-        (checkpoint) => checkpoint.turnId === turnId && checkpoint.status === "missing",
-      );
-      const currentTurnCount = thread.checkpoints.reduce(
-        (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
-        0,
-      );
-      const nextTurnCount = existingPlaceholder
-        ? existingPlaceholder.checkpointTurnCount
-        : currentTurnCount + 1;
+      const nextTurnCount = nextCheckpointTurnCount(thread.checkpoints, turnId);
 
       yield* captureAndDispatchCheckpoint({
         threadId: thread.id,
@@ -419,7 +481,9 @@ const make = Effect.gen(function* () {
           event.type === "turn.aborted"
             ? "ready"
             : checkpointStatusFromRuntime(event.payload.state),
-        assistantMessageId: existingPlaceholder?.assistantMessageId ?? undefined,
+        assistantMessageId:
+          thread.checkpoints.find((checkpoint) => checkpoint.turnId === turnId)
+            ?.assistantMessageId ?? undefined,
         createdAt: event.createdAt,
       });
     },
@@ -437,11 +501,14 @@ const make = Effect.gen(function* () {
         return;
       }
 
-      const projects = yield* resolveThreadProjects(thread.projectId);
+      const project = yield* resolveThreadProject(thread.projectId);
+      if (!isProjectCheckpointCaptureEnabled(project)) {
+        return;
+      }
       const checkpointCwd = yield* resolveCheckpointCwd({
         threadId: thread.id,
         thread,
-        projects,
+        project,
         preferSessionRuntime: false,
       });
       if (!checkpointCwd) {
@@ -646,11 +713,14 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const projects = yield* resolveThreadProjects(thread.projectId);
+    const project = yield* resolveThreadProject(thread.projectId);
+    if (!isProjectCheckpointCaptureEnabled(project)) {
+      return;
+    }
     const checkpointCwd = yield* resolveCheckpointCwd({
       threadId,
       thread,
-      projects,
+      project,
       preferSessionRuntime: false,
     });
     if (!checkpointCwd) {
@@ -734,12 +804,23 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    const targetCheckpoint = thread.checkpoints.find(
+      (checkpoint) => checkpoint.checkpointTurnCount === event.payload.turnCount,
+    );
+    if (targetCheckpoint?.historyOrigin !== undefined) {
+      yield* appendRevertFailureActivity({
+        threadId: event.payload.threadId,
+        turnCount: event.payload.turnCount,
+        detail: "Inherited checkpoints are read-only and cannot be restored in the fork workspace.",
+        createdAt: now,
+      }).pipe(Effect.catch(() => Effect.void));
+      return;
+    }
+
     const targetCheckpointRef =
       event.payload.turnCount === 0
         ? checkpointRefForThreadTurn(event.payload.threadId, 0)
-        : thread.checkpoints.find(
-            (checkpoint) => checkpoint.checkpointTurnCount === event.payload.turnCount,
-          )?.checkpointRef;
+        : targetCheckpoint?.checkpointRef;
 
     if (!targetCheckpointRef) {
       yield* appendRevertFailureActivity({
@@ -768,11 +849,22 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    // Refresh the workspace entry index so the @-mention file picker
-    // reflects the reverted filesystem state.
-    yield* workspaceEntries.refresh(sessionRuntime.value.cwd);
+    // Evict the workspace entry index without delaying checkpoint revert.
+    // The next @-mention file picker lookup rebuilds it from restored files.
+    yield* workspaceEntries.invalidate(sessionRuntime.value.cwd).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Failed to invalidate workspace search index after checkpoint revert", {
+          cwd: sessionRuntime.value.cwd,
+          cause,
+        }),
+      ),
+    );
 
-    const rolledBackTurns = Math.max(0, currentTurnCount - event.payload.turnCount);
+    const rolledBackTurns = thread.checkpoints.filter(
+      (checkpoint) =>
+        checkpoint.historyOrigin === undefined &&
+        checkpoint.checkpointTurnCount > event.payload.turnCount,
+    ).length;
     if (rolledBackTurns > 0) {
       yield* providerService.rollbackConversation({
         threadId: sessionRuntime.value.threadId,
@@ -782,7 +874,10 @@ const make = Effect.gen(function* () {
 
     const staleCheckpointRefs: Array<CheckpointRef> = [];
     for (const checkpoint of thread.checkpoints) {
-      if (checkpoint.checkpointTurnCount > event.payload.turnCount) {
+      if (
+        checkpoint.historyOrigin === undefined &&
+        checkpoint.checkpointTurnCount > event.payload.turnCount
+      ) {
         staleCheckpointRefs.push(checkpoint.checkpointRef);
       }
     }
