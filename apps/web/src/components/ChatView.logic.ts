@@ -1,3 +1,4 @@
+import { isStartedThreadModelChangeAllowed } from "@t3tools/client-runtime/provider-selection";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type AssetCreateUrlInput,
@@ -355,12 +356,14 @@ export function buildLocalDraftThread(
     checkpoints: [],
     activities: [],
     proposedPlans: [],
+    subagents: [],
   };
 }
 
 export function buildLoadingThreadFromShell(shell: ThreadShell): Thread {
   return {
     ...shell,
+    subagents: [],
     messages: [],
     proposedPlans: [],
     activities: [],
@@ -807,8 +810,9 @@ export function deriveLockedProvider(input: {
   selectedProvider: string | null;
   threadProvider: string | null;
   providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "driver">>;
+  allowMidChatProviderSwitching?: boolean;
 }): ProviderDriverKind | null {
-  if (!threadHasStarted(input.thread)) {
+  if (input.allowMidChatProviderSwitching || !threadHasStarted(input.thread)) {
     return null;
   }
   const sessionProvider = input.thread?.session?.providerName ?? null;
@@ -836,32 +840,28 @@ export function getStartedThreadModelChangeBlockReason(input: {
   currentModelSelection: ModelSelection;
   currentProviderInstanceId?: ModelSelection["instanceId"] | null | undefined;
   nextModelSelection: ModelSelection;
+  allowMidChatProviderSwitching?: boolean;
 }): { title: string; description: string } | null {
-  if (!input.hasStartedSession) {
-    return null;
-  }
-  const currentModelSelection = {
-    ...input.currentModelSelection,
-    instanceId: input.currentProviderInstanceId ?? input.currentModelSelection.instanceId,
-  };
-  if (
-    currentModelSelection.instanceId === input.nextModelSelection.instanceId &&
-    currentModelSelection.model === input.nextModelSelection.model
-  ) {
-    return null;
-  }
+  const currentInstanceId =
+    input.currentProviderInstanceId ?? input.currentModelSelection.instanceId;
   const currentProvider = input.providers.find(
-    (snapshot) => snapshot.instanceId === currentModelSelection.instanceId,
+    (snapshot) => snapshot.instanceId === currentInstanceId,
   );
   const nextProvider = input.providers.find(
     (snapshot) => snapshot.instanceId === input.nextModelSelection.instanceId,
   );
   if (
-    currentProvider?.requiresNewThreadForModelChange !== true &&
-    nextProvider?.requiresNewThreadForModelChange !== true
-  ) {
+    isStartedThreadModelChangeAllowed({
+      hasStarted: input.hasStartedSession,
+      allowMidChatProviderSwitching: input.allowMidChatProviderSwitching === true,
+      currentSelection: input.currentModelSelection,
+      nextSelection: input.nextModelSelection,
+      currentProviderInstanceId: input.currentProviderInstanceId,
+      currentRequiresNewThread: currentProvider?.requiresNewThreadForModelChange === true,
+      nextRequiresNewThread: nextProvider?.requiresNewThreadForModelChange === true,
+    })
+  )
     return null;
-  }
   return {
     title: "Start a new chat to change models",
     description: "This provider does not allow switching models after a conversation has started.",

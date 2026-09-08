@@ -2337,11 +2337,14 @@ export default function ChatView(props: ChatViewProps) {
     activeThread?.modelSelection.instanceId ??
     activeProjectDefaultModelSelection?.instanceId ??
     null;
+  const allowMidChatProviderSwitching =
+    serverConfig?.environment.capabilities.midChatProviderSwitching === true;
   const lockedProvider = deriveLockedProvider({
     thread: activeThread,
     selectedProvider: selectedProviderByThreadId,
     threadProvider,
     providers: providerStatuses,
+    allowMidChatProviderSwitching,
   });
   const pullRequestsCapabilityKnown = serverConfig !== null;
   const supportsPullRequests = serverConfig?.environment.capabilities.pullRequests === true;
@@ -7779,10 +7782,11 @@ export default function ChatView(props: ChatViewProps) {
         currentModelSelection: activeThread.modelSelection,
         currentProviderInstanceId: activeThread.session?.providerInstanceId ?? null,
         nextModelSelection: { instanceId, model },
+        allowMidChatProviderSwitching,
       });
       return reason ? `${reason.description} Start a new thread to use this model.` : null;
     },
-    [activeThread, providerStatuses],
+    [activeThread, allowMidChatProviderSwitching, providerStatuses],
   );
 
   const onProviderModelSelect = useCallback(
@@ -7834,6 +7838,7 @@ export default function ChatView(props: ChatViewProps) {
         currentModelSelection: activeThread.modelSelection,
         currentProviderInstanceId: activeThread.session?.providerInstanceId ?? null,
         nextModelSelection,
+        allowMidChatProviderSwitching,
       });
       if (modelChangeBlockReason) {
         toastManager.add({
@@ -7854,6 +7859,7 @@ export default function ChatView(props: ChatViewProps) {
     },
     [
       activeThread,
+      allowMidChatProviderSwitching,
       lockedProvider,
       scheduleComposerFocus,
       setComposerDraftModelSelection,
