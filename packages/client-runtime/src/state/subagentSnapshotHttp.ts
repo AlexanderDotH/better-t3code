@@ -1,0 +1,127 @@
+import type { OrchestrationSubagentDetailSnapshot, SubagentId, ThreadId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import { HttpClient } from "effect/unstable/http";
+
+import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
+import type { PreparedConnection } from "../connection/model.ts";
+import { environmentEndpointUrl } from "../environment/endpoint.ts";
+import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
+import type { RemoteEnvironmentRequestError } from "../rpc/http.ts";
+import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
+
+const DEFAULT_SUBAGENT_SNAPSHOT_TIMEOUT_MS = 6_000;
+
+export interface SubagentSnapshotWindow {
+  readonly activityLimit: number;
+  readonly beforeCursor?: string;
+}
+
+export function environmentSubagentSnapshotPath(
+  threadId: ThreadId,
+  subagentId: SubagentId,
+): string {
+  return `/api/orchestration/threads/${encodeURIComponent(threadId)}/subagents/${encodeURIComponent(subagentId)}`;
+}
+
+/**
+ * Load one subagent transcript over HTTP. The root thread snapshot intentionally
+ * carries summaries only, so transcripts stay lazy even for highly parallel
+ * sessions.
+ */
+export const fetchEnvironmentSubagentSnapshot = Effect.fn(
+  "clientRuntime.state.fetchEnvironmentSubagentSnapshot",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly threadId: ThreadId;
+  readonly subagentId: SubagentId;
+  readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
+  readonly remoteAuthorization?: Option.Option<RemoteEnvironmentAuthorization["Service"]>;
+  readonly timeoutMs?: number;
+  readonly window?: SubagentSnapshotWindow;
+}) {
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    ...input,
+    method: "GET",
+    url: (httpBaseUrl) =>
+      environmentEndpointUrl(httpBaseUrl, environmentSubagentSnapshotPath(input.threadId, input.subagentId)),
+    timeoutMs: input.timeoutMs ?? DEFAULT_SUBAGENT_SNAPSHOT_TIMEOUT_MS,
+    request: ({ client, headers }) =>
+      client.orchestration.subagentSnapshot({
+        params: { threadId: input.threadId, subagentId: input.subagentId },
+        payload: {
+          ...(input.window !== undefined ? { activityLimit: input.window.activityLimit } : {}),
+          ...(input.window?.beforeCursor !== undefined
+            ? { beforeCursor: input.window.beforeCursor }
+            : {}),
+        },
+        headers,
+      }),
+  });
+});
+
+export type FetchEnvironmentSubagentSnapshotError = RemoteEnvironmentRequestError;
+
+export class SubagentSnapshotLoader extends Context.Service<
+  SubagentSnapshotLoader,
+  {
+    readonly load: (
+      prepared: PreparedConnection,
+      threadId: ThreadId,
+      subagentId: SubagentId,
+      window?: SubagentSnapshotWindow,
+    ) => Effect.Effect<Option.Option<OrchestrationSubagentDetailSnapshot>>;
+  }
+>()("@t3tools/client-runtime/state/subagentSnapshotHttp/SubagentSnapshotLoader") {}
+
+export const subagentSnapshotLoaderLayer: Layer.Layer<
+  SubagentSnapshotLoader,
+  never,
+  HttpClient.HttpClient
+> = Layer.effect(
+  SubagentSnapshotLoader,
+  Effect.gen(function* () {
+    const httpClient = yield* HttpClient.HttpClient;
+    const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+    const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+
+    return SubagentSnapshotLoader.of({
+      load: (prepared, threadId, subagentId, window) =>
+        fetchEnvironmentSubagentSnapshot({
+          prepared,
+          threadId,
+          subagentId,
+          signer,
+          remoteAuthorization,
+          ...(window !== undefined ? { window } : {}),
+        }).pipe(
+          Effect.map(Option.some<OrchestrationSubagentDetailSnapshot>),
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.catchTags({
+            EnvironmentResourceNotFoundError: () =>
+              Effect.logDebug(
+                "Subagent snapshot not found over HTTP; deferring to the socket subscription.",
+              ).pipe(
+                Effect.annotateLogs({ threadId, subagentId }),
+                Effect.as(Option.none<OrchestrationSubagentDetailSnapshot>()),
+              ),
+          }),
+          Effect.catchCause((cause) =>
+            Effect.logWarning(
+              "Could not load the subagent snapshot over HTTP; using the socket snapshot instead.",
+            ).pipe(
+              Effect.annotateLogs({
+                threadId,
+                subagentId,
+                cause: Cause.pretty(cause),
+              }),
+              Effect.as(Option.none<OrchestrationSubagentDetailSnapshot>()),
+            ),
+          ),
+        ),
+    });
+  }),
+);

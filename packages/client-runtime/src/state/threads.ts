@@ -447,6 +447,12 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     }
 
     const sequence = yield* SubscriptionRef.get(lastSequence);
+    if (item.kind === "cursor") {
+      if (item.sequence > sequence) {
+        yield* SubscriptionRef.set(lastSequence, item.sequence);
+      }
+      return;
+    }
     if (item.event.sequence <= sequence) {
       return;
     }
@@ -890,3 +896,4 @@ export * from "./threadDetail.ts";
 export * from "./threadReducer.ts";
 export * from "./threadShell.ts";
 export * from "./threadState.ts";
+export * from "./subagents.ts";
