@@ -13,10 +13,9 @@
  *      Auth sessions, pairing links, command receipts, and provider
  *      runtime rows are dropped — pair a fresh browser against dev.
  *   3. Runs migrations on the result. Because the clone carries the real
- *      `effect_sql_migrations` table, this proves a new migration applies
- *      on top of the real applied set, and the slot check below catches
- *      the silent failure where two branches claim the same
- *      `Migrations/NNN_` id (the second one's CREATE TABLE is skipped).
+ *      legacy and independent migration ledgers, this proves convergence
+ *      and new migrations on the real applied set. Slot checks below compare
+ *      upstream and fork registries against their separate ledgers.
  *
  * The event log (`orchestration_events`) is pruned per stream while
  * `sqlite_sequence` and `projection_state` carry over untouched, so new
@@ -37,7 +36,13 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { Command, Flag } from "effect/unstable/cli";
 
-import { migrationManifest, runMigrations } from "../src/persistence/Migrations.ts";
+import {
+  forkMigrationManifest,
+  forkMigrationTable,
+  migrationManifest,
+  runMigrations,
+  upstreamMigrationTable,
+} from "../src/persistence/Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 export class MigrateDevDbNotInWorktreeError extends Schema.TaggedError<MigrateDevDbNotInWorktreeError>()(
@@ -117,13 +122,14 @@ export class MigrateDevDbDestinationBusyError extends Schema.TaggedError<Migrate
 export class MigrateDevDbSlotCollisionError extends Schema.TaggedError<MigrateDevDbSlotCollisionError>()(
   "MigrateDevDbSlotCollisionError",
   {
+    table: Schema.String,
     slot: Schema.Number,
     codeName: Schema.String,
     appliedName: Schema.String,
   },
 ) {
   override get message(): string {
-    return `Migration slot collision at ${this.slot}: this checkout registers '${this.codeName}' but the database already applied '${this.appliedName}' in that slot. Renumber the new migration to a free slot.`;
+    return `Migration slot collision in ${this.table} at ${this.slot}: this checkout registers '${this.codeName}' but the database already applied '${this.appliedName}' in that slot. Renumber the new migration to a free slot.`;
   }
 }
 
@@ -234,6 +240,7 @@ const ensureNotInUse = Effect.fn("ensureDevDbNotInUse")(function* (databasePath:
 
 const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigrateDevDbInput) {
   const sql = yield* SqlClient.SqlClient;
+  yield* sql`PRAGMA foreign_keys = ON`;
 
   // The shared db can carry monitor_json from a branch build even though no
   // migration in this checkout creates it, so filter it only when present.
@@ -300,10 +307,54 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
         "projection_pending_approvals",
         "projection_thread_proposed_plans",
         "checkpoint_diff_blobs",
+        "projection_thread_subagents",
+        "projection_thread_subagent_messages",
+        "projection_thread_subagent_proposed_plans",
+        "projection_thread_subagent_activities",
+        "projection_harness_chat_sync_links",
+        "projection_harness_chat_sync_message_links",
+        "projection_thread_fork_checkpoints",
+        "projection_attachment_references",
       ]) {
         yield* sql.unsafe(
           `DELETE FROM ${table} WHERE thread_id NOT IN (SELECT thread_id FROM kept_threads)`,
         ).unprepared;
+      }
+      // Remove graph children in batches before their parents. Cascading each
+      // evidence deletion scans its scope's unindexed evidence references.
+      for (const table of [
+        "knowledge_graph_node_evidence",
+        "knowledge_graph_edge_evidence",
+        "knowledge_graph_edges",
+        "knowledge_graph_nodes",
+        "knowledge_graph_evidence",
+        "knowledge_graph_file_fingerprints",
+        "knowledge_graph_patch_log",
+      ]) {
+        yield* sql.unsafe(
+          `DELETE FROM ${table} WHERE scope_id IN (
+            SELECT scope_id FROM knowledge_graph_scopes
+            WHERE project_id NOT IN (SELECT project_id FROM kept_projects)
+          )`,
+        ).unprepared;
+      }
+      for (const table of ["project_speech_profiles", "knowledge_graph_scopes"]) {
+        yield* sql.unsafe(
+          `DELETE FROM ${table} WHERE project_id NOT IN (SELECT project_id FROM kept_projects)`,
+        ).unprepared;
+      }
+      // Clones must not resume queued git operations, semantic jobs, or project
+      // coordination from the environment that owns the original work.
+      for (const table of [
+        "git_workbench_queue",
+        "git_workbench_undo_snapshots",
+        "knowledge_graph_semantic_queue",
+        "projection_project_agent_claims",
+        "projection_project_agent_messages",
+        "projection_project_agent_message_recipients",
+        "projection_project_agent_inbox_cursors",
+      ]) {
+        yield* sql.unsafe(`DELETE FROM ${table}`).unprepared;
       }
       yield* sql`DELETE FROM orchestration_events
         WHERE (aggregate_kind = 'thread'
@@ -337,13 +388,18 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
  * was skipped, not applied. */
 const verifyMigrationSlots = Effect.fn("verifyMigrationSlots")(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const applied = yield* sql<{ migration_id: number; name: string }>`
-    SELECT migration_id, name FROM effect_sql_migrations`;
-  const appliedById = new Map(applied.map((row) => [Number(row.migration_id), row.name]));
-  for (const [slot, codeName] of migrationManifest) {
-    const appliedName = appliedById.get(slot);
-    if (appliedName !== undefined && appliedName !== codeName) {
-      return yield* new MigrateDevDbSlotCollisionError({ slot, codeName, appliedName });
+  for (const [table, manifest] of [
+    [upstreamMigrationTable, migrationManifest],
+    [forkMigrationTable, forkMigrationManifest],
+  ] as const) {
+    const applied = yield* sql<{ migration_id: number; name: string }>`
+      SELECT migration_id, name FROM ${sql(table)}`;
+    const appliedById = new Map(applied.map((row) => [Number(row.migration_id), row.name]));
+    for (const [slot, codeName] of manifest) {
+      const appliedName = appliedById.get(slot) ?? "<missing>";
+      if (appliedName !== codeName) {
+        return yield* new MigrateDevDbSlotCollisionError({ table, slot, codeName, appliedName });
+      }
     }
   }
 });
