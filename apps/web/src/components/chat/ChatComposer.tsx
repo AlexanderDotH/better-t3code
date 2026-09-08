@@ -1,3 +1,9 @@
+import { useAtomValue } from "@effect/atom-react";
+import { resolveBetterT3FeatureFlag } from "@t3tools/contracts";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { useAssemblyAiDictation } from "../../hooks/useAssemblyAiDictation";
+import { VoiceDictationControl } from "./VoiceDictationControl";
+import { resolveAssemblyAiVoiceInputAvailability } from "./voiceInputAvailability";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
   questionAttachmentDraftId,
@@ -2993,9 +2999,68 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     showPlanFollowUpPrompt,
   ]);
 
+  const voiceServerConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const voiceApiKey = settings.speechTranscription.assemblyAi.apiKey;
+  const voiceInputConfigured = resolveAssemblyAiVoiceInputAvailability({
+    featureEnabled: resolveBetterT3FeatureFlag(settings.betterT3Environment, "voice.assemblyAi"),
+    environmentSettingsVersion:
+      voiceServerConfig?.environment.capabilities.environmentSettingsVersion,
+    apiKeyConfigured: voiceApiKey.value.trim().length > 0 || voiceApiKey.valueRedacted === true,
+  }).configured;
+  const createVoiceToken = useAtomCommand(serverEnvironment.createAssemblyAiStreamingToken, {
+    reportFailure: false,
+  });
+  const translateVoiceTranscript = useAtomCommand(serverEnvironment.translateSpeechTranscript, {
+    reportFailure: false,
+  });
+  const voiceDictation = useAssemblyAiDictation({
+    configured: voiceInputConfigured,
+    lifecycleKey:
+      typeof composerDraftTarget === "string"
+        ? `draft:${composerDraftTarget}`
+        : `thread:${composerDraftTarget.environmentId}:${composerDraftTarget.threadId}`,
+    getDraftSnapshot: () => ({ text: promptRef.current, cursor: composerCursor }),
+    applyDraftSnapshot: ({ text, cursor }) => {
+      const nextCursor = clampCollapsedComposerCursor(text, cursor);
+      onPromptChange(
+        text,
+        nextCursor,
+        expandCollapsedComposerCursor(text, nextCursor),
+        false,
+        composerTerminalContextsRef.current.map((context) => context.id),
+      );
+    },
+    onNotice: ({ title, error }) => {
+      toastManager.add({ type: "error", title, description: error.message });
+    },
+    createToken: async () => {
+      if (!activeThread) throw new Error("Project context is unavailable for voice input.");
+      const result = await createVoiceToken({
+        environmentId,
+        input: { projectId: activeThread.projectId },
+      });
+      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      return result.value;
+    },
+    ...(settings.voiceInputOutputLanguage === "english"
+      ? {
+          transformTranscript: async (text: string) => {
+            if (!activeThread)
+              throw new Error("Project context is unavailable for voice translation.");
+            const result = await translateVoiceTranscript({
+              environmentId,
+              input: { projectId: activeThread.projectId, text },
+            });
+            if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+            return result.value.text;
+          },
+        }
+      : {}),
+  });
+
   const submitComposer = useCallback(
     (event?: { preventDefault: () => void }, intent: ComposerSubmissionIntent = "foreground") => {
-      if (noProviderAvailable || isSendDisabled) {
+      if (noProviderAvailable || isSendDisabled || voiceDictation.active) {
         event?.preventDefault();
         return;
       }
@@ -3040,6 +3105,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       blurMobileComposerAfterSend,
       isSendDisabled,
       noProviderAvailable,
+      voiceDictation.active,
       onSend,
       promptRef,
       shouldBlurMobileComposerOnSubmit,
@@ -5803,6 +5869,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       </Tooltip>
                     </>
                   ) : null}
+                  {voiceInputConfigured || voiceDictation.active ? (
+                    <VoiceDictationControl
+                      state={voiceDictation.state}
+                      audioWaveform={voiceDictation.audioWaveform}
+                      disabled={
+                        isConnecting ||
+                        isSendBusy ||
+                        isSendDisabled ||
+                        noProviderAvailable ||
+                        projectSelectionRequired ||
+                        phase === "running" ||
+                        environmentUnavailable !== null ||
+                        pendingUserInputs.length > 0
+                      }
+                      onStart={voiceDictation.start}
+                      onStop={voiceDictation.stop}
+                    />
+                  ) : null}
                   <ComposerFooterPrimaryActions
                     compact={isComposerResting || isComposerPrimaryActionsCompact}
                     activeContextWindow={
@@ -5815,7 +5899,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       pendingUserInputs.length === 0 && showPlanFollowUpPrompt
                     }
                     promptHasText={prompt.trim().length > 0}
-                    isSendBusy={isSendBusy}
+                    isSendBusy={isSendBusy || voiceDictation.active}
                     sendDisabledReason={sendDisabledReason}
                     isConnecting={isConnecting}
                     isEnvironmentUnavailable={
