@@ -28,7 +28,7 @@ import {
   View,
 } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
-import type { EnvironmentId, ToolActivityIcon } from "@t3tools/contracts";
+import type { ChatVisualMode, EnvironmentId, ToolActivityIcon } from "@t3tools/contracts";
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
 
 import { AppText as Text } from "../../components/AppText";
@@ -399,6 +399,7 @@ export function collapsedWorkLogHeight(activities: ReadonlyArray<ThreadFeedActiv
 }
 
 interface ThreadWorkLogProps {
+  readonly chatVisualMode: ChatVisualMode;
   readonly activities: ReadonlyArray<ThreadFeedActivity>;
   readonly anchorKey: string;
   readonly environmentId: EnvironmentId;
@@ -421,6 +422,7 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
       <ThreadWorkLogRow
         key={row.id}
         row={row}
+        chatVisualMode={props.chatVisualMode}
         anchorKey={props.anchorKey}
         copied={props.copiedRowId === row.id}
         expanded={props.expandedRows[row.id] ?? false}
@@ -433,6 +435,7 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
       />
     ),
     [
+      props.chatVisualMode,
       props.anchorKey,
       props.copiedRowId,
       props.expandedRows,
@@ -769,7 +772,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
         className="rounded-md px-0.5 py-0 active:bg-subtle"
       >
         <View className="min-h-8 flex-row items-center gap-1.5">
-          {row.live && !expanded ? (
+          {row.live && !expanded && props.chatVisualMode === "current" ? (
             <ShimmeringWorkContent
               environmentId={props.environmentId}
               icon={icon}
@@ -1102,15 +1105,33 @@ export const ThreadAgentSpawnCard = memo(function ThreadAgentSpawnCard(props: {
 });
 
 export function ThreadThinkingRow(props: {
+  readonly chatVisualMode: ChatVisualMode;
   readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
   readonly iconSubtleColor: ColorValue;
 }) {
+  if (props.chatVisualMode === "classic") {
+    return (
+      <View
+        accessible
+        accessibilityLabel="Thinking"
+        className="-mx-1 flex-row items-center gap-2 px-1.5"
+        style={{ minHeight: props.rowSizing.estimatedRowHeight }}
+      >
+        <View className="flex-row items-center gap-1" accessible={false}>
+          <View className="h-1 w-1 rounded-full bg-foreground-muted" />
+          <View className="h-1 w-1 rounded-full bg-foreground-muted opacity-70" />
+          <View className="h-1 w-1 rounded-full bg-foreground-muted opacity-40" />
+        </View>
+        <Text className="font-t3-medium text-xs text-foreground-muted">Thinking</Text>
+      </View>
+    );
+  }
   return (
     <View
       accessible
       accessibilityLabel="Thinking"
-      className="-mx-1 min-h-8 flex-row items-center px-1.5 py-0"
-      style={{ minHeight: props.rowSizing.estimatedRowHeight }}
+      className="-mx-1 flex-row items-center border-b border-adaptive-neutral-200-a80-white-a8 px-1.5 py-0"
+      style={{ minHeight: Math.max(56, props.rowSizing.estimatedRowHeight) }}
     >
       <ShimmeringWorkContent
         key={props.rowSizing.textSizeKey}

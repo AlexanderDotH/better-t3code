@@ -1,3 +1,4 @@
+import type { ChatVisualMode } from "@t3tools/contracts";
 import type {
   OrchestrationProposedPlan,
   ServerProvider,
@@ -229,7 +230,8 @@ function formatMessageTime(input: string): string {
 
 // Fixed heights mirror renderFeedEntry's classNames and are only used while
 // text fits at the current font settings. Larger accessibility text is measured.
-const TURN_FOLD_HEIGHT = 42; // min-h-11 (38.5) + mb-1 (3.5), with the mobile 14px rem
+const TURN_FOLD_HEIGHT = { current: 56, classic: 44 } as const;
+const TURN_FOLD_MARGIN = 3.5; // mb-1 at the mobile 14px rem.
 const THREAD_FEED_LAYOUT_TRANSITION = LinearTransition.duration(THREAD_DISCLOSURE_TRANSITION_MS);
 const THREAD_FEED_IMMEDIATE_TRANSITION = LinearTransition.duration(0);
 // Tailwind spacing on the mobile 14px rem: px-3.5 on the user bubble, px-1 on
@@ -1522,6 +1524,7 @@ function renderFeedEntry(
     | "dispatchingMessageId"
     | "onEditPendingMessage"
   > & {
+    readonly chatVisualMode: ChatVisualMode;
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
     readonly workRowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
@@ -1563,7 +1566,10 @@ function renderFeedEntry(
         hitSlop={4}
         className="mb-1 min-h-11 flex-row items-center gap-2 border-b border-adaptive-neutral-200-a80-white-a8 px-2"
         style={{
-          minHeight: Math.max(TURN_FOLD_HEIGHT - 3.5, props.workRowSizing.estimatedRowHeight),
+          minHeight: Math.max(
+            TURN_FOLD_HEIGHT[props.chatVisualMode],
+            props.workRowSizing.estimatedRowHeight,
+          ),
         }}
       >
         <Text
@@ -1583,7 +1589,13 @@ function renderFeedEntry(
   }
 
   if (entry.type === "thinking") {
-    return <ThreadThinkingRow rowSizing={props.workRowSizing} iconSubtleColor={iconSubtleColor} />;
+    return (
+      <ThreadThinkingRow
+        chatVisualMode={props.chatVisualMode}
+        rowSizing={props.workRowSizing}
+        iconSubtleColor={iconSubtleColor}
+      />
+    );
   }
 
   if (entry.type === "agent-spawn") {
@@ -1614,7 +1626,7 @@ function renderFeedEntry(
         toolIcon={entry.toolIcon}
         summaryToolIcon={entry.summaryToolIcon}
         hasFailure={entry.hasFailure}
-        shimmer={entry.shimmer}
+        shimmer={entry.shimmer && props.chatVisualMode === "current"}
         onToggle={() => props.onToggleWorkGroup(entry.groupId, entry.id)}
       />
     );
@@ -1845,7 +1857,8 @@ function renderFeedEntry(
     <ThreadWorkLog
       // Fixed native rows need fresh measurement after a text-size change.
       // Anchors/details live in ThreadFeed and survive this group-only remount.
-      key={`${entry.id}:${props.workRowSizing.textSizeKey}`}
+      key={`${entry.id}:${props.workRowSizing.textSizeKey}:${props.chatVisualMode}`}
+      chatVisualMode={props.chatVisualMode}
       activities={entry.activities}
       environmentId={props.environmentId}
       anchorKey={entry.id}
@@ -2868,10 +2881,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       }
       switch (entry.type) {
         case "turn-fold":
-          return TURN_FOLD_HEIGHT;
+          return TURN_FOLD_HEIGHT[chatVisualMode] + TURN_FOLD_MARGIN;
         case "work-toggle":
-        case "thinking":
           return WORK_GROUP_TOGGLE_HEIGHT;
+        case "thinking":
+          return chatVisualMode === "current" ? 56 : WORK_GROUP_TOGGLE_HEIGHT;
         case "activity-group":
           if (isContextCompactionActivityGroup(entry)) {
             return undefined;
@@ -2885,7 +2899,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           return undefined;
       }
     },
-    [expandedWorkRows, workRowSizing.fixedRowHeight],
+    [chatVisualMode, expandedWorkRows, workRowSizing.fixedRowHeight],
   );
 
   // Disclosures can mount existing offscreen rows as well as new work rows.
@@ -2932,6 +2946,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             />
           ) : (
             renderFeedEntry(info, {
+              chatVisualMode,
               environmentId: props.environmentId,
               dispatchingMessageId: props.dispatchingMessageId,
               onEditPendingMessage: props.onEditPendingMessage,
@@ -3000,6 +3015,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       </Animated.View>
     ),
     [
+      chatVisualMode,
       implementingPlanId,
       props,
       props.dispatchingMessageId,
