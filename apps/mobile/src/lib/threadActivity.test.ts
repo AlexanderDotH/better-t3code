@@ -265,6 +265,7 @@ function makeThread(
     deletedAt: null,
     messages: [],
     proposedPlans: [],
+    subagents: [],
     activities: [],
     checkpoints: [],
     session: null,
@@ -3383,4 +3384,27 @@ it("makes attachment-only question answers expandable in the mobile feed", () =>
     workEntry: { questionAnswer: answer },
   });
   expect(group.activities[0]?.getFullDetail()).toBeNull();
+});
+
+describe("proposed plan feed", () => {
+  it("keeps restored plans visible through activity folding", () => {
+    const plan = {
+      id: "plan-restored",
+      turnId: null,
+      planMarkdown: "# Ship it\n- Preserve data",
+      implementedAt: null,
+      implementationThreadId: null,
+      createdAt: "2026-09-08T00:00:00.000Z",
+      updatedAt: "2026-09-08T00:00:00.000Z",
+    };
+    const feed = buildThreadFeed({ messages: [], activities: [], proposedPlans: [plan] });
+    expect(deriveThreadFeedPresentation(feed, null, new Set())).toEqual([
+      {
+        type: "proposed-plan",
+        id: "plan:plan-restored",
+        createdAt: plan.createdAt,
+        proposedPlan: plan,
+      },
+    ]);
+  });
 });
