@@ -7,6 +7,7 @@ import type { EnvironmentMachineKind } from "@t3tools/contracts";
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import { resolveSettledThreadTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 import type { MenuAction } from "@react-native-menu/menu";
+import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
 import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
 import { Alert, Platform, Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
@@ -26,14 +27,17 @@ import { useThreadPr } from "../../state/use-thread-pr";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
 import {
+  resolveThreadListV2ChangeRequestState,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozeGateExpiryMs,
   resolveThreadListV2Status,
   resolveThreadListV2SwipeActions,
+  type ThreadListV2ChangeRequestState,
   type ThreadListV2Status,
 } from "./threadListV2";
 import { QueuedMessageIcon } from "./queued-message-icon";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 /**
  * Thread List v2 renders one flat native list: rich edge-to-edge rows for
@@ -52,12 +56,12 @@ const MONO_FONT = Platform.select({
 // Live Activity/widgets (amber approval, indigo input, sky working) so a
 // thread reads the same color everywhere it surfaces.
 const STATUS_LABEL_BY_STATUS: Partial<
-  Record<ThreadListV2Status, { label: string; className: string }>
+  Record<ThreadListV2Status, { messageKey: InterfaceMessageKey; className: string }>
 > = {
-  approval: { label: "Approval", className: "text-warning-foreground" },
-  input: { label: "Input", className: "text-foreground-secondary" },
-  working: { label: "Working", className: "text-adaptive-sky-600-400" },
-  failed: { label: "Failed", className: "text-danger-foreground" },
+  approval: { messageKey: "mobile.thread.approval", className: "text-warning-foreground" },
+  input: { messageKey: "mobile.thread.input", className: "text-foreground-secondary" },
+  working: { messageKey: "mobile.thread.working", className: "text-adaptive-sky-600-400" },
+  failed: { messageKey: "mobile.thread.failed", className: "text-danger-foreground" },
 };
 
 function threadTimeLabel(thread: EnvironmentThreadShell): string {
@@ -66,27 +70,6 @@ function threadTimeLabel(thread: EnvironmentThreadShell): string {
 
 // Menus keep lifecycle and title regeneration together. Archive keeps its
 // own surface (thread screen / settings) rather than crowding v2 rows.
-const CARD_MENU_ACTIONS: MenuAction[] = [
-  { id: "settle", title: "Settle", image: "checkmark" },
-  { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
-];
-
-const SLIM_MENU_ACTIONS: MenuAction[] = [
-  { id: "unsettle", title: "Un-settle", image: "arrow.uturn.backward" },
-  { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
-];
-
-const SNOOZED_MENU_ACTIONS: MenuAction[] = [
-  { id: "unsnooze", title: "Wake thread", image: "clock" },
-  { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
-];
-
-// Pre-settlement servers: no lifecycle items, archive fills the gap.
-const LEGACY_MENU_ACTIONS: MenuAction[] = [
-  { id: "archive", title: "Archive", image: "archivebox" },
-  { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
-];
-
 /** Rounded-row radius shared with the v1 sidebar rows. */
 const SIDEBAR_V2_ROW_RADIUS = 12;
 
@@ -115,12 +98,15 @@ export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedS
   readonly onToggle: () => void;
   readonly pane?: "screen" | "sidebar";
 }) {
+  const translator = useMobileInterfaceTranslator();
   return (
     <Pressable
-      accessibilityHint={
-        props.expanded ? "Collapses the snoozed threads." : "Expands the snoozed threads."
-      }
-      accessibilityLabel={props.count === 1 ? "1 snoozed thread" : `${props.count} snoozed threads`}
+      accessibilityHint={translator.message(
+        props.expanded ? "mobile.thread.collapseSnoozedHint" : "mobile.thread.expandSnoozedHint",
+      )}
+      accessibilityLabel={translator.message("mobile.thread.snoozedCount", {
+        count: props.count,
+      })}
       accessibilityRole="button"
       accessibilityState={{ disabled: props.disabled, expanded: props.expanded }}
       className={cn(
@@ -132,7 +118,9 @@ export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedS
       style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
     >
       <Text className="text-xs font-t3-medium text-foreground-secondary">
-        {props.expanded ? "Snoozed" : `Snoozed (${props.count})`}
+        {props.expanded
+          ? translator.message("mobile.thread.snoozed")
+          : `${translator.message("mobile.thread.snoozed")} (${props.count})`}
       </Text>
       <View className="h-px flex-1 bg-primary/20" />
       <SymbolView
@@ -153,12 +141,15 @@ export const ThreadListV2SettledShelfHeader = memo(function ThreadListV2SettledS
   readonly onToggle: () => void;
   readonly pane?: "screen" | "sidebar";
 }) {
+  const translator = useMobileInterfaceTranslator();
   return (
     <Pressable
-      accessibilityHint={
-        props.expanded ? "Collapses the settled threads." : "Expands the settled threads."
-      }
-      accessibilityLabel={props.count === 1 ? "1 settled thread" : `${props.count} settled threads`}
+      accessibilityHint={translator.message(
+        props.expanded ? "mobile.thread.collapseSettledHint" : "mobile.thread.expandSettledHint",
+      )}
+      accessibilityLabel={translator.message("mobile.thread.settledCount", {
+        count: props.count,
+      })}
       accessibilityRole="button"
       accessibilityState={{ disabled: props.disabled, expanded: props.expanded }}
       className={cn(
@@ -170,7 +161,9 @@ export const ThreadListV2SettledShelfHeader = memo(function ThreadListV2SettledS
       style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
     >
       <Text className="text-xs font-t3-medium text-foreground-tertiary">
-        {props.expanded ? "Settled" : `Settled (${props.count})`}
+        {props.expanded
+          ? translator.message("mobile.thread.settled")
+          : `${translator.message("mobile.thread.settled")} (${props.count})`}
       </Text>
       <View className="h-px flex-1 bg-border" />
       <SymbolView
@@ -401,12 +394,20 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly canMoveDown?: boolean;
   readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
   readonly onSwipeableClose: (methods: SwipeableMethods) => void;
+  /** Reports this row's live PR (state + last activity) for the partition's
+      merge and close rules. Mirrors web's onChangeRequestState. */
+  readonly onChangeRequestState?: (
+    threadKey: string,
+    changeRequest: ThreadListV2ChangeRequestState | null,
+  ) => void;
+  readonly projectCwd?: string | null;
   readonly searchMatch?: EnvironmentThreadSearchMatch;
   readonly searchQuery?: string;
   readonly simultaneousSwipeGesture?: ComponentProps<
     typeof ThreadSwipeable
   >["simultaneousWithExternalGesture"];
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { width: windowWidth } = useWindowDimensions();
   const {
     thread,
@@ -428,6 +429,25 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const pinnedRow = props.pinned === true;
 
   const pr = useThreadPr(thread);
+  const prState = pr?.state ?? null;
+  const prUpdatedAt = pr?.updatedAt ?? null;
+  const threadKey = `${thread.environmentId}:${thread.id}`;
+  useEffect(() => {
+    const changeRequest = resolveThreadListV2ChangeRequestState({
+      linkedPullRequest: thread.linkedPullRequest ?? thread.branchPullRequest,
+      state: prState,
+      updatedAt: prUpdatedAt,
+    });
+    if (changeRequest === undefined) return;
+    props.onChangeRequestState?.(threadKey, changeRequest);
+  }, [
+    props.onChangeRequestState,
+    prState,
+    prUpdatedAt,
+    thread.linkedPullRequest,
+    thread.branchPullRequest,
+    threadKey,
+  ]);
 
   const theme = useUniwindTheme();
   const screenColor = theme["--color-screen"];
@@ -543,6 +563,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       props.pinningSupported,
       thread.pinnedAt,
       variant,
+      translator,
     ],
   );
   const titleRegenerationMenuItems = useMemo<MenuAction[]>(
@@ -555,49 +576,82 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   );
   const snoozableCardMenuActions = useMemo<MenuAction[]>(
     () => [
-      { id: "settle", title: "Settle", image: "checkmark" },
+      { id: "settle", title: translator.message("mobile.thread.settle"), image: "checkmark" },
       {
         id: "snooze",
-        title: "Snooze",
+        title: translator.message("mobile.thread.snooze"),
         image: "clock",
         subactions: snoozePresetActions,
       },
       ...arrangementMenuItems,
       ...titleRegenerationMenuItems,
-      { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
+      {
+        id: "delete",
+        title: translator.message("mobile.thread.delete"),
+        image: "trash",
+        attributes: { destructive: true },
+      },
     ],
-    [arrangementMenuItems, snoozePresetActions, titleRegenerationMenuItems],
+    [arrangementMenuItems, snoozePresetActions, titleRegenerationMenuItems, translator],
   );
   const cardMenuActions = useMemo<MenuAction[]>(
     () => [
-      CARD_MENU_ACTIONS[0]!,
+      { id: "settle", title: translator.message("mobile.thread.settle"), image: "checkmark" },
       ...arrangementMenuItems,
       ...titleRegenerationMenuItems,
-      ...CARD_MENU_ACTIONS.slice(1),
+      {
+        id: "delete",
+        title: translator.message("mobile.thread.delete"),
+        image: "trash",
+        attributes: { destructive: true },
+      },
     ],
-    [arrangementMenuItems, titleRegenerationMenuItems],
+    [arrangementMenuItems, titleRegenerationMenuItems, translator],
   );
   const slimMenuActions = useMemo<MenuAction[]>(
     () => [
-      SLIM_MENU_ACTIONS[0]!,
+      {
+        id: "unsettle",
+        title: translator.message("mobile.thread.unsettle"),
+        image: "arrow.uturn.backward",
+      },
       ...(thread.pinnedAt != null ? arrangementMenuItems : []),
       ...titleRegenerationMenuItems,
-      SLIM_MENU_ACTIONS[1]!,
+      {
+        id: "delete",
+        title: translator.message("mobile.thread.delete"),
+        image: "trash",
+        attributes: { destructive: true },
+      },
     ],
-    [arrangementMenuItems, thread.pinnedAt, titleRegenerationMenuItems],
+    [arrangementMenuItems, thread.pinnedAt, titleRegenerationMenuItems, translator],
   );
   const snoozedMenuActions = useMemo<MenuAction[]>(
-    () => [SNOOZED_MENU_ACTIONS[0]!, ...titleRegenerationMenuItems, SNOOZED_MENU_ACTIONS[1]!],
-    [titleRegenerationMenuItems],
+    () => [
+      { id: "unsnooze", title: translator.message("mobile.thread.wake"), image: "clock" },
+      ...titleRegenerationMenuItems,
+      {
+        id: "delete",
+        title: translator.message("mobile.thread.delete"),
+        image: "trash",
+        attributes: { destructive: true },
+      },
+    ],
+    [titleRegenerationMenuItems, translator],
   );
   const legacyMenuActions = useMemo<MenuAction[]>(
     () => [
-      LEGACY_MENU_ACTIONS[0]!,
+      { id: "archive", title: translator.message("mobile.thread.archive"), image: "archivebox" },
       ...arrangementMenuItems,
       ...titleRegenerationMenuItems,
-      LEGACY_MENU_ACTIONS[1]!,
+      {
+        id: "delete",
+        title: translator.message("mobile.thread.delete"),
+        image: "trash",
+        attributes: { destructive: true },
+      },
     ],
-    [arrangementMenuItems, titleRegenerationMenuItems],
+    [arrangementMenuItems, titleRegenerationMenuItems, translator],
   );
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
@@ -620,7 +674,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (snoozeSelection._tag === "selected") {
         handleSnooze(snoozeSelection.preset.snoozedUntil);
       } else if (snoozeSelection._tag === "expired") {
-        Alert.alert("Could not snooze thread", "That snooze time has passed. Choose another time.");
+        Alert.alert(
+          translator.message("mobile.thread.snoozeFailed"),
+          translator.message("mobile.thread.snoozeExpired"),
+        );
       }
     },
     [
@@ -638,6 +695,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       handleUnsettle,
       handleUnsnooze,
       snoozePresets,
+      translator,
     ],
   );
   const primaryAction = useMemo(() => {
@@ -646,31 +704,39 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     // settled.)
     if (swipeActions.primary === "archive") {
       return {
-        accessibilityLabel: `Archive ${thread.title}`,
+        accessibilityLabel: translator.message("mobile.thread.archiveNamed", {
+          thread: thread.title,
+        }),
         icon: "archivebox" as const,
-        label: "Archive",
+        label: translator.message("mobile.thread.archive"),
         onPress: handleArchive,
       };
     }
     if (swipeActions.primary === "unsnooze") {
       return {
-        accessibilityLabel: `Wake ${thread.title} now`,
+        accessibilityLabel: translator.message("mobile.thread.wakeNamed", {
+          thread: thread.title,
+        }),
         icon: "clock" as const,
-        label: "Wake",
+        label: translator.message("mobile.thread.wakeShort"),
         onPress: handleUnsnooze,
       };
     }
     return swipeActions.primary === "unsettle"
       ? {
-          accessibilityLabel: `Un-settle ${thread.title}`,
+          accessibilityLabel: translator.message("mobile.thread.unsettleNamed", {
+            thread: thread.title,
+          }),
           icon: "arrow.uturn.backward" as const,
-          label: "Un-settle",
+          label: translator.message("mobile.thread.unsettle"),
           onPress: handleUnsettle,
         }
       : {
-          accessibilityLabel: `Settle ${thread.title}`,
+          accessibilityLabel: translator.message("mobile.thread.settleNamed", {
+            thread: thread.title,
+          }),
           icon: "checkmark" as const,
-          label: "Settle",
+          label: translator.message("mobile.thread.settle"),
           onPress: handleSettle,
         };
   }, [
@@ -680,28 +746,33 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     handleUnsnooze,
     swipeActions.primary,
     thread.title,
+    translator,
   ]);
   const secondaryAction = useMemo(
     () =>
       swipeActions.secondary === "snooze"
         ? {
-            accessibilityLabel: `Choose when to snooze ${thread.title}`,
+            accessibilityLabel: translator.message("mobile.thread.chooseSnoozeNamed", {
+              thread: thread.title,
+            }),
             icon: "clock" as const,
-            label: "Snooze",
+            label: translator.message("mobile.thread.snooze"),
             menu: {
               actions: snoozePresetActions,
               onPressAction: handleMenuAction,
-              title: "Snooze until",
+              title: translator.message("mobile.thread.snoozeUntil"),
             },
             onPress: () => undefined,
           }
         : null,
-    [handleMenuAction, snoozePresetActions, swipeActions.secondary, thread.title],
+    [handleMenuAction, snoozePresetActions, swipeActions.secondary, thread.title, translator],
   );
   const swipeAccessibilityHint =
     secondaryAction === null
-      ? `Opens the thread. Swipe left to ${primaryAction.label.toLowerCase()}.`
-      : `Opens the thread. Swipe left for ${primaryAction.label.toLowerCase()} and snooze actions.`;
+      ? translator.message("mobile.thread.swipePrimaryHint", { action: primaryAction.label })
+      : translator.message("mobile.thread.swipePrimarySnoozeHint", {
+          action: primaryAction.label,
+        });
 
   // The sidebar pane fills selected rows with the theme's message surface, so
   // every piece of row text must use that surface's paired foreground.
@@ -743,7 +814,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               : (statusLabel?.className ?? "text-foreground-tertiary"),
           )}
         >
-          {statusLabel?.label ?? timeLabel}
+          {statusLabel ? translator.message(statusLabel.messageKey) : timeLabel}
         </Text>
       </View>
       <Text

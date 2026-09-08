@@ -7,8 +7,12 @@ import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state
 import type { EnvironmentMachineKind } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
 import { SymbolView } from "../../components/AppSymbol";
-import { memo, useCallback, useMemo, type ComponentProps } from "react";
+import { memo, useCallback, useEffect, useMemo, type ComponentProps } from "react";
 import { Platform, Pressable, useWindowDimensions, View } from "react-native";
+import {
+  resolveThreadListV2ChangeRequestState,
+  type ThreadListV2ChangeRequestState,
+} from "./threadListV2";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import Svg, { Circle, Path } from "react-native-svg";
@@ -30,6 +34,7 @@ import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regenerati
 import { QueuedMessageIcon } from "./queued-message-icon";
 import { resolveThreadStatus } from "./threadPresentation";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 /**
  * Shared presentation for the thread lists: the compact (phone) Home list and
@@ -96,6 +101,7 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
   readonly newThreadTarget?: EnvironmentProject | null;
   readonly onNewThread?: (project: EnvironmentProject) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { groupKey, onGroupAction, onNewThread } = props;
   const newThreadTarget = props.newThreadTarget ?? null;
   const compact = props.variant === "compact";
@@ -132,8 +138,13 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ expanded: !props.collapsed }}
-        accessibilityLabel={`${props.title}, ${props.threadCount} threads`}
-        accessibilityHint={props.collapsed ? "Expands the project" : "Collapses the project"}
+        accessibilityLabel={translator.message("mobile.thread.groupLabel", {
+          project: props.title,
+          count: props.threadCount,
+        })}
+        accessibilityHint={translator.message(
+          props.collapsed ? "mobile.thread.expandProject" : "mobile.thread.collapseProject",
+        )}
         className={
           compact ? "flex-1 flex-row items-center gap-2.5" : "flex-1 flex-row items-center gap-2"
         }
@@ -170,7 +181,9 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
       </Pressable>
       {showNewThreadButton ? (
         <Pressable
-          accessibilityLabel={`Create new thread in ${props.title}`}
+          accessibilityLabel={translator.message("mobile.thread.createInProject", {
+            project: props.title,
+          })}
           accessibilityRole="button"
           hitSlop={{ ...verticalHitSlop, left: 10, right: 14 }}
           onPress={handleNewThread}
@@ -189,15 +202,53 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
   );
 });
 
+export const ThreadListOlderProjectsHeader = memo(function ThreadListOlderProjectsHeader(props: {
+  readonly variant: ThreadListVariant;
+  readonly count: number;
+  readonly expanded: boolean;
+  readonly onToggle: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityHint={
+        props.expanded ? "Collapses the older projects." : "Expands the older projects."
+      }
+      accessibilityLabel={`${props.count} older ${props.count === 1 ? "project" : "projects"}`}
+      accessibilityRole="button"
+      accessibilityState={{ expanded: props.expanded }}
+      className="mb-1.5 mt-4 flex-row items-center gap-2.5"
+      onPress={props.onToggle}
+      style={({ pressed }) => ({
+        opacity: pressed ? 0.6 : 1,
+        paddingHorizontal: props.variant === "sidebar" ? 12 : 20,
+      })}
+    >
+      <Text className="text-xs font-t3-medium text-foreground-tertiary">
+        {props.expanded ? "Older projects" : `Older projects (${props.count})`}
+      </Text>
+      <View className="h-px flex-1 bg-border" />
+      <SymbolView
+        name={props.expanded ? "chevron.up" : "chevron.down"}
+        size={10}
+        tintColorClassName={"accent-foreground-muted"}
+        type="monochrome"
+      />
+    </Pressable>
+  );
+});
+
 /* ─── Show more / show less row ──────────────────────────────────────── */
 
 export const ThreadListShowMoreRow = memo(function ThreadListShowMoreRow(props: {
   readonly variant: ThreadListVariant;
   readonly hiddenCount: number;
   readonly canShowLess: boolean;
+  readonly canToggleSettled: boolean;
+  readonly settledVisible: boolean;
   readonly groupKey: string;
   readonly onGroupAction: (key: string, action: HomeGroupDisplayAction) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const showsMore = props.hiddenCount > 0;
   const compact = props.variant === "compact";
   const { groupKey, onGroupAction } = props;
@@ -209,11 +260,24 @@ export const ThreadListShowMoreRow = memo(function ThreadListShowMoreRow(props: 
     () => onGroupAction(groupKey, "show-less"),
     [groupKey, onGroupAction],
   );
+  const handleShowSettled = useCallback(
+    () => onGroupAction(groupKey, "show-settled"),
+    [groupKey, onGroupAction],
+  );
+  const handleHideSettled = useCallback(
+    () => onGroupAction(groupKey, "hide-settled"),
+    [groupKey, onGroupAction],
+  );
 
-  const button = (label: string, icon: "chevron.down" | "chevron.up", onPress: () => void) => (
+  const button = (
+    label: string,
+    accessibilityLabel: string,
+    icon: "chevron.down" | "chevron.up" | "checkmark.circle",
+    onPress: () => void,
+  ) => (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={label === "Show more" ? "Show more threads" : "Show fewer threads"}
+      accessibilityLabel={accessibilityLabel}
       className="rounded-full bg-subtle"
       hitSlop={6}
       onPress={onPress}
@@ -248,7 +312,9 @@ export const ThreadListShowMoreRow = memo(function ThreadListShowMoreRow(props: 
   return (
     <View
       className={
-        compact ? "flex-row items-center gap-2.5 bg-screen" : "flex-row items-center gap-2"
+        compact
+          ? "flex-row flex-wrap items-center gap-2.5 bg-screen"
+          : "flex-row flex-wrap items-center gap-2"
       }
       style={{
         paddingLeft: compact ? THREAD_LIST_COMPACT_INSET : 12,
@@ -256,8 +322,37 @@ export const ThreadListShowMoreRow = memo(function ThreadListShowMoreRow(props: 
         paddingVertical: compact ? 12 : 8,
       }}
     >
-      {showsMore ? button("Show more", "chevron.down", handleShowMore) : null}
-      {props.canShowLess ? button("Show less", "chevron.up", handleShowLess) : null}
+      {showsMore
+        ? button(
+            translator.message("mobile.thread.showMore"),
+            translator.message("mobile.thread.showMoreThreads"),
+            "chevron.down",
+            handleShowMore,
+          )
+        : null}
+      {props.canToggleSettled
+        ? props.settledVisible
+          ? button(
+              translator.message("mobile.thread.hideSettled"),
+              translator.message("mobile.thread.hideSettled"),
+              "checkmark.circle",
+              handleHideSettled,
+            )
+          : button(
+              translator.message("mobile.thread.showSettled"),
+              translator.message("mobile.thread.showSettled"),
+              "checkmark.circle",
+              handleShowSettled,
+            )
+        : null}
+      {props.canShowLess
+        ? button(
+            translator.message("mobile.thread.showLess"),
+            translator.message("mobile.thread.showFewer"),
+            "chevron.up",
+            handleShowLess,
+          )
+        : null}
     </View>
   );
 });
@@ -290,7 +385,6 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
   readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
 }) {
   const compact = props.variant === "compact";
-
   const { pendingTask, onSelectPendingTask, onDeletePendingTask } = props;
   const isDraft = pendingTask.kind === "draft";
   const timestamp = isDraft ? null : relativeTime(pendingTask.createdAt);
@@ -431,11 +525,6 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
 
 /* ─── Thread row ─────────────────────────────────────────────────────── */
 
-const THREAD_ROW_MENU_ACTIONS: MenuAction[] = [
-  { id: "archive", title: "Archive", image: "archivebox" },
-  { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
-];
-
 export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly variant: ThreadListVariant;
   readonly thread: EnvironmentThreadShell;
@@ -456,14 +545,18 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly onNewThreadOnBranch: (thread: EnvironmentThreadShell) => void;
   readonly onRegenerateThreadTitle: (thread: EnvironmentThreadShell) => void;
   readonly titleRegenerationSupported: boolean;
+  readonly onChangeRequestState?: (
+    threadKey: string,
+    changeRequest: ThreadListV2ChangeRequestState | null,
+  ) => void;
   readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
   readonly onSwipeableClose: (methods: SwipeableMethods) => void;
   readonly simultaneousSwipeGesture?: ComponentProps<
     typeof ThreadSwipeable
   >["simultaneousWithExternalGesture"];
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { width: windowWidth } = useWindowDimensions();
-  const { themeAppearance: colorScheme } = useAppearancePreferences();
   const compact = props.variant === "compact";
   const selected = props.selected === true;
   // Recycling-safe: resets when the list container is reused for another
@@ -486,7 +579,28 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
     onNewThreadOnBranch,
   } = props;
   const status = resolveThreadStatus(thread);
+  const { themeAppearance: colorScheme } = useAppearancePreferences();
   const pr = useThreadPr(thread);
+  const prState = pr?.state ?? null;
+  const prUpdatedAt = pr?.updatedAt ?? null;
+  const threadKey = `${thread.environmentId}:${thread.id}`;
+  const onChangeRequestState = props.onChangeRequestState;
+  useEffect(() => {
+    const changeRequest = resolveThreadListV2ChangeRequestState({
+      linkedPullRequest: thread.linkedPullRequest ?? thread.branchPullRequest,
+      state: prState,
+      updatedAt: prUpdatedAt,
+    });
+    if (changeRequest === undefined) return;
+    onChangeRequestState?.(threadKey, changeRequest);
+  }, [
+    prState,
+    prUpdatedAt,
+    onChangeRequestState,
+    threadKey,
+    thread.linkedPullRequest,
+    thread.branchPullRequest,
+  ]);
   const timestamp = relativeTime(
     thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
   );
@@ -532,23 +646,34 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
             },
           ]
         : []),
-      THREAD_ROW_MENU_ACTIONS[0]!,
+      {
+        id: "archive",
+        title: translator.message("mobile.thread.archive"),
+        image: "archivebox",
+      },
       ...buildThreadTitleRegenerationMenuItems({
         supported: props.titleRegenerationSupported,
         isRegenerating: thread.titleRegeneration != null,
       }),
-      THREAD_ROW_MENU_ACTIONS[1]!,
+      {
+        id: "delete",
+        title: translator.message("mobile.thread.delete"),
+        image: "trash",
+        attributes: { destructive: true },
+      },
     ],
-    [props.titleRegenerationSupported, thread.branch, thread.titleRegeneration],
+    [props.titleRegenerationSupported, thread.branch, thread.titleRegeneration, translator],
   );
   const primaryAction = useMemo(
     () => ({
-      accessibilityLabel: `Archive ${thread.title}`,
+      accessibilityLabel: translator.message("mobile.thread.archiveNamed", {
+        thread: thread.title,
+      }),
       icon: "archivebox" as const,
-      label: "Archive",
+      label: translator.message("mobile.thread.archive"),
       onPress: handleArchive,
     }),
-    [handleArchive, thread.title],
+    [handleArchive, thread.title, translator],
   );
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
@@ -622,7 +747,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const rowContent = (close: () => void) =>
     compact ? (
       <Pressable
-        accessibilityHint="Swipe left for archive and delete actions"
+        accessibilityHint={translator.message("mobile.thread.swipeActionsHint")}
         accessibilityLabel={threadAccessibilityLabel}
         accessibilityRole="button"
         className="bg-screen active:opacity-70"
@@ -662,7 +787,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
       </Pressable>
     ) : (
       <Pressable
-        accessibilityHint="Opens the thread"
+        accessibilityHint={translator.message("mobile.thread.openHint")}
         accessibilityLabel={threadAccessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ selected }}
