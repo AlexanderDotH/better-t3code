@@ -355,6 +355,8 @@ describe("orchestration projector", () => {
               payload: {
                 threadId: "thread-1",
                 session: {
+                  runtimeSessionId: null,
+                  abortState: null,
                   threadId: "thread-1",
                   status: "running",
                   providerName: "codex",
@@ -382,6 +384,8 @@ describe("orchestration projector", () => {
                   payload: {
                     threadId: "thread-1",
                     session: {
+                      runtimeSessionId: null,
+                      abortState: null,
                       threadId: "thread-1",
                       status,
                       providerName: "codex",
@@ -482,6 +486,8 @@ describe("orchestration projector", () => {
             event(2, "thread.session-set", {
               threadId,
               session: {
+                runtimeSessionId: null,
+                abortState: null,
                 threadId,
                 status: "running",
                 providerName: "codex",
@@ -506,6 +512,8 @@ describe("orchestration projector", () => {
             event(4, "thread.session-set", {
               threadId,
               session: {
+                runtimeSessionId: null,
+                abortState: null,
                 threadId,
                 status: sessionStatus,
                 providerName: "codex",

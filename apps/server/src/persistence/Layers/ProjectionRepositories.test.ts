@@ -281,6 +281,9 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       const sql = yield* SqlClient.SqlClient;
 
       yield* projects.upsert({
+        autoPull: false,
+
+        checkpointsEnabled: true,
         projectId: ProjectId.make("project-null-options"),
         title: "Null options project",
         workspaceRoot: "/tmp/project-null-options",
@@ -289,7 +292,6 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
           model: "gpt-5.4",
         },
         defaultThreadEnvMode: null,
-        autoPull: false,
         scripts: [],
         createdAt: "2026-03-24T00:00:00.000Z",
         updatedAt: "2026-03-24T00:00:00.000Z",
@@ -333,6 +335,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       const sql = yield* SqlClient.SqlClient;
 
       yield* threads.upsert({
+        fork: null,
         threadId: ThreadId.make("thread-null-options"),
         projectId: ProjectId.make("project-null-options"),
         title: "Null options thread",
@@ -397,6 +400,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       const threads = yield* ProjectionThreadRepository;
 
       yield* threads.upsert({
+        fork: null,
         threadId: ThreadId.make("thread-settled"),
         projectId: ProjectId.make("project-1"),
         title: "Settled thread",
@@ -478,6 +482,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       };
 
       yield* threads.upsert({
+        fork: null,
         threadId: ThreadId.make("thread-linked-pr"),
         projectId: ProjectId.make("project-linked-pr"),
         title: "Linked pull request",
@@ -517,13 +522,19 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
 
       const row = Option.getOrNull(persisted);
       if (row === null) return yield* Effect.die("Expected linked thread row to exist.");
-      yield* threads.upsert({ ...row, linkedPullRequest: null });
+      yield* threads.upsert({
+        ...row,
+        linkedPullRequest: null,
+      });
 
       const cleared = yield* threads.getById({ threadId: ThreadId.make("thread-linked-pr") });
       assert.strictEqual(Option.getOrNull(cleared)?.linkedPullRequest, null);
       assert.deepStrictEqual(Option.getOrNull(cleared)?.branchPullRequest, branchPullRequest);
 
-      yield* threads.upsert({ ...row, branchPullRequest: null });
+      yield* threads.upsert({
+        ...row,
+        branchPullRequest: null,
+      });
       const branchCleared = yield* threads.getById({ threadId: row.threadId });
       assert.strictEqual(Option.getOrNull(branchCleared)?.branchPullRequest, null);
       assert.deepStrictEqual(Option.getOrNull(branchCleared)?.linkedPullRequest, linkedPullRequest);

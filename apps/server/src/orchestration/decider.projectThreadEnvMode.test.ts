@@ -28,6 +28,7 @@ const seedProjectCreated = (sequence: number): OrchestrationEvent => ({
   correlationId: CommandId.make(`cmd-project-env-mode-${sequence}`),
   metadata: {},
   payload: {
+    checkpointsEnabled: true,
     projectId,
     title: "Env mode",
     workspaceRoot: "/tmp/env-mode",

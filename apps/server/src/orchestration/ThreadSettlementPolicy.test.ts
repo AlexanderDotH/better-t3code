@@ -178,6 +178,8 @@ describe("resolveAutoSettlementAt", () => {
       decide(
         makeThread({
           session: {
+            runtimeSessionId: null,
+            abortState: null,
             threadId: ThreadId.make("thread-1"),
             status: "running",
             providerName: "codex",

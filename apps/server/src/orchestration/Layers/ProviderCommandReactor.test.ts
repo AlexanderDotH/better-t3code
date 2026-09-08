@@ -355,6 +355,13 @@ describe("ProviderCommandReactor", () => {
 
     const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
     const service: ProviderServiceShape = {
+      forkSession: () => unsupported(),
+      startTransientSession: () => unsupported(),
+      resolveAbortTarget: () => unsupported(),
+      interruptAbortTarget: () => unsupported(),
+      forceStopAbortTarget: () => unsupported(),
+      isAbortTargetCurrent: () => Effect.succeed(false),
+      stopTransientSession: () => unsupported(),
       startSession: startSession as ProviderServiceShape["startSession"],
       sendTurn: sendTurn as ProviderServiceShape["sendTurn"],
       compactThread,
@@ -453,15 +460,33 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(reactorOrchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
-      Layer.provide(Layer.succeed(TurnAbortCoordinator, {
-        requestAbort: (input) => service.interruptTurn({ threadId: input.threadId }),
-        settleCooperative: () => Effect.succeed(false),
-      })),
-      Layer.provide(Layer.mock(FetchWorkerCoordinator, {
-        requestInterrupt: () => Effect.succeed(false), hasActiveRun: () => Effect.succeed(false),
-      })),
+      Layer.provide(
+        Layer.succeed(TurnAbortCoordinator, {
+          requestAbort: (input) => service.interruptTurn({ threadId: input.threadId }),
+          settleCooperative: () => Effect.succeed(false),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(FetchWorkerCoordinator, {
+          requestInterrupt: () => Effect.succeed(false),
+          hasActiveRun: () => Effect.succeed(false),
+        }),
+      ),
       Layer.provide(NoOpSkillEngineLayer),
-      Layer.provide(Layer.mock(ProjectMemoryStore, { read: () => Effect.succeed({ mode: "provider", storage: null, entries: [], markdown: "", tokenBudget: 2560, estimatedTokens: 0, truncated: false }) })),
+      Layer.provide(
+        Layer.mock(ProjectMemoryStore, {
+          read: () =>
+            Effect.succeed({
+              mode: "provider",
+              storage: null,
+              entries: [],
+              markdown: "",
+              tokenBudget: 2560,
+              estimatedTokens: 0,
+              truncated: false,
+            }),
+        }),
+      ),
       Layer.provide(Layer.mock(ProviderAuthService, { tryHandlePromptCommand })),
       Layer.provideMerge(makeProviderRegistryLayer(providerSnapshots as never)),
       Layer.provideMerge(
@@ -654,6 +679,8 @@ describe("ProviderCommandReactor", () => {
             commandId: CommandId.make("cmd-sign-out-bound-session"),
             threadId,
             session: {
+              runtimeSessionId: null,
+              abortState: null,
               threadId,
               providerInstanceId: instanceId,
               providerName: "antigravity",
@@ -1026,6 +1053,8 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.make("cmd-session-ready-before-blocked-compact"),
         threadId,
         session: {
+          runtimeSessionId: null,
+          abortState: null,
           threadId,
           status: "ready",
           providerName: "codex",
@@ -1132,6 +1161,8 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.make("cmd-session-ready-before-compact"),
         threadId,
         session: {
+          runtimeSessionId: null,
+          abortState: null,
           threadId,
           status: "ready",
           providerName: "codex",
@@ -2973,6 +3004,8 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.make("cmd-session-set-runtime-mode-claude"),
         threadId: ThreadId.make("thread-1"),
         session: {
+          runtimeSessionId: null,
+          abortState: null,
           threadId: ThreadId.make("thread-1"),
           status: "ready",
           providerName: "claudeAgent",
@@ -3081,6 +3114,8 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.make("cmd-session-set"),
         threadId: ThreadId.make("thread-1"),
         session: {
+          runtimeSessionId: null,
+          abortState: null,
           threadId: ThreadId.make("thread-1"),
           status: "running",
           providerName: "codex",
@@ -3119,6 +3154,8 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.make("cmd-session-set-stale"),
         threadId: ThreadId.make("thread-1"),
         session: {
+          runtimeSessionId: null,
+          abortState: null,
           threadId: ThreadId.make("thread-1"),
           status: "ready",
           providerName: "codex",
@@ -3174,6 +3211,8 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.make("cmd-session-set-missing-instance"),
         threadId: ThreadId.make("thread-1"),
         session: {
+          runtimeSessionId: null,
+          abortState: null,
           threadId: ThreadId.make("thread-1"),
           status: "ready",
           providerName: "codex",
@@ -3245,6 +3284,8 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.make("cmd-session-set-for-approval"),
         threadId: ThreadId.make("thread-1"),
         session: {
+          runtimeSessionId: null,
+          abortState: null,
           threadId: ThreadId.make("thread-1"),
           status: "running",
           providerName: "codex",
@@ -3286,6 +3327,8 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.make("cmd-session-set-for-user-input"),
         threadId: ThreadId.make("thread-1"),
         session: {
+          runtimeSessionId: null,
+          abortState: null,
           threadId: ThreadId.make("thread-1"),
           status: "running",
           providerName: "codex",
@@ -3340,6 +3383,8 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.make("cmd-session-set-for-approval-error"),
         threadId: ThreadId.make("thread-1"),
         session: {
+          runtimeSessionId: null,
+          abortState: null,
           threadId: ThreadId.make("thread-1"),
           status: "running",
           providerName: "codex",
@@ -3435,6 +3480,8 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.make("cmd-session-set-for-user-input-error"),
         threadId: ThreadId.make("thread-1"),
         session: {
+          runtimeSessionId: null,
+          abortState: null,
           threadId: ThreadId.make("thread-1"),
           status: "running",
           providerName: "claudeAgent",
@@ -3535,6 +3582,8 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.make("cmd-session-set-for-stop"),
         threadId: ThreadId.make("thread-1"),
         session: {
+          runtimeSessionId: null,
+          abortState: null,
           threadId: ThreadId.make("thread-1"),
           status: "ready",
           providerName: "codex",
@@ -3582,6 +3631,8 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.make("cmd-session-set-for-auto-settle"),
         threadId: ThreadId.make("thread-1"),
         session: {
+          runtimeSessionId: null,
+          abortState: null,
           threadId: ThreadId.make("thread-1"),
           status: "ready",
           providerName: "codex",

@@ -19,6 +19,7 @@ const threadId = ThreadId.make("thread-export-service");
 const projectId = ProjectId.make("project-export-service");
 
 const thread: OrchestrationThread = {
+  subagents: [],
   id: threadId,
   projectId,
   title: "Service export",
@@ -31,6 +32,8 @@ const thread: OrchestrationThread = {
   createdAt: "2026-07-12T10:00:00.000Z",
   updatedAt: "2026-07-12T10:00:00.000Z",
   archivedAt: null,
+  settledOverride: null,
+  settledAt: null,
   deletedAt: null,
   messages: [],
   proposedPlans: [],
@@ -40,6 +43,7 @@ const thread: OrchestrationThread = {
 };
 
 const project: OrchestrationProjectShell = {
+  checkpointsEnabled: true,
   id: projectId,
   title: "Project",
   workspaceRoot: "/workspace",
@@ -53,25 +57,22 @@ function queryLayer(input: {
   readonly thread: Option.Option<OrchestrationThread>;
   readonly project: Option.Option<OrchestrationProjectShell>;
 }) {
-  return Layer.succeed(
-    ProjectionSnapshotQuery,
-    ProjectionSnapshotQuery.of({
-      getCommandReadModel: () => Effect.die("unused"),
-      getSnapshot: () => Effect.die("unused"),
-      getShellSnapshot: () => Effect.die("unused"),
-      getArchivedShellSnapshot: () => Effect.die("unused"),
-      getSnapshotSequence: () => Effect.die("unused"),
-      getCounts: () => Effect.die("unused"),
-      getActiveProjectByWorkspaceRoot: () => Effect.die("unused"),
-      getProjectShellById: () => Effect.succeed(input.project),
-      getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
-      hasActiveProjectAgentPeer: () => Effect.die("unused"),
-      getThreadCheckpointContext: () => Effect.die("unused"),
-      getFullThreadDiffContext: () => Effect.die("unused"),
-      getThreadShellById: () => Effect.die("unused"),
-      getThreadDetailById: () => Effect.succeed(input.thread),
-    }),
-  );
+  return Layer.mock(ProjectionSnapshotQuery, {
+    getCommandReadModel: () => Effect.die("unused"),
+    getSnapshot: () => Effect.die("unused"),
+    getShellSnapshot: () => Effect.die("unused"),
+    getArchivedShellSnapshot: () => Effect.die("unused"),
+    getSnapshotSequence: () => Effect.die("unused"),
+    getCounts: () => Effect.die("unused"),
+    getActiveProjectByWorkspaceRoot: () => Effect.die("unused"),
+    getProjectShellById: () => Effect.succeed(input.project),
+    getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
+    hasActiveProjectAgentPeer: () => Effect.die("unused"),
+    getThreadCheckpointContext: () => Effect.die("unused"),
+    getFullThreadDiffContext: () => Effect.die("unused"),
+    getThreadShellById: () => Effect.die("unused"),
+    getThreadDetailById: () => Effect.succeed(input.thread),
+  });
 }
 
 function transactionLayer(onTransaction?: () => void) {

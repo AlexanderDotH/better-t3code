@@ -1,3 +1,4 @@
+import { ProviderDriverKind } from "@t3tools/contracts";
 import {
   ProviderInstanceId,
   SubagentId,
@@ -16,7 +17,7 @@ function activeFetchWorker(): OrchestrationSubagentSummary {
     id: SubagentId.make("fetch:thread-parent:run-1:0"),
     origin: "t3-fetch",
     providerInstanceId: ProviderInstanceId.make("claude-work"),
-    providerDriver: "claudeAgent",
+    providerDriver: ProviderDriverKind.make("claudeAgent"),
     providerThreadId: "fetch:thread-parent:run-1:0",
     parentId: null,
     path: "/root/fetch-0",

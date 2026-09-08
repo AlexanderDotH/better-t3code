@@ -43,6 +43,7 @@ function makeReadModel(
     projects: [],
     threads: [
       {
+        subagents: [],
         id: threadId,
         projectId: ProjectId.make("project-1"),
         title: "Thread",

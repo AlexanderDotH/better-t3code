@@ -1,3 +1,6 @@
+import { HarnessChatSessionId } from "@t3tools/contracts";
+import { HarnessChatContinuationKey } from "@t3tools/contracts";
+import { HarnessChatSyncSourceId } from "@t3tools/contracts";
 import {
   CommandId,
   EventId,
@@ -31,6 +34,7 @@ const seedThread = Effect.gen(function* () {
     correlationId: CommandId.make("command-project-harness-sync"),
     metadata: {},
     payload: {
+      checkpointsEnabled: true,
       projectId,
       title: "Harness sync",
       workspaceRoot: "/tmp/harness-sync",
@@ -80,9 +84,9 @@ it.layer(NodeServices.layer)("harness history sync decider", (it) => {
           type: "thread.harness-sync.link",
           commandId: CommandId.make("command-link-harness-sync"),
           threadId,
-          sourceId: "codex-home",
-          continuationKey: "codex:/tmp/home",
-          nativeSessionId: "native-session-1",
+          sourceId: HarnessChatSyncSourceId.make("codex-home"),
+          continuationKey: HarnessChatContinuationKey.make("codex:/tmp/home"),
+          nativeSessionId: HarnessChatSessionId.make("native-session-1"),
           providerInstanceId: ProviderInstanceId.make("codex-work"),
           providerLabel: "Codex Work",
           activity: "idle",
@@ -91,8 +95,8 @@ it.layer(NodeServices.layer)("harness history sync decider", (it) => {
         },
       });
 
-      expect(Array.isArray(decided)).toBe(false);
-      const event = Array.isArray(decided) ? decided[0] : decided;
+      expect(!("type" in decided)).toBe(false);
+      const event = !("type" in decided) ? decided[0] : decided;
       expect(event?.type).toBe("thread.harness-sync-linked");
       if (event?.type !== "thread.harness-sync-linked") return;
       expect(event.payload).toMatchObject({
@@ -127,8 +131,8 @@ it.layer(NodeServices.layer)("harness history sync decider", (it) => {
         },
       });
 
-      expect(Array.isArray(decided)).toBe(false);
-      const event = Array.isArray(decided) ? decided[0] : decided;
+      expect(!("type" in decided)).toBe(false);
+      const event = !("type" in decided) ? decided[0] : decided;
       expect(event?.type).toBe("thread.harness-sync-message-imported");
       if (event?.type !== "thread.harness-sync-message-imported") return;
       expect(event.payload).toMatchObject({
@@ -150,9 +154,9 @@ it.layer(NodeServices.layer)("harness history sync decider", (it) => {
           type: "thread.harness-sync.link",
           commandId: CommandId.make("command-link-original-provider"),
           threadId,
-          sourceId: "codex-home",
-          continuationKey: "codex:/tmp/home",
-          nativeSessionId: "native-session-1",
+          sourceId: HarnessChatSyncSourceId.make("codex-home"),
+          continuationKey: HarnessChatContinuationKey.make("codex:/tmp/home"),
+          nativeSessionId: HarnessChatSessionId.make("native-session-1"),
           providerInstanceId: ProviderInstanceId.make("codex-original"),
           providerLabel: "Codex Original",
           activity: "idle",
@@ -160,7 +164,7 @@ it.layer(NodeServices.layer)("harness history sync decider", (it) => {
           lastSyncedAt: createdAt,
         },
       });
-      if (Array.isArray(first)) return;
+      if (!("type" in first)) return;
       const linkedReadModel = yield* projectEvent(readModel, { ...first, sequence: 3 });
 
       const second = yield* decideOrchestrationCommand({
@@ -169,9 +173,9 @@ it.layer(NodeServices.layer)("harness history sync decider", (it) => {
           type: "thread.harness-sync.link",
           commandId: CommandId.make("command-link-different-provider"),
           threadId,
-          sourceId: "codex-home",
-          continuationKey: "codex:/tmp/home",
-          nativeSessionId: "native-session-1",
+          sourceId: HarnessChatSyncSourceId.make("codex-home"),
+          continuationKey: HarnessChatContinuationKey.make("codex:/tmp/home"),
+          nativeSessionId: HarnessChatSessionId.make("native-session-1"),
           providerInstanceId: ProviderInstanceId.make("codex-different"),
           providerLabel: "Codex Different",
           activity: "idle",
@@ -180,7 +184,7 @@ it.layer(NodeServices.layer)("harness history sync decider", (it) => {
         },
       });
 
-      if (Array.isArray(second) || second.type !== "thread.harness-sync-linked") return;
+      if (!("type" in second) || second.type !== "thread.harness-sync-linked") return;
       expect(second.payload.providerInstanceId).toBe("codex-original");
       expect(second.payload.providerLabel).toBe("Codex Original");
     }),
@@ -195,9 +199,9 @@ it.layer(NodeServices.layer)("harness history sync decider", (it) => {
           type: "thread.harness-sync.link",
           commandId: CommandId.make("command-link-active-harness-sync"),
           threadId,
-          sourceId: "codex-home",
-          continuationKey: "codex:/tmp/home",
-          nativeSessionId: "native-session-1",
+          sourceId: HarnessChatSyncSourceId.make("codex-home"),
+          continuationKey: HarnessChatContinuationKey.make("codex:/tmp/home"),
+          nativeSessionId: HarnessChatSessionId.make("native-session-1"),
           providerInstanceId: ProviderInstanceId.make("codex-work"),
           providerLabel: "Codex Work",
           activity: "active",
@@ -205,7 +209,7 @@ it.layer(NodeServices.layer)("harness history sync decider", (it) => {
           lastSyncedAt: syncedAt,
         },
       });
-      if (Array.isArray(linkedEvent)) return;
+      if (!("type" in linkedEvent)) return;
       const linkedReadModel = yield* projectEvent(readModel, { ...linkedEvent, sequence: 3 });
 
       const rejected = yield* Effect.exit(

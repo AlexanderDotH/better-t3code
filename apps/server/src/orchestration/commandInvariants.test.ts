@@ -20,6 +20,9 @@ const readModel: OrchestrationReadModel = {
   updatedAt: now,
   projects: [
     {
+      coordinationClaims: [],
+      checkpointsEnabled: true,
+      autoPull: false,
       id: ProjectId.make("project-a"),
       title: "Project A",
       workspaceRoot: "/tmp/project-a",
@@ -33,6 +36,9 @@ const readModel: OrchestrationReadModel = {
       deletedAt: null,
     },
     {
+      coordinationClaims: [],
+      checkpointsEnabled: true,
+      autoPull: false,
       id: ProjectId.make("project-b"),
       title: "Project B",
       workspaceRoot: "/tmp/project-b",
@@ -48,6 +54,7 @@ const readModel: OrchestrationReadModel = {
   ],
   threads: [
     {
+      subagents: [],
       id: ThreadId.make("thread-1"),
       projectId: ProjectId.make("project-a"),
       title: "Thread A",
@@ -73,6 +80,7 @@ const readModel: OrchestrationReadModel = {
       deletedAt: null,
     },
     {
+      subagents: [],
       id: ThreadId.make("thread-2"),
       projectId: ProjectId.make("project-b"),
       title: "Thread B",

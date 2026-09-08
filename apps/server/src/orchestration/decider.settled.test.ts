@@ -39,6 +39,7 @@ function makeReadModel(
     projects: [],
     threads: [
       {
+        subagents: [],
         id: ThreadId.make("thread-1"),
         projectId: ProjectId.make("project-1"),
         title: "Thread",
@@ -70,6 +71,8 @@ function makeReadModel(
 
 function makeSession(status: OrchestrationSession["status"]): OrchestrationSession {
   return {
+    runtimeSessionId: null,
+    abortState: null,
     threadId: ThreadId.make("thread-1"),
     status,
     providerName: "Codex",

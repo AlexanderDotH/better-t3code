@@ -56,6 +56,7 @@ function makeProject(
   workspaceRoot = "/workspace/project",
 ): OrchestrationProjectShell {
   return {
+    checkpointsEnabled: true,
     id,
     title: `Project ${id}`,
     workspaceRoot,
@@ -224,7 +225,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     );
   };
 
-  const serverSettings = ServerSettingsService.of({
+  const serverSettings: Partial<ServerSettingsService["Service"]> = {
     start: Effect.void,
     ready: Effect.void,
     getSettings: Ref.get(settings).pipe(Effect.tap((value) => Queue.offer(settingsReads, value))),
@@ -233,7 +234,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     subscribeChanges: PubSub.subscribe(settingsChanges).pipe(
       Effect.map((subscription) => Stream.fromSubscription(subscription)),
     ),
-  });
+  };
 
   const dependencies = Layer.mergeAll(
     Layer.mock(ProjectionSnapshotQuery)({
@@ -259,7 +260,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
       streamDomainEvents: Stream.empty,
       latestSequence: Effect.succeed(0),
     }),
-    Layer.succeed(ServerSettingsService, serverSettings),
+    Layer.mock(ServerSettingsService, serverSettings),
     Layer.succeed(ServerActivation, Deferred.await(activation)),
     Layer.succeed(Crypto.Crypto, testCrypto),
     FileSystem.layerNoop({

@@ -59,6 +59,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
         correlationId: CommandId.make("cmd-project-create-scripts"),
         metadata: {},
         payload: {
+          checkpointsEnabled: true,
           projectId: asProjectId("project-scripts"),
           title: "Scripts",
           workspaceRoot: "/tmp/scripts",
@@ -117,6 +118,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
       correlationId: CommandId.make("cmd-legacy-scripts"),
       metadata: {},
       payload: {
+        checkpointsEnabled: true,
         projectId: asProjectId("project-scripts"),
         title: "Scripts",
         workspaceRoot: "/tmp/scripts",
@@ -219,6 +221,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
         correlationId: CommandId.make("cmd-project-create-favicon"),
         metadata: {},
         payload: {
+          checkpointsEnabled: true,
           projectId: asProjectId("project-favicon"),
           title: "Favicon",
           workspaceRoot: "/tmp/favicon",
@@ -267,6 +270,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
         correlationId: CommandId.make("cmd-project-create"),
         metadata: {},
         payload: {
+          checkpointsEnabled: true,
           projectId: asProjectId("project-existing"),
           title: "Project",
           workspaceRoot: "/tmp/project",
@@ -313,6 +317,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
         correlationId: CommandId.make("cmd-project-create-first"),
         metadata: {},
         payload: {
+          checkpointsEnabled: true,
           projectId: asProjectId("project-first"),
           title: "First",
           workspaceRoot: "/tmp/project-first",
@@ -334,6 +339,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
         correlationId: CommandId.make("cmd-project-create-second"),
         metadata: {},
         payload: {
+          checkpointsEnabled: true,
           projectId: asProjectId("project-second"),
           title: "Second",
           workspaceRoot: "/tmp/project-second",
@@ -378,6 +384,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
         correlationId: CommandId.make("cmd-project-create"),
         metadata: {},
         payload: {
+          checkpointsEnabled: true,
           projectId: asProjectId("project-1"),
           title: "Project",
           workspaceRoot: "/tmp/project",
@@ -480,6 +487,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
         correlationId: CommandId.make("cmd-project-create"),
         metadata: {},
         payload: {
+          checkpointsEnabled: true,
           projectId: asProjectId("project-1"),
           title: "Project",
           workspaceRoot: "/tmp/project",
@@ -558,6 +566,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
         correlationId: CommandId.make("cmd-project-create"),
         metadata: {},
         payload: {
+          checkpointsEnabled: true,
           projectId: asProjectId("project-1"),
           title: "Project",
           workspaceRoot: "/tmp/project",

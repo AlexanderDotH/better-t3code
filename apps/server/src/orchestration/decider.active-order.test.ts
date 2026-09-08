@@ -27,6 +27,7 @@ function makeReadModel(overrides: Partial<OrchestrationThread> = {}): Orchestrat
     projects: [],
     threads: [
       {
+        subagents: [],
         id: THREAD_ID,
         projectId: ProjectId.make("project-1"),
         title: "Thread",
@@ -119,6 +120,8 @@ it.layer(NodeServices.layer)("active thread ordering", (it) => {
     Effect.gen(function* () {
       const readModel = makeReadModel({
         session: {
+          runtimeSessionId: null,
+          abortState: null,
           threadId: THREAD_ID,
           status: "running",
           providerName: "codex",
