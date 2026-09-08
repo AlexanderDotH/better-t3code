@@ -129,6 +129,7 @@ const SERVER_CONFIG: ServerConfigType = {
     serverVersion: "0.0.0-test",
     capabilities: {
       repositoryIdentity: true,
+      midChatProviderSwitching: false,
       connectionProbe: true,
     },
   },
@@ -206,6 +207,7 @@ const LEGACY_SERVER_CONFIG = {
     ...ENCODED_SERVER_CONFIG.environment,
     capabilities: {
       repositoryIdentity: true,
+      midChatProviderSwitching: false,
     },
   },
 };
