@@ -12,12 +12,14 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
+import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 import { RpcClientError } from "effect/unstable/rpc";
 import * as Socket from "effect/unstable/socket/Socket";
 
@@ -33,6 +35,7 @@ import type { RpcSession } from "../rpc/session.ts";
 import {
   applyServerWelcomeEvent,
   makeEnvironmentServerWelcomeState,
+  createServerEnvironmentAtoms,
   makeEnvironmentServerConfigState,
   isLegacyUpdateHandoffLoss,
   matchesServerUpdateReadyEvent,
@@ -49,6 +52,7 @@ import {
   runDesktopCommitWithReconnectObserver,
 } from "./server.ts";
 import { applyServerConfigProjection } from "./serverConfigProjection.ts";
+import * as EnvironmentRegistry from "../connection/registry.ts";
 
 const CONFIG = {
   availableEditors: [],
@@ -75,6 +79,61 @@ const TARGET = new PrimaryConnectionTarget({
   httpBaseUrl: "https://environment.example.test",
   wsBaseUrl: "wss://environment.example.test",
 });
+
+it("releases resource-protection subscriptions immediately after their last consumer", () => {
+  const runtime = Atom.runtime(Layer.empty) as unknown as Atom.AtomRuntime<
+    EnvironmentRegistry.EnvironmentRegistry | Persistence.EnvironmentCacheStore,
+    never
+  >;
+  const server = createServerEnvironmentAtoms(runtime, {
+    initialConfigValueAtom: () => Atom.make<ServerConfig | null>(null),
+  });
+  const target = { environmentId: TARGET.environmentId, input: {} };
+  const subscription = server.resourceProtection(target);
+
+  expect(subscription.idleTTL).toBe(0);
+  expect(server.resourceProtection(target)).toBe(subscription);
+});
+
+it.effect("cancels the resource-protection stream when its last consumer unmounts", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const cancelled = yield* Deferred.make<void>();
+      const upstream = Stream.never.pipe(
+        Stream.onStart(Deferred.succeed(started, undefined)),
+        Stream.ensuring(Deferred.succeed(cancelled, undefined)),
+      );
+      const followStream: EnvironmentRegistry.EnvironmentRegistry["Service"]["followStream"] = () =>
+        upstream as never;
+      const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
+        followStream,
+      } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+      const runtime = Atom.runtime(
+        Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+      ) as unknown as Atom.AtomRuntime<
+        EnvironmentRegistry.EnvironmentRegistry | Persistence.EnvironmentCacheStore,
+        never
+      >;
+      const server = createServerEnvironmentAtoms(runtime, {
+        initialConfigValueAtom: () => Atom.make<ServerConfig | null>(null),
+      });
+      const subscription = server.resourceProtection({
+        environmentId: TARGET.environmentId,
+        input: {},
+      });
+      const registry = AtomRegistry.make();
+      yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+      const unmount = registry.mount(subscription);
+
+      yield* Deferred.await(started);
+      unmount();
+      yield* Deferred.await(cancelled);
+
+      expect(subscription.idleTTL).toBe(0);
+    }),
+  ),
+);
 
 function session(client: WsRpcProtocolClient): RpcSession {
   return {
