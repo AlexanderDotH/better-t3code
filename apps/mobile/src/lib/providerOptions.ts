@@ -6,6 +6,7 @@ import type {
 import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
+  getProviderOptionCurrentLabel,
 } from "@t3tools/shared/model";
 
 export function resolveProviderOptionDescriptors(input: {
@@ -53,4 +54,16 @@ export function applyProviderOptionSelection(
   ) as ReadonlyArray<ProviderOptionDescriptor>;
 
   return buildProviderOptionSelectionsFromDescriptors(nextDescriptors) ?? [];
+}
+
+export function providerOptionValueLabels(
+  descriptors: ReadonlyArray<ProviderOptionDescriptor>,
+): ReadonlyArray<string> {
+  return descriptors.flatMap((descriptor) => {
+    if (descriptor.type === "boolean") {
+      return descriptor.currentValue ? [descriptor.label] : [];
+    }
+    const label = getProviderOptionCurrentLabel(descriptor);
+    return label ? [label] : [];
+  });
 }

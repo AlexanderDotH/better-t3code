@@ -32,6 +32,8 @@ export interface ProjectThreadStartTurnSpec {
   /** Wire attachments from `prepareTurnAttachments`, in composer order. */
   readonly uploadedAttachments: ReadonlyArray<UploadedMobileAttachment>;
   readonly modelSelection: ModelSelection;
+  readonly turnModelSelection?: ModelSelection;
+  readonly fetchMode?: "repository-exploration";
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly workspaceMode: "local" | "worktree";
@@ -59,7 +61,8 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
       text: spec.text,
       attachments: spec.uploadedAttachments,
     },
-    modelSelection: spec.modelSelection,
+    modelSelection: spec.turnModelSelection ?? spec.modelSelection,
+    ...(spec.fetchMode === undefined ? {} : { fetchMode: spec.fetchMode }),
     titleSeed: title,
     runtimeMode: spec.runtimeMode,
     interactionMode: spec.interactionMode,

@@ -103,7 +103,7 @@ describe("mobile model options", () => {
     ]);
   });
 
-  it("does not materialize catalog defaults for missing stored options", () => {
+  it("stores Codex Standard explicitly without adopting the catalog speed default", () => {
     const config = {
       providers: [
         {
@@ -144,7 +144,7 @@ describe("mobile model options", () => {
     });
 
     expect(option?.capabilities?.optionDescriptors?.[0]?.id).toBe("serviceTier");
-    expect(option?.selection.options).toBeUndefined();
+    expect(option?.selection.options).toEqual([{ id: "serviceTier", value: "default" }]);
 
     const [explicitOption] = buildModelOptions(config, {
       instanceId: ProviderInstanceId.make("codex"),

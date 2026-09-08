@@ -1986,3 +1986,16 @@ describe("mobile composer drafts", () => {
     expect(composerAttachmentCleanupMocks.remove).not.toHaveBeenCalled();
   });
 });
+
+it("preserves an edited Fetch setting while undoing an imported draft", () => {
+  const snapshot: ComposerDraft = {
+    text: "original",
+    attachments: [],
+    fetchMode: "repository-exploration",
+  };
+  const merged: ComposerDraft = { ...snapshot, text: "original imported" };
+  const current: ComposerDraft = { ...merged, fetchMode: undefined };
+  const result = undoComposerDraftMergeState({ draft: current }, "draft", snapshot, merged);
+  expect(result.draft?.fetchMode).toBeUndefined();
+  expect(result.draft?.text).toBe("original");
+});
