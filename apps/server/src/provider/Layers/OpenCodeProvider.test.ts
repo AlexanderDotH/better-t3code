@@ -206,6 +206,10 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
 
       NodeAssert.equal(snapshot.status, "error");
       NodeAssert.equal(snapshot.installed, false);
+      NodeAssert.deepStrictEqual(snapshot.nativeSubagents, {
+        toolName: "Task",
+        maxRecommendedSubagents: 8,
+      });
       NodeAssert.equal(
         snapshot.message,
         "OpenCode CLI (`opencode`) is not installed or not on PATH.",
@@ -294,6 +298,37 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
         agentDescriptor.options.find((option) => option.isDefault === true)?.id,
         "build",
       );
+    }),
+  );
+
+  it.effect("uses model IDs as names when the OpenCode provider omits model.name", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["google"],
+          all: [
+            {
+              id: "google",
+              name: "Google",
+              models: {
+                "gemini-2.5-flash": {
+                  id: "gemini-2.5-flash",
+                  providerID: "google",
+                },
+              },
+            },
+          ],
+          default: {},
+        },
+        agents: [],
+      };
+
+      const snapshot = yield* checkProvider(makeOpenCodeSettings());
+      const model = snapshot.models.find((entry) => entry.slug === "google/gemini-2.5-flash");
+
+      NodeAssert.ok(model);
+      NodeAssert.equal(model?.name, "gemini-2.5-flash");
+      NodeAssert.equal(model?.subProvider, "Google");
     }),
   );
 

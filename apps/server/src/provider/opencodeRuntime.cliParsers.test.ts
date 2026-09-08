@@ -3,11 +3,30 @@ import * as NodeAssert from "node:assert/strict";
 import { describe, it } from "vite-plus/test";
 
 import {
+  buildLocalOpenCodeInventoryArgs,
+  buildLocalOpenCodeServerArgs,
   parseAgentListCliOutput,
   parseModelsCliOutput,
+  parseOpenCodeModelSlug,
   parseSkillsCliOutput,
   toOpenCodeFileParts,
 } from "./opencodeRuntime.ts";
+
+describe("local OpenCode process arguments", () => {
+  it("disables external plugins for the owned server and matching inventory commands", () => {
+    NodeAssert.deepStrictEqual(buildLocalOpenCodeServerArgs("127.0.0.1", 4301), [
+      "serve",
+      "--pure",
+      "--hostname=127.0.0.1",
+      "--port=4301",
+    ]);
+    NodeAssert.deepStrictEqual(buildLocalOpenCodeInventoryArgs(), {
+      models: ["models", "--verbose", "--pure"],
+      agents: ["agent", "list", "--pure"],
+      skills: ["debug", "skill", "--pure"],
+    });
+  });
+});
 
 describe("parseModelsCliOutput", () => {
   it("parses a single model from a single provider", () => {
@@ -129,6 +148,35 @@ describe("parseModelsCliOutput", () => {
     NodeAssert.equal(model.capabilities!.reasoning, true);
     NodeAssert.ok(model.variants);
     NodeAssert.equal(model.variants!["medium"] !== undefined, true);
+  });
+
+  it("tolerates leading/trailing whitespace around model slugs", () => {
+    const stdout = [
+      "   google/gemini-2.5-flash  ",
+      JSON.stringify({
+        id: "gemini-2.5-flash",
+        providerID: "google",
+        name: "Gemini 2.5 Flash",
+      }),
+      "\n",
+      "\tgoogle/gemini-2.5-pro\t",
+      JSON.stringify({
+        id: "gemini-2.5-pro",
+        providerID: "google",
+        name: "Gemini 2.5 Pro",
+      }),
+    ].join("\n");
+
+    const result = parseModelsCliOutput(stdout);
+    NodeAssert.equal(result.providers.size, 1);
+    NodeAssert.equal(result.connected.length, 1);
+    NodeAssert.equal(result.connected[0], "google");
+    const provider = result.providers.get("google")!;
+    NodeAssert.ok(provider);
+    NodeAssert.equal(Object.keys(provider.models).length, 2);
+    NodeAssert.ok(provider.models["gemini-2.5-flash"]);
+    NodeAssert.equal(provider.models["gemini-2.5-flash"].name, "Gemini 2.5 Flash");
+    NodeAssert.equal(provider.models["gemini-2.5-pro"].id, "gemini-2.5-pro");
   });
 
   it("keeps a model whose JSON body has a slash and no interior whitespace", () => {
@@ -255,6 +303,38 @@ describe("parseAgentListCliOutput", () => {
     const result = parseAgentListCliOutput(stdout);
     NodeAssert.equal(result[0]!.hidden, true);
     NodeAssert.equal(result[1]!.hidden, false);
+  });
+});
+
+describe("parseOpenCodeModelSlug", () => {
+  it("parses google Gemini slugs", () => {
+    const parsed = parseOpenCodeModelSlug("google/gemini-2.5-flash");
+    NodeAssert.ok(parsed);
+    NodeAssert.equal(parsed?.providerID, "google");
+    NodeAssert.equal(parsed?.modelID, "gemini-2.5-flash");
+  });
+
+  it("trims whitespace around model slugs", () => {
+    const parsed = parseOpenCodeModelSlug("  google/gemini-2.5-flash ");
+    NodeAssert.ok(parsed);
+    NodeAssert.equal(parsed?.providerID, "google");
+    NodeAssert.equal(parsed?.modelID, "gemini-2.5-flash");
+  });
+
+  it("keeps slash-containing model ids", () => {
+    const parsed = parseOpenCodeModelSlug("openrouter/qwen/qwen3-coder");
+    NodeAssert.deepEqual(parsed, {
+      providerID: "openrouter",
+      modelID: "qwen/qwen3-coder",
+    });
+  });
+
+  it("rejects malformed model slugs", () => {
+    NodeAssert.equal(parseOpenCodeModelSlug("google"), null);
+    NodeAssert.equal(parseOpenCodeModelSlug("google//gemini"), null);
+    NodeAssert.equal(parseOpenCodeModelSlug("google gemini-2.5"), null);
+    NodeAssert.equal(parseOpenCodeModelSlug(""), null);
+    NodeAssert.equal(parseOpenCodeModelSlug(undefined), null);
   });
 });
 

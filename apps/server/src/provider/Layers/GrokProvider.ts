@@ -46,6 +46,10 @@ const GROK_PRESENTATION = {
   displayName: "Grok",
   badgeLabel: "Early Access",
   showInteractionModeToggle: false,
+  fetchWorkers: {
+    maxRecommendedWorkers: 8,
+    commandExecutionPolicy: "deny",
+  },
 } as const;
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],

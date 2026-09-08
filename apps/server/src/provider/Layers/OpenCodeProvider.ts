@@ -31,6 +31,14 @@ import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
 const OPENCODE_PRESENTATION = {
   displayName: "OpenCode",
   showInteractionModeToggle: false,
+  nativeSubagents: {
+    toolName: "Task",
+    maxRecommendedSubagents: 8,
+  },
+  fetchWorkers: {
+    maxRecommendedWorkers: 8,
+    commandExecutionPolicy: "deny",
+  },
 } as const;
 const OPENCODE_VERSION_PROBE_TIMEOUT = "4 seconds";
 
@@ -264,7 +272,7 @@ function flattenOpenCodeModels(input: OpenCodeInventory): ReadonlyArray<ServerPr
     }
 
     for (const model of Object.values(provider.models)) {
-      const name = nonEmptyTrimmed(model.name);
+      const name = nonEmptyTrimmed(model.name) ?? nonEmptyTrimmed(model.id);
       if (!name) {
         continue;
       }

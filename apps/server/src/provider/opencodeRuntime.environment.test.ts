@@ -42,6 +42,32 @@ describe("resolveOpenCodeConfigContent", () => {
     ).toBe('{"source":"process"}');
     expect(resolveOpenCodeConfigContent(undefined, {})).toBe("{}");
   });
+
+  it("adds managed MCP servers without dropping inherited OpenCode configuration", () => {
+    expect(
+      JSON.parse(
+        resolveOpenCodeConfigContent(
+          {
+            OPENCODE_CONFIG_CONTENT:
+              '{"source":"caller","mcp":{"existing":{"type":"remote","url":"https://existing.example"}}}',
+          },
+          {},
+          {
+            "t3-code": {
+              type: "remote",
+              url: "http://127.0.0.1/mcp/workspace",
+            },
+          },
+        ),
+      ),
+    ).toEqual({
+      source: "caller",
+      mcp: {
+        existing: { type: "remote", url: "https://existing.example" },
+        "t3-code": { type: "remote", url: "http://127.0.0.1/mcp/workspace" },
+      },
+    });
+  });
 });
 
 describe("resolveOpenCodeServerPassword", () => {

@@ -1587,11 +1587,13 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       const adapter = yield* makeTestAdapter(wrapperPath);
 
       const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const terminalReceipt = yield* Deferred.make<void>();
       const activeTurnIdRef = yield* Ref.make<TurnId | undefined>(undefined);
       const trailingChunkTurnId = yield* Deferred.make<TurnId>();
       const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
         Effect.gen(function* () {
           runtimeEvents.push(event);
+          if (event.type === "turn.completed") yield* Deferred.succeed(terminalReceipt, undefined);
           if (String(event.threadId) !== String(threadId)) {
             return;
           }
@@ -1629,6 +1631,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       yield* adapter.interruptTurn(threadId, turnId).pipe(Effect.timeout("2 seconds"));
       yield* Fiber.join(sendTurnFiber).pipe(Effect.timeout("2 seconds"));
 
+      yield* Deferred.await(terminalReceipt);
       const turnCompletedEvents = runtimeEvents.filter(
         (event): event is Extract<ProviderRuntimeEvent, { type: "turn.completed" }> =>
           event.type === "turn.completed" && String(event.threadId) === String(threadId),
@@ -1719,9 +1722,11 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       );
       const adapter = yield* makeTestAdapter(wrapperPath);
       const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const terminalReceipt = yield* Deferred.make<void>();
       const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           runtimeEvents.push(event);
+          if (event.type === "turn.completed") yield* Deferred.succeed(terminalReceipt, undefined);
         }),
       ).pipe(Effect.forkChild);
 
@@ -1740,6 +1745,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
           attachments: [],
         }),
       );
+      yield* Deferred.await(terminalReceipt);
       const readySessions = yield* adapter.listSessions();
       const readySession = readySessions.find((session) => session.threadId === threadId);
       const failedTurnCompleted = runtimeEvents.find(
@@ -1770,9 +1776,11 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       );
       const adapter = yield* makeTestAdapter(wrapperPath);
       const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const terminalReceipt = yield* Deferred.make<void>();
       const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           runtimeEvents.push(event);
+          if (event.type === "turn.completed") yield* Deferred.succeed(terminalReceipt, undefined);
         }),
       ).pipe(Effect.forkChild);
 
@@ -1791,6 +1799,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
           attachments: [],
         }),
       );
+      yield* Deferred.await(terminalReceipt);
       const readySessions = yield* adapter.listSessions();
       const readySession = readySessions.find((session) => session.threadId === threadId);
       const terminalEvents = runtimeEvents.filter(

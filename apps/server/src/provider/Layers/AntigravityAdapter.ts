@@ -4,6 +4,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   RuntimeRequestId,
+  RuntimeSessionId,
   RuntimeTaskId,
   TurnId,
   type AntigravitySettings,
@@ -108,6 +109,7 @@ type Runtime = Pick<
   | "drainEvents"
   | "prompt"
   | "cancel"
+  | "forceClose"
 >;
 type NativePermission = EffectAcpSchema.RequestPermissionRequest;
 type NativePermissionResponse = EffectAcpSchema.RequestPermissionResponse;
@@ -230,11 +232,20 @@ const resolveClientFilePath = Effect.fn("AntigravityAdapter.resolveClientFilePat
   }) {
     const { path } = input;
     const resolved = path.resolve(input.requestPath);
-    // Follow symlinks on the parent so a link out of the workspace cannot escape it.
-    const parent = yield* input.fileSystem
-      .realPath(path.dirname(resolved))
-      .pipe(Effect.orElseSucceed(() => path.dirname(resolved)));
-    const real = path.join(parent, path.basename(resolved));
+    let ancestor = resolved;
+    const missingSegments: string[] = [];
+    let real = resolved;
+    while (true) {
+      const existing = yield* input.fileSystem.realPath(ancestor).pipe(Effect.option);
+      if (Option.isSome(existing)) {
+        real = path.join(existing.value, ...missingSegments);
+        break;
+      }
+      const parent = path.dirname(ancestor);
+      if (parent === ancestor) break;
+      missingSegments.unshift(path.basename(ancestor));
+      ancestor = parent;
+    }
     const roots = yield* Effect.forEach(input.allowedRoots, (root) =>
       input.fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root)),
     );
@@ -331,7 +342,12 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
     eventId: Effect.map(randomId, EventId.make),
     createdAt: nowIso,
   });
-  const emit = (event: ProviderRuntimeEvent) => PubSub.publish(events, event).pipe(Effect.asVoid);
+  const emit = (event: ProviderRuntimeEvent) =>
+    PubSub.publish(events, {
+      ...event,
+      runtimeSessionId:
+        event.runtimeSessionId ?? sessions.get(event.threadId)?.session.runtimeSessionId,
+    }).pipe(Effect.asVoid);
 
   const withThreadLock = <A, E, R>(threadId: ThreadId, task: Effect.Effect<A, E, R>) =>
     SynchronizedRef.modifyEffect(locks, (current) => {
@@ -443,6 +459,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
           );
           context.subagents.clear();
           yield* emit({
+            runtimeSessionId: context.session.runtimeSessionId,
             type: "session.exited",
             ...(yield* stamp),
             provider: PROVIDER,
@@ -851,6 +868,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
                 provider: PROVIDER,
                 providerInstanceId: options.instanceId,
                 threadId: input.threadId,
+                runtimeSessionId: input.runtimeSessionId ?? RuntimeSessionId.make(yield* randomId),
                 cwd,
                 status: "ready",
                 runtimeMode: input.runtimeMode,
@@ -1229,6 +1247,31 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
 
   const stopSession: Adapter["stopSession"] = (threadId) =>
     withThreadLock(threadId, Effect.flatMap(requireSession(threadId), stopContext));
+  const forceStopSession: Adapter["forceStopSession"] = (threadId, expectedRuntimeSessionId) =>
+    withThreadLock(
+      threadId,
+      Effect.gen(function* () {
+        const context = sessions.get(threadId);
+        if (!context || context.session.runtimeSessionId !== expectedRuntimeSessionId) {
+          return { outcome: "terminated", mechanism: "already-stopped" } as const;
+        }
+        yield* context.runtime.forceClose.pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapterRequestError({
+                provider: PROVIDER,
+                method: "session/force-close",
+                detail: cause.message,
+                cause,
+              }),
+          ),
+        );
+        context.disconnected = true;
+        yield* stopContext(context);
+        return { outcome: "terminated", mechanism: "process-tree" } as const;
+      }),
+    );
+
   const stopAll: Adapter["stopAll"] = () =>
     Effect.forEach([...sessions.values()], stopContext, { discard: true });
   yield* Effect.addFinalizer(() =>
@@ -1244,7 +1287,11 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
 
   return {
     provider: PROVIDER,
-    capabilities: { sessionModelSwitch: "in-session", supportsConversationRollback: false },
+    capabilities: {
+      sessionModelSwitch: "in-session",
+      supportsConversationRollback: false,
+      mcp: "unsupported",
+    },
     compaction: { type: "slash-command", command: "/compact" },
     startSession,
     sendTurn,
@@ -1252,6 +1299,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
     respondToRequest,
     respondToUserInput,
     stopSession,
+    forceStopSession,
     stopAll,
     listSessions: () =>
       Effect.sync(() =>

@@ -6,6 +6,8 @@ import {
   type Agent,
   type FilePartInput,
   type Model,
+  type McpLocalConfig,
+  type McpRemoteConfig,
   type OpencodeClient,
   type PermissionRuleset,
   type ProviderListResponse,
@@ -36,6 +38,9 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
+const decodeJsonRecordExit = Schema.decodeUnknownExit(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
 const OPENCODE_EMPTY_CONFIG_CONTENT = "{}";
 
 export const MINIMUM_OPENCODE_VERSION = "1.14.19";
@@ -50,12 +55,26 @@ const decodeOpenCodeHealth = Schema.decodeUnknownEffect(OpenCodeHealthSchema);
 export function resolveOpenCodeConfigContent(
   inputEnvironment: Readonly<Record<string, string | undefined>> | undefined,
   inheritedEnvironment: Readonly<Record<string, string | undefined>> = process.env,
+  managedMcpServers?: OpenCodeMcpConfig,
 ): string {
-  return (
+  const configured =
     inputEnvironment?.OPENCODE_CONFIG_CONTENT ??
     inheritedEnvironment.OPENCODE_CONFIG_CONTENT ??
-    OPENCODE_EMPTY_CONFIG_CONTENT
-  );
+    OPENCODE_EMPTY_CONFIG_CONTENT;
+  if (!managedMcpServers || Object.keys(managedMcpServers).length === 0) {
+    return configured;
+  }
+
+  const decoded = decodeJsonRecordExit(configured);
+  const baseConfig = Exit.isSuccess(decoded) ? decoded.value : {};
+  const configuredMcp = baseConfig.mcp;
+  const existingMcp =
+    P.isObject(configuredMcp) && !Array.isArray(configuredMcp) ? configuredMcp : {};
+  const encoded = encodeUnknownJsonStringExit({
+    ...baseConfig,
+    mcp: { ...existingMcp, ...managedMcpServers },
+  });
+  return Exit.isSuccess(encoded) ? encoded.value : configured;
 }
 
 export function resolveOpenCodeServerPassword(
@@ -81,6 +100,30 @@ const OPENCODE_SERVER_READY_PREFIX = "opencode server listening";
 const DEFAULT_OPENCODE_SERVER_TIMEOUT_MS = 30_000;
 const DEFAULT_HOSTNAME = "127.0.0.1";
 const OPENCODE_SERVER_STARTUP_MAX_OUTPUT_CHARS = 64 * 1024;
+type OpenCodeMcpConfig = Record<string, McpLocalConfig | McpRemoteConfig>;
+
+/**
+ * T3-owned OpenCode processes must not load external plugins. Plugin hooks can
+ * rewrite prompts or create additional sessions, which breaks the one-turn
+ * lifecycle expected by the provider adapter. Pure mode keeps normal config,
+ * credentials, agents, and skills while skipping only external plugins.
+ */
+export function buildLocalOpenCodeServerArgs(hostname: string, port: number): Array<string> {
+  return ["serve", "--pure", `--hostname=${hostname}`, `--port=${port}`];
+}
+
+export function buildLocalOpenCodeInventoryArgs(): {
+  readonly models: ReadonlyArray<string>;
+  readonly agents: ReadonlyArray<string>;
+  readonly skills: ReadonlyArray<string>;
+} {
+  return {
+    models: ["models", "--verbose", "--pure"],
+    agents: ["agent", "list", "--pure"],
+    skills: ["debug", "skill", "--pure"],
+  };
+}
+
 const OPENCODE_SKILL_DISCOVERY_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 export interface OpenCodeServerProcess {
   readonly url: string;
@@ -88,6 +131,7 @@ export interface OpenCodeServerProcess {
   readonly version: string;
   readonly isRunning: Effect.Effect<boolean>;
   readonly exitCode: Effect.Effect<number, never>;
+  readonly pid?: number;
 }
 
 export interface OpenCodeServerConnection {
@@ -96,6 +140,7 @@ export interface OpenCodeServerConnection {
   readonly version: string;
   readonly exitCode: Effect.Effect<number, never> | null;
   readonly external: boolean;
+  readonly pid?: number;
 }
 
 const OPENCODE_RUNTIME_ERROR_TAG = "OpenCodeRuntimeError";
@@ -221,6 +266,7 @@ export interface OpenCodeRuntimeShape {
     readonly directory: string;
     readonly serverPassword?: string;
     readonly environment?: NodeJS.ProcessEnv;
+    readonly mcpServers?: OpenCodeMcpConfig;
     readonly port?: number;
     readonly hostname?: string;
     readonly timeoutMs?: number;
@@ -236,6 +282,7 @@ export interface OpenCodeRuntimeShape {
     readonly serverUrl?: string | null;
     readonly serverPassword?: string;
     readonly environment?: NodeJS.ProcessEnv;
+    readonly mcpServers?: OpenCodeMcpConfig;
     readonly port?: number;
     readonly hostname?: string;
     readonly timeoutMs?: number;
@@ -338,10 +385,10 @@ export function parseModelsCliOutput(stdout: string): {
     // whitespace and a `/` in one of its values (e.g. an OpenRouter model whose
     // `id` is `vendor/model`) matches SLUG_LINE_RE, so flushModel runs against
     // an empty body and the model is silently dropped.
-    const slugMatch = line.trimStart().startsWith("{") ? null : SLUG_LINE_RE.exec(line);
-    if (slugMatch) {
+    const parsedSlug = line.trimStart().startsWith("{") ? null : parseOpenCodeModelSlug(line);
+    if (parsedSlug) {
       flushModel();
-      currentSlug = slugMatch[1]!;
+      currentSlug = `${parsedSlug.providerID}/${parsedSlug.modelID}`;
     } else if (currentSlug !== null) {
       jsonLines.push(line);
     }
@@ -408,14 +455,20 @@ export function parseOpenCodeModelSlug(
   }
 
   const trimmed = slug.trim();
+  if (!SLUG_LINE_RE.test(trimmed)) {
+    return null;
+  }
+
   const separator = trimmed.indexOf("/");
-  if (separator <= 0 || separator === trimmed.length - 1) {
+  const providerID = trimmed.slice(0, separator);
+  const modelID = trimmed.slice(separator + 1);
+  if (providerID.length === 0 || modelID.split("/").some((segment) => segment.length === 0)) {
     return null;
   }
 
   return {
-    providerID: trimmed.slice(0, separator),
-    modelID: trimmed.slice(separator + 1),
+    providerID,
+    modelID,
   };
 }
 
@@ -438,9 +491,9 @@ export function openCodeQuestionId(
  * puts in the prompt.
  */
 const OPENCODE_NATIVE_IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
-const OPENCODE_NATIVE_FILE_PART_MAX_BYTES = 20 * 1024 * 1024;
+export const OPENCODE_NATIVE_FILE_PART_MAX_BYTES = 20 * 1024 * 1024;
 
-function isOpenCodeNativeFilePart(input: {
+export function isOpenCodeNativeFilePart(input: {
   readonly mimeType: string;
   readonly sizeBytes: number;
 }): boolean {
@@ -486,6 +539,7 @@ export function buildOpenCodePermissionRules(runtimeMode: RuntimeMode): Permissi
     return [
       { permission: "*", pattern: "*", action: "allow" },
       { permission: "external_directory", pattern: "*", action: "allow" },
+      { permission: "task", pattern: "*", action: "ask" },
     ];
   }
 
@@ -661,8 +715,13 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
           ),
         ));
       const timeoutMs = input.timeoutMs ?? DEFAULT_OPENCODE_SERVER_TIMEOUT_MS;
-      const args = ["serve", `--hostname=${hostname}`, `--port=${port}`];
+      const args = buildLocalOpenCodeServerArgs(hostname, port);
       const spawnCommand = yield* resolveCommand(input.binaryPath, args, input.environment);
+      const configContent = resolveOpenCodeConfigContent(
+        input.environment,
+        process.env,
+        input.mcpServers,
+      );
       const serverPassword = resolveOpenCodeServerPassword({
         external: false,
         ...(input.serverPassword !== undefined ? { serverPassword: input.serverPassword } : {}),
@@ -675,7 +734,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
             detached: hostPlatform !== "win32",
             shell: spawnCommand.shell,
             env: {
-              ...input.environment,
+              ...(input.environment ?? process.env),
               ...(serverPassword !== undefined ? { OPENCODE_SERVER_PASSWORD: serverPassword } : {}),
               // Respect an OPENCODE_CONFIG_CONTENT provided by the caller or
               // the inherited process environment, only falling back to the
@@ -684,7 +743,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
               // providers/models. The value is set explicitly (rather than
               // relying on inheritance) because `extendEnv` is false whenever
               // `input.environment` is provided.
-              OPENCODE_CONFIG_CONTENT: resolveOpenCodeConfigContent(input.environment),
+              OPENCODE_CONFIG_CONTENT: configContent,
             },
             extendEnv: input.environment === undefined,
           }),
@@ -827,6 +886,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
 
       return {
         url,
+        pid: Number(child.pid),
         ...(serverPassword !== undefined ? { serverPassword } : {}),
         version,
         isRunning: child.isRunning.pipe(Effect.orElseSucceed(() => false)),
@@ -866,6 +926,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       directory: input.directory,
       ...(input.serverPassword !== undefined ? { serverPassword: input.serverPassword } : {}),
       ...(input.environment !== undefined ? { environment: input.environment } : {}),
+      ...(input.mcpServers !== undefined ? { mcpServers: input.mcpServers } : {}),
       ...(input.port !== undefined ? { port: input.port } : {}),
       ...(input.hostname !== undefined ? { hostname: input.hostname } : {}),
       ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
@@ -876,6 +937,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         version: server.version,
         exitCode: server.exitCode,
         external: false,
+        ...(server.pid === undefined ? {} : { pid: server.pid }),
       })),
     );
   };
@@ -924,23 +986,24 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
     Effect.gen(function* () {
       const env = input.environment !== undefined ? { environment: input.environment } : ({} as {});
       const commandContext = { cwd: input.cwd, ...env };
+      const inventoryArgs = buildLocalOpenCodeInventoryArgs();
 
       const runModelsCli = () =>
         runOpenCodeCommand({
           binaryPath: input.binaryPath,
-          args: ["models", "--verbose"],
+          args: inventoryArgs.models,
           ...commandContext,
         }).pipe(Effect.exit);
       const runAgentsCli = () =>
         runOpenCodeCommand({
           binaryPath: input.binaryPath,
-          args: ["agent", "list"],
+          args: inventoryArgs.agents,
           ...commandContext,
         }).pipe(Effect.exit);
       const runSkillsCli = () =>
         runOpenCodeCommand({
           binaryPath: input.binaryPath,
-          args: ["debug", "skill"],
+          args: inventoryArgs.skills,
           maxOutputBytes: OPENCODE_SKILL_DISCOVERY_MAX_OUTPUT_BYTES,
           ...commandContext,
         }).pipe(Effect.exit);
