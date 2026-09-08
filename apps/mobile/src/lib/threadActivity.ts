@@ -131,7 +131,15 @@ interface DerivedWorkLogEntry extends WorkLogEntry {
   isBackgroundTask?: boolean;
 }
 
+type ProposedPlanFeedEntry = {
+  readonly type: "proposed-plan";
+  readonly id: string;
+  readonly createdAt: string;
+  readonly proposedPlan: OrchestrationThread["proposedPlans"][number];
+};
+
 type RawThreadFeedEntry =
+  | ProposedPlanFeedEntry
   | {
       readonly type: "message";
       readonly id: string;
@@ -147,6 +155,7 @@ type RawThreadFeedEntry =
     };
 
 export type ThreadFeedEntry =
+  | ProposedPlanFeedEntry
   | Extract<RawThreadFeedEntry, { type: "message" }>
   | {
       readonly type: "activity-group";
@@ -1732,8 +1741,24 @@ export function deriveThreadFeedPresentation(
   expandedTurnIds: ReadonlySet<TurnId>,
   expandedWorkGroupIds: ReadonlySet<string> = new Set(),
   activeWorkStartedAt: string | null = null,
+  chatVisualMode: "current" | "classic" = "current",
 ): ThreadFeedEntry[] {
-  const sourceFeed = feed.filter(
+  const visibleFeed =
+    chatVisualMode === "classic"
+      ? feed
+          .map((entry) =>
+            entry.type === "activity-group"
+              ? {
+                  ...entry,
+                  activities: entry.activities.filter(
+                    (activity) => !activity.toolLike || activity.status !== "neutral",
+                  ),
+                }
+              : entry,
+          )
+          .filter((entry) => entry.type !== "activity-group" || entry.activities.length > 0)
+      : feed;
+  const sourceFeed = visibleFeed.filter(
     (entry) =>
       entry.type !== "turn-fold" &&
       entry.type !== "work-toggle" &&
@@ -2172,7 +2197,8 @@ export function buildPendingUserInputAnswers(
 }
 
 export function buildThreadFeed(
-  thread: Pick<OrchestrationThread, "messages" | "activities">,
+  thread: Pick<OrchestrationThread, "messages" | "activities"> &
+    Partial<Pick<OrchestrationThread, "proposedPlans">>,
   options?: {
     readonly loadedMessages?: ReadonlyArray<OrchestrationThread["messages"][number]>;
     readonly localMessages?: ReadonlyArray<OrchestrationThread["messages"][number]>;
@@ -2195,6 +2221,12 @@ export function buildThreadFeed(
         }
         return entry;
       }),
+      ...(thread.proposedPlans ?? []).map((proposedPlan): ProposedPlanFeedEntry => ({
+        type: "proposed-plan",
+        id: `plan:${proposedPlan.id}`,
+        createdAt: proposedPlan.createdAt,
+        proposedPlan,
+      })),
       ...activityEntries.filter(
         (entry) =>
           oldestLoadedMessageCreatedAt === null || entry.createdAt >= oldestLoadedMessageCreatedAt,
