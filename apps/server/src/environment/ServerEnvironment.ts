@@ -193,6 +193,7 @@ export const make = Effect.gen(function* () {
   const machine = yield* detectServerEnvironmentMachineKind();
   const launcher = yield* resolveServiceLauncherMode();
   const serverSelfUpdate = resolveServerSelfUpdateCapability({
+    containerManaged: serverConfig.deploymentKind === "container",
     desktopManaged: serverConfig.mode === "desktop",
     launcherManaged: launcher.managed,
   });
@@ -240,6 +241,18 @@ export const make = Effect.gen(function* () {
           }
         : {}),
       ...(desktopAppUpdate ? { desktopAppUpdate: true } : {}),
+      gitWorkbenchVersion: 1,
+      mcpWorkspaceVersion: 1,
+      agentWorkflowVersion: 1,
+      environmentSettingsVersion: 5,
+      projectSettingsVersion: 1,
+      harnessChatSyncVersion: 1,
+      knowledgeGraphVersion: 1,
+      resourceProtectionVersion: 1,
+      resourceDiagnosticsVersion: 1,
+      midChatProviderSwitching: true,
+      threadForking: true,
+      interruptedTurnRetry: true,
     },
   };
 

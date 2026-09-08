@@ -39,8 +39,12 @@ const emptySecretStoreLayer = Layer.succeed(
   }),
 );
 
-const makeServerConfig = Effect.fn(function* (baseDir: string) {
+const makeServerConfig = Effect.fn(function* (
+  baseDir: string,
+  overrides: Partial<ServerConfig.ServerConfig["Service"]> = {},
+) {
   const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, undefined);
+  yield* ServerConfig.ensureServerDirectories(derivedPaths);
 
   return {
     ...derivedPaths,
@@ -69,6 +73,7 @@ const makeServerConfig = Effect.fn(function* (baseDir: string) {
     devAllowedOrigins: [],
     noBrowser: false,
     startupPresentation: "browser",
+    ...overrides,
   } satisfies ServerConfig.ServerConfig["Service"];
 });
 
@@ -169,8 +174,43 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       expect(second.capabilities.usagePriceOverrides).toBe(true);
       expect(second.capabilities.threadActiveReorder).toBe(true);
       expect(second.capabilities.threadTitleRegeneration).toBe(true);
+      expect(second.capabilities.mcpWorkspaceVersion).toBe(1);
+      expect(second.capabilities.agentWorkflowVersion).toBe(1);
+      expect(second.capabilities.environmentSettingsVersion).toBe(5);
+      expect(second.capabilities.projectSettingsVersion).toBe(1);
+      expect(second.capabilities.harnessChatSyncVersion).toBe(1);
+      expect(second.capabilities.knowledgeGraphVersion).toBe(1);
+      expect(second.capabilities.resourceProtectionVersion).toBe(1);
+      expect(second.capabilities.resourceDiagnosticsVersion).toBe(1);
+      expect(second.capabilities.midChatProviderSwitching).toBe(true);
+      expect(second.capabilities.threadForking).toBe(true);
+      expect(second.capabilities.interruptedTurnRetry).toBe(true);
       expect(second.capabilities.threadPullRequestLinking).toBe(true);
       expect(second.capabilities.agentActivityPublishing).toBe(false);
+    }),
+  );
+
+  it.effect("advertises container-managed updates for a container deployment", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-environment-container-test-",
+      });
+      const config = yield* makeServerConfig(baseDir, { deploymentKind: "container" });
+      const descriptor = yield* Effect.gen(function* () {
+        const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+        return yield* serverEnvironment.getDescriptor;
+      }).pipe(
+        Effect.provide(
+          ServerEnvironment.layer.pipe(
+            Layer.provide(ServerSecretStore.layer),
+            Layer.provide(ServerConfig.layer(config)),
+          ),
+        ),
+      );
+
+      expect(descriptor.capabilities.serverSelfUpdate).toBe("container-managed");
+      expect(descriptor.capabilities.serverSelfUpdateProgress).toBeUndefined();
     }),
   );
 
