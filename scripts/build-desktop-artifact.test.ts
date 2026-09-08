@@ -17,6 +17,8 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import {
   BundleNotSelfContainedError,
   BuildCommandFailedError,
+  DesktopDmgBackgroundRasterizationError,
+  DesktopIconGenerationError,
   buildWslRuntimeArchiveArgs,
   parseWslRuntimeArchiveMembers,
   DesktopDmgBackgroundSourceMissingError,
@@ -58,9 +60,11 @@ import {
   resolveWindowsServerAsarIgnoreGlobs,
   resourceMonitorExecutableName,
   resolveGitHubPublishConfig,
+  generateMacIconSet,
   resolveMockUpdateServerPort,
   resolveMockUpdateServerUrl,
   resolvePackageManagerUserAgent,
+  stageWslResourceMonitorPrebuild,
   stageLinuxIconSize,
   stageDesktopDmgBackground,
   stageResourceMonitor,
@@ -77,11 +81,14 @@ import {
   WindowsDesktopBuildPrerequisitesMissingError,
   WindowsPackagedPayloadValidationError,
   WINDOWS_NATIVE_ASAR_UNPACK_GLOB,
+  WINDOWS_SERVER_ASAR_UNPACK_GLOB,
   WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT,
   WINDOWS_SERVER_ASAR_IGNORE_GLOBS,
   WINDOWS_SERVER_EXTRA_RESOURCES,
   WINDOWS_SERVER_ASAR_RESOURCE,
   WINDOWS_SERVER_RESOURCE_SOURCE_DIR,
+  WSL_RESOURCE_MONITOR_DIRECTORY,
+  WSL_RESOURCE_MONITOR_MARKER_NAME,
   WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE,
   WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE,
   WSL_RUNTIME_ARCHIVE_HASH_NAME,
@@ -264,8 +271,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   });
 
   it("switches desktop packaging product names to nightly for nightly builds", () => {
-    assert.equal(resolveDesktopProductName("0.0.17"), "T3 Code (Alpha)");
-    assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "T3 Code (Nightly)");
+    assert.equal(resolveDesktopProductName("0.0.17"), "Better T3 Code (Alpha)");
+    assert.equal(
+      resolveDesktopProductName("0.0.17-nightly.20260413.42"),
+      "Better T3 Code (Nightly)",
+    );
   });
 
   it("switches desktop packaging icons to the nightly artwork for nightly versions", () => {
@@ -655,7 +665,13 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         ...WINDOWS_SERVER_EXTRA_RESOURCES,
       ]);
       assert.deepStrictEqual(win.nsis, { differentialPackage: true });
-      // The Claude SDK platform packages and .bin shims never ship.
+      // Native binaries and helper executables cannot load from inside an
+      // asar; everything else stays packed. The Claude SDK platform packages
+      // and .bin shims never ship.
+      assert.equal(
+        WINDOWS_SERVER_ASAR_UNPACK_GLOB,
+        "{**/*.node,**/*.dll,**/*.exe,**/*.so,**/*.so.*,**/*.dylib,**/resource-monitor/**/t3-resource-monitor}",
+      );
       assert.deepStrictEqual(WINDOWS_SERVER_ASAR_IGNORE_GLOBS, [
         "**/node_modules/@anthropic-ai/claude-agent-sdk-*",
         "**/node_modules/@anthropic-ai/claude-agent-sdk-*/**",
@@ -663,7 +679,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         "**/node_modules/.bin/**",
       ]);
       assert.deepStrictEqual(mac.dmg, {
-        title: "T3 Code (Alpha) 1.2.3 Installer",
+        title: "Better T3 Code (Alpha) 1.2.3 Installer",
         background: "dmg/dmg-background-latest.png",
         window: { width: 640, height: 432 },
         contents: [
@@ -1254,6 +1270,82 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
+  it.effect("validates the emitted WSL archive and its SHA-256 sidecar", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* makeWindowsPayloadFixture({
+          copyUnpackedNatives: true,
+          wslRuntime: "valid",
+        });
+        const result = yield* validateWindowsPackagedPayload({
+          stageDistDir: fixture.stageDistDir,
+          appExecutableName: fixture.appExecutableName,
+          targetArch: "x64",
+          expectWslRuntime: true,
+        });
+
+        assert.equal(result.packagedAppDir, fixture.packagedAppDir);
+      }),
+    ),
+  );
+
+  it.effect("rejects a Windows package missing its expected WSL runtime", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* makeWindowsPayloadFixture({ copyUnpackedNatives: true });
+        const error = yield* validateWindowsPackagedPayload({
+          stageDistDir: fixture.stageDistDir,
+          appExecutableName: fixture.appExecutableName,
+          targetArch: "x64",
+          expectWslRuntime: true,
+        }).pipe(Effect.flip);
+
+        assert.instanceOf(error, WindowsPackagedPayloadValidationError);
+        assert.equal(error.reason, "wsl-runtime-missing");
+      }),
+    ),
+  );
+
+  it.effect("rejects forbidden native members in the emitted WSL archive", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* makeWindowsPayloadFixture({
+          copyUnpackedNatives: true,
+          wslRuntime: "forbidden",
+        });
+        const error = yield* validateWindowsPackagedPayload({
+          stageDistDir: fixture.stageDistDir,
+          appExecutableName: fixture.appExecutableName,
+          targetArch: "x64",
+          expectWslRuntime: true,
+        }).pipe(Effect.flip);
+
+        assert.instanceOf(error, WindowsPackagedPayloadValidationError);
+        assert.equal(error.reason, "wsl-runtime-invalid");
+      }),
+    ),
+  );
+
+  it.effect("rejects an emitted WSL archive whose sidecar digest does not match", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* makeWindowsPayloadFixture({
+          copyUnpackedNatives: true,
+          wslRuntime: "bad-digest",
+        });
+        const error = yield* validateWindowsPackagedPayload({
+          stageDistDir: fixture.stageDistDir,
+          appExecutableName: fixture.appExecutableName,
+          targetArch: "x64",
+          expectWslRuntime: true,
+        }).pipe(Effect.flip);
+
+        assert.instanceOf(error, WindowsPackagedPayloadValidationError);
+        assert.equal(error.reason, "wsl-runtime-invalid");
+      }),
+    ),
+  );
+
   it.effect("probes fff through the packaged Windows primary instead of helper executables", () => {
     const commands: Array<{
       readonly command: string;
@@ -1623,43 +1715,49 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         const dmgDir = path.join(stageResourcesDir, "dmg");
         yield* fs.makeDirectory(dmgDir, { recursive: true });
         const sourcePath = path.join(dmgDir, "dmg-background-nightly.svg");
-        yield* fs.writeFileString(sourcePath, '<svg xmlns="http://www.w3.org/2000/svg"/>');
-        const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> =
-          [];
-
-        yield* stageDesktopDmgBackground(stageResourcesDir, "nightly", false).pipe(
-          Effect.provide(iconResizeSpawnerLayer(commands, [0, 0])),
+        yield* fs.writeFileString(
+          sourcePath,
+          '<svg width="1080" height="760" xmlns="http://www.w3.org/2000/svg"><rect width="1080" height="760" fill="#fff"/></svg>',
         );
 
-        assert.deepStrictEqual(
-          commands.map((command) => [command.command, ...command.args]),
-          [
-            [
-              "sips",
-              "-s",
-              "format",
-              "png",
-              "-z",
-              "432",
-              "640",
-              sourcePath,
-              "--out",
-              path.join(dmgDir, "dmg-background-nightly.png"),
-            ],
-            [
-              "sips",
-              "-s",
-              "format",
-              "png",
-              "-z",
-              "864",
-              "1280",
-              sourcePath,
-              "--out",
-              path.join(dmgDir, "dmg-background-nightly@2x.png"),
-            ],
-          ],
+        yield* stageDesktopDmgBackground(stageResourcesDir, "nightly", false);
+
+        for (const output of [
+          { path: path.join(dmgDir, "dmg-background-nightly.png"), width: 640, height: 432 },
+          {
+            path: path.join(dmgDir, "dmg-background-nightly@2x.png"),
+            width: 1280,
+            height: 864,
+          },
+        ]) {
+          const png = yield* fs.readFile(output.path);
+          assert.equal(new TextDecoder().decode(png.slice(1, 4)), "PNG");
+          const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
+          assert.equal(view.getUint32(16), output.width);
+          assert.equal(view.getUint32(20), output.height);
+        }
+      }),
+    ),
+  );
+
+  it.effect("fails clearly when a DMG background cannot be rasterized", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const stageResourcesDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "t3code-dmg-background-invalid-",
+        });
+        const dmgDir = path.join(stageResourcesDir, "dmg");
+        yield* fs.makeDirectory(dmgDir, { recursive: true });
+        yield* fs.writeFileString(path.join(dmgDir, "dmg-background-latest.svg"), "not svg");
+
+        const error = yield* stageDesktopDmgBackground(stageResourcesDir, "latest", false).pipe(
+          Effect.flip,
         );
+
+        assert.instanceOf(error, DesktopDmgBackgroundRasterizationError);
+        assert.include(error.message, "latest");
       }),
     ),
   );
@@ -1679,6 +1777,45 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.instanceOf(error, DesktopDmgBackgroundSourceMissingError);
         assert.equal(error.channel, "latest");
         assert.include(error.sourcePath, "dmg-background-latest.svg");
+      }),
+    ),
+  );
+
+  it.effect("generates a macOS icon container without iconutil", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-icns-" });
+        const sourcePath = path.join(tempDir, "source.png");
+        const targetPath = path.join(tempDir, "icon.icns");
+        yield* Effect.tryPromise({
+          try: () =>
+            import("sharp").then(({ default: sharp }) =>
+              sharp({
+                create: { width: 1024, height: 1024, channels: 4, background: "#000" },
+              })
+                .png()
+                .toFile(sourcePath),
+            ),
+          catch: (cause) =>
+            new DesktopIconGenerationError({
+              platform: "mac",
+              sourcePath,
+              targetPath,
+              cause,
+            }),
+        });
+
+        yield* generateMacIconSet(sourcePath, targetPath);
+
+        const icns = yield* fs.readFile(targetPath);
+        assert.equal(new TextDecoder().decode(icns.slice(0, 4)), "icns");
+        const view = new DataView(icns.buffer, icns.byteOffset, icns.byteLength);
+        assert.equal(view.getUint32(4), icns.byteLength);
+        for (const type of ["icp4", "icp5", "icp6", "ic07", "ic08", "ic09", "ic10"]) {
+          assert.include(new TextDecoder().decode(icns), type);
+        }
       }),
     ),
   );
@@ -1875,6 +2012,47 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resourceMonitorExecutableName("win"), "t3-resource-monitor.exe");
   });
 
+  it.effect("stages the x64 glibc WSL resource monitor with a version marker", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-wsl-resource-monitor-stage-test-",
+      });
+      const prebuildPath = path.join(tempDir, "prebuild", "t3-resource-monitor");
+      const serverStageDir = path.join(tempDir, "server");
+      yield* fs.makeDirectory(path.dirname(prebuildPath), { recursive: true });
+      yield* fs.writeFileString(prebuildPath, "linux-monitor");
+
+      yield* stageWslResourceMonitorPrebuild({
+        serverStageDir,
+        arch: "x64",
+        appVersion: "1.2.3",
+        prebuildPath,
+      });
+
+      const stagedDirectory = path.join(serverStageDir, WSL_RESOURCE_MONITOR_DIRECTORY);
+      assert.equal(
+        yield* fs.readFileString(path.join(stagedDirectory, "t3-resource-monitor")),
+        "linux-monitor",
+      );
+      assert.equal(
+        yield* fs.readFileString(path.join(stagedDirectory, WSL_RESOURCE_MONITOR_MARKER_NAME)),
+        '{"arch":"x64","libc":"glibc","version":"1.2.3"}\n',
+      );
+      const stat = yield* fs.stat(path.join(stagedDirectory, "t3-resource-monitor"));
+      assert.notEqual(stat.mode & 0o111, 0);
+
+      const asarPath = path.join(tempDir, "server.asar");
+      yield* packWindowsServerAsar({ sourceDir: serverStageDir, asarPath, arch: "x64" });
+      assert.equal(
+        yield* fs.readFileString(
+          path.join(`${asarPath}.unpacked`, WSL_RESOURCE_MONITOR_DIRECTORY, "t3-resource-monitor"),
+        ),
+        "linux-monitor",
+      );
+    }),
+  );
   it("packages the WSL server and production dependencies as one compressed runtime", () => {
     assert.equal(WSL_RUNTIME_ARCHIVE_NAME, "wsl-runtime.tar.gz");
     assert.equal(WSL_RUNTIME_ARCHIVE_HASH_NAME, "wsl-runtime.tar.gz.sha256");
@@ -2181,6 +2359,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         mockUpdates: Option.none(),
         mockUpdateServerPort: Option.none(),
         wslPrebuild: Option.none(),
+        wslResourceMonitorPrebuild: Option.none(),
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -2204,6 +2383,39 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }),
   );
 
+  it.effect("resolves the WSL monitor prebuild independently from node-pty", () =>
+    Effect.gen(function* () {
+      const resolved = yield* resolveBuildOptions({
+        platform: Option.some("win"),
+        target: Option.none(),
+        arch: Option.some("x64"),
+        buildVersion: Option.none(),
+        outputDir: Option.none(),
+        skipBuild: Option.none(),
+        keepStage: Option.none(),
+        signed: Option.none(),
+        verbose: Option.none(),
+        mockUpdates: Option.none(),
+        mockUpdateServerPort: Option.none(),
+        wslPrebuild: Option.some("/artifacts/pty.node"),
+        wslResourceMonitorPrebuild: Option.none(),
+      }).pipe(
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({
+              env: {
+                T3CODE_DESKTOP_WSL_RESOURCE_MONITOR_PREBUILD: "/artifacts/t3-resource-monitor",
+              },
+            }),
+          ),
+        ),
+      );
+
+      assert.equal(resolved.wslPrebuild, "/artifacts/pty.node");
+      assert.equal(resolved.wslResourceMonitorPrebuild, "/artifacts/t3-resource-monitor");
+    }),
+  );
+
   it.effect("rejects universal builds on Linux and Windows before staging binaries", () =>
     Effect.gen(function* () {
       for (const platform of ["linux", "win"] as const) {
@@ -2221,6 +2433,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             mockUpdates: Option.none(),
             mockUpdateServerPort: Option.none(),
             wslPrebuild: Option.none(),
+            wslResourceMonitorPrebuild: Option.none(),
           }),
         );
 
@@ -2245,6 +2458,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         mockUpdates: Option.some(false),
         mockUpdateServerPort: Option.none(),
         wslPrebuild: Option.none(),
+        wslResourceMonitorPrebuild: Option.none(),
       }).pipe(
         Effect.provide(
           ConfigProvider.layer(
