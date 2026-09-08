@@ -1,3 +1,16 @@
+import { useMemo } from "react";
+import { EnvironmentId, ProjectId, resolveBetterT3FeatureFlag } from "@t3tools/contracts";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { resolveMobileAgentWorkflowSettings } from "../../state/agent-workflow-settings";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { useAtomSet } from "@effect/atom-react";
+import { AsyncResult } from "effect/unstable/reactivity";
+import { NativeVoiceDictationControl } from "./NativeVoiceDictationControl";
+import { useNativeAssemblyAiDictation } from "./use-native-assembly-ai-dictation";
 import { useAtomValue } from "@effect/atom-react";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import {
@@ -73,6 +86,7 @@ import {
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import {
   clearComposerDraftContent,
+  setComposerDraftText,
   getComposerDraftSnapshot,
   mergeComposerDraftContent,
   restoreComposerDraftSnapshot,
@@ -170,6 +184,57 @@ export function NewTaskDraftScreen(props: {
   const selectedEnvironmentServerConfig = useEnvironmentServerConfig(
     selectedProject?.environmentId ?? null,
   );
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const improvePrompt = useAtomCommand(serverEnvironment.improvePrompt, { reportFailure: false });
+  const [isImprovingPrompt, setIsImprovingPrompt] = useState(false);
+  const preferences = AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value : {};
+  const effectiveExperimentalFetch = flow.editingPendingTask
+    ? flow.fetchMode === "repository-exploration"
+    : preferences.experimentalFetch;
+  const workflowSettings = useMemo(
+    () =>
+      resolveMobileAgentWorkflowSettings({
+        agentWorkflowVersion:
+          selectedEnvironmentServerConfig?.environment.capabilities.agentWorkflowVersion,
+        experimentalFetch: effectiveExperimentalFetch,
+      }),
+    [
+      effectiveExperimentalFetch,
+      selectedEnvironmentServerConfig?.environment.capabilities.agentWorkflowVersion,
+    ],
+  );
+  const shouldImprovePromptBeforeSend =
+    workflowSettings.supported &&
+    (flow.editingPendingTask
+      ? flow.editingPendingTask.improvePromptBeforeSend === true
+      : preferences.improvePromptBeforeSend === true);
+  const voiceOutputLanguage =
+    preferences.voiceInputOutputLanguage === "english" ? "english" : "native";
+  const assemblyAiKey =
+    selectedEnvironmentServerConfig?.settings.speechTranscription.assemblyAi.apiKey;
+  const assemblyAiEnabled =
+    selectedEnvironmentServerConfig !== null &&
+    resolveBetterT3FeatureFlag(
+      selectedEnvironmentServerConfig.settings.betterT3Environment,
+      "voice.assemblyAi",
+    );
+  const voiceConfigured =
+    selectedProject !== null &&
+    assemblyAiEnabled &&
+    (selectedEnvironmentServerConfig?.environment.capabilities.environmentSettingsVersion ?? 0) >=
+      1 &&
+    (assemblyAiKey?.valueRedacted === true || (assemblyAiKey?.value.trim().length ?? 0) > 0);
+  const voiceDictation = useNativeAssemblyAiDictation({
+    configured: voiceConfigured,
+    environmentId: selectedProject?.environmentId ?? EnvironmentId.make("unavailable"),
+    projectId: selectedProject?.id ?? ProjectId.make("unavailable"),
+    lifecycleKey: selectedProjectKey ?? "new-task-unselected",
+    draftText: flow.prompt,
+    outputLanguage: voiceOutputLanguage,
+    onChangeDraftText: flow.setPrompt,
+    onNotice: (title, error) => Alert.alert(title, error.message),
+  });
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const environmentConnected =
     selectedProject !== null &&
     connectedEnvironments.find(
@@ -922,6 +987,39 @@ export function NewTaskDraftScreen(props: {
     }
   }
 
+  async function handleImprovePrompt(): Promise<void> {
+    const project = flow.selectedProject;
+    const draftKey = flow.draftKey;
+    if (!project || !draftKey || !workflowSettings.supported || isImprovingPrompt) {
+      return;
+    }
+    const original = getComposerDraftSnapshot(draftKey).text;
+    const text = original.trim();
+    if (text.length === 0) {
+      return;
+    }
+
+    setIsImprovingPrompt(true);
+    const result = await improvePrompt({
+      environmentId: project.environmentId,
+      input: { projectId: project.id, text },
+    });
+    setIsImprovingPrompt(false);
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        Alert.alert(
+          "Could not improve prompt",
+          error instanceof Error ? error.message : "The prompt could not be improved.",
+        );
+      }
+      return;
+    }
+    if (getComposerDraftSnapshot(draftKey).text === original) {
+      setComposerDraftText(draftKey, result.value.text);
+    }
+  }
+
   const handleNativePasteImages = useCallback(
     async (uris: ReadonlyArray<string>) => {
       try {
@@ -940,7 +1038,7 @@ export function NewTaskDraftScreen(props: {
   );
 
   async function handleStart(): Promise<void> {
-    if (voiceInput.blocksSubmission) return;
+    if (voiceInput.blocksSubmission || voiceDictation.active || isImprovingPrompt) return;
     const selectedProject = flow.selectedProject;
     const draftKey = flow.draftKey;
     if (!selectedProject || !draftKey) {
@@ -1019,14 +1117,19 @@ export function NewTaskDraftScreen(props: {
           createdAt: editingPendingTask.createdAt,
         }
       : makeTurnCommandMetadata();
-    const message = flow.buildPendingTaskMessage(metadata, {
+    const pendingMessage = flow.buildPendingTaskMessage(metadata, {
       // A task that waits in the outbox cannot know the checkout it will
       // drain against; one that sends now runs against the live one.
       currentCheckoutBranch: queuesInsteadOfStarting ? null : flow.currentCheckoutBranchName,
     });
-    if (!message) {
+    if (!pendingMessage) {
       return;
     }
+    const message = {
+      ...pendingMessage,
+      fetchMode: workflowSettings.fetchMode,
+      improvePromptBeforeSend: shouldImprovePromptBeforeSend,
+    };
     if (!queuesInsteadOfStarting) {
       // Arm the lock-screen card before the async thread creation: backgrounding
       // the app right after tapping submit would otherwise reject the foreground
@@ -1103,6 +1206,8 @@ export function NewTaskDraftScreen(props: {
     !isImportingShare &&
     !flow.submitting &&
     !voiceInput.blocksSubmission &&
+    !voiceDictation.active &&
+    !isImprovingPrompt &&
     !(flow.workspaceMode === "worktree" && !flow.selectedBranchName);
   const promptEditor = (
     <ComposerEditor
@@ -1110,7 +1215,7 @@ export function NewTaskDraftScreen(props: {
       // The context-first screen intentionally opens with the keyboard closed.
       // Focusing is a user action, so presenting the form sheet has one motion.
       autoFocus={false}
-      editable={!isComposerInteractionLocked}
+      editable={!isComposerInteractionLocked && !voiceDictation.active}
       readOnly={voiceInput.freezesEditor}
       multiline
       scrollEnabled
@@ -1345,6 +1450,42 @@ export function NewTaskDraftScreen(props: {
                     onPickMedia={handlePickMedia}
                     onPickFiles={handlePickFiles}
                   />
+                  {workflowSettings.supported ? (
+                    <Pressable
+                      accessibilityRole="switch"
+                      accessibilityState={{ checked: workflowSettings.fetchEnabled }}
+                      disabled={isComposerInteractionLocked}
+                      onPress={() => {
+                        if (flow.editingPendingTask)
+                          flow.setFetchMode(
+                            workflowSettings.fetchEnabled ? undefined : "repository-exploration",
+                          );
+                        else savePreferences({ experimentalFetch: !workflowSettings.fetchEnabled });
+                      }}
+                      className="p-2"
+                    >
+                      <Text className="text-foreground">
+                        Fetch {workflowSettings.fetchEnabled ? "on" : "off"}
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                  {workflowSettings.supported ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      disabled={
+                        isImprovingPrompt ||
+                        isComposerInteractionLocked ||
+                        voiceDictation.active ||
+                        !flow.prompt.trim()
+                      }
+                      onPress={() => void handleImprovePrompt()}
+                      className="p-2"
+                    >
+                      <Text className="text-foreground">
+                        {isImprovingPrompt ? "Improving…" : "Improve"}
+                      </Text>
+                    </Pressable>
+                  ) : null}
                   <ComposerToolbarScroller align="end" contentPaddingRight={0} fadeSurface="sheet">
                     <ComposerInlineControl
                       accessibilityLabel="Model and reasoning settings"
@@ -1383,15 +1524,26 @@ export function NewTaskDraftScreen(props: {
                   </ComposerToolbarScroller>
                 </>
               )}
-              <ComposerDictationPrimaryAction
-                state={voiceInput.state}
-                presentation={voicePresentation}
-                isAvailable={voiceInput.isAvailable}
-                disabled={isIncomingShareTransferPending || isImportingShare || flow.submitting}
-                onStart={voiceInput.start}
-                onConfirm={voiceInput.stop}
-                onCancel={voiceInput.cancel}
-              />
+              {voiceConfigured ? (
+                <NativeVoiceDictationControl
+                  state={voiceDictation.state}
+                  audioWaveform={voiceDictation.audioWaveform}
+                  disabled={isComposerInteractionLocked || voiceInput.isBusy}
+                  onStart={voiceDictation.start}
+                  onStop={voiceDictation.stop}
+                  onCancel={voiceDictation.cancel}
+                />
+              ) : (
+                <ComposerDictationPrimaryAction
+                  state={voiceInput.state}
+                  presentation={voicePresentation}
+                  isAvailable={voiceInput.isAvailable}
+                  disabled={isIncomingShareTransferPending || isImportingShare || flow.submitting}
+                  onStart={voiceInput.start}
+                  onConfirm={voiceInput.stop}
+                  onCancel={voiceInput.cancel}
+                />
+              )}
               {voicePresentation.showsSend ? (
                 <ComposerActionButton
                   accessibilityLabel={
