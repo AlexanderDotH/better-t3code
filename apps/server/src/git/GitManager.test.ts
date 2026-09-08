@@ -285,6 +285,13 @@ function createTextGeneration(
   overrides: Partial<FakeGitTextGeneration> = {},
 ): TextGeneration.TextGeneration["Service"] {
   const implementation: FakeGitTextGeneration = {
+    decideAutoReasoning: () => Effect.die("unused"),
+    generateThreadMetadata: () => Effect.die("unused"),
+    translateTranscriptToEnglish: () => Effect.die("unused"),
+    improvePrompt: () => Effect.die("unused"),
+    planFetchExploration: () => Effect.die("unused"),
+    reviewPlanParallelism: () => Effect.die("unused"),
+    enrichKnowledgeGraph: () => Effect.die("unused"),
     generateCommitMessage: (input) =>
       Effect.succeed({
         subject: "Implement stacked git actions",
@@ -308,6 +315,7 @@ function createTextGeneration(
   };
 
   return {
+    ...implementation,
     generateCommitMessage: (input) =>
       implementation.generateCommitMessage(input).pipe(
         Effect.mapError(

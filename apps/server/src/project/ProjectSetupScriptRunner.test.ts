@@ -19,14 +19,16 @@ const makeProject = (scripts: OrchestrationProject["scripts"]): OrchestrationPro
   title: "Project",
   workspaceRoot: "/repo/project",
   defaultModelSelection: null,
+  checkpointsEnabled: true,
   scripts,
+  coordinationClaims: [],
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
   deletedAt: null,
 });
 
 const makeProjectionSnapshotQueryLayer = (project: OrchestrationProject) =>
-  Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+  Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
     getUserInputActivity: () => Effect.die("unused"),
     getCommandReadModel: () => Effect.die("unused"),
     getSnapshot: () => Effect.die("unused"),

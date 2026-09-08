@@ -28,6 +28,7 @@ const makeProjectShell = (workspaceRoot: string): OrchestrationProjectShell => (
   title: "Imported",
   workspaceRoot,
   defaultModelSelection: null,
+  checkpointsEnabled: true,
   scripts: [],
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
@@ -35,7 +36,7 @@ const makeProjectShell = (workspaceRoot: string): OrchestrationProjectShell => (
 
 /** Only `getShellSnapshot` is exercised; the rest must not be called. */
 const makeProjectionSnapshotQueryLayer = (importedWorkspaceRoots: ReadonlyArray<string>) =>
-  Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+  Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
     getCommandReadModel: () => Effect.die("unused"),
     getUserInputActivity: () => Effect.die("unused"),
     getSnapshot: () => Effect.die("unused"),

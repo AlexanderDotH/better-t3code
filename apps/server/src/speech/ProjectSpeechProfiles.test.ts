@@ -60,6 +60,7 @@ function workspaceLayer(options: {
         browse: () => Effect.die("unused"),
         list: options.list,
         refresh: () => Effect.void,
+        invalidate: () => Effect.void,
         search: () => Effect.die("unused"),
         searchContents: () => Effect.die("unused"),
       }),
@@ -69,6 +70,7 @@ function workspaceLayer(options: {
       WorkspaceFileSystem.WorkspaceFileSystem.of({
         readFile: options.readFile,
         writeFile: () => Effect.die("unused"),
+        editFiles: () => Effect.die("unused"),
       }),
     ),
     Layer.succeed(

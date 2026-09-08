@@ -1,3 +1,7 @@
+import { TurnAbortCoordinator } from "../orchestration/Services/TurnAbortCoordinator.ts";
+import { FetchWorkerCoordinator } from "../fetch/FetchWorkerCoordinator.ts";
+import { NoOpSkillEngineLayer } from "../skills/testUtils/NoOpSkillEngine.ts";
+import { ProjectMemoryStore } from "../projectMemory/ProjectMemoryStore.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it, vi } from "@effect/vitest";
 import {
@@ -102,6 +106,7 @@ const makeProject = (): OrchestrationProjectShell => ({
   title: "Project",
   workspaceRoot: WORKSPACE_ROOT,
   defaultModelSelection: null,
+  checkpointsEnabled: true,
   scripts: [],
   createdAt: "2026-08-24T09:00:00.000Z",
   updatedAt: "2026-08-24T09:00:00.000Z",
@@ -162,6 +167,7 @@ const makeProjectedThread = (input: {
     proposedPlans: [],
     activities: [],
     checkpoints: [],
+    subagents: [],
     session: null,
   };
 };
@@ -574,7 +580,7 @@ const integrationLayer = Layer.mergeAll(
   Layer.provide(OrchestrationEventStoreLive),
   Layer.provide(OrchestrationCommandReceiptRepositoryLive),
   Layer.provide(RepositoryIdentityResolver.layer),
-  Layer.provide(SqlitePersistenceMemory),
+  Layer.provideMerge(SqlitePersistenceMemory),
   Layer.provideMerge(integrationServerConfig),
   Layer.provideMerge(NodeServices.layer),
 );
@@ -931,6 +937,23 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
           Layer.provide(Layer.mock(VcsStatusBroadcaster)({})),
           Layer.provide(Layer.mock(TextGeneration)({})),
           Layer.provide(ServerSettingsService.layerTest()),
+          Layer.provide(NoOpSkillEngineLayer),
+          Layer.provide(Layer.mock(TurnAbortCoordinator)({})),
+          Layer.provide(Layer.mock(FetchWorkerCoordinator)({})),
+          Layer.provide(
+            Layer.mock(ProjectMemoryStore)({
+              read: () =>
+                Effect.succeed({
+                  mode: "provider",
+                  storage: null,
+                  entries: [],
+                  markdown: "",
+                  tokenBudget: 2560,
+                  estimatedTokens: 0,
+                  truncated: false,
+                }),
+            }),
+          ),
         );
 
         yield* engine.dispatch({

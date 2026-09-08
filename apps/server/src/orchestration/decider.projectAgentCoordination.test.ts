@@ -77,6 +77,7 @@ function readModel(withLease: boolean): OrchestrationReadModel {
         title: "Coordination",
         workspaceRoot: "/workspace/project",
         defaultModelSelection: null,
+        checkpointsEnabled: true,
         scripts: [],
         coordinationClaims: withLease
           ? [
@@ -186,6 +187,9 @@ it.layer(NodeServices.layer)("project agent coordination decider", (it) => {
         }),
       );
 
+      if (error._tag !== "OrchestrationCommandInvariantError") {
+        throw error;
+      }
       expect(error.code).toBe("project_agent_claim_conflict");
       expect(error.context).toMatchObject({
         conflicts: [

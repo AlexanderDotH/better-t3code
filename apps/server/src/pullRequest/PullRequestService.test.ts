@@ -54,6 +54,7 @@ function project(input: {
           },
         }
       : {}),
+    checkpointsEnabled: true,
     defaultModelSelection: null,
     scripts: [],
     createdAt: "2026-07-01T00:00:00Z",
