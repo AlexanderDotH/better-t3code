@@ -1,16 +1,21 @@
 import {
   type EnvironmentId,
+  ProjectAgentCoordinationUnavailableError,
   PreviewAutomationUnavailableError,
   type ProviderInstanceId,
   type ThreadId,
+  WorkspaceContextUnavailableError,
+  WorkspaceEditError,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
-export type McpCapability = "preview";
+export type McpCapability = "preview" | "workspace" | "workspace-write" | "coordination";
 
 export interface McpInvocationScope {
   readonly environmentId: EnvironmentId;
+  /** Authenticated runtime thread that owns this MCP credential. */
+  readonly ownerThreadId?: ThreadId;
   readonly threadId: ThreadId;
   readonly providerSessionId: string;
   readonly providerInstanceId: ProviderInstanceId;
@@ -23,8 +28,8 @@ export class McpInvocationContext extends Context.Service<
   McpInvocationScope
 >()("t3/mcp/McpInvocationContext") {}
 
-export const requireMcpCapability = Effect.fn("mcp.requireCapability")(function* (
-  capability: McpCapability,
+export const requireMcpCapability = Effect.fn("mcp.requirePreviewCapability")(function* (
+  capability: "preview",
 ) {
   const invocation = yield* McpInvocationContext;
   if (!invocation.capabilities.has(capability)) {
@@ -38,3 +43,37 @@ export const requireMcpCapability = Effect.fn("mcp.requireCapability")(function*
   }
   return invocation;
 });
+
+export const requireWorkspaceMcpCapability = Effect.fn("mcp.requireWorkspaceCapability")(
+  function* () {
+    const invocation = yield* McpInvocationContext;
+    if (!invocation.capabilities.has("workspace")) {
+      return yield* new WorkspaceContextUnavailableError({
+        reason: "credential_not_authorized",
+      });
+    }
+    return invocation;
+  },
+);
+
+export const requireWorkspaceWriteMcpCapability = Effect.fn("mcp.requireWorkspaceWriteCapability")(
+  function* () {
+    const invocation = yield* McpInvocationContext;
+    if (!invocation.capabilities.has("workspace-write")) {
+      return yield* new WorkspaceEditError({ reason: "credential_not_authorized" });
+    }
+    return invocation;
+  },
+);
+
+export const requireCoordinationMcpCapability = Effect.fn("mcp.requireCoordinationCapability")(
+  function* () {
+    const invocation = yield* McpInvocationContext;
+    if (!invocation.capabilities.has("coordination")) {
+      return yield* new ProjectAgentCoordinationUnavailableError({
+        reason: "credential_not_authorized",
+      });
+    }
+    return invocation;
+  },
+);

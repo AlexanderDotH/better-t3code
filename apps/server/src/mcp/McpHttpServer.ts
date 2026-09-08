@@ -3,16 +3,20 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
+import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import type * as Types from "effect/Types";
-import { McpProtocol, McpSchema, McpServer, Tool } from "effect/unstable/ai";
+import { McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/unstable/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import * as ResourceProtection from "../resourceProtection/SubagentResourceGovernor.ts";
+import { ProviderDriverKind } from "@t3tools/contracts";
 import {
   PreviewSnapshotToolkitHandlersLive,
   PreviewStandardToolkitHandlersLive,
@@ -22,6 +26,21 @@ import {
   PreviewSnapshotToolkit,
   PreviewStandardToolkit,
 } from "./toolkits/preview/tools.ts";
+import {
+  WorkspaceEditToolkitHandlersLive,
+  WorkspaceToolkitHandlersLive,
+} from "./toolkits/workspace/handlers.ts";
+import { WorkspaceEditToolkit, WorkspaceToolkit } from "./toolkits/workspace/tools.ts";
+import { CoordinationToolkitHandlersLive } from "./toolkits/coordination/handlers.ts";
+import { CoordinationToolkit } from "./toolkits/coordination/tools.ts";
+import { GeneralSubagentToolkitHandlersLive } from "./toolkits/subagents/handlers.ts";
+import { GeneralSubagentToolkit } from "./toolkits/subagents/tools.ts";
+import { KnowledgeGraphToolkitHandlersLive } from "./toolkits/knowledge-graph/handlers.ts";
+import { KnowledgeGraphToolkit } from "./toolkits/knowledge-graph/tools.ts";
+import { ThreadContextToolkitHandlersLive } from "./toolkits/thread-context/handlers.ts";
+import { ThreadContextToolkit } from "./toolkits/thread-context/tools.ts";
+import { ProjectMemoryToolkitHandlersLive } from "./toolkits/project-memory/handlers.ts";
+import { ProjectMemoryToolkit } from "./toolkits/project-memory/tools.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -63,37 +82,130 @@ export const normalizeMcpHttpResponse = (
     : response;
 };
 
-const makeMcpAuthMiddleware = McpSessionRegistry.McpSessionRegistry.pipe(
-  Effect.map((registry): McpAuthMiddleware =>
-    Effect.fn("McpHttpServer.authenticateRequest")(function* (httpEffect) {
-      const request = yield* HttpServerRequest.HttpServerRequest;
-      const authorization = request.headers.authorization;
-      const token =
-        authorization?.startsWith("Bearer ") === true
-          ? authorization.slice("Bearer ".length).trim()
-          : "";
-      const invocation = yield* registry.resolve(token);
-      if (!invocation) {
-        // Without this the only symptom of a dead credential is the agent
-        // quietly losing the whole `t3-code` toolkit for the rest of its
-        // session, with nothing on the server to explain why.
-        yield* Effect.logWarning("rejected MCP request with an unusable credential", {
-          reason: token.length === 0 ? "missing_bearer_token" : "unknown_or_expired_token",
-        });
-        return unauthorized;
-      }
-      return yield* httpEffect.pipe(
-        Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
-        Effect.map(normalizeMcpHttpResponse),
-      );
-    }),
-  ),
-  Effect.withSpan("McpHttpServer.makeAuthMiddleware"),
+// Codex reduces array schemas wrapped in `allOf` to `unknown`, so merge only
+// keyword fragments that cannot overwrite one another.
+function flattenMcpSchemaAllOf(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(flattenMcpSchemaAllOf);
+  if (!Predicate.isObject(value)) return value;
+
+  const normalized = Object.fromEntries(
+    Object.entries(value).map(([key, nested]) => [key, flattenMcpSchemaAllOf(nested)]),
+  );
+  if (!Array.isArray(normalized.allOf)) return normalized;
+
+  const { allOf, ...merged } = normalized;
+  for (const constraint of allOf) {
+    if (!Predicate.isObject(constraint) || Array.isArray(constraint)) return normalized;
+    for (const [key, nested] of Object.entries(constraint)) {
+      if (Object.hasOwn(merged, key)) return normalized;
+      merged[key] = nested;
+    }
+  }
+  return merged;
+}
+
+export function normalizeMcpToolInputSchema(
+  inputSchema: unknown,
+): Readonly<Record<string, unknown>> & { readonly type: "object" } {
+  const normalized = flattenMcpSchemaAllOf(inputSchema);
+  return {
+    ...(Predicate.isObject(normalized) && !Array.isArray(normalized) ? normalized : {}),
+    type: "object",
+  };
+}
+
+export function normalizeMcpTool(tool: McpSchema.Tool): McpSchema.Tool {
+  return new McpSchema.Tool({
+    name: tool.name,
+    ...(tool.title === undefined ? {} : { title: tool.title }),
+    ...(tool.description === undefined ? {} : { description: tool.description }),
+    inputSchema: normalizeMcpToolInputSchema(tool.inputSchema),
+    ...(tool.outputSchema === undefined ? {} : { outputSchema: tool.outputSchema }),
+    ...(tool.annotations === undefined ? {} : { annotations: tool.annotations }),
+    ...(tool.icons === undefined ? {} : { icons: tool.icons }),
+    ...(tool._meta === undefined ? {} : { _meta: tool._meta }),
+  });
+}
+
+const registerMcpCompatibleToolkit = Effect.fn("McpHttpServer.registerCompatibleToolkit")(
+  function* <Tools extends Record<string, Tool.Any>>(toolkit: Toolkit.Toolkit<Tools>) {
+    const server = yield* McpServer.McpServer;
+    const compatibleServer = McpServer.McpServer.of({
+      ...server,
+      addTool: (options) =>
+        server.addTool({
+          ...options,
+          tool: normalizeMcpTool(options.tool),
+        }),
+    });
+    // MCP requires object parameters even for unions and empty object schemas.
+    const compatibleToolkit = Toolkit.make(
+      ...Object.values(toolkit.tools).map((tool) =>
+        tool.setParameters(
+          tool.parametersSchema.check(
+            Schema.makeFilter((input) => Predicate.isObject(input) && !Array.isArray(input), {
+              toJsonSchema: () => ({ type: "object" }),
+            }),
+          ),
+        ),
+      ),
+    ) as unknown as Toolkit.Toolkit<Tools>;
+    yield* McpServer.registerToolkit(compatibleToolkit).pipe(
+      Effect.provideService(McpServer.McpServer, compatibleServer),
+    );
+  },
 );
 
-const McpAuthMiddlewareLive = HttpRouter.middleware<{
-  provides: McpInvocationContext.McpInvocationContext;
-}>()(makeMcpAuthMiddleware).layer;
+const mcpCompatibleToolkit = <Tools extends Record<string, Tool.Any>>(
+  toolkit: Toolkit.Toolkit<Tools>,
+) =>
+  Layer.effectDiscard(registerMcpCompatibleToolkit(toolkit)).pipe(
+    Layer.provide(McpServer.McpServer.layer),
+  );
+
+const makeMcpAuthMiddleware = (requiredCapability?: McpInvocationContext.McpCapability) =>
+  McpSessionRegistry.McpSessionRegistry.pipe(
+    Effect.map((registry): McpAuthMiddleware =>
+      Effect.fn("McpHttpServer.authenticateRequest")(function* (httpEffect) {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const authorization = request.headers.authorization;
+        const token =
+          authorization?.startsWith("Bearer ") === true
+            ? authorization.slice("Bearer ".length).trim()
+            : "";
+        const invocation = yield* registry.resolve(token);
+        if (!invocation) {
+          // Without this the only symptom of a dead credential is the agent
+          // quietly losing the whole `t3-code` toolkit for the rest of its
+          // session, with nothing on the server to explain why.
+          yield* Effect.logWarning("rejected MCP request with an unusable credential", {
+            reason: token.length === 0 ? "missing_bearer_token" : "unknown_or_expired_token",
+          });
+          return unauthorized;
+        }
+        if (requiredCapability !== undefined && !invocation.capabilities.has(requiredCapability)) {
+          yield* Effect.logWarning("rejected MCP request without endpoint capability", {
+            requiredCapability,
+          });
+          return unauthorized;
+        }
+        return yield* httpEffect.pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.map(normalizeMcpHttpResponse),
+        );
+      }),
+    ),
+    Effect.withSpan("McpHttpServer.makeAuthMiddleware", {
+      attributes: {
+        "mcp.required_capability": requiredCapability ?? "preview",
+      },
+    }),
+  );
+
+const makeMcpAuthMiddlewareLive = (requiredCapability?: McpInvocationContext.McpCapability) =>
+  HttpRouter.middleware<{
+    provides: McpInvocationContext.McpInvocationContext;
+  }>()(makeMcpAuthMiddleware(requiredCapability)).layer;
 
 const previewSnapshotFailure = <E>(cause: Cause.Cause<E>) => {
   if (Cause.hasInterrupts(cause) || cause.reasons.some(Cause.isDieReason)) {
@@ -135,7 +247,7 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
     tool: new McpSchema.Tool({
       name: tool.name,
       description: Tool.getDescription(tool),
-      inputSchema: Tool.getJsonSchema(tool),
+      inputSchema: normalizeMcpToolInputSchema(Tool.getJsonSchema(tool)),
       annotations: {
         ...Context.getOption(tool.annotations, Tool.Title).pipe(
           Option.map((title) => ({ title })),
@@ -206,7 +318,7 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
   });
 });
 
-const PreviewStandardToolkitRegistrationLive = McpServer.toolkit(PreviewStandardToolkit).pipe(
+const PreviewStandardToolkitRegistrationLive = mcpCompatibleToolkit(PreviewStandardToolkit).pipe(
   Layer.provide(PreviewStandardToolkitHandlersLive),
 );
 
@@ -219,11 +331,356 @@ export const PreviewToolkitRegistrationLive = Layer.mergeAll(
   PreviewSnapshotRegistrationLive,
 );
 
-const McpTransportLive = McpServer.layerHttp({
-  name: "T3 Code",
-  version: packageJson.version,
-  path: "/mcp",
-  protocols: [McpProtocol.v2025_06_18],
-}).pipe(Layer.provide(McpAuthMiddlewareLive));
+const WorkspaceContextToolkitRegistrationLive = mcpCompatibleToolkit(WorkspaceToolkit).pipe(
+  Layer.provide(WorkspaceToolkitHandlersLive),
+);
 
-export const layer = PreviewToolkitRegistrationLive.pipe(Layer.provideMerge(McpTransportLive));
+const WorkspaceEditToolkitRegistrationLive = mcpCompatibleToolkit(WorkspaceEditToolkit).pipe(
+  Layer.provide(WorkspaceEditToolkitHandlersLive),
+);
+
+export const KnowledgeGraphToolkitRegistrationLive = mcpCompatibleToolkit(
+  KnowledgeGraphToolkit,
+).pipe(Layer.provide(KnowledgeGraphToolkitHandlersLive));
+
+const ProjectMemoryToolkitRegistrationLive = mcpCompatibleToolkit(ProjectMemoryToolkit).pipe(
+  Layer.provide(ProjectMemoryToolkitHandlersLive),
+);
+
+const ThreadContextToolkitRegistrationLive = mcpCompatibleToolkit(ThreadContextToolkit).pipe(
+  Layer.provide(ThreadContextToolkitHandlersLive),
+);
+
+const WorkspaceContextCoreToolkitRegistrationLive = Layer.mergeAll(
+  WorkspaceContextToolkitRegistrationLive,
+  ThreadContextToolkitRegistrationLive,
+);
+
+const WorkspaceCoreToolkitRegistrationLive = Layer.mergeAll(
+  WorkspaceContextCoreToolkitRegistrationLive,
+  ProjectMemoryToolkitRegistrationLive,
+);
+
+export const WorkspaceToolkitRegistrationLive = Layer.mergeAll(
+  WorkspaceCoreToolkitRegistrationLive,
+  KnowledgeGraphToolkitRegistrationLive,
+);
+
+const WorkspaceToolkitWithoutProjectMemoryRegistrationLive = Layer.mergeAll(
+  WorkspaceContextCoreToolkitRegistrationLive,
+  KnowledgeGraphToolkitRegistrationLive,
+);
+
+const ProjectCoordinationToolkitRegistrationLive = mcpCompatibleToolkit(CoordinationToolkit).pipe(
+  Layer.provide(CoordinationToolkitHandlersLive),
+);
+
+export const GeneralSubagentToolkitRegistrationLive = mcpCompatibleToolkit(
+  GeneralSubagentToolkit,
+).pipe(Layer.provide(GeneralSubagentToolkitHandlersLive));
+
+const OptionalCoordinationToolkitRegistrationLive = Layer.mergeAll(
+  ProjectCoordinationToolkitRegistrationLive,
+  GeneralSubagentToolkitRegistrationLive,
+);
+
+export const CoordinationToolkitRegistrationLive = Layer.mergeAll(
+  OptionalCoordinationToolkitRegistrationLive,
+  ThreadContextToolkitRegistrationLive,
+);
+
+export const WorkspaceOnlyToolkitRegistrationLive = WorkspaceCoreToolkitRegistrationLive;
+
+export const WorkspaceOnlyWithoutProjectMemoryToolkitRegistrationLive =
+  WorkspaceContextCoreToolkitRegistrationLive;
+
+export const WorkspaceWithoutPreviewToolkitRegistrationLive = Layer.mergeAll(
+  OptionalCoordinationToolkitRegistrationLive,
+  WorkspaceToolkitRegistrationLive,
+);
+
+export const WorkspaceWithoutPreviewAndProjectMemoryToolkitRegistrationLive = Layer.mergeAll(
+  OptionalCoordinationToolkitRegistrationLive,
+  WorkspaceToolkitWithoutProjectMemoryRegistrationLive,
+);
+
+export const CoordinationEnabledToolkitRegistrationLive = Layer.mergeAll(
+  PreviewToolkitRegistrationLive,
+  CoordinationToolkitRegistrationLive,
+);
+
+export const WorkspaceEnabledToolkitRegistrationLive = Layer.mergeAll(
+  PreviewToolkitRegistrationLive,
+  OptionalCoordinationToolkitRegistrationLive,
+  WorkspaceToolkitRegistrationLive,
+);
+
+export const WorkspaceEnabledWithoutProjectMemoryToolkitRegistrationLive = Layer.mergeAll(
+  PreviewToolkitRegistrationLive,
+  OptionalCoordinationToolkitRegistrationLive,
+  WorkspaceToolkitWithoutProjectMemoryRegistrationLive,
+);
+
+const WorkspaceWriteEnabledToolkitRegistrationLive = Layer.mergeAll(
+  WorkspaceEnabledToolkitRegistrationLive,
+  WorkspaceEditToolkitRegistrationLive,
+);
+
+const WorkspaceWriteEnabledWithoutProjectMemoryToolkitRegistrationLive = Layer.mergeAll(
+  WorkspaceEnabledWithoutProjectMemoryToolkitRegistrationLive,
+  WorkspaceEditToolkitRegistrationLive,
+);
+
+const WorkspaceWriteWithoutPreviewToolkitRegistrationLive = Layer.mergeAll(
+  WorkspaceWithoutPreviewToolkitRegistrationLive,
+  WorkspaceEditToolkitRegistrationLive,
+);
+
+const WorkspaceWriteWithoutPreviewAndProjectMemoryToolkitRegistrationLive = Layer.mergeAll(
+  WorkspaceWithoutPreviewAndProjectMemoryToolkitRegistrationLive,
+  WorkspaceEditToolkitRegistrationLive,
+);
+
+const WorkspaceWriteOnlyToolkitRegistrationLive = Layer.mergeAll(
+  WorkspaceOnlyToolkitRegistrationLive,
+  WorkspaceEditToolkitRegistrationLive,
+);
+
+const WorkspaceWriteOnlyWithoutProjectMemoryToolkitRegistrationLive = Layer.mergeAll(
+  WorkspaceOnlyWithoutProjectMemoryToolkitRegistrationLive,
+  WorkspaceEditToolkitRegistrationLive,
+);
+
+const makeMcpTransportLive = (
+  path:
+    | "/mcp"
+    | "/mcp/coordination"
+    | "/mcp/workspace"
+    | "/mcp/workspace-no-memory"
+    | "/mcp/workspace-no-preview"
+    | "/mcp/workspace-no-preview-no-memory"
+    | "/mcp/workspace-only"
+    | "/mcp/workspace-only-no-memory"
+    | "/mcp/workspace-write"
+    | "/mcp/workspace-write-no-memory"
+    | "/mcp/workspace-write-no-preview"
+    | "/mcp/workspace-write-no-preview-no-memory"
+    | "/mcp/workspace-write-only"
+    | "/mcp/workspace-write-only-no-memory",
+  requiredCapability?: McpInvocationContext.McpCapability,
+) =>
+  McpServer.layerHttp({
+    name: "T3 Code",
+    version: packageJson.version,
+    path,
+    protocols: [McpProtocol.v2025_06_18],
+  }).pipe(Layer.provide(makeMcpAuthMiddlewareLive(requiredCapability)));
+
+const PreviewMcpEndpointLive = Layer.fresh(
+  CoordinationEnabledToolkitRegistrationLive.pipe(Layer.provideMerge(makeMcpTransportLive("/mcp"))),
+);
+
+const WorkspaceMcpEndpointLive = Layer.fresh(
+  WorkspaceEnabledToolkitRegistrationLive.pipe(
+    Layer.provideMerge(makeMcpTransportLive("/mcp/workspace", "workspace")),
+  ),
+);
+
+const WorkspaceWithoutProjectMemoryMcpEndpointLive = Layer.fresh(
+  WorkspaceEnabledWithoutProjectMemoryToolkitRegistrationLive.pipe(
+    Layer.provideMerge(makeMcpTransportLive("/mcp/workspace-no-memory", "workspace")),
+  ),
+);
+
+const CoordinationMcpEndpointLive = Layer.fresh(
+  CoordinationToolkitRegistrationLive.pipe(
+    Layer.provideMerge(makeMcpTransportLive("/mcp/coordination", "coordination")),
+  ),
+);
+
+const WorkspaceWithoutPreviewMcpEndpointLive = Layer.fresh(
+  WorkspaceWithoutPreviewToolkitRegistrationLive.pipe(
+    Layer.provideMerge(makeMcpTransportLive("/mcp/workspace-no-preview", "workspace")),
+  ),
+);
+
+const WorkspaceWithoutPreviewAndProjectMemoryMcpEndpointLive = Layer.fresh(
+  WorkspaceWithoutPreviewAndProjectMemoryToolkitRegistrationLive.pipe(
+    Layer.provideMerge(makeMcpTransportLive("/mcp/workspace-no-preview-no-memory", "workspace")),
+  ),
+);
+
+const WorkspaceOnlyMcpEndpointLive = Layer.fresh(
+  WorkspaceOnlyToolkitRegistrationLive.pipe(
+    Layer.provideMerge(makeMcpTransportLive("/mcp/workspace-only", "workspace")),
+  ),
+);
+
+const WorkspaceOnlyWithoutProjectMemoryMcpEndpointLive = Layer.fresh(
+  WorkspaceOnlyWithoutProjectMemoryToolkitRegistrationLive.pipe(
+    Layer.provideMerge(makeMcpTransportLive("/mcp/workspace-only-no-memory", "workspace")),
+  ),
+);
+
+const WorkspaceWriteMcpEndpointLive = Layer.fresh(
+  WorkspaceWriteEnabledToolkitRegistrationLive.pipe(
+    Layer.provideMerge(makeMcpTransportLive("/mcp/workspace-write", "workspace-write")),
+  ),
+);
+
+const WorkspaceWriteWithoutProjectMemoryMcpEndpointLive = Layer.fresh(
+  WorkspaceWriteEnabledWithoutProjectMemoryToolkitRegistrationLive.pipe(
+    Layer.provideMerge(makeMcpTransportLive("/mcp/workspace-write-no-memory", "workspace-write")),
+  ),
+);
+
+const WorkspaceWriteWithoutPreviewMcpEndpointLive = Layer.fresh(
+  WorkspaceWriteWithoutPreviewToolkitRegistrationLive.pipe(
+    Layer.provideMerge(makeMcpTransportLive("/mcp/workspace-write-no-preview", "workspace-write")),
+  ),
+);
+
+const WorkspaceWriteWithoutPreviewAndProjectMemoryMcpEndpointLive = Layer.fresh(
+  WorkspaceWriteWithoutPreviewAndProjectMemoryToolkitRegistrationLive.pipe(
+    Layer.provideMerge(
+      makeMcpTransportLive("/mcp/workspace-write-no-preview-no-memory", "workspace-write"),
+    ),
+  ),
+);
+
+const WorkspaceWriteOnlyMcpEndpointLive = Layer.fresh(
+  WorkspaceWriteOnlyToolkitRegistrationLive.pipe(
+    Layer.provideMerge(makeMcpTransportLive("/mcp/workspace-write-only", "workspace-write")),
+  ),
+);
+
+const WorkspaceWriteOnlyWithoutProjectMemoryMcpEndpointLive = Layer.fresh(
+  WorkspaceWriteOnlyWithoutProjectMemoryToolkitRegistrationLive.pipe(
+    Layer.provideMerge(
+      makeMcpTransportLive("/mcp/workspace-write-only-no-memory", "workspace-write"),
+    ),
+  ),
+);
+
+const CodexResourceLifecycleId = Schema.String.check(
+  Schema.isNonEmpty(),
+  Schema.isMaxLength(4_096),
+);
+const CodexResourceConfigurationKey = Schema.String.check(
+  Schema.isNonEmpty(),
+  Schema.isMaxLength(4_096),
+);
+const CodexResourceAction = Schema.Union([
+  Schema.Struct({
+    action: Schema.Literal("admit-root-turn"),
+    configurationKey: CodexResourceConfigurationKey,
+    lifecycleId: CodexResourceLifecycleId,
+  }),
+  Schema.Struct({
+    action: Schema.Literal("release-root-turn"),
+    lifecycleId: CodexResourceLifecycleId,
+  }),
+  Schema.Struct({
+    action: Schema.Literal("admit-subagent"),
+    configurationKey: CodexResourceConfigurationKey,
+    lifecycleId: CodexResourceLifecycleId,
+  }),
+  Schema.Struct({
+    action: Schema.Literal("confirm-subagent"),
+    configurationKey: CodexResourceConfigurationKey,
+    agentId: CodexResourceLifecycleId,
+  }),
+  Schema.Struct({
+    action: Schema.Literal("release-subagent"),
+    agentId: CodexResourceLifecycleId,
+  }),
+]);
+const decodeCodexResourceAction = Schema.decodeUnknownOption(CodexResourceAction);
+
+export const CodexResourceAdmissionRouteLive = HttpRouter.add(
+  "POST",
+  "/internal/resource-protection/codex-admit",
+  Effect.gen(function* () {
+    const invocation = yield* McpInvocationContext.McpInvocationContext;
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const governor = Option.getOrUndefined(
+      yield* Effect.serviceOption(ResourceProtection.SubagentResourceGovernor),
+    );
+    if (!governor) {
+      return HttpServerResponse.jsonUnsafe(
+        { admitted: false, state: "unavailable" },
+        { status: 503, headers: { "cache-control": "no-store" } },
+      );
+    }
+    const action = Option.getOrUndefined(
+      decodeCodexResourceAction(yield* request.json.pipe(Effect.orElseSucceed(() => undefined))),
+    );
+    if (!action) {
+      return HttpServerResponse.jsonUnsafe(
+        { error: "invalid_resource_protection_action" },
+        { status: 400, headers: { "cache-control": "no-store" } },
+      );
+    }
+
+    const owner = {
+      threadId: invocation.threadId,
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: invocation.providerInstanceId,
+    } as const;
+    let admitted = true;
+    switch (action.action) {
+      case "admit-root-turn":
+        admitted = yield* governor.awaitAdmission({
+          ...owner,
+          configurationKey: `root-turn:${action.configurationKey}`,
+          retention: { kind: "root-turn", lifecycleId: action.lifecycleId },
+        });
+        break;
+      case "release-root-turn":
+        yield* governor.releaseRootTurn({ ...owner, lifecycleId: action.lifecycleId });
+        break;
+      case "admit-subagent":
+        admitted = yield* governor.awaitAdmission({
+          ...owner,
+          configurationKey: `subagent:${action.configurationKey}`,
+          retention: { kind: "subagent", lifecycleId: action.lifecycleId },
+        });
+        break;
+      case "confirm-subagent":
+        yield* governor.confirmSubagent({
+          ...owner,
+          configurationKey: `subagent:${action.configurationKey}`,
+          agentId: action.agentId,
+        });
+        break;
+      case "release-subagent":
+        yield* governor.releaseSubagent({ ...owner, agentId: action.agentId });
+        break;
+    }
+    return HttpServerResponse.jsonUnsafe(
+      { admitted },
+      {
+        status: admitted ? 200 : 409,
+        headers: { "cache-control": "no-store" },
+      },
+    );
+  }),
+).pipe(Layer.provide(makeMcpAuthMiddlewareLive()));
+
+export const layer = Layer.mergeAll(
+  PreviewMcpEndpointLive,
+  WorkspaceMcpEndpointLive,
+  WorkspaceWithoutProjectMemoryMcpEndpointLive,
+  CoordinationMcpEndpointLive,
+  WorkspaceWithoutPreviewMcpEndpointLive,
+  WorkspaceWithoutPreviewAndProjectMemoryMcpEndpointLive,
+  WorkspaceOnlyMcpEndpointLive,
+  WorkspaceOnlyWithoutProjectMemoryMcpEndpointLive,
+  WorkspaceWriteMcpEndpointLive,
+  WorkspaceWriteWithoutProjectMemoryMcpEndpointLive,
+  WorkspaceWriteWithoutPreviewMcpEndpointLive,
+  WorkspaceWriteWithoutPreviewAndProjectMemoryMcpEndpointLive,
+  WorkspaceWriteOnlyMcpEndpointLive,
+  WorkspaceWriteOnlyWithoutProjectMemoryMcpEndpointLive,
+  CodexResourceAdmissionRouteLive,
+);
