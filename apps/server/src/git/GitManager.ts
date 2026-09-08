@@ -1752,9 +1752,14 @@ export const make = Effect.gen(function* () {
       /** When true, also produce a semantic feature branch name. */
       includeBranch?: boolean;
       filePaths?: readonly string[];
+      commitSelection?: GitRunStackedActionInput["commitSelection"];
       settings: SourceControlTextGenerationSettings;
     }) {
-      const context = yield* gitCore.prepareCommitContext(input.cwd, input.filePaths);
+      const context = yield* gitCore.prepareCommitContext(
+        input.cwd,
+        input.filePaths,
+        input.commitSelection,
+      );
       if (!context) {
         return null;
       }
@@ -1802,6 +1807,7 @@ export const make = Effect.gen(function* () {
     commitMessage?: string,
     preResolvedSuggestion?: CommitAndBranchSuggestion,
     filePaths?: readonly string[],
+    commitSelection?: GitRunStackedActionInput["commitSelection"],
     progressReporter?: GitActionProgressReporter,
     actionId?: string,
   ) {
@@ -1830,6 +1836,7 @@ export const make = Effect.gen(function* () {
         branch,
         ...(commitMessage ? { commitMessage } : {}),
         ...(filePaths ? { filePaths } : {}),
+        ...(commitSelection ? { commitSelection } : {}),
         settings,
       });
     }
@@ -2504,12 +2511,14 @@ export const make = Effect.gen(function* () {
     branch: string | null,
     commitMessage?: string,
     filePaths?: readonly string[],
+    commitSelection?: GitRunStackedActionInput["commitSelection"],
   ) {
     const suggestion = yield* resolveCommitAndBranchSuggestion({
       cwd,
       branch,
       ...(commitMessage ? { commitMessage } : {}),
       ...(filePaths ? { filePaths } : {}),
+      ...(commitSelection ? { commitSelection } : {}),
       includeBranch: true,
       settings,
     });
@@ -2641,6 +2650,7 @@ export const make = Effect.gen(function* () {
             initialStatus.branch,
             input.commitMessage,
             input.filePaths,
+            input.commitSelection,
           );
           branchStep = result.branchStep;
           commitMessageForStep = result.resolvedCommitMessage;
@@ -2669,6 +2679,7 @@ export const make = Effect.gen(function* () {
                   commitMessageForStep,
                   preResolvedCommitSuggestion,
                   input.filePaths,
+                  input.commitSelection,
                   options?.progressReporter,
                   progress.actionId,
                 ),

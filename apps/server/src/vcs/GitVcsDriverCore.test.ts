@@ -1763,6 +1763,47 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.include(status, "?? selected1.txt");
       }),
     );
+
+    it.effect("keeps existing staged work when adding a standard-index path selection", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        yield* writeTextFile(cwd, "already-staged.txt", "staged\n");
+        yield* writeTextFile(cwd, "selected.txt", "selected\n");
+        yield* writeTextFile(cwd, "left-alone.txt", "unstaged\n");
+        yield* git(cwd, ["add", "--", "already-staged.txt"]);
+
+        yield* driver.prepareCommitContext(cwd, undefined, {
+          mode: "paths",
+          paths: ["selected.txt"],
+        });
+
+        assert.equal(
+          yield* git(cwd, ["diff", "--cached", "--name-only"]),
+          "already-staged.txt\nselected.txt",
+        );
+        assert.include(yield* git(cwd, ["status", "--porcelain"]), "?? left-alone.txt");
+      }),
+    );
+
+    it.effect("uses the existing index unchanged for staged commits", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        yield* writeTextFile(cwd, "already-staged.txt", "staged\n");
+        yield* writeTextFile(cwd, "left-alone.txt", "unstaged\n");
+        yield* git(cwd, ["add", "--", "already-staged.txt"]);
+
+        const context = yield* driver.prepareCommitContext(cwd, undefined, { mode: "staged" });
+        assert.include(context?.stagedSummary ?? "", "already-staged.txt");
+        assert.notInclude(context?.stagedSummary ?? "", "left-alone.txt");
+        assert.include(yield* git(cwd, ["status", "--porcelain"]), "?? left-alone.txt");
+      }),
+    );
   });
 
   describe("remote operations", () => {
