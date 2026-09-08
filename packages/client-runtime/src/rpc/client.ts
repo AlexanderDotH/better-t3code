@@ -44,6 +44,7 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.providerInstallSubscribe
   | typeof ORCHESTRATION_WS_METHODS.subscribeShell
   | typeof ORCHESTRATION_WS_METHODS.subscribeThread
+  | typeof ORCHESTRATION_WS_METHODS.subscribeSubagent
   | typeof WS_METHODS.subscribeAuthAccess
   | typeof WS_METHODS.subscribeServerConfig
   | typeof WS_METHODS.subscribeServerLifecycle
@@ -52,6 +53,11 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribePreviewEvents
   | typeof WS_METHODS.subscribeDiscoveredLocalServers
   | typeof WS_METHODS.subscribeResourceTelemetry
+  | typeof WS_METHODS.subscribeResourceProtection
+  | typeof WS_METHODS.knowledgeGraphSubscribe
+  | typeof WS_METHODS.mcpRuntimeContextChanges
+  | typeof WS_METHODS.mcpRuntimeChanges
+  | typeof WS_METHODS.gitSubscribeWorkbench
   | typeof WS_METHODS.pullRequestsSubscribeRefreshes
   | typeof WS_METHODS.previewAutomationConnect
   | typeof WS_METHODS.subscribeVcsStatus
@@ -60,7 +66,9 @@ export type EnvironmentSubscriptionRpcTag =
 export type EnvironmentStreamCommandRpcTag =
   | typeof WS_METHODS.cloudInstallRelayClient
   | typeof WS_METHODS.serverUpdateServerWithProgress
-  | typeof WS_METHODS.gitRunStackedAction;
+  | typeof WS_METHODS.gitRunStackedAction
+  | typeof WS_METHODS.serverProviderAuthConnect
+  | typeof WS_METHODS.gitRunWorkbenchOperation;
 
 export type EnvironmentStreamRpcTag =
   | EnvironmentSubscriptionRpcTag
