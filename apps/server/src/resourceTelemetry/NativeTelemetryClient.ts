@@ -6,6 +6,9 @@ import type {
   ResourceMonitorExternalProcess,
   ResourceMonitorHelloEvent,
   ResourceMonitorProcessTableEntry,
+  ResourceMonitorProcessControlCommand,
+  ResourceMonitorProcessControlOperation,
+  ResourceMonitorProcessControlResultEvent,
   ResourceMonitorSnapshotEvent,
   ResourceTelemetrySourceStatus,
 } from "@t3tools/contracts";
@@ -47,6 +50,7 @@ const HANDSHAKE_TIMEOUT = Duration.seconds(5);
 const SAMPLE_REQUEST_TIMEOUT = Duration.seconds(5);
 const PROCESS_TABLE_REQUEST_TIMEOUT = Duration.seconds(5);
 const HISTORY_REQUEST_TIMEOUT = Duration.seconds(15);
+const PROCESS_CONTROL_REQUEST_TIMEOUT = Duration.seconds(10);
 const INITIAL_RESTART_DELAY = Duration.millis(500);
 const MAX_RESTART_DELAY = Duration.seconds(10);
 const FAILURE_WINDOW_MS = 60_000;
@@ -75,15 +79,35 @@ export class NativeTelemetryHandshakeTimedOut extends Schema.TaggedError<NativeT
   }
 }
 
-class NativeTelemetryRequestTimedOut extends Schema.TaggedError<NativeTelemetryRequestTimedOut>()(
+export class NativeTelemetryRequestTimedOut extends Schema.TaggedError<NativeTelemetryRequestTimedOut>()(
   "NativeTelemetryRequestTimedOut",
   {
-    operation: Schema.Literals(["processTable", "readHistory", "sampleNow"]),
+    operation: Schema.Literals([
+      "processTable",
+      "readHistory",
+      "sampleNow",
+      "suspendProcessTree",
+      "resumeProcessTree",
+    ]),
     timeoutMs: Schema.Number,
   },
 ) {
   override get message(): string {
     return `Resource monitor '${this.operation}' request timed out after ${this.timeoutMs}ms.`;
+  }
+}
+
+export class NativeTelemetryProcessControlFailed extends Schema.TaggedError<NativeTelemetryProcessControlFailed>()(
+  "NativeTelemetryProcessControlFailed",
+  {
+    operation: Schema.Literals(["suspend", "resume"]),
+    leaseId: Schema.String,
+    resumeRequired: Schema.Boolean,
+    reason: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Resource monitor failed to ${this.operation} process tree for lease '${this.leaseId}': ${this.reason}`;
   }
 }
 
@@ -133,7 +157,7 @@ export class NativeTelemetryExited extends Schema.TaggedError<NativeTelemetryExi
   }
 }
 
-class NativeTelemetryStreamClosed extends Schema.TaggedError<NativeTelemetryStreamClosed>()(
+export class NativeTelemetryStreamClosed extends Schema.TaggedError<NativeTelemetryStreamClosed>()(
   "NativeTelemetryStreamClosed",
   {},
 ) {
@@ -158,6 +182,7 @@ export type NativeTelemetryClientError =
   | NativeTelemetrySpawnFailed
   | NativeTelemetryHandshakeTimedOut
   | NativeTelemetryRequestTimedOut
+  | NativeTelemetryProcessControlFailed
   | NativeTelemetryProtocolMismatch
   | NativeTelemetryDecodeFailed
   | NativeTelemetryCommandFailed
@@ -184,6 +209,10 @@ export class NativeTelemetryClient extends Context.Service<
   {
     readonly capabilities: Effect.Effect<ResourceMonitorCapabilities, NativeTelemetryClientError>;
     readonly snapshots: Stream.Stream<NativeTelemetrySnapshot, NativeTelemetryClientError>;
+    readonly resourceProtectionSnapshots: Stream.Stream<
+      NativeTelemetrySnapshot,
+      NativeTelemetryClientError
+    >;
     readonly readHistory: (
       windowMs: number,
     ) => Effect.Effect<ReadonlyArray<ResourceMonitorSnapshotEvent>, NativeTelemetryClientError>;
@@ -192,6 +221,14 @@ export class NativeTelemetryClient extends Context.Service<
     ) => Effect.Effect<void, NativeTelemetryClientError>;
     readonly setHostPowerState: (
       snapshot: HostPowerSnapshot,
+    ) => Effect.Effect<void, NativeTelemetryClientError>;
+    readonly suspendProcessTree: (
+      leaseId: string,
+      processes: ResourceMonitorProcessControlCommand["processes"],
+    ) => Effect.Effect<void, NativeTelemetryClientError>;
+    readonly resumeProcessTree: (
+      leaseId: string,
+      processes: ResourceMonitorProcessControlCommand["processes"],
     ) => Effect.Effect<void, NativeTelemetryClientError>;
     readonly sampleNow: Effect.Effect<NativeTelemetrySnapshot, NativeTelemetryClientError>;
     readonly processTable: Effect.Effect<
@@ -223,6 +260,7 @@ interface ClientState {
 export interface CollectionControl {
   readonly hostPower: HostPowerSnapshot;
   readonly liveSubscriberCount: number;
+  readonly resourceProtectionSubscriberCount: number;
   readonly sampleIntervalMs: number;
 }
 
@@ -232,6 +270,69 @@ interface PendingHistoryRequest {
     NativeTelemetryClientError
   >;
   readonly snapshots: ReadonlyArray<ResourceMonitorSnapshotEvent>;
+}
+
+export interface PendingProcessControlRequest {
+  readonly operation: ResourceMonitorProcessControlOperation;
+  readonly leaseId: string;
+  readonly deferred: Deferred.Deferred<void, NativeTelemetryClientError>;
+}
+
+export function completePendingProcessControlRequest(
+  pendingRequests: Ref.Ref<Map<string, PendingProcessControlRequest>>,
+  event: ResourceMonitorProcessControlResultEvent,
+): Effect.Effect<void> {
+  return Effect.gen(function* () {
+    const pending = yield* Ref.modify(pendingRequests, (requests) => {
+      const request = requests.get(event.requestId);
+      if (!request) return [Option.none(), requests] as const;
+      const next = new Map(requests);
+      next.delete(event.requestId);
+      return [Option.some(request), next] as const;
+    });
+    if (Option.isNone(pending)) return;
+
+    const request = pending.value;
+    if (request.leaseId !== event.leaseId || request.operation !== event.operation) {
+      yield* Deferred.fail(
+        request.deferred,
+        new NativeTelemetryProcessControlFailed({
+          operation: request.operation,
+          leaseId: request.leaseId,
+          // A mismatched suspend receipt cannot prove whether the requested
+          // lease acquired increments. Compensate with the original lease.
+          resumeRequired: request.operation === "suspend",
+          reason: "sidecar returned a mismatched process-control receipt",
+        }),
+      );
+      return;
+    }
+    if (!event.success) {
+      yield* Deferred.fail(
+        request.deferred,
+        new NativeTelemetryProcessControlFailed({
+          operation: request.operation,
+          leaseId: request.leaseId,
+          resumeRequired: event.resumeRequired,
+          reason: event.error || "sidecar rejected the process-control request",
+        }),
+      );
+      return;
+    }
+    yield* Deferred.succeed(request.deferred, undefined);
+  });
+}
+
+export function failPendingProcessControlRequests(
+  pendingRequests: Ref.Ref<Map<string, PendingProcessControlRequest>>,
+  error: NativeTelemetryClientError,
+): Effect.Effect<void> {
+  return Effect.gen(function* () {
+    const requests = yield* Ref.getAndSet(pendingRequests, new Map());
+    yield* Effect.forEach(requests.values(), (request) => Deferred.fail(request.deferred, error), {
+      discard: true,
+    });
+  });
 }
 
 const initialState: ClientState = {
@@ -261,7 +362,9 @@ function isThermallyConstrained(snapshot: HostPowerSnapshot): boolean {
 export function resolveNativeSampleIntervalMs(
   snapshot: HostPowerSnapshot,
   liveSubscriberCount: number,
+  resourceProtectionSubscriberCount: number,
 ): number {
+  if (resourceProtectionSubscriberCount > 0) return SAMPLE_INTERVAL_MS;
   if (snapshot.stale || snapshot.source === "unknown") {
     return liveSubscriberCount > 0 ? SAMPLE_INTERVAL_MS : UNKNOWN_BACKGROUND_SAMPLE_INTERVAL_MS;
   }
@@ -382,6 +485,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
       updatedAt: initializedAt,
     },
     liveSubscriberCount: 0,
+    resourceProtectionSubscriberCount: 0,
     sampleIntervalMs: UNKNOWN_BACKGROUND_SAMPLE_INTERVAL_MS,
   });
   const appliedCollectionControl = yield* Ref.make(yield* Ref.get(collectionControl));
@@ -396,6 +500,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
     >(),
   );
   const pendingHistories = yield* Ref.make(new Map<string, PendingHistoryRequest>());
+  const pendingProcessControls = yield* Ref.make(new Map<string, PendingProcessControlRequest>());
   const snapshots = yield* PubSub.sliding<NativeTelemetrySnapshot>(8);
   const healthChanges = yield* PubSub.sliding<NativeTelemetryClientHealth>(4);
   const retryQueue = yield* Queue.sliding<void>(1);
@@ -425,6 +530,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
         (request) => Deferred.fail(request.deferred, error),
         { discard: true },
       );
+      yield* failPendingProcessControlRequests(pendingProcessControls, error);
     });
 
   const writeCommand = (
@@ -544,6 +650,8 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
             yield* Deferred.succeed(completed.value.deferred, completed.value.snapshots);
           }
         });
+      case "processControlResult":
+        return completePendingProcessControlRequest(pendingProcessControls, event);
       case "error":
         return Ref.update(state, (current) => ({
           ...current,
@@ -659,7 +767,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
               sampleIntervalMs: control.sampleIntervalMs,
               externalProcesses: [...(yield* Ref.get(externalProcesses))],
             });
-            if (control.liveSubscriberCount > 0) {
+            if (control.liveSubscriberCount > 0 || control.resourceProtectionSubscriberCount > 0) {
               yield* writeCommand(handle, {
                 version: RESOURCE_MONITOR_PROTOCOL_VERSION,
                 type: "setStreaming",
@@ -788,8 +896,10 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
           sampleIntervalMs: next.sampleIntervalMs,
         });
       }
-      const wasStreaming = previous.liveSubscriberCount > 0;
-      const isStreaming = next.liveSubscriberCount > 0;
+      const wasStreaming =
+        previous.liveSubscriberCount > 0 || previous.resourceProtectionSubscriberCount > 0;
+      const isStreaming =
+        next.liveSubscriberCount > 0 || next.resourceProtectionSubscriberCount > 0;
       if (wasStreaming !== isStreaming) {
         yield* writeCommand(handle, {
           version: RESOURCE_MONITOR_PROTOCOL_VERSION,
@@ -814,7 +924,11 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
     updateCollectionControl((current) => ({
       ...current,
       hostPower,
-      sampleIntervalMs: resolveNativeSampleIntervalMs(hostPower, current.liveSubscriberCount),
+      sampleIntervalMs: resolveNativeSampleIntervalMs(
+        hostPower,
+        current.liveSubscriberCount,
+        current.resourceProtectionSubscriberCount,
+      ),
     }));
 
   const changeLiveSubscriberCount = Effect.fn(
@@ -825,7 +939,31 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
       return {
         ...current,
         liveSubscriberCount,
-        sampleIntervalMs: resolveNativeSampleIntervalMs(current.hostPower, liveSubscriberCount),
+        sampleIntervalMs: resolveNativeSampleIntervalMs(
+          current.hostPower,
+          liveSubscriberCount,
+          current.resourceProtectionSubscriberCount,
+        ),
+      };
+    });
+  });
+
+  const changeResourceProtectionSubscriberCount = Effect.fn(
+    "resourceTelemetry.nativeTelemetryClient.changeResourceProtectionSubscriberCount",
+  )(function* (delta: 1 | -1) {
+    yield* updateCollectionControl((current) => {
+      const resourceProtectionSubscriberCount = Math.max(
+        0,
+        current.resourceProtectionSubscriberCount + delta,
+      );
+      return {
+        ...current,
+        resourceProtectionSubscriberCount,
+        sampleIntervalMs: resolveNativeSampleIntervalMs(
+          current.hostPower,
+          current.liveSubscriberCount,
+          resourceProtectionSubscriberCount,
+        ),
       };
     });
   });
@@ -835,6 +973,16 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
       const subscription = yield* PubSub.subscribe(snapshots);
       yield* Effect.acquireRelease(changeLiveSubscriberCount(1), () =>
         changeLiveSubscriberCount(-1).pipe(Effect.ignore),
+      );
+      return Stream.fromSubscription(subscription);
+    }),
+  );
+
+  const resourceProtectionSnapshots = Stream.unwrap(
+    Effect.gen(function* () {
+      const subscription = yield* PubSub.subscribe(snapshots);
+      yield* Effect.acquireRelease(changeResourceProtectionSubscriberCount(1), () =>
+        changeResourceProtectionSubscriberCount(-1).pipe(Effect.ignore),
       );
       return Stream.fromSubscription(subscription);
     }),
@@ -1022,6 +1170,87 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
     );
   });
 
+  const requestProcessTreeControl = Effect.fn(
+    "resourceTelemetry.nativeTelemetryClient.requestProcessTreeControl",
+  )(function* (
+    operation: ResourceMonitorProcessControlOperation,
+    leaseId: string,
+    processes: ResourceMonitorProcessControlCommand["processes"],
+  ) {
+    const current = yield* Ref.get(state);
+    if (!canCommandNativeTelemetrySidecar(current.status, Option.isSome(current.handle))) {
+      return yield* new NativeTelemetryUnavailable({
+        reason: Option.getOrElse(current.lastError, () => "sidecar is not running"),
+      });
+    }
+    if (!Option.exists(current.hello, (hello) => hello.capabilities.processSuspendResume)) {
+      return yield* new NativeTelemetryUnavailable({
+        reason: "sidecar does not support process suspend and resume",
+      });
+    }
+
+    const commandType =
+      operation === "suspend" ? ("suspendProcessTree" as const) : ("resumeProcessTree" as const);
+    const requestId = yield* crypto.randomUUIDv4.pipe(
+      Effect.mapError(
+        (cause) =>
+          new NativeTelemetryCommandFailed({
+            operation: "createProcessControlRequestId",
+            cause,
+          }),
+      ),
+    );
+    const deferred = yield* Deferred.make<void, NativeTelemetryClientError>();
+    yield* Ref.update(pendingProcessControls, (pending) => {
+      const next = new Map(pending);
+      next.set(requestId, { operation, leaseId, deferred });
+      return next;
+    });
+
+    return yield* writeCommand(Option.getOrThrow(current.handle), {
+      version: RESOURCE_MONITOR_PROTOCOL_VERSION,
+      type: commandType,
+      requestId,
+      leaseId,
+      processes,
+    }).pipe(
+      Effect.andThen(
+        Deferred.await(deferred).pipe(
+          Effect.timeoutOption(PROCESS_CONTROL_REQUEST_TIMEOUT),
+          Effect.flatMap(
+            Option.match({
+              onNone: () =>
+                Effect.fail(
+                  new NativeTelemetryRequestTimedOut({
+                    operation: commandType,
+                    timeoutMs: Duration.toMillis(PROCESS_CONTROL_REQUEST_TIMEOUT),
+                  }),
+                ),
+              onSome: Effect.succeed,
+            }),
+          ),
+        ),
+      ),
+      Effect.ensuring(
+        Ref.update(pendingProcessControls, (pending) => {
+          const next = new Map(pending);
+          next.delete(requestId);
+          return next;
+        }),
+      ),
+    );
+  });
+
+  const suspendProcessTree: NativeTelemetryClient["Service"]["suspendProcessTree"] = (
+    leaseId,
+    processes,
+  ) => requestProcessTreeControl("suspend", leaseId, processes);
+
+  const resumeProcessTree: NativeTelemetryClient["Service"]["resumeProcessTree"] = (
+    leaseId,
+    processes,
+  ) => requestProcessTreeControl("resume", leaseId, processes);
+
   const health = currentHealth;
 
   return NativeTelemetryClient.of({
@@ -1039,9 +1268,12 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
       ),
     ),
     snapshots: liveSnapshots,
+    resourceProtectionSnapshots,
     readHistory,
     setExternalProcesses,
     setHostPowerState,
+    suspendProcessTree,
+    resumeProcessTree,
     sampleNow,
     processTable,
     retry: Ref.get(state).pipe(
@@ -1082,8 +1314,10 @@ export const layerTest = (
         ioBytes: true,
         processStartTime: true,
         processTree: true,
+        processSuspendResume: false,
       }),
       snapshots: Stream.empty,
+      resourceProtectionSnapshots: overrides.snapshots ?? Stream.empty,
       readHistory: () =>
         Effect.fail(
           new NativeTelemetryUnavailable({
@@ -1092,6 +1326,18 @@ export const layerTest = (
         ),
       setExternalProcesses: () => Effect.void,
       setHostPowerState: () => Effect.void,
+      suspendProcessTree: () =>
+        Effect.fail(
+          new NativeTelemetryUnavailable({
+            reason: "No process suspend implementation was configured for this test.",
+          }),
+        ),
+      resumeProcessTree: () =>
+        Effect.fail(
+          new NativeTelemetryUnavailable({
+            reason: "No process resume implementation was configured for this test.",
+          }),
+        ),
       sampleNow: Effect.fail(
         new NativeTelemetryUnavailable({
           reason: "No resource monitor sample was configured for this test.",

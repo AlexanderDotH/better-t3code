@@ -1,4 +1,7 @@
-import type { HostPowerSnapshot } from "@t3tools/contracts";
+import type {
+  HostPowerSnapshot,
+  ResourceMonitorProcessControlResultEvent,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -8,9 +11,17 @@ import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 
 import {
+  NativeTelemetryExited,
+  NativeTelemetryProcessControlFailed,
+  NativeTelemetryRequestTimedOut,
+  NativeTelemetryStreamClosed,
+  type PendingProcessControlRequest,
+  type NativeTelemetryClientError,
   canCommandNativeTelemetrySidecar,
+  completePendingProcessControlRequest,
   canRequestNativeTelemetryRetry,
   commitCollectionControlUpdate,
+  failPendingProcessControlRequests,
   retainRecentNativeTelemetryFailures,
   resolveNativeSampleIntervalMs,
   synchronizeCollectionControlOnStart,
@@ -31,13 +42,23 @@ const basePower: HostPowerSnapshot = {
 
 describe("resolveNativeSampleIntervalMs", () => {
   it("keeps a recovery cadence while suspended and backs off under host constraints", () => {
-    expect(resolveNativeSampleIntervalMs({ ...basePower, suspended: true }, 1)).toBe(15_000);
-    expect(resolveNativeSampleIntervalMs({ ...basePower, locked: "true" }, 1)).toBe(15_000);
-    expect(resolveNativeSampleIntervalMs({ ...basePower, lowPowerMode: "true" }, 1)).toBe(15_000);
-    expect(resolveNativeSampleIntervalMs({ ...basePower, thermalState: "critical" }, 1)).toBe(
+    expect(resolveNativeSampleIntervalMs({ ...basePower, suspended: true }, 1, 0)).toBe(15_000);
+    expect(resolveNativeSampleIntervalMs({ ...basePower, locked: "true" }, 1, 0)).toBe(15_000);
+    expect(resolveNativeSampleIntervalMs({ ...basePower, lowPowerMode: "true" }, 1, 0)).toBe(
       15_000,
     );
-    expect(resolveNativeSampleIntervalMs({ ...basePower, onBattery: "true" }, 1)).toBe(5_000);
+    expect(resolveNativeSampleIntervalMs({ ...basePower, thermalState: "critical" }, 1, 0)).toBe(
+      15_000,
+    );
+    expect(resolveNativeSampleIntervalMs({ ...basePower, onBattery: "true" }, 1, 0)).toBe(5_000);
+  });
+
+  it("samples resource protection at 1Hz even while the host is constrained", () => {
+    expect(resolveNativeSampleIntervalMs({ ...basePower, suspended: true }, 1, 1)).toBe(1_000);
+    expect(resolveNativeSampleIntervalMs({ ...basePower, thermalState: "critical" }, 0, 1)).toBe(
+      1_000,
+    );
+    expect(resolveNativeSampleIntervalMs({ ...basePower, onBattery: "true" }, 0, 1)).toBe(1_000);
   });
 
   it("slows background telemetry and serves live diagnostics at 1Hz", () => {
@@ -46,16 +67,18 @@ describe("resolveNativeSampleIntervalMs", () => {
       source: "unknown",
       stale: true,
     };
-    expect(resolveNativeSampleIntervalMs(unknown, 0)).toBe(5_000);
-    expect(resolveNativeSampleIntervalMs(unknown, 1)).toBe(1_000);
+    expect(resolveNativeSampleIntervalMs(unknown, 0, 0)).toBe(5_000);
+    expect(resolveNativeSampleIntervalMs(unknown, 1, 0)).toBe(1_000);
     expect(
       resolveNativeSampleIntervalMs(
         { ...basePower, stale: true, locked: "true", suspended: true },
         0,
+        0,
       ),
     ).toBe(5_000);
-    expect(resolveNativeSampleIntervalMs(basePower, 0)).toBe(5_000);
-    expect(resolveNativeSampleIntervalMs(basePower, 1)).toBe(1_000);
+    expect(resolveNativeSampleIntervalMs(basePower, 0, 0)).toBe(5_000);
+    expect(resolveNativeSampleIntervalMs(basePower, 1, 0)).toBe(1_000);
+    expect(resolveNativeSampleIntervalMs(basePower, 0, 0)).toBe(5_000);
   });
 });
 
@@ -78,6 +101,131 @@ describe("canCommandNativeTelemetrySidecar", () => {
   });
 });
 
+describe("NativeTelemetryRequestTimedOut", () => {
+  it("models history and sample request deadlines without a fabricated cause", () => {
+    const historyTimeout = new NativeTelemetryRequestTimedOut({
+      operation: "readHistory",
+      timeoutMs: 15_000,
+    });
+    const sampleTimeout = new NativeTelemetryRequestTimedOut({
+      operation: "sampleNow",
+      timeoutMs: 5_000,
+    });
+
+    expect(historyTimeout.message).toBe(
+      "Resource monitor 'readHistory' request timed out after 15000ms.",
+    );
+    expect(sampleTimeout.message).toBe(
+      "Resource monitor 'sampleNow' request timed out after 5000ms.",
+    );
+    expect("cause" in historyTimeout).toBe(false);
+    expect("cause" in sampleTimeout).toBe(false);
+  });
+});
+
+describe("process-control request correlation", () => {
+  it.effect("completes only the request with the matching request and lease identity", () =>
+    Effect.gen(function* () {
+      const deferred = yield* Deferred.make<void, NativeTelemetryClientError>();
+      const pending = yield* Ref.make(
+        new Map<string, PendingProcessControlRequest>([
+          [
+            "request-2",
+            {
+              operation: "suspend",
+              leaseId: "lease-1",
+              deferred,
+            },
+          ],
+        ]),
+      );
+      const lateResult: ResourceMonitorProcessControlResultEvent = {
+        version: 4,
+        type: "processControlResult",
+        requestId: "request-1",
+        leaseId: "lease-1",
+        operation: "suspend",
+        success: true,
+        resumeRequired: false,
+      };
+      const currentResult: ResourceMonitorProcessControlResultEvent = {
+        ...lateResult,
+        requestId: "request-2",
+      };
+
+      yield* completePendingProcessControlRequest(pending, lateResult);
+      expect((yield* Ref.get(pending)).size).toBe(1);
+
+      yield* completePendingProcessControlRequest(pending, currentResult);
+      yield* Deferred.await(deferred);
+      expect((yield* Ref.get(pending)).size).toBe(0);
+    }),
+  );
+
+  it.effect("fails a correlated request when the sidecar rejects the process identity", () =>
+    Effect.gen(function* () {
+      const deferred = yield* Deferred.make<void, NativeTelemetryClientError>();
+      const pending = yield* Ref.make(
+        new Map<string, PendingProcessControlRequest>([
+          [
+            "request-3",
+            {
+              operation: "resume",
+              leaseId: "lease-2",
+              deferred,
+            },
+          ],
+        ]),
+      );
+
+      yield* completePendingProcessControlRequest(pending, {
+        version: 4,
+        type: "processControlResult",
+        requestId: "request-3",
+        leaseId: "lease-2",
+        operation: "resume",
+        success: false,
+        resumeRequired: true,
+        error: "process identity changed",
+      });
+      const failure = yield* Deferred.await(deferred).pipe(Effect.flip);
+
+      expect(failure).toBeInstanceOf(NativeTelemetryProcessControlFailed);
+      expect(failure).toMatchObject({ resumeRequired: true });
+      expect(failure.message).toContain("process identity changed");
+      expect((yield* Ref.get(pending)).size).toBe(0);
+    }),
+  );
+
+  it.effect("fails and clears every pending request when the sidecar exits", () =>
+    Effect.gen(function* () {
+      const suspend = yield* Deferred.make<void, NativeTelemetryClientError>();
+      const resume = yield* Deferred.make<void, NativeTelemetryClientError>();
+      const pending = yield* Ref.make(
+        new Map<string, PendingProcessControlRequest>([
+          ["request-4", { operation: "suspend", leaseId: "lease-3", deferred: suspend }],
+          ["request-5", { operation: "resume", leaseId: "lease-3", deferred: resume }],
+        ]),
+      );
+      const exit = new NativeTelemetryExited({ exitCode: 1 });
+
+      yield* failPendingProcessControlRequests(pending, exit);
+
+      expect(yield* Deferred.await(suspend).pipe(Effect.flip)).toBe(exit);
+      expect(yield* Deferred.await(resume).pipe(Effect.flip)).toBe(exit);
+      expect((yield* Ref.get(pending)).size).toBe(0);
+    }),
+  );
+});
+
+describe("native telemetry supervisor failures", () => {
+  it("distinguishes a closed event stream from a process exit", () => {
+    expect(new NativeTelemetryStreamClosed().message).toBe(
+      "Resource monitor event stream closed unexpectedly.",
+    );
+  });
+});
+
 describe("retainRecentNativeTelemetryFailures", () => {
   it("expires old failures so an isolated crash restarts from the initial backoff", () => {
     expect(retainRecentNativeTelemetryFailures([0, 30_000], 90_001)).toEqual([]);
@@ -91,6 +239,7 @@ describe("commitCollectionControlUpdate", () => {
       const initial = {
         hostPower: basePower,
         liveSubscriberCount: 0,
+        resourceProtectionSubscriberCount: 0,
         sampleIntervalMs: 5_000,
       };
       const desired = yield* Ref.make(initial);
@@ -142,6 +291,7 @@ describe("commitCollectionControlUpdate", () => {
       const initial = {
         hostPower: basePower,
         liveSubscriberCount: 0,
+        resourceProtectionSubscriberCount: 0,
         sampleIntervalMs: 5_000,
       };
       const desired = yield* Ref.make(initial);
