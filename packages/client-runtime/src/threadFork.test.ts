@@ -5,7 +5,7 @@ import {
   forkBoundaryKey,
   resolveFirstTurnForkBudget,
   resolveForkWorkspaceSpec,
-} from "./threadFork";
+} from "./threadFork.js";
 
 describe("thread fork presentation", () => {
   it("distinguishes message and plan boundaries", () => {

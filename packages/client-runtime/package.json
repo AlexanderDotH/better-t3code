@@ -314,6 +314,10 @@
     "./provider-selection": {
       "types": "./src/providerSelection.ts",
       "default": "./src/providerSelection.ts"
+    },
+    "./thread-fork": {
+      "types": "./src/threadFork.ts",
+      "default": "./src/threadFork.ts"
     }
   },
   "scripts": {
