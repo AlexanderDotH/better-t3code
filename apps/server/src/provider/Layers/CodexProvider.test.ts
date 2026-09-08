@@ -1,37 +1,48 @@
 import { assert, it } from "@effect/vitest";
+import { createCodexContextWindowDescriptor } from "@t3tools/shared/model";
 
 import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
 
+const TEST_CONTEXT_WINDOW = {
+  defaultTokens: 272_000,
+  maxTokens: 872_000,
+  effectivePercent: 95,
+} as const;
+const TEST_CONTEXT_WINDOW_DESCRIPTOR = createCodexContextWindowDescriptor(TEST_CONTEXT_WINDOW);
+
 it("maps current Codex model capability fields", () => {
-  const capabilities = mapCodexModelCapabilities({
-    additionalSpeedTiers: [],
-    defaultReasoningEffort: "super-high",
-    description: "Test model",
-    displayName: "GPT Test",
-    hidden: false,
-    id: "gpt-test",
-    isDefault: true,
-    model: "gpt-test",
-    defaultServiceTier: "flex",
-    serviceTiers: [
-      {
-        id: "priority",
-        name: "Fast",
-        description: "Lower latency responses.",
-      },
-      {
-        id: "flex",
-        name: "Flex",
-        description: "Lower-cost asynchronous routing.",
-      },
-    ],
-    supportedReasoningEfforts: [
-      {
-        description: "Maximum reasoning",
-        reasoningEffort: "super-high",
-      },
-    ],
-  });
+  const capabilities = mapCodexModelCapabilities(
+    {
+      additionalSpeedTiers: [],
+      defaultReasoningEffort: "super-high",
+      description: "Test model",
+      displayName: "GPT Test",
+      hidden: false,
+      id: "gpt-test",
+      isDefault: true,
+      model: "gpt-test",
+      defaultServiceTier: "flex",
+      serviceTiers: [
+        {
+          id: "priority",
+          name: "Fast",
+          description: "Lower latency responses.",
+        },
+        {
+          id: "flex",
+          name: "Flex",
+          description: "Lower-cost asynchronous routing.",
+        },
+      ],
+      supportedReasoningEfforts: [
+        {
+          description: "Maximum reasoning",
+          reasoningEffort: "super-high",
+        },
+      ],
+    },
+    TEST_CONTEXT_WINDOW,
+  );
 
   assert.deepStrictEqual(capabilities.optionDescriptors, [
     {
@@ -61,29 +72,33 @@ it("maps current Codex model capability fields", () => {
       ],
       currentValue: "flex",
     },
+    TEST_CONTEXT_WINDOW_DESCRIPTOR,
   ]);
 });
 
 it("uses standard routing when the catalog has no default service tier", () => {
-  const capabilities = mapCodexModelCapabilities({
-    additionalSpeedTiers: ["fast"],
-    defaultReasoningEffort: "medium",
-    defaultServiceTier: null,
-    description: "Test model",
-    displayName: "GPT Test",
-    hidden: false,
-    id: "gpt-test",
-    isDefault: true,
-    model: "gpt-test",
-    serviceTiers: [
-      {
-        id: "priority",
-        name: "Fast",
-        description: "1.5x speed, increased usage",
-      },
-    ],
-    supportedReasoningEfforts: [],
-  });
+  const capabilities = mapCodexModelCapabilities(
+    {
+      additionalSpeedTiers: ["fast"],
+      defaultReasoningEffort: "medium",
+      defaultServiceTier: null,
+      description: "Test model",
+      displayName: "GPT Test",
+      hidden: false,
+      id: "gpt-test",
+      isDefault: true,
+      model: "gpt-test",
+      serviceTiers: [
+        {
+          id: "priority",
+          name: "Fast",
+          description: "1.5x speed, increased usage",
+        },
+      ],
+      supportedReasoningEfforts: [],
+    },
+    TEST_CONTEXT_WINDOW,
+  );
 
   assert.deepStrictEqual(capabilities.optionDescriptors, [
     {
@@ -100,6 +115,40 @@ it("uses standard routing when the catalog has no default service tier", () => {
       ],
       currentValue: "default",
     },
+    TEST_CONTEXT_WINDOW_DESCRIPTOR,
+  ]);
+});
+
+it("canonicalizes the legacy fast catalog tier to priority", () => {
+  const capabilities = mapCodexModelCapabilities(
+    {
+      additionalSpeedTiers: ["fast"],
+      defaultReasoningEffort: "medium",
+      defaultServiceTier: "fast",
+      description: "Legacy catalog model",
+      displayName: "GPT Legacy",
+      hidden: false,
+      id: "gpt-legacy",
+      isDefault: false,
+      model: "gpt-legacy",
+      serviceTiers: [],
+      supportedReasoningEfforts: [],
+    },
+    TEST_CONTEXT_WINDOW,
+  );
+
+  assert.deepStrictEqual(capabilities.optionDescriptors, [
+    {
+      id: "serviceTier",
+      label: "Service Tier",
+      type: "select",
+      options: [
+        { id: "default", label: "Standard" },
+        { id: "priority", label: "Fast", isDefault: true },
+      ],
+      currentValue: "priority",
+    },
+    TEST_CONTEXT_WINDOW_DESCRIPTOR,
   ]);
 });
 

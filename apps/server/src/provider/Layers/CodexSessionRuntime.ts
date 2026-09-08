@@ -4,7 +4,8 @@ import {
   EventId,
   ProviderDriverKind,
   ProviderItemId,
-  type ProviderInstanceId,
+  type McpServerDefinition,
+  ProviderInstanceId,
   type ProviderApprovalDecision,
   type ProviderApprovalOption,
   type ProviderEvent,
@@ -14,18 +15,20 @@ import {
   type ProviderTurnStartResult,
   type ProviderUserInputAnswers,
   RuntimeMode,
+  SubagentId,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { normalizeModelSlug } from "@t3tools/shared/model";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as Queue from "effect/Queue";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -36,10 +39,26 @@ import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
+import {
+  forceTerminateOwnedChildProcessAndCleanup,
+  type OwnedChildProcessTerminationError,
+} from "../../process/OwnedChildProcess.ts";
+import * as ResourceProtection from "../../resourceProtection/SubagentResourceGovernor.ts";
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
+import { managedMcpProviderKey } from "../../mcp/McpConfigEngine.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
-import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
+import {
+  buildCodexDeveloperInstructions,
+  type CodexT3ToolAvailability,
+} from "../CodexDeveloperInstructions.ts";
+import { codexManagedFeatureArgs } from "../CodexProcessArgs.ts";
+import {
+  makeBoundedProviderEventQueue,
+  providerEventEncodedBytes,
+  PROVIDER_SESSION_EVENT_QUEUE_BYTE_CAPACITY,
+  PROVIDER_SESSION_EVENT_QUEUE_CAPACITY,
+} from "../boundedEventQueue.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
 
 const PROVIDER = ProviderDriverKind.make("codex");
@@ -62,8 +81,161 @@ const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
   "no rollout found",
 ];
 
+export type CodexMcpServerStatus =
+  CodexRpc.ClientRequestResponsesByMethod["mcpServerStatus/list"]["data"][number];
+type CodexMcpServerStatusListParams = CodexRpc.ClientRequestParamsByMethod["mcpServerStatus/list"];
+type CodexMcpServerStatusListResponse =
+  CodexRpc.ClientRequestResponsesByMethod["mcpServerStatus/list"];
+
+export interface CodexNativeThreadForkResult {
+  readonly threadId: string;
+  readonly model: string;
+  readonly reasoningEffort?: string;
+}
+
+export function forkCodexThread<E>(input: {
+  readonly client: {
+    readonly request: (
+      method: "thread/fork",
+      params: CodexRpc.ClientRequestParamsByMethod["thread/fork"],
+    ) => Effect.Effect<CodexRpc.ClientRequestResponsesByMethod["thread/fork"], E>;
+  };
+  readonly sourceProviderThreadId: string;
+  readonly lastProviderTurnId?: string;
+}): Effect.Effect<CodexNativeThreadForkResult, E> {
+  return input.client
+    .request("thread/fork", {
+      threadId: input.sourceProviderThreadId,
+      ...(input.lastProviderTurnId !== undefined ? { lastTurnId: input.lastProviderTurnId } : {}),
+    })
+    .pipe(
+      Effect.map((response) => ({
+        threadId: response.thread.id,
+        model: response.model,
+        ...(response.reasoningEffort !== undefined && response.reasoningEffort !== null
+          ? { reasoningEffort: response.reasoningEffort }
+          : {}),
+      })),
+    );
+}
+
+export function compactCodexThread<E>(input: {
+  readonly client: {
+    readonly request: (
+      method: "thread/compact/start",
+      params: CodexRpc.ClientRequestParamsByMethod["thread/compact/start"],
+    ) => Effect.Effect<CodexRpc.ClientRequestResponsesByMethod["thread/compact/start"], E>;
+  };
+  readonly providerThreadId: string;
+}): Effect.Effect<void> {
+  return input.client.request("thread/compact/start", { threadId: input.providerThreadId }).pipe(
+    Effect.asVoid,
+    Effect.catch((cause) =>
+      Effect.logWarning("codex app-server thread compaction failed nonfatally", {
+        providerThreadId: input.providerThreadId,
+        cause,
+      }),
+    ),
+  );
+}
+
+export function listCodexMcpServerStatuses<E>(
+  requestPage: (
+    params: CodexMcpServerStatusListParams,
+  ) => Effect.Effect<CodexMcpServerStatusListResponse, E>,
+  input: Omit<CodexMcpServerStatusListParams, "cursor">,
+): Effect.Effect<ReadonlyArray<CodexMcpServerStatus>, E> {
+  return Effect.gen(function* () {
+    const statuses: Array<CodexMcpServerStatus> = [];
+    const visitedCursors = new Set<string>();
+    let cursor: string | undefined;
+
+    do {
+      const response = yield* requestPage({
+        ...input,
+        ...(cursor ? { cursor } : {}),
+      });
+      statuses.push(...response.data);
+      cursor = response.nextCursor ?? undefined;
+      if (cursor && visitedCursors.has(cursor)) {
+        break;
+      }
+      if (cursor) {
+        visitedCursors.add(cursor);
+      }
+    } while (cursor);
+
+    return statuses;
+  });
+}
+
+export function requestCodexMcpOauth<E>(
+  request: (
+    params: CodexRpc.ClientRequestParamsByMethod["mcpServer/oauth/login"],
+  ) => Effect.Effect<CodexRpc.ClientRequestResponsesByMethod["mcpServer/oauth/login"], E>,
+  input: {
+    readonly providerThreadId: string;
+    readonly serverName: string;
+    readonly scopes?: ReadonlyArray<string>;
+  },
+): Effect.Effect<CodexRpc.ClientRequestResponsesByMethod["mcpServer/oauth/login"], E> {
+  return request({
+    name: input.serverName,
+    threadId: input.providerThreadId,
+    ...(input.scopes ? { scopes: input.scopes } : {}),
+  });
+}
+
+/**
+ * Reports whether the configured T3 MCP endpoint exposes collaborative browser
+ * tools. Preview-disabled and workspace-only profiles still attach T3 MCP,
+ * so they must not make the prompt claim that `preview_*` is available.
+ */
+export function configuredT3ToolAvailability(
+  appServerArgs: ReadonlyArray<string> | undefined,
+): CodexT3ToolAvailability {
+  const endpointArgument = appServerArgs?.find((argument) =>
+    argument.includes("mcp_servers.t3-code.url="),
+  );
+  if (!endpointArgument) {
+    return {
+      preview: false,
+      workspace: false,
+      workspaceWrite: false,
+      coordination: false,
+      threadContext: false,
+      projectMemory: false,
+      knowledgeGraph: false,
+    };
+  }
+  const profile =
+    /\/mcp(?:\/(workspace|workspace-no-memory|workspace-no-preview|workspace-no-preview-no-memory|coordination|workspace-only|workspace-only-no-memory|workspace-write|workspace-write-no-memory|workspace-write-no-preview|workspace-write-no-preview-no-memory|workspace-write-only|workspace-write-only-no-memory))?(?:["'?]|$)/u.exec(
+      endpointArgument,
+    )?.[1];
+  const workspace = profile?.startsWith("workspace") === true;
+  const workspaceWrite = profile?.startsWith("workspace-write") === true;
+  const workspaceOnly =
+    profile?.startsWith("workspace-only") === true ||
+    profile?.startsWith("workspace-write-only") === true;
+  const projectMemory = workspace && !profile?.endsWith("no-memory");
+  return {
+    preview:
+      profile === undefined ||
+      profile === "workspace" ||
+      profile === "workspace-no-memory" ||
+      profile === "workspace-write" ||
+      profile === "workspace-write-no-memory",
+    workspace,
+    workspaceWrite,
+    coordination: !workspaceOnly,
+    threadContext: true,
+    projectMemory,
+    knowledgeGraph: workspace && !workspaceOnly,
+  };
+}
+
 export function hasConfiguredMcpServer(appServerArgs: ReadonlyArray<string> | undefined): boolean {
-  return appServerArgs?.some((argument) => argument.includes("mcp_servers.")) === true;
+  return configuredT3ToolAvailability(appServerArgs).preview;
 }
 
 export const CodexResumeCursorSchema = Schema.Struct({
@@ -163,21 +335,36 @@ export interface CodexSessionRuntimeOptions {
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
   readonly model?: string;
+  readonly reasoningEffort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
+  readonly contextWindow?: number;
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
   readonly appServerArgs?: ReadonlyArray<string>;
+  readonly appServerGlobalArgs?: ReadonlyArray<string>;
+  readonly mcpServers?: ReadonlyArray<McpServerDefinition>;
+  readonly internalMcpServer?: CodexInternalMcpServerConfig;
+}
+
+export interface CodexInternalMcpServerConfig {
+  readonly url: string;
+  readonly bearerTokenEnvVar: string;
 }
 
 export interface CodexSessionRuntimeSendTurnInput {
   readonly input?: string;
   readonly attachments?: ReadonlyArray<{
-    readonly type: "image";
+    readonly type: "image" | "audio";
     readonly url: string;
   }>;
   readonly model?: string;
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort | undefined;
   readonly interactionMode?: ProviderInteractionMode;
+}
+
+export interface CodexSessionRuntimeForkInput {
+  readonly sourceProviderThreadId: string;
+  readonly lastProviderTurnId?: string;
 }
 
 export interface CodexThreadTurnSnapshot {
@@ -196,12 +383,15 @@ export interface CodexSessionRuntimeShape {
   readonly sendTurn: (
     input: CodexSessionRuntimeSendTurnInput,
   ) => Effect.Effect<ProviderTurnStartResult, CodexSessionRuntimeError>;
-  readonly compactThread: Effect.Effect<void, CodexSessionRuntimeError>;
   readonly interruptTurn: (turnId?: TurnId) => Effect.Effect<void, CodexSessionRuntimeError>;
   readonly readThread: Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
   readonly rollbackThread: (
     numTurns: number,
   ) => Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
+  readonly forkThread: (
+    input: CodexSessionRuntimeForkInput,
+  ) => Effect.Effect<CodexNativeThreadForkResult, CodexSessionRuntimeError>;
+  readonly compactThread: Effect.Effect<void, CodexSessionRuntimeError>;
   readonly uploadFeedback: (
     reason?: string,
   ) => Effect.Effect<EffectCodexSchema.V2FeedbackUploadResponse, CodexSessionRuntimeError>;
@@ -213,8 +403,17 @@ export interface CodexSessionRuntimeShape {
     requestId: ApprovalRequestId,
     answers: ProviderUserInputAnswers,
   ) => Effect.Effect<void, CodexSessionRuntimeError>;
+  readonly listMcpServerStatuses: (
+    detail?: EffectCodexSchema.V2ListMcpServerStatusParams__McpServerStatusDetail,
+  ) => Effect.Effect<ReadonlyArray<CodexMcpServerStatus>, CodexSessionRuntimeError>;
+  readonly reloadMcpServers: Effect.Effect<void, CodexSessionRuntimeError>;
+  readonly startMcpOauth: (input: {
+    readonly serverName: string;
+    readonly scopes?: ReadonlyArray<string>;
+  }) => Effect.Effect<{ readonly authorizationUrl: string }, CodexSessionRuntimeError>;
   readonly events: Stream.Stream<ProviderEvent, never>;
   readonly close: Effect.Effect<void>;
+  readonly forceClose: Effect.Effect<void, OwnedChildProcessTerminationError>;
 }
 
 export type CodexSessionRuntimeError =
@@ -274,6 +473,8 @@ interface PendingApproval {
   readonly requestKind: ProviderRequestKind;
   readonly turnId: TurnId | undefined;
   readonly itemId: ProviderItemId | undefined;
+  readonly providerThreadId: string | undefined;
+  readonly subagentId: SubagentId | undefined;
   readonly decision: Deferred.Deferred<ProviderApprovalDecision>;
 }
 
@@ -288,6 +489,8 @@ interface PendingUserInput {
   readonly requestId: ApprovalRequestId;
   readonly turnId: TurnId | undefined;
   readonly itemId: ProviderItemId | undefined;
+  readonly providerThreadId: string | undefined;
+  readonly subagentId: SubagentId | undefined;
   readonly answers: Deferred.Deferred<ProviderUserInputAnswers>;
 }
 
@@ -527,18 +730,87 @@ function runtimeModeToThreadConfig(input: RuntimeMode): {
   }
 }
 
+function secretValuesToPlainRecord(values: Record<string, { readonly value: string }>) {
+  return Object.fromEntries(Object.entries(values).map(([name, value]) => [name, value.value]));
+}
+
+function codexMcpServerConfig(server: McpServerDefinition): Record<string, unknown> {
+  switch (server.transport) {
+    case "stdio":
+      return {
+        command: server.command,
+        args: server.args,
+        ...(server.cwd ? { cwd: server.cwd } : {}),
+        env: secretValuesToPlainRecord(server.env),
+      };
+    case "sse":
+    case "http":
+      return {
+        transport: server.transport,
+        url: server.url,
+        headers: secretValuesToPlainRecord(server.headers),
+      };
+  }
+}
+
+function codexThreadMcpConfig(
+  servers: ReadonlyArray<McpServerDefinition> | undefined,
+  internalMcpServer: CodexInternalMcpServerConfig | undefined,
+): Record<string, unknown> | undefined {
+  if ((!servers || servers.length === 0) && !internalMcpServer) {
+    return undefined;
+  }
+  return {
+    mcp_servers: {
+      ...Object.fromEntries(
+        (servers ?? []).map((server) => [
+          managedMcpProviderKey(server.id),
+          codexMcpServerConfig(server),
+        ]),
+      ),
+      ...(internalMcpServer
+        ? {
+            "t3-code": {
+              url: internalMcpServer.url,
+              bearer_token_env_var: internalMcpServer.bearerTokenEnvVar,
+            },
+          }
+        : {}),
+    },
+  };
+}
+
 function buildThreadStartParams(input: {
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
   readonly model: string | undefined;
+  readonly contextWindow: number | undefined;
+  readonly reasoningEffort: EffectCodexSchema.V2TurnStartParams__ReasoningEffort | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
+  readonly mcpServers?: ReadonlyArray<McpServerDefinition>;
+  readonly internalMcpServer?: CodexInternalMcpServerConfig;
 }): EffectCodexSchema.V2ThreadStartParams {
   const config = runtimeModeToThreadConfig(input.runtimeMode);
+  const mcpConfig = codexThreadMcpConfig(input.mcpServers, input.internalMcpServer);
+  const threadConfig = {
+    ...mcpConfig,
+    model_auto_compact_token_limit_scope: "body_after_prefix",
+    ...(input.contextWindow !== undefined
+      ? {
+          model_context_window: input.contextWindow,
+          model_auto_compact_token_limit: Math.max(1, Math.floor(input.contextWindow * 0.8)),
+        }
+      : {}),
+    ...(input.reasoningEffort !== undefined
+      ? { model_reasoning_effort: input.reasoningEffort }
+      : {}),
+  };
   return {
     cwd: input.cwd,
     approvalPolicy: config.approvalPolicy,
     sandbox: config.sandbox,
     approvalsReviewer: config.approvalsReviewer,
+    ...(Object.keys(threadConfig).length > 0 ? { config: threadConfig } : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
   };
@@ -570,6 +842,7 @@ function buildCodexCollaborationMode(input: {
   readonly model?: string;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
   readonly browserToolsAvailable?: boolean;
+  readonly t3ToolAvailability?: CodexT3ToolAvailability;
 }): EffectCodexSchema.V2TurnStartParams__CollaborationMode | undefined {
   if (input.interactionMode === undefined) {
     return undefined;
@@ -584,7 +857,7 @@ function buildCodexCollaborationMode(input: {
       developer_instructions: buildCodexDeveloperInstructions(
         input.interactionMode,
         { model, reasoningEffort },
-        input.browserToolsAvailable ?? true,
+        input.t3ToolAvailability ?? input.browserToolsAvailable ?? true,
       ),
     },
   };
@@ -595,7 +868,7 @@ export function buildTurnStartParams(input: {
   readonly runtimeMode: RuntimeMode;
   readonly prompt?: string;
   readonly attachments?: ReadonlyArray<{
-    readonly type: "image";
+    readonly type: "image" | "audio";
     readonly url: string;
   }>;
   readonly model?: string;
@@ -604,6 +877,7 @@ export function buildTurnStartParams(input: {
   readonly interactionMode?: ProviderInteractionMode;
   /** Defaults to true so callers that predate the agent-access gate are unchanged. */
   readonly browserToolsAvailable?: boolean;
+  readonly t3ToolAvailability?: CodexT3ToolAvailability;
 }): Effect.Effect<
   CodexTurnStartParamsWithCollaborationMode,
   CodexErrors.CodexAppServerProtocolParseError
@@ -625,6 +899,7 @@ export function buildTurnStartParams(input: {
     ...(input.model ? { model: input.model } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
     browserToolsAvailable: input.browserToolsAvailable ?? true,
+    ...(input.t3ToolAvailability ? { t3ToolAvailability: input.t3ToolAvailability } : {}),
   });
 
   return decodeCodexTurnStartParamsWithCollaborationMode({
@@ -707,15 +982,23 @@ export const openCodexThread = (input: {
   readonly runtimeMode: RuntimeMode;
   readonly cwd: string;
   readonly requestedModel: string | undefined;
+  readonly contextWindow?: number;
+  readonly reasoningEffort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
   readonly serviceTier: CodexServiceTier | undefined;
   readonly resumeThreadId: string | undefined;
+  readonly mcpServers?: ReadonlyArray<McpServerDefinition>;
+  readonly internalMcpServer?: CodexInternalMcpServerConfig;
 }): Effect.Effect<typeof CodexThreadResumeMetadata.Type, CodexErrors.CodexAppServerError> => {
   const resumeThreadId = input.resumeThreadId;
   const startParams = buildThreadStartParams({
     cwd: input.cwd,
     runtimeMode: input.runtimeMode,
     model: input.requestedModel,
+    contextWindow: input.contextWindow,
+    reasoningEffort: input.reasoningEffort,
     serviceTier: input.serviceTier,
+    ...(input.mcpServers ? { mcpServers: input.mcpServers } : {}),
+    ...(input.internalMcpServer ? { internalMcpServer: input.internalMcpServer } : {}),
   });
 
   if (resumeThreadId === undefined) {
@@ -755,54 +1038,79 @@ export const openCodexThread = (input: {
     );
 };
 
-function readNotificationThreadId(notification: CodexServerNotification): string | undefined {
-  switch (notification.method) {
-    case "thread/started":
-      return notification.params.thread.id;
-    case "error":
-    case "thread/status/changed":
-    case "thread/archived":
-    case "thread/unarchived":
-    case "thread/closed":
-    case "thread/name/updated":
-    case "thread/settings/updated":
-    case "thread/tokenUsage/updated":
-    case "model/rerouted":
-    case "turn/started":
-    case "hook/started":
-    case "turn/completed":
-    case "hook/completed":
-    case "turn/diff/updated":
-    case "turn/plan/updated":
-    case "item/started":
-    case "item/autoApprovalReview/started":
-    case "item/autoApprovalReview/completed":
-    case "item/completed":
-    case "rawResponseItem/completed":
-    case "item/agentMessage/delta":
-    case "item/plan/delta":
-    case "item/commandExecution/outputDelta":
-    case "item/commandExecution/terminalInteraction":
-    case "item/fileChange/outputDelta":
-    case "item/fileChange/patchUpdated":
-    case "serverRequest/resolved":
-    case "item/mcpToolCall/progress":
-    case "item/reasoning/summaryTextDelta":
-    case "item/reasoning/summaryPartAdded":
-    case "item/reasoning/textDelta":
-    case "thread/compacted":
-    case "thread/realtime/started":
-    case "thread/realtime/itemAdded":
-    case "thread/realtime/transcript/delta":
-    case "thread/realtime/transcript/done":
-    case "thread/realtime/outputAudio/delta":
-    case "thread/realtime/sdp":
-    case "thread/realtime/error":
-    case "thread/realtime/closed":
-      return notification.params.threadId;
-    default:
-      return undefined;
+type CodexNotificationLike = {
+  readonly method: string;
+  readonly params: unknown;
+};
+
+function unknownRecord(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return typeof value === "object" && value !== null
+    ? (value as Readonly<Record<string, unknown>>)
+    : undefined;
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
   }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function readNotificationThreadId(notification: CodexNotificationLike): string | undefined {
+  const params = unknownRecord(notification.params);
+  const directThreadId = nonEmptyString(params?.threadId);
+  if (directThreadId) {
+    return directThreadId;
+  }
+
+  if (notification.method !== "thread/started") {
+    return undefined;
+  }
+  return nonEmptyString(unknownRecord(params?.thread)?.id);
+}
+
+function isSubagentThreadStarted(notification: CodexNotificationLike): boolean {
+  if (notification.method !== "thread/started") {
+    return false;
+  }
+  const thread = unknownRecord(unknownRecord(notification.params)?.thread);
+  if (nonEmptyString(thread?.parentThreadId)) {
+    return true;
+  }
+  return unknownRecord(thread?.source)?.subAgent !== undefined;
+}
+
+export function makeCodexSubagentId(providerThreadId: string): SubagentId {
+  return SubagentId.make(`codex:${providerThreadId.trim()}`);
+}
+
+function codexProviderRoute(
+  rootProviderThreadId: string | undefined,
+  providerThreadId: string | undefined,
+  forceSubagent = false,
+): Pick<ProviderEvent, "providerThreadId" | "subagentId"> {
+  if (!providerThreadId) {
+    return {};
+  }
+  const isSubagent =
+    forceSubagent ||
+    (rootProviderThreadId !== undefined && providerThreadId !== rootProviderThreadId);
+  return {
+    providerThreadId,
+    ...(isSubagent ? { subagentId: makeCodexSubagentId(providerThreadId) } : {}),
+  };
+}
+
+export function codexNotificationProviderRoute(
+  rootProviderThreadId: string | undefined,
+  notification: CodexNotificationLike,
+): Pick<ProviderEvent, "providerThreadId" | "subagentId"> {
+  return codexProviderRoute(
+    rootProviderThreadId,
+    readNotificationThreadId(notification),
+    isSubagentThreadStarted(notification),
+  );
 }
 
 export function makeMemoryConsolidationNotificationFilter(): (
@@ -1110,7 +1418,6 @@ export function routeCodexChildNotification(method: string): CodexChildNotificat
   // Unknown or parent-owned (serverRequest/resolved, approvals, …).
   return "parent";
 }
-
 function toCodexUserInputAnswer(
   questionId: string,
   value: ProviderUserInputAnswers[string],
@@ -1186,9 +1493,17 @@ export const makeCodexSessionRuntime = (
 > =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const hostPlatform = yield* HostProcessPlatform;
     const runtimeScope = yield* Scope.Scope;
     const crypto = yield* Crypto.Crypto;
-    const events = yield* Queue.unbounded<ProviderEvent>();
+    const resourceGovernor = Option.getOrUndefined(
+      yield* Effect.serviceOption(ResourceProtection.SubagentResourceGovernor),
+    );
+    const events = yield* makeBoundedProviderEventQueue<ProviderEvent>({
+      capacity: PROVIDER_SESSION_EVENT_QUEUE_CAPACITY,
+      byteCapacity: PROVIDER_SESSION_EVENT_QUEUE_BYTE_CAPACITY,
+      sizeOf: providerEventEncodedBytes,
+    });
     const pendingApprovalsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingApproval>());
     const approvalCorrelationsRef = yield* Ref.make(new Map<string, ApprovalCorrelation>());
     const pendingUserInputsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingUserInput>());
@@ -1209,7 +1524,13 @@ export const makeCodexSessionRuntime = (
       ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
     };
     const extendEnv = options.environment === undefined;
-    const appServerArgs = codexSessionAppServerArgs(options.appServerArgs, options.launchArgs);
+    const appServerArgs = [
+      ...(options.appServerGlobalArgs ?? []),
+      ...codexSessionAppServerArgs(
+        [...codexManagedFeatureArgs(), ...(options.appServerArgs ?? [])],
+        options.launchArgs,
+      ),
+    ];
     const spawnCommand = yield* resolveSpawnCommand(options.binaryPath, appServerArgs, {
       env,
       extendEnv,
@@ -1229,11 +1550,34 @@ export const makeCodexSessionRuntime = (
         Effect.mapError(
           (cause) =>
             new CodexErrors.CodexAppServerSpawnError({
-              command: `${options.binaryPath} app-server`,
+              command: `${options.binaryPath} ${appServerArgs.join(" ")}`,
               cause,
             }),
         ),
       );
+
+    if (resourceGovernor) {
+      const pid = Number(child.pid);
+      const startTimeMs = ResourceProtection.providerProcessStartTimeMs(pid, hostPlatform);
+      const providerInstanceId = options.providerInstanceId ?? ProviderInstanceId.make("codex");
+      yield* resourceGovernor.registerProviderProcess({
+        threadId: options.threadId,
+        provider: PROVIDER,
+        providerInstanceId,
+        pid,
+        ...(startTimeMs === undefined ? {} : { startTimeMs }),
+      });
+      const unregister = resourceGovernor.unregisterProviderProcess({
+        pid,
+        ...(startTimeMs === undefined ? {} : { startTimeMs }),
+      });
+      yield* Scope.addFinalizer(runtimeScope, unregister);
+      yield* child.exitCode.pipe(
+        Effect.andThen(unregister),
+        Effect.ignore,
+        Effect.forkIn(runtimeScope),
+      );
+    }
 
     const clientContext = yield* CodexClient.layerChildProcess(child).pipe(
       Layer.build,
@@ -1242,7 +1586,11 @@ export const makeCodexSessionRuntime = (
     const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
       Effect.provide(clientContext),
     );
-    const serverNotifications = yield* Queue.unbounded<CodexServerNotification>();
+    const serverNotifications = yield* makeBoundedProviderEventQueue<CodexServerNotification>({
+      capacity: PROVIDER_SESSION_EVENT_QUEUE_CAPACITY,
+      byteCapacity: PROVIDER_SESSION_EVENT_QUEUE_BYTE_CAPACITY,
+      sizeOf: providerEventEncodedBytes,
+    });
     const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
     const randomUUIDv4 = (purpose: CodexErrors.CodexAppServerIdentifierPurpose) =>
       crypto.randomUUIDv4.pipe(
@@ -1269,7 +1617,7 @@ export const makeCodexSessionRuntime = (
       updatedAt: sessionCreatedAt,
     } satisfies ProviderSession;
     const sessionRef = yield* Ref.make<ProviderSession>(initialSession);
-    const offerEvent = (event: ProviderEvent) => Queue.offer(events, event).pipe(Effect.asVoid);
+    const offerEvent = (event: ProviderEvent) => events.offer(event).pipe(Effect.asVoid);
 
     const emitEvent = (event: Omit<ProviderEvent, "id" | "provider" | "createdAt">) =>
       Effect.gen(function* () {
@@ -1441,11 +1789,21 @@ export const makeCodexSessionRuntime = (
         ),
       );
 
+    const currentSessionProviderThreadId = Effect.map(Ref.get(sessionRef), currentProviderThreadId);
+    const providerRouteForThreadId = (providerThreadId: string | undefined) =>
+      currentSessionProviderThreadId.pipe(
+        Effect.map((rootProviderThreadId) =>
+          codexProviderRoute(rootProviderThreadId, providerThreadId),
+        ),
+      );
+
     /**
      * Registers v2 collab children and re-emits their notifications as
      * synthetic `collabAgent/*` events for the adapter's task.* synthesis.
-     * Returns true when the notification was fully handled (must not reach
-     * parent-timeline mapping).
+     * Registered child conversation traffic is also allowed through the
+     * normal mapper with provider-thread routing. That preserves the fork's
+     * per-child transcript while the synthetic events retain upstream's
+     * bounded Agents-surface lifecycle.
      */
     const interceptCollabChildNotification = (notification: CodexServerNotification) =>
       Effect.gen(function* () {
@@ -1455,11 +1813,11 @@ export const makeCodexSessionRuntime = (
           const thread = notification.params.thread;
           const spawn = readThreadSpawnSource(thread);
           if (!spawn) {
-            return false;
+            return "pass" as const;
           }
           const rootProviderThreadId = currentProviderThreadId(yield* Ref.get(sessionRef));
           if (thread.id === rootProviderThreadId) {
-            return false;
+            return "pass" as const;
           }
           // Merge with any subAgentActivity registration that got here
           // first. spawnTurnId is REGISTRATION-time-only on both paths: for
@@ -1500,7 +1858,7 @@ export const makeCodexSessionRuntime = (
             },
           });
           yield* startCollabChildMetadataLookup(thread.id);
-          return true;
+          return "handled" as const;
         }
 
         // Registration path 2: parent-side subAgentActivity item names the
@@ -1522,7 +1880,7 @@ export const makeCodexSessionRuntime = (
             item.agentPath === "/root" ||
             item.agentPath === "/"
           ) {
-            return false;
+            return "pass" as const;
           }
           const activitySpawnTurnId = (yield* Ref.get(sessionRef)).activeTurnId ?? undefined;
           yield* Ref.update(collabChildAgentsRef, (current) => {
@@ -1565,20 +1923,20 @@ export const makeCodexSessionRuntime = (
           if (item.kind === "started") {
             yield* startCollabChildMetadataLookup(item.agentThreadId);
           }
-          return true;
+          return "handled" as const;
         }
 
         // Interception: notifications addressed to a registered child thread
         // become agent-scoped synthetic events instead of parent chatter.
         const providerConversationId = readNotificationThreadId(notification);
         if (!providerConversationId) {
-          return false;
+          return "pass" as const;
         }
         // Belt-and-braces: the root thread's traffic must never be
         // intercepted, whatever the registry says.
         const interceptRootId = currentProviderThreadId(yield* Ref.get(sessionRef));
         if (providerConversationId === interceptRootId) {
-          return false;
+          return "pass" as const;
         }
 
         if (
@@ -1609,10 +1967,38 @@ export const makeCodexSessionRuntime = (
           return true;
         }
 
+        if (
+          interceptRootId !== undefined &&
+          (notification.method === "thread/settings/updated" ||
+            notification.method === "model/rerouted")
+        ) {
+          const model = nonEmptyMetadataValue(
+            notification.method === "thread/settings/updated"
+              ? notification.params.threadSettings.model
+              : notification.params.toModel,
+          );
+          const effort =
+            notification.method === "thread/settings/updated"
+              ? nonEmptyMetadataValue(notification.params.threadSettings.effort)
+              : undefined;
+          const changed = yield* updateCollabChildMetadata(
+            providerConversationId,
+            {
+              ...(model ? { model } : {}),
+              ...(effort ? { effort } : {}),
+            },
+            true,
+          );
+          if (changed && (yield* Ref.get(collabChildAgentsRef)).has(providerConversationId)) {
+            yield* emitCollabChildMetadataUpdated(providerConversationId);
+          }
+          return "handled" as const;
+        }
+
         const children = yield* Ref.get(collabChildAgentsRef);
         const child = children.get(providerConversationId);
         if (!child) {
-          return false;
+          return "pass" as const;
         }
         const metadata = (yield* Ref.get(collabChildMetadataRef)).get(child.agentThreadId);
         const childIdentity = collabChildIdentity(child, metadata);
@@ -1637,7 +2023,7 @@ export const makeCodexSessionRuntime = (
               method: "collabAgent/turnStarted",
               payload: childIdentity,
             });
-            return true;
+            return "handled" as const;
           }
           case "turn/completed":
             yield* Ref.update(collabChildLiveTurnsRef, (current) => {
@@ -1655,7 +2041,7 @@ export const makeCodexSessionRuntime = (
                 turn: notification.params.turn,
               },
             });
-            return true;
+            return "handled" as const;
           case "thread/status/changed":
             yield* emitEvent({
               kind: "notification",
@@ -1667,7 +2053,7 @@ export const makeCodexSessionRuntime = (
                 status: notification.params.status,
               },
             });
-            return true;
+            return "handled" as const;
           case "thread/tokenUsage/updated":
             yield* emitEvent({
               kind: "notification",
@@ -1679,7 +2065,7 @@ export const makeCodexSessionRuntime = (
                 tokenUsage: notification.params.tokenUsage,
               },
             });
-            return true;
+            return "handled" as const;
           case "item/started":
           case "item/completed":
             yield* emitEvent({
@@ -1692,7 +2078,7 @@ export const makeCodexSessionRuntime = (
                 item: notification.params.item,
               },
             });
-            return true;
+            return "routed-child" as const;
           case "thread/closed":
             // The child is gone: drop its live-turn entry so a later Stop
             // doesn't waste a turn/interrupt RPC on a closed thread before
@@ -1710,7 +2096,7 @@ export const makeCodexSessionRuntime = (
               method: "collabAgent/closed",
               payload: childIdentity,
             });
-            return true;
+            return "handled" as const;
           case "error": {
             // A child error must surface as a failed agent, not vanish into
             // the default swallow (review finding: the child stayed
@@ -1722,7 +2108,7 @@ export const makeCodexSessionRuntime = (
             // path.
             const willRetry = (notification.params as { willRetry?: boolean }).willRetry === true;
             if (willRetry) {
-              return true;
+              return "handled" as const;
             }
             yield* Ref.update(collabChildLiveTurnsRef, (current) => {
               const next = new Map(current);
@@ -1739,14 +2125,14 @@ export const makeCodexSessionRuntime = (
                 status: { type: "systemError" },
               },
             });
-            return true;
+            return "handled" as const;
           }
           default:
-            // Routing table decides (single source of truth, asserted
-            // against captured wire traces): enumerated chatter is dropped,
-            // everything else — including methods this build has never seen
-            // — falls through to the parent path rather than vanishing.
-            return routeCodexChildNotification(notification.method) === "drop";
+            // The upstream routing table identifies child chatter that must
+            // never mutate parent state. This fork can safely retain it
+            // because the normal mapper stamps providerThreadId/subagentId
+            // before adapter ingestion.
+            return "routed-child" as const;
         }
       });
 
@@ -1771,7 +2157,8 @@ export const makeCodexSessionRuntime = (
         // legacy suppressor below would drop its lifecycle before it could
         // become synthetic collabAgent events (review finding). The
         // suppressor still covers UNREGISTERED children.
-        if (yield* interceptCollabChildNotification(notification)) {
+        const childInterception = yield* interceptCollabChildNotification(notification);
+        if (childInterception === "handled") {
           yield* Ref.set(collabReceiverTurnsRef, collabReceiverTurns);
           return;
         }
@@ -1793,6 +2180,7 @@ export const makeCodexSessionRuntime = (
           );
         })();
         if (
+          childInterception !== "routed-child" &&
           (childParentTurnId !== undefined || foreignConversation) &&
           shouldSuppressChildConversationNotification(notification.method)
         ) {
@@ -1835,10 +2223,13 @@ export const makeCodexSessionRuntime = (
         if (isMemoryConsolidationNotification) {
           return;
         }
+        yield* Ref.set(collabReceiverTurnsRef, collabReceiverTurns);
+        const rootProviderThreadId = yield* currentSessionProviderThreadId;
+        const providerRoute = codexNotificationProviderRoute(rootProviderThreadId, notification);
 
         let requestId: ApprovalRequestId | undefined;
         let requestKind: ProviderRequestKind | undefined;
-        let turnId = childParentTurnId ?? route.turnId;
+        let turnId = route.turnId;
         let itemId = route.itemId;
 
         if (notification.method === "serverRequest/resolved") {
@@ -1862,11 +2253,11 @@ export const makeCodexSessionRuntime = (
           }
         }
 
-        yield* Ref.set(collabReceiverTurnsRef, collabReceiverTurns);
         yield* emitEvent({
           kind: "notification",
           threadId: options.threadId,
           method: notification.method,
+          ...providerRoute,
           ...(turnId ? { turnId } : {}),
           ...(itemId ? { itemId } : {}),
           ...(requestId ? { requestId } : {}),
@@ -1877,8 +2268,6 @@ export const makeCodexSessionRuntime = (
           ...(payload !== undefined ? { payload } : {}),
         });
       });
-
-    const currentSessionProviderThreadId = Effect.map(Ref.get(sessionRef), currentProviderThreadId);
 
     yield* client.handleServerNotification("thread/started", (payload) =>
       currentSessionProviderThreadId.pipe(
@@ -1948,6 +2337,7 @@ export const makeCodexSessionRuntime = (
         const requestId = ApprovalRequestId.make(yield* randomUUIDv4("command-approval-request"));
         const turnId = TurnId.make(payload.turnId);
         const itemId = ProviderItemId.make(payload.itemId);
+        const providerRoute = yield* providerRouteForThreadId(payload.threadId);
         const decision = yield* Deferred.make<ProviderApprovalDecision>();
 
         yield* Ref.update(pendingApprovalsRef, (current) => {
@@ -1958,6 +2348,8 @@ export const makeCodexSessionRuntime = (
             requestKind: "command",
             turnId,
             itemId,
+            providerThreadId: providerRoute.providerThreadId,
+            subagentId: providerRoute.subagentId,
             decision,
           });
           return next;
@@ -1977,6 +2369,7 @@ export const makeCodexSessionRuntime = (
           kind: "request",
           threadId: options.threadId,
           method: "item/commandExecution/requestApproval",
+          ...providerRoute,
           requestId,
           requestKind: "command",
           ...(turnId ? { turnId } : {}),
@@ -2006,6 +2399,7 @@ export const makeCodexSessionRuntime = (
         );
         const turnId = TurnId.make(payload.turnId);
         const itemId = ProviderItemId.make(payload.itemId);
+        const providerRoute = yield* providerRouteForThreadId(payload.threadId);
         const decision = yield* Deferred.make<ProviderApprovalDecision>();
 
         yield* Ref.update(pendingApprovalsRef, (current) => {
@@ -2016,6 +2410,8 @@ export const makeCodexSessionRuntime = (
             requestKind: "file-change",
             turnId,
             itemId,
+            providerThreadId: providerRoute.providerThreadId,
+            subagentId: providerRoute.subagentId,
             decision,
           });
           return next;
@@ -2035,6 +2431,7 @@ export const makeCodexSessionRuntime = (
           kind: "request",
           threadId: options.threadId,
           method: "item/fileChange/requestApproval",
+          ...providerRoute,
           requestId,
           requestKind: "file-change",
           ...(turnId ? { turnId } : {}),
@@ -2073,6 +2470,7 @@ export const makeCodexSessionRuntime = (
         const turnId = payload.turnId
           ? TurnId.make(payload.turnId)
           : (yield* Ref.get(sessionRef)).activeTurnId;
+        const providerRoute = yield* providerRouteForThreadId(payload.threadId);
         const jsonRpcId = payload.mode === "url" ? payload.elicitationId : requestId;
         const decision = yield* Deferred.make<ProviderApprovalDecision>();
 
@@ -2084,6 +2482,8 @@ export const makeCodexSessionRuntime = (
             requestKind: "mcp-elicitation",
             turnId,
             itemId: undefined,
+            providerThreadId: providerRoute.providerThreadId,
+            subagentId: providerRoute.subagentId,
             decision,
           });
           return next;
@@ -2103,6 +2503,7 @@ export const makeCodexSessionRuntime = (
           kind: "request",
           threadId: options.threadId,
           method: "mcpServer/elicitation/request",
+          ...providerRoute,
           requestId,
           requestKind: "mcp-elicitation",
           ...(turnId ? { turnId } : {}),
@@ -2127,6 +2528,7 @@ export const makeCodexSessionRuntime = (
         const requestId = ApprovalRequestId.make(yield* randomUUIDv4("user-input-request"));
         const turnId = TurnId.make(payload.turnId);
         const itemId = ProviderItemId.make(payload.itemId);
+        const providerRoute = yield* providerRouteForThreadId(payload.threadId);
         const answers = yield* Deferred.make<ProviderUserInputAnswers>();
 
         yield* Ref.update(pendingUserInputsRef, (current) => {
@@ -2135,6 +2537,8 @@ export const makeCodexSessionRuntime = (
             requestId,
             turnId,
             itemId,
+            providerThreadId: providerRoute.providerThreadId,
+            subagentId: providerRoute.subagentId,
             answers,
           });
           return next;
@@ -2144,6 +2548,7 @@ export const makeCodexSessionRuntime = (
           kind: "request",
           threadId: options.threadId,
           method: "item/tool/requestUserInput",
+          ...providerRoute,
           requestId,
           ...(turnId ? { turnId } : {}),
           ...(itemId ? { itemId } : {}),
@@ -2178,9 +2583,7 @@ export const makeCodexSessionRuntime = (
 
     const registerServerNotification = <M extends CodexRpc.ServerNotificationMethod>(method: M) =>
       client.handleServerNotification(method, (params) =>
-        Queue.offer(serverNotifications, makeCodexServerNotification(method, params)).pipe(
-          Effect.asVoid,
-        ),
+        serverNotifications.offer(makeCodexServerNotification(method, params)).pipe(Effect.asVoid),
       );
 
     yield* Effect.forEach(
@@ -2191,7 +2594,7 @@ export const makeCodexSessionRuntime = (
       { concurrency: 1, discard: true },
     );
 
-    yield* Stream.fromQueue(serverNotifications).pipe(
+    yield* serverNotifications.stream.pipe(
       Stream.runForEach(handleRawNotification),
       Effect.forkIn(runtimeScope),
     );
@@ -2269,8 +2672,14 @@ export const makeCodexSessionRuntime = (
         runtimeMode: options.runtimeMode,
         cwd: options.cwd,
         requestedModel,
+        ...(options.contextWindow !== undefined ? { contextWindow: options.contextWindow } : {}),
+        ...(options.reasoningEffort !== undefined
+          ? { reasoningEffort: options.reasoningEffort }
+          : {}),
         serviceTier: options.serviceTier,
         resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
+        ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
+        ...(options.internalMcpServer ? { internalMcpServer: options.internalMcpServer } : {}),
       });
 
       const providerThreadId = opened.thread.id;
@@ -2314,29 +2723,37 @@ export const makeCodexSessionRuntime = (
         ),
       );
       yield* Scope.close(runtimeScope, Exit.void);
-      yield* Queue.shutdown(serverNotifications);
-      yield* Queue.shutdown(events);
+      yield* serverNotifications.shutdown;
+      yield* events.shutdown;
+    });
+
+    const forceClose = Effect.gen(function* () {
+      yield* settlePendingApprovals("cancel");
+      yield* settlePendingUserInputs({});
+      const shutdownQueues = Effect.all([serverNotifications.shutdown, events.shutdown], {
+        discard: true,
+      });
+      const cleanup = Effect.all(
+        [
+          Ref.set(closedRef, true),
+          updateSession(sessionRef, {
+            status: "closed",
+            activeTurnId: undefined,
+          }),
+        ],
+        { discard: true },
+      ).pipe(
+        Effect.ensuring(Scope.close(runtimeScope, Exit.void).pipe(Effect.ensuring(shutdownQueues))),
+      );
+      yield* forceTerminateOwnedChildProcessAndCleanup({ child }, cleanup);
     });
 
     return {
       start,
       getSession: Ref.get(sessionRef),
-      compactThread: Effect.gen(function* () {
-        const providerThreadId = yield* readProviderThreadId;
-        yield* client.request("thread/compact/start", { threadId: providerThreadId });
-      }),
       sendTurn: (input) =>
         Effect.gen(function* () {
           const providerThreadId = yield* readProviderThreadId;
-          if (hasConfiguredMcpServer(options.appServerArgs)) {
-            yield* client.request("config/mcpServer/reload", undefined).pipe(
-              Effect.catch((cause) =>
-                Effect.logWarning("Failed to refresh Codex MCP tool catalog before turn.", {
-                  cause,
-                }),
-              ),
-            );
-          }
           const normalizedModel = normalizeCodexModelSlug(
             input.model ?? (yield* Ref.get(sessionRef)).model,
           );
@@ -2352,7 +2769,7 @@ export const makeCodexSessionRuntime = (
             // Derived from the session's own MCP configuration rather than the
             // setting, so the prompt describes the tools this turn actually
             // has even if the setting changed after the session started.
-            browserToolsAvailable: hasConfiguredMcpServer(options.appServerArgs),
+            t3ToolAvailability: configuredT3ToolAvailability(options.appServerArgs),
           });
           const rawResponse = yield* client.raw.request("turn/start", params);
           const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(
@@ -2436,6 +2853,17 @@ export const makeCodexSessionRuntime = (
           });
           return parseThreadSnapshot(response);
         }),
+      forkThread: (input) =>
+        forkCodexThread({
+          client,
+          sourceProviderThreadId: input.sourceProviderThreadId,
+          ...(input.lastProviderTurnId !== undefined
+            ? { lastProviderTurnId: input.lastProviderTurnId }
+            : {}),
+        }),
+      compactThread: readProviderThreadId.pipe(
+        Effect.flatMap((providerThreadId) => compactCodexThread({ client, providerThreadId })),
+      ),
       uploadFeedback: (reason) =>
         Effect.gen(function* () {
           const providerThreadId = yield* readProviderThreadId;
@@ -2466,6 +2894,8 @@ export const makeCodexSessionRuntime = (
             method: "item/requestApproval/decision",
             requestId: pending.requestId,
             requestKind: pending.requestKind,
+            ...(pending.providerThreadId ? { providerThreadId: pending.providerThreadId } : {}),
+            ...(pending.subagentId ? { subagentId: pending.subagentId } : {}),
             ...(pending.turnId ? { turnId: pending.turnId } : {}),
             ...(pending.itemId ? { itemId: pending.itemId } : {}),
             payload: {
@@ -2495,6 +2925,8 @@ export const makeCodexSessionRuntime = (
             threadId: options.threadId,
             method: "item/tool/requestUserInput/answered",
             requestId: pending.requestId,
+            ...(pending.providerThreadId ? { providerThreadId: pending.providerThreadId } : {}),
+            ...(pending.subagentId ? { subagentId: pending.subagentId } : {}),
             ...(pending.turnId ? { turnId: pending.turnId } : {}),
             ...(pending.itemId ? { itemId: pending.itemId } : {}),
             payload: {
@@ -2502,7 +2934,35 @@ export const makeCodexSessionRuntime = (
             },
           });
         }),
-      events: Stream.fromQueue(events),
+      listMcpServerStatuses: (detail = "toolsAndAuthOnly") =>
+        Effect.gen(function* () {
+          const providerThreadId = yield* readProviderThreadId;
+          return yield* listCodexMcpServerStatuses(
+            (params) => client.request("mcpServerStatus/list", params),
+            {
+              threadId: providerThreadId,
+              detail,
+            },
+          );
+        }),
+      reloadMcpServers: Effect.gen(function* () {
+        yield* readProviderThreadId;
+        yield* client.request("config/mcpServer/reload", undefined);
+      }),
+      startMcpOauth: (input) =>
+        Effect.gen(function* () {
+          const providerThreadId = yield* readProviderThreadId;
+          return yield* requestCodexMcpOauth(
+            (params) => client.request("mcpServer/oauth/login", params),
+            {
+              providerThreadId,
+              serverName: input.serverName,
+              ...(input.scopes ? { scopes: input.scopes } : {}),
+            },
+          );
+        }),
+      events: events.stream,
       close,
+      forceClose,
     } satisfies CodexSessionRuntimeShape;
   });

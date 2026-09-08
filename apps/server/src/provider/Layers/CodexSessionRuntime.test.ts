@@ -1,10 +1,17 @@
+import { CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS } from "../CodexDeveloperInstructions.ts";
+import { CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS } from "../CodexDeveloperInstructions.ts";
+import { compactCodexThread } from "./CodexSessionRuntime.ts";
+import { codexNotificationProviderRoute } from "./CodexSessionRuntime.ts";
+import { configuredT3ToolAvailability } from "./CodexSessionRuntime.ts";
+import { forkCodexThread } from "./CodexSessionRuntime.ts";
+import { requestCodexMcpOauth } from "./CodexSessionRuntime.ts";
 import * as NodeAssert from "node:assert/strict";
 
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { describe } from "vite-plus/test";
-import { DEFAULT_MODEL, ThreadId } from "@t3tools/contracts";
+import { DEFAULT_MODEL, McpServerDefinition, SubagentId, ThreadId } from "@t3tools/contracts";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
@@ -16,11 +23,14 @@ import {
   describeMcpElicitation,
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
+  listCodexMcpServerStatuses,
+  makeCodexSubagentId,
   makeMemoryConsolidationNotificationFilter,
   openCodexThread,
   toMcpElicitationResponse,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
+const decodeMcpServerDefinition = Schema.decodeSync(McpServerDefinition);
 
 describe("CodexSessionRuntimeIdentifierGenerationError", () => {
   it("retains identifier purpose and the random source failure", () => {
@@ -514,11 +524,31 @@ describe("T3 browser developer instructions", () => {
   it("prefers the product-native preview tools in both collaboration modes", () => {
     for (const mode of ["default", "plan"] as const) {
       const instructions = buildCodexDeveloperInstructions(mode, runtime, true);
-      NodeAssert.match(instructions, /t3-code/);
+      NodeAssert.match(instructions, /T3 preview tools/);
       NodeAssert.match(instructions, /preview_status/);
-      NodeAssert.match(instructions, /preview_open/);
-      NodeAssert.match(instructions, /Do not switch to global browser skills/);
+      NodeAssert.match(instructions, /open a preview/i);
+      NodeAssert.match(instructions, /before switching browser systems/i);
     }
+  });
+
+  it("keeps collaboration guidance and concise workspace-tool preferences", () => {
+    NodeAssert.match(CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS, /concise by default/);
+    NodeAssert.match(CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS, /complete replacement/);
+    NodeAssert.match(
+      CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+      /request_user_input.*listed in the available tools/,
+    );
+
+    for (const instructions of [
+      CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+      CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+    ]) {
+      NodeAssert.match(instructions, /workspace_context/);
+      NodeAssert.doesNotMatch(instructions, /then use bounded.*rg/i);
+      NodeAssert.doesNotMatch(instructions, /reuse.*results/i);
+    }
+    NodeAssert.match(CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS, /workspace_edit/);
+    NodeAssert.doesNotMatch(CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS, /workspace_edit/);
   });
 
   it("omits the browser block entirely when the preview tools are not attached", () => {
@@ -530,30 +560,239 @@ describe("T3 browser developer instructions", () => {
       // Steering away from other browser automation must go with the tools;
       // keeping it would leave the model talked out of its only option.
       NodeAssert.doesNotMatch(instructions, /Do not switch to global browser skills/);
-      // The rest of the collaboration mode is untouched.
+      // The collaboration mode remains valid while unavailable toolkits stay absent.
       NodeAssert.match(instructions, /<collaboration_mode>/);
       NodeAssert.match(instructions, /<\/collaboration_mode>/);
+      NodeAssert.doesNotMatch(instructions, /workspace_context/);
     }
   });
 
   it("tracks the turn's MCP configuration rather than defaulting to on", () => {
-    NodeAssert.match(buildCodexDeveloperInstructions("default", runtime, true), /preview_open/);
+    NodeAssert.match(buildCodexDeveloperInstructions("default", runtime, true), /preview_status/);
     NodeAssert.doesNotMatch(
       buildCodexDeveloperInstructions("default", runtime, false),
-      /preview_open/,
+      /preview_status/,
+    );
+  });
+});
+
+describe("configuredT3ToolAvailability", () => {
+  it("announces only toolkits attached by the selected endpoint profile", () => {
+    NodeAssert.deepEqual(configuredT3ToolAvailability(undefined), {
+      preview: false,
+      workspace: false,
+      workspaceWrite: false,
+      coordination: false,
+      threadContext: false,
+      projectMemory: false,
+      knowledgeGraph: false,
+    });
+    NodeAssert.deepEqual(
+      configuredT3ToolAvailability([
+        "-c",
+        'mcp_servers.t3-code.url="http://127.0.0.1/mcp/workspace-no-preview"',
+      ]),
+      {
+        preview: false,
+        workspace: true,
+        workspaceWrite: false,
+        coordination: true,
+        threadContext: true,
+        projectMemory: true,
+        knowledgeGraph: true,
+      },
+    );
+    NodeAssert.deepEqual(
+      configuredT3ToolAvailability([
+        "-c",
+        'mcp_servers.t3-code.url="http://127.0.0.1/mcp/workspace-only"',
+      ]),
+      {
+        preview: false,
+        workspace: true,
+        workspaceWrite: false,
+        coordination: false,
+        threadContext: true,
+        projectMemory: true,
+        knowledgeGraph: false,
+      },
+    );
+    NodeAssert.deepEqual(
+      configuredT3ToolAvailability([
+        "-c",
+        'mcp_servers.t3-code.url="http://127.0.0.1/mcp/workspace-only-no-memory"',
+      ]),
+      {
+        preview: false,
+        workspace: true,
+        workspaceWrite: false,
+        coordination: false,
+        threadContext: true,
+        projectMemory: false,
+        knowledgeGraph: false,
+      },
+    );
+    NodeAssert.deepEqual(
+      configuredT3ToolAvailability([
+        "-c",
+        'mcp_servers.t3-code.url="http://127.0.0.1/mcp/workspace-write-no-preview"',
+      ]),
+      {
+        preview: false,
+        workspace: true,
+        workspaceWrite: true,
+        coordination: true,
+        threadContext: true,
+        projectMemory: true,
+        knowledgeGraph: true,
+      },
+    );
+    NodeAssert.deepEqual(
+      configuredT3ToolAvailability([
+        "-c",
+        'mcp_servers.t3-code.url="http://127.0.0.1/mcp/workspace-write-only-no-memory"',
+      ]),
+      {
+        preview: false,
+        workspace: true,
+        workspaceWrite: true,
+        coordination: false,
+        threadContext: true,
+        projectMemory: false,
+        knowledgeGraph: false,
+      },
     );
   });
 });
 
 describe("hasConfiguredMcpServer", () => {
-  it("detects inline Codex MCP configuration arguments", () => {
+  it("distinguishes preview-capable and preview-free T3 MCP endpoint profiles", () => {
     NodeAssert.equal(hasConfiguredMcpServer(undefined), false);
     NodeAssert.equal(hasConfiguredMcpServer(["--model", "gpt-5.4"]), false);
     NodeAssert.equal(
       hasConfiguredMcpServer(["-c", 'mcp_servers.t3-code.url="http://127.0.0.1/mcp"']),
       true,
     );
+    NodeAssert.equal(
+      hasConfiguredMcpServer(["-c", 'mcp_servers.t3-code.url="http://127.0.0.1/mcp/workspace"']),
+      true,
+    );
+    NodeAssert.equal(
+      hasConfiguredMcpServer([
+        "-c",
+        'mcp_servers.t3-code.url="http://127.0.0.1/mcp/workspace-write"',
+      ]),
+      true,
+    );
+    for (const profile of [
+      "workspace-no-preview",
+      "coordination",
+      "workspace-only",
+      "workspace-no-preview-no-memory",
+      "workspace-only-no-memory",
+      "workspace-write-no-preview",
+      "workspace-write-no-preview-no-memory",
+      "workspace-write-only",
+      "workspace-write-only-no-memory",
+    ]) {
+      NodeAssert.equal(
+        hasConfiguredMcpServer(["-c", `mcp_servers.t3-code.url="http://127.0.0.1/mcp/${profile}"`]),
+        false,
+      );
+    }
   });
+});
+
+describe("listCodexMcpServerStatuses", () => {
+  it.effect("follows every pagination cursor while preserving thread and detail filters", () =>
+    Effect.gen(function* () {
+      const requests: Array<CodexRpc.ClientRequestParamsByMethod["mcpServerStatus/list"]> = [];
+      const responses: Array<CodexRpc.ClientRequestResponsesByMethod["mcpServerStatus/list"]> = [
+        {
+          data: [
+            {
+              authStatus: "oAuth",
+              name: "notion",
+              resourceTemplates: [],
+              resources: [],
+              serverInfo: null,
+              tools: {},
+            },
+          ],
+          nextCursor: "page-2",
+        },
+        {
+          data: [
+            {
+              authStatus: "bearerToken",
+              name: "github",
+              resourceTemplates: [],
+              resources: [],
+              serverInfo: null,
+              tools: {},
+            },
+          ],
+          nextCursor: null,
+        },
+      ];
+
+      const statuses = yield* listCodexMcpServerStatuses(
+        (params) =>
+          Effect.sync(() => {
+            requests.push(params);
+            const response = responses.shift();
+            NodeAssert.ok(response);
+            return response;
+          }),
+        {
+          threadId: "provider-thread-1",
+          detail: "full",
+        },
+      );
+
+      NodeAssert.deepStrictEqual(
+        statuses.map((status) => status.name),
+        ["notion", "github"],
+      );
+      NodeAssert.deepStrictEqual(requests, [
+        {
+          threadId: "provider-thread-1",
+          detail: "full",
+        },
+        {
+          threadId: "provider-thread-1",
+          detail: "full",
+          cursor: "page-2",
+        },
+      ]);
+    }),
+  );
+});
+
+describe("requestCodexMcpOauth", () => {
+  it.effect("scopes authorization to the exact provider thread and server", () =>
+    Effect.gen(function* () {
+      let requested: CodexRpc.ClientRequestParamsByMethod["mcpServer/oauth/login"] | undefined;
+      const response = yield* requestCodexMcpOauth(
+        (params) => {
+          requested = params;
+          return Effect.succeed({ authorizationUrl: "https://auth.example.test/authorize" });
+        },
+        {
+          providerThreadId: "provider-thread-1",
+          serverName: "notion",
+          scopes: ["search", "read"],
+        },
+      );
+
+      NodeAssert.deepStrictEqual(requested, {
+        name: "notion",
+        threadId: "provider-thread-1",
+        scopes: ["search", "read"],
+      });
+      NodeAssert.equal(response.authorizationUrl, "https://auth.example.test/authorize");
+    }),
+  );
 });
 
 function makeThreadStartedNotification(
@@ -719,6 +958,80 @@ describe("codexSessionAppServerArgs", () => {
       ],
     );
   });
+
+  it("passes narrow and explicit optional T3 profiles to the Codex runtime unchanged", () => {
+    const profileArg = (
+      profile: "workspace-only" | "workspace-no-preview" | "workspace-only-no-memory",
+    ) => `mcp_servers.t3-code.url=http://127.0.0.1/mcp/${profile}`;
+
+    NodeAssert.deepStrictEqual(codexSessionAppServerArgs(["-c", profileArg("workspace-only")]), [
+      "app-server",
+      "-c",
+      profileArg("workspace-only"),
+    ]);
+    NodeAssert.deepStrictEqual(
+      codexSessionAppServerArgs(["-c", profileArg("workspace-no-preview")]),
+      ["app-server", "-c", profileArg("workspace-no-preview")],
+    );
+    NodeAssert.deepStrictEqual(
+      codexSessionAppServerArgs(["-c", profileArg("workspace-only-no-memory")]),
+      ["app-server", "-c", profileArg("workspace-only-no-memory")],
+    );
+  });
+});
+
+describe("Codex notification provider routing", () => {
+  it("tags child notifications from their provider thread without rewriting their route", () => {
+    const route = codexNotificationProviderRoute("provider-root", {
+      method: "item/started",
+      params: {
+        threadId: "provider-child",
+        turnId: "child-turn",
+        item: {
+          id: "child-item",
+          type: "agentMessage",
+          text: "",
+        },
+      },
+    });
+
+    NodeAssert.deepStrictEqual(route, {
+      providerThreadId: "provider-child",
+      subagentId: SubagentId.make("codex:provider-child"),
+    });
+  });
+
+  it("reads child thread ids from thread metadata notifications", () => {
+    const route = codexNotificationProviderRoute("provider-root", {
+      method: "thread/started",
+      params: {
+        thread: {
+          id: "provider-child",
+        },
+      },
+    });
+
+    NodeAssert.deepStrictEqual(route, {
+      providerThreadId: "provider-child",
+      subagentId: makeCodexSubagentId("provider-child"),
+    });
+  });
+
+  it("keeps root notifications untagged while retaining the provider thread id", () => {
+    const route = codexNotificationProviderRoute("provider-root", {
+      method: "turn/started",
+      params: {
+        threadId: "provider-root",
+        turn: {
+          id: "root-turn",
+        },
+      },
+    });
+
+    NodeAssert.deepStrictEqual(route, {
+      providerThreadId: "provider-root",
+    });
+  });
 });
 
 describe("isRecoverableThreadResumeError", () => {
@@ -836,6 +1149,7 @@ describe("openCodexThread", () => {
             sandbox: "workspace-write",
             approvalsReviewer: "auto_review",
             excludeTurns: true,
+            config: { model_auto_compact_token_limit_scope: "body_after_prefix" },
           },
         },
       ]);
@@ -907,6 +1221,7 @@ describe("openCodexThread", () => {
         runtimeMode: "full-access",
         cwd: "/tmp/project",
         requestedModel: "gpt-5.3-codex",
+        contextWindow: 524_288,
         serviceTier: undefined,
         resumeThreadId: "stale-thread",
       });
@@ -916,6 +1231,13 @@ describe("openCodexThread", () => {
         calls.map((call) => call.method),
         ["thread/resume", "thread/start"],
       );
+      for (const call of calls) {
+        NodeAssert.equal(
+          (call.payload as { readonly config?: { readonly model_context_window?: number } }).config
+            ?.model_context_window,
+          524_288,
+        );
+      }
     }),
   );
 
@@ -946,6 +1268,87 @@ describe("openCodexThread", () => {
 
       NodeAssert.ok(isCodexAppServerRequestError(error));
       NodeAssert.equal(error.errorMessage, "timed out waiting for server");
+    }),
+  );
+});
+
+describe("Codex native thread lifecycle", () => {
+  it.effect("forks through the requested provider turn without serializing a transcript", () =>
+    Effect.gen(function* () {
+      const requests: Array<{ readonly method: string; readonly payload: unknown }> = [];
+      const result = yield* forkCodexThread({
+        client: {
+          request: (method, payload) => {
+            requests.push({ method, payload });
+            return Effect.succeed({
+              model: "gpt-5.6-sol",
+              reasoningEffort: "high",
+              thread: { id: "provider-child" },
+            } as CodexRpc.ClientRequestResponsesByMethod["thread/fork"]);
+          },
+        },
+        sourceProviderThreadId: "provider-parent",
+        lastProviderTurnId: "provider-turn-7",
+      });
+      yield* forkCodexThread({
+        client: {
+          request: (method, payload) => {
+            requests.push({ method, payload });
+            return Effect.succeed({
+              model: "gpt-5.6-sol",
+              thread: { id: "provider-child-latest" },
+            } as CodexRpc.ClientRequestResponsesByMethod["thread/fork"]);
+          },
+        },
+        sourceProviderThreadId: "provider-parent",
+      });
+
+      NodeAssert.deepStrictEqual(requests, [
+        {
+          method: "thread/fork",
+          payload: {
+            threadId: "provider-parent",
+            lastTurnId: "provider-turn-7",
+          },
+        },
+        {
+          method: "thread/fork",
+          payload: { threadId: "provider-parent" },
+        },
+      ]);
+      NodeAssert.deepStrictEqual(result, {
+        threadId: "provider-child",
+        model: "gpt-5.6-sol",
+        reasoningEffort: "high",
+      });
+    }),
+  );
+
+  it.effect("treats a native compaction request failure as nonfatal", () =>
+    Effect.gen(function* () {
+      const requests: Array<{ readonly method: string; readonly payload: unknown }> = [];
+
+      yield* compactCodexThread({
+        client: {
+          request: (method, payload) => {
+            requests.push({ method, payload });
+            return Effect.fail(
+              new CodexErrors.CodexAppServerRequestError({
+                code: -32603,
+                errorMessage: "compaction unavailable",
+              }),
+            );
+          },
+        },
+        providerThreadId: "provider-thread-1",
+      });
+
+      NodeAssert.deepStrictEqual(requests, [
+        {
+          method: "thread/compact/start",
+          payload: { threadId: "provider-thread-1" },
+        },
+      ]);
     }),
   );
 });

@@ -1,6 +1,7 @@
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Cause from "effect/Cause";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
@@ -25,9 +26,17 @@ import type {
 } from "@t3tools/contracts";
 import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/contracts";
 
-import { createModelCapabilities, readCustomModelEntries } from "@t3tools/shared/model";
+import {
+  createCodexContextWindowDescriptor,
+  createModelCapabilities,
+  readCustomModelEntries,
+} from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
+import {
+  codexAppServerArgs as codexConfiguredAppServerArgs,
+  codexExecLaunchArgs,
+  resolveCodexLaunchArgs,
+} from "./codexLaunchArgs.ts";
 import {
   AUTH_PROBE_TIMEOUT_MS,
   buildServerProvider,
@@ -42,7 +51,10 @@ import {
   type CodexRateLimitSnapshot,
   type CodexResetCreditsSummary,
 } from "./codexUsageLimits.ts";
+import { codexManagedFeatureArgs } from "../CodexProcessArgs.ts";
+import { CODEX_DEFAULT_SERVICE_TIER, CODEX_FAST_SERVICE_TIER } from "../../codexModelOptions.ts";
 import packageJson from "../../../package.json" with { type: "json" };
+import { collectUint8StreamText } from "../../stream/collectUint8StreamText.ts";
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
 const RATE_LIMITS_PROBE_TIMEOUT_MS = 3_000;
 
@@ -57,11 +69,21 @@ type CodexRateLimitsProbe =
     }
   | { readonly failure: string };
 
-const CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER = "2 seconds" as const;
+const CODEX_MODEL_CATALOG_MAX_BYTES = 2 * 1024 * 1024;
+const CODEX_MODEL_CATALOG_TIMEOUT = Duration.seconds(5);
+const decodeUnknownJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
 const CODEX_PRESENTATION = {
   displayName: "Codex",
   showInteractionModeToggle: true,
+  nativeSubagents: {
+    toolName: "spawn_agent",
+    maxRecommendedSubagents: 8,
+  },
+  fetchWorkers: {
+    maxRecommendedWorkers: 8,
+    commandExecutionPolicy: "deny",
+  },
 } as const;
 
 export interface CodexAppServerProviderSnapshot {
@@ -79,11 +101,21 @@ const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
   medium: "Medium",
   high: "High",
   xhigh: "Extra High",
-  max: "Max",
   ultra: "Ultra",
+  max: "Maximum",
 };
 
-const DEFAULT_SERVICE_TIER_ID = "default";
+const CURRENT_CODEX_MODELS = new Set([
+  "gpt-5.6-luna",
+  "gpt-5.6-terra",
+  "gpt-5.6-sol",
+  "gpt-daybreak-blue-latest",
+  "gpt-daybreak-red-latest",
+]);
+
+export function isLegacyCodexModel(model: string): boolean {
+  return !CURRENT_CODEX_MODELS.has(model);
+}
 
 function reasoningEffortLabel(reasoningEffort: string): string {
   return REASONING_EFFORT_LABELS[reasoningEffort] ?? reasoningEffort;
@@ -139,6 +171,7 @@ function codexAccountEmail(account: CodexSchema.V2GetAccountResponse["account"])
 
 export function mapCodexModelCapabilities(
   model: CodexSchema.V2ModelListResponse__Model,
+  contextWindow?: ModelCapabilities["contextWindow"],
 ): ModelCapabilities {
   const reasoningOptions = model.supportedReasoningEfforts.map(({ reasoningEffort }) =>
     reasoningEffort === model.defaultReasoningEffort
@@ -153,7 +186,7 @@ export function mapCodexModelCapabilities(
         },
   );
   const defaultReasoning = reasoningOptions.find((option) => option.isDefault)?.id;
-  const serviceTiers =
+  const rawServiceTiers =
     model.serviceTiers && model.serviceTiers.length > 0
       ? model.serviceTiers
       : (model.additionalSpeedTiers ?? []).map((id) => ({
@@ -161,12 +194,26 @@ export function mapCodexModelCapabilities(
           name: id === "fast" ? "Fast" : id,
           description: "",
         }));
-  const catalogDefaultServiceTier = serviceTiers.some(
-    (tier) => tier.id === model.defaultServiceTier,
-  )
-    ? model.defaultServiceTier
+  const serviceTiers = rawServiceTiers.reduce<
+    Array<{ readonly id: string; readonly name: string; readonly description: string }>
+  >((tiers, tier) => {
+    const id = tier.id === "fast" ? CODEX_FAST_SERVICE_TIER : tier.id;
+    if (tiers.some((candidate) => candidate.id === id)) {
+      return tiers;
+    }
+    tiers.push({
+      id,
+      name: id === CODEX_FAST_SERVICE_TIER ? "Fast" : tier.name,
+      description: tier.description,
+    });
+    return tiers;
+  }, []);
+  const catalogDefaultTier =
+    model.defaultServiceTier === "fast" ? CODEX_FAST_SERVICE_TIER : model.defaultServiceTier;
+  const catalogDefaultServiceTier = serviceTiers.some((tier) => tier.id === catalogDefaultTier)
+    ? catalogDefaultTier
     : null;
-  const defaultServiceTier = catalogDefaultServiceTier ?? DEFAULT_SERVICE_TIER_ID;
+  const defaultServiceTier = catalogDefaultServiceTier ?? CODEX_DEFAULT_SERVICE_TIER;
   const optionDescriptors: ProviderOptionDescriptor[] = [];
 
   if (reasoningOptions.length > 0) {
@@ -185,9 +232,9 @@ export function mapCodexModelCapabilities(
       type: "select",
       options: [
         {
-          id: DEFAULT_SERVICE_TIER_ID,
+          id: CODEX_DEFAULT_SERVICE_TIER,
           label: "Standard",
-          ...(defaultServiceTier === DEFAULT_SERVICE_TIER_ID ? { isDefault: true } : {}),
+          ...(defaultServiceTier === CODEX_DEFAULT_SERVICE_TIER ? { isDefault: true } : {}),
         },
         ...serviceTiers.map((tier) => ({
           id: tier.id,
@@ -199,11 +246,135 @@ export function mapCodexModelCapabilities(
       currentValue: defaultServiceTier,
     });
   }
+  if (contextWindow) {
+    optionDescriptors.push(createCodexContextWindowDescriptor(contextWindow));
+  }
 
   return createModelCapabilities({
     optionDescriptors,
+    ...(contextWindow ? { contextWindow } : {}),
   });
 }
+
+type CodexContextWindowMetadata = NonNullable<ModelCapabilities["contextWindow"]>;
+
+export function parseCodexDebugModelCatalog(
+  value: unknown,
+): Map<string, CodexContextWindowMetadata> {
+  if (typeof value !== "object" || value === null || !("models" in value)) return new Map();
+  const models = (value as { readonly models?: unknown }).models;
+  if (!Array.isArray(models)) return new Map();
+
+  const parsed = new Map<string, CodexContextWindowMetadata>();
+  for (const model of models) {
+    if (typeof model !== "object" || model === null) continue;
+    const candidate = model as Record<string, unknown>;
+    const slug = typeof candidate.slug === "string" ? candidate.slug.trim() : "";
+    const defaultTokens = candidate.context_window;
+    const maxTokens = candidate.max_context_window;
+    const effectivePercent = candidate.effective_context_window_percent;
+    if (
+      !slug ||
+      !Number.isSafeInteger(defaultTokens) ||
+      !Number.isSafeInteger(maxTokens) ||
+      Number(defaultTokens) <= 0 ||
+      Number(maxTokens) < Number(defaultTokens)
+    ) {
+      continue;
+    }
+    parsed.set(slug, {
+      defaultTokens: Number(defaultTokens),
+      maxTokens: Number(maxTokens),
+      ...(typeof effectivePercent === "number" &&
+      Number.isFinite(effectivePercent) &&
+      effectivePercent >= 1 &&
+      effectivePercent <= 100
+        ? { effectivePercent }
+        : {}),
+    });
+  }
+  return parsed;
+}
+
+function enrichCodexModelsWithContextWindow(
+  models: ReadonlyArray<ServerProviderModel>,
+  catalog: ReadonlyMap<string, CodexContextWindowMetadata>,
+): ReadonlyArray<ServerProviderModel> {
+  return models.map((model) => {
+    const contextWindow = catalog.get(model.slug);
+    if (!contextWindow) return model;
+    const capabilities = model.capabilities ?? createModelCapabilities({ optionDescriptors: [] });
+    const optionDescriptors = (capabilities.optionDescriptors ?? []).filter(
+      (descriptor) => descriptor.id !== "contextWindow",
+    );
+    return {
+      ...model,
+      capabilities: createModelCapabilities({
+        optionDescriptors: [
+          ...optionDescriptors,
+          createCodexContextWindowDescriptor(contextWindow),
+        ],
+        contextWindow,
+      }),
+    };
+  });
+}
+
+const probeCodexContextWindowCatalog = Effect.fn("probeCodexContextWindowCatalog")(
+  function* (input: {
+    readonly binaryPath: string;
+    readonly launchArgs?: string;
+    readonly cwd: string;
+    readonly environment: NodeJS.ProcessEnv;
+  }) {
+    const args = [...codexExecLaunchArgs(input.launchArgs), "debug", "models"];
+    const spawnCommand = yield* resolveSpawnCommand(input.binaryPath, args, {
+      env: input.environment,
+      extendEnv: true,
+    });
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const child = yield* spawner.spawn(
+      ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+        cwd: input.cwd,
+        env: input.environment,
+        extendEnv: true,
+        shell: spawnCommand.shell,
+      }),
+    );
+    const [stdout, stderr, exitCode] = yield* Effect.all(
+      [
+        collectUint8StreamText({
+          stream: child.stdout,
+          maxBytes: CODEX_MODEL_CATALOG_MAX_BYTES,
+        }),
+        collectUint8StreamText({ stream: child.stderr, maxBytes: 16 * 1024 }),
+        child.exitCode.pipe(Effect.map(Number)),
+      ],
+      { concurrency: "unbounded" },
+    );
+    if (exitCode !== 0 || stdout.truncated || stdout.invalidUtf8 || stderr.truncated) {
+      return new Map<string, CodexContextWindowMetadata>();
+    }
+    const decoded = yield* decodeUnknownJson(stdout.text);
+    return parseCodexDebugModelCatalog(decoded);
+  },
+);
+
+const loadCodexContextWindowCatalog = (input: {
+  readonly binaryPath: string;
+  readonly launchArgs?: string;
+  readonly cwd: string;
+  readonly environment: NodeJS.ProcessEnv;
+}) =>
+  probeCodexContextWindowCatalog(input).pipe(
+    Effect.scoped,
+    Effect.timeout(CODEX_MODEL_CATALOG_TIMEOUT),
+    Effect.catchCause((cause) =>
+      Effect.logDebug("Codex model context catalog unavailable", {
+        cause: Cause.pretty(cause),
+      }).pipe(Effect.as(new Map<string, CodexContextWindowMetadata>())),
+    ),
+  );
 
 const toDisplayName = (model: CodexSchema.V2ModelListResponse__Model): string => {
   // Capitalize 'gpt' to 'GPT-' and capitalize any letter following a dash
@@ -365,23 +536,25 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
   // "CODEX_HOME points to '~/.codex_work', but that path does not exist".
   // Expand here for parity with `CodexTextGeneration`/`CodexSessionRuntime`.
   const resolvedHomePath = input.homePath ? expandHomePath(input.homePath) : undefined;
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const environment = {
     ...input.environment,
     ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
   };
-  const spawnCommand = yield* resolveSpawnCommand(
-    input.binaryPath,
-    codexAppServerArgs(input.launchArgs),
-    { env: environment, extendEnv: true },
-  );
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const appServerArgs = [
+    ...codexConfiguredAppServerArgs(input.launchArgs),
+    ...codexManagedFeatureArgs(),
+  ];
+  const spawnCommand = yield* resolveSpawnCommand(input.binaryPath, appServerArgs, {
+    env: environment,
+    extendEnv: true,
+  });
   const child = yield* spawner
     .spawn(
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         cwd: input.cwd,
         env: environment,
         extendEnv: true,
-        forceKillAfter: CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER,
         shell: spawnCommand.shell,
       }),
     )
@@ -389,7 +562,7 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
       Effect.mapError(
         (cause) =>
           new CodexErrors.CodexAppServerSpawnError({
-            command: `${input.binaryPath} app-server`,
+            command: `${input.binaryPath} ${appServerArgs.join(" ")}`,
             cause,
           }),
       ),
@@ -427,7 +600,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     } satisfies CodexAppServerProviderSnapshot;
   }
 
-  const [skillsResponse, models, rateLimits] = yield* Effect.all(
+  const [skillsResponse, models, rateLimits, contextCatalog] = yield* Effect.all(
     [
       client.request("skills/list", {
         cwds: [input.cwd],
@@ -453,6 +626,12 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
           ),
         ),
       ),
+      loadCodexContextWindowCatalog({
+        binaryPath: input.binaryPath,
+        ...(input.launchArgs ? { launchArgs: input.launchArgs } : {}),
+        cwd: input.cwd,
+        environment: input.environment ?? process.env,
+      }),
     ],
     { concurrency: "unbounded" },
   );
@@ -462,7 +641,10 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     rateLimits,
     version,
     models: applyPreferredCodexDefaultModel(
-      appendCustomCodexModels(models, input.customModels ?? []),
+      enrichCodexModelsWithContextWindow(
+        appendCustomCodexModels(models, input.customModels ?? []),
+        contextCatalog,
+      ),
     ),
     skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
   } satisfies CodexAppServerProviderSnapshot;
