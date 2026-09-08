@@ -1,3 +1,14 @@
+import type {
+  PlanImplementationStrategy,
+  PlanImplementationSuggestion,
+  PlanParallelismReviewStatus,
+} from "@t3tools/client-runtime/plan-implementation";
+import {
+  buildPlanImplementationActionPresentation,
+  resolvePlanImplementationReviewPresentation,
+} from "../../planImplementationActions";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
+import type { ThreadAbortPresentation } from "@t3tools/client-runtime/state/thread-abort";
 import { memo, type PointerEventHandler } from "react";
 import { ChevronDownIcon, ChevronLeftIcon } from "lucide-react";
 import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
@@ -20,6 +31,7 @@ interface ComposerPrimaryActionsProps {
   compact: boolean;
   pendingAction: PendingActionState | null;
   isRunning: boolean;
+  abortPresentation?: ThreadAbortPresentation;
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
@@ -34,7 +46,10 @@ interface ComposerPrimaryActionsProps {
   showSendWhileRunning?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
-  onImplementPlanInNewThread: () => void;
+  planImplementationSuggestion?: PlanImplementationSuggestion | null;
+  planParallelismReviewStatus?: PlanParallelismReviewStatus;
+  onImplementPlan?: (strategy: PlanImplementationStrategy) => void;
+  onImplementPlanInNewThread: (strategy: PlanImplementationStrategy) => void;
 }
 
 const formatPendingPrimaryActionLabel = (input: {
@@ -63,6 +78,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   compact,
   pendingAction,
   isRunning,
+  abortPresentation,
   showPlanFollowUpPrompt,
   promptHasText,
   isSendBusy,
@@ -75,8 +91,27 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   showSendWhileRunning = false,
   onPreviousPendingQuestion,
   onInterrupt,
+  planImplementationSuggestion = null,
+  planParallelismReviewStatus = "idle",
+  onImplementPlan,
   onImplementPlanInNewThread,
 }: ComposerPrimaryActionsProps) {
+  const translate = useInterfaceTranslator().message;
+  const planActions = buildPlanImplementationActionPresentation({
+    compact,
+    suggestion: planImplementationSuggestion,
+    translate,
+  });
+  const planReview = resolvePlanImplementationReviewPresentation(
+    planParallelismReviewStatus,
+    translate,
+  );
+  const planActionsDisabled =
+    isSendBusy ||
+    sendDisabledReason !== null ||
+    isConnecting ||
+    isEnvironmentUnavailable ||
+    planReview.actionsDisabled;
   const pointerFocusProps = preserveComposerFocusOnPointerDown
     ? { onPointerDown: preventPointerFocus }
     : undefined;
@@ -99,7 +134,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       )}
       {...pointerFocusProps}
       onClick={onInterrupt}
-      aria-label="Stop generation"
+      aria-label={abortPresentation?.accessibilityLabel ?? "Stop generation"}
+      disabled={abortPresentation?.disabled === true}
+      aria-busy={abortPresentation?.phase === "force-stopping" || undefined}
     >
       <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
         <rect x="2" y="2" width="8" height="8" rx="1.5" />
@@ -110,7 +147,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   if (pendingAction) {
     return (
       <div className={cn("flex items-center justify-end", compact ? "gap-1.5" : "gap-2")}>
-        {isRunning ? renderStopGenerationButton(true) : null}
+        {isRunning || abortPresentation?.showStopAction ? renderStopGenerationButton(true) : null}
         {pendingAction.questionIndex > 0 ? (
           compact ? (
             <Button
@@ -183,13 +220,23 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     return (
       <div data-chat-composer-implement-actions="true" className="flex items-center justify-end">
         <Button
-          type="submit"
+          type={onImplementPlan ? "button" : "submit"}
           size="sm"
           className="h-9 rounded-l-full rounded-r-none bg-message-action px-4 text-message-action-foreground hover:bg-message-action-hover sm:h-8"
           {...pointerFocusProps}
-          disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
+          aria-label={planActions.primaryAriaLabel ?? undefined}
+          title={planReview.tooltip ?? undefined}
+          onClick={
+            onImplementPlan
+              ? () =>
+                  onImplementPlan(planImplementationSuggestion?.strategy ?? { kind: "standard" })
+              : undefined
+          }
+          disabled={planActionsDisabled}
         >
-          {isConnecting || isSendBusy ? "Sending..." : "Implement"}
+          {isConnecting || isSendBusy
+            ? "Sending..."
+            : (planReview.primaryLabel ?? planActions.primaryLabel)}
         </Button>
         <Menu>
           <MenuTrigger
@@ -200,19 +247,25 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
                 className="h-9 rounded-l-none rounded-r-full border-l-message-action-foreground/20 bg-message-action px-2 text-message-action-foreground hover:bg-message-action-hover sm:h-8"
                 aria-label="Implementation actions"
                 {...pointerFocusProps}
-                disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
+                disabled={planActionsDisabled}
               />
             }
           >
             <ChevronDownIcon className="size-3.5" />
           </MenuTrigger>
           <MenuPopup align="end" side="top" {...composerFloatingLayerProps}>
-            <MenuItem
-              disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
-              onClick={() => void onImplementPlanInNewThread()}
-            >
-              Implement in a new thread
-            </MenuItem>
+            {planActions.menuActions.map((action) => (
+              <MenuItem
+                key={action.id}
+                disabled={planActionsDisabled}
+                onClick={() => {
+                  if (action.target === "new-thread") onImplementPlanInNewThread(action.strategy);
+                  else onImplementPlan?.(action.strategy);
+                }}
+              >
+                {action.label}
+              </MenuItem>
+            ))}
           </MenuPopup>
         </Menu>
       </div>
@@ -271,7 +324,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     </button>
   );
 
-  if (!isRunning) {
+  if (!isRunning && !abortPresentation?.showStopAction) {
     return sendButton;
   }
 
