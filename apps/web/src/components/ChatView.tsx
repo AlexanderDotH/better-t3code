@@ -1,3 +1,5 @@
+import { threadHasStarted } from "./ChatView.logic";
+import { ProjectSpeechSetup } from "./chat/ProjectSpeechSetup";
 import { resolvePromptForSend } from "@t3tools/client-runtime/prompt-improvement";
 import { ThreadSubagents } from "./ThreadSubagents";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
@@ -8103,6 +8105,15 @@ export default function ChatView(props: ChatViewProps) {
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
+      {routeKind === "draft" && draftId && activeProject && !threadHasStarted(activeThread) ? (
+        <ProjectSpeechSetup
+          key={`${activeProject.environmentId}:${activeProject.id}:${draftId}`}
+          environmentId={activeProject.environmentId}
+          projectId={activeProject.id}
+          projectTitle={activeProject.title}
+          promptRef={promptRef}
+        />
+      ) : null}
       {rightPanelControlsAtRoot ? panelLayoutControls : null}
       <div
         className={cn(
