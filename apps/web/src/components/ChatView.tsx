@@ -1,3 +1,4 @@
+import { KnowledgeGraphPanelController } from "./knowledge-graph/KnowledgeGraphPanelController";
 import { ChatWorkspaceDeckController } from "./workspace-deck/ChatWorkspaceDeckController";
 import { GitWorkspaceChangesIndicator } from "./git-workbench/GitWorkspaceChangesIndicator";
 import { threadHasStarted } from "./ChatView.logic";
@@ -47,6 +48,7 @@ import {
   ProviderDriverKind,
   resolveEnvironmentMachineKind,
   RuntimeMode,
+  resolveBetterT3FeatureFlag,
   TerminalOpenInput,
 } from "@t3tools/contracts";
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
@@ -2318,6 +2320,18 @@ export default function ChatView(props: ChatViewProps) {
     ? (activeEnvironment?.serverConfig ?? null)
     : (primaryEnvironment?.serverConfig ?? null);
   const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
+  const knowledgeGraphOwnerAvailable = Boolean(
+    activeProject && (serverConfig?.environment.capabilities.knowledgeGraphVersion ?? 0) >= 1,
+  );
+  const knowledgeGraphAvailable =
+    knowledgeGraphOwnerAvailable &&
+    resolveBetterT3FeatureFlag(settings.betterT3Environment, "knowledge.graph");
+  useEffect(() => {
+    if (!activeThreadRef || knowledgeGraphOwnerAvailable) return;
+    const graph = rightPanelState.surfaces.find((surface) => surface.kind === "knowledge-graph");
+    if (graph) useRightPanelStore.getState().closeSurface(activeThreadRef, graph.id);
+  }, [activeThreadRef, knowledgeGraphOwnerAvailable, rightPanelState.surfaces]);
+
   const selectedProviderByThreadId = composerActiveProvider ?? null;
   const threadProvider =
     activeThread?.modelSelection.instanceId ??
@@ -4129,9 +4143,9 @@ export default function ChatView(props: ChatViewProps) {
     useRightPanelStore.getState().open(activeThreadRef, "agents");
   }, [activeThreadRef]);
   const openFileSurface = useCallback(
-    (relativePath: string) => {
+    (relativePath: string, line?: number) => {
       if (!activeThreadRef || !activeProject) return;
-      useRightPanelStore.getState().openFile(activeThreadRef, relativePath);
+      useRightPanelStore.getState().openFile(activeThreadRef, relativePath, line);
     },
     [activeProject, activeThreadRef],
   );
@@ -8049,6 +8063,16 @@ export default function ChatView(props: ChatViewProps) {
         }
         composerDraftTarget={composerDraftTarget}
       />
+    ) : renderedRightPanelSurface?.kind === "knowledge-graph" && activeProject ? (
+      <KnowledgeGraphPanelController
+        environmentId={activeThread.environmentId}
+        projectId={activeProject.id}
+        threadId={activeThread.id}
+        {...(serverConfig?.environment.capabilities.knowledgeGraphVersion === undefined
+          ? {}
+          : { knowledgeGraphVersion: serverConfig.environment.capabilities.knowledgeGraphVersion })}
+        onOpenSource={(path, line) => openFileSurface(path, line ?? undefined)}
+      />
     ) : renderedRightPanelSurface?.kind === "agents" ? (
       <AgentsPanel
         model={agentPanelModel}
@@ -8713,6 +8737,11 @@ export default function ChatView(props: ChatViewProps) {
           filesAvailable={activeProject !== null}
           pullRequestAvailable={pullRequestSurfaceAvailable}
           agentsAvailable
+          knowledgeGraphAvailable={knowledgeGraphAvailable}
+          onAddKnowledgeGraph={() => {
+            if (activeThreadRef)
+              useRightPanelStore.getState().open(activeThreadRef, "knowledge-graph");
+          }}
           liveAgentCount={agentPanelModel.liveCount}
         >
           {rightPanelContent}
@@ -8763,6 +8792,11 @@ export default function ChatView(props: ChatViewProps) {
             filesAvailable={activeProject !== null}
             pullRequestAvailable={pullRequestSurfaceAvailable}
             agentsAvailable
+            knowledgeGraphAvailable={knowledgeGraphAvailable}
+            onAddKnowledgeGraph={() => {
+              if (activeThreadRef)
+                useRightPanelStore.getState().open(activeThreadRef, "knowledge-graph");
+            }}
             liveAgentCount={agentPanelModel.liveCount}
           >
             {rightPanelContent}

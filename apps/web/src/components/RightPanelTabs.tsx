@@ -8,6 +8,7 @@ import type {
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import {
   Bot,
+  Network,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -105,6 +106,8 @@ interface RightPanelTabsProps {
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddAgents: () => void;
+  onAddKnowledgeGraph?: (() => void) | undefined;
+  knowledgeGraphAvailable?: boolean | undefined;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -140,6 +143,7 @@ const SURFACE_DISABLED_REASONS = {
   diff: "Diff is only available for server threads in Git repositories.",
   pullRequest: "This thread's branch has no pull request yet.",
   agents: "Agents are only available from a thread.",
+  knowledgeGraph: "Knowledge graph requires a compatible project environment.",
 } as const;
 
 /** Overlays that must win over the launcher's letter shortcuts. */
@@ -162,6 +166,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
   diff: "Available for Git repositories.",
   pullRequest: "No pull request on this branch yet.",
   agents: "Available from a thread.",
+  knowledgeGraph: "Available with a compatible project environment.",
 } as const;
 
 type TabContextMenuAction =
@@ -299,6 +304,8 @@ function RightPanelEmptyState(props: {
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddAgents: () => void;
+  onAddKnowledgeGraph?: (() => void) | undefined;
+  knowledgeGraphAvailable?: boolean | undefined;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -359,6 +366,16 @@ function RightPanelEmptyState(props: {
       available: props.pullRequestAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.pullRequest,
       onClick: props.onAddPullRequest,
+      badgeCount: 0,
+    },
+    {
+      label: "Knowledge graph",
+      description: "Explore project knowledge and sources.",
+      icon: Network,
+      shortcut: "K",
+      available: props.knowledgeGraphAvailable === true,
+      disabledReason: SURFACE_UNAVAILABLE_HINTS.knowledgeGraph,
+      onClick: () => props.onAddKnowledgeGraph?.(),
       badgeCount: 0,
     },
     {
@@ -604,6 +621,8 @@ function surfaceTitle(
       return `#${surface.number}`;
     case "agents":
       return "Agents";
+    case "knowledge-graph":
+      return "Knowledge graph";
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -683,6 +702,8 @@ function SurfaceIcon({
           seed={pullRequestStatusSeeds?.[surface.id]}
         />
       );
+    case "knowledge-graph":
+      return <Network className="size-3.5" />;
     case "agents":
       return <Bot className="size-3 shrink-0" />;
   }
@@ -805,6 +826,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       available: props.pullRequestAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.pullRequest,
       onClick: props.onAddPullRequest,
+    },
+    {
+      label: "Knowledge graph",
+      icon: Network,
+      shortcut: "K",
+      available: props.knowledgeGraphAvailable === true,
+      disabledReason: SURFACE_DISABLED_REASONS.knowledgeGraph,
+      onClick: () => props.onAddKnowledgeGraph?.(),
     },
     {
       label: "Agents",
@@ -1257,6 +1286,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             filesAvailable={props.filesAvailable}
             pullRequestAvailable={props.pullRequestAvailable}
             agentsAvailable={props.agentsAvailable}
+            knowledgeGraphAvailable={props.knowledgeGraphAvailable}
+            onAddKnowledgeGraph={props.onAddKnowledgeGraph}
             liveAgentCount={props.liveAgentCount}
           />
         ) : (
