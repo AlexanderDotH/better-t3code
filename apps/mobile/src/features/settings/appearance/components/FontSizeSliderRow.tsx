@@ -91,19 +91,17 @@ export function FontSizeSliderRow(props: {
         dragging.value = true;
         const f = fractionAt(event.x);
         progress.value = f;
+        runOnJS(commit)(valueAtFraction(f));
       })
-      .onFinalize((_event, success) => {
+      .onFinalize(() => {
         if (!dragging.value) {
           return;
         }
         dragging.value = false;
-        if (!success) {
-          progress.value = withTiming(fractionOfValue(value), SNAP_ANIMATION);
-          return;
-        }
-        const next = valueAtFraction(progress.value);
-        progress.value = withTiming(fractionOfValue(next), SNAP_ANIMATION);
-        runOnJS(commit)(next);
+        progress.value = withTiming(
+          fractionOfValue(valueAtFraction(progress.value)),
+          SNAP_ANIMATION,
+        );
       });
 
     const tap = Gesture.Tap()
@@ -115,7 +113,7 @@ export function FontSizeSliderRow(props: {
       });
 
     return Gesture.Race(pan, tap);
-  }, [commit, disabled, dragging, max, min, progress, step, trackWidth, value]);
+  }, [commit, disabled, dragging, max, min, progress, step, trackWidth]);
 
   const fillStyle = useAnimatedStyle(() => ({
     width: THUMB_SIZE / 2 + progress.value * Math.max(0, trackWidth.value - THUMB_SIZE),
