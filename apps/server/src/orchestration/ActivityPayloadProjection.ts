@@ -361,15 +361,30 @@ export function projectActivityPayload(
 ): OrchestrationThreadActivity {
   const payload = asRecord(activity.payload);
   const data = asRecord(payload?.data);
-  if (!payload || !data) {
+  if (!payload) {
     return activity;
   }
 
+  // Provider-neutral ingestion keeps the original provider payload for
+  // transcript export and debugging. It belongs in persistence, not on the
+  // client wire: it can contain the complete MCP/tool result that the data
+  // projection below deliberately summarizes.
+  const projectedPayload = { ...payload };
+  delete projectedPayload.canonicalPayload;
+
+  if (!data) {
+    return "canonicalPayload" in payload
+      ? {
+          ...activity,
+          payload: projectedPayload,
+        }
+      : activity;
+  }
+
   const itemStatus = asRecord(data.item)?.status;
-  const projectedPayload =
-    payload.status === "completed" && (itemStatus === "failed" || itemStatus === "declined")
-      ? { ...payload, status: itemStatus }
-      : payload;
+  if (payload.status === "completed" && (itemStatus === "failed" || itemStatus === "declined")) {
+    projectedPayload.status = itemStatus;
+  }
 
   if (payload.itemType === "mcp_tool_call") {
     return {
