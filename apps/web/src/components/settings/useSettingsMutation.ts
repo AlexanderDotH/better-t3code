@@ -18,6 +18,8 @@ export function useSettingsCommand<W, A, E>(command: AtomCommand<W, A, E>) {
 
 export function useSettingsMutation<A, W = void>(options: {
   readonly mutationFn: (input: W) => Promise<A>;
+  readonly onMutate?: (input: W) => void;
+  readonly onSettled?: (input: W) => void;
   readonly onSuccess?: (result: A, input: W) => void;
   readonly onError?: (error: unknown, input: W) => void;
 }) {
@@ -31,7 +33,10 @@ export function useSettingsMutation<A, W = void>(options: {
     running.current = true;
     setState({ isPending: true, variables: input });
     void Promise.resolve()
-      .then(() => options.mutationFn(input))
+      .then(() => {
+        options.onMutate?.(input);
+        return options.mutationFn(input);
+      })
       .then(
         (result) => options.onSuccess?.(result, input),
         (error: unknown) => options.onError?.(error, input),
@@ -39,6 +44,7 @@ export function useSettingsMutation<A, W = void>(options: {
       .finally(() => {
         running.current = false;
         setState({ isPending: false });
+        options.onSettled?.(input);
       });
   };
   return { ...state, mutate };
