@@ -18,7 +18,10 @@ export function forkBoundaryKey(boundary: ThreadForkBoundary): string {
 }
 
 export function resolveFirstTurnForkBudget(
-  handoff: ThreadForkHandoffState | null | undefined,
+  handoff:
+    | (Pick<ThreadForkHandoffState, "status"> & Partial<ThreadForkHandoffState>)
+    | null
+    | undefined,
 ): FirstTurnForkBudget | null {
   if (handoff?.status !== "pending") return null;
   return {

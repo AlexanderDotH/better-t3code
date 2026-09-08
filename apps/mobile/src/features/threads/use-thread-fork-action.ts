@@ -63,6 +63,7 @@ export function useThreadForkAction(input: {
     globalDefault: input.serverConfig?.settings.defaultThreadEnvMode ?? "local",
     startFromOrigin: input.serverConfig?.settings.newWorktreesStartFromOrigin ?? true,
     refs: branchState.data?.refs ?? [],
+    isGitRepository: branchState.data?.isRepo ?? true,
   });
   const defaultsSettled = isDefaultThreadEnvModeSettled({
     explicitMode: undefined,
