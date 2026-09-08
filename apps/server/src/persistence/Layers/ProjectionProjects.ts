@@ -21,10 +21,19 @@ const ProjectionProjectDbRow = ProjectionProject.mapFields(
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
     autoPull: Schema.Number,
     projectIcon: Schema.NullOr(Schema.fromJsonString(ProjectIconOverride)),
+    checkpointsEnabled: Schema.Number,
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
   }),
 );
 type ProjectionProjectDbRow = typeof ProjectionProjectDbRow.Type;
+
+function toProjectionProject(row: ProjectionProjectDbRow): ProjectionProject {
+  return {
+    ...row,
+    checkpointsEnabled: row.checkpointsEnabled === 1,
+    autoPull: row.autoPull === 1,
+  };
+}
 
 const makeProjectionProjectRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -40,6 +49,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           default_model_selection_json,
           default_thread_env_mode,
           auto_pull,
+          checkpoints_enabled,
           favicon_path,
           project_icon_json,
           scripts_json,
@@ -54,6 +64,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           ${row.defaultModelSelection !== null ? JSON.stringify(row.defaultModelSelection) : null},
           ${row.defaultThreadEnvMode},
           ${row.autoPull ? 1 : 0},
+          ${row.checkpointsEnabled ? 1 : 0},
           ${row.faviconPath ?? null},
           ${row.projectIcon ? JSON.stringify(row.projectIcon) : null},
           ${JSON.stringify(row.scripts)},
@@ -68,6 +79,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           default_model_selection_json = excluded.default_model_selection_json,
           default_thread_env_mode = excluded.default_thread_env_mode,
           auto_pull = excluded.auto_pull,
+          checkpoints_enabled = excluded.checkpoints_enabled,
           favicon_path = excluded.favicon_path,
           project_icon_json = excluded.project_icon_json,
           scripts_json = excluded.scripts_json,
@@ -89,6 +101,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           default_model_selection_json AS "defaultModelSelection",
           default_thread_env_mode AS "defaultThreadEnvMode",
           auto_pull AS "autoPull",
+          checkpoints_enabled AS "checkpointsEnabled",
           favicon_path AS "faviconPath",
           project_icon_json AS "projectIcon",
           scripts_json AS "scripts",
@@ -112,6 +125,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           default_model_selection_json AS "defaultModelSelection",
           default_thread_env_mode AS "defaultThreadEnvMode",
           auto_pull AS "autoPull",
+          checkpoints_enabled AS "checkpointsEnabled",
           favicon_path AS "faviconPath",
           project_icon_json AS "projectIcon",
           scripts_json AS "scripts",
@@ -139,13 +153,13 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
 
   const getById: ProjectionProjectRepositoryShape["getById"] = (input) =>
     getProjectionProjectRow(input).pipe(
-      Effect.map(Option.map((row) => ({ ...row, autoPull: row.autoPull === 1 }))),
+      Effect.map(Option.map(toProjectionProject)),
       Effect.mapError(toPersistenceSqlError("ProjectionProjectRepository.getById:query")),
     );
 
   const listAll: ProjectionProjectRepositoryShape["listAll"] = () =>
     listProjectionProjectRows().pipe(
-      Effect.map((rows) => rows.map((row) => ({ ...row, autoPull: row.autoPull === 1 }))),
+      Effect.map((rows) => rows.map(toProjectionProject)),
       Effect.mapError(toPersistenceSqlError("ProjectionProjectRepository.listAll:query")),
     );
 

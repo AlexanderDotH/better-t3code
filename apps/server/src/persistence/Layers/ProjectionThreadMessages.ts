@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
-import { ChatAttachment } from "@t3tools/contracts";
+import { ChatAttachment, OrchestrationHistoryOrigin } from "@t3tools/contracts";
 
 import { toPersistenceSqlError } from "../Errors.ts";
 import {
@@ -23,6 +23,7 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
   Struct.assign({
     isStreaming: Schema.Number,
     attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
+    historyOrigin: Schema.NullOr(Schema.fromJsonString(OrchestrationHistoryOrigin)),
   }),
 );
 const ProjectionThreadMessageExistsDbRowSchema = Schema.Struct({ exists: Schema.Number });
@@ -40,6 +41,7 @@ function toProjectionThreadMessage(
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     ...(row.attachments !== null ? { attachments: row.attachments } : {}),
+    ...(row.historyOrigin !== null ? { historyOrigin: row.historyOrigin } : {}),
   };
 }
 
@@ -62,6 +64,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           is_streaming,
           created_at,
           updated_at
+          , history_origin_json
         )
         VALUES (
           ${row.messageId},
@@ -80,6 +83,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           ${row.isStreaming ? 1 : 0},
           ${row.createdAt},
           ${row.updatedAt}
+          , ${row.historyOrigin === undefined ? null : JSON.stringify(row.historyOrigin)}
         )
         ON CONFLICT (message_id)
         DO UPDATE SET
@@ -94,6 +98,10 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           is_streaming = excluded.is_streaming,
           created_at = excluded.created_at,
           updated_at = excluded.updated_at
+          , history_origin_json = COALESCE(
+            excluded.history_origin_json,
+            projection_thread_messages.history_origin_json
+          )
       `;
     },
   });
@@ -157,6 +165,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
+          , history_origin_json AS "historyOrigin"
         FROM projection_thread_messages
         WHERE message_id = ${messageId}
         LIMIT 1
@@ -195,6 +204,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
+          , history_origin_json AS "historyOrigin"
         FROM projection_thread_messages
         WHERE thread_id = ${threadId}
         ORDER BY created_at ASC, message_id ASC
@@ -211,6 +221,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
       FROM projection_thread_messages
       WHERE thread_id = ${threadId} AND role = 'user'
         AND message_id NOT GLOB 'import:*'
+        AND history_origin_json IS NULL
     `,
   });
 

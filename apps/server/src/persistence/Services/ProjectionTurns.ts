@@ -14,6 +14,7 @@ import {
   OrchestrationProposedPlanId,
   OrchestrationCheckpointFile,
   OrchestrationCheckpointStatus,
+  OrchestrationHistoryOrigin,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -48,6 +49,7 @@ export const ProjectionTurn = Schema.Struct({
   checkpointRef: Schema.NullOr(CheckpointRef),
   checkpointStatus: Schema.NullOr(OrchestrationCheckpointStatus),
   checkpointFiles: Schema.Array(OrchestrationCheckpointFile),
+  historyOrigin: Schema.optional(OrchestrationHistoryOrigin),
 });
 export type ProjectionTurn = typeof ProjectionTurn.Type;
 
@@ -66,6 +68,7 @@ export const ProjectionTurnById = Schema.Struct({
   checkpointRef: Schema.NullOr(CheckpointRef),
   checkpointStatus: Schema.NullOr(OrchestrationCheckpointStatus),
   checkpointFiles: Schema.Array(OrchestrationCheckpointFile),
+  historyOrigin: Schema.optional(OrchestrationHistoryOrigin),
 });
 export type ProjectionTurnById = typeof ProjectionTurnById.Type;
 
@@ -107,6 +110,11 @@ export const ClearCheckpointTurnConflictInput = Schema.Struct({
 export type ClearCheckpointTurnConflictInput = typeof ClearCheckpointTurnConflictInput.Type;
 
 export interface ProjectionTurnRepositoryShape {
+  /** Inserts or replaces one immutable inherited turn, including a pending turn without an id. */
+  readonly upsertHistorical: (
+    row: ProjectionTurn,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
+
   /**
    * Inserts or updates the canonical row for a concrete `{threadId, turnId}` turn lifecycle state.
    */
