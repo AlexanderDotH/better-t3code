@@ -12,11 +12,13 @@ export function ThreadSubagents({
   subagents,
   markdownCwd,
   timestampFormat,
+  streamingMotionEnabled = false,
 }: {
   readonly threadRef: ScopedThreadRef;
   readonly subagents: readonly OrchestrationSubagentSummary[];
   readonly markdownCwd?: string;
   readonly timestampFormat: TimestampFormat;
+  readonly streamingMotionEnabled?: boolean;
 }) {
   const [selectedId, setSelectedId] = useState<SubagentId | null>(null);
   const state = useEnvironmentSubagent(threadRef.environmentId, threadRef.threadId, selectedId);
@@ -43,6 +45,7 @@ export function ThreadSubagents({
         errorMessage={error}
         threadRef={threadRef}
         timestampFormat={timestampFormat}
+        streamingMotionEnabled={streamingMotionEnabled}
         {...(markdownCwd ? { markdownCwd } : {})}
         hasOlderActivities={page?.hasMore ?? false}
         isLoadingOlderActivities={page?.loadingOlder ?? false}

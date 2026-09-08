@@ -227,6 +227,7 @@ export interface TimelineForkProvenance {
 }
 
 interface TimelineRowSharedState {
+  streamingMotionEnabled: boolean;
   forkDividerAfterRowId: string | null;
   forkActions: TimelineForkActions | null;
   retryAction: TimelineRetryAction | null;
@@ -353,6 +354,7 @@ function TimelineForkProvenanceBanner({ sourceTitle, onOpenSource }: TimelineFor
   );
 }
 interface MessagesTimelineProps {
+  streamingMotionEnabled?: boolean;
   forkProvenance?: TimelineForkProvenance | null;
   forkActions?: TimelineForkActions | null;
   retryAction?: TimelineRetryAction | null;
@@ -417,6 +419,7 @@ interface MessagesTimelineProps {
 // ---------------------------------------------------------------------------
 
 export const MessagesTimeline = memo(function MessagesTimeline({
+  streamingMotionEnabled = false,
   forkProvenance = null,
   forkActions = null,
   retryAction = null,
@@ -805,6 +808,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       citationRequest: readyCitationRequest,
       listRef,
       timestampFormat,
+      streamingMotionEnabled,
       routeThreadKey,
       // Keep Markdown callbacks memoized during unrelated activity updates.
       threadRef: citationThreadRef,
@@ -833,6 +837,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       readyCitationRequest,
       listRef,
       timestampFormat,
+      streamingMotionEnabled,
       routeThreadKey,
       citationThreadRef,
       markdownCwd,
@@ -1816,6 +1821,8 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             cwd={ctx.markdownCwd}
             threadRef={ctx.threadRef ?? undefined}
             isStreaming={Boolean(row.message.streaming)}
+            streamId={`${ctx.routeThreadKey}:${row.message.id}`}
+            streamingMotionEnabled={ctx.streamingMotionEnabled}
             lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
             skills={ctx.skills}
             onUseArtifactTemplate={ctx.onUseArtifactTemplate}

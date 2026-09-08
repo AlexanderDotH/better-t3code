@@ -18,6 +18,7 @@ export interface SubagentTranscriptDialogProps {
   readonly markdownCwd?: string;
   readonly threadRef?: ScopedThreadRef;
   readonly timestampFormat?: TimestampFormat;
+  readonly streamingMotionEnabled?: boolean;
   readonly hasOlderActivities?: boolean;
   readonly isLoadingOlderActivities?: boolean;
   readonly onLoadOlderActivities?: () => void;
@@ -35,6 +36,7 @@ export const SubagentTranscriptDialogContent = memo(function SubagentTranscriptD
   markdownCwd,
   threadRef,
   timestampFormat = "locale",
+  streamingMotionEnabled = false,
   hasOlderActivities = false,
   isLoadingOlderActivities = false,
   onLoadOlderActivities,
@@ -48,6 +50,7 @@ export const SubagentTranscriptDialogContent = memo(function SubagentTranscriptD
         {...(markdownCwd ? { markdownCwd } : {})}
         {...(threadRef ? { threadRef } : {})}
         timestampFormat={timestampFormat}
+        streamingMotionEnabled={streamingMotionEnabled}
         hasOlderActivities={hasOlderActivities}
         isLoadingOlderActivities={isLoadingOlderActivities}
         {...(onLoadOlderActivities ? { onLoadOlderActivities } : {})}
@@ -66,6 +69,7 @@ export const SubagentTranscriptDialog = memo(function SubagentTranscriptDialog({
   markdownCwd,
   threadRef,
   timestampFormat = "locale",
+  streamingMotionEnabled = false,
   hasOlderActivities = false,
   isLoadingOlderActivities = false,
   onLoadOlderActivities,
@@ -89,6 +93,7 @@ export const SubagentTranscriptDialog = memo(function SubagentTranscriptDialog({
           {...(markdownCwd ? { markdownCwd } : {})}
           {...(threadRef ? { threadRef } : {})}
           timestampFormat={timestampFormat}
+          streamingMotionEnabled={streamingMotionEnabled}
           hasOlderActivities={hasOlderActivities}
           isLoadingOlderActivities={isLoadingOlderActivities}
           {...(onLoadOlderActivities ? { onLoadOlderActivities } : {})}
