@@ -7293,10 +7293,7 @@ export default function ChatView(props: ChatViewProps) {
           );
           return;
         }
-        attachmentsByQuestionId.set(
-          question.id,
-          uploaded as import("@t3tools/contracts").UserInputAttachments[string],
-        );
+        attachmentsByQuestionId.set(question.id, uploaded);
       }
       userInputResponsesInFlight.current.add(responseKey);
       setRespondingUserInputRequestIds((existing) =>

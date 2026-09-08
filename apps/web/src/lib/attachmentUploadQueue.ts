@@ -1,6 +1,7 @@
 import {
   PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
-  type ChatAttachment,
+  type ChatImageAttachment,
+  type ChatFileAttachment,
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -550,9 +551,10 @@ export async function awaitAttachmentUploads(imageIds: ReadonlyArray<string>): P
 export function getUploadedAttachments(input: {
   readonly environmentId: EnvironmentId;
   readonly images: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>;
-}): ChatAttachment[] | null {
-  const attachments: ChatAttachment[] = [];
+}): (ChatImageAttachment | ChatFileAttachment)[] | null {
+  const attachments: (ChatImageAttachment | ChatFileAttachment)[] = [];
   for (const image of input.images) {
+    if (image.type !== "image" && image.type !== "file") return null;
     const upload = readAttachmentUpload(image.id);
     if (upload?.status !== "ready" || upload.environmentId !== input.environmentId) {
       return null;
