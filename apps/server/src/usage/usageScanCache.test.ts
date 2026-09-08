@@ -8,7 +8,7 @@ import {
   type CachedFile,
   type ScanCache,
 } from "./usageScanCache.ts";
-import type { UsageRecord } from "./usageTranscripts.ts";
+import { initialCodexScanState, type UsageRecord } from "./usageTranscripts.ts";
 
 function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
   return {
@@ -25,6 +25,7 @@ function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
     },
     reportedCostUsd: null,
     dedupeKey: "msg_1:",
+    callKind: "root",
     ...overrides,
   };
 }
@@ -58,7 +59,30 @@ describe("scan cache round trip", () => {
   it("restores records unchanged", () => {
     const original = cacheWith([
       ["/a.jsonl", 100, [record(), record({ dedupeKey: "msg_2:", model: "claude-opus-5" })]],
-      ["/b.jsonl", 200, [record({ sessionId: "session-b", reportedCostUsd: 1.5 })]],
+      [
+        "/b.jsonl",
+        200,
+        [
+          record({
+            sessionId: "session-b",
+            reportedCostUsd: 1.5,
+            diagnostics: {
+              nativeForks: 1,
+              compactHandoffs: 1,
+              totalHandoffChars: 256,
+              compactionEvents: 2,
+              maxContextTokens: 200_000,
+              instructionChars: 1_000,
+              memoryInjectionChars: 2_000,
+              toolSchemaChars: 3_000,
+              subagentResultChars: 4_000,
+              toolDigestChars: 5_000,
+              autoRoutingChars: 6_000,
+            },
+            callKind: "auto-reasoning",
+          }),
+        ],
+      ],
     ]);
     original.set("/grok.jsonl", {
       size: 40,
@@ -78,6 +102,7 @@ describe("scan cache round trip", () => {
       tailRecords: [],
       position: position({
         codexState: {
+          ...initialCodexScanState(),
           model: "gpt-5.2-codex",
           sessionId: "session-c",
           lastUsageSignature: '{"input_tokens":1}',
@@ -137,6 +162,19 @@ describe("scan cache round trip", () => {
 
     expect(encoded.models).toEqual(["claude-fable-5"]);
     expect(encoded.sessions).toEqual(["session-a"]);
+  });
+
+  it("maps an in-memory legacy record without call attribution to unknown", () => {
+    const { callKind: _callKind, ...legacy } = record();
+    const restored = decodeScanCache(
+      JSON.parse(
+        JSON.stringify(
+          encodeScanCache(cacheWith([["/legacy.jsonl", 100, [legacy as UsageRecord]]])),
+        ),
+      ),
+    );
+
+    expect(restored.get("/legacy.jsonl")?.records[0]?.callKind).toBe("unknown");
   });
 
   it("treats a corrupt or foreign document as an empty cache", () => {

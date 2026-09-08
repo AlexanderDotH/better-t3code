@@ -1,3 +1,4 @@
+import { encodeScanCache, decodeScanCache } from "./usageScanCache.ts";
 // @effect-diagnostics nodeBuiltinImport:off - resume coverage writes, appends
 // to, and truncates real transcript files byte-exactly, mirroring the reader's
 // own deliberate node:fs usage.
@@ -207,4 +208,70 @@ describe("readTranscriptRecords resume", () => {
   it("returns null for an unreadable file", async () => {
     assert.isNull(await readTranscriptRecords(NodePath.join(dir, "missing.jsonl"), "claude"));
   });
+});
+
+for (const provider of ["codex", "claude"] as const) {
+  it(`retains ${provider} routing diagnostics after saving and resuming the cache`, async () => {
+    const path = NodePath.join(dir, `${provider}-routing.jsonl`);
+    const prompt = "<t3code_auto_reasoning_call>choose effort</t3code_auto_reasoning_call>";
+    const context =
+      provider === "codex"
+        ? codexMetaLine() +
+          codexModelLine("gpt-5.2-codex") +
+          JSON.stringify({
+            type: "response_item",
+            payload: {
+              type: "message",
+              role: "user",
+              content: [{ type: "input_text", text: prompt }],
+            },
+          }) +
+          "\n"
+        : JSON.stringify({ type: "user", message: { content: prompt } }) + "\n";
+    await NodeFSP.writeFile(path, context);
+    const first = await readTranscriptRecords(path, provider);
+    assert.isNotNull(first);
+    const cache = new Map([
+      [
+        path,
+        {
+          size: Buffer.byteLength(context),
+          mtimeMs: 1,
+          provider,
+          records: first.records,
+          tailRecords: first.tailRecords,
+          position: first.position,
+        },
+      ],
+    ]);
+    const restored = decodeScanCache(JSON.parse(JSON.stringify(encodeScanCache(cache))));
+    const position = restored.get(path)?.position;
+    assert.isDefined(position);
+    await NodeFSP.appendFile(path, provider === "codex" ? codexUsageLine(7, 4) : claudeLine(1, 7));
+    const resumed = await readTranscriptRecords(path, provider, position);
+    const full = await readTranscriptRecords(path, provider);
+    assert.isNotNull(resumed);
+    assert.isNotNull(full);
+    assert.isTrue(resumed.resumed);
+    assert.strictEqual(resumed.records[0]?.callKind, "auto-reasoning");
+    assert.strictEqual(resumed.records[0]?.diagnostics?.autoRoutingChars, prompt.length);
+    assert.deepStrictEqual(resumed.records, full.records);
+  });
+}
+
+it("clears Claude metadata attribution on the next ordinary user message", async () => {
+  const path = NodePath.join(dir, "claude-metadata-reset.jsonl");
+  const userLine = (content: string) =>
+    JSON.stringify({ type: "user", message: { content } }) + "\n";
+  await NodeFSP.writeFile(
+    path,
+    userLine("<t3code_metadata_call>name</t3code_metadata_call>") + claudeLine(1, 7),
+  );
+  const first = await readTranscriptRecords(path, "claude");
+  assert.isNotNull(first);
+  assert.strictEqual(first.records[0]?.callKind, "metadata");
+  await NodeFSP.appendFile(path, userLine("Implement the fix") + claudeLine(2, 11));
+  const second = await readTranscriptRecords(path, "claude", first.position);
+  assert.isNotNull(second);
+  assert.strictEqual(second.records[0]?.callKind, "unknown");
 });
