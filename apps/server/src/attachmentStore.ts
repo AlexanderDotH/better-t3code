@@ -11,7 +11,30 @@ import {
 } from "./attachmentPaths.ts";
 import { inferImageExtension, SAFE_IMAGE_FILE_EXTENSIONS } from "./imageMime.ts";
 
-const ATTACHMENT_FILENAME_EXTENSIONS = [...SAFE_IMAGE_FILE_EXTENSIONS, ".bin"];
+const SAFE_AUDIO_FILE_EXTENSIONS = [
+  ".aac",
+  ".flac",
+  ".m4a",
+  ".mp3",
+  ".ogg",
+  ".wav",
+  ".webm",
+] as const;
+const AUDIO_EXTENSION_BY_MIME_TYPE: Readonly<Record<string, string>> = {
+  "audio/aac": ".aac",
+  "audio/flac": ".flac",
+  "audio/mp4": ".m4a",
+  "audio/mpeg": ".mp3",
+  "audio/ogg": ".ogg",
+  "audio/wav": ".wav",
+  "audio/webm": ".webm",
+  "audio/x-m4a": ".m4a",
+};
+const ATTACHMENT_FILENAME_EXTENSIONS = [
+  ...SAFE_IMAGE_FILE_EXTENSIONS,
+  ...SAFE_AUDIO_FILE_EXTENSIONS,
+  ".bin",
+];
 const ATTACHMENT_ID_THREAD_SEGMENT_MAX_CHARS = 80;
 const ATTACHMENT_ID_THREAD_SEGMENT_PATTERN = "[a-z0-9_]+(?:-[a-z0-9_]+)*";
 const ATTACHMENT_ID_UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
@@ -22,7 +45,7 @@ const ATTACHMENT_ID_PATTERN = new RegExp(
 );
 
 export const PENDING_ATTACHMENT_THREAD_SEGMENT = "pending";
-const PENDING_ATTACHMENT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+export const PENDING_ATTACHMENT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const PARTIAL_UPLOAD_MAX_AGE_MS = 60 * 60 * 1000;
 
 export function toSafeThreadAttachmentSegment(threadId: string): string | null {
@@ -108,6 +131,15 @@ export function attachmentRelativePath(attachment: ChatAttachment): string | nul
         mimeType: attachment.mimeType,
         fileName: attachment.name,
       });
+      return `${attachment.id}${extension}`;
+    }
+    case "audio": {
+      const fileExtension = NodePath.extname(attachment.name).toLowerCase();
+      const extension = SAFE_AUDIO_FILE_EXTENSIONS.includes(
+        fileExtension as (typeof SAFE_AUDIO_FILE_EXTENSIONS)[number],
+      )
+        ? fileExtension
+        : (AUDIO_EXTENSION_BY_MIME_TYPE[attachment.mimeType.toLowerCase()] ?? ".bin");
       return `${attachment.id}${extension}`;
     }
     case "file":

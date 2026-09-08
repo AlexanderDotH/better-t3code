@@ -3,9 +3,10 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { describe, expect, it } from "vite-plus/test";
+import { assert, describe, expect, it } from "vite-plus/test";
 
 import {
+  attachmentRelativePath,
   attachmentFileExtension,
   createAttachmentId,
   createPendingAttachmentId,
@@ -89,6 +90,32 @@ describe("attachmentStore", () => {
         attachmentId,
       });
       expect(resolved).toBe(pngPath);
+    } finally {
+      NodeFS.rmSync(attachmentsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("stores and resolves provider-history audio with a safe extension", () => {
+    const attachment = {
+      type: "audio" as const,
+      id: "thread-1-00000000-0000-4000-8000-000000000003",
+      name: "voice-note.ogg",
+      mimeType: "audio/ogg",
+      sizeBytes: 5,
+    };
+    expect(attachmentRelativePath(attachment)).toBe(`${attachment.id}.ogg`);
+
+    const attachmentsDir = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "t3code-audio-attachment-store-"),
+    );
+    try {
+      const relativePath = attachmentRelativePath(attachment);
+      assert.isNotNull(relativePath);
+      const audioPath = NodePath.join(attachmentsDir, relativePath);
+      NodeFS.writeFileSync(audioPath, Buffer.from("audio"));
+      expect(resolveAttachmentPathById({ attachmentsDir, attachmentId: attachment.id })).toBe(
+        audioPath,
+      );
     } finally {
       NodeFS.rmSync(attachmentsDir, { recursive: true, force: true });
     }
