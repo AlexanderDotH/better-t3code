@@ -68,6 +68,12 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
  */
 export const SETTINGS_SEARCH_ITEMS = [
   {
+    id: "interface-language",
+    title: "Interface language",
+    to: "/settings/appearance",
+    searchTerms: ["language locale English Deutsch German français French system"],
+  },
+  {
     id: "project-defaults",
     title: "Project defaults and overrides",
     to: "/settings/projects",
