@@ -99,8 +99,7 @@ ports:
 
 Do not expose a broad port range by default. Public T3 Connect/relay endpoints currently carry the
 T3 server connection, not arbitrary loopback ports. Integrated previews through those endpoints
-need the authenticated preview gateway described in the compatibility matrix; until that lands,
-use a private-network-reachable published port or an explicit operator-managed tunnel.
+require a route to the preview service itself. Use a private-network-reachable published port
+or an explicit operator-managed tunnel.
 
-See [Remote Access](./remote-access.md) for pairing and transport choices and the
-[container compatibility matrix](../internals/container-server-compatibility.md) for maintainers.
+See [Remote access](./remote-access.md) for pairing and transport choices.

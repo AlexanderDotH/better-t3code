@@ -4,8 +4,9 @@ Open **Settings → Appearance** to choose a theme and follow the system appeara
 or dark mode. To use different themes for light and dark mode, select the corresponding preview
 within each theme. Appearance preferences are saved separately on each device or browser.
 
-Mobile has its own themes and text, code, and terminal preferences. It does not follow environment
-themes or defaults.
+Mobile has its own built-in themes and text, code, and terminal preferences in
+**Settings → Appearance**. It does not load environment theme palettes. Language, chat visuals,
+and the number of preview threads per project synchronize separately with supported environments.
 
 ## Motion
 
@@ -71,3 +72,22 @@ view.
 
 Write updates to a temporary file and rename it into place so clients never read a partial theme.
 Invalid files are not published.
+
+## Language and chat layout
+
+On web and desktop, choose **Settings → Better T3 → General → Interface language**. On mobile,
+choose **Settings → Appearance → Language**. Select English, German, French, or **System** to follow
+the device's preferred language. This changes interface text and formatting, not your conversations,
+source code, provider output, or the language the agent uses.
+
+Language choices synchronize with supported connected environments. The setting reports when a
+server is read-only, offline, or too old to accept a change. Reconnect or update that environment
+before expecting the same choice there.
+
+Choose chat visuals in **Settings → Better T3 → Visual** on web and desktop, or
+**Settings → Appearance → Chat visuals** on mobile. The same mobile page controls font sizes,
+code and terminal appearance, thread-list style, and how many chats each project previews.
+Chat visuals and the project preview count synchronize with supported environments; mobile theme
+palettes and font choices remain device preferences.
+
+For macOS window transparency, see [desktop appearance](./desktop-appearance.md).
