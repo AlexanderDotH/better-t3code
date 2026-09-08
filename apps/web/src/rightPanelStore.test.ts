@@ -825,3 +825,32 @@ describe("rightPanelStore", () => {
     ).toEqual(["terminal:term-1", "browser:tab-b", "browser:tab-c"]);
   });
 });
+
+describe("persisted fork panel compatibility", () => {
+  it("discards malformed surfaces and selects the next surviving tab", () => {
+    const migrated = migratePersistedRightPanelState({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: "retired-panel",
+          surfaces: [
+            { id: "diff", kind: "diff" },
+            { id: "retired-panel", kind: "retired-panel" },
+            null,
+            ["invalid"],
+            { id: "file:wrong.ts", kind: "file", relativePath: "actual.ts" },
+            { id: "files", kind: "files" },
+          ],
+        },
+      },
+    });
+    expect(migrated.byThreadKey["env-1:thread-A"]).toEqual({
+      isOpen: true,
+      activeSurfaceId: "files",
+      surfaces: [
+        { id: "diff", kind: "diff" },
+        { id: "files", kind: "files" },
+      ],
+    });
+  });
+});
