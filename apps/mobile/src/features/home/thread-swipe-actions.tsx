@@ -41,6 +41,12 @@ import Animated, {
 
 import { AppText as Text } from "../../components/AppText";
 import { registerThreadDismissal } from "./thread-dismissal";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import {
+  resolveThreadSwipeSecondaryAction,
+  type ThreadSwipeActionModel,
+  type ThreadSwipeSecondaryActionModel,
+} from "./thread-swipe-action-model";
 
 // Wide enough for the longest action label ("Unarchive").
 const ACTION_ITEM_WIDTH = 58;
@@ -57,65 +63,20 @@ export const THREAD_SWIPE_SPRING = {
   stiffness: 330,
 };
 
-interface ThreadSwipeAction {
-  readonly accessibilityLabel: string;
-  readonly icon: ComponentProps<typeof SymbolView>["name"];
-  readonly label: string;
-  readonly menu?: {
-    readonly actions: MenuAction[];
-    readonly onPressAction: NonNullable<ComponentProps<typeof ControlPillMenu>["onPressAction"]>;
-    readonly title?: string;
-  };
-  readonly onPress: () => void;
-}
+type ThreadSwipeAction = ThreadSwipeActionModel<
+  ComponentProps<typeof SymbolView>["name"],
+  MenuAction,
+  Parameters<NonNullable<ComponentProps<typeof ControlPillMenu>["onPressAction"]>>[0]
+>;
 
-interface ThreadSwipeSecondaryAction extends ThreadSwipeAction {
-  readonly tone: "primary" | "secondary" | "danger";
-}
+type ThreadSwipeSecondaryAction = ThreadSwipeSecondaryActionModel<
+  ComponentProps<typeof SymbolView>["name"],
+  MenuAction,
+  Parameters<NonNullable<ComponentProps<typeof ControlPillMenu>["onPressAction"]>>[0]
+>;
 
 function swipeActionsWidth(hasSecondaryAction: boolean) {
   return hasSecondaryAction ? THREAD_SWIPE_ACTIONS_WIDTH : ACTION_ITEM_WIDTH;
-}
-
-/** `undefined` keeps the v1 Delete default; `null` means one action only. */
-function resolveSecondaryAction(input: {
-  readonly close: () => void;
-  readonly onDelete: () => void;
-  readonly secondaryAction: ThreadSwipeAction | null | undefined;
-  readonly threadTitle: string;
-}): ThreadSwipeSecondaryAction | null {
-  if (input.secondaryAction === null) return null;
-  if (input.secondaryAction === undefined) {
-    return {
-      accessibilityLabel: `Delete ${input.threadTitle}`,
-      tone: "danger",
-      icon: "trash",
-      label: "Delete",
-      onPress: () => {
-        input.close();
-        input.onDelete();
-      },
-    };
-  }
-  const action = input.secondaryAction;
-  return {
-    ...action,
-    tone: "secondary",
-    menu:
-      action.menu === undefined
-        ? undefined
-        : {
-            ...action.menu,
-            onPressAction: (event) => {
-              input.close();
-              action.menu?.onPressAction(event);
-            },
-          },
-    onPress: () => {
-      input.close();
-      action.onPress();
-    },
-  };
 }
 
 /**
@@ -273,6 +234,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
 }
 
 function ThreadSwipeableRow(props: ThreadSwipeableProps) {
+  const translator = useMobileInterfaceTranslator();
   const swipeableRef = useRef<SwipeableMethods | null>(null);
   const fullSwipeArmedRef = useRef(false);
   const hasSecondaryAction = props.secondaryAction !== null;
@@ -463,11 +425,15 @@ function ThreadSwipeableRow(props: ThreadSwipeableProps) {
                   ...primaryAction,
                   onPress: commitPrimaryAction,
                 }}
-                secondaryAction={resolveSecondaryAction({
+                secondaryAction={resolveThreadSwipeSecondaryAction({
                   close: () => methods.close(),
                   onDelete: props.onDelete,
                   secondaryAction: props.secondaryAction,
-                  threadTitle: props.threadTitle,
+                  deleteAccessibilityLabel: translator.message("mobile.thread.deleteNamed", {
+                    thread: props.threadTitle,
+                  }),
+                  deleteIcon: "trash",
+                  deleteLabel: translator.message("mobile.thread.delete"),
                 })}
                 translation={translation}
               />
