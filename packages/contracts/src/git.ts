@@ -119,6 +119,19 @@ export const GitRunStackedActionInput = Schema.Struct({
   filePaths: Schema.optional(
     Schema.Array(TrimmedNonEmptyStringSchema).check(Schema.isMinLength(1)),
   ),
+  /** Standard-index semantics used by Git workbench clients. `filePaths`
+      remains decodable for legacy clients whose server path resets and
+      rebuilds the index before committing. */
+  commitSelection: Schema.optional(
+    Schema.Union([
+      Schema.Struct({ mode: Schema.Literal("staged") }),
+      Schema.Struct({ mode: Schema.Literal("all") }),
+      Schema.Struct({
+        mode: Schema.Literal("paths"),
+        paths: Schema.Array(TrimmedNonEmptyStringSchema).check(Schema.isMinLength(1)),
+      }),
+    ]),
+  ),
 });
 export type GitRunStackedActionInput = typeof GitRunStackedActionInput.Type;
 
@@ -353,11 +366,20 @@ export class GitCommandError extends Schema.TaggedError<GitCommandError>()("GitC
   }
 }
 
+export const TextGenerationModelFailureReason = Schema.Literals([
+  "model-unavailable",
+  "entitlement",
+  "rate-limited",
+]);
+export type TextGenerationModelFailureReason = typeof TextGenerationModelFailureReason.Type;
+
 export class TextGenerationError extends Schema.TaggedError<TextGenerationError>()(
   "TextGenerationError",
   {
     operation: Schema.String,
     detail: Schema.String,
+    reason: Schema.optional(TextGenerationModelFailureReason),
+    retryAt: Schema.optional(NonNegativeInt),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {

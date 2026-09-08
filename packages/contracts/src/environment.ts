@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import {
   EnvironmentId,
   ForwardCompatibleOptional,
+  PositiveInt,
   ProjectId,
   ThreadId,
   TrimmedNonEmptyString,
@@ -72,6 +73,7 @@ export const ServerSelfUpdateCapability = Schema.Literals([
   "boot-service",
   "respawn",
   "desktop-managed",
+  "container-managed",
 ]);
 export type ServerSelfUpdateCapability = typeof ServerSelfUpdateCapability.Type;
 
@@ -123,6 +125,12 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server understands regenerateTitle on thread.meta.update. Absent on
       older servers, so clients hide the action instead of sending it. */
   threadTitleRegeneration: Schema.optionalKey(Schema.Boolean),
+  /** Server can create an independent thread from a completed message or
+      proposed plan. Absent on older servers, so clients hide fork actions. */
+  threadForking: Schema.optionalKey(Schema.Boolean),
+  /** Server can retry an interrupted turn from its existing user message
+      without appending a duplicate message. */
+  interruptedTurnRetry: Schema.optionalKey(Schema.Boolean),
   /** Server persists a pull request reference on thread.meta.update. */
   threadPullRequestLinking: Schema.optionalKey(Schema.Boolean),
   /** The update path clients should offer for this server. Absent on
@@ -135,6 +143,37 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server can durably mark running provider turns before a self-update and
       continue them after the replacement process starts. */
   serverUpdateThreadContinuation: Schema.optionalKey(Schema.Boolean),
+  /** Versioned, Git-specific repository workbench RPC surface. Missing on
+      older servers, so clients retain compact VCS controls and do not issue
+      workbench requests when this field is absent. */
+  gitWorkbenchVersion: Schema.optionalKey(PositiveInt),
+  /** Versioned MCP workspace and provider-context subscription surface.
+      Missing on older servers, so clients retain configuration-only MCP UI
+      and do not issue workspace-specific runtime requests. */
+  mcpWorkspaceVersion: Schema.optionalKey(PositiveInt),
+  /** Versioned Fetch, prompt-improvement, plan-review, subagent, and transcript surface.
+      Missing on older servers, so clients do not present extended agent actions. */
+  agentWorkflowVersion: Schema.optionalKey(PositiveInt),
+  /** Versioned provider, skill, speech, and import administration surface.
+      Missing on older servers, so clients retain connection-only settings. */
+  environmentSettingsVersion: Schema.optionalKey(PositiveInt),
+  /** Versioned project metadata and agent-coordination administration surface.
+      Missing on older servers, so clients keep project settings read-only. */
+  projectSettingsVersion: Schema.optionalKey(PositiveInt),
+  /** Provider-native historical chat discovery, import, and resume linkage.
+      Missing on older servers, so clients hide harness sync controls. */
+  harnessChatSyncVersion: Schema.optionalKey(PositiveInt),
+  /** Versioned continuous project Knowledge Graph queries and mutation controls. */
+  knowledgeGraphVersion: Schema.optionalKey(PositiveInt),
+  /** Versioned adaptive admission and provider-process suspension policies.
+      Missing on older servers, so clients do not expose policy switches that
+      the environment cannot enforce. */
+  resourceProtectionVersion: Schema.optionalKey(PositiveInt),
+  /** Versioned read-only resource telemetry and diagnostics surface.
+      Missing on older servers, so clients hide diagnostics rather than
+      assuming the RPC and stream contracts exist. */
+  resourceDiagnosticsVersion: Schema.optionalKey(PositiveInt),
+  midChatProviderSwitching: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Agent-activity publishes (push notifications and Live Activities)
       currently leave this environment: the publish opt-in is enabled and the
       relay link credentials exist. Clients skip seeding a Live Activity when

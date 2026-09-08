@@ -16,16 +16,28 @@ import {
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetTurnDiffInput,
   OrchestrationLatestTurn,
+  OrchestrationProposedPlan,
+  OrchestrationReadModel,
+  OrchestrationSubagentDetail,
+  OrchestrationSubagentSummary,
+  OrchestrationThread,
   ProjectCreatedPayload,
   ProjectMetaUpdatedPayload,
-  OrchestrationProposedPlan,
   OrchestrationSession,
-  OrchestrationThread,
   OrchestrationThreadShell,
   ProjectCreateCommand,
   OrchestrationMessage,
   ThreadMessageSentPayload,
   ThreadMetaUpdatedPayload,
+  ThreadForkCommand,
+  ThreadForkedPayload,
+  ThreadForkHandoffCompleteCommand,
+  ThreadForkHandoffCompletedPayload,
+  ThreadForkWorkspaceUpdateCommand,
+  ThreadForkWorkspaceUpdatedPayload,
+  ThreadHarnessSyncLinkCommand,
+  ThreadHarnessSyncMessageImportCommand,
+  ThreadTurnRetryCommand,
   ThreadTurnStartCommand,
   ThreadCreatedPayload,
   ThreadTurnDiff,
@@ -35,6 +47,7 @@ import {
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { RuntimeSessionId, TurnId } from "./baseSchemas.ts";
 
 const decodeTurnDiffInput = Schema.decodeUnknownEffect(OrchestrationGetTurnDiffInput);
 const decodeFullThreadDiffInput = Schema.decodeUnknownEffect(OrchestrationGetFullThreadDiffInput);
@@ -43,7 +56,7 @@ const decodeProjectCreateCommand = Schema.decodeUnknownEffect(ProjectCreateComma
 const decodeProjectCreatedPayload = Schema.decodeUnknownEffect(ProjectCreatedPayload);
 const decodeProjectMetaUpdatedPayload = Schema.decodeUnknownEffect(ProjectMetaUpdatedPayload);
 const decodeThreadTurnStartCommand = Schema.decodeUnknownEffect(ThreadTurnStartCommand);
-const decodeClientOrchestrationCommand = Schema.decodeUnknownEffect(ClientOrchestrationCommand);
+const decodeThreadTurnRetryCommand = Schema.decodeUnknownEffect(ThreadTurnRetryCommand);
 const decodeOrchestrationMessage = Schema.decodeUnknownEffect(OrchestrationMessage);
 const decodeThreadMessageSentPayload = Schema.decodeUnknownEffect(ThreadMessageSentPayload);
 const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
@@ -51,9 +64,12 @@ const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
 );
 const decodeOrchestrationLatestTurn = Schema.decodeUnknownEffect(OrchestrationLatestTurn);
 const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(OrchestrationProposedPlan);
+const decodeOrchestrationReadModel = Schema.decodeUnknownEffect(OrchestrationReadModel);
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
 const decodeOrchestrationThread = Schema.decodeUnknownEffect(OrchestrationThread);
 const decodeOrchestrationThreadShell = Schema.decodeUnknownEffect(OrchestrationThreadShell);
+const decodeOrchestrationSubagentDetail = Schema.decodeUnknownEffect(OrchestrationSubagentDetail);
+const decodeOrchestrationSubagentSummary = Schema.decodeUnknownEffect(OrchestrationSubagentSummary);
 const encodeThreadCreatedPayload = Schema.encodeEffect(ThreadCreatedPayload);
 
 function getOptionValue(
@@ -64,10 +80,235 @@ function getOptionValue(
 }
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
+const decodeClientOrchestrationCommand = Schema.decodeUnknownEffect(ClientOrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
+const decodeThreadForkCommand = Schema.decodeUnknownEffect(ThreadForkCommand);
+const decodeThreadForkedPayload = Schema.decodeUnknownEffect(ThreadForkedPayload);
+const decodeThreadForkWorkspaceUpdateCommand = Schema.decodeUnknownEffect(
+  ThreadForkWorkspaceUpdateCommand,
+);
+const decodeThreadForkWorkspaceUpdatedPayload = Schema.decodeUnknownEffect(
+  ThreadForkWorkspaceUpdatedPayload,
+);
+const decodeThreadForkHandoffCompleteCommand = Schema.decodeUnknownEffect(
+  ThreadForkHandoffCompleteCommand,
+);
+const decodeThreadForkHandoffCompletedPayload = Schema.decodeUnknownEffect(
+  ThreadForkHandoffCompletedPayload,
+);
+const decodeThreadHarnessSyncLinkCommand = Schema.decodeUnknownEffect(ThreadHarnessSyncLinkCommand);
+const decodeThreadHarnessSyncMessageImportCommand = Schema.decodeUnknownEffect(
+  ThreadHarnessSyncMessageImportCommand,
+);
 const decodeDispatchCommandError = Schema.decodeUnknownEffect(OrchestrationDispatchCommandError);
 const decodeSnapShotAccessibility = Schema.decodeUnknownEffect(SnapShotAccessibility);
+
+const forkWorkspace = {
+  mode: "worktree",
+  baseBranch: "main",
+  startFromOrigin: true,
+  runSetupScript: true,
+} as const;
+
+it.effect("decodes message and proposed-plan thread fork commands", () =>
+  Effect.gen(function* () {
+    const base = {
+      type: "thread.fork",
+      commandId: "fork-command",
+      threadId: "thread-fork",
+      sourceThreadId: "thread-source",
+      modelSelection: { instanceId: "codex", model: "gpt-5.6" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      workspace: forkWorkspace,
+      createdAt: "2026-08-24T10:00:00.000Z",
+    } as const;
+    const fromMessage = yield* decodeThreadForkCommand({
+      ...base,
+      boundary: { kind: "message", messageId: "message-source" },
+    });
+    const fromPlan = yield* decodeClientOrchestrationCommand({
+      ...base,
+      boundary: { kind: "proposed-plan", planId: "plan-source" },
+      workspace: {
+        mode: "local",
+        baseBranch: null,
+        startFromOrigin: false,
+        runSetupScript: false,
+      },
+    });
+
+    assert.strictEqual(fromMessage.boundary.kind, "message");
+    assert.strictEqual(fromPlan.type, "thread.fork");
+    if (fromPlan.type === "thread.fork") {
+      assert.strictEqual(fromPlan.boundary.kind, "proposed-plan");
+      assert.strictEqual(fromPlan.workspace.baseBranch, null);
+    }
+  }),
+);
+
+it.effect("decodes frozen fork history with provenance and remaining first-turn budget", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadForkedPayload({
+      threadId: "thread-fork",
+      fork: {
+        provenance: {
+          sourceThreadId: "thread-source",
+          sourceTitle: "Source thread",
+          boundary: { kind: "message", messageId: "message-source" },
+          forkedAt: "2026-08-24T10:00:00.000Z",
+        },
+        workspace: {
+          spec: forkWorkspace,
+          status: "pending",
+          preparedAt: null,
+          lastError: null,
+        },
+        handoff: {
+          status: "pending",
+          historyInputChars: 4_000,
+          historyAttachmentCount: 1,
+          remainingInputChars: 116_000,
+          remainingAttachmentCount: 7,
+          completedAt: null,
+        },
+      },
+      history: {
+        messages: [
+          {
+            id: "message-fork",
+            role: "user",
+            text: "Question",
+            turnId: "turn-fork",
+            streaming: false,
+            createdAt: "2026-08-24T09:59:00.000Z",
+            updatedAt: "2026-08-24T09:59:00.000Z",
+            historyOrigin: {
+              sourceThreadId: "thread-source",
+              sourceId: "message-source",
+              ordinal: 0,
+            },
+          },
+        ],
+        proposedPlans: [],
+        activities: [],
+        subagents: [],
+        turns: [
+          {
+            turnId: "turn-fork",
+            pendingMessageId: "message-fork",
+            assistantMessageId: null,
+            state: "running",
+            requestedAt: "2026-08-24T09:59:00.000Z",
+            startedAt: "2026-08-24T09:59:01.000Z",
+            completedAt: null,
+            checkpointTurnCount: null,
+            checkpointRef: null,
+            checkpointStatus: null,
+            checkpointFiles: [],
+            historyOrigin: {
+              sourceThreadId: "thread-source",
+              sourceId: "turn-source",
+              ordinal: 1,
+            },
+          },
+        ],
+        checkpoints: [],
+      },
+    });
+
+    assert.strictEqual(parsed.history.messages[0]?.historyOrigin.sourceId, "message-source");
+    assert.strictEqual(parsed.fork.handoff.remainingInputChars, 116_000);
+    assert.strictEqual(parsed.fork.workspace.status, "pending");
+
+    const event = yield* decodeOrchestrationEvent({
+      sequence: 1,
+      eventId: "event-forked",
+      aggregateKind: "thread",
+      aggregateId: "thread-fork",
+      type: "thread.forked",
+      occurredAt: "2026-08-24T10:00:00.000Z",
+      commandId: "fork-command",
+      causationEventId: null,
+      correlationId: "fork-command",
+      metadata: {},
+      payload: parsed,
+    });
+    assert.strictEqual(event.type, "thread.forked");
+  }),
+);
+
+it.effect("decodes internal fork workspace and handoff state transitions", () =>
+  Effect.gen(function* () {
+    const workspaceCommand = yield* decodeThreadForkWorkspaceUpdateCommand({
+      type: "thread.fork.workspace.update",
+      commandId: "workspace-command",
+      threadId: "thread-fork",
+      status: "error",
+      preparedAt: null,
+      lastError: "Could not create worktree",
+      createdAt: "2026-08-24T10:01:00.000Z",
+    });
+    const workspacePayload = yield* decodeThreadForkWorkspaceUpdatedPayload({
+      threadId: "thread-fork",
+      status: "ready",
+      preparedAt: "2026-08-24T10:02:00.000Z",
+      lastError: null,
+      createdAt: "2026-08-24T10:02:00.000Z",
+    });
+    const handoffCommand = yield* decodeThreadForkHandoffCompleteCommand({
+      type: "thread.fork.handoff.complete",
+      commandId: "handoff-command",
+      threadId: "thread-fork",
+      completedAt: "2026-08-24T10:03:00.000Z",
+    });
+    const handoffPayload = yield* decodeThreadForkHandoffCompletedPayload({
+      threadId: "thread-fork",
+      completedAt: "2026-08-24T10:03:00.000Z",
+    });
+    const internalCommand = yield* decodeOrchestrationCommand(workspaceCommand);
+    const internalHandoffCommand = yield* decodeOrchestrationCommand(handoffCommand);
+    const clientWorkspaceCommand = yield* Effect.exit(
+      decodeClientOrchestrationCommand(workspaceCommand),
+    );
+    const workspaceEvent = yield* decodeOrchestrationEvent({
+      sequence: 2,
+      eventId: "event-workspace-updated",
+      aggregateKind: "thread",
+      aggregateId: "thread-fork",
+      type: "thread.fork-workspace-updated",
+      occurredAt: workspacePayload.createdAt,
+      commandId: workspaceCommand.commandId,
+      causationEventId: null,
+      correlationId: workspaceCommand.commandId,
+      metadata: {},
+      payload: workspacePayload,
+    });
+    const handoffEvent = yield* decodeOrchestrationEvent({
+      sequence: 3,
+      eventId: "event-handoff-completed",
+      aggregateKind: "thread",
+      aggregateId: "thread-fork",
+      type: "thread.fork-handoff-completed",
+      occurredAt: handoffPayload.completedAt,
+      commandId: handoffCommand.commandId,
+      causationEventId: null,
+      correlationId: handoffCommand.commandId,
+      metadata: {},
+      payload: handoffPayload,
+    });
+
+    assert.strictEqual(workspaceCommand.status, "error");
+    assert.strictEqual(workspacePayload.status, "ready");
+    assert.strictEqual(handoffCommand.completedAt, handoffPayload.completedAt);
+    assert.strictEqual(internalCommand.type, "thread.fork.workspace.update");
+    assert.strictEqual(internalHandoffCommand.type, "thread.fork.handoff.complete");
+    assert.strictEqual(clientWorkspaceCommand._tag, "Failure");
+    assert.strictEqual(workspaceEvent.type, "thread.fork-workspace-updated");
+    assert.strictEqual(handoffEvent.type, "thread.fork-handoff-completed");
+  }),
+);
 
 it.effect("decodes a dispatch error after its bootstrap thread was deleted", () =>
   Effect.gen(function* () {
@@ -78,6 +319,45 @@ it.effect("decodes a dispatch error after its bootstrap thread was deleted", () 
     });
 
     assert.strictEqual(error.bootstrapThreadDisposition, "deleted");
+  }),
+);
+
+it.effect("decodes harness history link and native message import commands", () =>
+  Effect.gen(function* () {
+    const linked = yield* decodeThreadHarnessSyncLinkCommand({
+      type: "thread.harness-sync.link",
+      commandId: "sync-link-1",
+      threadId: "thread-1",
+      sourceId: "codex-home",
+      continuationKey: "codex:/tmp/codex-home",
+      nativeSessionId: "native-session-1",
+      providerInstanceId: "codex-work",
+      providerLabel: "Codex Work",
+      activity: "active",
+      sourceUpdatedAt: "2026-08-23T10:00:00.000Z",
+      lastSyncedAt: "2026-08-23T10:01:00.000Z",
+    });
+    const imported = yield* decodeThreadHarnessSyncMessageImportCommand({
+      type: "thread.harness-sync.message.import",
+      commandId: "sync-message-1",
+      threadId: "thread-1",
+      nativeMessageId: "native-message-1",
+      message: {
+        id: "message-1",
+        role: "assistant",
+        text: "Imported answer",
+        turnId: null,
+        streaming: false,
+        createdAt: "2026-08-23T09:59:00.000Z",
+        updatedAt: "2026-08-23T09:59:00.000Z",
+      },
+      linkedAt: "2026-08-23T10:01:00.000Z",
+    });
+
+    assert.strictEqual(linked.providerInstanceId, "codex-work");
+    assert.strictEqual(linked.activity, "active");
+    assert.strictEqual(imported.nativeMessageId, "native-message-1");
+    assert.strictEqual(imported.message.id, "message-1");
   }),
 );
 
@@ -200,6 +480,32 @@ it.effect("decodes historical project.created payloads with a default provider",
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.defaultModelSelection?.instanceId, "codex");
+    assert.strictEqual(parsed.checkpointsEnabled, true);
+  }),
+);
+
+it.effect("defaults checkpoint capture for projects in historical cached snapshots", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationReadModel({
+      snapshotSequence: 1,
+      projects: [
+        {
+          id: "project-1",
+          title: "Historical project",
+          workspaceRoot: "/tmp/historical-project",
+          defaultModelSelection: null,
+          scripts: [],
+          coordinationClaims: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          deletedAt: null,
+        },
+      ],
+      threads: [],
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(parsed.projects[0]?.checkpointsEnabled, true);
   }),
 );
 
@@ -248,8 +554,115 @@ it.effect("decodes thread.turn.start defaults for provider and runtime mode", ()
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.modelSelection, undefined);
+    assert.strictEqual(parsed.fetchMode, undefined);
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
     assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
+  }),
+);
+
+it.effect("decodes a result-only retry against an existing user message and turn", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnRetryCommand({
+      type: "thread.turn.retry",
+      commandId: "cmd-turn-retry-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      messageId: "msg-1",
+      fetchMode: "repository-exploration",
+      modelSelection: {
+        instanceId: "codex",
+        model: "gpt-5.6",
+      },
+      createdAt: "2026-01-01T00:01:00.000Z",
+    });
+
+    assert.strictEqual(parsed.type, "thread.turn.retry");
+    assert.strictEqual(parsed.turnId, "turn-1");
+    assert.strictEqual(parsed.messageId, "msg-1");
+    assert.strictEqual(parsed.fetchMode, "repository-exploration");
+    assert.strictEqual(parsed.modelSelection?.model, "gpt-5.6");
+  }),
+);
+
+it.effect("decodes a result-only retry before a provider turn id exists", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnRetryCommand({
+      type: "thread.turn.retry",
+      commandId: "cmd-turn-retry-pending",
+      threadId: "thread-1",
+      turnId: null,
+      messageId: "msg-1",
+      createdAt: "2026-01-01T00:01:00.000Z",
+    });
+
+    assert.strictEqual(parsed.type, "thread.turn.retry");
+    assert.strictEqual(parsed.turnId, null);
+    assert.strictEqual(parsed.messageId, "msg-1");
+  }),
+);
+
+it.effect("preserves Fetch mode in thread.turn.start", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-instructions",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-turn-instructions",
+        role: "user",
+        text: "inspect the repository",
+        attachments: [],
+      },
+      fetchMode: "repository-exploration",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(parsed.message.text, "inspect the repository");
+    assert.strictEqual(parsed.fetchMode, "repository-exploration");
+  }),
+);
+
+it.effect("keeps Fetch mode narrow on client turn-start commands", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeClientOrchestrationCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-client-fetch",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-client-fetch",
+        role: "user",
+        text: "inspect the repository",
+        attachments: [],
+      },
+      fetchMode: "repository-exploration",
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.type, "thread.turn.start");
+    if (parsed.type !== "thread.turn.start") {
+      return;
+    }
+    assert.strictEqual(parsed.fetchMode, "repository-exploration");
+
+    const invalid = yield* Effect.exit(
+      decodeClientOrchestrationCommand({
+        type: "thread.turn.start",
+        commandId: "cmd-client-fetch-invalid",
+        threadId: "thread-1",
+        message: {
+          messageId: "msg-client-fetch-invalid",
+          role: "user",
+          text: "inspect the repository",
+          attachments: [],
+        },
+        fetchMode: "arbitrary-hidden-prompt",
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    assert.strictEqual(invalid._tag, "Failure");
   }),
 );
 
@@ -299,6 +712,44 @@ it.effect("accepts inline images, uploaded images, and uploaded files from clien
     assert.strictEqual("dataUrl" in command.message.attachments[0]!, true);
     assert.strictEqual("id" in command.message.attachments[1]!, true);
     assert.strictEqual(command.message.attachments[2]!.type, "file");
+  }),
+);
+
+it.effect("rejects display-only and unknown attachment types on new turns", () =>
+  Effect.gen(function* () {
+    const makeCommand = (attachment: unknown) => ({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-unsupported-attachment",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-unsupported-attachment",
+        role: "user",
+        text: "inspect this",
+        attachments: [attachment],
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    const base = {
+      id: "pending-00000000-0000-4000-8000-000000000003",
+      name: "recording.bin",
+      sizeBytes: 12,
+    };
+
+    const audio = yield* Effect.exit(
+      decodeClientOrchestrationCommand(
+        makeCommand({ ...base, type: "audio", mimeType: "audio/webm" }),
+      ),
+    );
+    const unknown = yield* Effect.exit(
+      decodeClientOrchestrationCommand(
+        makeCommand({ ...base, type: "future", mimeType: "application/octet-stream" }),
+      ),
+    );
+
+    assert.strictEqual(Exit.isFailure(audio), true);
+    assert.strictEqual(Exit.isFailure(unknown), true);
   }),
 );
 
@@ -680,8 +1131,10 @@ it.effect("defaults settled fields when decoding historical thread data", () =>
 
     assert.strictEqual(thread.settledOverride, null);
     assert.strictEqual(thread.settledAt, null);
+    assert.strictEqual(thread.fork, undefined);
     assert.strictEqual(shell.settledOverride, null);
     assert.strictEqual(shell.settledAt, null);
+    assert.strictEqual(shell.fork, undefined);
   }),
 );
 
@@ -1098,8 +1551,37 @@ it.effect(
       assert.strictEqual(parsed.modelSelection, undefined);
       assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
       assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
+      assert.strictEqual(parsed.fetchMode, undefined);
       assert.strictEqual(parsed.sourceProposedPlan, undefined);
     }),
+);
+
+it.effect("decodes Fetch mode on a turn-start request", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartRequestedPayload({
+      threadId: "thread-1",
+      messageId: "msg-1",
+      fetchMode: "repository-exploration",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(parsed.fetchMode, "repository-exploration");
+  }),
+);
+
+it.effect("decodes result-only retry metadata on a turn-start request", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartRequestedPayload({
+      threadId: "thread-1",
+      messageId: "msg-1",
+      resultOnly: true,
+      retryOfTurnId: "turn-1",
+      createdAt: "2026-01-01T00:01:00.000Z",
+    });
+
+    assert.strictEqual(parsed.resultOnly, true);
+    assert.strictEqual(parsed.retryOfTurnId, "turn-1");
+  }),
 );
 
 it.effect("decodes thread.turn-start-requested source proposed plan metadata when present", () =>
@@ -1166,6 +1648,342 @@ it.effect("decodes orchestration session runtime mode defaults", () =>
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
+    assert.strictEqual(parsed.runtimeSessionId, null);
+    assert.strictEqual(parsed.abortState, null);
+  }),
+);
+
+it.effect("decodes orchestration session abort synchronization state", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationSession({
+      threadId: "thread-1",
+      status: "running",
+      providerName: "codex",
+      runtimeSessionId: " runtime-session-1 ",
+      runtimeMode: "full-access",
+      activeTurnId: "turn-1",
+      abortState: {
+        runtimeSessionId: " runtime-session-1 ",
+        targetTurnId: "turn-1",
+        phase: "interrupting",
+        requestedAt: "2026-01-01T00:00:01.000Z",
+        forceAt: "2026-01-01T00:00:06.000Z",
+      },
+      lastError: null,
+      updatedAt: "2026-01-01T00:00:01.000Z",
+    });
+
+    assert.strictEqual(parsed.runtimeSessionId, "runtime-session-1");
+    assert.deepStrictEqual(parsed.abortState, {
+      runtimeSessionId: RuntimeSessionId.make("runtime-session-1"),
+      targetTurnId: TurnId.make("turn-1"),
+      phase: "interrupting",
+      requestedAt: "2026-01-01T00:00:01.000Z",
+      forceAt: "2026-01-01T00:00:06.000Z",
+    });
+  }),
+);
+
+it.effect("decodes the internal turn abort settlement command", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationCommand({
+      type: "thread.turn.abort.settle",
+      commandId: "cmd-abort-settle",
+      threadId: "thread-1",
+      runtimeSessionId: "runtime-session-1",
+      turnId: "turn-1",
+      outcome: "force-terminated",
+      settledAt: "2026-01-01T00:00:07.000Z",
+      createdAt: "2026-01-01T00:00:07.000Z",
+    });
+
+    assert.strictEqual(parsed.type, "thread.turn.abort.settle");
+    if (parsed.type !== "thread.turn.abort.settle") {
+      return;
+    }
+    assert.strictEqual(parsed.outcome, "force-terminated");
+    assert.strictEqual(parsed.turnId, "turn-1");
+  }),
+);
+
+it.effect("keeps interrupt public without exposing a force-abort client command", () =>
+  Effect.gen(function* () {
+    const interrupt = yield* decodeClientOrchestrationCommand({
+      type: "thread.turn.interrupt",
+      commandId: "cmd-interrupt",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(interrupt.type, "thread.turn.interrupt");
+
+    const forceAbort = yield* Effect.exit(
+      decodeClientOrchestrationCommand({
+        type: "thread.turn.force-abort",
+        commandId: "cmd-force-abort",
+        threadId: "thread-1",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    assert.strictEqual(forceAbort._tag, "Failure");
+  }),
+);
+
+it.effect("decodes the authoritative turn abort settlement event", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationEvent({
+      sequence: 42,
+      eventId: "evt-abort-settled",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      occurredAt: "2026-01-01T00:00:07.000Z",
+      commandId: "cmd-abort-settle",
+      causationEventId: null,
+      correlationId: "cmd-abort-settle",
+      metadata: {},
+      type: "thread.turn-abort-settled",
+      payload: {
+        threadId: "thread-1",
+        runtimeSessionId: "runtime-session-1",
+        turnId: null,
+        outcome: "force-detached",
+        detail: "Remote termination could not be confirmed",
+        settledAt: "2026-01-01T00:00:07.000Z",
+      },
+    });
+
+    assert.strictEqual(parsed.type, "thread.turn-abort-settled");
+    if (parsed.type !== "thread.turn-abort-settled") {
+      return;
+    }
+    assert.strictEqual(parsed.payload.outcome, "force-detached");
+    assert.strictEqual(parsed.payload.turnId, null);
+  }),
+);
+
+const orchestrationThreadFixture = {
+  id: "thread-1",
+  projectId: "project-1",
+  title: "Subagent contracts",
+  modelSelection: {
+    instanceId: "codex",
+    model: "gpt-5.6-codex",
+  },
+  runtimeMode: "full-access",
+  interactionMode: "default",
+  branch: "main",
+  worktreePath: "/tmp/project",
+  latestTurn: null,
+  createdAt: "2026-07-30T10:00:00.000Z",
+  updatedAt: "2026-07-30T10:00:00.000Z",
+  archivedAt: null,
+  deletedAt: null,
+  messages: [],
+  proposedPlans: [],
+  activities: [],
+  checkpoints: [],
+  session: null,
+} as const;
+
+const orchestrationSubagentSummaryFixture = {
+  id: "agent-contracts",
+  providerThreadId: "provider-thread-contracts",
+  parentId: null,
+  path: "/root/contracts",
+  name: "contracts",
+  nickname: "contracts",
+  role: "worker",
+  task: "Implement contract schemas",
+  model: "gpt-5.6-codex",
+  reasoningEffort: "ultra",
+  depth: 1,
+  status: "running",
+  statusMessage: "Adding tests",
+  latestProgress: {
+    kind: "test",
+    summary: "Running contract tests",
+    detail: null,
+    createdAt: "2026-07-30T10:00:01.000Z",
+  },
+  latestTurn: null,
+  startedAt: "2026-07-30T10:00:00.000Z",
+  updatedAt: "2026-07-30T10:00:01.000Z",
+  completedAt: null,
+} as const;
+
+it.effect("defaults subagents to an empty list for historical thread snapshots", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationThread(orchestrationThreadFixture);
+
+    assert.deepStrictEqual(parsed.subagents, []);
+  }),
+);
+
+it.effect("decodes subagent summaries with explicit progress and lifecycle state", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationSubagentSummary(orchestrationSubagentSummaryFixture);
+
+    assert.strictEqual(parsed.id, "agent-contracts");
+    assert.strictEqual(parsed.status, "running");
+    assert.strictEqual(parsed.latestProgress?.summary, "Running contract tests");
+    assert.strictEqual(parsed.origin, "provider-native");
+    assert.strictEqual(parsed.providerInstanceId, null);
+    assert.strictEqual(parsed.providerDriver, null);
+  }),
+);
+
+it.effect("decodes T3 Fetch subagent provider metadata", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationSubagentSummary({
+      ...orchestrationSubagentSummaryFixture,
+      origin: "t3-fetch",
+      providerInstanceId: "claude_work",
+      providerDriver: "claudeAgent",
+    });
+
+    assert.strictEqual(parsed.origin, "t3-fetch");
+    assert.strictEqual(parsed.providerInstanceId, "claude_work");
+    assert.strictEqual(parsed.providerDriver, "claudeAgent");
+  }),
+);
+
+it.effect("decodes T3-managed general subagent provider metadata", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationSubagentSummary({
+      ...orchestrationSubagentSummaryFixture,
+      origin: "t3-managed",
+      providerInstanceId: "codex",
+      providerDriver: "codex",
+      serviceTier: "priority",
+    });
+
+    assert.strictEqual(parsed.origin, "t3-managed");
+    assert.strictEqual(parsed.providerInstanceId, "codex");
+    assert.strictEqual(parsed.providerDriver, "codex");
+    assert.strictEqual(parsed.serviceTier, "priority");
+  }),
+);
+
+it.effect("decodes a subagent detail using the existing transcript schemas", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationSubagentDetail({
+      ...orchestrationSubagentSummaryFixture,
+      messages: [
+        {
+          id: "message-agent-1",
+          role: "assistant",
+          text: "Contracts are ready.",
+          turnId: "turn-agent-1",
+          streaming: false,
+          createdAt: "2026-07-30T10:00:02.000Z",
+          updatedAt: "2026-07-30T10:00:02.000Z",
+        },
+      ],
+      proposedPlans: [],
+      activities: [],
+    });
+
+    assert.strictEqual(parsed.messages[0]?.text, "Contracts are ready.");
+  }),
+);
+
+it.effect("routes internal transcript commands to an optional subagent", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationCommand({
+      type: "thread.message.assistant.delta",
+      commandId: "command-agent-delta-1",
+      threadId: "thread-1",
+      subagentId: "agent-contracts",
+      messageId: "message-agent-1",
+      delta: "Contracts",
+      turnId: "turn-agent-1",
+      createdAt: "2026-07-30T10:00:01.000Z",
+    });
+
+    assert.strictEqual(parsed.type, "thread.message.assistant.delta");
+    if (parsed.type !== "thread.message.assistant.delta") {
+      return;
+    }
+    assert.strictEqual(parsed.subagentId, "agent-contracts");
+  }),
+);
+
+it.effect("decodes subagent summary and progress commands", () =>
+  Effect.gen(function* () {
+    const upsert = yield* decodeOrchestrationCommand({
+      type: "thread.subagent.upsert",
+      commandId: "command-agent-upsert-1",
+      threadId: "thread-1",
+      subagent: orchestrationSubagentSummaryFixture,
+      createdAt: "2026-07-30T10:00:01.000Z",
+    });
+    const progress = yield* decodeOrchestrationCommand({
+      type: "thread.subagent.progress.set",
+      commandId: "command-agent-progress-1",
+      threadId: "thread-1",
+      subagentId: "agent-contracts",
+      progress: null,
+      updatedAt: "2026-07-30T10:00:02.000Z",
+    });
+
+    assert.strictEqual(upsert.type, "thread.subagent.upsert");
+    assert.strictEqual(progress.type, "thread.subagent.progress.set");
+  }),
+);
+
+it.effect("decodes routed subagent transcript events and state updates", () =>
+  Effect.gen(function* () {
+    const stateEvent = yield* decodeOrchestrationEvent({
+      sequence: 1,
+      eventId: "event-agent-state-1",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      occurredAt: "2026-07-30T10:00:02.000Z",
+      commandId: "command-agent-state-1",
+      causationEventId: null,
+      correlationId: "command-agent-state-1",
+      metadata: {},
+      type: "thread.subagent-state-set",
+      payload: {
+        threadId: "thread-1",
+        subagentId: "agent-contracts",
+        status: "waiting",
+        statusMessage: null,
+        updatedAt: "2026-07-30T10:00:02.000Z",
+      },
+    });
+    const activityEvent = yield* decodeOrchestrationEvent({
+      sequence: 2,
+      eventId: "event-agent-activity-1",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      occurredAt: "2026-07-30T10:00:03.000Z",
+      commandId: "command-agent-activity-1",
+      causationEventId: null,
+      correlationId: "command-agent-activity-1",
+      metadata: {},
+      type: "thread.activity-appended",
+      payload: {
+        threadId: "thread-1",
+        subagentId: "agent-contracts",
+        activity: {
+          id: "activity-agent-1",
+          tone: "tool",
+          kind: "command",
+          summary: "Running tests",
+          payload: {},
+          turnId: "turn-agent-1",
+          createdAt: "2026-07-30T10:00:03.000Z",
+        },
+      },
+    });
+
+    assert.strictEqual(stateEvent.type, "thread.subagent-state-set");
+    assert.strictEqual(activityEvent.type, "thread.activity-appended");
+    if (activityEvent.type !== "thread.activity-appended") {
+      return;
+    }
+    assert.strictEqual(activityEvent.payload.subagentId, "agent-contracts");
   }),
 );
 

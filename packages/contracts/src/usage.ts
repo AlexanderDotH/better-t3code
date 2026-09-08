@@ -21,14 +21,13 @@ import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 5 as const;
+export const USAGE_CONTRACT_VERSION = 6 as const;
 
 /**
  * Oldest {@link UsageSummary} version a current client will still merge.
  *
- * v5 only adds `grok` to {@link UsageProviderKind}; v4 Claude/Codex buckets
- * remain valid, so mixed-version environments keep those totals instead of
- * treating every older server as stale.
+ * v6 adds optional diagnostics and Auto Reasoning attribution. v4 and v5
+ * buckets remain valid, so mixed-version environments keep their totals.
  */
 export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
 
@@ -79,6 +78,37 @@ export const UsageTokenTotals = Schema.Struct({
 });
 export type UsageTokenTotals = typeof UsageTokenTotals.Type;
 
+/** Best-effort attribution for one provider model call. */
+export const UsageCallKind = Schema.Literals([
+  "root",
+  "subagent",
+  "metadata",
+  "auto-reasoning",
+  "unknown",
+]);
+export type UsageCallKind = typeof UsageCallKind.Type;
+
+/**
+ * Content-free context diagnostics observed in provider transcripts.
+ *
+ * These counters deliberately contain no session ids, prompts, summaries, or
+ * project-memory text.
+ */
+export const UsageContextDiagnostics = Schema.Struct({
+  nativeForks: NonNegativeInt,
+  compactHandoffs: NonNegativeInt,
+  totalHandoffChars: NonNegativeInt,
+  compactionEvents: NonNegativeInt,
+  maxContextTokens: NonNegativeInt,
+  instructionChars: Schema.optional(NonNegativeInt),
+  memoryInjectionChars: Schema.optional(NonNegativeInt),
+  toolSchemaChars: Schema.optional(NonNegativeInt),
+  subagentResultChars: Schema.optional(NonNegativeInt),
+  toolDigestChars: Schema.optional(NonNegativeInt),
+  autoRoutingChars: Schema.optional(NonNegativeInt),
+});
+export type UsageContextDiagnostics = typeof UsageContextDiagnostics.Type;
+
 /**
  * One `(day, hourStart?, provider, model)` cell. `hourStart` is the UTC start
  * instant of a rolling bucket and is present only for hourly requests.
@@ -94,6 +124,10 @@ export const UsageBucket = Schema.Struct({
   provider: UsageProviderKind,
   model: TrimmedNonEmptyString,
   totals: UsageTokenTotals,
+  /** Missing on older servers and mapped to `unknown` by current clients. */
+  callKind: Schema.optional(UsageCallKind),
+  /** Present only when the provider transcript exposes content-free signals. */
+  diagnostics: Schema.optional(UsageContextDiagnostics),
   costUsd: Schema.Number,
   /**
    * What the cached input would have cost at full input rates minus what it

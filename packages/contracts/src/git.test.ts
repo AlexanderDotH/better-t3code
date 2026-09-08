@@ -8,6 +8,7 @@ import {
   GitRunStackedActionResult,
   GitRunStackedActionInput,
   GitResolvePullRequestResult,
+  TextGenerationError,
 } from "./git.ts";
 
 const decodeCreateWorktreeInput = Schema.decodeUnknownSync(VcsCreateWorktreeInput);
@@ -20,6 +21,45 @@ const decodePreparePullRequestThreadResult = Schema.decodeUnknownSync(
 const decodeRunStackedActionInput = Schema.decodeUnknownSync(GitRunStackedActionInput);
 const decodeRunStackedActionResult = Schema.decodeUnknownSync(GitRunStackedActionResult);
 const decodeResolvePullRequestResult = Schema.decodeUnknownSync(GitResolvePullRequestResult);
+const decodeTextGenerationError = Schema.decodeUnknownSync(TextGenerationError);
+
+describe("TextGenerationError", () => {
+  it("keeps legacy errors compatible and decodes typed model failures", () => {
+    expect(
+      decodeTextGenerationError({
+        _tag: "TextGenerationError",
+        operation: "generateThreadTitle",
+        detail: "failed",
+      }).reason,
+    ).toBeUndefined();
+    expect(
+      decodeTextGenerationError({
+        _tag: "TextGenerationError",
+        operation: "planFetchExploration",
+        detail: "model is unavailable",
+        reason: "model-unavailable",
+      }).reason,
+    ).toBe("model-unavailable");
+    expect(() =>
+      decodeTextGenerationError({
+        _tag: "TextGenerationError",
+        operation: "planFetchExploration",
+        detail: "failed",
+        reason: "timeout",
+      }),
+    ).toThrow();
+
+    const rateLimited = decodeTextGenerationError({
+      _tag: "TextGenerationError",
+      operation: "enrichKnowledgeGraph",
+      detail: "Rate limited.",
+      reason: "rate-limited",
+      retryAt: 1_788_000_000_000,
+    });
+    expect(rateLimited.reason).toBe("rate-limited");
+    expect(rateLimited.retryAt).toBe(1_788_000_000_000);
+  });
+});
 
 describe("VcsCreateWorktreeInput", () => {
   it("accepts omitted newRefName for existing-refName worktrees", () => {
@@ -124,6 +164,32 @@ describe("GitRunStackedActionInput", () => {
 
     expect(parsed.actionId).toBe("action-1");
     expect(parsed.action).toBe("create_pr");
+  });
+
+  it("preserves legacy filePaths while accepting standard-index commit selections", () => {
+    const legacy = decodeRunStackedActionInput({
+      actionId: "legacy-action",
+      cwd: "/repo",
+      action: "commit",
+      filePaths: ["src/legacy.ts"],
+    });
+    const staged = decodeRunStackedActionInput({
+      actionId: "staged-action",
+      cwd: "/repo",
+      action: "commit_push",
+      commitSelection: { mode: "staged" },
+    });
+    const selected = decodeRunStackedActionInput({
+      actionId: "selected-action",
+      cwd: "/repo",
+      action: "commit",
+      commitSelection: { mode: "paths", paths: ["src/deck.tsx"] },
+    });
+
+    expect(legacy.filePaths).toEqual(["src/legacy.ts"]);
+    expect(legacy.commitSelection).toBeUndefined();
+    expect(staged.commitSelection).toEqual({ mode: "staged" });
+    expect(selected.commitSelection).toEqual({ mode: "paths", paths: ["src/deck.tsx"] });
   });
 });
 

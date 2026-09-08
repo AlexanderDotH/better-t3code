@@ -1,10 +1,11 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { HostPowerSnapshot } from "./background.ts";
 import { DesktopUpdateStateSchema } from "./ipc.ts";
 
-export const RESOURCE_MONITOR_PROTOCOL_VERSION = 3 as const;
+export const RESOURCE_MONITOR_PROTOCOL_VERSION = 4 as const;
 
 /** Whole-host capacity, independent of T3's process diagnostics. */
 export const HostResourcesSnapshot = Schema.Struct({
@@ -67,6 +68,7 @@ export const ResourceMonitorCapabilities = Schema.Struct({
   ioBytes: Schema.Boolean,
   processStartTime: Schema.Boolean,
   processTree: Schema.Boolean,
+  processSuspendResume: Schema.Boolean,
 });
 export type ResourceMonitorCapabilities = typeof ResourceMonitorCapabilities.Type;
 
@@ -87,6 +89,14 @@ export const ResourceMonitorProcessSample = Schema.Struct({
   ioSemantics: Schema.Literals(["storage", "all-io"]),
 });
 export type ResourceMonitorProcessSample = typeof ResourceMonitorProcessSample.Type;
+
+export const ResourceMonitorHostMemory = Schema.Struct({
+  totalBytes: NonNegativeInt,
+  availableBytes: NonNegativeInt,
+  swapTotalBytes: NonNegativeInt,
+  swapFreeBytes: NonNegativeInt,
+});
+export type ResourceMonitorHostMemory = typeof ResourceMonitorHostMemory.Type;
 
 export const ResourceMonitorConfigureCommand = Schema.Struct({
   version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
@@ -142,6 +152,32 @@ export const ResourceMonitorReadHistoryCommand = Schema.Struct({
 });
 export type ResourceMonitorReadHistoryCommand = typeof ResourceMonitorReadHistoryCommand.Type;
 
+export const ResourceMonitorSuspendProcessTreeCommand = Schema.Struct({
+  version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
+  type: Schema.Literal("suspendProcessTree"),
+  requestId: TrimmedNonEmptyString,
+  leaseId: TrimmedNonEmptyString,
+  processes: Schema.NonEmptyArray(ResourceTelemetryProcessIdentity),
+});
+export type ResourceMonitorSuspendProcessTreeCommand =
+  typeof ResourceMonitorSuspendProcessTreeCommand.Type;
+
+export const ResourceMonitorResumeProcessTreeCommand = Schema.Struct({
+  version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
+  type: Schema.Literal("resumeProcessTree"),
+  requestId: TrimmedNonEmptyString,
+  leaseId: TrimmedNonEmptyString,
+  processes: Schema.NonEmptyArray(ResourceTelemetryProcessIdentity),
+});
+export type ResourceMonitorResumeProcessTreeCommand =
+  typeof ResourceMonitorResumeProcessTreeCommand.Type;
+
+export const ResourceMonitorProcessControlCommand = Schema.Union([
+  ResourceMonitorSuspendProcessTreeCommand,
+  ResourceMonitorResumeProcessTreeCommand,
+]);
+export type ResourceMonitorProcessControlCommand = typeof ResourceMonitorProcessControlCommand.Type;
+
 export const ResourceMonitorShutdownCommand = Schema.Struct({
   version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
   type: Schema.Literal("shutdown"),
@@ -156,6 +192,7 @@ export const ResourceMonitorCommand = Schema.Union([
   ResourceMonitorSampleNowCommand,
   ResourceMonitorProcessTableCommand,
   ResourceMonitorReadHistoryCommand,
+  ResourceMonitorProcessControlCommand,
   ResourceMonitorShutdownCommand,
 ]);
 export type ResourceMonitorCommand = typeof ResourceMonitorCommand.Type;
@@ -180,6 +217,7 @@ export const ResourceMonitorSnapshotEvent = Schema.Struct({
   scannedProcessCount: NonNegativeInt,
   retainedProcessCount: NonNegativeInt,
   inaccessibleProcessCount: NonNegativeInt,
+  memory: ResourceMonitorHostMemory,
   requestId: Schema.optionalKey(TrimmedNonEmptyString),
   externalProcesses: Schema.optionalKey(Schema.Array(ResourceMonitorExternalProcess)),
   processes: Schema.Array(ResourceMonitorProcessSample),
@@ -219,11 +257,30 @@ export const ResourceMonitorErrorEvent = Schema.Struct({
 });
 export type ResourceMonitorErrorEvent = typeof ResourceMonitorErrorEvent.Type;
 
+export const ResourceMonitorProcessControlOperation = Schema.Literals(["suspend", "resume"]);
+export type ResourceMonitorProcessControlOperation =
+  typeof ResourceMonitorProcessControlOperation.Type;
+
+export const ResourceMonitorProcessControlResultEvent = Schema.Struct({
+  version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
+  type: Schema.Literal("processControlResult"),
+  requestId: TrimmedNonEmptyString,
+  leaseId: TrimmedNonEmptyString,
+  operation: ResourceMonitorProcessControlOperation,
+  success: Schema.Boolean,
+  /** True only when the sidecar still owns suspend increments for this lease. */
+  resumeRequired: Schema.Boolean,
+  error: Schema.optionalKey(Schema.String),
+});
+export type ResourceMonitorProcessControlResultEvent =
+  typeof ResourceMonitorProcessControlResultEvent.Type;
+
 export const ResourceMonitorEvent = Schema.Union([
   ResourceMonitorHelloEvent,
   ResourceMonitorSnapshotEvent,
   ResourceMonitorProcessTableEvent,
   ResourceMonitorHistoryChunkEvent,
+  ResourceMonitorProcessControlResultEvent,
   ResourceMonitorErrorEvent,
 ]);
 export type ResourceMonitorEvent = typeof ResourceMonitorEvent.Type;
@@ -462,6 +519,40 @@ export const ResourceTelemetrySnapshot = Schema.Struct({
   health: ResourceTelemetryHealth,
 });
 export type ResourceTelemetrySnapshot = typeof ResourceTelemetrySnapshot.Type;
+
+export const ResourceProtectionState = Schema.Literals([
+  "normal",
+  "waiting",
+  "throttled",
+  "recovering",
+  "unavailable",
+]);
+export type ResourceProtectionState = typeof ResourceProtectionState.Type;
+
+export const RESOURCE_PROTECTION_MAX_AFFECTED_THREAD_IDS = 256;
+const ResourceProtectionAffectedThreadIds = Schema.Array(ThreadId).check(
+  Schema.isMaxLength(RESOURCE_PROTECTION_MAX_AFFECTED_THREAD_IDS),
+);
+
+/**
+ * Ephemeral server authority for admission and provider throttling state.
+ * Producers select the first bounded unique IDs in policy order and set the
+ * truncation flag when further affected threads exist. Decoding rejects an
+ * oversized array and never slices it silently.
+ */
+export const ResourceProtectionSnapshot = Schema.Struct({
+  state: ResourceProtectionState,
+  totalMemoryBytes: NonNegativeInt,
+  availableMemoryBytes: NonNegativeInt,
+  reservedMemoryBytes: NonNegativeInt,
+  coreReserveBytes: NonNegativeInt,
+  waitingStarts: NonNegativeInt,
+  affectedThreadIds: ResourceProtectionAffectedThreadIds,
+  affectedThreadIdsTruncated: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+});
+export type ResourceProtectionSnapshot = typeof ResourceProtectionSnapshot.Type;
 
 export const ResourceTelemetryHistoryInput = Schema.Struct({
   windowMs: NonNegativeInt,

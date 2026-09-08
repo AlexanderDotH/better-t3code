@@ -1,9 +1,11 @@
 import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
+import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import {
   ForwardCompatibleNullable,
+  NonNegativeInt,
   ProjectId,
   TrimmedNonEmptyString,
   TrimmedString,
@@ -12,7 +14,15 @@ import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 import { EnvironmentMachineKind, ThreadEnvMode } from "./environment.ts";
 import { KeybindingShortcut } from "./keybindings.ts";
 import {
+  BetterT3SettingsPatchV1,
+  BetterT3SettingsV1,
+  DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
+} from "./betterT3.ts";
+import { McpSettings, McpServerDefinition } from "./mcp.ts";
+import {
   CustomModelSetting,
+  AgentReasoningEffort,
+  DEFAULT_AGENT_REASONING_EFFORT,
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
   ProviderOptionSelections,
@@ -33,6 +43,66 @@ import {
   type ProviderDriverKind,
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
+import { SkillSettings } from "./skills.ts";
+
+// ── Synchronized Client Preferences ────────────────────────────
+
+export const MIN_PROJECT_THREAD_PREVIEW_COUNT = 1;
+export const MAX_PROJECT_THREAD_PREVIEW_COUNT = 15;
+export const ProjectThreadPreviewCount = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_PROJECT_THREAD_PREVIEW_COUNT,
+    maximum: MAX_PROJECT_THREAD_PREVIEW_COUNT,
+  }),
+);
+export type ProjectThreadPreviewCount = typeof ProjectThreadPreviewCount.Type;
+export const DEFAULT_PROJECT_THREAD_PREVIEW_COUNT: ProjectThreadPreviewCount = 3;
+
+export const ProjectThreadPreviewSyncRecord = Schema.Struct({
+  count: ProjectThreadPreviewCount,
+  updatedAt: NonNegativeInt,
+  updateId: TrimmedNonEmptyString,
+});
+export type ProjectThreadPreviewSyncRecord = typeof ProjectThreadPreviewSyncRecord.Type;
+
+// ── Synchronized Chat Visual Settings ──────────────────────────
+
+export const ChatVisualMode = Schema.Literals(["current", "classic"]);
+export type ChatVisualMode = typeof ChatVisualMode.Type;
+export const DEFAULT_CHAT_VISUAL_MODE: ChatVisualMode = "current";
+
+export const ChatVisualModeSyncRecord = Schema.Struct({
+  mode: ChatVisualMode,
+  updatedAt: NonNegativeInt,
+  updateId: TrimmedNonEmptyString,
+});
+export type ChatVisualModeSyncRecord = typeof ChatVisualModeSyncRecord.Type;
+
+// ── Synchronized Interface Language ────────────────────────────
+
+export const InterfaceLanguagePreference = Schema.Literals(["system", "en", "de"]);
+export type InterfaceLanguagePreference = typeof InterfaceLanguagePreference.Type;
+export const DEFAULT_INTERFACE_LANGUAGE_PREFERENCE: InterfaceLanguagePreference = "system";
+
+export const InterfaceLanguageSyncRecord = Schema.Struct({
+  preference: InterfaceLanguagePreference,
+  updatedAt: NonNegativeInt,
+  updateId: TrimmedNonEmptyString,
+});
+export type InterfaceLanguageSyncRecord = typeof InterfaceLanguageSyncRecord.Type;
+
+export const INTERFACE_LOCALE_SYNC_VERSION = 1 as const;
+export const InterfaceLocalePreferenceV1 = Schema.Literals(["system", "en", "de", "fr"]);
+export type InterfaceLocalePreferenceV1 = typeof InterfaceLocalePreferenceV1.Type;
+export const DEFAULT_INTERFACE_LOCALE_PREFERENCE_V1: InterfaceLocalePreferenceV1 = "system";
+
+export const InterfaceLocaleSyncRecordV1 = Schema.Struct({
+  version: Schema.Literal(INTERFACE_LOCALE_SYNC_VERSION),
+  preference: InterfaceLocalePreferenceV1,
+  updatedAt: NonNegativeInt,
+  updateId: TrimmedNonEmptyString,
+});
+export type InterfaceLocaleSyncRecordV1 = typeof InterfaceLocaleSyncRecordV1.Type;
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -58,17 +128,13 @@ export const SidebarProjectGroupingMode = Schema.Literals([
   "separate",
 ]);
 export type SidebarProjectGroupingMode = typeof SidebarProjectGroupingMode.Type;
-const DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE: SidebarProjectGroupingMode = "repository";
-export const MIN_SIDEBAR_THREAD_PREVIEW_COUNT = 1;
-export const MAX_SIDEBAR_THREAD_PREVIEW_COUNT = 15;
-export const SidebarThreadPreviewCount = Schema.Int.check(
-  Schema.isBetween({
-    minimum: MIN_SIDEBAR_THREAD_PREVIEW_COUNT,
-    maximum: MAX_SIDEBAR_THREAD_PREVIEW_COUNT,
-  }),
-);
-export type SidebarThreadPreviewCount = typeof SidebarThreadPreviewCount.Type;
-const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount = 6;
+export const DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE: SidebarProjectGroupingMode = "repository";
+export const MIN_SIDEBAR_THREAD_PREVIEW_COUNT = MIN_PROJECT_THREAD_PREVIEW_COUNT;
+export const MAX_SIDEBAR_THREAD_PREVIEW_COUNT = MAX_PROJECT_THREAD_PREVIEW_COUNT;
+export const SidebarThreadPreviewCount = ProjectThreadPreviewCount;
+export type SidebarThreadPreviewCount = ProjectThreadPreviewCount;
+export const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount =
+  DEFAULT_PROJECT_THREAD_PREVIEW_COUNT;
 export const MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = 1;
 export const MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = 90;
 export const SidebarAutoSettleAfterDays = Schema.Number.check(
@@ -88,7 +154,7 @@ export const GlassOpacity = Schema.Int.check(
   }),
 );
 export type GlassOpacity = typeof GlassOpacity.Type;
-const DEFAULT_GLASS_OPACITY: GlassOpacity = 80;
+export const DEFAULT_GLASS_OPACITY: GlassOpacity = 80;
 
 export const MIN_APPEARANCE_CONTRAST = 50;
 export const MAX_APPEARANCE_CONTRAST = 200;
@@ -96,7 +162,7 @@ export const AppearanceContrast = Schema.Int.check(
   Schema.isBetween({ minimum: MIN_APPEARANCE_CONTRAST, maximum: MAX_APPEARANCE_CONTRAST }),
 );
 export type AppearanceContrast = typeof AppearanceContrast.Type;
-const DEFAULT_APPEARANCE_CONTRAST: AppearanceContrast = 100;
+export const DEFAULT_APPEARANCE_CONTRAST: AppearanceContrast = 100;
 export const MIN_PANEL_ANIMATION_DURATION_MS = 0;
 export const MAX_PANEL_ANIMATION_DURATION_MS = 400;
 export const PanelAnimationDurationMs = Schema.Int.check(
@@ -223,6 +289,12 @@ const LegacyConfirmQuit = Schema.Boolean.pipe(
 );
 
 const QuitConfirmationModeSetting = Schema.Union([QuitConfirmationMode, LegacyConfirmQuit]);
+export const VoiceInputOutputLanguage = Schema.Literals(["native", "english"]);
+export type VoiceInputOutputLanguage = typeof VoiceInputOutputLanguage.Type;
+
+export const SidebarPosition = Schema.Literals(["left", "right"]);
+export type SidebarPosition = typeof SidebarPosition.Type;
+export const DEFAULT_SIDEBAR_POSITION: SidebarPosition = "left";
 
 /**
  * A user-chosen font family (a single name or a comma-separated list). Empty
@@ -282,6 +354,10 @@ export const ClientSettingsSchema = Schema.Struct({
   panelAnimationDurationMs: PanelAnimationDurationMs.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PANEL_ANIMATION_DURATION_MS)),
   ),
+  macosWindowTransparency: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  betterT3Device: BetterT3SettingsV1.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1)),
+  ),
   browserDefaultViewport: PreviewViewportSetting.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BROWSER_VIEWPORT)),
   ),
@@ -335,8 +411,19 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   diffIgnoreWhitespace: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   diffLayout: DiffLayout.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_DIFF_LAYOUT))),
+  experimentalFetch: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  experimentalParallelPlanImplementation: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   environmentIdentificationMode: EnvironmentIdentificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE)),
+  ),
+  /** Local cache participating in cross-environment interface-language sync. */
+  interfaceLanguageLocalRecord: Schema.NullOr(InterfaceLanguageSyncRecord).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  interfaceLocaleLocalRecordV1: Schema.NullOr(InterfaceLocaleSyncRecordV1).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   glassOpacity: GlassOpacity.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_GLASS_OPACITY)),
@@ -407,6 +494,14 @@ export const ClientSettingsSchema = Schema.Struct({
   // settles the composer into its single-line layout. Losing focus never does.
   composerCollapseOnScroll: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   proactivePanelsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // Keep composer controls bundled by default; web and desktop users can opt
+  // into expanded controls when the available composer width supports them.
+  showExpandedComposerControls: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  // Provider-supplied reasoning stays hidden by default.
+  // Users can opt into an expanded inline presentation on web and desktop.
+  showReasoning: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   showSkillsInSlashMenu: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   // Legacy sidebar (the original per-project tree). Deliberately a fresh key
   // (was `sidebarV2Enabled` + `sidebarV2ConfiguredByUser`): decoding drops the
@@ -426,6 +521,10 @@ export const ClientSettingsSchema = Schema.Struct({
   sidebarThreadSortOrder: SidebarThreadSortOrder.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_SORT_ORDER)),
   ),
+  sidebarPosition: SidebarPosition.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_POSITION)),
+  ),
+  projectThreadPreviewMigrationVersion: Schema.optionalKey(Schema.Literal(1)),
   sidebarThreadPreviewCount: SidebarThreadPreviewCount.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT)),
   ),
@@ -445,6 +544,10 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   snapShotFlash: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   snapShotAnimations: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  voiceInputOutputLanguage: VoiceInputOutputLanguage.pipe(
+    Schema.withDecodingDefault(Effect.succeed("native" as const)),
+  ),
+  improvePromptBeforeSend: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   wordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
@@ -467,7 +570,7 @@ export const UsageModelPriceOverride = Schema.Struct({
 });
 export type UsageModelPriceOverride = typeof UsageModelPriceOverride.Type;
 
-const makeBinaryPathSetting = (fallback: string) =>
+const makeDefaultedTrimmedStringSetting = (fallback: string) =>
   TrimmedString.pipe(
     Schema.decodeTo(
       Schema.String,
@@ -479,7 +582,31 @@ const makeBinaryPathSetting = (fallback: string) =>
     Schema.withDecodingDefault(Effect.succeed(fallback)),
   );
 
-export type ProviderSettingsFormControl = "text" | "password" | "textarea" | "switch" | "select";
+const makeBinaryPathSetting = makeDefaultedTrimmedStringSetting;
+
+export type ProviderSettingsFormControl =
+  | "text"
+  | "password"
+  | "textarea"
+  | "switch"
+  | "select"
+  | "number"
+  | "ordered-string-list";
+
+export interface ProviderSettingsFormSelectOption {
+  readonly value: string;
+  readonly label: string;
+  readonly description?: string | undefined;
+}
+
+export type ProviderSettingsFormOptions =
+  | readonly ProviderSettingsFormSelectOption[]
+  | { readonly source: "models" };
+
+export interface ProviderSettingsFormVisibilityCondition {
+  readonly field: string;
+  readonly equals: string | number | boolean;
+}
 
 export interface ProviderSettingsFormOption {
   readonly value: string;
@@ -491,8 +618,11 @@ export interface ProviderSettingsFormAnnotation {
   readonly placeholder?: string | undefined;
   readonly hidden?: boolean | undefined;
   readonly clearWhenEmpty?: "omit" | "persist" | undefined;
-  /** Choices for a `select` control. The first entry is the default. */
-  readonly options?: ReadonlyArray<ProviderSettingsFormOption> | undefined;
+  readonly options?: ProviderSettingsFormOptions | undefined;
+  readonly min?: number | undefined;
+  readonly max?: number | undefined;
+  readonly step?: number | undefined;
+  readonly visibleWhen?: ProviderSettingsFormVisibilityCondition | undefined;
 }
 
 export interface ProviderSettingsFormSchemaAnnotation {
@@ -513,7 +643,7 @@ export type ProviderSettingsOrder<Fields extends Schema.Struct.Fields> = readonl
   string
 >[];
 
-function makeProviderSettingsSchema<const Fields extends Schema.Struct.Fields>(
+export function makeProviderSettingsSchema<const Fields extends Schema.Struct.Fields>(
   fields: Fields,
   options?: {
     readonly order?: ProviderSettingsOrder<Fields> | undefined;
@@ -580,6 +710,252 @@ export const CodexSettings = makeProviderSettingsSchema(
   },
 );
 export type CodexSettings = typeof CodexSettings.Type;
+
+export const ChatGptSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    binaryPath: makeBinaryPathSetting("codex").pipe(
+      Schema.annotateKey({
+        title: "Auth broker binary path",
+        description: "Path to the Codex binary used only for ChatGPT subscription sign-in.",
+        providerSettingsForm: { placeholder: "codex", clearWhenEmpty: "omit" },
+      }),
+    ),
+  },
+  { order: ["binaryPath"] },
+);
+export type ChatGptSettings = typeof ChatGptSettings.Type;
+
+const OpenRouterProtocol = Schema.Literals(["chat-completions", "responses"]);
+const OpenRouterRoutingMode = Schema.Literals(["openrouter-default", "provider-order", "sort"]);
+const OpenRouterRoutingSort = Schema.Literals(["price", "throughput", "latency"]);
+const OpenRouterAllowFallbacks = Schema.Literals(["inherit", "enabled", "disabled"]);
+const OpenRouterDataCollection = Schema.Literals(["inherit", "allow", "deny"]);
+const OpenRouterNonNegativeNumber = Schema.Number.check(
+  Schema.isFinite(),
+  Schema.isGreaterThanOrEqualTo(0),
+);
+
+const optionalOpenRouterNumber = (title: string, description: string) =>
+  Schema.optionalKey(OpenRouterNonNegativeNumber).pipe(
+    Schema.annotateKey({
+      title,
+      description,
+      providerSettingsForm: { control: "number", min: 0 },
+    }),
+  );
+
+export const OpenRouterSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    protocol: OpenRouterProtocol.pipe(
+      Schema.withDecodingDefault(Effect.succeed("chat-completions" as const)),
+      Schema.annotateKey({
+        title: "Protocol",
+        description: "Chat Completions is stable. OpenResponses is beta.",
+        providerSettingsForm: {
+          control: "select",
+          options: [
+            { value: "chat-completions", label: "Chat Completions" },
+            { value: "responses", label: "OpenResponses (Beta)" },
+          ],
+        },
+      }),
+    ),
+    defaultModel: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Default model",
+        description: "Required before OpenRouter can start turns or background workers.",
+        providerSettingsForm: {
+          control: "select",
+          options: { source: "models" },
+          clearWhenEmpty: "persist",
+        },
+      }),
+    ),
+    customModels: Schema.Array(TrimmedNonEmptyString).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({
+        title: "Custom models and presets",
+        description: "Additional model or @preset slugs not returned by the model catalog.",
+        providerSettingsForm: {
+          control: "ordered-string-list",
+          placeholder: "@preset/t3",
+        },
+      }),
+    ),
+    contextCompression: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({
+        title: "Context compression",
+        description: "Allow OpenRouter to compress messages when the model context is exceeded.",
+        providerSettingsForm: { control: "switch" },
+      }),
+    ),
+    routingMode: OpenRouterRoutingMode.pipe(
+      Schema.withDecodingDefault(Effect.succeed("openrouter-default" as const)),
+      Schema.annotateKey({
+        title: "Routing mode",
+        description: "Choose OpenRouter routing, an ordered provider list, or metric sorting.",
+        providerSettingsForm: {
+          control: "select",
+          options: [
+            { value: "openrouter-default", label: "OpenRouter default" },
+            { value: "provider-order", label: "Provider order" },
+            { value: "sort", label: "Sort providers" },
+          ],
+        },
+      }),
+    ),
+    providerOrder: Schema.Array(TrimmedNonEmptyString).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({
+        title: "Provider order",
+        description: "Try these OpenRouter provider slugs in order.",
+        providerSettingsForm: {
+          control: "ordered-string-list",
+          placeholder: "anthropic",
+          visibleWhen: { field: "routingMode", equals: "provider-order" },
+        },
+      }),
+    ),
+    routingSort: OpenRouterRoutingSort.pipe(
+      Schema.withDecodingDefault(Effect.succeed("price" as const)),
+      Schema.annotateKey({
+        title: "Provider sort",
+        description: "Sort eligible providers by price, throughput, or latency.",
+        providerSettingsForm: {
+          control: "select",
+          options: [
+            { value: "price", label: "Price" },
+            { value: "throughput", label: "Throughput" },
+            { value: "latency", label: "Latency" },
+          ],
+          visibleWhen: { field: "routingMode", equals: "sort" },
+        },
+      }),
+    ),
+    allowFallbacks: OpenRouterAllowFallbacks.pipe(
+      Schema.withDecodingDefault(Effect.succeed("inherit" as const)),
+      Schema.annotateKey({
+        title: "Endpoint fallbacks",
+        description: "Inherit the account setting or explicitly enable or disable fallbacks.",
+        providerSettingsForm: {
+          control: "select",
+          options: [
+            { value: "inherit", label: "Inherit account setting" },
+            { value: "enabled", label: "Enabled" },
+            { value: "disabled", label: "Disabled" },
+          ],
+        },
+      }),
+    ),
+    dataCollection: OpenRouterDataCollection.pipe(
+      Schema.withDecodingDefault(Effect.succeed("inherit" as const)),
+      Schema.annotateKey({
+        title: "Data collection",
+        description: "Inherit the account privacy setting or allow or deny data collection.",
+        providerSettingsForm: {
+          control: "select",
+          options: [
+            { value: "inherit", label: "Inherit account setting" },
+            { value: "allow", label: "Allow" },
+            { value: "deny", label: "Deny" },
+          ],
+        },
+      }),
+    ),
+    requireZdr: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({
+        title: "Require zero data retention",
+        description: "Only use endpoints that advertise zero data retention.",
+        providerSettingsForm: { control: "switch" },
+      }),
+    ),
+    preferredMinThroughput: optionalOpenRouterNumber(
+      "Preferred minimum throughput",
+      "Preferred minimum generation throughput in tokens per second.",
+    ),
+    preferredMaxLatency: optionalOpenRouterNumber(
+      "Preferred maximum latency",
+      "Preferred maximum generation latency in seconds.",
+    ),
+    maxPromptPriceUsdPerMillion: optionalOpenRouterNumber(
+      "Maximum prompt price",
+      "Maximum prompt price in USD per million tokens.",
+    ),
+    maxCompletionPriceUsdPerMillion: optionalOpenRouterNumber(
+      "Maximum completion price",
+      "Maximum completion price in USD per million tokens.",
+    ),
+    maxRequestPriceUsd: optionalOpenRouterNumber(
+      "Maximum request price",
+      "Maximum price in USD per request.",
+    ),
+  },
+  {
+    order: [
+      "protocol",
+      "defaultModel",
+      "customModels",
+      "contextCompression",
+      "routingMode",
+      "providerOrder",
+      "routingSort",
+      "allowFallbacks",
+      "dataCollection",
+      "requireZdr",
+      "preferredMinThroughput",
+      "preferredMaxLatency",
+      "maxPromptPriceUsdPerMillion",
+      "maxCompletionPriceUsdPerMillion",
+      "maxRequestPriceUsd",
+    ],
+  },
+);
+export type OpenRouterSettings = typeof OpenRouterSettings.Type;
+
+/**
+ * Driver-only decoder for opaque provider-instance configuration.
+ *
+ * Legacy migrations persist a marker when an old OpenRouter entry targeted a
+ * custom base URL. The public settings type stays exact and contains no
+ * migration-only field; this codec rejects the raw marker before the driver is
+ * created so the registry preserves the entry as an unavailable shadow with a
+ * clear explanation.
+ */
+export const OpenRouterDriverSettings = Schema.Unknown.pipe(
+  Schema.decodeTo(
+    OpenRouterSettings,
+    SchemaTransformation.transformOrFail({
+      decode: (value) => {
+        if (
+          typeof value === "object" &&
+          value !== null &&
+          "legacyBaseUrlIncompatible" in value &&
+          value.legacyBaseUrlIncompatible === true
+        ) {
+          return Effect.fail(
+            new SchemaIssue.InvalidValue({
+              message:
+                "This legacy OpenRouter instance used a non-OpenRouter base URL and cannot be migrated to the native OpenRouter provider.",
+            }),
+          );
+        }
+        return Effect.succeed(value as typeof OpenRouterSettings.Encoded);
+      },
+      encode: (value) => Effect.succeed(value),
+    }),
+  ),
+);
 
 // Empty, or an integer from 100,000 to 1,000,000. Shared by the full
 // Claude settings schema and its patch so an out-of-range value fails at
@@ -682,8 +1058,7 @@ export type CursorSettings = typeof CursorSettings.Type;
 
 export const GrokSettings = makeProviderSettingsSchema(
   {
-    // Off by default (like Cursor and OpenCode): the binding is not yet
-    // stable enough to probe on every install. Users opt in from Settings.
+    // Off by default; users opt in from Settings.
     enabled: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(false)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
@@ -788,11 +1163,29 @@ export const AntigravitySettings = makeProviderSettingsSchema(
   { order: ["authMethod", "apiKey", "gcpProject", "gcpLocation", "binaryPath"] },
 );
 export type AntigravitySettings = typeof AntigravitySettings.Type;
+export const GeminiSettings = makeProviderSettingsSchema({
+  enabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+    Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+  ),
+  customModels: Schema.Array(Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+    Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+  ),
+});
+export type GeminiSettings = typeof GeminiSettings.Type;
+
+export const OpenAiSettings = makeProviderSettingsSchema({
+  enabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+    Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+  ),
+});
+export type OpenAiSettings = typeof OpenAiSettings.Type;
 
 export const OpenCodeSettings = makeProviderSettingsSchema(
   {
-    // Off by default (like Cursor and Grok): the binding is not yet stable
-    // enough to probe on every install. Users opt in from Settings.
+    // Off by default; users opt in from Settings.
     enabled: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(false)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
@@ -862,6 +1255,75 @@ export const ObservabilitySettings = Schema.Struct({
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
+export const CavemanMode = Schema.Literals(["off", "lite", "full", "ultra"]);
+export type CavemanMode = typeof CavemanMode.Type;
+export const DEFAULT_CAVEMAN_MODE: CavemanMode = "off";
+
+export const DEEP_THINKING_STEP_COUNT_MIN = 2;
+export const DEEP_THINKING_STEP_COUNT_MAX = 8;
+export const DEFAULT_DEEP_THINKING_STEP_COUNT = 3;
+export const DEEP_THINKING_REFINEMENT_PASSES_MIN = 0;
+export const DEEP_THINKING_REFINEMENT_PASSES_MAX = 3;
+export const DEFAULT_DEEP_THINKING_REFINEMENT_PASSES = 0;
+export const DEEP_THINKING_PARALLEL_BATCH_SIZE_MIN = 1;
+export const DEEP_THINKING_PARALLEL_BATCH_SIZE_MAX = 8;
+export const DEFAULT_DEEP_THINKING_PARALLEL_BATCH_SIZE = 3;
+
+export const DeepThinkingStepCount = Schema.Int.check(
+  Schema.isBetween({
+    minimum: DEEP_THINKING_STEP_COUNT_MIN,
+    maximum: DEEP_THINKING_STEP_COUNT_MAX,
+  }),
+);
+export type DeepThinkingStepCount = typeof DeepThinkingStepCount.Type;
+
+export const DeepThinkingRefinementPasses = Schema.Int.check(
+  Schema.isBetween({
+    minimum: DEEP_THINKING_REFINEMENT_PASSES_MIN,
+    maximum: DEEP_THINKING_REFINEMENT_PASSES_MAX,
+  }),
+);
+export type DeepThinkingRefinementPasses = typeof DeepThinkingRefinementPasses.Type;
+
+export const DeepThinkingParallelBatchSize = Schema.Int.check(
+  Schema.isBetween({
+    minimum: DEEP_THINKING_PARALLEL_BATCH_SIZE_MIN,
+    maximum: DEEP_THINKING_PARALLEL_BATCH_SIZE_MAX,
+  }),
+);
+export type DeepThinkingParallelBatchSize = typeof DeepThinkingParallelBatchSize.Type;
+
+export const DeepThinkingSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  stepCount: DeepThinkingStepCount.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_DEEP_THINKING_STEP_COUNT)),
+  ),
+  refinementPasses: DeepThinkingRefinementPasses.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_DEEP_THINKING_REFINEMENT_PASSES)),
+  ),
+  parallelEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  parallelBatchSize: DeepThinkingParallelBatchSize.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_DEEP_THINKING_PARALLEL_BATCH_SIZE)),
+  ),
+  forceParallelForDurableProviders: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+});
+export type DeepThinkingSettings = typeof DeepThinkingSettings.Type;
+
+export const AgentEnhancementSettings = Schema.Struct({
+  cavemanMode: CavemanMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_CAVEMAN_MODE))),
+  defaultReasoningEffort: AgentReasoningEffort.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_AGENT_REASONING_EFFORT)),
+  ),
+  deepThinking: DeepThinkingSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+});
+export type AgentEnhancementSettings = typeof AgentEnhancementSettings.Type;
+
+export const DEFAULT_AGENT_ENHANCEMENT_SETTINGS: AgentEnhancementSettings = Schema.decodeSync(
+  AgentEnhancementSettings,
+)({});
+
 export const SourceControlWritingStyleMode = Schema.Literals([
   "repo_conventions",
   "conventional_commits",
@@ -879,6 +1341,25 @@ export const SourceControlWritingStyleSettings = Schema.Struct({
   ),
 });
 export type SourceControlWritingStyleSettings = typeof SourceControlWritingStyleSettings.Type;
+
+export const SecretSettingValue = Schema.Struct({
+  value: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  valueRedacted: Schema.optional(Schema.Boolean),
+});
+export type SecretSettingValue = typeof SecretSettingValue.Type;
+
+export const AssemblyAiSpeechTranscriptionSettings = Schema.Struct({
+  apiKey: SecretSettingValue.pipe(Schema.withDecodingDefault(Effect.succeed({ value: "" }))),
+});
+export type AssemblyAiSpeechTranscriptionSettings =
+  typeof AssemblyAiSpeechTranscriptionSettings.Type;
+
+export const SpeechTranscriptionSettings = Schema.Struct({
+  assemblyAi: AssemblyAiSpeechTranscriptionSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+});
+export type SpeechTranscriptionSettings = typeof SpeechTranscriptionSettings.Type;
 
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 export const DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.minutes(5);
@@ -922,13 +1403,31 @@ export const BackgroundActivitySettings = Schema.Struct({
 }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
 
+export const DEFAULT_PARALLEL_PLAN_REVIEW_MODEL_SELECTION: ModelSelection = {
+  instanceId: ProviderInstanceId.make("codex"),
+  model: DEFAULT_TEXT_GENERATION_MODEL,
+  options: [
+    { id: "reasoningEffort", value: "low" },
+    { id: "serviceTier", value: "priority" },
+  ],
+};
+
 export const ServerSettings = Schema.Struct({
-  // Legacy token-by-token assistant output. Deliberately a fresh key (was
-  // `enableAssistantStreaming`): decoding drops the old key, so everyone,
-  // including prior opt-ins, resets to the buffered default.
+  betterT3Environment: BetterT3SettingsV1.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1)),
+  ),
+  projectThreadPreviewSyncRecord: Schema.optionalKey(ProjectThreadPreviewSyncRecord),
+  chatVisualModeSyncRecord: Schema.optionalKey(ChatVisualModeSyncRecord),
+  interfaceLanguageSyncRecord: Schema.optionalKey(InterfaceLanguageSyncRecord),
+  interfaceLocaleSyncRecordV1: Schema.optionalKey(InterfaceLocaleSyncRecordV1),
+  // Legacy token-by-token assistant output. Persisted settings and patches
+  // using the former `enableAssistantStreaming` key are normalized at the
+  // server boundary; current clients only receive this canonical key.
   enableLegacyTokenStreaming: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
+  /** @deprecated Read-only compatibility mirror for older clients. */
+  enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
   enableProviderUpdateChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   // Retain the update-era key; recovery now needs an environment-owned opt-in.
   continueThreadsAfterServerUpdate: Schema.Boolean.pipe(
@@ -936,10 +1435,10 @@ export const ServerSettings = Schema.Struct({
   ),
   /**
    * Whether agents may drive the in-app preview browser. Turning this off
-   * withholds the MCP credential, so the `t3-code` server (and with it every
-   * `preview_*` tool) is never attached to a provider session, and the prompt
-   * text describing those tools is dropped along with them. The user's own
-   * browser panel is unaffected — this gates agent access only.
+   * removes every `preview_*` tool and its prompt text from provider sessions.
+   * The `t3-code` credential remains attached so workspace context, skills,
+   * MCP configuration, and project-agent coordination continue to work. The
+   * user's own browser panel is unaffected — this gates agent access only.
    *
    * Server-authoritative rather than client-local: tool injection and prompt
    * construction both happen on the server, and the answer must not differ
@@ -1024,6 +1523,21 @@ export const ServerSettings = Schema.Struct({
       }),
     ),
   ),
+  autoReasoningModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  fetchModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  voiceTranslationModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  knowledgeGraphModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  parallelPlanReviewModelSelection: ModelSelection.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PARALLEL_PLAN_REVIEW_MODEL_SELECTION)),
+  ),
   sourceControlWritingStyle: SourceControlWritingStyleSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -1044,6 +1558,10 @@ export const ServerSettings = Schema.Struct({
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     antigravity: AntigravitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    gemini: GeminiSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    chatgpt: ChatGptSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    openrouter: OpenRouterSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    openai: OpenAiSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
   // are `ProviderInstanceConfig` envelopes. The driver-specific config blob
@@ -1053,6 +1571,7 @@ export const ServerSettings = Schema.Struct({
   providerInstances: Schema.Record(ProviderInstanceId, ProviderInstanceConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  agentEnhancement: AgentEnhancementSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // Keyed by a user-chosen id so a source keeps its rows across edits. Entries
   // this build cannot decode round-trip untouched, as provider instances do.
@@ -1063,6 +1582,11 @@ export const ServerSettings = Schema.Struct({
   usagePriceOverrides: Schema.Record(TrimmedNonEmptyString, UsageModelPriceOverride).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  speechTranscription: SpeechTranscriptionSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  mcp: McpSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  skills: SkillSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -1088,7 +1612,7 @@ export const providerInstanceConfigEnabledFlag = (config: unknown): boolean | un
  * through `DEFAULT_SERVER_SETTINGS`, so the schema's decoding default stays
  * the single source of truth. Unknown (fork) drivers default to enabled.
  */
-const defaultEnabledForDriver = (driver: ProviderDriverKind): boolean => {
+export const defaultEnabledForDriver = (driver: ProviderDriverKind): boolean => {
   const legacyDefaults = DEFAULT_SERVER_SETTINGS.providers as Record<
     string,
     { readonly enabled?: boolean } | undefined
@@ -1172,6 +1696,30 @@ const CodexSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
 });
 
+const ChatGptSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  binaryPath: Schema.optionalKey(TrimmedString),
+});
+
+const OpenRouterSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  protocol: Schema.optionalKey(OpenRouterProtocol),
+  defaultModel: Schema.optionalKey(TrimmedString),
+  customModels: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
+  contextCompression: Schema.optionalKey(Schema.Boolean),
+  routingMode: Schema.optionalKey(OpenRouterRoutingMode),
+  providerOrder: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
+  routingSort: Schema.optionalKey(OpenRouterRoutingSort),
+  allowFallbacks: Schema.optionalKey(OpenRouterAllowFallbacks),
+  dataCollection: Schema.optionalKey(OpenRouterDataCollection),
+  requireZdr: Schema.optionalKey(Schema.Boolean),
+  preferredMinThroughput: Schema.optionalKey(OpenRouterNonNegativeNumber),
+  preferredMaxLatency: Schema.optionalKey(OpenRouterNonNegativeNumber),
+  maxPromptPriceUsdPerMillion: Schema.optionalKey(OpenRouterNonNegativeNumber),
+  maxCompletionPriceUsdPerMillion: Schema.optionalKey(OpenRouterNonNegativeNumber),
+  maxRequestPriceUsd: Schema.optionalKey(OpenRouterNonNegativeNumber),
+});
+
 const ClaudeSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(TrimmedString),
@@ -1208,6 +1756,15 @@ const AntigravitySettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
 });
 
+const GeminiSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
+const OpenAiSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+});
+
 const OpenCodeSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(TrimmedString),
@@ -1216,9 +1773,36 @@ const OpenCodeSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
 });
 
+const DeepThinkingSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  stepCount: Schema.optionalKey(DeepThinkingStepCount),
+  refinementPasses: Schema.optionalKey(DeepThinkingRefinementPasses),
+  parallelEnabled: Schema.optionalKey(Schema.Boolean),
+  parallelBatchSize: Schema.optionalKey(DeepThinkingParallelBatchSize),
+  forceParallelForDurableProviders: Schema.optionalKey(Schema.Boolean),
+});
+
+const AgentEnhancementSettingsPatch = Schema.Struct({
+  cavemanMode: Schema.optionalKey(CavemanMode),
+  defaultReasoningEffort: Schema.optionalKey(AgentReasoningEffort),
+  deepThinking: Schema.optionalKey(DeepThinkingSettingsPatch),
+});
+
+const SecretSettingValuePatch = Schema.Struct({
+  value: Schema.optionalKey(TrimmedString),
+  valueRedacted: Schema.optionalKey(Schema.Boolean),
+});
+
 export const ServerSettingsPatch = Schema.Struct({
   // Server settings
+  betterT3Environment: Schema.optionalKey(BetterT3SettingsPatchV1),
+  projectThreadPreviewSyncRecord: Schema.optionalKey(ProjectThreadPreviewSyncRecord),
+  chatVisualModeSyncRecord: Schema.optionalKey(ChatVisualModeSyncRecord),
+  interfaceLanguageSyncRecord: Schema.optionalKey(InterfaceLanguageSyncRecord),
+  interfaceLocaleSyncRecordV1: Schema.optionalKey(InterfaceLocaleSyncRecordV1),
   enableLegacyTokenStreaming: Schema.optionalKey(Schema.Boolean),
+  /** @deprecated Use `enableLegacyTokenStreaming`. Kept for mixed-version clients. */
+  enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
@@ -1252,6 +1836,14 @@ export const ServerSettingsPatch = Schema.Struct({
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  autoReasoningModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  // Fetch selection is an atomic value: provider, model, and traits must
+  // always be replaced together so a patch cannot mix two runtimes.
+  fetchModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  voiceTranslationModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  knowledgeGraphModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  parallelPlanReviewModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  agentEnhancement: Schema.optionalKey(AgentEnhancementSettingsPatch),
   sourceControlWritingStyle: Schema.optionalKey(
     Schema.Struct({
       mode: Schema.optionalKey(SourceControlWritingStyleMode),
@@ -1266,6 +1858,25 @@ export const ServerSettingsPatch = Schema.Struct({
       otlpMetricsUrl: Schema.optionalKey(TrimmedString),
     }),
   ),
+  speechTranscription: Schema.optionalKey(
+    Schema.Struct({
+      assemblyAi: Schema.optionalKey(
+        Schema.Struct({
+          apiKey: Schema.optionalKey(SecretSettingValuePatch),
+        }),
+      ),
+    }),
+  ),
+  mcp: Schema.optionalKey(
+    Schema.Struct({
+      servers: Schema.optionalKey(Schema.Array(McpServerDefinition)),
+    }),
+  ),
+  skills: Schema.optionalKey(
+    Schema.Struct({
+      disabledSkillIds: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
+    }),
+  ),
   providers: Schema.optionalKey(
     Schema.Struct({
       codex: Schema.optionalKey(CodexSettingsPatch),
@@ -1274,6 +1885,10 @@ export const ServerSettingsPatch = Schema.Struct({
       grok: Schema.optionalKey(GrokSettingsPatch),
       opencode: Schema.optionalKey(OpenCodeSettingsPatch),
       antigravity: Schema.optionalKey(AntigravitySettingsPatch),
+      gemini: Schema.optionalKey(GeminiSettingsPatch),
+      chatgpt: Schema.optionalKey(ChatGptSettingsPatch),
+      openrouter: Schema.optionalKey(OpenRouterSettingsPatch),
+      openai: Schema.optionalKey(OpenAiSettingsPatch),
     }),
   ),
   // Whole-map replacement for the new instance config. Patching individual
@@ -1299,6 +1914,8 @@ export const ClientSettingsPatch = Schema.Struct({
   loadBalancingWeights: Schema.optionalKey(LoadBalancingWeights),
   appearanceContrast: Schema.optionalKey(AppearanceContrast),
   panelAnimationDurationMs: Schema.optionalKey(PanelAnimationDurationMs),
+  macosWindowTransparency: Schema.optionalKey(Schema.Boolean),
+  betterT3Device: Schema.optionalKey(BetterT3SettingsPatchV1),
   browserDefaultViewport: Schema.optionalKey(PreviewViewportSetting),
   browserDefaultZoomFactor: Schema.optionalKey(PreviewZoomFactor),
   browserDefaultAppearance: Schema.optionalKey(PreviewAppearancePreference),
@@ -1313,7 +1930,11 @@ export const ClientSettingsPatch = Schema.Struct({
   confirmThreadUnpin: Schema.optionalKey(Schema.Boolean),
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
   diffLayout: Schema.optionalKey(DiffLayout),
+  experimentalFetch: Schema.optionalKey(Schema.Boolean),
+  experimentalParallelPlanImplementation: Schema.optionalKey(Schema.Boolean),
   environmentIdentificationMode: Schema.optionalKey(EnvironmentIdentificationMode),
+  interfaceLanguageLocalRecord: Schema.optionalKey(Schema.NullOr(InterfaceLanguageSyncRecord)),
+  interfaceLocaleLocalRecordV1: Schema.optionalKey(Schema.NullOr(InterfaceLocaleSyncRecordV1)),
   glassOpacity: Schema.optionalKey(GlassOpacity),
   onboardingCompletedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
   fontSizeInterface: Schema.optionalKey(InterfaceFontSize),
@@ -1353,6 +1974,8 @@ export const ClientSettingsPatch = Schema.Struct({
   contextWindowMeterEnabled: Schema.optionalKey(Schema.Boolean),
   composerCollapseOnScroll: Schema.optionalKey(Schema.Boolean),
   proactivePanelsEnabled: Schema.optionalKey(Schema.Boolean),
+  showExpandedComposerControls: Schema.optionalKey(Schema.Boolean),
+  showReasoning: Schema.optionalKey(Schema.Boolean),
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
@@ -1361,6 +1984,8 @@ export const ClientSettingsPatch = Schema.Struct({
   ),
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
+  sidebarPosition: Schema.optionalKey(SidebarPosition),
+  projectThreadPreviewMigrationVersion: Schema.optionalKey(Schema.Literal(1)),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   timestampFormat: Schema.optionalKey(TimestampFormat),
   snapShotEnabled: Schema.optionalKey(Schema.Boolean),
@@ -1370,6 +1995,8 @@ export const ClientSettingsPatch = Schema.Struct({
   snapShotSound: Schema.optionalKey(SnapShotSound),
   snapShotFlash: Schema.optionalKey(Schema.Boolean),
   snapShotAnimations: Schema.optionalKey(Schema.Boolean),
+  voiceInputOutputLanguage: Schema.optionalKey(VoiceInputOutputLanguage),
+  improvePromptBeforeSend: Schema.optionalKey(Schema.Boolean),
   wordWrap: Schema.optionalKey(Schema.Boolean),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

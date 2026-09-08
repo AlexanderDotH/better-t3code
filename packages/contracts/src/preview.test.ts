@@ -244,7 +244,7 @@ describe("PreviewEvent", () => {
     expect(event.type).toBe("opened");
   });
 
-  it("decodes failed with code/description", () => {
+  it("decodes legacy failed events without a snapshot", () => {
     const event = decodePreviewEvent({
       type: "failed",
       threadId: "t",
@@ -260,6 +260,46 @@ describe("PreviewEvent", () => {
     expect(event.type).toBe("failed");
     if (event.type === "failed") {
       expect(event.code).toBe(-105);
+      expect(event.snapshot).toBeUndefined();
+    }
+  });
+
+  it("decodes failed events with an authoritative snapshot", () => {
+    const event = decodePreviewEvent({
+      type: "failed",
+      threadId: "t",
+      tabId: "preview-t",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      serverEpoch: "server-a",
+      revision: 1,
+      url: "https://example.com/",
+      title: "Example",
+      code: -105,
+      description: "ERR_NAME_NOT_RESOLVED",
+      snapshot: {
+        threadId: "t",
+        tabId: "preview-t",
+        navStatus: {
+          _tag: "LoadFailed",
+          url: "https://example.com/",
+          title: "Example",
+          code: -105,
+          description: "ERR_NAME_NOT_RESOLVED",
+        },
+        canGoBack: true,
+        canGoForward: false,
+        viewport: { _tag: "freeform", width: 1024, height: 768 },
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    expect(event.type).toBe("failed");
+    if (event.type === "failed") {
+      expect(event.snapshot?.canGoBack).toBe(true);
+      expect(event.snapshot?.viewport).toEqual({
+        _tag: "freeform",
+        width: 1024,
+        height: 768,
+      });
     }
   });
 

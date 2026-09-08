@@ -27,6 +27,7 @@ import {
 import {
   DpopFailureReason,
   AuthSessionId,
+  SubagentId,
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
@@ -34,8 +35,10 @@ import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import {
   ClientOrchestrationCommand,
   DispatchResult,
+  ORCHESTRATION_MAX_THREAD_TURN_LIMIT,
   OrchestrationReadModel,
   OrchestrationShellSnapshot,
+  OrchestrationSubagentDetailSnapshot,
   OrchestrationThreadDetailSnapshot,
 } from "./orchestration.ts";
 import {
@@ -94,6 +97,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "client_session_revoke_failed",
   "orchestration_snapshot_failed",
   "orchestration_thread_snapshot_failed",
+  "orchestration_subagent_snapshot_failed",
   "orchestration_dispatch_failed",
   "internal_error",
 ]);
@@ -191,7 +195,10 @@ export class EnvironmentInternalError extends Schema.TaggedError<EnvironmentInte
   }
 }
 
-export const EnvironmentResourceNotFoundReason = Schema.Literals(["thread_not_found"]);
+export const EnvironmentResourceNotFoundReason = Schema.Literals([
+  "thread_not_found",
+  "subagent_not_found",
+]);
 export type EnvironmentResourceNotFoundReason = typeof EnvironmentResourceNotFoundReason.Type;
 
 export class EnvironmentResourceNotFoundError extends Schema.TaggedError<EnvironmentResourceNotFoundError>()(
@@ -494,11 +501,28 @@ const EnvironmentOrchestrationThreadSnapshotParams = Schema.Struct({
   threadId: ThreadId,
 });
 
+const EnvironmentOrchestrationSubagentSnapshotParams = Schema.Struct({
+  threadId: ThreadId,
+  subagentId: SubagentId,
+});
+
 // Query-string window for windowed thread snapshots (GET payloads must encode
-// to strings). Both fields optional: omitting them keeps the full-snapshot
-// behavior, so pagination stays opt-in per request.
-const EnvironmentOrchestrationThreadSnapshotQuery = {
+// to strings). Both fields optional: omitting them keeps the mixed-version
+// full-snapshot behavior, so pagination stays opt-in per request. Current
+// clients are bounded at the same maximum as the WebSocket fallback request.
+export const EnvironmentOrchestrationThreadSnapshotQuery = {
   turnLimit: Schema.optional(
+    Schema.FiniteFromString.check(
+      Schema.isInt(),
+      Schema.isGreaterThanOrEqualTo(1),
+      Schema.isLessThanOrEqualTo(ORCHESTRATION_MAX_THREAD_TURN_LIMIT),
+    ),
+  ),
+  beforeCursor: Schema.optional(TrimmedNonEmptyString),
+};
+
+const EnvironmentOrchestrationSubagentSnapshotQuery = {
+  activityLimit: Schema.optional(
     Schema.FiniteFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
   ),
   beforeCursor: Schema.optional(TrimmedNonEmptyString),
@@ -527,6 +551,19 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
       success: OrchestrationThreadDetailSnapshot,
       error: EnvironmentOrchestrationThreadSnapshotErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get(
+      "subagentSnapshot",
+      "/api/orchestration/threads/:threadId/subagents/:subagentId",
+      {
+        headers: OptionalBearerHeaders,
+        params: EnvironmentOrchestrationSubagentSnapshotParams,
+        payload: EnvironmentOrchestrationSubagentSnapshotQuery,
+        success: OrchestrationSubagentDetailSnapshot,
+        error: EnvironmentOrchestrationThreadSnapshotErrors,
+      },
+    ).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
     HttpApiEndpoint.post("dispatch", "/api/orchestration/dispatch", {

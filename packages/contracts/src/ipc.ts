@@ -19,6 +19,37 @@ import type {
   VcsStatusResult,
 } from "./git.ts";
 import type {
+  GitApplyChangeSelectionInput,
+  GitApplyChangeSelectionResult,
+  GitChangesDiffInput,
+  GitChangesDiffResult,
+  GitCommitDetailInput,
+  GitCommitDetailResult,
+  GitCommitFileDiffInput,
+  GitCommitFileDiffResult,
+  GitHistoryListInput,
+  GitHistoryListResult,
+  GitInteractiveRebasePlanInput,
+  GitInteractiveRebasePlanResult,
+  GitQueuedWorkflowCancelInput,
+  GitQueuedWorkflowCancelResult,
+  GitQueuedWorkflowUpsertInput,
+  GitQueuedWorkflowUpsertResult,
+  GitRepositoryInsightsInput,
+  GitRepositoryInsightsResult,
+  GitUndoSnapshotCreateInput,
+  GitUndoSnapshotCreateResult,
+  GitUndoSnapshotRestoreInput,
+  GitUndoSnapshotRestoreResult,
+  GitUndoSnapshotsListInput,
+  GitUndoSnapshotsListResult,
+  GitWorkbenchInput,
+  GitWorkbenchOperationEvent,
+  GitWorkbenchRunOperationInput,
+  GitWorkbenchSnapshot,
+  GitWorkbenchStreamEvent,
+} from "./gitWorkbench.ts";
+import type {
   ReviewDiffFileContentsInput,
   ReviewDiffFileContentsResult,
   ReviewDiffPreviewInput,
@@ -36,6 +67,27 @@ import type {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project.ts";
+import type { ProviderInstanceId } from "./providerInstance.ts";
+import type {
+  PlanParallelismReviewInput,
+  PlanParallelismReviewResult,
+} from "./planParallelismReview.ts";
+import type {
+  AssemblyAiStreamingTokenResult,
+  ServerConfig,
+  ServerProcessDiagnosticsResult,
+  ServerProcessResourceHistoryInput,
+  ServerProcessResourceHistoryResult,
+  ServerProviderUpdateInput,
+  ServerProviderUpdatedPayload,
+  ServerRemoveKeybindingInput,
+  ServerRemoveKeybindingResult,
+  ServerSignalProcessInput,
+  ServerSignalProcessResult,
+  ServerTraceDiagnosticsResult,
+  ServerUpsertKeybindingInput,
+  ServerUpsertKeybindingResult,
+} from "./server.ts";
 import type {
   TerminalAttachInput,
   TerminalAttachStreamEvent,
@@ -48,6 +100,7 @@ import type {
   TerminalSessionSnapshot,
   TerminalWriteInput,
 } from "./terminal.ts";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type {
   DiscoveredLocalServerList,
@@ -80,10 +133,14 @@ import type {
   ClientOrchestrationCommand,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetFullThreadDiffResult,
+  OrchestrationExportThreadTranscriptInput,
+  OrchestrationThreadTranscriptExport,
   OrchestrationGetTurnDiffInput,
   OrchestrationGetTurnDiffResult,
   OrchestrationShellSnapshot,
   OrchestrationShellStreamItem,
+  OrchestrationSubagentStreamItem,
+  OrchestrationSubscribeSubagentInput,
   OrchestrationSubscribeThreadInput,
   OrchestrationThreadStreamItem,
 } from "./orchestration.ts";
@@ -98,11 +155,26 @@ import type {
 import { AuthAccessTokenResult, AuthSessionState, AuthWebSocketTicketResult } from "./auth.ts";
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
-import { type ClientSettings, type QuitConfirmationMode, SnapShotShortcut } from "./settings.ts";
+import {
+  type ClientSettings,
+  type ServerSettings,
+  type ServerSettingsPatch,
+  type QuitConfirmationMode,
+  SnapShotShortcut,
+} from "./settings.ts";
+import type {
+  ImprovePromptInput,
+  ProjectSpeechProfile,
+  ProjectSpeechProfileInput,
+  ProjectSpeechProfileListResult,
+  ProjectTextTransformResult,
+  TranslateTranscriptInput,
+} from "./speech.ts";
 import type { EditorId } from "./editor.ts";
 import type {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
+  SourceControlDiscoveryResult,
   SourceControlPublishRepositoryInput,
   SourceControlPublishRepositoryResult,
   SourceControlRepositoryInfo,
@@ -112,6 +184,67 @@ import type {
   DesktopAppActivationRequest,
   DesktopAppActivationResponse,
 } from "./desktopAppActivation.ts";
+import type {
+  SkillCreateInput,
+  SkillDeleteInput,
+  SkillDiscoverImportSourcesInput,
+  SkillDiscoverImportSourcesResult,
+  SkillImportSourcesInput,
+  SkillImportSourcesResult,
+  SkillListInput,
+  SkillListResult,
+  SkillMutationResult,
+  SkillRenameInput,
+  SkillSetEnabledInput,
+  SkillUpdateInput,
+} from "./skills.ts";
+import type {
+  McpCreateInput,
+  McpCursorJsonResult,
+  McpDeleteInput,
+  McpDiscoverImportSourcesInput,
+  McpDiscoverImportSourcesResult,
+  McpExportCursorJsonInput,
+  McpImportCursorJsonInput,
+  McpImportSourcesInput,
+  McpListInput,
+  McpListResult,
+  McpMutationResult,
+  McpProviderStatusInput,
+  McpProviderStatusResult,
+  McpRuntimeActionInput,
+  McpRuntimeActionResult,
+  McpRuntimeChange,
+  McpRuntimeChangesInput,
+  McpRuntimeContextChange,
+  McpRuntimeContextChangesInput,
+  McpRuntimeContextsInput,
+  McpRuntimeContextsResult,
+  McpRuntimeServerDetailsInput,
+  McpRuntimeServerDetailsResult,
+  McpRuntimeSnapshot,
+  McpRuntimeSnapshotInput,
+  McpSetEnabledInput,
+  McpSetProviderEnabledInput,
+  McpSetProviderEnabledResult,
+  McpUpdateInput,
+} from "./mcp.ts";
+import type {
+  T3ChatImportDiscoverInput,
+  T3ChatImportDiscoverResult,
+  T3ChatImportRunInput,
+  T3ChatImportRunResult,
+} from "./t3ChatImport.ts";
+import type {
+  HarnessChatSyncListInput,
+  HarnessChatSyncListResult,
+  HarnessChatSyncRunInput,
+  HarnessChatSyncRunResult,
+  HarnessChatSyncSourcesInput,
+  HarnessChatSyncSourcesResult,
+  HarnessChatSyncStatusInput,
+  HarnessChatSyncStatusResult,
+} from "./harnessChatSync.ts";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -807,6 +940,7 @@ export const DesktopPreviewWebviewConfigSchema: Schema.Codec<DesktopPreviewWebvi
   });
 
 export interface DesktopPreviewAnnotationTheme {
+  interfaceLanguage?: "en" | "de" | "fr";
   colorScheme: "light" | "dark";
   radius: string;
   background: string;
@@ -826,26 +960,28 @@ export interface DesktopPreviewAnnotationTheme {
   fontMono: string;
 }
 
-export const DesktopPreviewAnnotationThemeSchema: Schema.Codec<DesktopPreviewAnnotationTheme> =
-  Schema.Struct({
-    colorScheme: Schema.Literals(["light", "dark"]),
-    radius: Schema.String,
-    background: Schema.String,
-    foreground: Schema.String,
-    popover: Schema.String,
-    popoverForeground: Schema.String,
-    primary: Schema.String,
-    primaryForeground: Schema.String,
-    muted: Schema.String,
-    mutedForeground: Schema.String,
-    accent: Schema.String,
-    accentForeground: Schema.String,
-    border: Schema.String,
-    input: Schema.String,
-    ring: Schema.String,
-    fontSans: Schema.String,
-    fontMono: Schema.String,
-  });
+export const DesktopPreviewAnnotationThemeSchema = Schema.Struct({
+  interfaceLanguage: Schema.Literals(["en", "de", "fr"]).pipe(
+    Schema.withDecodingDefault(Effect.succeed("en" as const)),
+  ),
+  colorScheme: Schema.Literals(["light", "dark"]),
+  radius: Schema.String,
+  background: Schema.String,
+  foreground: Schema.String,
+  popover: Schema.String,
+  popoverForeground: Schema.String,
+  primary: Schema.String,
+  primaryForeground: Schema.String,
+  muted: Schema.String,
+  mutedForeground: Schema.String,
+  accent: Schema.String,
+  accentForeground: Schema.String,
+  border: Schema.String,
+  input: Schema.String,
+  ring: Schema.String,
+  fontSans: Schema.String,
+  fontMono: Schema.String,
+});
 
 export interface DesktopPreviewRecordingFrame {
   tabId: string;
@@ -1509,6 +1645,98 @@ export interface EnvironmentApi {
   assets: {
     createUrl: (input: AssetCreateUrlInput) => Promise<AssetCreateUrlResult>;
   };
+  server: {
+    getConfig: () => Promise<ServerConfig>;
+    /**
+     * Refresh provider snapshots. When `input.instanceId` is supplied only that
+     * configured instance is probed; otherwise every configured instance is
+     * refreshed.
+     */
+    refreshProviders: (input?: {
+      readonly instanceId?: ProviderInstanceId;
+    }) => Promise<ServerProviderUpdatedPayload>;
+    updateProvider: (input: ServerProviderUpdateInput) => Promise<ServerProviderUpdatedPayload>;
+    upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
+    removeKeybinding: (input: ServerRemoveKeybindingInput) => Promise<ServerRemoveKeybindingResult>;
+    getSettings: () => Promise<ServerSettings>;
+    updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
+    createAssemblyAiStreamingToken: (
+      input: ProjectSpeechProfileInput,
+    ) => Promise<AssemblyAiStreamingTokenResult>;
+    discoverSourceControl: () => Promise<SourceControlDiscoveryResult>;
+    getTraceDiagnostics: () => Promise<ServerTraceDiagnosticsResult>;
+    getProcessDiagnostics: () => Promise<ServerProcessDiagnosticsResult>;
+    getProcessResourceHistory: (
+      input: ServerProcessResourceHistoryInput,
+    ) => Promise<ServerProcessResourceHistoryResult>;
+    signalProcess: (input: ServerSignalProcessInput) => Promise<ServerSignalProcessResult>;
+  };
+  speech: {
+    getProjectProfile: (input: ProjectSpeechProfileInput) => Promise<ProjectSpeechProfile | null>;
+    listProjectProfiles: () => Promise<ProjectSpeechProfileListResult>;
+    indexProject: (input: ProjectSpeechProfileInput) => Promise<ProjectSpeechProfile>;
+    createBasicProjectProfile: (input: ProjectSpeechProfileInput) => Promise<ProjectSpeechProfile>;
+    translateTranscript: (input: TranslateTranscriptInput) => Promise<ProjectTextTransformResult>;
+  };
+  prompt: {
+    improve: (input: ImprovePromptInput) => Promise<ProjectTextTransformResult>;
+  };
+  plan: {
+    reviewParallelism: (input: PlanParallelismReviewInput) => Promise<PlanParallelismReviewResult>;
+  };
+  chatImport: {
+    discover: (input?: T3ChatImportDiscoverInput) => Promise<T3ChatImportDiscoverResult>;
+    run: (input: T3ChatImportRunInput) => Promise<T3ChatImportRunResult>;
+  };
+  harnessChatSync: {
+    sources: (input?: HarnessChatSyncSourcesInput) => Promise<HarnessChatSyncSourcesResult>;
+    list: (input: HarnessChatSyncListInput) => Promise<HarnessChatSyncListResult>;
+    run: (input: HarnessChatSyncRunInput) => Promise<HarnessChatSyncRunResult>;
+    status: (input: HarnessChatSyncStatusInput) => Promise<HarnessChatSyncStatusResult>;
+  };
+  skills: {
+    list: (input: SkillListInput) => Promise<SkillListResult>;
+    discoverImportSources: (
+      input?: SkillDiscoverImportSourcesInput,
+    ) => Promise<SkillDiscoverImportSourcesResult>;
+    importSources: (input: SkillImportSourcesInput) => Promise<SkillImportSourcesResult>;
+    create: (input: SkillCreateInput) => Promise<SkillMutationResult>;
+    update: (input: SkillUpdateInput) => Promise<SkillMutationResult>;
+    rename: (input: SkillRenameInput) => Promise<SkillMutationResult>;
+    delete: (input: SkillDeleteInput) => Promise<SkillListResult>;
+    setEnabled: (input: SkillSetEnabledInput) => Promise<SkillMutationResult>;
+  };
+  mcp: {
+    list: (input?: McpListInput) => Promise<McpListResult>;
+    discoverImportSources: (
+      input?: McpDiscoverImportSourcesInput,
+    ) => Promise<McpDiscoverImportSourcesResult>;
+    create: (input: McpCreateInput) => Promise<McpMutationResult>;
+    update: (input: McpUpdateInput) => Promise<McpMutationResult>;
+    delete: (input: McpDeleteInput) => Promise<McpMutationResult>;
+    setEnabled: (input: McpSetEnabledInput) => Promise<McpMutationResult>;
+    setProviderEnabled: (input: McpSetProviderEnabledInput) => Promise<McpSetProviderEnabledResult>;
+    importCursorJson: (input: McpImportCursorJsonInput) => Promise<McpMutationResult>;
+    importSources: (input: McpImportSourcesInput) => Promise<McpMutationResult>;
+    exportCursorJson: (input?: McpExportCursorJsonInput) => Promise<McpCursorJsonResult>;
+    providerStatus: (input?: McpProviderStatusInput) => Promise<McpProviderStatusResult>;
+    runtimeContexts: (input: McpRuntimeContextsInput) => Promise<McpRuntimeContextsResult>;
+    runtimeContextChanges: (
+      input: McpRuntimeContextChangesInput,
+      callback: (change: McpRuntimeContextChange) => void,
+      options?: { onResubscribe?: () => void },
+    ) => () => void;
+    runtimeSnapshot: (input: McpRuntimeSnapshotInput) => Promise<McpRuntimeSnapshot>;
+    runtimeChanges: (
+      input: McpRuntimeChangesInput,
+      callback: (change: McpRuntimeChange) => void,
+      options?: { onResubscribe?: () => void },
+    ) => () => void;
+    runtimeServerDetails: (
+      input: McpRuntimeServerDetailsInput,
+    ) => Promise<McpRuntimeServerDetailsResult>;
+    runtimeAction: (input: McpRuntimeActionInput) => Promise<McpRuntimeActionResult>;
+  };
   sourceControl: {
     lookupRepository: (
       input: SourceControlRepositoryLookupInput,
@@ -1542,6 +1770,40 @@ export interface EnvironmentApi {
     preparePullRequestThread: (
       input: GitPreparePullRequestThreadInput,
     ) => Promise<GitPreparePullRequestThreadResult>;
+    subscribeWorkbench: (
+      input: GitWorkbenchInput,
+      callback: (event: GitWorkbenchStreamEvent) => void,
+      options?: { onResubscribe?: () => void },
+    ) => () => void;
+    refreshWorkbench: (input: GitWorkbenchInput) => Promise<GitWorkbenchSnapshot>;
+    getRepositoryInsights: (
+      input: GitRepositoryInsightsInput,
+    ) => Promise<GitRepositoryInsightsResult>;
+    listHistory: (input: GitHistoryListInput) => Promise<GitHistoryListResult>;
+    getCommitDetail: (input: GitCommitDetailInput) => Promise<GitCommitDetailResult>;
+    getCommitFileDiff: (input: GitCommitFileDiffInput) => Promise<GitCommitFileDiffResult>;
+    getChangesDiff: (input: GitChangesDiffInput) => Promise<GitChangesDiffResult>;
+    getInteractiveRebasePlan: (
+      input: GitInteractiveRebasePlanInput,
+    ) => Promise<GitInteractiveRebasePlanResult>;
+    applyChangeSelection: (
+      input: GitApplyChangeSelectionInput,
+    ) => Promise<GitApplyChangeSelectionResult>;
+    runWorkbenchOperation: (
+      input: GitWorkbenchRunOperationInput,
+      callback: (event: GitWorkbenchOperationEvent) => void,
+    ) => Promise<void>;
+    listUndoSnapshots: (input: GitUndoSnapshotsListInput) => Promise<GitUndoSnapshotsListResult>;
+    createUndoSnapshot: (input: GitUndoSnapshotCreateInput) => Promise<GitUndoSnapshotCreateResult>;
+    restoreUndoSnapshot: (
+      input: GitUndoSnapshotRestoreInput,
+    ) => Promise<GitUndoSnapshotRestoreResult>;
+    upsertQueuedWorkflow: (
+      input: GitQueuedWorkflowUpsertInput,
+    ) => Promise<GitQueuedWorkflowUpsertResult>;
+    cancelQueuedWorkflow: (
+      input: GitQueuedWorkflowCancelInput,
+    ) => Promise<GitQueuedWorkflowCancelResult>;
   };
   review: {
     getDiffPreview: (input: ReviewDiffPreviewInput) => Promise<ReviewDiffPreviewResult>;
@@ -1555,6 +1817,9 @@ export interface EnvironmentApi {
     getFullThreadDiff: (
       input: OrchestrationGetFullThreadDiffInput,
     ) => Promise<OrchestrationGetFullThreadDiffResult>;
+    exportThreadTranscript: (
+      input: OrchestrationExportThreadTranscriptInput,
+    ) => Promise<OrchestrationThreadTranscriptExport>;
     getArchivedShellSnapshot: () => Promise<OrchestrationShellSnapshot>;
     subscribeShell: (
       callback: (event: OrchestrationShellStreamItem) => void,
@@ -1565,6 +1830,13 @@ export interface EnvironmentApi {
     subscribeThread: (
       input: OrchestrationSubscribeThreadInput,
       callback: (event: OrchestrationThreadStreamItem) => void,
+      options?: {
+        onResubscribe?: () => void;
+      },
+    ) => () => void;
+    subscribeSubagent: (
+      input: OrchestrationSubscribeSubagentInput,
+      callback: (event: OrchestrationSubagentStreamItem) => void,
       options?: {
         onResubscribe?: () => void;
       },

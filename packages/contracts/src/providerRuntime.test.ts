@@ -60,6 +60,176 @@ describe("ProviderRuntimeEvent", () => {
     ).toBe("turn.completed");
   });
 
+  it("decodes typed MCP startup failures that require reauthentication", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "mcp.status.updated",
+      eventId: "event-mcp-status-1",
+      provider: "codex",
+      createdAt: "2026-08-02T12:00:00.000Z",
+      threadId: "thread-1",
+      payload: {
+        status: {
+          name: "notion",
+          status: "failed",
+          error: "Authorization required",
+          failureReason: "reauthenticationRequired",
+        },
+      },
+    });
+
+    expect(parsed.type).toBe("mcp.status.updated");
+    if (parsed.type !== "mcp.status.updated") {
+      throw new Error("expected mcp.status.updated");
+    }
+    expect(parsed.payload.status).toEqual({
+      name: "notion",
+      status: "failed",
+      error: "Authorization required",
+      failureReason: "reauthenticationRequired",
+    });
+  });
+
+  it("rejects unknown MCP startup states and failure reasons", () => {
+    const event = {
+      type: "mcp.status.updated",
+      eventId: "event-mcp-status-invalid",
+      provider: "codex",
+      createdAt: "2026-08-02T12:00:00.000Z",
+      threadId: "thread-1",
+      payload: {
+        status: {
+          name: "notion",
+          status: "offline",
+          failureReason: "tokenExpired",
+        },
+      },
+    };
+
+    expect(() => decodeRuntimeEvent(event)).toThrow();
+  });
+
+  it("retains typed MCP OAuth completion events", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "mcp.oauth.completed",
+      eventId: "event-mcp-oauth-1",
+      provider: "codex",
+      createdAt: "2026-08-02T12:01:00.000Z",
+      threadId: "thread-1",
+      payload: {
+        success: false,
+        name: "notion",
+        error: "Authorization was cancelled",
+      },
+    });
+
+    expect(parsed.type).toBe("mcp.oauth.completed");
+    if (parsed.type !== "mcp.oauth.completed") {
+      throw new Error("expected mcp.oauth.completed");
+    }
+    expect(parsed.payload.name).toBe("notion");
+    expect(parsed.payload.error).toBe("Authorization was cancelled");
+  });
+
+  it("decodes a discovered nested subagent with provider routing metadata", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "subagent.discovered",
+      eventId: "event-subagent-discovered-1",
+      provider: "codex",
+      createdAt: "2026-07-30T10:00:00.000Z",
+      threadId: "thread-1",
+      subagentId: "agent-child",
+      providerRefs: {
+        providerThreadId: "provider-thread-child",
+      },
+      payload: {
+        subagentId: "agent-child",
+        providerThreadId: "provider-thread-child",
+        parentSubagentId: "agent-parent",
+        agentPath: "/root/child",
+        nickname: "contracts",
+        role: "worker",
+        task: "Add the schema contracts",
+        model: "gpt-5.6-codex",
+        reasoningEffort: "ultra",
+        serviceTier: "priority",
+        depth: 1,
+      },
+    });
+
+    expect(parsed.type).toBe("subagent.discovered");
+    if (parsed.type !== "subagent.discovered") {
+      throw new Error("expected subagent.discovered");
+    }
+    expect(parsed.subagentId).toBe("agent-child");
+    expect(parsed.providerRefs?.providerThreadId).toBe("provider-thread-child");
+    expect(parsed.payload.parentSubagentId).toBe("agent-parent");
+    expect(parsed.payload.serviceTier).toBe("priority");
+    expect(parsed.payload.depth).toBe(1);
+  });
+
+  it("decodes a subagent state change without a status message", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "subagent.state.changed",
+      eventId: "event-subagent-state-1",
+      provider: "codex",
+      createdAt: "2026-07-30T10:00:01.000Z",
+      threadId: "thread-1",
+      subagentId: "agent-child",
+      payload: {
+        subagentId: "agent-child",
+        state: "waiting",
+      },
+    });
+
+    expect(parsed.type).toBe("subagent.state.changed");
+    if (parsed.type !== "subagent.state.changed") {
+      throw new Error("expected subagent.state.changed");
+    }
+    expect(parsed.payload.state).toBe("waiting");
+    expect(parsed.payload.statusMessage).toBeUndefined();
+  });
+
+  it("rejects empty subagent routing identifiers", () => {
+    expect(() =>
+      decodeRuntimeEvent({
+        type: "turn.started",
+        eventId: "event-subagent-invalid-1",
+        provider: "codex",
+        createdAt: "2026-07-30T10:00:02.000Z",
+        threadId: "thread-1",
+        subagentId: "   ",
+        payload: {},
+      }),
+    ).toThrow();
+  });
+
+  it("decodes runtime identity on newly emitted events", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "session.started",
+      eventId: "event-runtime-session",
+      provider: "codex",
+      runtimeSessionId: " runtime-session-1 ",
+      createdAt: "2026-02-28T00:00:00.000Z",
+      threadId: "thread-1",
+      payload: {},
+    });
+
+    expect(parsed.runtimeSessionId).toBe("runtime-session-1");
+  });
+
+  it("continues to decode historical events without runtime identity", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "session.started",
+      eventId: "event-legacy-session",
+      provider: "codex",
+      createdAt: "2026-02-28T00:00:00.000Z",
+      threadId: "thread-1",
+      payload: {},
+    });
+
+    expect(parsed.runtimeSessionId).toBeUndefined();
+  });
+
   it("accepts fork-provided driver kinds as branded slugs", () => {
     const parsed = decodeRuntimeEvent({
       type: "session.started",

@@ -5,6 +5,8 @@ import {
   EventId,
   IsoDateTime,
   ProviderItemId,
+  RuntimeSessionId,
+  SubagentId,
   ThreadId,
   TurnId,
 } from "./baseSchemas.ts";
@@ -23,6 +25,7 @@ import {
   RuntimeMode,
 } from "./orchestration.ts";
 import { ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
+import { ProjectMemoryMode } from "./projectMemory.ts";
 
 const ProviderSessionStatus = Schema.Literals([
   "connecting",
@@ -31,6 +34,18 @@ const ProviderSessionStatus = Schema.Literals([
   "error",
   "closed",
 ]);
+
+export const ProviderSessionPurpose = Schema.Literals([
+  "interactive",
+  "fetch-worker",
+  "subagent-worker",
+]);
+export type ProviderSessionPurpose = typeof ProviderSessionPurpose.Type;
+export const DEFAULT_PROVIDER_SESSION_PURPOSE: ProviderSessionPurpose = "interactive";
+
+export const resolveProviderSessionPurpose = (
+  purpose: ProviderSessionPurpose | undefined,
+): ProviderSessionPurpose => purpose ?? DEFAULT_PROVIDER_SESSION_PURPOSE;
 
 export const ProviderSession = Schema.Struct({
   provider: ProviderDriverKind,
@@ -43,6 +58,8 @@ export const ProviderSession = Schema.Struct({
   cwd: Schema.optional(TrimmedNonEmptyString),
   model: Schema.optional(TrimmedNonEmptyString),
   threadId: ThreadId,
+  // Historical sessions predate runtime lease fencing.
+  runtimeSessionId: Schema.optional(RuntimeSessionId),
   resumeCursor: Schema.optional(Schema.Unknown),
   activeTurnId: Schema.optional(TurnId),
   createdAt: IsoDateTime,
@@ -53,6 +70,10 @@ export type ProviderSession = typeof ProviderSession.Type;
 
 export const ProviderSessionStartInput = Schema.Struct({
   threadId: ThreadId,
+  purpose: Schema.optional(ProviderSessionPurpose),
+  // Assigned by ProviderService before entering an adapter. Optional only for
+  // persisted and legacy producers while runtime lease fencing rolls out.
+  runtimeSessionId: Schema.optional(RuntimeSessionId),
   provider: Schema.optional(ProviderDriverKind),
   // See ProviderSession for the migration story.
   providerInstanceId: Schema.optional(ProviderInstanceId),
@@ -60,11 +81,39 @@ export const ProviderSessionStartInput = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyString),
   modelSelection: Schema.optional(ModelSelection),
   resumeCursor: Schema.optional(Schema.Unknown),
+  freshSession: Schema.optional(Schema.Boolean),
+  projectMemoryMode: Schema.optional(ProjectMemoryMode),
   approvalPolicy: Schema.optional(ProviderApprovalPolicy),
   sandboxMode: Schema.optional(ProviderSandboxMode),
   runtimeMode: RuntimeMode,
 });
 export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
+
+export const ProviderForkCursor = Schema.Struct({
+  providerThreadId: TrimmedNonEmptyString,
+  providerTurnId: TrimmedNonEmptyString,
+});
+export type ProviderForkCursor = typeof ProviderForkCursor.Type;
+
+export const ProviderForkStrategy = Schema.Literals(["provider-native", "compact-handoff"]);
+export type ProviderForkStrategy = typeof ProviderForkStrategy.Type;
+
+export const ProviderCompactThreadInput = Schema.Struct({ threadId: ThreadId });
+export type ProviderCompactThreadInput = typeof ProviderCompactThreadInput.Type;
+
+export class ProviderCompactionError extends Schema.TaggedError<ProviderCompactionError>()(
+  "ProviderCompactionError",
+  {
+    reason: Schema.Literals(["unavailable", "failed"]),
+    detail: TrimmedNonEmptyString,
+  },
+) {}
+
+export const ProviderTurnTranscriptHandoff = Schema.Struct({
+  text: TrimmedNonEmptyString,
+  attachments: Schema.optional(Schema.Array(ChatAttachment)),
+});
+export type ProviderTurnTranscriptHandoff = typeof ProviderTurnTranscriptHandoff.Type;
 
 export const ProviderSendTurnInput = Schema.Struct({
   threadId: ThreadId,
@@ -77,6 +126,9 @@ export const ProviderSendTurnInput = Schema.Struct({
   attachments: Schema.optional(
     Schema.Array(ChatAttachment).check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS)),
   ),
+  // Server-owned continuation context is validated separately from the new
+  // user turn. It must never be trimmed to the composer transport limits.
+  transcriptHandoff: Schema.optional(ProviderTurnTranscriptHandoff),
   modelSelection: Schema.optional(ModelSelection),
   interactionMode: Schema.optional(ProviderInteractionMode),
 });
@@ -147,6 +199,8 @@ export const ProviderEvent = Schema.Struct({
   // See ProviderSession for the migration story.
   providerInstanceId: Schema.optional(ProviderInstanceId),
   threadId: ThreadId,
+  subagentId: Schema.optional(SubagentId),
+  providerThreadId: Schema.optional(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
   method: TrimmedNonEmptyString,
   message: Schema.optional(TrimmedNonEmptyString),

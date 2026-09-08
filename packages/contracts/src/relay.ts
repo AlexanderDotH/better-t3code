@@ -43,6 +43,9 @@ export type RelayAgentAwarenessPreferences = typeof RelayAgentAwarenessPreferenc
 export const RelayApnsEnvironment = Schema.Literals(["sandbox", "production"]);
 export type RelayApnsEnvironment = typeof RelayApnsEnvironment.Type;
 
+export const RelayInterfaceLanguage = Schema.Literals(["en", "de", "fr"]);
+export type RelayInterfaceLanguage = typeof RelayInterfaceLanguage.Type;
+
 export const RelayDeviceRegistrationRequest = Schema.Struct({
   deviceId: TrimmedNonEmptyString,
   label: TrimmedNonEmptyString,
@@ -55,6 +58,8 @@ export const RelayDeviceRegistrationRequest = Schema.Struct({
   // falls back to its configured defaults.
   bundleId: Schema.optional(TrimmedNonEmptyString),
   apsEnvironment: Schema.optional(RelayApnsEnvironment),
+  /** Resolved device language used for app-owned notification and Live Activity copy. */
+  language: Schema.optional(RelayInterfaceLanguage),
   pushToken: Schema.optional(TrimmedNonEmptyString),
   pushToStartToken: Schema.optional(TrimmedNonEmptyString),
   preferences: RelayAgentAwarenessPreferences,
@@ -67,6 +72,7 @@ export const RelayClientDeviceRecord = Schema.Struct({
   platform: RelayAgentAwarenessPlatform,
   iosMajorVersion: Schema.Int.check(Schema.isGreaterThanOrEqualTo(18)),
   appVersion: Schema.NullOr(TrimmedNonEmptyString),
+  language: Schema.optionalKey(RelayInterfaceLanguage),
   notifications: Schema.Struct({
     enabled: Schema.Boolean,
     notifyOnApproval: Schema.Boolean,
@@ -127,6 +133,7 @@ export type RelayAgentActivityAggregateRow = typeof RelayAgentActivityAggregateR
 export const RelayAgentActivityAggregateState = Schema.Struct({
   title: TrimmedNonEmptyString,
   subtitle: TrimmedNonEmptyString,
+  language: Schema.optionalKey(RelayInterfaceLanguage),
   activeCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   updatedAt: TrimmedNonEmptyString,
   activities: Schema.Array(RelayAgentActivityAggregateRow),

@@ -7,6 +7,7 @@ import {
   ProviderSendTurnInput,
   ProviderSession,
   ProviderSessionStartInput,
+  resolveProviderSessionPurpose,
   ProviderUploadFeedbackError,
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
@@ -27,6 +28,60 @@ function getOptionValue(
 }
 
 describe("ProviderSessionStartInput", () => {
+  it("keeps legacy sessions interactive when purpose is absent", () => {
+    const parsed = decodeProviderSessionStartInput({
+      threadId: "thread-interactive",
+      providerInstanceId: "codex",
+      runtimeMode: "full-access",
+    });
+
+    expect(resolveProviderSessionPurpose(parsed.purpose)).toBe("interactive");
+  });
+
+  it("accepts the Fetch worker purpose", () => {
+    const parsed = decodeProviderSessionStartInput({
+      threadId: "fetch:parent:run:0",
+      providerInstanceId: "claude_work",
+      runtimeMode: "approval-required",
+      purpose: "fetch-worker",
+    });
+
+    expect(parsed.purpose).toBe("fetch-worker");
+  });
+
+  it("accepts the T3-managed general subagent purpose", () => {
+    const parsed = decodeProviderSessionStartInput({
+      threadId: "general:parent:worker",
+      providerInstanceId: "codex",
+      runtimeMode: "full-access",
+      purpose: "subagent-worker",
+    });
+
+    expect(parsed.purpose).toBe("subagent-worker");
+  });
+
+  it("rejects unknown session purposes", () => {
+    expect(() =>
+      decodeProviderSessionStartInput({
+        threadId: "thread-invalid-purpose",
+        providerInstanceId: "codex",
+        runtimeMode: "full-access",
+        purpose: "background",
+      }),
+    ).toThrow();
+  });
+
+  it("accepts an optional freshSession flag", () => {
+    const parsed = decodeProviderSessionStartInput({
+      threadId: "thread-fresh",
+      providerInstanceId: "codex",
+      freshSession: true,
+      runtimeMode: "full-access",
+    });
+
+    expect(parsed.freshSession).toBe(true);
+  });
+
   it("accepts codex-compatible payloads", () => {
     const parsed = decodeProviderSessionStartInput({
       threadId: "thread-1",
@@ -118,9 +173,52 @@ describe("ProviderSessionStartInput", () => {
     expect(parsed.providerInstanceId).toBe("ollama_local");
     expect(parsed.modelSelection?.instanceId).toBe("ollama_local");
   });
+
+  it("normalizes a service-assigned runtime session id", () => {
+    const parsed = decodeProviderSessionStartInput({
+      threadId: "thread-1",
+      provider: "codex",
+      providerInstanceId: "codex_personal",
+      runtimeSessionId: " runtime-session-1 ",
+      runtimeMode: "full-access",
+    });
+
+    expect(parsed.runtimeSessionId).toBe("runtime-session-1");
+  });
 });
 
 describe("ProviderSendTurnInput", () => {
+  it("keeps an unbounded internal transcript handoff separate from the current turn limits", () => {
+    const inheritedAttachments = Array.from({ length: 9 }, (_, index) => ({
+      type: "file" as const,
+      id: `inherited-file-${index}`,
+      name: `inherited-${index}.txt`,
+      mimeType: "text/plain",
+      sizeBytes: 1,
+    }));
+    const inheritedText = "h".repeat(120_001);
+
+    const parsed = decodeProviderSendTurnInput({
+      threadId: "thread-fork",
+      input: "new fork message",
+      transcriptHandoff: {
+        text: inheritedText,
+        attachments: inheritedAttachments,
+      },
+    });
+
+    expect(parsed.input).toBe("new fork message");
+    expect(parsed.transcriptHandoff?.text).toBe(inheritedText);
+    expect(parsed.transcriptHandoff?.attachments).toHaveLength(9);
+    expect(() =>
+      decodeProviderSendTurnInput({
+        threadId: "thread-fork",
+        input: "u".repeat(120_001),
+        transcriptHandoff: { text: "inherited" },
+      }),
+    ).toThrow();
+  });
+
   it("accepts codex modelSelection", () => {
     const parsed = decodeProviderSendTurnInput({
       threadId: "thread-1",
@@ -225,6 +323,35 @@ describe("providerInstanceId routing key (slice-2 invariant)", () => {
     expect(session.providerInstanceId).toBe("codex_work");
   });
 
+  it("decodes ProviderSession without runtimeSessionId for legacy producers", () => {
+    const session = decodeProviderSession({
+      provider: "codex",
+      providerInstanceId: "codex_work",
+      status: "ready",
+      runtimeMode: "full-access",
+      threadId: "thread-1",
+      createdAt: "2024-01-01T00:00:00Z",
+      updatedAt: "2024-01-01T00:00:00Z",
+    });
+
+    expect(session.runtimeSessionId).toBeUndefined();
+  });
+
+  it("propagates runtimeSessionId through ProviderSession decode", () => {
+    const session = decodeProviderSession({
+      provider: "codex",
+      providerInstanceId: "codex_work",
+      runtimeSessionId: " runtime-session-1 ",
+      status: "ready",
+      runtimeMode: "full-access",
+      threadId: "thread-1",
+      createdAt: "2024-01-01T00:00:00Z",
+      updatedAt: "2024-01-01T00:00:00Z",
+    });
+
+    expect(session.runtimeSessionId).toBe("runtime-session-1");
+  });
+
   it("decodes ProviderSession for fork-provided driver kinds", () => {
     const session = decodeProviderSession({
       provider: "ollama",
@@ -252,6 +379,22 @@ describe("providerInstanceId routing key (slice-2 invariant)", () => {
     });
     expect(event.provider).toBe("codex");
     expect(event.providerInstanceId).toBe("codex_personal");
+  });
+
+  it("decodes a ProviderEvent carrying subagent and provider-thread routing", () => {
+    const event = decodeProviderEvent({
+      id: "event-subagent-1",
+      kind: "notification",
+      provider: "codex",
+      threadId: "thread-1",
+      subagentId: "agent-contracts",
+      providerThreadId: "provider-thread-contracts",
+      createdAt: "2026-07-30T10:00:00.000Z",
+      method: "item/started",
+    });
+
+    expect(event.subagentId).toBe("agent-contracts");
+    expect(event.providerThreadId).toBe("provider-thread-contracts");
   });
 
   it("rejects providerInstanceId values that fail the slug pattern (defense in depth)", () => {

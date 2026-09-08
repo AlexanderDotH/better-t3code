@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderDriverKind } from "./providerInstance.ts";
 
 export const ProviderOptionDescriptorType = Schema.Literals(["select", "boolean"]);
@@ -51,6 +51,9 @@ export const ProviderOptionSelection = Schema.Struct({
   value: ProviderOptionSelectionValue,
 });
 export type ProviderOptionSelection = typeof ProviderOptionSelection.Type;
+
+export const CODEX_REASONING_EFFORT_OPTION_ID = "reasoningEffort";
+export const T3_AUTO_REASONING_OPTION_ID = "t3AutoReasoning";
 
 /**
  * Legacy on-disk shape for provider option selections, kept readable by the
@@ -122,8 +125,42 @@ function canonicalSelectionsToLegacyObject(
   return out;
 }
 
+export const AGENT_REASONING_EFFORT_VALUES = ["minimal", "low", "medium", "high", "xhigh"] as const;
+export const AgentReasoningEffort = Schema.Literals(AGENT_REASONING_EFFORT_VALUES);
+export type AgentReasoningEffort = typeof AgentReasoningEffort.Type;
+export const DEFAULT_AGENT_REASONING_EFFORT: AgentReasoningEffort = "medium";
+
+const NonNegativeFiniteNumber = Schema.Number.check(
+  Schema.isFinite(),
+  Schema.isGreaterThanOrEqualTo(0),
+);
+
 export const ModelCapabilities = Schema.Struct({
   optionDescriptors: Schema.optional(Schema.Array(ProviderOptionDescriptor)),
+  contextWindow: Schema.optional(
+    Schema.Struct({
+      defaultTokens: PositiveInt,
+      maxTokens: PositiveInt,
+      effectivePercent: Schema.optional(
+        Schema.Number.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
+      ),
+    }),
+  ),
+  inputModalities: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  outputModalities: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  pricing: Schema.optional(
+    Schema.Struct({
+      promptUsdPerMillion: Schema.optional(NonNegativeFiniteNumber),
+      completionUsdPerMillion: Schema.optional(NonNegativeFiniteNumber),
+    }),
+  ),
+  toolSupport: Schema.optional(
+    Schema.Struct({
+      tools: Schema.Boolean,
+      parallelToolCalls: Schema.Boolean,
+      toolChoice: Schema.Boolean,
+    }),
+  ),
 });
 export type ModelCapabilities = typeof ModelCapabilities.Type;
 
@@ -143,11 +180,13 @@ export type CustomModelEntry = typeof CustomModelEntry.Type;
 export const CustomModelSetting = Schema.Union([Schema.String, CustomModelEntry]);
 export type CustomModelSetting = typeof CustomModelSetting.Type;
 
-const CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
-const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
-const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
-const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
-const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
+export const CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
+export const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
+export const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
+export const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
+export const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
+export const GEMINI_DRIVER_KIND = ProviderDriverKind.make("gemini");
+export const GEMINI_DEFAULT_MODEL = "gemini-3.6-flash";
 
 export const DEFAULT_MODEL = "gpt-5.6-sol";
 
@@ -163,6 +202,7 @@ export const PREFERRED_DEFAULT_CODEX_MODELS: ReadonlyArray<string> = [
 export const DEFAULT_TEXT_GENERATION_MODEL = "gpt-5.6-luna";
 /** Keep the official Antigravity session's current model. Never send this ID to ACP. */
 export const ANTIGRAVITY_DEFAULT_MODEL = "antigravity-default";
+export const DEFAULT_GIT_TEXT_GENERATION_MODEL = DEFAULT_TEXT_GENERATION_MODEL;
 export const DEFAULT_TEXT_GENERATION_REASONING_EFFORT = "low";
 
 export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
@@ -173,6 +213,7 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   [GROK_DRIVER_KIND]: "grok-build",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
   [ProviderDriverKind.make("antigravity")]: ANTIGRAVITY_DEFAULT_MODEL,
+  [GEMINI_DRIVER_KIND]: GEMINI_DEFAULT_MODEL,
 };
 
 /** Per-provider text generation model defaults. */
@@ -184,7 +225,10 @@ export const DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [CLAUDE_DRIVER_KIND]: "claude-haiku-4-5",
   [CURSOR_DRIVER_KIND]: "composer-2",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  [GEMINI_DRIVER_KIND]: GEMINI_DEFAULT_MODEL,
 };
+export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER =
+  DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER;
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
   Record<ProviderDriverKind, Record<string, string>>
@@ -221,4 +265,5 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [CURSOR_DRIVER_KIND]: "Cursor",
   [GROK_DRIVER_KIND]: "Grok",
   [OPENCODE_DRIVER_KIND]: "OpenCode",
+  [GEMINI_DRIVER_KIND]: "Gemini",
 };
