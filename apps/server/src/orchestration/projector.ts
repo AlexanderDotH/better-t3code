@@ -1,4 +1,11 @@
-import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "@t3tools/contracts";
+import type {
+  OrchestrationEvent,
+  OrchestrationReadModel,
+  OrchestrationSubagentStatus,
+  OrchestrationSubagentSummary,
+  SubagentId,
+  ThreadId,
+} from "@t3tools/contracts";
 import {
   isImportedAgentSessionMessageId,
   OrchestrationCheckpointSummary,
@@ -17,11 +24,18 @@ import {
   ProjectCreatedPayload,
   ProjectDeletedPayload,
   ProjectMetaUpdatedPayload,
+  ProjectAgentClaimSetPayload,
+  ProjectAgentClaimReleasedPayload,
   ThreadActivityAppendedPayload,
   ThreadArchivedPayload,
   ThreadCreatedPayload,
+  ThreadForkedPayload,
+  ThreadForkWorkspaceUpdatedPayload,
+  ThreadForkHandoffCompletedPayload,
   ThreadDeletedPayload,
   ThreadInteractionModeSetPayload,
+  ThreadHarnessSyncLinkedPayload,
+  ThreadHarnessSyncMessageImportedPayload,
   ThreadMetaUpdatedPayload,
   ThreadProposedPlanUpsertedPayload,
   ThreadRuntimeModeSetPayload,
@@ -35,12 +49,165 @@ import {
   ThreadUnsnoozedPayload,
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
+  ThreadSubagentProgressSetPayload,
+  ThreadSubagentStateSetPayload,
+  ThreadSubagentUpsertedPayload,
+  ThreadTurnAbortSettledPayload,
   ThreadTurnDiffCompletedPayload,
 } from "./Schemas.ts";
+import { makeAbortInteractionResolutionActivities } from "./abortInteractionSettlement.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
 const MAX_THREAD_MESSAGES = 2_000;
 const MAX_THREAD_CHECKPOINTS = 500;
+const TERMINAL_SUBAGENT_STATUSES = new Set<OrchestrationSubagentStatus>([
+  "completed",
+  "interrupted",
+  "error",
+  "unavailable",
+]);
+
+function retainFrozenWithNativeLimit<T extends { readonly historyOrigin?: unknown }>(
+  rows: ReadonlyArray<T>,
+  nativeLimit: number,
+): T[] {
+  const frozen = rows.filter((row) => row.historyOrigin !== undefined);
+  const native = rows.filter((row) => row.historyOrigin === undefined).slice(-nativeLimit);
+  return [...frozen, ...native];
+}
+
+function maxIsoDate(left: string, right: string): string {
+  return left.localeCompare(right) >= 0 ? left : right;
+}
+
+function minIsoDate(left: string, right: string): string {
+  return left.localeCompare(right) <= 0 ? left : right;
+}
+
+function placeholderSubagent(input: {
+  readonly subagentId: SubagentId;
+  readonly updatedAt: string;
+  readonly status?: OrchestrationSubagentStatus;
+}): OrchestrationSubagentSummary {
+  return {
+    id: input.subagentId,
+    origin: "provider-native",
+    providerInstanceId: null,
+    providerDriver: null,
+    providerThreadId: input.subagentId,
+    parentId: null,
+    path: null,
+    name: `Agent ${input.subagentId.slice(0, 8)}`,
+    nickname: null,
+    role: null,
+    task: null,
+    model: null,
+    reasoningEffort: null,
+    depth: 0,
+    status: input.status ?? "starting",
+    statusMessage: null,
+    latestProgress: null,
+    latestTurn: null,
+    startedAt: input.updatedAt,
+    updatedAt: input.updatedAt,
+    completedAt:
+      input.status !== undefined && TERMINAL_SUBAGENT_STATUSES.has(input.status)
+        ? input.updatedAt
+        : null,
+  };
+}
+
+function mergeSubagentSummary(
+  existing: OrchestrationSubagentSummary,
+  incoming: OrchestrationSubagentSummary,
+): OrchestrationSubagentSummary {
+  const lifecycle = incoming.updatedAt.localeCompare(existing.updatedAt) >= 0 ? incoming : existing;
+  return {
+    ...existing,
+    ...incoming,
+    parentId: incoming.parentId ?? existing.parentId,
+    path: incoming.path ?? existing.path,
+    nickname: incoming.nickname ?? existing.nickname,
+    role: incoming.role ?? existing.role,
+    task: incoming.task ?? existing.task,
+    model: incoming.model ?? existing.model,
+    reasoningEffort: incoming.reasoningEffort ?? existing.reasoningEffort,
+    serviceTier: incoming.serviceTier ?? existing.serviceTier,
+    status: lifecycle.status,
+    statusMessage: lifecycle.statusMessage,
+    latestProgress: lifecycle.latestProgress,
+    latestTurn: lifecycle.latestTurn,
+    startedAt: minIsoDate(existing.startedAt, incoming.startedAt),
+    updatedAt: lifecycle.updatedAt,
+    completedAt: lifecycle.completedAt,
+  };
+}
+
+function upsertSubagent(
+  subagents: ReadonlyArray<OrchestrationSubagentSummary>,
+  incoming: OrchestrationSubagentSummary,
+): OrchestrationSubagentSummary[] {
+  const existing = subagents.find((entry) => entry.id === incoming.id);
+  if (!existing) {
+    return [...subagents, incoming];
+  }
+  const merged = mergeSubagentSummary(existing, incoming);
+  return subagents.map((entry) => (entry.id === incoming.id ? merged : entry));
+}
+
+function setSubagentState(
+  subagents: ReadonlyArray<OrchestrationSubagentSummary>,
+  input: {
+    readonly subagentId: SubagentId;
+    readonly status: OrchestrationSubagentStatus;
+    readonly statusMessage: string | null;
+    readonly updatedAt: string;
+  },
+): OrchestrationSubagentSummary[] {
+  const existing =
+    subagents.find((entry) => entry.id === input.subagentId) ??
+    placeholderSubagent({
+      subagentId: input.subagentId,
+      updatedAt: input.updatedAt,
+      status: input.status,
+    });
+  const updated =
+    input.updatedAt.localeCompare(existing.updatedAt) < 0
+      ? existing
+      : {
+          ...existing,
+          status: input.status,
+          statusMessage: input.statusMessage,
+          updatedAt: input.updatedAt,
+          completedAt: TERMINAL_SUBAGENT_STATUSES.has(input.status) ? input.updatedAt : null,
+        };
+  return upsertSubagent(subagents, updated);
+}
+
+function setSubagentProgress(
+  subagents: ReadonlyArray<OrchestrationSubagentSummary>,
+  input: {
+    readonly subagentId: SubagentId;
+    readonly progress: OrchestrationSubagentSummary["latestProgress"];
+    readonly updatedAt: string;
+  },
+): OrchestrationSubagentSummary[] {
+  const existing =
+    subagents.find((entry) => entry.id === input.subagentId) ??
+    placeholderSubagent({
+      subagentId: input.subagentId,
+      updatedAt: input.updatedAt,
+    });
+  const updated =
+    input.updatedAt.localeCompare(existing.updatedAt) < 0
+      ? existing
+      : {
+          ...existing,
+          latestProgress: input.progress,
+          updatedAt: input.updatedAt,
+        };
+  return upsertSubagent(subagents, updated);
+}
 
 // Async questions can stay open while the agent produces more activity.
 // Match the database snapshot's pending-question retention.
@@ -60,7 +227,7 @@ function retainThreadActivities(activities: OrchestrationThread["activities"]) {
   }
   const pendingActivities = new Set(pending.values());
   return activities.filter(
-    (activity, index) => index >= recentStart || pendingActivities.has(activity),
+    (activity, index) => activity.historyOrigin !== undefined || index >= recentStart || pendingActivities.has(activity),
   );
 }
 
@@ -112,13 +279,18 @@ function decodeForEvent<A>(
   );
 }
 
-function retainThreadMessagesAfterRevert(
-  messages: ReadonlyArray<OrchestrationMessage>,
+export function retainThreadMessagesAfterRevert<T extends OrchestrationMessage>(
+  messages: ReadonlyArray<T>,
   retainedTurnIds: ReadonlySet<string>,
   turnCount: number,
-): ReadonlyArray<OrchestrationMessage> {
+  isFrozen: (message: T) => boolean = (message) => message.historyOrigin !== undefined,
+): ReadonlyArray<T> {
   const retainedMessageIds = new Set<string>();
   for (const message of messages) {
+    if (isFrozen(message)) {
+      retainedMessageIds.add(message.id);
+      continue;
+    }
     if (message.role === "system" || isImportedAgentSessionMessageId(message.id)) {
       retainedMessageIds.add(message.id);
       continue;
@@ -131,7 +303,7 @@ function retainThreadMessagesAfterRevert(
   const retainedUserCount = messages.filter(
     (message) =>
       message.role === "user" &&
-      !isImportedAgentSessionMessageId(message.id) &&
+      !isImportedAgentSessionMessageId(message.id) && !isFrozen(message) &&
       retainedMessageIds.has(message.id),
   ).length;
   const missingUserCount = Math.max(0, turnCount - retainedUserCount);
@@ -140,6 +312,7 @@ function retainThreadMessagesAfterRevert(
       .filter(
         (message) =>
           message.role === "user" &&
+          !isFrozen(message) &&
           !retainedMessageIds.has(message.id) &&
           (message.turnId === null || retainedTurnIds.has(message.turnId)),
       )
@@ -157,7 +330,7 @@ function retainThreadMessagesAfterRevert(
   const retainedAssistantCount = messages.filter(
     (message) =>
       message.role === "assistant" &&
-      !isImportedAgentSessionMessageId(message.id) &&
+      !isImportedAgentSessionMessageId(message.id) && !isFrozen(message) &&
       retainedMessageIds.has(message.id),
   ).length;
   const missingAssistantCount = Math.max(0, turnCount - retainedAssistantCount);
@@ -166,6 +339,7 @@ function retainThreadMessagesAfterRevert(
       .filter(
         (message) =>
           message.role === "assistant" &&
+          !isFrozen(message) &&
           !retainedMessageIds.has(message.id) &&
           (message.turnId === null || retainedTurnIds.has(message.turnId)),
       )
@@ -183,21 +357,31 @@ function retainThreadMessagesAfterRevert(
   return messages.filter((message) => retainedMessageIds.has(message.id));
 }
 
-function retainThreadActivitiesAfterRevert(
-  activities: ReadonlyArray<OrchestrationThread["activities"][number]>,
+export function retainThreadActivitiesAfterRevert<
+  T extends OrchestrationThread["activities"][number],
+>(
+  activities: ReadonlyArray<T>,
   retainedTurnIds: ReadonlySet<string>,
-): ReadonlyArray<OrchestrationThread["activities"][number]> {
+  isFrozen: (activity: T) => boolean = (activity) => activity.historyOrigin !== undefined,
+): ReadonlyArray<T> {
   return activities.filter(
-    (activity) => activity.turnId === null || retainedTurnIds.has(activity.turnId),
+    (activity) =>
+      isFrozen(activity) || activity.turnId === null || retainedTurnIds.has(activity.turnId),
   );
 }
 
-function retainThreadProposedPlansAfterRevert(
-  proposedPlans: ReadonlyArray<OrchestrationThread["proposedPlans"][number]>,
+export function retainThreadProposedPlansAfterRevert<
+  T extends OrchestrationThread["proposedPlans"][number],
+>(
+  proposedPlans: ReadonlyArray<T>,
   retainedTurnIds: ReadonlySet<string>,
-): ReadonlyArray<OrchestrationThread["proposedPlans"][number]> {
+  isFrozen: (plan: T) => boolean = (plan) => plan.historyOrigin !== undefined,
+): ReadonlyArray<T> {
   return proposedPlans.filter(
-    (proposedPlan) => proposedPlan.turnId === null || retainedTurnIds.has(proposedPlan.turnId),
+    (proposedPlan) =>
+      isFrozen(proposedPlan) ||
+      proposedPlan.turnId === null ||
+      retainedTurnIds.has(proposedPlan.turnId),
   );
 }
 
@@ -249,9 +433,11 @@ export function projectEvent(
             defaultModelSelection: payload.defaultModelSelection,
             defaultThreadEnvMode: null,
             autoPull: false,
+            checkpointsEnabled: payload.checkpointsEnabled,
             faviconPath: payload.faviconPath ?? null,
             projectIcon: payload.projectIcon ?? null,
             scripts: payload.scripts,
+            coordinationClaims: [],
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
             deletedAt: null,
@@ -287,6 +473,9 @@ export function projectEvent(
                     ? { defaultThreadEnvMode: payload.defaultThreadEnvMode }
                     : {}),
                   ...(payload.autoPull !== undefined ? { autoPull: payload.autoPull } : {}),
+                  ...(payload.checkpointsEnabled !== undefined
+                    ? { checkpointsEnabled: payload.checkpointsEnabled }
+                    : {}),
                   ...(payload.faviconPath !== undefined
                     ? { faviconPath: payload.faviconPath }
                     : {}),
@@ -311,11 +500,64 @@ export function projectEvent(
                   ...project,
                   deletedAt: payload.deletedAt,
                   updatedAt: payload.deletedAt,
+                  coordinationClaims: [],
                 }
               : project,
           ),
         })),
       );
+
+    case "project.agent-claim-set":
+      return decodeForEvent(ProjectAgentClaimSetPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          projects: nextBase.projects.map((project) =>
+            project.id === payload.projectId
+              ? {
+                  ...project,
+                  coordinationClaims: [
+                    ...project.coordinationClaims.filter(
+                      (lease) => lease.threadId !== payload.threadId,
+                    ),
+                    payload,
+                  ],
+                  updatedAt: maxIsoDate(project.updatedAt, payload.updatedAt),
+                }
+              : project,
+          ),
+        })),
+      );
+
+    case "project.agent-claim-released":
+      return decodeForEvent(
+        ProjectAgentClaimReleasedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          projects: nextBase.projects.map((project) =>
+            project.id === payload.projectId
+              ? {
+                  ...project,
+                  coordinationClaims: project.coordinationClaims.filter(
+                    (lease) =>
+                      lease.threadId !== payload.threadId ||
+                      (payload.expectedTurnId !== null && lease.turnId !== payload.expectedTurnId),
+                  ),
+                  updatedAt: maxIsoDate(project.updatedAt, payload.releasedAt),
+                }
+              : project,
+          ),
+        })),
+      );
+
+    case "project.agent-message-sent":
+    case "project.agent-inbox-acknowledged":
+      // Message bodies and per-recipient cursors stay in their compact SQL
+      // projections; they do not inflate the orchestration command model.
+      return Effect.succeed(nextBase);
 
     case "thread.created":
       return Effect.gen(function* () {
@@ -349,7 +591,9 @@ export function projectEvent(
             snoozedAt: null,
             deletedAt: null,
             messages: [],
+            proposedPlans: [],
             activities: [],
+            subagents: [],
             checkpoints: [],
             session: null,
           },
@@ -364,6 +608,82 @@ export function projectEvent(
             : [...nextBase.threads, thread],
         };
       });
+
+    case "thread.forked":
+      return decodeForEvent(ThreadForkedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            fork: payload.fork,
+            messages: payload.history.messages,
+            proposedPlans: payload.history.proposedPlans,
+            activities: payload.history.activities,
+            subagents: payload.history.subagents,
+            checkpoints: payload.history.checkpoints,
+            latestTurn: null,
+            session: null,
+            updatedAt: event.occurredAt,
+          }),
+        })),
+      );
+
+    case "thread.fork-workspace-updated":
+      return decodeForEvent(
+        ThreadForkWorkspaceUpdatedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (thread?.fork === undefined) return nextBase;
+          if (thread.fork.workspace.status === "ready") return nextBase;
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              fork: {
+                ...thread.fork,
+                workspace: {
+                  ...thread.fork.workspace,
+                  status: payload.status,
+                  preparedAt: payload.preparedAt,
+                  lastError: payload.lastError,
+                },
+              },
+              updatedAt: payload.createdAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.fork-handoff-completed":
+      return decodeForEvent(
+        ThreadForkHandoffCompletedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (thread?.fork === undefined || thread.fork.handoff.status === "completed") {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              fork: {
+                ...thread.fork,
+                handoff: {
+                  ...thread.fork.handoff,
+                  status: "completed",
+                  completedAt: payload.completedAt,
+                },
+              },
+              updatedAt: payload.completedAt,
+            }),
+          };
+        }),
+      );
 
     case "thread.deleted":
       return decodeForEvent(ThreadDeletedPayload, event.payload, event.type, "payload").pipe(
@@ -552,15 +872,21 @@ export function projectEvent(
       );
 
     case "thread.message-sent":
+    case "thread.harness-sync-message-imported":
       return Effect.gen(function* () {
         const payload = yield* decodeForEvent(
-          MessageSentPayloadSchema,
+          event.type === "thread.message-sent"
+            ? MessageSentPayloadSchema
+            : ThreadHarnessSyncMessageImportedPayload,
           event.payload,
           event.type,
           "payload",
         );
         const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
         if (!thread) {
+          return nextBase;
+        }
+        if (payload.subagentId !== undefined) {
           return nextBase;
         }
 
@@ -601,7 +927,7 @@ export function projectEvent(
                 : entry,
             )
           : [...thread.messages, message];
-        const cappedMessages = messages.slice(-MAX_THREAD_MESSAGES);
+        const cappedMessages = retainFrozenWithNativeLimit(messages, MAX_THREAD_MESSAGES);
 
         return {
           ...nextBase,
@@ -611,6 +937,38 @@ export function projectEvent(
           }),
         };
       });
+
+    case "thread.harness-sync-linked":
+      return decodeForEvent(
+        ThreadHarnessSyncLinkedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (
+            thread?.harnessSync !== undefined &&
+            thread.harnessSync !== null &&
+            thread.harnessSync.lastSyncedAt.localeCompare(payload.lastSyncedAt) > 0
+          ) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              harnessSync: {
+                providerInstanceId: payload.providerInstanceId,
+                providerLabel: payload.providerLabel,
+                activity: payload.activity,
+                sourceUpdatedAt: payload.sourceUpdatedAt,
+                lastSyncedAt: payload.lastSyncedAt,
+              },
+              updatedAt: maxIsoDate(event.occurredAt, payload.lastSyncedAt),
+            }),
+          };
+        }),
+      );
 
     case "thread.session-set":
       return Effect.gen(function* () {
@@ -675,6 +1033,82 @@ export function projectEvent(
         };
       });
 
+    case "thread.turn-abort-settled":
+      return Effect.gen(function* () {
+        const payload = yield* decodeForEvent(
+          ThreadTurnAbortSettledPayload,
+          event.payload,
+          event.type,
+          "payload",
+        );
+        const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+        const session = thread?.session;
+        if (
+          !thread ||
+          !session ||
+          session.abortState === null ||
+          session.runtimeSessionId !== payload.runtimeSessionId ||
+          session.abortState.runtimeSessionId !== payload.runtimeSessionId ||
+          session.abortState.targetTurnId !== payload.turnId
+        ) {
+          return nextBase;
+        }
+
+        const cooperative = payload.outcome === "cooperative";
+        const failed = payload.outcome === "force-failed";
+        const nextSession: OrchestrationSession = {
+          ...session,
+          status: cooperative ? "ready" : failed ? "error" : "stopped",
+          runtimeSessionId: cooperative ? session.runtimeSessionId : null,
+          activeTurnId: null,
+          abortState: null,
+          lastError:
+            payload.detail !== undefined
+              ? payload.detail
+              : failed
+                ? "Provider force-stop failed."
+                : session.lastError,
+          updatedAt: payload.settledAt,
+        };
+        const abortResolutionActivities = makeAbortInteractionResolutionActivities({
+          settlementEventId: event.eventId,
+          settlementSequence: event.sequence,
+          targetTurnId: payload.turnId,
+          outcome: payload.outcome,
+          settledAt: payload.settledAt,
+          activities: thread.activities,
+        });
+        const settlementActivityIds = new Set(
+          abortResolutionActivities.map((activity) => activity.id),
+        );
+        const activities =
+          abortResolutionActivities.length === 0
+            ? thread.activities
+            : [
+                ...thread.activities.filter((activity) => !settlementActivityIds.has(activity.id)),
+                ...abortResolutionActivities,
+              ].toSorted(compareThreadActivities);
+        const retainedActivities = retainFrozenWithNativeLimit(activities, 500);
+        return {
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            session: nextSession,
+            activities: retainedActivities,
+            latestTurn:
+              payload.turnId !== null &&
+              thread.latestTurn?.turnId === payload.turnId &&
+              thread.latestTurn.state === "running"
+                ? {
+                    ...thread.latestTurn,
+                    state: failed ? "error" : "interrupted",
+                    completedAt: payload.settledAt,
+                  }
+                : thread.latestTurn,
+            updatedAt: event.occurredAt,
+          }),
+        };
+      });
+
     case "thread.proposed-plan-upserted":
       return Effect.gen(function* () {
         const payload = yield* decodeForEvent(
@@ -687,16 +1121,20 @@ export function projectEvent(
         if (!thread) {
           return nextBase;
         }
+        if (payload.subagentId !== undefined) {
+          return nextBase;
+        }
 
-        const proposedPlans = [
-          ...thread.proposedPlans.filter((entry) => entry.id !== payload.proposedPlan.id),
-          payload.proposedPlan,
-        ]
-          .toSorted(
+        const proposedPlans = retainFrozenWithNativeLimit(
+          [
+            ...thread.proposedPlans.filter((entry) => entry.id !== payload.proposedPlan.id),
+            payload.proposedPlan,
+          ].toSorted(
             (left, right) =>
               left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
-          )
-          .slice(-200);
+          ),
+          200,
+        );
 
         return {
           ...nextBase,
@@ -745,12 +1183,13 @@ export function projectEvent(
           return nextBase;
         }
 
-        const checkpoints = [
-          ...thread.checkpoints.filter((entry) => entry.turnId !== checkpoint.turnId),
-          checkpoint,
-        ]
-          .toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount)
-          .slice(-MAX_THREAD_CHECKPOINTS);
+        const checkpoints = retainFrozenWithNativeLimit(
+          [
+            ...thread.checkpoints.filter((entry) => entry.turnId !== checkpoint.turnId),
+            checkpoint,
+          ].toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount),
+          MAX_THREAD_CHECKPOINTS,
+        );
 
         // Mid-turn diff updates produce placeholder checkpoints; record the
         // checkpoint, but don't settle a turn its session is still running.
@@ -794,23 +1233,32 @@ export function projectEvent(
             return nextBase;
           }
 
-          const checkpoints = thread.checkpoints
-            .filter((entry) => entry.checkpointTurnCount <= payload.turnCount)
-            .toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount)
-            .slice(-MAX_THREAD_CHECKPOINTS);
+          const checkpoints = retainFrozenWithNativeLimit(
+            thread.checkpoints
+              .filter(
+                (entry) =>
+                  entry.historyOrigin !== undefined ||
+                  entry.checkpointTurnCount <= payload.turnCount,
+              )
+              .toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount),
+            MAX_THREAD_CHECKPOINTS,
+          );
           const retainedTurnIds = new Set(checkpoints.map((checkpoint) => checkpoint.turnId));
-          const messages = retainThreadMessagesAfterRevert(
-            thread.messages,
-            retainedTurnIds,
-            payload.turnCount,
-          ).slice(-MAX_THREAD_MESSAGES);
-          const proposedPlans = retainThreadProposedPlansAfterRevert(
-            thread.proposedPlans,
-            retainedTurnIds,
-          ).slice(-200);
-          const activities = retainThreadActivitiesAfterRevert(thread.activities, retainedTurnIds);
+          const messages = retainFrozenWithNativeLimit(
+            retainThreadMessagesAfterRevert(thread.messages, retainedTurnIds, payload.turnCount),
+            MAX_THREAD_MESSAGES,
+          );
+          const proposedPlans = retainFrozenWithNativeLimit(
+            retainThreadProposedPlansAfterRevert(thread.proposedPlans, retainedTurnIds),
+            200,
+          );
+          const activities = retainFrozenWithNativeLimit(
+            retainThreadActivitiesAfterRevert(thread.activities, retainedTurnIds),
+            500,
+          );
 
-          const latestCheckpoint = checkpoints.at(-1) ?? null;
+          const latestCheckpoint =
+            checkpoints.findLast((checkpoint) => checkpoint.historyOrigin === undefined) ?? null;
           const latestTurn =
             latestCheckpoint === null
               ? null
@@ -849,6 +1297,9 @@ export function projectEvent(
           if (!thread) {
             return nextBase;
           }
+          if (payload.subagentId !== undefined) {
+            return nextBase;
+          }
 
           const activities = retainThreadActivities(
             [
@@ -862,6 +1313,72 @@ export function projectEvent(
             threads: updateThread(nextBase.threads, payload.threadId, {
               activities,
               updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.subagent-upserted":
+      return decodeForEvent(
+        ThreadSubagentUpsertedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              subagents: upsertSubagent(thread.subagents, payload.subagent),
+              updatedAt: maxIsoDate(thread.updatedAt, event.occurredAt),
+            }),
+          };
+        }),
+      );
+
+    case "thread.subagent-state-set":
+      return decodeForEvent(
+        ThreadSubagentStateSetPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              subagents: setSubagentState(thread.subagents, payload),
+              updatedAt: maxIsoDate(thread.updatedAt, event.occurredAt),
+            }),
+          };
+        }),
+      );
+
+    case "thread.subagent-progress-set":
+      return decodeForEvent(
+        ThreadSubagentProgressSetPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              subagents: setSubagentProgress(thread.subagents, payload),
+              updatedAt: maxIsoDate(thread.updatedAt, event.occurredAt),
             }),
           };
         }),

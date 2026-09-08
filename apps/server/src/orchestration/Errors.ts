@@ -33,6 +33,8 @@ export class OrchestrationCommandInvariantError extends Schema.TaggedError<Orche
   {
     commandType: Schema.String,
     detail: Schema.String,
+    code: Schema.optional(Schema.Literal("project_agent_claim_conflict")),
+    context: Schema.optional(Schema.Unknown),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
