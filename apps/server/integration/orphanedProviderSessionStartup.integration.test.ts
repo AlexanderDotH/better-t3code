@@ -99,7 +99,8 @@ const startupDependencies = Layer.mergeAll(
   Layer.succeed(ServiceLauncherClient.ServiceLauncherClient, {
     managed: false,
     requestUpdate: () => Effect.die("unused"),
-    prepareTrial: Effect.sync(() => undefined),
+    prepareTrial: Effect.succeed(undefined),
+    awaitShutdownRequest: Effect.never,
   }),
   Layer.succeed(
     HttpServer.HttpServer,
@@ -110,7 +111,7 @@ const startupDependencies = Layer.mergeAll(
   ),
   AnalyticsService.layerTest,
   Layer.mock(GitVcsDriver.GitVcsDriver)({}),
-  Layer.succeed(ProviderService.ProviderService, {
+  Layer.mock(ProviderService.ProviderService)({
     startSession: () => Effect.die("unused"),
     sendTurn: () => Effect.die("unused"),
     compactThread: () => Effect.die("unused"),
@@ -187,6 +188,8 @@ it.effect(
             providerName: "codex",
             providerInstanceId,
             runtimeMode: "full-access",
+            runtimeSessionId: null,
+            abortState: null,
             activeTurnId: null,
             lastError: null,
             updatedAt: createdAt,
@@ -239,6 +242,8 @@ it.effect(
             providerName: "codex",
             providerInstanceId,
             runtimeMode: "full-access",
+            runtimeSessionId: null,
+            abortState: null,
             activeTurnId: null,
             lastError: null,
             updatedAt: createdAt,
@@ -410,6 +415,8 @@ it.effect.each(["opt-in desktop restart", "marked remote update"] as const)(
             providerName: "codex",
             providerInstanceId,
             runtimeMode: "full-access",
+            runtimeSessionId: null,
+            abortState: null,
             activeTurnId,
             lastError: null,
             updatedAt: createdAt,

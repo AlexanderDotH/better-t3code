@@ -464,6 +464,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           repositoryIdentity: null,
           defaultModelSelection: null,
           scripts: [],
+          checkpointsEnabled: true,
           createdAt: now,
           updatedAt: now,
         } satisfies OrchestrationProjectShell;
@@ -495,6 +496,8 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
             status: "running",
             providerName: "Codex",
             runtimeMode: "full-access",
+            runtimeSessionId: null,
+            abortState: null,
             activeTurnId: "turn-1" as TurnId,
             lastError: null,
             updatedAt: now,
@@ -544,6 +547,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           serverVersion: "0.0.0-test",
           capabilities: {
             repositoryIdentity: true,
+            midChatProviderSwitching: true,
           },
         } satisfies ExecutionEnvironmentDescriptor;
 
@@ -655,6 +659,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           repositoryIdentity: null,
           defaultModelSelection: null,
           scripts: [],
+          checkpointsEnabled: true,
           createdAt: now,
           updatedAt: now,
         } satisfies OrchestrationProjectShell;
@@ -686,6 +691,8 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
             status: "running",
             providerName: "Codex",
             runtimeMode: "full-access",
+            runtimeSessionId: null,
+            abortState: null,
             activeTurnId: "turn-1" as TurnId,
             lastError: null,
             updatedAt: now,
@@ -706,6 +713,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           serverVersion: "0.0.0-test",
           capabilities: {
             repositoryIdentity: true,
+            midChatProviderSwitching: true,
           },
         } satisfies ExecutionEnvironmentDescriptor;
 
