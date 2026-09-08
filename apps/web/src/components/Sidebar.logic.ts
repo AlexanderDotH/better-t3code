@@ -20,7 +20,7 @@ import type { SidebarThreadSummary, Thread } from "../types";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
 
-const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
+export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
 // Visible sidebar rows are prewarmed into the thread-detail cache so opening a
 // nearby thread usually reuses an already-hot subscription. Each prewarmed
@@ -32,6 +32,21 @@ const SIDEBAR_THREAD_PREWARM_LIMIT = 3;
 // A small buffer keeps the next few rows warm without leasing every row that
 // content-visibility leaves mounted below the scroll viewport.
 const SIDEBAR_ROW_SUBSCRIPTION_OVERSCAN_PX = 160;
+
+export function resolveSidebarProjectSettingsTarget(
+  scopedProject: { readonly projectKey: string } | null,
+):
+  | { readonly to: "/settings/projects" }
+  | {
+      readonly to: "/projects/$projectKey";
+      readonly params: { readonly projectKey: string };
+    } {
+  if (scopedProject === null) return { to: "/settings/projects" };
+  return {
+    to: "/projects/$projectKey",
+    params: { projectKey: scopedProject.projectKey },
+  };
+}
 
 export function useSidebarRowSubscriptionLease(isActive: boolean): {
   readonly leaseLiveStatus: boolean;
@@ -106,6 +121,7 @@ export type SidebarListMarker =
   | "settled-placeholder"
   /** The boundary between pinned and active rows. */
   | "pinned-divider"
+  | "older-projects-header"
   | "snoozed-header"
   | "settled-header";
 
@@ -491,6 +507,7 @@ export interface ThreadStatusPill {
     | "Monitoring"
     | "Connecting"
     | "Completed"
+    | "Failed"
     | "Pending Approval"
     | "Awaiting Input"
     | "Plan Ready";
@@ -499,12 +516,19 @@ export interface ThreadStatusPill {
   pulse: boolean;
 }
 
+export function isThreadStatusAlwaysVisibleInProjectPreview(
+  status: ThreadStatusPill | null,
+): boolean {
+  return status !== null;
+}
+
 // Rollup order mirrors the per-thread resolver exactly: attention states,
 // then active work, then the actionable plan prompt, then passive
 // monitoring. A Monitoring sibling must never hide a Plan Ready thread.
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
-  "Pending Approval": 6,
-  "Awaiting Input": 5,
+  "Pending Approval": 7,
+  "Awaiting Input": 6,
+  Failed: 5,
   Working: 4,
   Connecting: 4,
   "Plan Ready": 3,
@@ -514,16 +538,13 @@ const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
 
 type ThreadStatusInput = Pick<
   SidebarThreadSummary,
-  | "hasActionableProposedPlan"
-  | "hasPendingApprovals"
-  | "hasPendingUserInput"
-  | "interactionMode"
-  | "latestTurn"
-  | "session"
-  | "backgroundLiveness"
-> & {
-  lastVisitedAt?: string | undefined;
-};
+  "hasPendingApprovals" | "hasPendingUserInput" | "session" | "backgroundLiveness"
+> &
+  Partial<
+    Pick<SidebarThreadSummary, "hasActionableProposedPlan" | "interactionMode" | "latestTurn">
+  > & {
+    lastVisitedAt?: string | undefined;
+  };
 
 export interface ThreadJumpHintVisibilityController {
   sync: (shouldShow: boolean) => void;
@@ -621,6 +642,14 @@ export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   return completedAt > lastVisitedAt;
 }
 
+function hasUnseenFailure(thread: ThreadStatusInput): boolean {
+  if (thread.session?.status !== "error") return false;
+  if (!thread.lastVisitedAt) return true;
+  const failedAt = Date.parse(thread.session.updatedAt);
+  const lastVisitedAt = Date.parse(thread.lastVisitedAt);
+  return Number.isNaN(failedAt) || Number.isNaN(lastVisitedAt) || failedAt > lastVisitedAt;
+}
+
 export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {
   if (target === null) return true;
   return !target.closest(THREAD_SELECTION_SAFE_SELECTOR);
@@ -664,6 +693,16 @@ export function shouldCreateNewThreadInCurrentProject(
   return shiftKey || projectGroupCount <= 1;
 }
 
+export function resolveProjectHeaderClickAction(input: {
+  button: number;
+  detail: number;
+  projectExpanded: boolean;
+  shiftKey: boolean;
+}): "show-less" | "toggle-expanded" {
+  const isShiftLeftClick = input.button === 0 && input.detail > 0 && input.shiftKey;
+  return input.projectExpanded && isShiftLeftClick ? "show-less" : "toggle-expanded";
+}
+
 export function orderItemsByPreferredIds<TItem, TId>(input: {
   items: readonly TItem[];
   preferredIds: readonly TId[];
@@ -701,6 +740,28 @@ export function orderItemsByPreferredIds<TItem, TId>(input: {
   });
   const remaining = items.filter((_, index) => !emittedIndexes.has(index));
   return [...ordered, ...remaining];
+}
+
+export function getVisibleSidebarThreadIds<TThreadId>(
+  renderedProjects: readonly {
+    shouldShowThreadPanel?: boolean;
+    renderedThreadIds: readonly TThreadId[];
+  }[],
+): TThreadId[] {
+  return renderedProjects.flatMap((renderedProject) =>
+    renderedProject.shouldShowThreadPanel === false ? [] : renderedProject.renderedThreadIds,
+  );
+}
+
+export function resolveLegacySidebarProjectThreadIds<TThreadId>(input: {
+  projectExpanded: boolean;
+  pinnedCollapsedThreadId: TThreadId | null;
+  resolveExpandedThreadIds: () => readonly TThreadId[];
+}): readonly TThreadId[] {
+  if (input.projectExpanded) {
+    return input.resolveExpandedThreadIds();
+  }
+  return input.pinnedCollapsedThreadId === null ? [] : [input.pinnedCollapsedThreadId];
 }
 
 export function getSidebarThreadIdsToPrewarm<TThreadId>(
@@ -781,7 +842,7 @@ export function resolveThreadRowClassName(input: {
 }
 
 // ── Sidebar thread status model ─────────────────────────────────────
-// Five visual states, three colors: color is reserved for "act now"
+// Six visual states, with color reserved for "act now"
 // (approval), "in motion" (working), and "broken" (failed). Ready is the
 // unlabeled resting state — the agent stopped and is waiting on the user,
 // whether it finished, asked a question, or proposed a plan.
@@ -810,25 +871,39 @@ export function shouldRecedeSidebarThread(input: {
   return false;
 }
 
-type SidebarThreadStatusInput = Pick<
-  SidebarThreadSummary,
-  "hasPendingApprovals" | "hasPendingUserInput" | "session" | "backgroundLiveness"
->;
+export type SidebarThreadPresentationState =
+  | SidebarThreadStatus
+  | "completed"
+  | "connecting"
+  | "plan-ready";
 
-export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
+export function resolveSidebarThreadPresentationState(
+  thread: ThreadStatusInput,
+): SidebarThreadPresentationState {
   if (thread.hasPendingApprovals) {
     return "approval";
   }
   if (thread.hasPendingUserInput) {
     return "input";
   }
-  if (thread.session?.status === "running" || thread.session?.status === "starting") {
+  if (
+    thread.session?.status === "running" ||
+    (thread.session?.status === "starting" && thread.backgroundLiveness === "working")
+  ) {
     return "working";
   }
+  if (thread.session?.status === "starting") return "connecting";
   // A failed session outranks lingering background liveness: the user must
-  // see the failure, not a stale Working (review finding).
+  // see each new failure once, not a stale Working forever.
   if (thread.session?.status === "error") {
-    return "failed";
+    return hasUnseenFailure(thread) ? "failed" : "ready";
+  }
+  if (
+    thread.interactionMode === "plan" &&
+    isLatestTurnSettled(thread.latestTurn ?? null, thread.session) &&
+    thread.hasActionableProposedPlan === true
+  ) {
+    return "plan-ready";
   }
   // Background work outlives the turn: fleets read as working; monitoring
   // only when watch loops are the sole live work.
@@ -838,7 +913,22 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   if (thread.backgroundLiveness === "monitoring") {
     return "monitoring";
   }
+  if (hasUnseenCompletion(thread)) return "completed";
   return "ready";
+}
+
+export function resolveSidebarThreadStatus(thread: ThreadStatusInput): SidebarThreadStatus {
+  const state = resolveSidebarThreadPresentationState(thread);
+  if (state === "connecting") return "working";
+  if (state === "completed" || state === "plan-ready") return "ready";
+  return state;
+}
+
+/** NaN-safe Date.parse for sort comparators: a malformed timestamp must not
+    poison the whole ordering, so it sinks to the epoch instead. */
+export function parseTimestampMs(isoDate: string): number {
+  const parsed = Date.parse(isoDate);
+  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 /** First VALID timestamp wins: `a ?? b` falls through on null, but a present-
@@ -965,92 +1055,66 @@ export function formatWorkingDurationLabel(elapsedMs: number): string {
 export function resolveThreadStatusPill(input: {
   thread: ThreadStatusInput;
 }): ThreadStatusPill | null {
-  const { thread } = input;
-
-  if (thread.hasPendingApprovals) {
-    return {
-      label: "Pending Approval",
-      colorClass: "text-amber-600 dark:text-amber-300/90",
-      dotClass: "bg-amber-500 dark:bg-amber-300/90",
-      pulse: false,
-    };
+  switch (resolveSidebarThreadPresentationState(input.thread)) {
+    case "approval":
+      return {
+        label: "Pending Approval",
+        colorClass: "text-amber-600 dark:text-amber-300/90",
+        dotClass: "bg-amber-500 dark:bg-amber-300/90",
+        pulse: false,
+      };
+    case "input":
+      return {
+        label: "Awaiting Input",
+        colorClass: "text-indigo-600 dark:text-indigo-300/90",
+        dotClass: "bg-indigo-500 dark:bg-indigo-300/90",
+        pulse: false,
+      };
+    case "working":
+      return {
+        label: "Working",
+        colorClass: "text-sky-600 dark:text-sky-300/80",
+        dotClass: "bg-sky-500 dark:bg-sky-300/80",
+        pulse: true,
+      };
+    case "connecting":
+      return {
+        label: "Connecting",
+        colorClass: "text-sky-600 dark:text-sky-300/80",
+        dotClass: "bg-sky-500 dark:bg-sky-300/80",
+        pulse: true,
+      };
+    case "failed":
+      return {
+        label: "Failed",
+        colorClass: "text-red-600 dark:text-red-300/90",
+        dotClass: "bg-red-500 dark:bg-red-300/90",
+        pulse: false,
+      };
+    case "plan-ready":
+      return {
+        label: "Plan Ready",
+        colorClass: "text-violet-600 dark:text-violet-300/90",
+        dotClass: "bg-violet-500 dark:bg-violet-300/90",
+        pulse: false,
+      };
+    case "monitoring":
+      return {
+        label: "Monitoring",
+        colorClass: "text-sky-600 dark:text-sky-300/80",
+        dotClass: "bg-sky-500 dark:bg-sky-300/80",
+        pulse: false,
+      };
+    case "completed":
+      return {
+        label: "Completed",
+        colorClass: "text-emerald-600 dark:text-emerald-300/90",
+        dotClass: "bg-emerald-500 dark:bg-emerald-300/90",
+        pulse: false,
+      };
+    case "ready":
+      return null;
   }
-
-  if (thread.hasPendingUserInput) {
-    return {
-      label: "Awaiting Input",
-      colorClass: "text-indigo-600 dark:text-indigo-300/90",
-      dotClass: "bg-indigo-500 dark:bg-indigo-300/90",
-      pulse: false,
-    };
-  }
-
-  if (thread.session?.status === "running") {
-    return {
-      label: "Working",
-      colorClass: "text-sky-600 dark:text-sky-300/80",
-      dotClass: "bg-sky-500 dark:bg-sky-300/80",
-      pulse: true,
-    };
-  }
-
-  if (thread.session?.status === "starting") {
-    return {
-      label: "Connecting",
-      colorClass: "text-sky-600 dark:text-sky-300/80",
-      dotClass: "bg-sky-500 dark:bg-sky-300/80",
-      pulse: true,
-    };
-  }
-
-  // An actionable plan prompt outranks lingering background work: it needs
-  // the user's decision, while liveness merely reports (review finding).
-  const hasPlanReadyPrompt =
-    !thread.hasPendingUserInput &&
-    thread.interactionMode === "plan" &&
-    isLatestTurnSettled(thread.latestTurn, thread.session) &&
-    thread.hasActionableProposedPlan;
-  if (hasPlanReadyPrompt) {
-    return {
-      label: "Plan Ready",
-      colorClass: "text-violet-600 dark:text-violet-300/90",
-      dotClass: "bg-violet-500 dark:bg-violet-300/90",
-      pulse: false,
-    };
-  }
-
-  // The turn can settle while native background work runs on. Subagent and
-  // workflow fleets read as plain Working; Monitoring is reserved for watch
-  // loops (a parent agent babysitting a PR, tailing checks) with no other
-  // live work. Same recede treatment as Working per inbox-zero.
-  if (thread.backgroundLiveness === "working") {
-    return {
-      label: "Working",
-      colorClass: "text-sky-600 dark:text-sky-300/80",
-      dotClass: "bg-sky-500 dark:bg-sky-300/80",
-      pulse: true,
-    };
-  }
-
-  if (thread.backgroundLiveness === "monitoring") {
-    return {
-      label: "Monitoring",
-      colorClass: "text-sky-600 dark:text-sky-300/80",
-      dotClass: "bg-sky-500 dark:bg-sky-300/80",
-      pulse: false,
-    };
-  }
-
-  if (hasUnseenCompletion(thread)) {
-    return {
-      label: "Completed",
-      colorClass: "text-emerald-600 dark:text-emerald-300/90",
-      dotClass: "bg-emerald-500 dark:bg-emerald-300/90",
-      pulse: false,
-    };
-  }
-
-  return null;
 }
 
 export function resolveProjectStatusIndicator(
