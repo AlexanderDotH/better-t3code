@@ -46,6 +46,7 @@ export interface SubagentTranscriptPanelProps {
   readonly markdownCwd?: string;
   readonly threadRef?: ScopedThreadRef;
   readonly timestampFormat?: TimestampFormat;
+  readonly streamingMotionEnabled?: boolean;
   readonly className?: string;
   readonly hasOlderActivities?: boolean;
   readonly isLoadingOlderActivities?: boolean;
@@ -59,6 +60,7 @@ export const SubagentTranscriptPanel = memo(function SubagentTranscriptPanel({
   markdownCwd,
   threadRef,
   timestampFormat = "locale",
+  streamingMotionEnabled = false,
   className,
   hasOlderActivities = false,
   isLoadingOlderActivities = false,
@@ -78,9 +80,10 @@ export const SubagentTranscriptPanel = memo(function SubagentTranscriptPanel({
         markdownCwd={markdownCwd}
         threadRef={threadRef}
         timestampFormat={timestampFormat}
+        streamingMotionEnabled={streamingMotionEnabled}
       />
     ),
-    [markdownCwd, name, threadRef, timestampFormat],
+    [markdownCwd, name, threadRef, timestampFormat, streamingMotionEnabled],
   );
   const renderVirtualizedEntry = useCallback(
     ({ item }: { readonly item: SubagentTranscriptEntry }) => (
@@ -269,7 +272,9 @@ function SubagentTranscriptEntryView({
   markdownCwd,
   threadRef,
   timestampFormat,
+  streamingMotionEnabled,
 }: {
+  readonly streamingMotionEnabled: boolean;
   readonly entry: SubagentTranscriptEntry;
   readonly agentName: string;
   readonly markdownCwd: string | undefined;
@@ -285,6 +290,7 @@ function SubagentTranscriptEntryView({
         markdownCwd={markdownCwd}
         threadRef={threadRef}
         timestampFormat={timestampFormat}
+        streamingMotionEnabled={streamingMotionEnabled}
       />
     );
   }
@@ -318,7 +324,9 @@ function TranscriptMessage({
   markdownCwd,
   threadRef,
   timestampFormat,
+  streamingMotionEnabled,
 }: {
+  readonly streamingMotionEnabled: boolean;
   readonly message: OrchestrationMessage;
   readonly agentName: string;
   readonly markdownCwd: string | undefined;
@@ -359,6 +367,8 @@ function TranscriptMessage({
         cwd={markdownCwd}
         threadRef={threadRef}
         isStreaming={message.streaming}
+        streamId={`${threadRef?.environmentId ?? ""}:${threadRef?.threadId ?? ""}:${message.id}`}
+        streamingMotionEnabled={message.role === "assistant" && streamingMotionEnabled}
         lineBreaks={message.role === "user"}
       />
     </article>
