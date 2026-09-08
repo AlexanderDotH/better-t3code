@@ -8,7 +8,16 @@ import {
   HistoryIcon,
   ScaleIcon,
 } from "lucide-react";
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
@@ -66,6 +75,20 @@ interface BranchToolbarProps {
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
   composerControlsHostRef?: (element: HTMLDivElement | null) => void;
   contextStripVisible?: boolean;
+  gitControl?: ReactNode;
+  orientation?: "previous" | "next";
+  cardPeek?: boolean;
+}
+
+export function branchToolbarContextStripClassName(input: {
+  readonly cardPeek: boolean;
+  readonly orientation: "previous" | "next";
+}): string {
+  if (input.cardPeek)
+    return cn("mx-0 mt-0 mb-0 w-full max-w-none ps-0 pe-0 pt-0 pb-0", "before:hidden");
+  return input.orientation === "previous"
+    ? "chat-composer-context-strip--previous mt-0 -mb-4 pt-1 pb-5"
+    : "chat-composer-context-strip--next";
 }
 
 interface MobileRunContextSelectorProps {
@@ -457,6 +480,9 @@ export const BranchToolbar = memo(function BranchToolbar({
   onEnvironmentChange,
   composerControlsHostRef,
   contextStripVisible = true,
+  gitControl,
+  orientation = "next",
+  cardPeek = false,
 }: BranchToolbarProps) {
   const threadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
@@ -536,8 +562,10 @@ export const BranchToolbar = memo(function BranchToolbar({
     <ComposerSurface.ContextStrip
       ref={setStripElement}
       data-compact={labelsOverflow ? "" : undefined}
+      data-workspace-card-peek-position={orientation}
       className={cn(
         "gap-1 text-xs font-normal text-muted-foreground/70",
+        branchToolbarContextStripClassName({ cardPeek, orientation }),
         // A non-Git strip with no visible composer controls should occupy no
         // space, but its host must retain a prospective width so controls can
         // become visible again when the chat view grows.
@@ -616,6 +644,7 @@ export const BranchToolbar = memo(function BranchToolbar({
         />
       ) : null}
 
+      {gitControl}
       {showGitControls ? (
         <BranchToolbarBranchSelector
           className="min-w-0 flex-initial justify-end @3xl/composer-surface:ml-auto"
