@@ -1,5 +1,8 @@
 import {
   type EnvironmentId,
+  type ProviderAuthConnectEvent,
+  type ProviderAuthConnectInput,
+  type ProjectId,
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
@@ -21,7 +24,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, type AtomRegistry } from "effect/unstable/reactivity";
 
 import {
   createAtomCommandScheduler,
@@ -30,6 +33,7 @@ import {
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
   createRuntimeCommand,
+  runStreamInEnvironment,
   scheduleAtomCommandEffect,
 } from "./runtime.ts";
 import { EnvironmentRegistry } from "../connection/registry.ts";
@@ -77,6 +81,19 @@ export interface ServerUpdateTarget {
   readonly environmentId: EnvironmentId;
   readonly input: EnvironmentRpcInput<typeof WS_METHODS.serverUpdateServer>;
 }
+
+export interface ProviderAuthConnectStateTarget {
+  readonly environmentId: EnvironmentId;
+  readonly instanceId: ProviderAuthConnectInput["instanceId"];
+}
+
+const providerAuthConnectStateKey = (target: ProviderAuthConnectStateTarget): string =>
+  JSON.stringify([target.environmentId, target.instanceId]);
+
+const providerAuthCommandKey = (target: {
+  readonly environmentId: EnvironmentId;
+  readonly input: { readonly instanceId: ProviderAuthConnectInput["instanceId"] };
+}): string => `${target.environmentId}:${target.input.instanceId}`;
 
 const IDLE_SERVER_UPDATE_STATE: ServerUpdateState = { status: "idle" };
 const EMPTY_SERVER_UPDATE_STATE_ATOM = Atom.make<ServerUpdateState>(IDLE_SERVER_UPDATE_STATE).pipe(
@@ -634,6 +651,34 @@ export function createServerEnvironmentAtoms<R, E>(
     mode: "serial" as const,
     key: ({ environmentId }: { readonly environmentId: string }) => environmentId,
   };
+  const providerAuthConnectConcurrency = {
+    mode: "serial" as const,
+    key: (target: {
+      readonly environmentId: EnvironmentId;
+      readonly input: EnvironmentRpcInput<typeof WS_METHODS.serverProviderAuthConnect>;
+    }) => providerAuthCommandKey(target),
+  };
+  const providerAuthDisconnectConcurrency = {
+    mode: "serial" as const,
+    key: (target: {
+      readonly environmentId: EnvironmentId;
+      readonly input: EnvironmentRpcInput<typeof WS_METHODS.serverProviderAuthDisconnect>;
+    }) => providerAuthCommandKey(target),
+  };
+  const providerAuthSetCredentialConcurrency = {
+    mode: "serial" as const,
+    key: (target: {
+      readonly environmentId: EnvironmentId;
+      readonly input: EnvironmentRpcInput<typeof WS_METHODS.serverProviderAuthSetCredential>;
+    }) => providerAuthCommandKey(target),
+  };
+  const providerAuthConnectEventFamily = Atom.family((key: string) =>
+    Atom.make<ProviderAuthConnectEvent | null>(null).pipe(
+      Atom.withLabel(`environment-data:server:provider-auth-connect-event:${key}`),
+    ),
+  );
+  const providerAuthConnectEventAtom = (target: ProviderAuthConnectStateTarget) =>
+    providerAuthConnectEventFamily(providerAuthConnectStateKey(target));
   const configProjectionFamily = Atom.family((environmentId: EnvironmentId) =>
     runtime
       .atom(
@@ -959,6 +1004,65 @@ export function createServerEnvironmentAtoms<R, E>(
     readonly environmentId: EnvironmentId;
     readonly input: EnvironmentRpcInput<typeof WS_METHODS.subscribeServerLifecycle>;
   }) => welcomeFamily(target.environmentId);
+  const connectProviderAuth = createRuntimeCommand(runtime, {
+    label: "environment-data:server:provider-auth-connect",
+    scheduler: configScheduler,
+    concurrency: providerAuthConnectConcurrency,
+    execute: (target, atomRegistry) => {
+      const eventAtom = providerAuthConnectEventAtom({
+        environmentId: target.environmentId,
+        instanceId: target.input.instanceId,
+      });
+      atomRegistry.set(eventAtom, null);
+      return runStreamInEnvironment(
+        target.environmentId,
+        runStream(WS_METHODS.serverProviderAuthConnect, target.input),
+      ).pipe(
+        Stream.tap((event) =>
+          Effect.sync(() => {
+            atomRegistry.set(eventAtom, event);
+          }),
+        ),
+        Stream.runLast,
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.fail(new Cause.NoSuchElementError()),
+            onSome: Effect.succeed,
+          }),
+        ),
+      );
+    },
+  });
+  const projectMemoryView = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:project-memory:view",
+    tag: WS_METHODS.projectMemoryView,
+    staleTimeMs: 0,
+  });
+  const refreshProjectMemory = (
+    target: {
+      readonly environmentId: EnvironmentId;
+      readonly input: { readonly projectId: ProjectId };
+    },
+    atomRegistry: AtomRegistry.AtomRegistry,
+  ) =>
+    Effect.sync(() => {
+      atomRegistry.refresh(
+        projectMemoryView({
+          environmentId: target.environmentId,
+          input: { projectId: target.input.projectId },
+        }),
+      );
+    });
+  const projectMemoryConcurrency = {
+    mode: "singleFlight" as const,
+    key: ({
+      environmentId,
+      input,
+    }: {
+      readonly environmentId: string;
+      readonly input: { readonly projectId: ProjectId };
+    }) => `${environmentId}:${input.projectId}`,
+  };
 
   return {
     configValueAtom,
@@ -1011,6 +1115,7 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:provider:install-remove",
       tag: WS_METHODS.providerInstallRemove,
     }),
+    providerAuthConnectEventAtom,
     traceDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:trace-diagnostics",
       tag: WS_METHODS.serverGetTraceDiagnostics,
@@ -1035,6 +1140,11 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.subscribeResourceTelemetry,
       idleTtlMs: 0,
     }),
+    resourceProtection: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:resource-protection",
+      tag: WS_METHODS.subscribeResourceProtection,
+      idleTtlMs: 0,
+    }),
     resourceTelemetryHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:resource-telemetry-history",
       tag: WS_METHODS.serverGetResourceTelemetryHistory,
@@ -1048,6 +1158,7 @@ export function createServerEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
       refreshTrigger: ({ environmentId }) => usagePricesAtom(environmentId),
     }),
+    projectMemoryView,
     configProjection,
     welcome,
     consumeResetCredit: createEnvironmentRpcCommand(runtime, {
@@ -1079,6 +1190,33 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    connectProviderAuth,
+    setProviderAuthCredential: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:provider-auth-set-credential",
+      tag: WS_METHODS.serverProviderAuthSetCredential,
+      scheduler: configScheduler,
+      concurrency: providerAuthSetCredentialConcurrency,
+      onSuccess: ({ environmentId, input }, atomRegistry) =>
+        Effect.sync(() => {
+          atomRegistry.set(
+            providerAuthConnectEventAtom({ environmentId, instanceId: input.instanceId }),
+            null,
+          );
+        }),
+    }),
+    disconnectProviderAuth: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:provider-auth-disconnect",
+      tag: WS_METHODS.serverProviderAuthDisconnect,
+      scheduler: configScheduler,
+      concurrency: providerAuthDisconnectConcurrency,
+      onSuccess: ({ environmentId, input }, atomRegistry) =>
+        Effect.sync(() => {
+          atomRegistry.set(
+            providerAuthConnectEventAtom({ environmentId, instanceId: input.instanceId }),
+            null,
+          );
+        }),
+    }),
     updateServer,
     upsertKeybinding: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:upsert-keybinding",
@@ -1097,6 +1235,90 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverUpdateSettings,
       scheduler: configScheduler,
       concurrency: configConcurrency,
+    }),
+    compactThread: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:provider:compact-thread",
+      tag: WS_METHODS.providerCompactThread,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.threadId}`,
+      },
+    }),
+    updateProjectMemorySettings: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:project-memory:update-settings",
+      tag: WS_METHODS.projectMemoryUpdateSettings,
+      concurrency: projectMemoryConcurrency,
+      onSuccess: refreshProjectMemory,
+    }),
+    replaceProjectMemory: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:project-memory:replace",
+      tag: WS_METHODS.projectMemoryReplace,
+      concurrency: projectMemoryConcurrency,
+      onSuccess: refreshProjectMemory,
+    }),
+    importProjectMemory: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:project-memory:import",
+      tag: WS_METHODS.projectMemoryImport,
+      concurrency: projectMemoryConcurrency,
+      onSuccess: refreshProjectMemory,
+    }),
+    clearProjectMemory: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:project-memory:clear",
+      tag: WS_METHODS.projectMemoryClear,
+      concurrency: projectMemoryConcurrency,
+      onSuccess: refreshProjectMemory,
+    }),
+    createAssemblyAiStreamingToken: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:create-assembly-ai-streaming-token",
+      tag: WS_METHODS.serverCreateAssemblyAiStreamingToken,
+    }),
+    startSpeechStreamingSession: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:speech:start-streaming-session",
+      tag: WS_METHODS.speechStartStreamingSession,
+    }),
+    pushSpeechStreamingAudio: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:speech:push-streaming-audio",
+      tag: WS_METHODS.speechPushStreamingAudio,
+    }),
+    finishSpeechStreamingSession: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:speech:finish-streaming-session",
+      tag: WS_METHODS.speechFinishStreamingSession,
+    }),
+    cancelSpeechStreamingSession: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:speech:cancel-streaming-session",
+      tag: WS_METHODS.speechCancelStreamingSession,
+    }),
+    getProjectSpeechProfile: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:speech:get-project-profile",
+      tag: WS_METHODS.speechGetProjectProfile,
+    }),
+    listProjectSpeechProfiles: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:speech:list-project-profiles",
+      tag: WS_METHODS.speechListProjectProfiles,
+    }),
+    indexProjectSpeechProfile: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:speech:index-project",
+      tag: WS_METHODS.speechIndexProject,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.projectId}`,
+      },
+    }),
+    createBasicProjectSpeechProfile: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:speech:create-basic-project-profile",
+      tag: WS_METHODS.speechCreateBasicProjectProfile,
+    }),
+    translateSpeechTranscript: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:speech:translate-transcript",
+      tag: WS_METHODS.speechTranslateTranscript,
+    }),
+    improvePrompt: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:prompt:improve",
+      tag: WS_METHODS.promptImprove,
+    }),
+    reviewPlanParallelism: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:plan:review-parallelism",
+      tag: WS_METHODS.planReviewParallelism,
     }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",

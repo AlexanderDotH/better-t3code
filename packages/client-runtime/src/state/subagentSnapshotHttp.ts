@@ -47,7 +47,10 @@ export const fetchEnvironmentSubagentSnapshot = Effect.fn(
     ...input,
     method: "GET",
     url: (httpBaseUrl) =>
-      environmentEndpointUrl(httpBaseUrl, environmentSubagentSnapshotPath(input.threadId, input.subagentId)),
+      environmentEndpointUrl(
+        httpBaseUrl,
+        environmentSubagentSnapshotPath(input.threadId, input.subagentId),
+      ),
     timeoutMs: input.timeoutMs ?? DEFAULT_SUBAGENT_SNAPSHOT_TIMEOUT_MS,
     request: ({ client, headers }) =>
       client.orchestration.subagentSnapshot({
