@@ -108,6 +108,8 @@ export class ServiceLauncherClient extends Context.Service<
       ServerSelfUpdateOutcome | undefined,
       ServiceLauncherClientError
     >;
+    /** Resolves once when the launcher requests an orderly root-scope shutdown. */
+    readonly awaitShutdownRequest: Effect.Effect<string, ServiceLauncherClientError>;
   }
 >()("t3/cloud/serviceLauncherClient") {}
 
@@ -218,6 +220,35 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
       ),
     );
 
+  const awaitShutdownRequest = Effect.callback<string, ServiceLauncherClientError>((resume) => {
+    if (!managed) {
+      resume(Effect.fail(new ServiceLauncherClientError({ operation: "unmanaged" })));
+      return;
+    }
+
+    let settled = false;
+    const cleanup = () => {
+      host.off("message", onMessage);
+      host.off("disconnect", onDisconnect);
+    };
+    const settle = (effect: Effect.Effect<string, ServiceLauncherClientError>) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resume(effect);
+    };
+    const onMessage = (...args: ReadonlyArray<unknown>) => {
+      const reply = decodeServiceLauncherParentMessage(args[0]);
+      if (reply?.type === "shutdown") settle(Effect.succeed(reply.requestId));
+    };
+    const onDisconnect = () =>
+      settle(Effect.fail(new ServiceLauncherClientError({ operation: "disconnect" })));
+
+    host.on("message", onMessage);
+    host.on("disconnect", onDisconnect);
+    return Effect.sync(cleanup);
+  });
+
   const pending = context?.update?.status === "pending" ? context.update : undefined;
   const outcome =
     context?.update === undefined || context.update.status === "pending"
@@ -247,6 +278,7 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
     managed,
     requestUpdate,
     prepareTrial,
+    awaitShutdownRequest,
   });
 });
 
