@@ -2,9 +2,9 @@ import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
-  MAX_SIDEBAR_THREAD_PREVIEW_COUNT,
+  MAX_PROJECT_THREAD_PREVIEW_COUNT,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
-  MIN_SIDEBAR_THREAD_PREVIEW_COUNT,
+  MIN_PROJECT_THREAD_PREVIEW_COUNT,
   type BetterT3FeatureControlStateV1,
   type BetterT3FeatureId,
   type CavemanMode,
@@ -53,7 +53,7 @@ import { Switch } from "../ui/switch";
 type BetterT3SettingsPatch = ClientSettingsPatch & ServerSettingsPatch;
 type Translate = InterfaceTranslator["message"];
 
-export const WEB_BETTER_T3_PREPARED_CONTROL_IDS = [
+const WEB_BETTER_T3_PREPARED_CONTROL_IDS = [
   "agent.fetchModel",
   "agent.autoReasoningModel",
   "agent.parallelPlanReviewer",
@@ -805,10 +805,10 @@ export function useBetterT3PreparedControls(input: {
         value={String(previewCount)}
         options={Array.from(
           {
-            length: MAX_SIDEBAR_THREAD_PREVIEW_COUNT - MIN_SIDEBAR_THREAD_PREVIEW_COUNT + 1,
+            length: MAX_PROJECT_THREAD_PREVIEW_COUNT - MIN_PROJECT_THREAD_PREVIEW_COUNT + 1,
           },
           (_, index) => {
-            const value = MIN_SIDEBAR_THREAD_PREVIEW_COUNT + index;
+            const value = MIN_PROJECT_THREAD_PREVIEW_COUNT + index;
             return { value: String(value), label: String(value) };
           },
         )}

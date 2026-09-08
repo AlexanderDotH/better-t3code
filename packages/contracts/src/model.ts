@@ -125,7 +125,7 @@ function canonicalSelectionsToLegacyObject(
   return out;
 }
 
-export const AGENT_REASONING_EFFORT_VALUES = ["minimal", "low", "medium", "high", "xhigh"] as const;
+const AGENT_REASONING_EFFORT_VALUES = ["minimal", "low", "medium", "high", "xhigh"] as const;
 export const AgentReasoningEffort = Schema.Literals(AGENT_REASONING_EFFORT_VALUES);
 export type AgentReasoningEffort = typeof AgentReasoningEffort.Type;
 export const DEFAULT_AGENT_REASONING_EFFORT: AgentReasoningEffort = "medium";
@@ -202,7 +202,6 @@ export const PREFERRED_DEFAULT_CODEX_MODELS: ReadonlyArray<string> = [
 export const DEFAULT_TEXT_GENERATION_MODEL = "gpt-5.6-luna";
 /** Keep the official Antigravity session's current model. Never send this ID to ACP. */
 export const ANTIGRAVITY_DEFAULT_MODEL = "antigravity-default";
-export const DEFAULT_GIT_TEXT_GENERATION_MODEL = DEFAULT_TEXT_GENERATION_MODEL;
 export const DEFAULT_TEXT_GENERATION_REASONING_EFFORT = "low";
 
 export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
@@ -227,8 +226,6 @@ export const DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
   [GEMINI_DRIVER_KIND]: GEMINI_DEFAULT_MODEL,
 };
-export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER =
-  DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER;
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
   Record<ProviderDriverKind, Record<string, string>>

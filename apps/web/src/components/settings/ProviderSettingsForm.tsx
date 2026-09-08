@@ -32,9 +32,7 @@ export {
   deriveProviderSettingsFields,
   nextProviderConfigWithFieldValue,
   readProviderConfigBoolean,
-  readProviderConfigNumber,
   readProviderConfigString,
-  readProviderConfigStringArray,
 } from "@t3tools/client-runtime/providerSettingsForm";
 export type { ProviderSettingsFieldModel } from "@t3tools/client-runtime/providerSettingsForm";
 

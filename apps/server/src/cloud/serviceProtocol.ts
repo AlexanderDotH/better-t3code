@@ -128,7 +128,7 @@ export function parseServiceStopAcknowledgement(
   }
 }
 
-export function decodeServiceUpdate(value: unknown): ServiceUpdateRecord | undefined {
+function decodeServiceUpdate(value: unknown): ServiceUpdateRecord | undefined {
   if (!isRecord(value)) return undefined;
   const { id, fromVersion, targetVersion, status } = value;
   if (

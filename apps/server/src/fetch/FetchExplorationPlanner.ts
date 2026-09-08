@@ -11,7 +11,7 @@ import {
 } from "../textGeneration/TextGenerationPrompts.ts";
 import { discoverWorkspaceContext } from "../workspace/WorkspaceContextEngine.ts";
 
-export const FETCH_EXPLORATION_PLANNER_TIMEOUT = "20 seconds";
+const FETCH_EXPLORATION_PLANNER_TIMEOUT = "20 seconds";
 const FETCH_EXPLORATION_MATCH_LIMIT = 12;
 
 export interface PlanFetchExplorationInput {
@@ -205,7 +205,7 @@ function formatPathList(paths: ReadonlyArray<string>, limit: number): string {
   return `${retained.join("; ")}${suffix}`;
 }
 
-export const buildFetchRepositoryOrientation = Effect.fn(
+const buildFetchRepositoryOrientation = Effect.fn(
   "FetchExplorationPlanner.buildRepositoryOrientation",
 )(function* (input: { readonly cwd: string; readonly userRequest: string }) {
   const query = requestSearchQuery(input.userRequest);

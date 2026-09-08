@@ -608,7 +608,7 @@ export const makeCursorModelDiscovery = Effect.fn("makeCursorModelDiscovery")(fu
     Cache.get(cache, JSON.stringify([about.version, about.auth]));
 });
 
-export const discoverCursorModelCapabilitiesViaAcp = (
+const discoverCursorModelCapabilitiesViaAcp = (
   cursorSettings: CursorSettings,
   existingModels: ReadonlyArray<ServerProviderModel>,
   environment: NodeJS.ProcessEnv = process.env,
@@ -727,7 +727,7 @@ export const discoverCursorModelCapabilitiesViaAcp = (
     environment,
   );
 
-export function getCursorFallbackModels(
+function getCursorFallbackModels(
   cursorSettings: Pick<CursorSettings, "customModels">,
 ): ReadonlyArray<ServerProviderModel> {
   return providerModelsFromSettings([], cursorSettings.customModels, EMPTY_CAPABILITIES);
@@ -1272,7 +1272,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
   });
 });
 
-export function hasUncapturedCursorModels(snapshot: Pick<ServerProvider, "models">): boolean {
+function hasUncapturedCursorModels(snapshot: Pick<ServerProvider, "models">): boolean {
   return snapshot.models.some((model) => !model.isCustom && !hasCursorModelCapabilities(model));
 }
 

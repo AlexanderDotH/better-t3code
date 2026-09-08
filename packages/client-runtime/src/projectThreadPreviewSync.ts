@@ -11,7 +11,7 @@ import {
   type SynchronizedPreferenceSyncWriteOutcome,
 } from "./synchronizedPreferenceSync.ts";
 
-export const PROJECT_THREAD_PREVIEW_SYNC_SETTINGS_VERSION = 2;
+const PROJECT_THREAD_PREVIEW_SYNC_SETTINGS_VERSION = 2;
 
 export interface ProjectThreadPreviewSyncEnvironment<
   EnvironmentId extends string = string,

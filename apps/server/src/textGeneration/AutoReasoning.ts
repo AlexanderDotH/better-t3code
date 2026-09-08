@@ -2,7 +2,7 @@ import { type ChatAttachment, TextGenerationError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-export const AUTO_REASONING_CALL_MARKER = "<t3code_auto_reasoning_call>";
+const AUTO_REASONING_CALL_MARKER = "<t3code_auto_reasoning_call>";
 export const AUTO_REASONING_MAX_ESTIMATED_TOKENS = 8_000;
 const AUTO_REASONING_MAX_CHARS = AUTO_REASONING_MAX_ESTIMATED_TOKENS * 4;
 const AUTO_REASONING_CONVERSATION_MAX_CHARS = 10_000;

@@ -76,7 +76,7 @@ function delegationInstructions(value: boolean | CodexT3ToolAvailability): strin
 Automatic delegation uses \`fork_turns: "none"\` and a self-contained brief. Use a positive fork_turns count only for necessary recent exchanges, and full history only when explicitly requested.${tools.threadContext ? " Retrieve exact older messages with `thread_context`." : ""} Do not impose an agent-count cap.`;
 }
 
-export const codexPlanModeDeveloperInstructions = (
+const codexPlanModeDeveloperInstructions = (
   tools: boolean | CodexT3ToolAvailability,
 ): string => `<collaboration_mode># Plan Mode (Conversational)
 
@@ -137,7 +137,7 @@ Resolve discoverable facts before asking. Ask only when a material product choic
 ${toolInstructions(tools, false)}
 </collaboration_mode>`;
 
-export const codexDefaultModeDeveloperInstructions = (
+const codexDefaultModeDeveloperInstructions = (
   tools: boolean | CodexT3ToolAvailability,
 ): string => `<collaboration_mode># Collaboration Mode: Default
 

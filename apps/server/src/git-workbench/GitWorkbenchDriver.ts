@@ -74,14 +74,12 @@ export function makeRegisteredGitWorkspace(registeredCwd: string): RegisteredGit
   });
 }
 
-export class GitWorkbenchInvalidPathError extends Data.TaggedError("GitWorkbenchInvalidPathError")<{
+class GitWorkbenchInvalidPathError extends Data.TaggedError("GitWorkbenchInvalidPathError")<{
   readonly path: string;
   readonly reason: string;
 }> {}
 
-export class GitWorkbenchNotRepositoryError extends Data.TaggedError(
-  "GitWorkbenchNotRepositoryError",
-)<{
+class GitWorkbenchNotRepositoryError extends Data.TaggedError("GitWorkbenchNotRepositoryError")<{
   readonly cwd: string;
 }> {}
 
@@ -489,6 +487,7 @@ export class GitWorkbenchDriver extends Context.Service<
   GitWorkbenchDriverService
 >()("t3/git-workbench/GitWorkbenchDriver") {}
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
   const spawnCwd = yield* HostProcessWorkingDirectory;

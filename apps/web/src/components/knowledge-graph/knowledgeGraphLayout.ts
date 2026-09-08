@@ -45,9 +45,9 @@ export interface KnowledgeGraphLayoutResponse {
   readonly settled: boolean;
 }
 
-export const KNOWLEDGE_GRAPH_LAYOUT_ITERATIONS_PER_FRAME = 2;
+const KNOWLEDGE_GRAPH_LAYOUT_ITERATIONS_PER_FRAME = 2;
 export const KNOWLEDGE_GRAPH_LAYOUT_FRAME_DELAY_MS = 32;
-export const KNOWLEDGE_GRAPH_LAYOUT_STABLE_DISTANCE = 0.08;
+const KNOWLEDGE_GRAPH_LAYOUT_STABLE_DISTANCE = 0.08;
 
 export function mergeKnowledgeGraphPinnedPositions(
   positions: ReadonlyMap<KnowledgeGraphNodeId, KnowledgeGraphPosition>,

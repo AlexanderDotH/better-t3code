@@ -91,7 +91,7 @@ export const InterfaceLanguageSyncRecord = Schema.Struct({
 });
 export type InterfaceLanguageSyncRecord = typeof InterfaceLanguageSyncRecord.Type;
 
-export const INTERFACE_LOCALE_SYNC_VERSION = 1 as const;
+const INTERFACE_LOCALE_SYNC_VERSION = 1 as const;
 export const InterfaceLocalePreferenceV1 = Schema.Literals(["system", "en", "de", "fr"]);
 export type InterfaceLocalePreferenceV1 = typeof InterfaceLocalePreferenceV1.Type;
 export const DEFAULT_INTERFACE_LOCALE_PREFERENCE_V1: InterfaceLocalePreferenceV1 = "system";
@@ -128,12 +128,10 @@ export const SidebarProjectGroupingMode = Schema.Literals([
   "separate",
 ]);
 export type SidebarProjectGroupingMode = typeof SidebarProjectGroupingMode.Type;
-export const DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE: SidebarProjectGroupingMode = "repository";
-export const MIN_SIDEBAR_THREAD_PREVIEW_COUNT = MIN_PROJECT_THREAD_PREVIEW_COUNT;
-export const MAX_SIDEBAR_THREAD_PREVIEW_COUNT = MAX_PROJECT_THREAD_PREVIEW_COUNT;
+const DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE: SidebarProjectGroupingMode = "repository";
 export const SidebarThreadPreviewCount = ProjectThreadPreviewCount;
 export type SidebarThreadPreviewCount = ProjectThreadPreviewCount;
-export const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount =
+const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount =
   DEFAULT_PROJECT_THREAD_PREVIEW_COUNT;
 export const MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = 1;
 export const MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = 90;
@@ -154,7 +152,7 @@ export const GlassOpacity = Schema.Int.check(
   }),
 );
 export type GlassOpacity = typeof GlassOpacity.Type;
-export const DEFAULT_GLASS_OPACITY: GlassOpacity = 80;
+const DEFAULT_GLASS_OPACITY: GlassOpacity = 80;
 
 export const MIN_APPEARANCE_CONTRAST = 50;
 export const MAX_APPEARANCE_CONTRAST = 200;
@@ -162,7 +160,7 @@ export const AppearanceContrast = Schema.Int.check(
   Schema.isBetween({ minimum: MIN_APPEARANCE_CONTRAST, maximum: MAX_APPEARANCE_CONTRAST }),
 );
 export type AppearanceContrast = typeof AppearanceContrast.Type;
-export const DEFAULT_APPEARANCE_CONTRAST: AppearanceContrast = 100;
+const DEFAULT_APPEARANCE_CONTRAST: AppearanceContrast = 100;
 export const MIN_PANEL_ANIMATION_DURATION_MS = 0;
 export const MAX_PANEL_ANIMATION_DURATION_MS = 400;
 export const PanelAnimationDurationMs = Schema.Int.check(
@@ -294,7 +292,7 @@ export type VoiceInputOutputLanguage = typeof VoiceInputOutputLanguage.Type;
 
 export const SidebarPosition = Schema.Literals(["left", "right"]);
 export type SidebarPosition = typeof SidebarPosition.Type;
-export const DEFAULT_SIDEBAR_POSITION: SidebarPosition = "left";
+const DEFAULT_SIDEBAR_POSITION: SidebarPosition = "left";
 
 /**
  * A user-chosen font family (a single name or a comma-separated list). Empty
@@ -1263,17 +1261,17 @@ export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
 export const CavemanMode = Schema.Literals(["off", "lite", "full", "ultra"]);
 export type CavemanMode = typeof CavemanMode.Type;
-export const DEFAULT_CAVEMAN_MODE: CavemanMode = "off";
+const DEFAULT_CAVEMAN_MODE: CavemanMode = "off";
 
-export const DEEP_THINKING_STEP_COUNT_MIN = 2;
-export const DEEP_THINKING_STEP_COUNT_MAX = 8;
-export const DEFAULT_DEEP_THINKING_STEP_COUNT = 3;
-export const DEEP_THINKING_REFINEMENT_PASSES_MIN = 0;
-export const DEEP_THINKING_REFINEMENT_PASSES_MAX = 3;
-export const DEFAULT_DEEP_THINKING_REFINEMENT_PASSES = 0;
-export const DEEP_THINKING_PARALLEL_BATCH_SIZE_MIN = 1;
-export const DEEP_THINKING_PARALLEL_BATCH_SIZE_MAX = 8;
-export const DEFAULT_DEEP_THINKING_PARALLEL_BATCH_SIZE = 3;
+const DEEP_THINKING_STEP_COUNT_MIN = 2;
+const DEEP_THINKING_STEP_COUNT_MAX = 8;
+const DEFAULT_DEEP_THINKING_STEP_COUNT = 3;
+const DEEP_THINKING_REFINEMENT_PASSES_MIN = 0;
+const DEEP_THINKING_REFINEMENT_PASSES_MAX = 3;
+const DEFAULT_DEEP_THINKING_REFINEMENT_PASSES = 0;
+const DEEP_THINKING_PARALLEL_BATCH_SIZE_MIN = 1;
+const DEEP_THINKING_PARALLEL_BATCH_SIZE_MAX = 8;
+const DEFAULT_DEEP_THINKING_PARALLEL_BATCH_SIZE = 3;
 
 export const DeepThinkingStepCount = Schema.Int.check(
   Schema.isBetween({

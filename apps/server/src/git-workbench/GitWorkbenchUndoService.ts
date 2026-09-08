@@ -80,6 +80,7 @@ function storageError(
   });
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const driver = yield* GitWorkbenchUndoDriver;
   const storage = yield* GitWorkbenchUndoStorage;

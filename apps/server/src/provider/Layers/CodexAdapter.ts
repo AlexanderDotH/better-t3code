@@ -162,7 +162,7 @@ interface CodexTurnTokenUsageState {
   readonly byTurnId: Map<string, CodexTurnTokenUsageAccumulator>;
 }
 
-export function mapCodexRuntimeError(
+function mapCodexRuntimeError(
   threadId: ThreadId,
   method: string,
   error: CodexSessionRuntimeError,

@@ -364,7 +364,7 @@ export function mapOperation(snapshot: ContractWorkbenchSnapshot | null): GitOpe
   };
 }
 
-export function mapRebaseNode(node: GitWorkbenchRebaseNode): GitRebaseTodoNode | null {
+function mapRebaseNode(node: GitWorkbenchRebaseNode): GitRebaseTodoNode | null {
   if (node.kind === "label") return { kind: "label", name: node.label };
   if (node.kind === "reset") return { kind: "reset", label: node.label };
   if (node.kind === "merge") {

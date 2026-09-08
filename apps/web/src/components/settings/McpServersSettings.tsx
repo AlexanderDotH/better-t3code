@@ -221,7 +221,7 @@ function findServerProjectKey(
   );
 }
 
-export function emptyDraft(
+function emptyDraft(
   projects: ReadonlyArray<ProjectOption>,
   providerInstanceId?: ProviderInstanceId | string,
 ): McpServerDraft {
@@ -244,7 +244,7 @@ export function emptyDraft(
   };
 }
 
-export function draftFromServer(
+function draftFromServer(
   server: McpServerDefinition,
   projects: ReadonlyArray<ProjectOption>,
 ): McpServerDraft {
@@ -282,7 +282,7 @@ export function draftFromServer(
   };
 }
 
-export function duplicateDraftFromServer(
+function duplicateDraftFromServer(
   server: McpServerDefinition,
   projects: ReadonlyArray<ProjectOption>,
   existingIds: ReadonlySet<string>,
@@ -305,7 +305,7 @@ function selectedProject(
   return projects.find((project) => project.key === draft.projectKey) ?? projects[0] ?? null;
 }
 
-export function draftToServer(
+function draftToServer(
   draft: McpServerDraft,
   projects: ReadonlyArray<ProjectOption>,
 ): McpServerDefinition {
@@ -361,7 +361,7 @@ function validateSecretEntries(
   return null;
 }
 
-export function validateDraft(input: {
+function validateDraft(input: {
   readonly draft: McpServerDraft;
   readonly mode: EditorMode;
   readonly originalId: string | null;
@@ -534,7 +534,7 @@ function SecretEntriesEditor(props: {
   );
 }
 
-export function McpServerEditorDialog(props: {
+function McpServerEditorDialog(props: {
   readonly open: boolean;
   readonly mode: EditorMode;
   readonly draft: McpServerDraft;
@@ -880,7 +880,7 @@ function ImportSourceRows(props: {
   );
 }
 
-export function McpImportDialog(props: {
+function McpImportDialog(props: {
   readonly open: boolean;
   readonly projects: ReadonlyArray<ProjectOption>;
   readonly sources: ReadonlyArray<AgentImportSource>;
@@ -1039,7 +1039,7 @@ export function McpImportDialog(props: {
   );
 }
 
-export function CursorExportDialog(props: {
+function CursorExportDialog(props: {
   readonly open: boolean;
   readonly projects: ReadonlyArray<ProjectOption>;
   readonly isExporting: boolean;

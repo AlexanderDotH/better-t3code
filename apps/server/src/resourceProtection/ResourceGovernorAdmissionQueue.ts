@@ -112,7 +112,7 @@ export function resourceGovernorAdmissionQueueHasCapacity(
   );
 }
 
-export function requestMatchesRegistration(
+function requestMatchesRegistration(
   request: SubagentAdmissionRequest,
   registration: ResourceGovernorRegisteredProcess,
 ): boolean {

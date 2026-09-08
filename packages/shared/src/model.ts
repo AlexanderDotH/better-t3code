@@ -166,7 +166,7 @@ export function readAutoReasoningResolution(
 }
 
 export const CODEX_CONTEXT_WINDOW_OPTION_ID = "contextWindow";
-export const CODEX_CONTEXT_WINDOW_DEFAULT_VALUE = "default";
+const CODEX_CONTEXT_WINDOW_DEFAULT_VALUE = "default";
 
 const CODEX_CONTEXT_WINDOW_MIN_TOKENS = 16_384;
 const CODEX_CONTEXT_WINDOW_CUSTOM_MAX_TOKENS = 1_000_000;
@@ -234,7 +234,7 @@ export function createCodexContextWindowDescriptor(
   };
 }
 
-export const CODEX_CONTEXT_WINDOW_DESCRIPTOR = createCodexContextWindowDescriptor({
+const CODEX_CONTEXT_WINDOW_DESCRIPTOR = createCodexContextWindowDescriptor({
   defaultTokens: 272_000,
   maxTokens: CODEX_CONTEXT_WINDOW_CUSTOM_MAX_TOKENS,
   effectivePercent: 95,

@@ -41,7 +41,7 @@ export const ProviderSessionPurpose = Schema.Literals([
   "subagent-worker",
 ]);
 export type ProviderSessionPurpose = typeof ProviderSessionPurpose.Type;
-export const DEFAULT_PROVIDER_SESSION_PURPOSE: ProviderSessionPurpose = "interactive";
+const DEFAULT_PROVIDER_SESSION_PURPOSE: ProviderSessionPurpose = "interactive";
 
 export const resolveProviderSessionPurpose = (
   purpose: ProviderSessionPurpose | undefined,

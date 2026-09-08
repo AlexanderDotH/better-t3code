@@ -505,7 +505,7 @@ export function BetterT3FeatureChoice(props: {
   );
 }
 
-export function BetterT3FeatureVisual(props: {
+function BetterT3FeatureVisual(props: {
   readonly featureId: BetterT3VisualFeatureId;
   readonly model: BetterT3SettingsPreviewModel;
   readonly translate: Translate;

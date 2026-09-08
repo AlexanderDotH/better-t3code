@@ -28,10 +28,10 @@ import { nativeHarnessWorkspaceInstructions } from "../nativeHarness/NativeHarne
 const PROVIDER = ProviderDriverKind.make("chatgpt");
 const CHATGPT_RESUME_VERSION = 1 as const;
 const CHATGPT_MAX_SESSIONS = 40;
-export const CHATGPT_MAX_IDLE_WORKING_SETS = 8;
+const CHATGPT_MAX_IDLE_WORKING_SETS = 8;
 const CHATGPT_COMPACTION_THRESHOLD_RATIO = 0.8;
-export const CHATGPT_MAX_TOOL_DEFINITIONS = 90;
-export const CHATGPT_MAX_TOOL_OUTPUT_BYTES = 1_048_576;
+const CHATGPT_MAX_TOOL_DEFINITIONS = 90;
+const CHATGPT_MAX_TOOL_OUTPUT_BYTES = 1_048_576;
 const CHATGPT_MAX_PARALLEL_TOOL_CALLS = 8;
 const decodeJsonUnknown = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeJsonUnknownSync = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));

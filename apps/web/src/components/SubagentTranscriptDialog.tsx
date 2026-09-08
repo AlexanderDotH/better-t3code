@@ -6,7 +6,7 @@ import { resolveSubagentDisplayName } from "./subagents/subagentPresentation";
 import { SubagentTranscriptPanel } from "./SubagentTranscriptPanel";
 import { Dialog, DialogPopup, DialogTitle } from "./ui/dialog";
 
-export const SUBAGENT_TRANSCRIPT_DIALOG_CLASS_NAME =
+const SUBAGENT_TRANSCRIPT_DIALOG_CLASS_NAME =
   "h-[min(82dvh,52rem)] max-w-[min(64rem,calc(100dvw-2rem))] overflow-hidden bg-background p-0 shadow-2xl/20";
 
 export interface SubagentTranscriptDialogProps {
@@ -29,7 +29,7 @@ type SubagentTranscriptDialogContentProps = Omit<
   "open" | "onOpenChange"
 >;
 
-export const SubagentTranscriptDialogContent = memo(function SubagentTranscriptDialogContent({
+const SubagentTranscriptDialogContent = memo(function SubagentTranscriptDialogContent({
   subagent,
   isLoading = false,
   errorMessage = null,

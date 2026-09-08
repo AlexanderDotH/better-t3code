@@ -314,7 +314,7 @@ interface HostedPairingMessage {
   readonly values?: Readonly<Record<string, string | number>>;
 }
 
-export function pairingErrorMessage(error: unknown, fallback: string): string {
+function pairingErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message.trim().length > 0) {
     return error.message;
   }

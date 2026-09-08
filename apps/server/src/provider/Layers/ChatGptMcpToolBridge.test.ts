@@ -10,7 +10,10 @@ import * as Schema from "effect/Schema";
 
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { buildNativeHarnessToolCatalog } from "../nativeHarness/NativeHarnessTools.ts";
-import { makeChatGptMcpToolBridge, type ChatGptMcpClientFactory } from "./ChatGptMcpToolBridge.ts";
+import {
+  makeNativeProviderMcpToolBridge,
+  type ChatGptMcpClientFactory,
+} from "./ChatGptMcpToolBridge.ts";
 
 const decodeServer = Schema.decodeSync(McpServerDefinition);
 const docsServer = decodeServer({
@@ -80,7 +83,7 @@ describe("ChatGptMcpToolBridge", () => {
             },
           }),
         };
-        const bridge = yield* makeChatGptMcpToolBridge({
+        const bridge = yield* makeNativeProviderMcpToolBridge({
           instanceId,
           environment: {},
           clientFactory,
@@ -119,7 +122,7 @@ describe("ChatGptMcpToolBridge", () => {
         const threadId = ThreadId.make("native-mcp-reconnect-thread");
         const closedAttempts: number[] = [];
         let connectionAttempt = 0;
-        const bridge = yield* makeChatGptMcpToolBridge({
+        const bridge = yield* makeNativeProviderMcpToolBridge({
           instanceId: ProviderInstanceId.make("openrouter_personal"),
           environment: {},
           resolveActiveServers: () => Effect.succeed([docsServer]),
@@ -177,7 +180,7 @@ describe("ChatGptMcpToolBridge", () => {
           Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
         );
         let connectionAttempt = 0;
-        const bridge = yield* makeChatGptMcpToolBridge({
+        const bridge = yield* makeNativeProviderMcpToolBridge({
           instanceId: ProviderInstanceId.make("openrouter_personal"),
           environment: {},
           resolveActiveServers: () => Effect.succeed([]),
@@ -214,7 +217,7 @@ describe("ChatGptMcpToolBridge", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const connectionAttempts: string[] = [];
-        const bridge = yield* makeChatGptMcpToolBridge({
+        const bridge = yield* makeNativeProviderMcpToolBridge({
           instanceId: ProviderInstanceId.make("openrouter_personal"),
           environment: {},
           resolveActiveServers: () => Effect.succeed([docsServer, searchServer]),
@@ -261,7 +264,7 @@ describe("ChatGptMcpToolBridge", () => {
           readonly name: string;
           readonly arguments?: Readonly<Record<string, unknown>>;
         }> = [];
-        const bridge = yield* makeChatGptMcpToolBridge({
+        const bridge = yield* makeNativeProviderMcpToolBridge({
           instanceId: ProviderInstanceId.make("openrouter_personal"),
           environment: {},
           resolveActiveServers: () => Effect.succeed([docsServer]),

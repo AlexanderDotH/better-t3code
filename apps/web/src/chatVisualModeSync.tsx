@@ -11,7 +11,7 @@ import {
   type ChatVisualModeSyncWrite,
 } from "@t3tools/client-runtime/chat-visual-mode-sync";
 import * as Schema from "effect/Schema";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { toastManager } from "./components/ui/toast";
 import { useLocalStorage } from "./hooks/useLocalStorage";
@@ -20,7 +20,7 @@ import { useEnvironments } from "./state/environments";
 import { serverEnvironment } from "./state/server";
 import { useAtomCommand } from "./state/use-atom-command";
 
-export const CHAT_VISUAL_MODE_SYNC_STORAGE_KEY = "t3code:chat-visual-mode-sync:v1";
+const CHAT_VISUAL_MODE_SYNC_STORAGE_KEY = "t3code:chat-visual-mode-sync:v1";
 
 const ChatVisualModeSyncCache = Schema.NullOr(ChatVisualModeSyncRecordSchema);
 
@@ -82,45 +82,6 @@ export function chatVisualModeSyncStatusText(input: {
     );
   }
   return messages.length > 0 ? messages.join(" ") : null;
-}
-
-export interface ChatVisualModeSyncStatus {
-  readonly deferredEnvironmentLabels: ReadonlyArray<string>;
-  readonly failedEnvironmentLabels: ReadonlyArray<string>;
-  readonly isSyncing: boolean;
-  readonly unsupportedEnvironmentLabels: ReadonlyArray<string>;
-}
-
-const EMPTY_SYNC_STATUS: ChatVisualModeSyncStatus = Object.freeze({
-  deferredEnvironmentLabels: Object.freeze([]),
-  failedEnvironmentLabels: Object.freeze([]),
-  isSyncing: false,
-  unsupportedEnvironmentLabels: Object.freeze([]),
-});
-const syncStatusListeners = new Set<() => void>();
-let syncStatusSnapshot = EMPTY_SYNC_STATUS;
-
-function syncStatusKey(status: ChatVisualModeSyncStatus): string {
-  return JSON.stringify(status);
-}
-
-function replaceSyncStatus(status: ChatVisualModeSyncStatus): void {
-  if (syncStatusKey(syncStatusSnapshot) === syncStatusKey(status)) return;
-  syncStatusSnapshot = status;
-  for (const listener of syncStatusListeners) listener();
-}
-
-function subscribeSyncStatus(listener: () => void): () => void {
-  syncStatusListeners.add(listener);
-  return () => syncStatusListeners.delete(listener);
-}
-
-export function useChatVisualModeSyncStatus(): ChatVisualModeSyncStatus {
-  return useSyncExternalStore(
-    subscribeSyncStatus,
-    () => syncStatusSnapshot,
-    () => EMPTY_SYNC_STATUS,
-  );
 }
 
 function recordsMatch(
@@ -252,38 +213,10 @@ export function ChatVisualModeSyncCoordinator() {
     }
   }, [plan.writes]);
 
-  const status = useMemo<ChatVisualModeSyncStatus>(() => {
-    const labelsFor = (environmentIds: ReadonlyArray<EnvironmentId>) =>
-      environmentIds.map(
-        (environmentId) => labelByEnvironmentId.get(environmentId) ?? environmentId,
-      );
-    const failedEnvironmentIds = plan.pendingWrites
-      .filter((write) => failedWriteKeyByEnvironment.get(write.environmentId) === writeKey(write))
-      .map((write) => write.environmentId);
-    const isSyncing = plan.writes.some((write) => {
-      const key = writeKey(write);
-      return (
-        !confirmedWriteKeys.current.has(key) &&
-        failedWriteKeyByEnvironment.get(write.environmentId) !== key
-      );
-    });
-    return {
-      deferredEnvironmentLabels: labelsFor(plan.deferredEnvironmentIds),
-      failedEnvironmentLabels: labelsFor(failedEnvironmentIds),
-      isSyncing,
-      unsupportedEnvironmentLabels: labelsFor(plan.unsupportedEnvironmentIds),
-    };
-  }, [failedWriteKeyByEnvironment, labelByEnvironmentId, plan]);
-
-  useEffect(() => {
-    replaceSyncStatus(status);
-  }, [status]);
-
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
-      replaceSyncStatus(EMPTY_SYNC_STATUS);
     };
   }, []);
 

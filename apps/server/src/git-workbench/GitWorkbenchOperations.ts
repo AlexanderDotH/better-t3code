@@ -83,13 +83,11 @@ export class GitWorkbenchOperationConflict extends Data.TaggedError(
   readonly activeOperation: GitWorkbenchOperationKind;
 }> {}
 
-export class GitWorkbenchOperationInputError extends Data.TaggedError(
-  "GitWorkbenchOperationInputError",
-)<{
+class GitWorkbenchOperationInputError extends Data.TaggedError("GitWorkbenchOperationInputError")<{
   readonly detail: string;
 }> {}
 
-export class GitWorkbenchRebasePlanError extends Data.TaggedError("GitWorkbenchRebasePlanError")<{
+class GitWorkbenchRebasePlanError extends Data.TaggedError("GitWorkbenchRebasePlanError")<{
   readonly issues: readonly GitRebasePlanIssue[];
 }> {}
 
@@ -285,6 +283,7 @@ function resultFromState(state: GitWorkbenchOperationState): GitWorkbenchOperati
   };
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const driver = yield* GitWorkbenchOperationsDriver;
   const stateReader = yield* GitWorkbenchOperationStateReader;

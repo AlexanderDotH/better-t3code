@@ -80,7 +80,7 @@ const AdvertisedHttpUrl = Schema.URLFromString.check(
   ),
 );
 
-export const advertisedUrlFlag = Flag.string("advertised-url").pipe(
+const advertisedUrlFlag = Flag.string("advertised-url").pipe(
   Flag.withSchema(AdvertisedHttpUrl),
   Flag.withDescription(
     "External HTTP(S) origin advertised in pairing links (for example an HTTPS reverse proxy).",

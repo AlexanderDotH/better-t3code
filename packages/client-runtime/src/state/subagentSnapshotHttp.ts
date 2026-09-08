@@ -32,7 +32,7 @@ export function environmentSubagentSnapshotPath(
  * carries summaries only, so transcripts stay lazy even for highly parallel
  * sessions.
  */
-export const fetchEnvironmentSubagentSnapshot = Effect.fn(
+const fetchEnvironmentSubagentSnapshot = Effect.fn(
   "clientRuntime.state.fetchEnvironmentSubagentSnapshot",
 )(function* (input: {
   readonly prepared: PreparedConnection;

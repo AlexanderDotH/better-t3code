@@ -65,7 +65,7 @@ function modelCapabilities(model: ChatGptAdapterModel) {
   });
 }
 
-export function chatGptModelsFromLiveCatalog(
+function chatGptModelsFromLiveCatalog(
   models: ReadonlyArray<ChatGptAdapterModel>,
 ): ReadonlyArray<ServerProviderModel> {
   return models.map((model, index) => ({

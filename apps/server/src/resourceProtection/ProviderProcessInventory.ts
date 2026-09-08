@@ -114,7 +114,7 @@ function sameProcessStartTime(left: number, right: number): boolean {
   return Math.floor(left / 1_000) === Math.floor(right / 1_000);
 }
 
-export function collectProviderProcessTree(
+function collectProviderProcessTree(
   registration: { readonly pid: number; readonly startTimeMs: number | undefined },
   processes: ReadonlyArray<ResourceGovernorProcessSample>,
 ): ProviderProcessTreeSample {

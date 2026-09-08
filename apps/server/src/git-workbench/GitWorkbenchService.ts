@@ -94,7 +94,7 @@ function tagged(error: unknown, tag: string): boolean {
   return typeof error === "object" && error !== null && "_tag" in error && error._tag === tag;
 }
 
-export function toGitWorkbenchServiceError(
+function toGitWorkbenchServiceError(
   cwd: string,
   operation: string,
   error: unknown,
@@ -281,6 +281,7 @@ export class GitWorkbenchService extends Context.Service<
   }
 >()("t3/git-workbench/GitWorkbenchService") {}
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const driver = yield* GitWorkbenchDriver;
   const query = yield* GitRepositoryQueryService;

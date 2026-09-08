@@ -82,7 +82,7 @@ function normalizeProvidedPadding(
   };
 }
 
-export function resolveSectionEntryPageVerticalPadding(
+function resolveSectionEntryPageVerticalPadding(
   ctx: AgentSkillContext,
 ): PageVerticalPaddingContract | null {
   for (const label of CUSTOMER_FORM_PAGE_PADDING_LABELS) {
@@ -91,22 +91,6 @@ export function resolveSectionEntryPageVerticalPadding(
   }
 
   return normalizeProvidedPadding(ctx.pageVerticalPadding);
-}
-
-export function buildPageVerticalPaddingPromptBlock(contract: PageVerticalPaddingContract): string {
-  const topMm = contract.topMm;
-  const bottomMm = contract.bottomMm;
-  const expectedLine =
-    topMm === bottomMm
-      ? `- When calling layout checks, pass \`expectedPageVerticalInsetMm: ${topMm}\` so verification enforces this contract.\n`
-      : "";
-
-  return `### Page vertical padding contract (HIGHEST PRIORITY)
-- **Page vertical padding:** ${topMm}mm top and ${bottomMm}mm bottom on every print page (page 1 and continuation pages).
-- Keep \`@page { size: A4; margin: 0; }\` as the full-bleed print boundary; do **not** satisfy this only with \`@page { margin-top: ${topMm}mm; }\`.
-- Implement the inset in template CSS with \`--asterix-page-y-padding: ${topMm}mm\`, \`.page { padding-top: var(--asterix-page-y-padding); padding-bottom: var(--asterix-page-y-padding); box-sizing: border-box; }\`, and \`box-decoration-break: clone\`.
-${expectedLine}- In print CSS, never reset configured page padding to zero. \`.page { padding-top: 0; }\` or \`.page { padding-bottom: 0; }\` is a blocking defect when this contract is active.
-- This page-level padding is separate from list spacing such as \`.section-entries { padding-top: 3mm; }\`; apply both when both are relevant.`;
 }
 
 function buildGeometrySchema(ctx: AgentSkillContext): string {
@@ -133,7 +117,7 @@ function resolvePageBreakMode(ctx: AgentSkillContext): string | null {
   return parseCustomerFormLine(ctx.customerFormPromptMarkdown, "Page break / wrapping");
 }
 
-export function buildSectionEntryPrintLayoutAppendix(ctx: AgentSkillContext): string {
+function buildSectionEntryPrintLayoutAppendix(ctx: AgentSkillContext): string {
   const pageVerticalPadding = resolveSectionEntryPageVerticalPadding(ctx);
   const geometryJson = buildGeometrySchema(ctx);
   const pageBreakMode = resolvePageBreakMode(ctx);

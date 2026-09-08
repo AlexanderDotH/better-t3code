@@ -342,7 +342,7 @@ export function McpRuntimeServerList({
   );
 }
 
-export function McpRuntimeInventoryDetails({
+function McpRuntimeInventoryDetails({
   details,
   reportsTools,
   serverName,

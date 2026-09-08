@@ -63,7 +63,7 @@ function appliesToProject(server: McpServerDefinition, projectCwd: string | null
   return serverCwd !== null && currentCwd !== null && serverCwd === currentCwd;
 }
 
-export function applicableMcpServerDefinitions(input: {
+function applicableMcpServerDefinitions(input: {
   readonly configuredServers: readonly McpServerDefinition[];
   readonly projectCwd: string | null;
   readonly providerInstanceId: ProviderInstanceId | string | null;
@@ -75,7 +75,7 @@ export function applicableMcpServerDefinitions(input: {
   );
 }
 
-export function formatMcpWorkspaceFreshness(observedAt: string | null): string {
+function formatMcpWorkspaceFreshness(observedAt: string | null): string {
   if (observedAt === null) return "Not observed in this session";
   const timestamp = Date.parse(observedAt);
   if (!Number.isFinite(timestamp)) return "Observation time unavailable";

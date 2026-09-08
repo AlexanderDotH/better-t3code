@@ -80,7 +80,7 @@ interface BranchToolbarProps {
   cardPeek?: boolean;
 }
 
-export function branchToolbarContextStripClassName(input: {
+function branchToolbarContextStripClassName(input: {
   readonly cardPeek: boolean;
   readonly orientation: "previous" | "next";
 }): string {

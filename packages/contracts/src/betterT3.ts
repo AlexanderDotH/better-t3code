@@ -2,7 +2,7 @@ import * as Schema from "effect/Schema";
 
 import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
-export const BETTER_T3_SETTINGS_VERSION = 1 as const;
+const BETTER_T3_SETTINGS_VERSION = 1 as const;
 
 export const BetterT3FeatureSection = Schema.Literals([
   "agent-workflows",

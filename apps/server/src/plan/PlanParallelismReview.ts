@@ -41,6 +41,7 @@ export class PlanParallelismReview extends Context.Service<
   }
 >()("t3/plan/PlanParallelismReview") {}
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerInstanceRegistry = yield* ProviderInstanceRegistry;

@@ -43,11 +43,11 @@ const BOOT_SERVICE_NAME = "t3code";
 const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
 // `.service` suffix keeps the label distinct from the desktop app's bundle id
 // (com.t3tools.t3code), so launchd and TCC records never collide.
-export const BOOT_SERVICE_LAUNCHD_LABEL = "com.t3tools.t3code.service";
-export const BOOT_SERVICE_PLIST_FILE = `${BOOT_SERVICE_LAUNCHD_LABEL}.plist`;
+const BOOT_SERVICE_LAUNCHD_LABEL = "com.t3tools.t3code.service";
+const BOOT_SERVICE_PLIST_FILE = `${BOOT_SERVICE_LAUNCHD_LABEL}.plist`;
 export const BOOT_SERVICE_WINDOWS_TASK_NAME = SERVICE_WINDOWS_TASK_NAME;
-export const BOOT_SERVICE_TASK_XML_FILE = "t3code-task.xml";
-export const BOOT_SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
+const BOOT_SERVICE_TASK_XML_FILE = "t3code-task.xml";
+const BOOT_SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
 
 const trimEnvironmentValue = (value: string | undefined): string | undefined => {
   const trimmed = value?.trim();
@@ -205,7 +205,7 @@ export function renderBootServicePlist(
 }
 
 /** Quotes one argv value according to the CommandLineToArgvW/CreateProcess rules. */
-export function quoteWindowsCommandLineArgument(value: string): string {
+function quoteWindowsCommandLineArgument(value: string): string {
   const escaped = value
     .replace(/(\\*)"/g, (_match, slashes: string) => `${slashes}${slashes}\\"`)
     .replace(/(\\+)$/g, "$1$1");
@@ -481,7 +481,7 @@ function launchdManager(input: {
   };
 }
 
-export function windowsTaskSchedulerManager(input: {
+function windowsTaskSchedulerManager(input: {
   readonly path: Path.Path;
   readonly baseDir: string;
   readonly homeDir: string;

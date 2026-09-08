@@ -64,10 +64,7 @@ import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import { prepareLegacyOpenRouterSettingsMigration } from "./openRouterLegacySettingsMigration.ts";
 import { openRouterApiKeySecretName } from "./provider/openrouter/auth/OpenRouterCredentialStore.ts";
 
-export {
-  resolveSourceControlWriterModelSelection,
-  resolveVoiceTranslationModelSelection,
-} from "@t3tools/shared/serverSettings";
+export { resolveSourceControlWriterModelSelection } from "@t3tools/shared/serverSettings";
 
 const encodeServerSettings = Schema.encodeEffect(ServerSettings);
 const encodeServerSettingsJson = Schema.encodeUnknownEffect(fromJsonStringPretty(ServerSettings));

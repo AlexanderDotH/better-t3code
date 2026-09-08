@@ -620,4 +620,3 @@ export const makeNativeProviderMcpToolBridge = Effect.fn("makeNativeProviderMcpT
 // Compatibility aliases for the original ChatGPT subscription integration.
 export type ChatGptMcpClientFactory = NativeProviderMcpClientFactory;
 export type ChatGptMcpToolBridge = NativeProviderMcpToolBridge;
-export const makeChatGptMcpToolBridge = makeNativeProviderMcpToolBridge;

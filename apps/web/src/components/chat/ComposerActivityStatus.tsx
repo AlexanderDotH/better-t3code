@@ -93,17 +93,6 @@ export function ComposerActivityRow(
   );
 }
 
-export function ComposerActivityBanner({ status }: { readonly status: ComposerActivityStatus }) {
-  return (
-    <ComposerBanner.Root
-      data-chat-composer-activity-strip="true"
-      variant={composerActivityVariant(status)}
-    >
-      <ComposerActivityRow status={status} />
-    </ComposerBanner.Root>
-  );
-}
-
 export function ComposerActivityTokenMetrics(props: {
   readonly status: ComposerActivityStatus | undefined;
 }) {

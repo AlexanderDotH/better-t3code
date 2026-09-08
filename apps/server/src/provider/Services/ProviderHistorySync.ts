@@ -188,7 +188,7 @@ export function makeAlreadyLocalProviderHistorySync(input: {
   return { availability: "already-local", source: input.source, reason: input.reason };
 }
 
-export function makeProviderHistorySyncSource(input: {
+function makeProviderHistorySyncSource(input: {
   readonly sourceId: string;
   readonly continuationKey: string;
   readonly displayName: string;

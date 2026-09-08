@@ -1,8 +1,6 @@
 import type { ProviderEnhancementSurface } from "./PromptEnhancementTypes.ts";
 
-export const AGENT_SKILL_IDS = ["section-entry-print-layout"] as const;
-
-export type AgentSkillId = (typeof AGENT_SKILL_IDS)[number];
+export type AgentSkillId = "section-entry-print-layout";
 export type AgentSkillSurface = Exclude<ProviderEnhancementSurface, "preflightGuardrail">;
 
 export type PageVerticalPaddingSource = "customer-form" | "wizard" | "explicit";
@@ -28,8 +26,4 @@ export interface AgentSkillDefinition {
   readonly phases: ReadonlyArray<string>;
   readonly surfaces: ReadonlyArray<AgentSkillSurface>;
   readonly buildAppendix: (ctx: AgentSkillContext) => string;
-}
-
-export function isAgentSkillId(value: string): value is AgentSkillId {
-  return (AGENT_SKILL_IDS as ReadonlyArray<string>).includes(value);
 }

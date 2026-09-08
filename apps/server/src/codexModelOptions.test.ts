@@ -18,5 +18,5 @@ it("keeps legacy persisted fast mode selections working", () => {
     { id: "fastMode", value: true },
   ]);
 
-  assert.equal(getCodexServiceTierOptionValue(selection), "fast");
+  assert.equal(getCodexServiceTierOptionValue(selection), "priority");
 });

@@ -23,7 +23,7 @@ import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptRea
 import type { CodexScanState, ClaudeScanState, UsageRecord } from "./usageTranscripts.ts";
 
 // Reducer state and diagnostics must travel with incremental parse offsets.
-export const USAGE_SCAN_CACHE_VERSION = 6 as const;
+const USAGE_SCAN_CACHE_VERSION = 6 as const;
 
 export interface CachedFile {
   readonly size: number;

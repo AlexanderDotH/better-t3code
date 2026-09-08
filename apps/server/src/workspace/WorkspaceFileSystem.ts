@@ -1040,6 +1040,7 @@ export const makeWithFileRename = (renameFile: typeof NodeFSP.rename) =>
     return WorkspaceFileSystem.of({ readFile, writeFile, editFiles });
   });
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = makeWithFileRename(NodeFSP.rename);
 
 export const layer = Layer.effect(WorkspaceFileSystem, make);

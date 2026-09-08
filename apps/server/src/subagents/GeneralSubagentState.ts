@@ -26,7 +26,7 @@ import {
   type GeneralSubagentOutcome,
 } from "./GeneralSubagentPolicy.ts";
 
-export const GENERAL_SUBAGENT_RESULT_LIMIT = 256;
+const GENERAL_SUBAGENT_RESULT_LIMIT = 256;
 
 export type GeneralSubagentAdmission = "admitted" | "limit" | "nested";
 

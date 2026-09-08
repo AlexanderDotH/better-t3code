@@ -131,7 +131,7 @@ export function resolveSubagentDisplayName(agent: SubagentNameSource): string {
   return firstNonEmpty(agent.nickname) ?? asterixAgentName(agent.id);
 }
 
-export function isSubagentActiveStatus(status: OrchestrationSubagentStatus): boolean {
+function isSubagentActiveStatus(status: OrchestrationSubagentStatus): boolean {
   return ACTIVE_STATUSES.has(status);
 }
 

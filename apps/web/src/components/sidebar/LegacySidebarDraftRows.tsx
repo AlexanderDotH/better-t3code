@@ -59,7 +59,7 @@ export function useProjectHasDraftContent(projectRefs: readonly ScopedProjectRef
   });
 }
 
-export const LegacySidebarDraftRow = memo(function LegacySidebarDraftRow(props: {
+const LegacySidebarDraftRow = memo(function LegacySidebarDraftRow(props: {
   row: LegacySidebarDraftRowData;
   isActive: boolean;
   onNavigate: (draftId: DraftId) => void;

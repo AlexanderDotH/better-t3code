@@ -33,9 +33,9 @@ import { Badge } from "./ui/badge";
 import { ScrollArea } from "./ui/scroll-area";
 import { Spinner } from "./ui/spinner";
 
-export const SUBAGENT_TRANSCRIPT_VIRTUALIZATION_THRESHOLD = 80;
+const SUBAGENT_TRANSCRIPT_VIRTUALIZATION_THRESHOLD = 80;
 
-export function shouldVirtualizeSubagentTranscript(entryCount: number): boolean {
+function shouldVirtualizeSubagentTranscript(entryCount: number): boolean {
   return entryCount > SUBAGENT_TRANSCRIPT_VIRTUALIZATION_THRESHOLD;
 }
 

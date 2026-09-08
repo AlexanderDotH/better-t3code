@@ -43,7 +43,7 @@ export {
   WorkspaceContextUnavailableError,
 } from "@t3tools/contracts";
 
-export const WORKSPACE_CONTEXT_MAX_RESPONSE_TEXT_BYTES = 64 * 1024;
+const WORKSPACE_CONTEXT_MAX_RESPONSE_TEXT_BYTES = 64 * 1024;
 const WORKSPACE_CONTEXT_READ_CONCURRENCY = 4;
 
 type WorkspaceContextExecutionError =
@@ -353,6 +353,7 @@ export class WorkspaceContext extends Context.Service<
   }
 >()("t3/workspace/WorkspaceContext") {}
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;

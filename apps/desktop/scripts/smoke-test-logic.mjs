@@ -1,6 +1,6 @@
-export const DESKTOP_SMOKE_READY_MARKERS = ["backend ready", "main window created"];
+const DESKTOP_SMOKE_READY_MARKERS = ["backend ready", "main window created"];
 
-export const DESKTOP_SMOKE_FATAL_PATTERNS = [
+const DESKTOP_SMOKE_FATAL_PATTERNS = [
   "Cannot find module",
   "MODULE_NOT_FOUND",
   "Refused to execute",

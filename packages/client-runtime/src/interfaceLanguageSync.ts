@@ -11,8 +11,8 @@ import {
   type SynchronizedPreferenceSyncWriteOutcome,
 } from "./synchronizedPreferenceSync.ts";
 
-export const INTERFACE_LANGUAGE_SYNC_SETTINGS_VERSION = 4;
-export const INTERFACE_LOCALE_SYNC_SETTINGS_VERSION = 5;
+const INTERFACE_LANGUAGE_SYNC_SETTINGS_VERSION = 4;
+const INTERFACE_LOCALE_SYNC_SETTINGS_VERSION = 5;
 
 export function toInterfaceLocaleRecordV1(
   record: InterfaceLanguageSyncRecord,

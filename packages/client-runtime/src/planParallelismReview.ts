@@ -82,7 +82,7 @@ export const IDLE_REVIEW_STATE: PlanParallelismReviewState = {
   reviewedSubagentCount: null,
 };
 
-export function serializeReviewerSelection(selection: ModelSelection): string {
+function serializeReviewerSelection(selection: ModelSelection): string {
   const options = [...(selection.options ?? [])].sort((left, right) =>
     left.id.localeCompare(right.id),
   );

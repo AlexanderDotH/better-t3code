@@ -30,34 +30,34 @@ const invoke = Effect.fn("GeneralSubagentToolkit.invoke")(function* <A>(
   });
 });
 
-export const invokeGeneralSubagentModels = () =>
+const invokeGeneralSubagentModels = () =>
   invoke((coordinator, caller) => coordinator.listModels(caller));
 
 export const invokeGeneralSubagentSpawn = (input: GeneralSubagentSpawnInput) =>
   invoke((coordinator, caller) => coordinator.spawn({ ...caller, ...input }));
 
-export const invokeGeneralSubagentWait = (input: GeneralSubagentWaitInput) =>
+const invokeGeneralSubagentWait = (input: GeneralSubagentWaitInput) =>
   invoke((coordinator, caller) => coordinator.wait({ ...caller, ...input }));
 
-export const invokeGeneralSubagentCancel = (input: GeneralSubagentCancelInput) =>
+const invokeGeneralSubagentCancel = (input: GeneralSubagentCancelInput) =>
   invoke((coordinator, caller) => coordinator.cancel({ ...caller, ...input }));
 
-export const invokeGeneralSubagentList = () =>
+const invokeGeneralSubagentList = () =>
   invoke((coordinator, caller) => coordinator.listAgents(caller));
 
-export const invokeGeneralSubagentSpawnAgent = (input: GeneralSubagentSpawnInput) =>
+const invokeGeneralSubagentSpawnAgent = (input: GeneralSubagentSpawnInput) =>
   invoke((coordinator, caller) => coordinator.spawnAgent({ ...caller, ...input }));
 
-export const invokeGeneralSubagentSendMessage = (input: GeneralSubagentSendMessageInput) =>
+const invokeGeneralSubagentSendMessage = (input: GeneralSubagentSendMessageInput) =>
   invoke((coordinator, caller) => coordinator.sendMessage({ ...caller, ...input }));
 
 export const invokeGeneralSubagentFollowUp = (input: GeneralSubagentFollowUpInput) =>
   invoke((coordinator, caller) => coordinator.followUp({ ...caller, ...input }));
 
-export const invokeGeneralSubagentWaitAgent = (input: GeneralSubagentWaitInput) =>
+const invokeGeneralSubagentWaitAgent = (input: GeneralSubagentWaitInput) =>
   invoke((coordinator, caller) => coordinator.waitAgent({ ...caller, ...input }));
 
-export const invokeGeneralSubagentInterrupt = (input: GeneralSubagentInterruptInput) =>
+const invokeGeneralSubagentInterrupt = (input: GeneralSubagentInterruptInput) =>
   invoke((coordinator, caller) => coordinator.interruptAgent({ ...caller, ...input }));
 
 export const GeneralSubagentToolkitHandlersLive = GeneralSubagentToolkit.toLayer({

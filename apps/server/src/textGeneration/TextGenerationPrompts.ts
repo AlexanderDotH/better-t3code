@@ -13,7 +13,7 @@ import { limitSection } from "./TextGenerationUtils.ts";
 import type { TextGenerationPolicy } from "./TextGenerationPolicy.ts";
 
 const EARLIER_CONTENT_TRUNCATION_MARKER = "[Earlier content truncated]\n\n";
-export const T3_METADATA_CALL_MARKER = "<t3code_metadata_call>";
+const T3_METADATA_CALL_MARKER = "<t3code_metadata_call>";
 
 function metadataPrompt(prompt: string): string {
   return `${T3_METADATA_CALL_MARKER}\n${prompt}`;

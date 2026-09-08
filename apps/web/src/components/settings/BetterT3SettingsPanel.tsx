@@ -59,10 +59,7 @@ import {
   resolveBetterT3DescriptorMessageKeys,
   resolveSelectedBetterT3EnvironmentId,
 } from "./BetterT3SettingsPanel.logic";
-import {
-  useBetterT3PreparedControls,
-  WEB_BETTER_T3_PREPARED_CONTROL_IDS,
-} from "./BetterT3SettingsPanel.controls";
+import { useBetterT3PreparedControls } from "./BetterT3SettingsPanel.controls";
 import {
   BETTER_T3_VISUAL_FEATURE_IDS,
   BetterT3FeatureChoice,
@@ -94,7 +91,7 @@ export type BetterT3SettingsTabId =
   | "system"
   | "integrations";
 
-export const BETTER_T3_SETTINGS_TABS = [
+const BETTER_T3_SETTINGS_TABS = [
   { id: "general", section: null, labelMessageId: "settings.betterT3.tab.general" },
   { id: "agents", section: "agent-workflows", labelMessageId: "settings.betterT3.tab.agents" },
   { id: "visual", section: "chat-layout", labelMessageId: "settings.betterT3.tab.visual" },
@@ -129,7 +126,7 @@ export const BETTER_T3_SETTINGS_TABS = [
   readonly labelMessageId: InterfaceMessageKey;
 }>;
 
-export const BETTER_T3_ADVANCED_FEATURE_IDS: ReadonlySet<BetterT3FeatureId> = new Set([
+const BETTER_T3_ADVANCED_FEATURE_IDS: ReadonlySet<BetterT3FeatureId> = new Set([
   "agent.fetchModel",
   "agent.parallelPlanReviewer",
   "agent.cavemanMode",
@@ -153,7 +150,7 @@ export const BETTER_T3_ADVANCED_FEATURE_IDS: ReadonlySet<BetterT3FeatureId> = ne
   "integration.skills",
 ]);
 
-export function resolveBetterT3SettingsSearchTarget(
+function resolveBetterT3SettingsSearchTarget(
   targetId: string | null,
 ): { readonly tabId: BetterT3SettingsTabId; readonly advanced: boolean } | null {
   if (targetId === "better-t3-interface" || targetId === "better-t3-interface-language") {
@@ -441,7 +438,7 @@ function BetterT3SettingsTabs(props: BetterT3SettingsPanelViewProps) {
   );
 }
 
-export function BetterT3SettingsPanelView(props: BetterT3SettingsPanelViewProps) {
+function BetterT3SettingsPanelView(props: BetterT3SettingsPanelViewProps) {
   return (
     <SettingsPageContainer>
       {props.introduction}
@@ -462,7 +459,7 @@ type BetterT3Destination =
   | "/settings/connections"
   | "/settings/diagnostics";
 
-export function resolveBetterT3ControlDestination(
+function resolveBetterT3ControlDestination(
   featureId: BetterT3FeatureId,
 ): BetterT3Destination | null {
   if (featureId === "workspace.checkpoints") return "/settings/projects";
@@ -478,27 +475,6 @@ export function resolveBetterT3ControlDestination(
   if (featureId.startsWith("integration.")) return "/settings/integrations";
   if (featureId.startsWith("agent.")) return "/settings/general";
   return null;
-}
-
-export type WebBetterT3ControlRenderingPath =
-  | "switch"
-  | "prepared-control"
-  | "sidebar-position"
-  | "status"
-  | "deep-link"
-  | "missing";
-
-const WEB_PREPARED_CONTROL_IDS = new Set<BetterT3FeatureId>(WEB_BETTER_T3_PREPARED_CONTROL_IDS);
-
-export function resolveWebBetterT3ControlRenderingPath(
-  feature: Pick<BetterT3FeatureControlStateV1["descriptor"], "id" | "controlKind">,
-): WebBetterT3ControlRenderingPath {
-  if (feature.controlKind === "switch") return "switch";
-  if (WEB_PREPARED_CONTROL_IDS.has(feature.id)) return "prepared-control";
-  if (feature.id === "chat.sidebarPosition") return "sidebar-position";
-  if (feature.controlKind === "status-only") return "status";
-  if (resolveBetterT3ControlDestination(feature.id) !== null) return "deep-link";
-  return "missing";
 }
 
 function CapabilityControl(props: {
@@ -534,7 +510,7 @@ type BetterT3PreparedStatusFeatureId =
   | "integration.skills"
   | "integration.compatibility";
 
-export function resolveBetterT3PreparedStatusMessageId(input: {
+function resolveBetterT3PreparedStatusMessageId(input: {
   readonly featureId: BetterT3PreparedStatusFeatureId;
   readonly state: BetterT3PreparedStatusState;
   readonly connectionPhase?: EnvironmentPresentation["connection"]["phase"];
@@ -569,7 +545,7 @@ export function resolveBetterT3PreparedStatusMessageId(input: {
   return "settings.betterT3.status.unknown";
 }
 
-export function resolveBetterT3PreparedStatusText(input: {
+function resolveBetterT3PreparedStatusText(input: {
   readonly featureId: BetterT3PreparedStatusFeatureId;
   readonly statuses: BetterT3PreparedStatusModel;
   readonly connectionPhase: EnvironmentPresentation["connection"]["phase"];
@@ -686,7 +662,7 @@ function initializationMessageId(
     : "settings.betterT3.initialization.existing";
 }
 
-export function BetterT3SettingsIntroduction(props: {
+function BetterT3SettingsIntroduction(props: {
   readonly environmentOptions: ReadonlyArray<BetterT3EnvironmentOption>;
   readonly selectedEnvironmentId: EnvironmentId | null;
   readonly deviceInitialization: BetterT3SettingsInitialization;

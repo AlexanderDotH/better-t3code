@@ -556,9 +556,9 @@ const WorkspaceEditToolkitRegistrationLive = mcpCompatibleToolkit(WorkspaceEditT
   Layer.provide(WorkspaceEditToolkitHandlersLive),
 );
 
-export const KnowledgeGraphToolkitRegistrationLive = mcpCompatibleToolkit(
-  KnowledgeGraphToolkit,
-).pipe(Layer.provide(KnowledgeGraphToolkitHandlersLive));
+const KnowledgeGraphToolkitRegistrationLive = mcpCompatibleToolkit(KnowledgeGraphToolkit).pipe(
+  Layer.provide(KnowledgeGraphToolkitHandlersLive),
+);
 
 const ProjectMemoryToolkitRegistrationLive = mcpCompatibleToolkit(ProjectMemoryToolkit).pipe(
   Layer.provide(ProjectMemoryToolkitHandlersLive),
@@ -578,7 +578,7 @@ const WorkspaceCoreToolkitRegistrationLive = Layer.mergeAll(
   ProjectMemoryToolkitRegistrationLive,
 );
 
-export const WorkspaceToolkitRegistrationLive = Layer.mergeAll(
+const WorkspaceToolkitRegistrationLive = Layer.mergeAll(
   WorkspaceCoreToolkitRegistrationLive,
   KnowledgeGraphToolkitRegistrationLive,
 );
@@ -592,47 +592,47 @@ const ProjectCoordinationToolkitRegistrationLive = mcpCompatibleToolkit(Coordina
   Layer.provide(CoordinationToolkitHandlersLive),
 );
 
-export const GeneralSubagentToolkitRegistrationLive = mcpCompatibleToolkit(
-  GeneralSubagentToolkit,
-).pipe(Layer.provide(GeneralSubagentToolkitHandlersLive));
+const GeneralSubagentToolkitRegistrationLive = mcpCompatibleToolkit(GeneralSubagentToolkit).pipe(
+  Layer.provide(GeneralSubagentToolkitHandlersLive),
+);
 
 const OptionalCoordinationToolkitRegistrationLive = Layer.mergeAll(
   ProjectCoordinationToolkitRegistrationLive,
   GeneralSubagentToolkitRegistrationLive,
 );
 
-export const CoordinationToolkitRegistrationLive = Layer.mergeAll(
+const CoordinationToolkitRegistrationLive = Layer.mergeAll(
   OptionalCoordinationToolkitRegistrationLive,
   ThreadContextToolkitRegistrationLive,
 );
 
-export const WorkspaceOnlyToolkitRegistrationLive = WorkspaceCoreToolkitRegistrationLive;
+const WorkspaceOnlyToolkitRegistrationLive = WorkspaceCoreToolkitRegistrationLive;
 
-export const WorkspaceOnlyWithoutProjectMemoryToolkitRegistrationLive =
+const WorkspaceOnlyWithoutProjectMemoryToolkitRegistrationLive =
   WorkspaceContextCoreToolkitRegistrationLive;
 
-export const WorkspaceWithoutPreviewToolkitRegistrationLive = Layer.mergeAll(
+const WorkspaceWithoutPreviewToolkitRegistrationLive = Layer.mergeAll(
   OptionalCoordinationToolkitRegistrationLive,
   WorkspaceToolkitRegistrationLive,
 );
 
-export const WorkspaceWithoutPreviewAndProjectMemoryToolkitRegistrationLive = Layer.mergeAll(
+const WorkspaceWithoutPreviewAndProjectMemoryToolkitRegistrationLive = Layer.mergeAll(
   OptionalCoordinationToolkitRegistrationLive,
   WorkspaceToolkitWithoutProjectMemoryRegistrationLive,
 );
 
-export const CoordinationEnabledToolkitRegistrationLive = Layer.mergeAll(
+const CoordinationEnabledToolkitRegistrationLive = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
   CoordinationToolkitRegistrationLive,
 );
 
-export const WorkspaceEnabledToolkitRegistrationLive = Layer.mergeAll(
+const WorkspaceEnabledToolkitRegistrationLive = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
   OptionalCoordinationToolkitRegistrationLive,
   WorkspaceToolkitRegistrationLive,
 );
 
-export const WorkspaceEnabledWithoutProjectMemoryToolkitRegistrationLive = Layer.mergeAll(
+const WorkspaceEnabledWithoutProjectMemoryToolkitRegistrationLive = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
   OptionalCoordinationToolkitRegistrationLive,
   WorkspaceToolkitWithoutProjectMemoryRegistrationLive,

@@ -51,7 +51,7 @@ const RECONNECT_PRIMARY_STATES: ReadonlySet<McpRuntimeState> = new Set([
 
 const RUNTIME_MENU_ORDER: ReadonlyArray<McpRuntimeAction> = ["refresh", "reconnect", "authorize"];
 
-export function createMcpServerRowActionModel(input: {
+function createMcpServerRowActionModel(input: {
   readonly state: McpRuntimeState;
   readonly availableRuntimeActions: ReadonlyArray<McpRuntimeAction>;
   readonly configurationActions?: ReadonlyArray<McpServerConfigurationAction>;

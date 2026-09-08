@@ -254,7 +254,7 @@ export function applyCodexMcpStartupObservation(
   };
 }
 
-export function normalizeExpectedCodexMcpServer(input: {
+function normalizeExpectedCodexMcpServer(input: {
   readonly providerKey: string;
   readonly providerInstanceId: ProviderInstanceId;
   readonly threadId: ThreadId;

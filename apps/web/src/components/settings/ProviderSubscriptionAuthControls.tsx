@@ -288,7 +288,7 @@ export interface ProviderSubscriptionAuthControlsViewProps {
   readonly onConfirmDisconnect: () => void;
 }
 
-export function ProviderSubscriptionAuthControlsView({
+function ProviderSubscriptionAuthControlsView({
   presentation,
   readOnly,
   detail,

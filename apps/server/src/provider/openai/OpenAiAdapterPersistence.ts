@@ -10,7 +10,7 @@ import type {
 import type { OpenAiHistoryItem } from "./OpenAiProtocol.ts";
 
 const PROVIDER = ProviderDriverKind.make("openai");
-export const OPENAI_RESUME_VERSION = 1 as const;
+const OPENAI_RESUME_VERSION = 1 as const;
 
 const JsonObject = Schema.Record(Schema.String, Schema.Json);
 const NonNegativeInteger = Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));

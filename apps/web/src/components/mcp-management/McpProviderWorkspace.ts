@@ -1,7 +1,4 @@
-export {
-  McpProviderWorkspace,
-  type McpProviderWorkspaceProps,
-} from "../settings/McpProviderWorkspace";
+export type { McpProviderWorkspaceProps } from "../settings/McpProviderWorkspace";
 
 export type {
   McpConfiguredServerView,

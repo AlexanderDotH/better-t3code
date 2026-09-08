@@ -27,7 +27,7 @@ import { isIgnoredProjectSpeechPath } from "./ProjectSpeechPathPolicy.ts";
 import { ProjectSpeechWorkspaceScanner } from "./ProjectSpeechWorkspaceScanner.ts";
 
 export const PROJECT_SPEECH_PROFILE_INDEX_FILE_LIMIT = 24;
-export const PROJECT_SPEECH_PROFILE_INDEX_TIMEOUT = "5 seconds";
+const PROJECT_SPEECH_PROFILE_INDEX_TIMEOUT = "5 seconds";
 export const INDEX_FALLBACK_WARNING =
   "Full project indexing was unavailable; using a basic speech profile.";
 

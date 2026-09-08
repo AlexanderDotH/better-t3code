@@ -55,7 +55,7 @@ import {
 } from "./HarnessChatSyncSettings.logic";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 
-export const HARNESS_CHAT_PAGE_SIZE = 10;
+const HARNESS_CHAT_PAGE_SIZE = 10;
 
 interface ProjectOption {
   readonly id: ProjectId;
@@ -351,7 +351,7 @@ function ChatRow({
   );
 }
 
-export function HarnessChatSyncSourceView({
+function HarnessChatSyncSourceView({
   source,
   chats,
   selection,
@@ -614,7 +614,7 @@ function MissingProjectResolver({
   );
 }
 
-export function MissingProjectResolverContent({
+function MissingProjectResolverContent({
   unresolvedCount,
   projects,
   selectedProjectId,
@@ -696,7 +696,7 @@ function applyStatusOverrides(
   });
 }
 
-export function HarnessChatSyncSourceTabs({
+function HarnessChatSyncSourceTabs({
   sources,
   activeSourceId,
   onSourceChange,
@@ -995,7 +995,7 @@ function HarnessChatSyncEnvironment({
   );
 }
 
-export function HarnessChatSyncEnvironmentView({
+function HarnessChatSyncEnvironmentView({
   label,
   detail,
   isRefreshing,
@@ -1033,7 +1033,7 @@ export function HarnessChatSyncEnvironmentView({
   );
 }
 
-export function supportsHarnessChatSync(config: ServerConfig | undefined): boolean {
+function supportsHarnessChatSync(config: ServerConfig | undefined): boolean {
   return (config?.environment.capabilities.harnessChatSyncVersion ?? 0) >= 1;
 }
 

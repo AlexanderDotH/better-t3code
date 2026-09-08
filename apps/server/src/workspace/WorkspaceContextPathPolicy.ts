@@ -42,7 +42,7 @@ export function shouldSkipWorkspaceContextDirectory(name: string): boolean {
   return SKIPPED_DIRECTORY_NAMES.has(name.toLowerCase());
 }
 
-export function isWorkspaceContextSecretPath(relativePath: string): boolean {
+function isWorkspaceContextSecretPath(relativePath: string): boolean {
   const basename = relativePath.slice(relativePath.lastIndexOf("/") + 1).toLowerCase();
   if (basename.startsWith(".env")) return true;
   if (PRIVATE_KEY_FILE_NAMES.has(basename)) return true;

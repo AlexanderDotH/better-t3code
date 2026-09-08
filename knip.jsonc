@@ -13,8 +13,13 @@
       "vitest": { "entry": [".github/**/*.test.cjs"] },
     },
     "scripts": {
-      // Knip loads its preprocessor through a CLI option, not a source import.
-      "entry": ["knip-schemas.ts"],
+      // CLI options and PowerShell launch these helpers by filename, not source imports.
+      "entry": [
+        "knip-schemas.ts",
+        "windows-assert-authenticode.mjs",
+        "windows-desktop-smoke-driver.mjs",
+        "wsl-runtime-probe.cjs",
+      ],
     },
     "apps/server": {
       // Vite+ pack entries and the launcher used by installed background services.
