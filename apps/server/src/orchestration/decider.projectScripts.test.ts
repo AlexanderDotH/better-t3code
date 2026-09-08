@@ -430,6 +430,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
             { id: "reasoningEffort", value: "high" },
             { id: "fastMode", value: true },
           ]),
+          fetchMode: "repository-exploration",
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
           runtimeMode: "approval-required",
           createdAt: now,
@@ -455,6 +456,10 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
           { id: "fastMode", value: true },
         ]),
         runtimeMode: "approval-required",
+        fetchMode: "repository-exploration",
+      });
+      expect(events[0]?.payload).toMatchObject({
+        text: "hello",
       });
     }),
   );
