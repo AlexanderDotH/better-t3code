@@ -107,14 +107,21 @@ export function getThreadSortTimestamp(
  * top instead of sinking back to its creation-order slot. Shared by web and
  * mobile so both render the same order. Malformed timestamps sink to 0.
  */
-function activeThreadAnchorTimestampMs(thread: {
-  readonly createdAt: string;
-  readonly unsettledAt?: string | null | undefined;
-}): number {
-  return Math.max(
-    toSortableTimestamp(thread.createdAt) ?? 0,
-    toSortableTimestamp(thread.unsettledAt ?? undefined) ?? 0,
-  );
+function activeThreadAnchorTimestampMs(
+  thread: Pick<ThreadSortInput, "createdAt"> &
+    Partial<ThreadSortInput> & {
+      readonly unsettledAt?: string | null | undefined;
+    },
+  sortOrder?: SidebarThreadSortOrder,
+): number {
+  const timestamp =
+    sortOrder === undefined
+      ? (toSortableTimestamp(thread.createdAt) ?? 0)
+      : getThreadSortTimestamp(
+          { ...thread, updatedAt: thread.updatedAt ?? thread.createdAt },
+          sortOrder,
+        );
+  return Math.max(timestamp, toSortableTimestamp(thread.unsettledAt ?? undefined) ?? 0);
 }
 
 export function sortThreads<T extends { readonly id: string } & ThreadSortInput>(
@@ -323,8 +330,8 @@ export function sortActiveThreadsByOrderKey<
     readonly unsettledAt?: string | null | undefined;
     readonly activeOrderKey?: string | null | undefined;
     readonly environmentId?: string | undefined;
-  },
->(threads: readonly T[]): T[] {
+  } & Partial<ThreadSortInput>,
+>(threads: readonly T[], sortOrder?: SidebarThreadSortOrder): T[] {
   return [...threads].sort((left, right) => {
     const leftKey = left.activeOrderKey;
     const rightKey = right.activeOrderKey;
@@ -334,7 +341,9 @@ export function sortActiveThreadsByOrderKey<
     if (leftKey != null && rightKey != null) {
       order = leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
     } else {
-      order = activeThreadAnchorTimestampMs(right) - activeThreadAnchorTimestampMs(left);
+      order =
+        activeThreadAnchorTimestampMs(right, sortOrder) -
+        activeThreadAnchorTimestampMs(left, sortOrder);
     }
     return (
       order ||

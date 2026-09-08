@@ -270,6 +270,30 @@ describe("sortActiveThreadsByOrderKey", () => {
     ]);
   });
 
+  it("uses the chosen chronology for keyless rows while preserving explicit order and re-entry", () => {
+    const threads = [
+      { id: "older-active", createdAt: "2026-03-01T00:00:00Z", updatedAt: "2026-03-10T00:00:00Z" },
+      { id: "newer", createdAt: "2026-03-05T00:00:00Z", updatedAt: "2026-03-05T00:00:00Z" },
+      { id: "manual-last", createdAt: "2026-03-12T00:00:00Z", activeOrderKey: "t" },
+      { id: "manual-first", createdAt: "2026-03-01T00:00:00Z", activeOrderKey: "f" },
+      { id: "reopened", createdAt: "2026-03-01T00:00:00Z", unsettledAt: "2026-03-11T00:00:00Z" },
+    ];
+    expect(sortActiveThreadsByOrderKey(threads, "updated_at").map((thread) => thread.id)).toEqual([
+      "reopened",
+      "older-active",
+      "newer",
+      "manual-first",
+      "manual-last",
+    ]);
+    expect(sortActiveThreadsByOrderKey(threads, "created_at").map((thread) => thread.id)).toEqual([
+      "reopened",
+      "newer",
+      "older-active",
+      "manual-first",
+      "manual-last",
+    ]);
+  });
+
   it("breaks equal order keys and timestamps by thread then environment", () => {
     for (const activeOrderKey of [null, "m"]) {
       const threads = [
