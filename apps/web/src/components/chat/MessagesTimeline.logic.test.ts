@@ -41,6 +41,105 @@ import {
 } from "../../session-logic";
 import { isImageAttachment, type ChatMessage, type TurnDiffSummary } from "../../types";
 
+describe("classic timeline grouping", () => {
+  const timelineEntries = Array.from({ length: 3 }, (_, index) => ({
+    kind: "work" as const,
+    id: `entry-${index}`,
+    createdAt: `2026-09-08T00:00:0${index}Z`,
+    entry: {
+      id: `work-${index}`,
+      createdAt: `2026-09-08T00:00:0${index}Z`,
+      label: `Read file ${index}`,
+      tone: "tool" as const,
+      toolLifecycleStatus: "completed" as const,
+    },
+  }));
+  const input = {
+    timelineEntries,
+    isWorking: false,
+    activeTurnStartedAt: null,
+    turnDiffSummaries: [],
+    supportsConversationRollback: false,
+  };
+
+  it("shows the newest classic activity and expands older entries in chronological order", () => {
+    const collapsed = deriveMessagesTimelineRows({ ...input, chatVisualMode: "classic" });
+    expect(collapsed.map((row) => row.id)).toEqual(["work-2", "work-toggle:entry-0"]);
+    expect(collapsed.find((row) => row.kind === "work-toggle")).toMatchObject({
+      hiddenCount: 2,
+      expanded: false,
+    });
+    const expanded = deriveMessagesTimelineRows({
+      ...input,
+      chatVisualMode: "classic",
+      expandedWorkGroupIds: new Set(["work-group:entry-0"]),
+    });
+    const work = expanded.find((row) => row.kind === "work");
+    expect(work?.groupedEntries.map((entry) => entry.id)).toEqual(["work-0", "work-1", "work-2"]);
+    expect(work?.isExpandedToolGroup).toBe(true);
+    expect(deriveMessagesTimelineRows({ ...input, chatVisualMode: "classic" })).toEqual(collapsed);
+  });
+
+  it("recomputes grouping when the preference changes and restores the current summary", () => {
+    const current = deriveMessagesTimelineRowsWithState({ ...input, chatVisualMode: "current" });
+    expect(current.rows.map((row) => row.kind)).toEqual(["work-toggle"]);
+    const classic = deriveMessagesTimelineRowsWithState(
+      { ...input, chatVisualMode: "classic" },
+      current,
+    );
+    expect(classic.rows.map((row) => row.kind)).toEqual(["work", "work-toggle"]);
+    expect(
+      deriveMessagesTimelineRowsWithState({ ...input, chatVisualMode: "current" }, classic).rows,
+    ).toEqual(current.rows);
+  });
+
+  it("keeps failures visible and filters neutral running tools in classic mode", () => {
+    const turnId = TurnId.make("active");
+    const entries = [
+      ...timelineEntries,
+      {
+        ...timelineEntries[0]!,
+        id: "failure",
+        entry: {
+          ...timelineEntries[0]!.entry,
+          id: "failure",
+          tone: "error" as const,
+          toolLifecycleStatus: "failed" as const,
+        },
+      },
+      {
+        ...timelineEntries[0]!,
+        id: "running",
+        entry: {
+          ...timelineEntries[0]!.entry,
+          id: "running",
+          turnId,
+          toolLifecycleStatus: "inProgress" as const,
+        },
+      },
+    ];
+    const rows = deriveMessagesTimelineRows({
+      ...input,
+      timelineEntries: entries,
+      chatVisualMode: "classic",
+      isWorking: true,
+      runningTurnId: turnId,
+    });
+    expect(
+      rows.flatMap((row) =>
+        row.kind === "work" ? row.groupedEntries.map((entry) => entry.id) : [],
+      ),
+    ).toContain("failure");
+    expect(rows.some((row) => row.kind === "work-live")).toBe(false);
+    expect(
+      rows.flatMap((row) =>
+        row.kind === "work" ? row.groupedEntries.map((entry) => entry.id) : [],
+      ),
+    ).not.toContain("running");
+    expect(rows.some((row) => row.kind === "working")).toBe(true);
+  });
+});
+
 describe("streaming row projection", () => {
   function fixture(text = "") {
     const turnId = TurnId.make("live-turn");
