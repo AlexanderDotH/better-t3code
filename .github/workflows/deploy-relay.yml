@@ -17,6 +17,7 @@ concurrency:
 jobs:
   deploy_relay:
     name: Deploy production relay
+    if: github.repository == 'pingdotgg/t3code' || vars.T3_ENABLE_PRODUCTION_AUTOMATION == 'true'
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 15
     environment:

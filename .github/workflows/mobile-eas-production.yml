@@ -60,7 +60,8 @@ on:
       - packages/contracts/**
       - packages/shared/**
       - assets/**
-      - scripts/**
+      - scripts/lib/brand-assets.ts
+      - scripts/lib/public-config.ts
       - patches/**
       - pnpm-lock.yaml
       - pnpm-workspace.yaml
@@ -76,6 +77,7 @@ concurrency:
 jobs:
   production:
     name: EAS Production ${{ github.event_name == 'push' && 'auto' || inputs.mode }}
+    if: github.repository == 'pingdotgg/t3code' || vars.T3_ENABLE_PRODUCTION_AUTOMATION == 'true'
     runs-on: blacksmith-8vcpu-ubuntu-2404
     permissions:
       contents: read
