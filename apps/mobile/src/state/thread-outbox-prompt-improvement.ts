@@ -1,3 +1,4 @@
+import { resolvePromptForSend } from "@t3tools/client-runtime/prompt-improvement";
 import type { ProjectId } from "@t3tools/contracts";
 
 import type { QueuedThreadMessage } from "./thread-outbox-model";
@@ -20,7 +21,7 @@ export async function prepareQueuedPromptForDelivery(input: {
 
   let text: string;
   try {
-    text = (await input.improve(input.message.text.trim(), input.projectId)).trim();
+    text = (await resolvePromptForSend({ prompt: input.message.text, improve: (prompt) => input.improve(prompt, input.projectId) })).trim();
   } catch (error) {
     input.onError?.("improve", error);
     return { _tag: "retry" };
