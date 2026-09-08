@@ -239,7 +239,7 @@ export function renderProviderTraitsPicker(input: TraitsRenderInput): ReactNode 
 
 function renderContextWindowControl(
   Component: typeof ContextWindowMenuContent | typeof ContextWindowPicker,
-  input: TraitsRenderInput,
+  input: Omit<TraitsRenderInput, "prompt" | "onPromptChange">,
 ): ReactNode {
   if (
     (input.threadRef === undefined && input.draftId === undefined) ||
@@ -255,14 +255,21 @@ function renderContextWindowControl(
       {...(input.draftId ? { draftId: input.draftId } : {})}
       model={input.model}
       modelOptions={input.modelOptions}
+      {...(input.size ? { size: input.size } : {})}
+      {...(input.hidden !== undefined ? { hidden: input.hidden } : {})}
+      {...(input.isComposerOwned ? { isComposerOwned: true } : {})}
     />
   );
 }
 
-export function renderProviderContextWindowPicker(input: TraitsRenderInput): ReactNode {
+export function renderProviderContextWindowPicker(
+  input: Omit<TraitsRenderInput, "prompt" | "onPromptChange">,
+): ReactNode {
   return renderContextWindowControl(ContextWindowPicker, input);
 }
 
-export function renderProviderContextWindowMenuContent(input: TraitsRenderInput): ReactNode {
+export function renderProviderContextWindowMenuContent(
+  input: Omit<TraitsRenderInput, "prompt" | "onPromptChange">,
+): ReactNode {
   return renderContextWindowControl(ContextWindowMenuContent, input);
 }
