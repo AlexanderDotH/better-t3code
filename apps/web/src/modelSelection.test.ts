@@ -914,3 +914,14 @@ describe("resolvePlanAgentHealPatch", () => {
     ).toEqual({ sourceControlWriterModelSelection: healed });
   });
 });
+
+it("preserves provider catalog capabilities for client filtering", () => {
+  const snapshot = provider({
+    provider: ProviderDriverKind.make("openrouter"),
+    instanceId: "openrouter",
+    models: ["vendor/model"],
+  });
+  const entries = deriveProviderInstanceEntries([snapshot]);
+  const options = getAppModelOptionsForInstance(DEFAULT_UNIFIED_SETTINGS, entries[0]!);
+  expect(options[0]?.capabilities).toEqual(snapshot.models[0]?.capabilities);
+});
