@@ -1,3 +1,4 @@
+import { resolveFirstTurnForkBudget } from "@t3tools/client-runtime/thread-fork";
 import {
   resolveThreadAbortPresentation,
   type ThreadAbortPresentation,
@@ -4910,10 +4911,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         interactionModeEnabled: planModeUiEnabled,
       }),
       validateProviderInput: (providerInput: string) => {
+        const forkBudget = resolveFirstTurnForkBudget(activeThread?.fork?.handoff);
         const validationMessage = getComposerSubmissionValidationMessage({
           prompt: promptRef.current,
           providerInput,
           submissionTarget: "provider-turn",
+          ...(forkBudget ? { maxInputChars: forkBudget.remainingInputChars } : {}),
         });
         providerInputRejectedRef.current = validationMessage !== null;
         setProviderInputSubmissionError(validationMessage);
