@@ -27,6 +27,7 @@ const RIGHT_PANEL_KINDS = [
   "terminal",
   "pull-request",
   "agents",
+  "knowledge-graph",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -72,7 +73,8 @@ export type RightPanelSurface =
       number: number;
       url?: string;
     }
-  | { id: "agents"; kind: "agents" };
+  | { id: "agents"; kind: "agents" }
+  | { id: "knowledge-graph"; kind: "knowledge-graph" };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v9 removed the "plan" surface kind (plans render inline in the transcript).
@@ -171,6 +173,8 @@ const singletonSurface = (
       return { id: "files", kind };
     case "agents":
       return { id: "agents", kind };
+    case "knowledge-graph":
+      return { id: "knowledge-graph", kind };
   }
 };
 
@@ -313,6 +317,9 @@ function normalizePersistedRightPanelSurface(surface: unknown): RightPanelSurfac
   }
   if (kind === "files") {
     return id === kind ? { id: "files", kind: "files" } : null;
+  }
+  if (kind === "knowledge-graph") {
+    return id === kind ? { id: "knowledge-graph", kind } : null;
   }
   if (kind === "agents") {
     return id === kind ? { id: "agents", kind: "agents" } : null;

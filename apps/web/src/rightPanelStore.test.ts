@@ -854,3 +854,24 @@ describe("persisted fork panel compatibility", () => {
     });
   });
 });
+
+describe("knowledge graph surface", () => {
+  it("opens independently per thread, survives restart normalization and can close and reopen", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "knowledge-graph");
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe(
+      "knowledge-graph",
+    );
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refB)).toBeNull();
+    store.close(refA);
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBeNull();
+    store.open(refA, "knowledge-graph");
+    const state = migratePersistedRightPanelState({
+      byThreadKey: useRightPanelStore.getState().byThreadKey,
+    });
+    expect(selectActiveRightPanel(state.byThreadKey, refA)).toBe("knowledge-graph");
+    expect(selectThreadRightPanelState(state.byThreadKey, refA).surfaces).toEqual([
+      { id: "knowledge-graph", kind: "knowledge-graph" },
+    ]);
+  });
+});
