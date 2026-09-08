@@ -1,5 +1,6 @@
 import { SymbolView } from "../../components/AppSymbol";
 import { Pressable, View } from "react-native";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export interface SidebarHeaderActionsProps {
   readonly onOpenSettings: () => void;
@@ -29,10 +30,11 @@ function FallbackHeaderButton(props: {
 }
 
 export function SidebarHeaderActions(props: SidebarHeaderActionsProps) {
+  const translator = useMobileInterfaceTranslator();
   return (
     <View className="flex-row items-center gap-0.5">
       <FallbackHeaderButton
-        accessibilityLabel="Open settings"
+        accessibilityLabel={translator.message("mobile.navigation.openSettings")}
         icon="gearshape"
         onPress={props.onOpenSettings}
       />
