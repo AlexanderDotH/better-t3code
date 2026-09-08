@@ -336,6 +336,10 @@ import { MessagesTimeline } from "./chat/MessagesTimeline";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { resolveTimelineIsAtEnd } from "./chat/MessagesTimeline.logic";
 import { resolveComposerTimelineInset, resolveScrollToEndClearance } from "./composerFooterLayout";
+import { ComposerFloatingBubble } from "./chat/ComposerFloatingBubble";
+import { resolveComposerFloatingBubbleLayout } from "./chat/composerFloatingBubble.logic";
+import { buildResourceProtectionBanner } from "./resourceProtectionBanner";
+import { useInterfaceLanguage } from "../interfaceLanguageSync";
 import { ChatHeader } from "./chat/ChatHeader";
 import { ChatTranscriptCopyButton } from "./chat/ChatTranscriptCopyButton";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
@@ -1417,6 +1421,9 @@ export default function ChatView(props: ChatViewProps) {
   }, [routeThreadKey]);
   const [isImprovingPrompt, setIsImprovingPrompt] = useState(false);
   const [voiceRecordingActive, setVoiceRecordingActive] = useState(false);
+  const [composerFloatingBubbleHost, setComposerFloatingBubbleHost] =
+    useState<HTMLDivElement | null>(null);
+  const interfaceLanguage = useInterfaceLanguage().language;
   const [nonChatWorkspaceCardActive, setNonChatWorkspaceCardActive] = useState(false);
   const [workspaceCardExpanded, setWorkspaceCardExpanded] = useState(false);
   const improvePrompt = useAtomCommand(serverEnvironment.improvePrompt, { reportFailure: false });
@@ -5935,7 +5942,27 @@ export default function ChatView(props: ChatViewProps) {
       }),
     [feedbackSubmissions, routeThreadKey],
   );
+  const resourceProtectionQuery = useEnvironmentQuery(
+    (serverConfig?.environment.capabilities.resourceProtectionVersion ?? 0) >= 1
+      ? serverEnvironment.resourceProtection({ environmentId, input: {} })
+      : null,
+  );
+  const resourceProtectionBanner = useMemo(
+    () =>
+      activeThread
+        ? buildResourceProtectionBanner({
+            environmentId,
+            threadId: activeThread.id,
+            snapshot: resourceProtectionQuery.data,
+            language: interfaceLanguage,
+          })
+        : null,
+    [environmentId, activeThread?.id, resourceProtectionQuery.data, interfaceLanguage],
+  );
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
+    const resourceProtectionItems: ComposerBannerStackItem[] = resourceProtectionBanner
+      ? [{ ...resourceProtectionBanner, icon: <span aria-hidden="true">●</span> }]
+      : [];
     const backgroundLivenessItems =
       backgroundLivenessBannerItem === null ? [] : [backgroundLivenessBannerItem];
     const resumeCompactionItems =
@@ -5947,6 +5974,7 @@ export default function ChatView(props: ChatViewProps) {
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
         ...feedbackBannerItems,
+        ...resourceProtectionItems,
         ...usageLimitsItems,
         ...systemComposerBannerItems,
         ...backgroundLivenessItems,
@@ -5957,6 +5985,7 @@ export default function ChatView(props: ChatViewProps) {
     }
     return [
       ...feedbackBannerItems,
+      ...resourceProtectionItems,
       ...usageLimitsItems,
       ...systemComposerBannerItems,
       ...backgroundLivenessItems,
@@ -6006,6 +6035,7 @@ export default function ChatView(props: ChatViewProps) {
     activeBranchMismatchKey,
     backgroundLivenessBannerItem,
     feedbackBannerItems,
+    resourceProtectionBanner,
     handleRestoreThreadBranch,
     isRestoringThreadBranch,
     localCheckoutBranchMismatch,
@@ -8454,6 +8484,18 @@ export default function ChatView(props: ChatViewProps) {
     </div>
   );
 
+  const composerFloatingBubbleLayout = resolveComposerFloatingBubbleLayout({
+    isDraftHeroState,
+    nonChatWorkspaceCardActive,
+    workspaceCardExpanded,
+  });
+  const composerFloatingBubble = (
+    <ComposerFloatingBubble
+      active={composerFloatingBubbleLayout.visible}
+      hostRef={setComposerFloatingBubbleHost}
+    />
+  );
+
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden window-surface bg-background">
       {routeKind === "draft" && draftId && activeProject && !threadHasStarted(activeThread) ? (
@@ -8548,6 +8590,7 @@ export default function ChatView(props: ChatViewProps) {
                 threadRef={activeThreadRef}
                 subagents={activeThread.subagents}
                 timestampFormat={settings.timestampFormat}
+                streamingMotionEnabled={settings.enableLegacyTokenStreaming}
                 {...(gitCwd ? { markdownCwd: gitCwd } : {})}
               />
             ) : null}
@@ -8616,6 +8659,7 @@ export default function ChatView(props: ChatViewProps) {
                 markdownCwd={gitCwd ?? undefined}
                 resolvedTheme={resolvedTheme}
                 timestampFormat={timestampFormat}
+                streamingMotionEnabled={settings.enableLegacyTokenStreaming}
                 workspaceRoot={activeWorkspaceRoot}
                 skills={
                   activeProviderStatus
@@ -8680,7 +8724,7 @@ export default function ChatView(props: ChatViewProps) {
                   data-workspace-expanded={workspaceCardExpanded || undefined}
                   data-workspace-non-chat={nonChatWorkspaceCardActive || undefined}
                 >
-                  {isDraftHeroState ? (
+                  {composerFloatingBubbleLayout.placement === "hero" ? (
                     <div className="absolute inset-x-0 bottom-full z-0">
                       <div
                         className="pb-8 group-has-data-[composer-shoulder-tab]/composer-stack:pb-4"
@@ -8698,8 +8742,11 @@ export default function ChatView(props: ChatViewProps) {
                           activeProjectTitle={activeProject?.title ?? null}
                         />
                       </div>
+                      {composerFloatingBubble}
                     </div>
-                  ) : null}
+                  ) : (
+                    composerFloatingBubble
+                  )}
                   <div
                     className="relative"
                     style={
@@ -8792,6 +8839,9 @@ export default function ChatView(props: ChatViewProps) {
                                 }
                                 isPreparingWorktree={isPreparingWorktree}
                                 bannerItems={composerBannerItems}
+                                isWorking={isWorking}
+                                activeWorkStartedAt={activeWorkStartedAt}
+                                floatingBubbleHost={composerFloatingBubbleHost}
                                 // With attachments or contexts aboard the pick just inserts the
                                 // text, so it sends as a prompt like the typed path would.
                                 onUsageLimitsCommand={
