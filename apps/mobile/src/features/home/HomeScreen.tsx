@@ -33,7 +33,9 @@ import type { SavedRemoteConnection } from "../../lib/connection";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { resolveMobileSidebarSettlingPreferences } from "../../persistence/mobile-preferences";
 import { useThreadSearch } from "../../state/queries";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
 import { usePendingThreadOrder } from "../../state/thread-order";
 import { environmentServerConfigsAtom } from "../../state/server";
@@ -42,6 +44,7 @@ import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import {
   PendingTaskListRow,
   ThreadListGroupHeader,
+  ThreadListOlderProjectsHeader,
   ThreadListRow,
   ThreadListShowMoreRow,
 } from "../threads/thread-list-items";
@@ -58,16 +61,20 @@ import {
   buildThreadListV2ListItems,
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
+  type ThreadListV2ChangeRequestState,
   type ThreadListV2ListItem,
 } from "../threads/threadListV2";
 import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-shelf-preferences";
 import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
+import { startHomeFocusMinuteClock } from "./home-focus-clock";
+import { getHomeContentBottomPadding } from "./homeContentInsets";
 import {
   buildHomeListLayout,
   DEFAULT_GROUP_DISPLAY_STATE,
   EMPTY_HOME_LIST_LAYOUT,
   homeListItemsAreEqual,
   nextGroupDisplayState,
+  resolveGroupedProjectSettledThreadKeys,
   type HomeGroupDisplayAction,
   type HomeGroupDisplayState,
   type HomeListItem,
@@ -79,6 +86,9 @@ import {
   type HomeProjectSortOrder,
 } from "./homeThreadList";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-swipe-actions";
+import { useHomeProjectActivity } from "./use-home-project-activity";
+import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 /* ─── Types ──────────────────────────────────────────────────────────── */
 
@@ -143,20 +153,25 @@ const PRE_LIQUID_GLASS_BOTTOM_TOOLBAR_HEIGHT = 44;
 function deriveEmptyState(props: {
   readonly catalogState: WorkspaceState;
   readonly projectCount: number;
-}): { readonly title: string; readonly detail: string; readonly loading: boolean } {
+}): {
+  readonly titleKey: InterfaceMessageKey;
+  readonly detailKey?: InterfaceMessageKey;
+  readonly detail?: string;
+  readonly loading: boolean;
+} {
   const { catalogState } = props;
   if (catalogState.isLoadingConnections) {
     return {
-      title: "Loading environments",
-      detail: "Checking saved environments on this device.",
+      titleKey: "mobile.home.loadingEnvironments",
+      detailKey: "mobile.home.checkingEnvironments",
       loading: true,
     };
   }
 
   if (!catalogState.hasConnections) {
     return {
-      title: "No environments connected",
-      detail: "Add an environment to load projects and start coding sessions.",
+      titleKey: "mobile.home.noEnvironments",
+      detailKey: "mobile.home.addEnvironmentDescription",
       loading: false,
     };
   }
@@ -168,10 +183,10 @@ function deriveEmptyState(props: {
     !catalogState.hasLoadedShellSnapshot
   ) {
     return {
-      title: "Environment unavailable",
-      detail:
-        catalogState.connectionError ??
-        "The saved environment is offline. Check the URL or start the environment, then retry.",
+      titleKey: "mobile.home.environmentUnavailable",
+      ...(catalogState.connectionError === null
+        ? { detailKey: "mobile.home.environmentOffline" as const }
+        : { detail: catalogState.connectionError }),
       loading: false,
     };
   }
@@ -182,23 +197,23 @@ function deriveEmptyState(props: {
     catalogState.connectionError === null
   ) {
     return {
-      title: "Connecting to environment",
-      detail: "Loading projects and threads from the saved environment.",
+      titleKey: "mobile.home.connectingEnvironment",
+      detailKey: "mobile.home.loadingProjectsThreads",
       loading: true,
     };
   }
 
   if (props.projectCount === 0 && catalogState.hasLoadedShellSnapshot) {
     return {
-      title: "No projects found",
-      detail: "The connected environment did not report any projects.",
+      titleKey: "mobile.home.noProjects",
+      detailKey: "mobile.home.noProjectsDescription",
       loading: false,
     };
   }
 
   return {
-    title: "No threads yet",
-    detail: "Create a task to start a new coding session in one of your connected projects.",
+    titleKey: "mobile.home.noThreads",
+    detailKey: "mobile.home.createTaskInProject",
     loading: false,
   };
 }
@@ -210,12 +225,18 @@ function HomeTopContentSpacer() {
 /* ─── Main screen ────────────────────────────────────────────────────── */
 
 export function HomeScreen(props: HomeScreenProps) {
+  const translator = useMobileInterfaceTranslator();
   const [groupDisplayStates, setGroupDisplayStates] = useState<
     ReadonlyMap<string, HomeGroupDisplayState>
   >(() => new Map());
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const threadListV2Enabled = useThreadListV2Enabled();
   const queuedThreadKeys = useQueuedThreadKeys();
+  const { appearance } = useAppearancePreferences();
+  const { afterDays: autoSettleAfterDays, onMerge: autoSettleOnMerge } =
+    resolveMobileSidebarSettlingPreferences(
+      AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value : undefined,
+    );
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const listRef = useRef<LegendListRef | null>(null);
@@ -224,6 +245,25 @@ export function HomeScreen(props: HomeScreenProps) {
     Platform.OS === "ios" && !NATIVE_LIQUID_GLASS_SUPPORTED
       ? PRE_LIQUID_GLASS_BOTTOM_TOOLBAR_HEIGHT
       : 0;
+  const homeContentPlatform = Platform.OS === "android" ? "android" : "ios";
+  const emptyStateBottomPadding = getHomeContentBottomPadding({
+    platform: homeContentPlatform,
+    safeAreaBottom: insets.bottom,
+    iosBottomToolbarClearance,
+    surface: "empty",
+  });
+  const v1ListBottomPadding = getHomeContentBottomPadding({
+    platform: homeContentPlatform,
+    safeAreaBottom: insets.bottom,
+    iosBottomToolbarClearance,
+    surface: "thread-list-v1",
+  });
+  const v2ListBottomPadding = getHomeContentBottomPadding({
+    platform: homeContentPlatform,
+    safeAreaBottom: insets.bottom,
+    iosBottomToolbarClearance,
+    surface: "thread-list-v2",
+  });
   const searchEnvironmentIds = useMemo(
     () =>
       props.selectedEnvironmentId === null
@@ -412,18 +452,6 @@ export function HomeScreen(props: HomeScreenProps) {
   );
 
   const hasSearchQuery = props.searchQuery.trim().length > 0;
-  const listLayout = useMemo(
-    () =>
-      threadListV2Enabled
-        ? EMPTY_HOME_LIST_LAYOUT
-        : buildHomeListLayout({
-            groups: projectGroups,
-            displayStates: effectiveGroupDisplayStates,
-            showAllThreads: hasSearchQuery,
-          }),
-    [threadListV2Enabled, projectGroups, effectiveGroupDisplayStates, hasSearchQuery],
-  );
-
   const projectByKey = useMemo(() => {
     const map = new Map<string, EnvironmentProject>();
     for (const project of props.projects) {
@@ -496,6 +524,33 @@ export function HomeScreen(props: HomeScreenProps) {
   // Settled threads stay in the live shell stream (settled ≠ archived), so
   // the partition works directly off live shells — no snapshot merging or
   // optimistic holds.
+  // PR states stream in per-row. The next partition applies the configured
+  // merge rule and the always-on close rule, matching web.
+  const [changeRequestByKey, setChangeRequestByKey] = useState<
+    ReadonlyMap<string, ThreadListV2ChangeRequestState>
+  >(() => new Map());
+  const handleChangeRequestState = useCallback(
+    (threadKey: string, changeRequest: ThreadListV2ChangeRequestState | null) => {
+      setChangeRequestByKey((current) => {
+        const existing = current.get(threadKey) ?? null;
+        if (
+          (existing?.state ?? null) === (changeRequest?.state ?? null) &&
+          (existing?.updatedAt ?? null) === (changeRequest?.updatedAt ?? null) &&
+          (existing?.linkedPullRequestKey ?? null) === (changeRequest?.linkedPullRequestKey ?? null)
+        ) {
+          return current;
+        }
+        const next = new Map(current);
+        if (changeRequest === null) {
+          next.delete(threadKey);
+        } else {
+          next.set(threadKey, changeRequest);
+        }
+        return next;
+      });
+    },
+    [],
+  );
   const handleSettleThread = props.onSettleThread;
   const handleSnoozeThread = useCallback(
     (thread: EnvironmentThreadShell, snoozedUntil: string) => {
@@ -557,21 +612,15 @@ export function HomeScreen(props: HomeScreenProps) {
     toggleSettledShelf,
     toggleSnoozedShelf,
   } = useThreadListV2ShelfPreferences();
-  // The queued-start and snooze helpers need a clock while the list stays open.
+  // now is quantized to the minute and ticks so the inactivity auto-settle
+  // boundary is actually crossed while the app stays open (mirrors web);
+  // without a clock dependency the partition memoizes a frozen "now".
   const [nowMinute, setNowMinute] = useState(() => new Date().toISOString().slice(0, 16));
   // Snooze wake times are second-precise; a counter bumped exactly at the
   // next wake boundary re-runs the partition with a fresh clock so a woken
   // thread reappears immediately instead of on the next minute tick.
   const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
-  useFocusEffect(
-    useCallback(() => {
-      if (!threadListV2Enabled) return;
-      // Refresh immediately on enable or focus because the previous value can be hours old.
-      setNowMinute(new Date().toISOString().slice(0, 16));
-      const id = setInterval(() => setNowMinute(new Date().toISOString().slice(0, 16)), 60_000);
-      return () => clearInterval(id);
-    }, [threadListV2Enabled]),
-  );
+  useFocusEffect(useCallback(() => startHomeFocusMinuteClock(setNowMinute), []));
   // Threads on servers without the settlement capability never classify as
   // settled (the user could neither un-settle nor pin them).
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
@@ -629,6 +678,80 @@ export function HomeScreen(props: HomeScreenProps) {
     }
     return supported;
   }, [serverConfigs]);
+  const groupedSettledThreadKeys = useMemo(
+    () =>
+      resolveGroupedProjectSettledThreadKeys({
+        threads: scopedThreads,
+        queuedThreadKeys,
+        settlementEnvironmentIds,
+        snoozeEnvironmentIds,
+        changeRequestByKey,
+        autoSettleOnMerge,
+        now: `${nowMinute}:00.000Z`,
+        autoSettleAfterDays,
+      }),
+    [
+      changeRequestByKey,
+      autoSettleAfterDays,
+      autoSettleOnMerge,
+      nowMinute,
+      scopedThreads,
+      queuedThreadKeys,
+      settlementEnvironmentIds,
+      snoozeEnvironmentIds,
+    ],
+  );
+  const projectActivity = useHomeProjectActivity(
+    projectGroups,
+    !hasSearchQuery,
+    groupedSettledThreadKeys,
+  );
+  const persistedOlderProjectsExpanded =
+    AsyncResult.isSuccess(preferencesResult) &&
+    preferencesResult.value.olderProjectsExpanded === true;
+  const selectedOlderProjectKey =
+    selectedProjectScope !== null &&
+    projectActivity.olderGroups.some((group) => group.key === selectedProjectScope.key)
+      ? selectedProjectScope.key
+      : null;
+  const [dismissedAutoRevealProjectKey, setDismissedAutoRevealProjectKey] = useState<string | null>(
+    null,
+  );
+  const autoRevealOlderProjects =
+    selectedOlderProjectKey !== null && selectedOlderProjectKey !== dismissedAutoRevealProjectKey;
+  const olderProjectsExpanded = persistedOlderProjectsExpanded || autoRevealOlderProjects;
+  const toggleOlderProjects = useCallback(() => {
+    if (olderProjectsExpanded) {
+      savePreferences({ olderProjectsExpanded: false });
+      setDismissedAutoRevealProjectKey(selectedOlderProjectKey);
+      return;
+    }
+    setDismissedAutoRevealProjectKey(null);
+    savePreferences({ olderProjectsExpanded: true });
+  }, [olderProjectsExpanded, savePreferences, selectedOlderProjectKey]);
+  const listLayout = useMemo(
+    () =>
+      threadListV2Enabled
+        ? EMPTY_HOME_LIST_LAYOUT
+        : buildHomeListLayout({
+            groups: projectActivity.recentGroups,
+            olderGroups: projectActivity.olderGroups,
+            olderProjectsExpanded,
+            projectThreadPreviewCount: appearance.projectThreadPreviewCount,
+            displayStates: effectiveGroupDisplayStates,
+            settledThreadKeys: groupedSettledThreadKeys,
+            showAllThreads: hasSearchQuery,
+          }),
+    [
+      threadListV2Enabled,
+      appearance.projectThreadPreviewCount,
+      effectiveGroupDisplayStates,
+      groupedSettledThreadKeys,
+      hasSearchQuery,
+      olderProjectsExpanded,
+      projectActivity,
+    ],
+  );
   const machineByEnvironmentId = useMemo(
     () =>
       new Map(
@@ -658,6 +781,9 @@ export function HomeScreen(props: HomeScreenProps) {
           threads: props.threads,
           section,
           pendingOrder,
+          changeRequestByKey,
+          autoSettleAfterDays,
+          autoSettleOnMerge,
           now: new Date().toISOString(),
           settlementEnvironmentIds,
           snoozeEnvironmentIds,
@@ -668,6 +794,9 @@ export function HomeScreen(props: HomeScreenProps) {
   }, [
     serverConfigs,
     props.threads,
+    changeRequestByKey,
+    autoSettleAfterDays,
+    autoSettleOnMerge,
     pendingOrder,
     queuedThreadKeys,
     settlementEnvironmentIds,
@@ -695,6 +824,9 @@ export function HomeScreen(props: HomeScreenProps) {
       projectRefs: v2ScopedProjectGroup === null ? null : v2ScopedProjectGroup.projectRefs,
       searchQuery: props.searchQuery,
       matchedThreadKeys,
+      changeRequestByKey,
+      autoSettleOnMerge,
+      autoSettleAfterDays,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
       queuedThreadKeys,
@@ -707,6 +839,9 @@ export function HomeScreen(props: HomeScreenProps) {
   }, [
     pendingOrder,
     queuedThreadKeys,
+    changeRequestByKey,
+    autoSettleAfterDays,
+    autoSettleOnMerge,
     nowMinute,
     snoozeWakeTick,
     snoozedShelfExpanded,
@@ -768,7 +903,7 @@ export function HomeScreen(props: HomeScreenProps) {
         settledShelfHeaderIndex: threadListV2Layout.settledShelfHeaderIndex,
         snoozeLabelNow: `${nowMinute}:00.000Z`,
       }),
-    [settledShelfExpanded, snoozedShelfExpanded, threadListV2Layout, v2PendingTasks],
+    [settledShelfExpanded, snoozedShelfExpanded, threadListV2Layout, v2PendingTasks, nowMinute],
   );
 
   const renderV2Item = useCallback(
@@ -862,6 +997,7 @@ export function HomeScreen(props: HomeScreenProps) {
           titleRegenerationSupported={titleRegenerationEnvironmentIds.has(thread.environmentId)}
           settlementSupported={settlementEnvironmentIds.has(thread.environmentId)}
           onSettleThread={handleSettleThread}
+          onChangeRequestState={handleChangeRequestState}
           snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
           pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
           reorderSupported={
@@ -884,6 +1020,7 @@ export function HomeScreen(props: HomeScreenProps) {
     },
     [
       handleDeleteThread,
+      handleChangeRequestState,
       activeReorderEnvironmentIds,
       threadMovePlanners,
       pendingOrder,
@@ -960,6 +1097,15 @@ export function HomeScreen(props: HomeScreenProps) {
   const renderItem = useCallback(
     ({ item }: LegendListRenderItemProps<HomeListItem>) => {
       switch (item.type) {
+        case "older-projects":
+          return (
+            <ThreadListOlderProjectsHeader
+              variant="compact"
+              count={item.count}
+              expanded={item.expanded}
+              onToggle={toggleOlderProjects}
+            />
+          );
         case "header":
           return (
             <ThreadListGroupHeader
@@ -1017,6 +1163,7 @@ export function HomeScreen(props: HomeScreenProps) {
               onDeleteThread={props.onDeleteThread}
               onRegenerateThreadTitle={handleRegenerateThreadTitle}
               titleRegenerationSupported={titleRegenerationEnvironmentIds.has(thread.environmentId)}
+              onChangeRequestState={handleChangeRequestState}
               onSelectThread={props.onSelectThread}
               onSwipeableClose={handleSwipeableClose}
               onSwipeableWillOpen={handleSwipeableWillOpen}
@@ -1029,6 +1176,8 @@ export function HomeScreen(props: HomeScreenProps) {
               variant="compact"
               hiddenCount={item.hiddenCount}
               canShowLess={item.canShowLess}
+              canToggleSettled={item.canToggleSettled}
+              settledVisible={item.settledVisible}
               groupKey={item.groupKey}
               onGroupAction={updateGroupDisplay}
             />
@@ -1038,6 +1187,7 @@ export function HomeScreen(props: HomeScreenProps) {
     [
       handleSwipeableClose,
       handleSwipeableWillOpen,
+      handleChangeRequestState,
       handleRegenerateThreadTitle,
       machineByEnvironmentId,
       queuedThreadKeys,
@@ -1052,6 +1202,7 @@ export function HomeScreen(props: HomeScreenProps) {
       props.savedConnectionsById,
       threadSearchMatchByKey,
       titleRegenerationEnvironmentIds,
+      toggleOlderProjects,
       updateGroupDisplay,
     ],
   );
@@ -1084,15 +1235,24 @@ export function HomeScreen(props: HomeScreenProps) {
       <View
         className="flex-1 items-center justify-center bg-screen px-8"
         style={{
-          paddingBottom: Math.max(insets.bottom, 24) + iosBottomToolbarClearance,
+          paddingBottom: emptyStateBottomPadding,
           paddingTop: NATIVE_LIQUID_GLASS_SUPPORTED ? insets.top + 72 : 0,
         }}
       >
         <View className="w-full max-w-[430px]">
           <EmptyState
-            title={emptyState.title}
-            detail={emptyState.detail}
-            actionLabel={!props.catalogState.hasReadyEnvironment ? "Add environment" : undefined}
+            title={translator.message(emptyState.titleKey)}
+            detail={
+              emptyState.detail ??
+              (emptyState.detailKey
+                ? translator.message(emptyState.detailKey)
+                : translator.message("common.unavailable"))
+            }
+            actionLabel={
+              !props.catalogState.hasReadyEnvironment
+                ? translator.message("mobile.home.addEnvironment")
+                : undefined
+            }
             onAction={!props.catalogState.hasReadyEnvironment ? props.onAddConnection : undefined}
             variant="plain"
           />
@@ -1114,30 +1274,49 @@ export function HomeScreen(props: HomeScreenProps) {
 
   const listEmpty = !hasResults ? (
     hasSearchQuery && threadSearch.isPending ? null : hasSearchQuery ? (
-      <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
+      <EmptyState
+        title={translator.message("mobile.home.noResults")}
+        detail={translator.message("mobile.home.noMatchingThreads", {
+          query: props.searchQuery,
+        })}
+      />
     ) : selectedProjectScope !== null ? (
       <EmptyState
-        title={`No threads in ${selectedProjectScope.title}`}
-        detail="Choose another project or create a new task."
+        title={translator.message("mobile.home.noThreadsIn", {
+          scope: selectedProjectScope.title,
+        })}
+        detail={translator.message("mobile.home.chooseProject")}
       />
     ) : selectedEnvironmentLabel ? (
       <EmptyState
-        title={`No threads in ${selectedEnvironmentLabel}`}
-        detail="Choose another environment or create a new task."
+        title={translator.message("mobile.home.noThreadsIn", {
+          scope: selectedEnvironmentLabel,
+        })}
+        detail={translator.message("mobile.home.chooseEnvironment")}
       />
     ) : (
-      <EmptyState title="No threads yet" detail="Create a task to start a new coding session." />
+      <EmptyState
+        title={translator.message("mobile.home.noThreads")}
+        detail={translator.message("mobile.home.createTask")}
+      />
     )
   ) : null;
   // Use the v2 project scope for its empty state. Snoozed threads need no
   // special empty state: their shelf header is a list row even while collapsed.
   const v2ListEmpty =
     hasSearchQuery && threadSearch.isPending ? null : hasSearchQuery ? (
-      <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
+      <EmptyState
+        title={translator.message("mobile.home.noResults")}
+        detail={translator.message("mobile.home.noMatchingThreads", {
+          query: props.searchQuery,
+        })}
+      />
     ) : v2ScopedProjectGroup !== null ? (
       <EmptyState
-        title={`No threads in ${v2ScopedProjectGroup.title}`}
-        detail="Choose another project or create a new task."
+        title={translator.message("mobile.home.noThreadsIn", {
+          scope: v2ScopedProjectGroup.title,
+        })}
+        detail={translator.message("mobile.home.chooseProject")}
       />
     ) : (
       listEmpty
@@ -1157,13 +1336,20 @@ export function HomeScreen(props: HomeScreenProps) {
               settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0 ? (
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={`Show ${Math.min(threadListV2Layout.hiddenSettledCount, THREAD_LIST_V2_SETTLED_PAGE_COUNT)} more settled threads`}
+                  accessibilityLabel={translator.message("mobile.home.showMoreSettled", {
+                    count: Math.min(
+                      threadListV2Layout.hiddenSettledCount,
+                      THREAD_LIST_V2_SETTLED_PAGE_COUNT,
+                    ),
+                  })}
                   onPress={showMoreSettled}
                   className="mx-4 mt-2 items-center rounded-lg border border-dashed border-border py-2.5"
                   style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
                 >
                   <Text className="text-xs font-t3-medium text-foreground-muted">
-                    Show more ({threadListV2Layout.hiddenSettledCount} settled hidden)
+                    {translator.message("mobile.home.settledHidden", {
+                      count: threadListV2Layout.hiddenSettledCount,
+                    })}
                   </Text>
                 </Pressable>
               ) : null
@@ -1178,10 +1364,7 @@ export function HomeScreen(props: HomeScreenProps) {
             {...scrollGateHandlers}
             scrollEventThrottle={16}
             contentContainerStyle={{
-              paddingBottom:
-                Platform.OS === "ios"
-                  ? Math.max(insets.bottom, 24) + 96 + iosBottomToolbarClearance
-                  : Math.max(insets.bottom, 16) + 88,
+              paddingBottom: v2ListBottomPadding,
             }}
           />
         </SwipeableScrollGateProvider>
@@ -1224,10 +1407,7 @@ export function HomeScreen(props: HomeScreenProps) {
             // standard 44pt bottom toolbar that overlays the list and is not
             // reflected in insets while contentInsetAdjustmentBehavior is
             // "never".
-            paddingBottom:
-              Platform.OS === "ios"
-                ? Math.max(insets.bottom, 24) + 24 + iosBottomToolbarClearance
-                : Math.max(insets.bottom, 16) + 88,
+            paddingBottom: v1ListBottomPadding,
           }}
           scrollIndicatorInsets={
             Platform.OS === "ios"

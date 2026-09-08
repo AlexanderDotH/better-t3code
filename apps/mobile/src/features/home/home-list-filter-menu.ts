@@ -1,7 +1,7 @@
 import type { EnvironmentId, SidebarThreadSortOrder } from "@t3tools/contracts";
 
 import type { HomeProjectSortOrder } from "./homeThreadList";
-import { PROJECT_SORT_OPTIONS, THREAD_SORT_OPTIONS } from "./home-list-options";
+import { PROJECT_SORT_OPTIONS, THREAD_SORT_OPTIONS } from "./home-list-sort-options";
 
 export interface HomeListFilterMenuEnvironment {
   readonly environmentId: EnvironmentId;
@@ -32,6 +32,34 @@ export interface HomeListFilterMenu {
   readonly items: Array<HomeListFilterMenuAction | HomeListFilterMenuSubmenu>;
 }
 
+export interface HomeListFilterMenuCopy {
+  readonly title: string;
+  readonly environment: string;
+  readonly allEnvironments: string;
+  readonly allEnvironmentsDescription: string;
+  readonly project: string;
+  readonly allProjects: string;
+  readonly allProjectsDescription: string;
+  readonly sortProjects: string;
+  readonly sortThreads: string;
+  readonly lastUserMessage: string;
+  readonly createdAt: string;
+}
+
+const DEFAULT_HOME_LIST_FILTER_MENU_COPY: HomeListFilterMenuCopy = {
+  title: "Thread list options",
+  environment: "Environment",
+  allEnvironments: "All environments",
+  allEnvironmentsDescription: "Show threads from every environment",
+  project: "Project",
+  allProjects: "All projects",
+  allProjectsDescription: "Show threads from every project",
+  sortProjects: "Sort projects",
+  sortThreads: "Sort threads",
+  lastUserMessage: "Last user message",
+  createdAt: "Created at",
+};
+
 export function buildHomeListFilterMenu(props: {
   readonly environments: ReadonlyArray<HomeListFilterMenuEnvironment>;
   readonly projects: ReadonlyArray<HomeListFilterMenuProject>;
@@ -47,17 +75,19 @@ export function buildHomeListFilterMenu(props: {
       creation-order layout, so offering those controls while it silently
       ignores them would be a lie; the environment filter still applies. */
   readonly listOrganization?: boolean;
+  readonly copy?: HomeListFilterMenuCopy;
 }): HomeListFilterMenu {
+  const copy = props.copy ?? DEFAULT_HOME_LIST_FILTER_MENU_COPY;
   const items: Array<HomeListFilterMenuAction | HomeListFilterMenuSubmenu> = [];
 
   items.push({
     type: "submenu",
-    title: "Environment",
+    title: copy.environment,
     items: [
       {
         type: "action",
-        title: "All environments",
-        subtitle: "Show threads from every environment",
+        title: copy.allEnvironments,
+        subtitle: copy.allEnvironmentsDescription,
         state: props.selectedEnvironmentId === null ? "on" : "off",
         onPress: () => props.onEnvironmentChange(null),
       },
@@ -76,12 +106,12 @@ export function buildHomeListFilterMenu(props: {
   if (props.projects.length > 0) {
     items.push({
       type: "submenu",
-      title: "Project",
+      title: copy.project,
       items: [
         {
           type: "action",
-          title: "All projects",
-          subtitle: "Show threads from every project",
+          title: copy.allProjects,
+          subtitle: copy.allProjectsDescription,
           state: props.selectedProjectKey === null ? "on" : "off",
           onPress: () => props.onProjectChange(null),
         },
@@ -99,20 +129,20 @@ export function buildHomeListFilterMenu(props: {
     items.push(
       {
         type: "submenu",
-        title: "Sort projects",
+        title: copy.sortProjects,
         items: PROJECT_SORT_OPTIONS.map((option) => ({
           type: "action",
-          title: option.label,
+          title: option.value === "updated_at" ? copy.lastUserMessage : copy.createdAt,
           state: props.projectSortOrder === option.value ? "on" : "off",
           onPress: () => props.onProjectSortOrderChange(option.value),
         })),
       },
       {
         type: "submenu",
-        title: "Sort threads",
+        title: copy.sortThreads,
         items: THREAD_SORT_OPTIONS.map((option) => ({
           type: "action",
-          title: option.label,
+          title: option.value === "updated_at" ? copy.lastUserMessage : copy.createdAt,
           state: props.threadSortOrder === option.value ? "on" : "off",
           onPress: () => props.onThreadSortOrderChange(option.value),
         })),
@@ -121,7 +151,7 @@ export function buildHomeListFilterMenu(props: {
   }
 
   return {
-    title: "Thread list options",
+    title: copy.title,
     items,
   };
 }
