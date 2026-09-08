@@ -11,10 +11,17 @@
  * @module ServerSettings
  */
 import {
+  BetterT3SettingsV1,
+  bootstrapBetterT3SettingsV1,
+  DEFAULT_EXISTING_BETTER_T3_SETTINGS_V1,
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_SERVER_SETTINGS,
+  type McpEnvironment,
+  type McpHeaders,
+  type McpSecretValue,
+  type McpServerDefinition,
   type ModelSelection,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
@@ -54,8 +61,13 @@ import {
   isModelSelectionProviderEnabled,
 } from "@t3tools/shared/serverSettings";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import { prepareLegacyOpenRouterSettingsMigration } from "./openRouterLegacySettingsMigration.ts";
+import { openRouterApiKeySecretName } from "./provider/openrouter/auth/OpenRouterCredentialStore.ts";
 
-export { resolveSourceControlWriterModelSelection } from "@t3tools/shared/serverSettings";
+export {
+  resolveSourceControlWriterModelSelection,
+  resolveVoiceTranslationModelSelection,
+} from "@t3tools/shared/serverSettings";
 
 const encodeServerSettings = Schema.encodeEffect(ServerSettings);
 const encodeServerSettingsJson = Schema.encodeUnknownEffect(fromJsonStringPretty(ServerSettings));
@@ -63,6 +75,20 @@ const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
+
+const secretSettingsErrorOperation = (detail: string) => {
+  if (detail.includes("read")) return "read-secret" as const;
+  if (detail.includes("remove stale")) return "remove-stale-secret" as const;
+  if (detail.includes("remove")) return "remove-secret" as const;
+  return "write-secret" as const;
+};
+
+const toSettingsError = (detail: string, cause: unknown) =>
+  new ServerSettingsError({
+    settingsPath: "<secret-store>",
+    operation: secretSettingsErrorOperation(detail),
+    cause,
+  });
 
 /**
  * Fold the legacy in-config `enabled` flag into the envelope-level
@@ -146,6 +172,16 @@ function usageLimitSourceSecretName(sourceId: string): string {
   return `usage-limit-source-${Buffer.from(sourceId, "utf8").toString("base64url")}`;
 }
 
+function mcpSecretName(input: {
+  readonly serverId: string;
+  readonly kind: "env" | "header";
+  readonly name: string;
+}): string {
+  return `mcp-${input.kind}-${Buffer.from(input.serverId, "utf8").toString("base64url")}-${Buffer.from(input.name, "utf8").toString("base64url")}`;
+}
+
+const ASSEMBLY_AI_API_KEY_SECRET_NAME = "speech-transcription-assembly-ai-api-key";
+
 function redactProviderEnvironmentVariable(
   variable: ProviderInstanceEnvironmentVariable,
 ): ProviderInstanceEnvironmentVariable {
@@ -160,16 +196,76 @@ function redactProviderEnvironmentVariable(
   };
 }
 
+function redactMcpSecretValue(value: McpSecretValue): McpSecretValue {
+  if (!value.sensitive) {
+    const { valueRedacted: _omit, ...rest } = value;
+    return rest;
+  }
+  return {
+    ...value,
+    value: "",
+    ...(value.value.length > 0 || value.valueRedacted ? { valueRedacted: true } : {}),
+  };
+}
+
+function redactMcpSecretMap<T extends Record<string, McpSecretValue>>(values: T): T {
+  return Object.fromEntries(
+    Object.entries(values).map(([name, value]) => [name, redactMcpSecretValue(value)]),
+  ) as T;
+}
+
+function redactMcpServerDefinition(server: McpServerDefinition): McpServerDefinition {
+  switch (server.transport) {
+    case "stdio":
+      return { ...server, env: redactMcpSecretMap(server.env) };
+    case "sse":
+    case "http":
+      return { ...server, headers: redactMcpSecretMap(server.headers) };
+  }
+}
+
+function redactOpenRouterInstanceConfig(instance: ProviderInstanceConfig): ProviderInstanceConfig {
+  if (
+    instance.driver !== "openrouter" ||
+    instance.config === null ||
+    typeof instance.config !== "object" ||
+    Array.isArray(instance.config) ||
+    !Object.hasOwn(instance.config, "apiKey")
+  ) {
+    return instance;
+  }
+  const { apiKey: _omit, ...config } = instance.config as Record<string, unknown>;
+  return { ...instance, config };
+}
+
+function redactSpeechTranscriptionSettings(
+  settings: ServerSettings["speechTranscription"],
+): ServerSettings["speechTranscription"] {
+  const apiKey = settings.assemblyAi.apiKey;
+  return {
+    ...settings,
+    assemblyAi: {
+      ...settings.assemblyAi,
+      apiKey: {
+        value: "",
+        ...(apiKey.value.length > 0 || apiKey.valueRedacted ? { valueRedacted: true } : {}),
+      },
+    },
+  };
+}
+
 export function redactServerSettingsForClient(settings: ServerSettings): ServerSettings {
   const providerInstances = Object.fromEntries(
     Object.entries(settings.providerInstances).map(([instanceId, instance]) => [
       instanceId,
-      instance.environment
-        ? {
-            ...instance,
-            environment: instance.environment.map(redactProviderEnvironmentVariable),
-          }
-        : instance,
+      redactOpenRouterInstanceConfig(
+        instance.environment
+          ? {
+              ...instance,
+              environment: instance.environment.map(redactProviderEnvironmentVariable),
+            }
+          : instance,
+      ),
     ]),
   );
   // The hub key is a bearer secret; clients only need to know one is set.
@@ -182,7 +278,17 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
       },
     ]),
   );
-  return { ...settings, providerInstances, usageLimitSources };
+  return {
+    ...settings,
+    enableAssistantStreaming: settings.enableLegacyTokenStreaming,
+    providerInstances,
+    usageLimitSources,
+    mcp: {
+      ...settings.mcp,
+      servers: settings.mcp.servers.map(redactMcpServerDefinition),
+    },
+    speechTranscription: redactSpeechTranscriptionSettings(settings.speechTranscription),
+  };
 }
 
 export class ServerSettingsService extends Context.Service<
@@ -202,6 +308,17 @@ export class ServerSettingsService extends Context.Service<
       patch: ServerSettingsPatch,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
 
+    /**
+     * Atomically read, transform, validate, and persist the latest settings.
+     *
+     * Use this for read-modify-write operations whose transform must observe
+     * all previously committed mutations. The callback runs while the
+     * settings write semaphore is held and must not call this service again.
+     */
+    readonly modifySettings: <E, R>(
+      modify: (current: ServerSettings) => Effect.Effect<ServerSettings, E, R>,
+    ) => Effect.Effect<ServerSettings, E | ServerSettingsError, R>;
+
     /** Stream of settings change events. */
     readonly streamChanges: Stream.Stream<ServerSettings>;
 
@@ -216,6 +333,8 @@ export class ServerSettingsService extends Context.Service<
   /** @deprecated Import and use `layerTest` from this module. */
   static readonly layerTest = (overrides: DeepPartial<ServerSettings> = {}) => layerTest(overrides);
 }
+
+export type ServerSettingsShape = ServerSettingsService["Service"];
 
 const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
   Effect.gen(function* () {
@@ -232,28 +351,138 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
         : {}),
     });
     const currentSettingsRef = yield* Ref.make<ServerSettings>(initialSettings);
+    const writeSemaphore = yield* Semaphore.make(1);
+    const changesPubSub = yield* PubSub.unbounded<ServerSettings>();
+
+    const modifySettings: ServerSettingsService["Service"]["modifySettings"] = (modify) =>
+      writeSemaphore.withPermits(1)(
+        Ref.get(currentSettingsRef).pipe(
+          Effect.flatMap(modify),
+          Effect.flatMap(normalizeServerSettings),
+          Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
+          Effect.tap((nextSettings) => PubSub.publish(changesPubSub, nextSettings)),
+          Effect.map(resolveTextGenerationProvider),
+        ),
+      );
 
     return {
       start: Effect.void,
       ready: Effect.void,
       getSettings: Ref.get(currentSettingsRef).pipe(Effect.map(resolveTextGenerationProvider)),
       updateSettings: (patch) =>
-        Ref.get(currentSettingsRef).pipe(
-          Effect.map((currentSettings) => applyServerSettingsPatch(currentSettings, patch)),
-          Effect.flatMap(normalizeServerSettings),
-          Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
-          Effect.map(resolveTextGenerationProvider),
+        modifySettings((currentSettings) =>
+          Effect.succeed(applyServerSettingsPatch(currentSettings, patch)),
         ),
-      streamChanges: Stream.empty,
-      subscribeChanges: Effect.succeed(Stream.empty),
+      modifySettings,
+      get streamChanges() {
+        return Stream.fromPubSub(changesPubSub);
+      },
+      get subscribeChanges() {
+        return PubSub.subscribe(changesPubSub).pipe(
+          Effect.map((subscription) => Stream.fromSubscription(subscription)),
+        );
+      },
     } satisfies ServerSettingsService["Service"];
   });
 
 export const layerTest = (overrides: DeepPartial<ServerSettings> = {}) =>
   Layer.effect(ServerSettingsService, makeTest(overrides));
 
-const ServerSettingsJson = fromLenientJson(ServerSettings);
-const decodeServerSettingsJsonExit = Schema.decodeUnknownExit(ServerSettingsJson);
+const LenientJsonUnknown = fromLenientJson(Schema.Unknown);
+const decodeLenientJsonUnknownExit = Schema.decodeUnknownExit(LenientJsonUnknown);
+const decodeServerSettingsExit = Schema.decodeUnknownExit(ServerSettings);
+const isBetterT3SettingsV1 = Schema.is(BetterT3SettingsV1);
+
+function readExplicitLegacyDeepThinkingEnabled(
+  settings: Readonly<Record<string, unknown>>,
+): boolean | undefined {
+  const agentEnhancement = settings.agentEnhancement;
+  if (
+    agentEnhancement === null ||
+    typeof agentEnhancement !== "object" ||
+    Array.isArray(agentEnhancement)
+  ) {
+    return undefined;
+  }
+  const deepThinking = (agentEnhancement as Record<string, unknown>).deepThinking;
+  if (deepThinking === null || typeof deepThinking !== "object" || Array.isArray(deepThinking)) {
+    return undefined;
+  }
+  const enabled = (deepThinking as Record<string, unknown>).enabled;
+  return typeof enabled === "boolean" ? enabled : undefined;
+}
+
+function normalizeBetterT3Compatibility(settings: Readonly<Record<string, unknown>>): unknown {
+  const persisted = settings.betterT3Environment;
+  if (Object.hasOwn(settings, "betterT3Environment") && !isBetterT3SettingsV1(persisted)) {
+    return persisted;
+  }
+  const legacyDeepThinkingEnabled = readExplicitLegacyDeepThinkingEnabled(settings);
+  return bootstrapBetterT3SettingsV1({
+    version: 1,
+    initialization: "existing-install-migration",
+    persistedSettings: isBetterT3SettingsV1(persisted) ? persisted : null,
+    compatibilityFlags:
+      legacyDeepThinkingEnabled === undefined
+        ? []
+        : [{ featureId: "agent.deepThinking", enabled: legacyDeepThinkingEnabled }],
+  });
+}
+
+function needsDeepThinkingCompatibilityWrite(settings: Readonly<Record<string, unknown>>): boolean {
+  if (readExplicitLegacyDeepThinkingEnabled(settings) === undefined) return false;
+  const persisted = settings.betterT3Environment;
+  return isBetterT3SettingsV1(persisted) && !Object.hasOwn(persisted.flags, "agent.deepThinking");
+}
+
+function normalizePersistedSettingsCompatibility(input: unknown): unknown {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    return input;
+  }
+
+  const settings = input as Record<string, unknown>;
+  const { enableAssistantStreaming, ...canonicalSettings } = settings;
+  const nextSettings: Record<string, unknown> = {
+    ...canonicalSettings,
+    betterT3Environment: normalizeBetterT3Compatibility(settings),
+  };
+  const legacyLocale = settings.interfaceLanguageSyncRecord;
+  if (
+    !Object.hasOwn(settings, "interfaceLocaleSyncRecordV1") &&
+    legacyLocale !== null &&
+    typeof legacyLocale === "object" &&
+    !Array.isArray(legacyLocale)
+  ) {
+    nextSettings.interfaceLocaleSyncRecordV1 = { version: 1, ...legacyLocale };
+  }
+  if (
+    !Object.hasOwn(settings, "enableLegacyTokenStreaming") &&
+    typeof enableAssistantStreaming === "boolean"
+  ) {
+    return {
+      ...nextSettings,
+      enableLegacyTokenStreaming: enableAssistantStreaming,
+    };
+  }
+  return nextSettings;
+}
+
+function persistedSettingsNeedsCompatibilityWrite(input: unknown): boolean {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) return false;
+  const settings = input as Record<string, unknown>;
+  return (
+    !Object.hasOwn(settings, "betterT3Environment") ||
+    needsDeepThinkingCompatibilityWrite(settings) ||
+    (Object.hasOwn(settings, "interfaceLanguageSyncRecord") &&
+      !Object.hasOwn(settings, "interfaceLocaleSyncRecordV1")) ||
+    (Object.hasOwn(settings, "enableAssistantStreaming") &&
+      !Object.hasOwn(settings, "enableLegacyTokenStreaming"))
+  );
+}
+
+const decodePersistedServerSettingsExit = (input: unknown) =>
+  decodeServerSettingsExit(normalizePersistedSettingsCompatibility(input));
+
 const PersistedOptionalProviderSettings = Schema.Struct({
   providers: Schema.optionalKey(
     Schema.Struct({
@@ -348,11 +577,15 @@ function fallbackTextGenerationProvider(settings: ServerSettings): ServerSetting
 
 // Values under these keys are compared as a whole — never stripped field-by-field.
 const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
+  "betterT3Environment",
   "backgroundActivity",
   "automaticGitFetchInterval",
   "providerHealthRefreshInterval",
   "sourceControlWriterModelSelection",
   "textGenerationModelSelection",
+  "autoReasoningModelSelection",
+  "voiceTranslationModelSelection",
+  "parallelPlanReviewModelSelection",
 ]);
 
 // Preserve both enabled states because provider history cannot recover a new opt-in.
@@ -439,19 +672,78 @@ const make = Effect.gen(function* () {
     ),
   );
 
+  const persistLegacyOpenRouterCredentials = Effect.fn(
+    "ServerSettings.persistLegacyOpenRouterCredentials",
+  )(function* (
+    credentials: ReturnType<typeof prepareLegacyOpenRouterSettingsMigration>["credentials"],
+  ) {
+    for (const credential of credentials) {
+      yield* secretStore
+        .create(
+          openRouterApiKeySecretName(credential.instanceId),
+          textEncoder.encode(credential.apiKey),
+        )
+        .pipe(
+          Effect.catch((cause) => {
+            if (ServerSecretStore.isSecretAlreadyExistsError(cause)) return Effect.void;
+            return Effect.fail(
+              new ServerSettingsError({
+                settingsPath,
+                operation: "write-secret",
+                providerInstanceId: credential.instanceId,
+                cause,
+              }),
+            );
+          }),
+        );
+    }
+  });
+
+  const sanitizeOpenRouterProviderInstances = Effect.fn(
+    "ServerSettings.sanitizeOpenRouterProviderInstances",
+  )(function* (settings: ServerSettings) {
+    const migration = prepareLegacyOpenRouterSettingsMigration({
+      providerInstances: settings.providerInstances,
+    });
+    if (!migration.changed) return settings;
+    yield* persistLegacyOpenRouterCredentials(migration.credentials);
+    if (
+      migration.settings === null ||
+      typeof migration.settings !== "object" ||
+      Array.isArray(migration.settings) ||
+      !("providerInstances" in migration.settings)
+    ) {
+      return settings;
+    }
+    return {
+      ...settings,
+      providerInstances: migration.settings
+        .providerInstances as ServerSettings["providerInstances"],
+    };
+  });
+
   const loadSettingsFromDisk = Effect.gen(function* () {
     let settings = DEFAULT_SERVER_SETTINGS;
     let persisted: typeof PersistedOptionalProviderSettings.Type = {};
+    let openRouterMigration:
+      | ReturnType<typeof prepareLegacyOpenRouterSettingsMigration>
+      | undefined;
+    let compatibilityMigrationChanged = false;
 
-    if (yield* readConfigExists) {
+    const settingsFileExists = yield* readConfigExists;
+    if (settingsFileExists) {
+      settings = {
+        ...DEFAULT_SERVER_SETTINGS,
+        betterT3Environment: DEFAULT_EXISTING_BETTER_T3_SETTINGS_V1,
+      };
       const raw = yield* readRawConfig;
-      const decoded = decodeServerSettingsJsonExit(raw);
+      const parsed = decodeLenientJsonUnknownExit(raw);
       const persistedSettings = decodePersistedOptionalProviderSettingsJsonExit(raw);
       if (persistedSettings._tag === "Success") {
         persisted = persistedSettings.value;
       }
-      if (decoded._tag === "Failure" || persistedSettings._tag === "Failure") {
-        const failure = decoded._tag === "Failure" ? decoded : persistedSettings;
+      if (parsed._tag === "Failure" || persistedSettings._tag === "Failure") {
+        const failure = parsed._tag === "Failure" ? parsed : persistedSettings;
         if (failure._tag === "Failure") {
           yield* Effect.logWarning("failed to parse settings.json, using defaults", {
             path: settingsPath,
@@ -460,7 +752,19 @@ const make = Effect.gen(function* () {
           });
         }
       } else {
-        settings = decoded.value;
+        const compatibilityWriteNeeded = persistedSettingsNeedsCompatibilityWrite(parsed.value);
+        openRouterMigration = prepareLegacyOpenRouterSettingsMigration(parsed.value);
+        const decoded = decodePersistedServerSettingsExit(openRouterMigration.settings);
+        if (decoded._tag === "Failure") {
+          yield* Effect.logWarning("failed to decode settings.json, using defaults", {
+            path: settingsPath,
+            issues: Cause.pretty(decoded.cause),
+            cause: decoded.cause,
+          });
+        } else {
+          settings = decoded.value;
+          compatibilityMigrationChanged = compatibilityWriteNeeded;
+        }
       }
     }
 
@@ -490,9 +794,26 @@ const make = Effect.gen(function* () {
       ),
     );
 
-    return foldProviderInstanceEnabledFlags(
+    const restoredSettings = foldProviderInstanceEnabledFlags(
       restoreUsedProviders(settings, persisted, providerHistory),
     );
+    if (openRouterMigration?.changed) {
+      yield* persistLegacyOpenRouterCredentials(openRouterMigration.credentials);
+    }
+    const hasInlineProviderSecrets = Object.values(restoredSettings.providerInstances).some(
+      (instance) =>
+        instance.environment?.some(
+          (variable) => variable.sensitive && !variable.valueRedacted && variable.value.length > 0,
+        ),
+    );
+    // Save compatibility changes with the next settings update when secrets still need migrating.
+    if (
+      (openRouterMigration?.changed || compatibilityMigrationChanged) &&
+      !hasInlineProviderSecrets
+    ) {
+      yield* writeSettingsAtomically(restoredSettings);
+    }
+    return restoredSettings;
   });
 
   const settingsCache = yield* Cache.make<typeof cacheKey, ServerSettings, ServerSettingsError>({
@@ -570,8 +891,10 @@ const make = Effect.gen(function* () {
     changes.pipe(
       Stream.mapEffect((settings) =>
         materializeProviderEnvironmentSecrets(settings).pipe(
+          Effect.flatMap(materializeMcpSecretValues),
+          Effect.flatMap(materializeSpeechTranscriptionSecrets),
           Effect.catch((error: ServerSettingsError) =>
-            Effect.logWarning("failed to materialize provider environment secrets", {
+            Effect.logWarning("failed to materialize server settings secrets", {
               operation: error.operation,
               providerInstanceId: error.providerInstanceId,
               environmentVariable: error.environmentVariable,
@@ -582,6 +905,113 @@ const make = Effect.gen(function* () {
       ),
       Stream.map(resolveTextGenerationProvider),
     );
+
+  const materializeMcpSecretValues = (
+    settings: ServerSettings,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    Effect.gen(function* () {
+      const materializeSecretMap = (input: {
+        readonly serverId: string;
+        readonly kind: "env" | "header";
+        readonly values: Record<string, McpSecretValue>;
+      }): Effect.Effect<Record<string, McpSecretValue>, ServerSettingsError> =>
+        Effect.gen(function* () {
+          const values: Record<string, McpSecretValue> = {};
+          for (const [name, value] of Object.entries(input.values)) {
+            if (!value.sensitive || !value.valueRedacted) {
+              values[name] = value;
+              continue;
+            }
+            const secret = yield* secretStore
+              .get(mcpSecretName({ serverId: input.serverId, kind: input.kind, name }))
+              .pipe(
+                Effect.mapError((cause) =>
+                  toSettingsError(`failed to read MCP ${input.kind} secret ${name}`, cause),
+                ),
+              );
+            values[name] = {
+              ...value,
+              value: Option.match(secret, {
+                onNone: () => "",
+                onSome: (bytes) => textDecoder.decode(bytes),
+              }),
+            };
+          }
+          return values;
+        });
+
+      const materializeServer = (
+        server: McpServerDefinition,
+      ): Effect.Effect<McpServerDefinition, ServerSettingsError> => {
+        switch (server.transport) {
+          case "stdio":
+            return materializeSecretMap({
+              serverId: server.id,
+              kind: "env",
+              values: server.env,
+            }).pipe(
+              Effect.map(
+                (env) => ({ ...server, env: env as McpEnvironment }) satisfies McpServerDefinition,
+              ),
+            );
+          case "sse":
+          case "http":
+            return materializeSecretMap({
+              serverId: server.id,
+              kind: "header",
+              values: server.headers,
+            }).pipe(
+              Effect.map(
+                (headers) =>
+                  ({ ...server, headers: headers as McpHeaders }) satisfies McpServerDefinition,
+              ),
+            );
+        }
+      };
+
+      const servers = yield* Effect.forEach(settings.mcp.servers, materializeServer);
+
+      return {
+        ...settings,
+        mcp: {
+          ...settings.mcp,
+          servers,
+        },
+      };
+    });
+
+  const materializeSpeechTranscriptionSecrets = (
+    settings: ServerSettings,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    Effect.gen(function* () {
+      const apiKey = settings.speechTranscription.assemblyAi.apiKey;
+      if (!apiKey.valueRedacted) {
+        return settings;
+      }
+      const secret = yield* secretStore
+        .get(ASSEMBLY_AI_API_KEY_SECRET_NAME)
+        .pipe(
+          Effect.mapError((cause) =>
+            toSettingsError("failed to read AssemblyAI API key secret", cause),
+          ),
+        );
+      return {
+        ...settings,
+        speechTranscription: {
+          ...settings.speechTranscription,
+          assemblyAi: {
+            ...settings.speechTranscription.assemblyAi,
+            apiKey: {
+              ...apiKey,
+              value: Option.match(secret, {
+                onNone: () => "",
+                onSome: (bytes) => textDecoder.decode(bytes),
+              }),
+            },
+          },
+        },
+      };
+    });
 
   const persistProviderEnvironmentSecrets = (
     current: ServerSettings,
@@ -738,6 +1168,187 @@ const make = Effect.gen(function* () {
       };
     });
 
+  const persistMcpSecretValues = (
+    current: ServerSettings,
+    next: ServerSettings,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    Effect.gen(function* () {
+      const nextSecretKeys = new Set<string>();
+      const persistSecretMap = (input: {
+        readonly serverId: string;
+        readonly kind: "env" | "header";
+        readonly values: Record<string, McpSecretValue>;
+      }): Effect.Effect<Record<string, McpSecretValue>, ServerSettingsError> =>
+        Effect.gen(function* () {
+          const values: Record<string, McpSecretValue> = {};
+          for (const [name, value] of Object.entries(input.values)) {
+            const secretName = mcpSecretName({
+              serverId: input.serverId,
+              kind: input.kind,
+              name,
+            });
+            if (!value.sensitive) {
+              yield* secretStore
+                .remove(secretName)
+                .pipe(
+                  Effect.mapError((cause) =>
+                    toSettingsError(`failed to remove MCP ${input.kind} secret ${name}`, cause),
+                  ),
+                );
+              values[name] = redactMcpSecretValue(value);
+              continue;
+            }
+
+            nextSecretKeys.add(secretName);
+            if (!value.valueRedacted) {
+              if (value.value.length > 0) {
+                yield* secretStore
+                  .set(secretName, textEncoder.encode(value.value))
+                  .pipe(
+                    Effect.mapError((cause) =>
+                      toSettingsError(`failed to persist MCP ${input.kind} secret ${name}`, cause),
+                    ),
+                  );
+                values[name] = { ...value, value: "", valueRedacted: true };
+              } else {
+                yield* secretStore
+                  .remove(secretName)
+                  .pipe(
+                    Effect.mapError((cause) =>
+                      toSettingsError(`failed to remove MCP ${input.kind} secret ${name}`, cause),
+                    ),
+                  );
+                const { valueRedacted: _omit, ...rest } = value;
+                values[name] = rest;
+              }
+              continue;
+            }
+
+            values[name] = redactMcpSecretValue(value);
+          }
+          return values;
+        });
+
+      const persistServer = (
+        server: McpServerDefinition,
+      ): Effect.Effect<McpServerDefinition, ServerSettingsError> => {
+        switch (server.transport) {
+          case "stdio":
+            return persistSecretMap({
+              serverId: server.id,
+              kind: "env",
+              values: server.env,
+            }).pipe(
+              Effect.map(
+                (env) => ({ ...server, env: env as McpEnvironment }) satisfies McpServerDefinition,
+              ),
+            );
+          case "sse":
+          case "http":
+            return persistSecretMap({
+              serverId: server.id,
+              kind: "header",
+              values: server.headers,
+            }).pipe(
+              Effect.map(
+                (headers) =>
+                  ({
+                    ...server,
+                    headers: headers as McpHeaders,
+                  }) satisfies McpServerDefinition,
+              ),
+            );
+        }
+      };
+
+      const servers = yield* Effect.forEach(next.mcp.servers, persistServer);
+
+      for (const server of current.mcp.servers) {
+        const staleValues =
+          server.transport === "stdio"
+            ? Object.entries(server.env).map(([name, value]) => ({
+                kind: "env" as const,
+                name,
+                value,
+              }))
+            : Object.entries(server.headers).map(([name, value]) => ({
+                kind: "header" as const,
+                name,
+                value,
+              }));
+
+        for (const { kind, name, value } of staleValues) {
+          if (!value.sensitive) continue;
+          const secretName = mcpSecretName({ serverId: server.id, kind, name });
+          if (nextSecretKeys.has(secretName)) continue;
+          yield* secretStore
+            .remove(secretName)
+            .pipe(
+              Effect.mapError((cause) =>
+                toSettingsError(`failed to remove stale MCP ${kind} secret ${name}`, cause),
+              ),
+            );
+        }
+      }
+
+      return {
+        ...next,
+        mcp: {
+          ...next.mcp,
+          servers,
+        },
+      };
+    });
+
+  const persistSpeechTranscriptionSecrets = (
+    next: ServerSettings,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    Effect.gen(function* () {
+      const apiKey = next.speechTranscription.assemblyAi.apiKey;
+      if (apiKey.value.length > 0) {
+        yield* secretStore
+          .set(ASSEMBLY_AI_API_KEY_SECRET_NAME, textEncoder.encode(apiKey.value))
+          .pipe(
+            Effect.mapError((cause) =>
+              toSettingsError("failed to persist AssemblyAI API key secret", cause),
+            ),
+          );
+        return {
+          ...next,
+          speechTranscription: redactSpeechTranscriptionSettings({
+            ...next.speechTranscription,
+            assemblyAi: {
+              ...next.speechTranscription.assemblyAi,
+              apiKey: { value: apiKey.value, valueRedacted: true },
+            },
+          }),
+        };
+      }
+      if (apiKey.valueRedacted) {
+        return {
+          ...next,
+          speechTranscription: redactSpeechTranscriptionSettings(next.speechTranscription),
+        };
+      }
+      yield* secretStore
+        .remove(ASSEMBLY_AI_API_KEY_SECRET_NAME)
+        .pipe(
+          Effect.mapError((cause) =>
+            toSettingsError("failed to remove AssemblyAI API key secret", cause),
+          ),
+        );
+      return {
+        ...next,
+        speechTranscription: {
+          ...next.speechTranscription,
+          assemblyAi: {
+            ...next.speechTranscription.assemblyAi,
+            apiKey: { value: "" },
+          },
+        },
+      };
+    });
+
   const writeSettingsAtomically = Effect.fnUntraced(
     function* (settings: ServerSettings) {
       const sparseSettingsJson = yield* encodeServerSettingsJson(
@@ -830,29 +1441,42 @@ const make = Effect.gen(function* () {
     yield* Deferred.succeed(startedDeferred, undefined).pipe(Effect.orDie);
   });
 
+  const modifySettings: ServerSettingsService["Service"]["modifySettings"] = (modify) =>
+    writeSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        const current = yield* getSettingsFromCache;
+        const requested = yield* modify(current);
+        const sanitizedRequested = yield* sanitizeOpenRouterProviderInstances(requested);
+        const nextWithProviderSecrets = yield* persistProviderEnvironmentSecrets(
+          current,
+          sanitizedRequested,
+        );
+        const nextWithMcpSecrets = yield* persistMcpSecretValues(current, nextWithProviderSecrets);
+        const nextPersisted = yield* persistSpeechTranscriptionSecrets(nextWithMcpSecrets);
+        const next = yield* normalizeServerSettings(nextPersisted);
+        yield* writeSettingsAtomically(next);
+        yield* Cache.set(settingsCache, cacheKey, next);
+        yield* emitChange(next);
+        const materialized = yield* materializeProviderEnvironmentSecrets(next).pipe(
+          Effect.flatMap(materializeMcpSecretValues),
+          Effect.flatMap(materializeSpeechTranscriptionSecrets),
+        );
+        return resolveTextGenerationProvider(materialized);
+      }),
+    );
+
   return {
     start,
     ready: Deferred.await(startedDeferred),
     getSettings: getSettingsFromCache.pipe(
       Effect.flatMap(materializeProviderEnvironmentSecrets),
+      Effect.flatMap(materializeMcpSecretValues),
+      Effect.flatMap(materializeSpeechTranscriptionSecrets),
       Effect.map(resolveTextGenerationProvider),
     ),
     updateSettings: (patch) =>
-      writeSemaphore.withPermits(1)(
-        Effect.gen(function* () {
-          const current = yield* getSettingsFromCache;
-          const nextPersisted = yield* persistProviderEnvironmentSecrets(
-            current,
-            applyServerSettingsPatch(current, patch),
-          );
-          const next = yield* normalizeServerSettings(nextPersisted);
-          yield* writeSettingsAtomically(next);
-          yield* Cache.set(settingsCache, cacheKey, next);
-          yield* emitChange(next);
-          const materialized = yield* materializeProviderEnvironmentSecrets(next);
-          return resolveTextGenerationProvider(materialized);
-        }),
-      ),
+      modifySettings((current) => Effect.succeed(applyServerSettingsPatch(current, patch))),
+    modifySettings,
     get streamChanges() {
       return materializeChanges(Stream.fromPubSub(changesPubSub));
     },
