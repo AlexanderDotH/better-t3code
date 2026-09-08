@@ -1,9 +1,9 @@
-import { readFileSync } from "node:fs";
+import * as NodeFS from "node:fs";
 import { describe, expect, it } from "vite-plus/test";
 import { parse } from "yaml";
 
 const readWorkflow = (name: string) =>
-  parse(readFileSync(new URL(`../.github/workflows/${name}`, import.meta.url), "utf8"));
+  parse(NodeFS.readFileSync(new URL(`../.github/workflows/${name}`, import.meta.url), "utf8"));
 
 describe("fork automation policy", () => {
   it("requires upstream or explicit opt-in for every production job", () => {
@@ -19,6 +19,19 @@ describe("fork automation policy", () => {
         expect(job.if, name).toContain("vars.T3_ENABLE_PRODUCTION_AUTOMATION == 'true'");
       }
     }
+  });
+  it("blocks release publication on Windows startup and update verification", () => {
+    const jobs = readWorkflow("release.yml").jobs;
+    expect(jobs.publish_cli.needs).toContain("windows_update_smoke");
+    expect(jobs.publish_cli.if).toContain("needs.windows_update_smoke.result == 'success'");
+    const commands = (job: { steps: Array<{ run?: string }> }) =>
+      job.steps.flatMap((step) => step.run ?? []).join("\n");
+    expect(commands(jobs.build)).toContain("windows-desktop-release-smoke.ps1");
+    expect(commands(jobs.build)).toContain("--wsl-resource-monitor-prebuild");
+    expect(commands(jobs.windows_update_smoke)).toContain("-Mode update");
+    expect(commands(jobs.windows_update_smoke)).toContain(
+      "windows-task-scheduler-service-smoke.ps1",
+    );
   });
   it("uses hosted runners for fork previews", () => {
     for (const name of [
