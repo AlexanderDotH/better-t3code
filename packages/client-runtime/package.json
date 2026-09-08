@@ -250,6 +250,14 @@
     "./interface-language-sync": {
       "types": "./src/interfaceLanguageSync.ts",
       "default": "./src/interfaceLanguageSync.ts"
+    },
+    "./model-options": {
+      "types": "./src/modelOptions.ts",
+      "default": "./src/modelOptions.ts"
+    },
+    "./openrouter-model-selection": {
+      "types": "./src/openRouterModelSelection.ts",
+      "default": "./src/openRouterModelSelection.ts"
     }
   },
   "scripts": {
