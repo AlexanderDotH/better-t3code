@@ -1,3 +1,5 @@
+import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import type { DesktopUpdateState } from "@t3tools/contracts";
 import { TriangleAlertIcon } from "lucide-react";
 import { type ComponentProps, useCallback, useEffect, useId, useRef, useState } from "react";
@@ -12,7 +14,6 @@ import {
   canCheckForUpdate,
   getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
-  getDesktopUpdateButtonTooltip,
   getDesktopUpdateInstallConfirmationMessage,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
@@ -61,6 +62,50 @@ export function openSidebarUpdateReleaseNotesPopoverOnForwardTab(
   flushSync(() => handle.open(triggerId));
 }
 
+function localizedUpdateTooltip(
+  state: NonNullable<ReturnType<typeof useDesktopUpdateState>>,
+  translator: InterfaceTranslator,
+): string {
+  if (state.status === "available") {
+    return state.availableVersion
+      ? translator.message("sidebar.update.versionReadyToDownload", {
+          version: state.availableVersion,
+        })
+      : translator.message("sidebar.update.readyToDownload");
+  }
+  if (state.status === "downloading") {
+    return typeof state.downloadPercent === "number"
+      ? translator.message("sidebar.update.downloadingProgress", {
+          percent: Math.floor(state.downloadPercent),
+        })
+      : translator.message("sidebar.update.downloading");
+  }
+  if (state.status === "downloaded") {
+    return translator.message("sidebar.update.downloaded", {
+      version: state.downloadedVersion ?? state.availableVersion ?? "",
+    });
+  }
+  if (state.status === "error") {
+    if (state.errorContext === "download" && state.availableVersion) {
+      return translator.message("sidebar.update.downloadRetry", {
+        version: state.availableVersion,
+      });
+    }
+    if (state.errorContext === "install" && state.downloadedVersion) {
+      return translator.message("sidebar.update.installRetry", {
+        version: state.downloadedVersion,
+      });
+    }
+    if (state.downloadedVersion) {
+      return translator.message("sidebar.update.downloaded", {
+        version: state.downloadedVersion,
+      });
+    }
+    return state.message ?? translator.message("sidebar.update.failed");
+  }
+  return translator.message("sidebar.update.current");
+}
+
 function resolveSidebarUpdatePresentation({
   action,
   isDownloading,
@@ -93,6 +138,7 @@ export function SidebarUpdateArchitectureWarning() {
 }
 
 function SidebarUpdateArchitectureWarningContent() {
+  const translator = useInterfaceTranslator();
   const state = useDesktopUpdateState();
   const visible = shouldShowArm64IntelBuildWarning(state);
   const description = state && visible ? getArm64IntelBuildWarningDescription(state) : null;
@@ -102,7 +148,7 @@ function SidebarUpdateArchitectureWarningContent() {
   return (
     <Alert variant="warning" className="rounded-2xl border-warning/40 bg-warning/8 text-xs">
       <TriangleAlertIcon />
-      <AlertTitle>Intel build on Apple Silicon</AlertTitle>
+      <AlertTitle>{translator.message("sidebar.update.intelOnAppleSilicon")}</AlertTitle>
       <AlertDescription>{description}</AlertDescription>
     </Alert>
   );
@@ -113,6 +159,7 @@ export function SidebarUpdatePill() {
 }
 
 function SidebarUpdateControl() {
+  const translator = useInterfaceTranslator();
   const state = useDesktopUpdateState();
   const [isActionPending, setIsActionPending] = useState(false);
   const [checkAnimationKey, setCheckAnimationKey] = useState(0);
@@ -145,11 +192,11 @@ function SidebarUpdateControl() {
   });
   const tooltip = showUpdateDetails
     ? state
-      ? getDesktopUpdateButtonTooltip(state)
-      : "Update available"
+      ? localizedUpdateTooltip(state, translator)
+      : translator.message("sidebar.update.available")
     : showCheckIcon
-      ? "Checking for updates…"
-      : "Check for updates";
+      ? translator.message("sidebar.update.checking")
+      : translator.message("sidebar.update.check");
   const disabled = showCheckIcon
     ? true
     : showUpdateDetails
@@ -193,7 +240,7 @@ function SidebarUpdateControl() {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Could not download update",
+              title: translator.message("sidebar.update.downloadFailed"),
               description: actionError,
             }),
           );
@@ -202,8 +249,11 @@ function SidebarUpdateControl() {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Could not start update download",
-              description: error instanceof Error ? error.message : "An unexpected error occurred.",
+              title: translator.message("sidebar.update.downloadStartFailed"),
+              description:
+                error instanceof Error
+                  ? error.message
+                  : translator.message("sidebar.error.unexpected"),
             }),
           );
         })
@@ -222,8 +272,11 @@ function SidebarUpdateControl() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not confirm update",
-            description: error instanceof Error ? error.message : "Update confirmation failed.",
+            title: translator.message("sidebar.update.confirmFailed"),
+            description:
+              error instanceof Error
+                ? error.message
+                : translator.message("sidebar.update.confirmFailed"),
           }),
         );
         return;
@@ -241,7 +294,7 @@ function SidebarUpdateControl() {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Could not install update",
+              title: translator.message("sidebar.update.installFailed"),
               description: actionError,
             }),
           );
@@ -250,8 +303,11 @@ function SidebarUpdateControl() {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Could not install update",
-              description: error instanceof Error ? error.message : "An unexpected error occurred.",
+              title: translator.message("sidebar.update.installFailed"),
+              description:
+                error instanceof Error
+                  ? error.message
+                  : translator.message("sidebar.error.unexpected"),
             }),
           );
         })
@@ -286,7 +342,7 @@ function SidebarUpdateControl() {
         );
       })
       .finally(() => setIsActionPending(false));
-  }, [action, isInteractionDisabled, prefersReducedMotion, state]);
+  }, [action, isInteractionDisabled, prefersReducedMotion, state, translator]);
 
   const handleCheckAnimationIteration = useCallback(() => {
     setIsCheckAnimationLatched(

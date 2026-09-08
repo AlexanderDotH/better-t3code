@@ -10,6 +10,13 @@ vi.mock("../ui/toast", () => ({
   toastManager: { add: testState.addToast },
 }));
 
+vi.mock("../../hooks/useInterfaceTranslator", async () => {
+  const { createInterfaceTranslator } = await import("@t3tools/shared/interfaceLanguage");
+  return {
+    useInterfaceTranslator: () => createInterfaceTranslator({ language: "en", locale: "en-US" }),
+  };
+});
+
 import { SidebarUpdateReleaseNotes } from "./SidebarUpdateReleaseNotes";
 
 type AnchorElement = ReactElement<{
