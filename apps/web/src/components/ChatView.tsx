@@ -1,3 +1,4 @@
+import { resolvePromptForSend } from "@t3tools/client-runtime/prompt-improvement";
 import { ThreadSubagents } from "./ThreadSubagents";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
@@ -1398,6 +1399,12 @@ export default function ChatView(props: ChatViewProps) {
     [environmentId, threadId],
   );
   const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
+  const activePromptRouteRef = useRef(routeThreadKey);
+  useLayoutEffect(() => {
+    activePromptRouteRef.current = routeThreadKey;
+  }, [routeThreadKey]);
+  const [isImprovingPrompt, setIsImprovingPrompt] = useState(false);
+  const improvePrompt = useAtomCommand(serverEnvironment.improvePrompt, { reportFailure: false });
   const updateProjectScriptSettings = useAtomCommand(serverEnvironment.updateSettings, {
     reportFailure: false,
   });
@@ -2906,7 +2913,7 @@ export default function ChatView(props: ChatViewProps) {
     localDispatchStartedAt,
     latestUserMessageAt,
     isPreparingWorktree,
-    isSendBusy,
+    isSendBusy: localDispatchBusy,
     backgroundSubmissionPending,
   } = useLocalDispatchState({
     activeThread,
@@ -2916,6 +2923,7 @@ export default function ChatView(props: ChatViewProps) {
     activePendingUserInput: activePendingUserInput?.requestId ?? null,
     threadError,
   });
+  const isSendBusy = localDispatchBusy || isImprovingPrompt;
   const optimisticCompactionMessage = optimisticUserMessages.at(-1);
   const pendingCompactionMessage =
     isSendBusy &&
@@ -6671,6 +6679,38 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
 
+    let messagePromptForSend = promptForSend;
+    if (settings.improvePromptBeforeSend && trimmed.length > 0) {
+      sendInFlightRef.current = true;
+      setIsImprovingPrompt(true);
+      try {
+        messagePromptForSend = await resolvePromptForSend({
+          prompt: promptForSend,
+          improve: async (text) => {
+            const result = await improvePrompt({
+              environmentId,
+              input: { projectId: activeThread.projectId, text },
+            });
+            if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+            return result.value.text;
+          },
+        });
+      } catch (error) {
+        if (activePromptRouteRef.current === routeThreadKey) {
+          setThreadError(
+            threadIdForSend,
+            error instanceof Error ? error.message : "Could not improve the prompt.",
+          );
+        }
+        return;
+      } finally {
+        sendInFlightRef.current = false;
+        setIsImprovingPrompt(false);
+      }
+      if (activePromptRouteRef.current !== routeThreadKey || promptRef.current !== promptForSend)
+        return;
+    }
+
     const composerImagesSnapshot = [...composerImages];
     const composerFilesSnapshot = [...composerFiles];
     const composerAttachmentsSnapshot = [...composerImagesSnapshot, ...composerFilesSnapshot];
@@ -6679,7 +6719,7 @@ export default function ChatView(props: ChatViewProps) {
     const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
     const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...composerReviewComments];
     const messageTextWithContexts = appendElementContextsToPrompt(
-      appendTerminalContextsToPrompt(promptForSend, composerTerminalContextsSnapshot),
+      appendTerminalContextsToPrompt(messagePromptForSend, composerTerminalContextsSnapshot),
       composerElementContextsSnapshot,
     );
     const messageTextWithPreviewAnnotations = composerPreviewAnnotationsSnapshot.reduce(
@@ -6890,7 +6930,7 @@ export default function ChatView(props: ChatViewProps) {
         firstComposerImageName = firstComposerImage.name;
       }
     }
-    let titleSeed = assistantCitationsToPlainText(trimmed);
+    let titleSeed = assistantCitationsToPlainText(messagePromptForSend.trim());
     if (!titleSeed) {
       if (firstComposerImageName) {
         titleSeed = `Image: ${firstComposerImageName}`;

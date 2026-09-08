@@ -491,6 +491,17 @@ export function VoiceInputSettings() {
           }
         />
         <SettingsRow
+          title="Improve prompts before sending"
+          description="Use the text generation model to clarify your prompt before starting a turn."
+          control={
+            <Switch
+              checked={settings.improvePromptBeforeSend}
+              onCheckedChange={(enabled) => updateSettings({ improvePromptBeforeSend: enabled })}
+              aria-label="Improve prompts before sending"
+            />
+          }
+        />
+        <SettingsRow
           title="Dictation output"
           description="Keep the spoken language or translate the finished transcript into English."
           control={
