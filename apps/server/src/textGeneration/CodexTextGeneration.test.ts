@@ -13,7 +13,10 @@ import { CodexSettings, ProviderInstanceId, TextGenerationError } from "@t3tools
 
 import * as ServerConfig from "../config.ts";
 import * as TextGeneration from "./TextGeneration.ts";
-import { makeCodexTextGeneration } from "./CodexTextGeneration.ts";
+import {
+  classifyCodexTextGenerationModelFailure,
+  makeCodexTextGeneration,
+} from "./CodexTextGeneration.ts";
 import { writeFakeCli } from "../testUtils/fakeCli.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
@@ -38,6 +41,7 @@ interface FakeCodexInput {
   forbidArg?: string;
   stdinMustContain?: string;
   stdinMustNotContain?: string;
+  cwdMustDifferFrom?: string;
 }
 
 // The stub walks argv the way the shell script it replaced did: `--image`,
@@ -55,6 +59,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
     stdinMustContain: input.stdinMustContain ?? null,
     stdinMustNotContain: input.stdinMustNotContain ?? null,
     stderr: input.stderr ?? null,
+    cwdMustDifferFrom: input.cwdMustDifferFrom ?? null,
     output: input.output,
     exitCode: input.exitCode ?? 0,
   });
@@ -66,6 +71,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
       source: [
         'import * as NodeFS from "node:fs";',
         `const check = ${check};`,
+        'if (check.cwdMustDifferFrom && NodeFS.realpathSync(process.cwd()) === NodeFS.realpathSync(check.cwdMustDifferFrom)) throw new Error("cwd was not isolated");',
         "const args = process.argv.slice(2);",
         'const originalArgs = ` ${args.join(" ")} `;',
         "let outputPath = null;",
@@ -142,10 +148,21 @@ function withFakeCodexEnv<A, E, R>(
     const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-codex-text-" });
     const codexPath = yield* makeFakeCodexBinary(tempDir, input);
     const config = decodeCodexSettings({ binaryPath: codexPath, launchArgs: input.launchArgs });
-    const textGeneration = yield* makeCodexTextGeneration(config, input.environment);
+    const textGeneration = yield* makeCodexTextGeneration(config, {
+      ...process.env,
+      ...input.environment,
+    });
     return yield* effectFn(textGeneration);
   }).pipe(Effect.scoped);
 }
+
+it("classifies Codex Spark usage limits as rate limited", () => {
+  expect(
+    classifyCodexTextGenerationModelFailure(
+      "You've hit your usage limit for GPT-5.3-Codex-Spark. Switch to another model now, or try again at 11:47 PM.",
+    ),
+  ).toBe("rate-limited");
+});
 
 it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
   it.effect("generates and sanitizes commit messages without branch by default", () =>
@@ -172,6 +189,31 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
           expect(generated.subject.endsWith(".")).toBe(false);
           expect(generated.body).toBe("- added migration\n- updated tests");
           expect(generated.branch).toBeUndefined();
+        }),
+    ),
+  );
+
+  it.effect("routes Auto Reasoning in an isolated cwd with tools and MCP disabled", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ effort: "high" }),
+        requireArg: "--disable multi_agent -c mcp_servers={}",
+        stdinMustContain: "<t3code_auto_reasoning_call>",
+        cwdMustDifferFrom: process.cwd(),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const result = yield* textGeneration.decideAutoReasoning({
+            cwd: process.cwd(),
+            userPrompt: "Implement the smallest correct fix.",
+            interactionMode: "default",
+            attachments: [],
+            allowedEfforts: ["low", "medium", "high"],
+            conversation: [],
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
+
+          expect(result).toEqual({ effort: "high" });
         }),
     ),
   );
@@ -364,6 +406,113 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
+  it.effect("reviews plan parallelism through Codex structured output", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ recommendedSubagents: 7 }),
+        stdinMustContain: "between 2 and 12",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.reviewPlanParallelism({
+            cwd: process.cwd(),
+            planMarkdown: "## Server\nImplement the RPC.\n\n## Web\nAdd the review state.",
+            userRequest: "Implement the complete plan.",
+            maxSubagents: 12,
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
+
+          expect(generated).toEqual({ recommendedSubagents: 7 });
+        }),
+    ),
+  );
+
+  it.effect("plans Fetch exploration with the exact Codex traits and provider budget", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          decision: "run",
+          workers: [{ scope: "Server routing", questions: ["Where is Fetch routed?"] }],
+        }),
+        stdinMustContain: "between 1 and 10 workers",
+        requireReasoningEffort: "high",
+        requireArg: "--disable multi_agent -c mcp_servers={}",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.planFetchExploration({
+            cwd: process.cwd(),
+            userRequest: "Trace Fetch routing.",
+            repositoryOrientation: "Top-level areas: apps/server",
+            maxRecommendedWorkers: 10,
+            modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.6-luna", [
+              { id: "reasoningEffort", value: "high" },
+            ]),
+          });
+
+          expect(generated).toEqual({
+            decision: "run",
+            workers: [{ scope: "Server routing", questions: ["Where is Fetch routed?"] }],
+          });
+        }),
+    ),
+  );
+
+  it.effect("types Codex account-access failures as entitlement errors", () =>
+    withFakeCodexEnv(
+      {
+        output: "",
+        exitCode: 1,
+        stderr:
+          "The 'gpt-5.3-codex-spark' model is not supported when using Codex with this ChatGPT account.",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const error = yield* textGeneration
+            .planFetchExploration({
+              cwd: process.cwd(),
+              userRequest: "Inspect the repository.",
+              repositoryOrientation: "Repository orientation",
+              maxRecommendedWorkers: 8,
+              modelSelection: createModelSelection(
+                ProviderInstanceId.make("codex"),
+                "gpt-5.3-codex-spark",
+              ),
+            })
+            .pipe(Effect.flip);
+
+          expect(error.reason).toBe("entitlement");
+        }),
+    ),
+  );
+
+  it.effect("types Codex missing-model failures as model unavailable", () =>
+    withFakeCodexEnv(
+      {
+        output: "",
+        exitCode: 1,
+        stderr: "Model gpt-5.3-codex-spark was not found.",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const error = yield* textGeneration
+            .planFetchExploration({
+              cwd: process.cwd(),
+              userRequest: "Inspect the repository.",
+              repositoryOrientation: "Repository orientation",
+              maxRecommendedWorkers: 8,
+              modelSelection: createModelSelection(
+                ProviderInstanceId.make("codex"),
+                "gpt-5.3-codex-spark",
+              ),
+            })
+            .pipe(Effect.flip);
+
+          expect(error.reason).toBe("model-unavailable");
+        }),
+    ),
+  );
+
   it.effect("falls back when thread title normalization becomes whitespace-only", () =>
     withFakeCodexEnv(
       {
@@ -425,13 +574,13 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("passes image attachments through as codex image inputs", () =>
+  it.effect("keeps branch-name image attachments as metadata without passing --image", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({
           branch: "fix/ui-regression",
         }),
-        requireImage: true,
+        forbidArg: "--image",
         stdinMustContain: "Attachment metadata:",
       },
       (textGeneration) =>
@@ -464,94 +613,73 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("resolves persisted attachment ids to files for codex image inputs", () =>
+  it.effect("keeps thread-title image attachments as metadata without passing --image", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({
-          branch: "fix/ui-regression",
+          title: "Fix UI regression",
         }),
-        requireImage: true,
+        forbidArg: "--image",
+        stdinMustContain: "Attachment metadata:",
       },
       (textGeneration) =>
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const { attachmentsDir } = yield* ServerConfig.ServerConfig;
-          const attachmentId = "thread-1-attachment";
-          const imagePath = path.join(attachmentsDir, `${attachmentId}.png`);
+          const attachmentId = "thread-title-image-attachment";
+          const attachmentPath = path.join(attachmentsDir, `${attachmentId}.png`);
           yield* fs.makeDirectory(attachmentsDir, { recursive: true });
-          yield* fs.writeFile(imagePath, Buffer.from("hello"));
+          yield* fs.writeFile(attachmentPath, Buffer.from("hello"));
 
-          const generated = yield* textGeneration
-            .generateBranchName({
-              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-              cwd: process.cwd(),
-              message: "Fix layout bug from screenshot.",
-              attachments: [
-                {
-                  type: "image",
-                  id: attachmentId,
-                  name: "bug.png",
-                  mimeType: "image/png",
-                  sizeBytes: 5,
-                },
-              ],
-            })
-            .pipe(
-              Effect.tap(() =>
-                fs.stat(imagePath).pipe(
-                  Effect.map((fileInfo) => {
-                    expect(fileInfo.type).toBe("File");
-                  }),
-                ),
-              ),
-              Effect.ensuring(fs.remove(imagePath).pipe(Effect.catch(() => Effect.void))),
-            );
+          const generated = yield* textGeneration.generateThreadTitle({
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+            cwd: process.cwd(),
+            message: "Fix layout bug from screenshot.",
+            attachments: [
+              {
+                type: "image",
+                id: attachmentId,
+                name: "bug.png",
+                mimeType: "image/png",
+                sizeBytes: 5,
+              },
+            ],
+          });
 
-          expect(generated.branch).toBe("fix/ui-regression");
+          expect(generated.title).toBe("Fix UI regression");
         }),
     ),
   );
 
-  it.effect("ignores missing attachment ids for codex image inputs", () =>
+  it.effect("does not read missing attachment files for metadata-only naming prompts", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({
           branch: "fix/ui-regression",
         }),
-        requireImage: true,
+        forbidArg: "--image",
+        stdinMustContain: "Attachment metadata:",
       },
       (textGeneration) =>
         Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const { attachmentsDir } = yield* ServerConfig.ServerConfig;
           const missingAttachmentId = "thread-missing-attachment";
-          const missingPath = path.join(attachmentsDir, `${missingAttachmentId}.png`);
-          yield* fs.remove(missingPath).pipe(Effect.catch(() => Effect.void));
+          const generated = yield* textGeneration.generateBranchName({
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+            cwd: process.cwd(),
+            message: "Fix layout bug from screenshot.",
+            attachments: [
+              {
+                type: "image",
+                id: missingAttachmentId,
+                name: "outside.png",
+                mimeType: "image/png",
+                sizeBytes: 5,
+              },
+            ],
+          });
 
-          const result = yield* textGeneration
-            .generateBranchName({
-              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-              cwd: process.cwd(),
-              message: "Fix layout bug from screenshot.",
-              attachments: [
-                {
-                  type: "image",
-                  id: missingAttachmentId,
-                  name: "outside.png",
-                  mimeType: "image/png",
-                  sizeBytes: 5,
-                },
-              ],
-            })
-            .pipe(Effect.result);
-
-          expect(Result.isFailure(result)).toBe(true);
-          if (Result.isFailure(result)) {
-            expect(result.failure).toBeInstanceOf(TextGenerationError);
-            expect(result.failure.message).toContain("missing --image input");
-          }
+          expect(generated.branch).toBe("fix/ui-regression");
         }),
     ),
   );

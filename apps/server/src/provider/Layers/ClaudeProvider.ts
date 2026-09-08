@@ -1,3 +1,4 @@
+import { getProviderOptionDescriptors, getProviderOptionCurrentValue } from "@t3tools/shared/model";
 import {
   type ClaudeSettings,
   type ModelCapabilities,
@@ -33,6 +34,11 @@ import {
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
+import {
+  resolveClaudeDiscoveredModels,
+  type ClaudeDiscoveredModel,
+} from "../Drivers/ClaudeDiscoveredModels.ts";
+import type { ClaudeGatewayCatalog } from "../Drivers/ClaudeGatewayCatalog.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
 import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
@@ -43,6 +49,7 @@ import {
 } from "./claudeUsageLimits.ts";
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
+  normalizeClaudeCatalogEffort,
   type ClaudeModelCatalog,
   formatClaudeVersionUpgradeMessage,
   resolveClaudeModelsForVersion,
@@ -55,6 +62,14 @@ const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabili
 const CLAUDE_PRESENTATION = {
   displayName: "Claude",
   showInteractionModeToggle: true,
+  nativeSubagents: {
+    toolName: "Agent",
+    maxRecommendedSubagents: 8,
+  },
+  fetchWorkers: {
+    maxRecommendedWorkers: 8,
+    commandExecutionPolicy: "deny",
+  },
 } as const;
 function toTitleCaseWords(value: string): string {
   const parts: Array<string> = [];
@@ -223,6 +238,58 @@ function nonEmptyProbeString(value: string): string | undefined {
   return candidate ? candidate : undefined;
 }
 
+function optionalProbeString(value: unknown): string | undefined {
+  return typeof value === "string" ? nonEmptyProbeString(value) : undefined;
+}
+
+function parseSupportedEffortLevels(value: unknown): ReadonlyArray<string> | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.flatMap((effort) => {
+    const parsed = optionalProbeString(effort);
+    return parsed ? [parsed] : [];
+  });
+}
+
+function parseClaudeInitializationModel(value: unknown): ClaudeDiscoveredModel | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const model = value as Record<string, unknown>;
+  const modelId = optionalProbeString(model.value);
+  const displayName = optionalProbeString(model.displayName);
+  if (!modelId || !displayName) return undefined;
+
+  const resolvedModel = optionalProbeString(model.resolvedModel);
+  const description = optionalProbeString(model.description);
+  const supportedEffortLevels = parseSupportedEffortLevels(model.supportedEffortLevels);
+
+  return {
+    value: modelId,
+    displayName,
+    ...(resolvedModel ? { resolvedModel } : {}),
+    ...(description ? { description } : {}),
+    ...(typeof model.supportsEffort === "boolean" ? { supportsEffort: model.supportsEffort } : {}),
+    ...(supportedEffortLevels ? { supportedEffortLevels } : {}),
+    ...(typeof model.supportsAdaptiveThinking === "boolean"
+      ? { supportsAdaptiveThinking: model.supportsAdaptiveThinking }
+      : {}),
+    ...(typeof model.supportsFastMode === "boolean"
+      ? { supportsFastMode: model.supportsFastMode }
+      : {}),
+    ...(typeof model.supportsAutoMode === "boolean"
+      ? { supportsAutoMode: model.supportsAutoMode }
+      : {}),
+  };
+}
+
+export function parseClaudeInitializationModels(
+  value: unknown,
+): ReadonlyArray<ClaudeDiscoveredModel> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((model) => {
+    const parsed = parseClaudeInitializationModel(model);
+    return parsed ? [parsed] : [];
+  });
+}
+
 type ClaudeCapabilitiesProbe = {
   readonly email: string | undefined;
   readonly subscriptionType: string | undefined;
@@ -240,6 +307,7 @@ type ClaudeCapabilitiesProbe = {
    * otherwise successful response mean the account has none (API key).
    */
   readonly usage?: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">;
+  readonly models: ReadonlyArray<ClaudeDiscoveredModel>;
 };
 
 function parseClaudeInitializationCommands(
@@ -385,6 +453,7 @@ const probeClaudeCapabilities = (
           tokenSource: account?.tokenSource,
           apiProvider: account?.apiProvider,
           slashCommands: parseClaudeInitializationCommands(init.commands),
+          models: parseClaudeInitializationModels(init.models),
           ...(usage ? { usage } : {}),
         } satisfies ClaudeCapabilitiesProbe;
       }),
@@ -425,6 +494,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   modelCatalog: ClaudeModelCatalog = BUNDLED_CLAUDE_MODEL_CATALOG,
   /** Shared with the adapter so turn events reuse the scoped-bucket names this probe saw. */
   scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>,
+  resolveGatewayCatalog?: (
+    claudeSettings: ClaudeSettings,
+  ) => Effect.Effect<ClaudeGatewayCatalog | undefined, Error>,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -522,16 +594,25 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
+  const builtInModels = resolveClaudeModelsForVersion(modelCatalog, parsedVersion);
+  const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(modelCatalog, parsedVersion);
+
+  const { capabilities, gatewayCatalog } = yield* Effect.all(
+    {
+      capabilities: resolveCapabilities
+        ? resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
+        : Effect.succeed(undefined),
+      gatewayCatalog: resolveGatewayCatalog
+        ? resolveGatewayCatalog(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
+        : Effect.succeed(undefined),
+    },
+    { concurrency: "unbounded" },
+  );
   const models = providerModelsFromSettings(
-    resolveClaudeModelsForVersion(modelCatalog, parsedVersion),
+    resolveClaudeDiscoveredModels(builtInModels, capabilities?.models ?? [], gatewayCatalog),
     claudeSettings.customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
-  const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(modelCatalog, parsedVersion);
-
-  const capabilities = resolveCapabilities
-    ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
-    : undefined;
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
   const slashCommands = [COMPACT_SLASH_COMMAND, ...(capabilities?.slashCommands ?? [])];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
@@ -635,3 +716,30 @@ export const makePendingClaudeProvider = (
   });
 
 export { probeClaudeCapabilities };
+
+export function resolveClaudeEffort(
+  caps: ModelCapabilities,
+  raw: string | null | undefined,
+): string | undefined {
+  const descriptor = getProviderOptionDescriptors({
+    caps,
+    ...(raw ? { selections: [{ id: "effort", value: raw }] } : {}),
+  }).find((entry) => entry.id === "effort");
+  const value = getProviderOptionCurrentValue(descriptor);
+  return typeof value === "string" ? value : undefined;
+}
+
+export function normalizeClaudeCliEffort(
+  effort: string | null | undefined,
+  model: string | null | undefined,
+  capabilities?: ModelCapabilities,
+): string | undefined {
+  if (
+    capabilities &&
+    !BUNDLED_CLAUDE_MODEL_CATALOG.models.some((entry) => entry.model.slug === model) &&
+    effort &&
+    resolveClaudeEffort(capabilities, effort) === effort
+  )
+    return effort;
+  return normalizeClaudeCatalogEffort(BUNDLED_CLAUDE_MODEL_CATALOG, effort, model);
+}

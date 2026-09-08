@@ -2,25 +2,41 @@ import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as PubSub from "effect/PubSub";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
 
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { KnowledgeGraphSemanticModelRequestV1, ProviderInstanceId } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 
+const decodeKnowledgeGraphSemanticModelRequest = Schema.decodeUnknownSync(
+  KnowledgeGraphSemanticModelRequestV1,
+);
+
 const makeStubTextGeneration = (
   overrides: Partial<TextGeneration.TextGeneration["Service"]>,
 ): TextGeneration.TextGeneration["Service"] =>
   TextGeneration.TextGeneration.of({
+    decideAutoReasoning: () => Effect.die("decideAutoReasoning stub not configured for this test"),
     generateCommitMessage: () =>
       Effect.die("generateCommitMessage stub not configured for this test"),
     generatePrContent: () => Effect.die("generatePrContent stub not configured for this test"),
     generateBranchName: () => Effect.die("generateBranchName stub not configured for this test"),
+    generateThreadMetadata: () =>
+      Effect.die("generateThreadMetadata stub not configured for this test"),
     generateThreadTitle: () => Effect.die("generateThreadTitle stub not configured for this test"),
+    translateTranscriptToEnglish: () =>
+      Effect.die("translateTranscriptToEnglish stub not configured for this test"),
+    improvePrompt: () => Effect.die("improvePrompt stub not configured for this test"),
+    reviewPlanParallelism: () =>
+      Effect.die("reviewPlanParallelism stub not configured for this test"),
+    planFetchExploration: () =>
+      Effect.die("planFetchExploration stub not configured for this test"),
+    enrichKnowledgeGraph: () => Effect.die("enrichKnowledgeGraph stub not configured"),
     ...overrides,
   });
 
@@ -92,6 +108,252 @@ describe("makeTextGenerationFromRegistry", () => {
 
       expect(result.branch).toBe("personal-branch");
       expect(personalCalls).toEqual(["Refactor the routing layer"]);
+    }),
+  );
+
+  it.effect("routes combined thread metadata through the selected instance once", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("codex_primary");
+      const calls: TextGeneration.ThreadMetadataGenerationInput[] = [];
+      const instance = makeStubInstance(
+        instanceId,
+        makeStubTextGeneration({
+          generateThreadMetadata: (input) => {
+            calls.push(input);
+            return Effect.succeed({ title: "Fix reconnect handling", branch: "fix-reconnect" });
+          },
+        }),
+      );
+      const tg = TextGeneration.makeTextGenerationFromRegistry(makeStubRegistry([instance]));
+      const modelSelection = createModelSelection(instanceId, "gpt-5.6-sol");
+
+      const result = yield* tg.generateThreadMetadata({
+        cwd: process.cwd(),
+        message: "Fix reconnect handling",
+        modelSelection,
+      });
+
+      expect(result).toEqual({ title: "Fix reconnect handling", branch: "fix-reconnect" });
+      expect(calls).toEqual([
+        { cwd: process.cwd(), message: "Fix reconnect handling", modelSelection },
+      ]);
+    }),
+  );
+
+  it.effect("routes transcript translation and prompt improvement to the selected instance", () =>
+    Effect.gen(function* () {
+      const personalId = ProviderInstanceId.make("claude_personal");
+      const calls: string[] = [];
+      const personal = makeStubInstance(
+        personalId,
+        makeStubTextGeneration({
+          translateTranscriptToEnglish: (input) => {
+            calls.push(`translate:${input.text}`);
+            return Effect.succeed({ text: "Update useThreadOutbox." });
+          },
+          improvePrompt: (input) => {
+            calls.push(`improve:${input.text}`);
+            return Effect.succeed({ text: "Clarify the reconnect requirements." });
+          },
+        }),
+      );
+      const work = makeStubInstance(
+        ProviderInstanceId.make("claude_work"),
+        makeStubTextGeneration({
+          translateTranscriptToEnglish: () => Effect.succeed({ text: "wrong instance" }),
+          improvePrompt: () => Effect.succeed({ text: "wrong instance" }),
+        }),
+      );
+      const textGeneration = TextGeneration.makeTextGenerationFromRegistry(
+        makeStubRegistry([personal, work]),
+      );
+      const modelSelection = createModelSelection(personalId, "claude-sonnet-4-6");
+
+      const translated = yield* textGeneration.translateTranscriptToEnglish({
+        cwd: process.cwd(),
+        text: "Actualiza useThreadOutbox.",
+        modelSelection,
+      });
+      const improved = yield* textGeneration.improvePrompt({
+        cwd: process.cwd(),
+        text: "Clarify reconnect.",
+        modelSelection,
+      });
+
+      expect(translated).toEqual({ text: "Update useThreadOutbox." });
+      expect(improved).toEqual({ text: "Clarify the reconnect requirements." });
+      expect(calls).toEqual(["translate:Actualiza useThreadOutbox.", "improve:Clarify reconnect."]);
+    }),
+  );
+
+  it.effect("routes plan parallelism review to the selected provider instance", () =>
+    Effect.gen(function* () {
+      const reviewerId = ProviderInstanceId.make("codex_reviewer");
+      const calls: Array<{ readonly planMarkdown: string; readonly maxSubagents: number }> = [];
+      const reviewer = makeStubInstance(
+        reviewerId,
+        makeStubTextGeneration({
+          reviewPlanParallelism: (input) => {
+            calls.push({
+              planMarkdown: input.planMarkdown,
+              maxSubagents: input.maxSubagents,
+            });
+            return Effect.succeed({ recommendedSubagents: 7 });
+          },
+        }),
+      );
+      const textGeneration = TextGeneration.makeTextGenerationFromRegistry(
+        makeStubRegistry([reviewer]),
+      );
+
+      const generated = yield* textGeneration.reviewPlanParallelism({
+        cwd: "/repo/worktree",
+        planMarkdown: "## Server\nImplement the RPC.",
+        userRequest: "Implement this plan.",
+        maxSubagents: 8,
+        modelSelection: createModelSelection(reviewerId, "gpt-5.6-luna"),
+      });
+
+      expect(generated).toEqual({ recommendedSubagents: 7 });
+      expect(calls).toEqual([{ planMarkdown: "## Server\nImplement the RPC.", maxSubagents: 8 }]);
+    }),
+  );
+
+  it.effect("routes Fetch planning with the exact model selection and provider budget", () =>
+    Effect.gen(function* () {
+      const plannerId = ProviderInstanceId.make("claude_fetch");
+      const calls: TextGeneration.FetchExplorationGenerationInput[] = [];
+      const planner = makeStubInstance(
+        plannerId,
+        makeStubTextGeneration({
+          planFetchExploration: (input) => {
+            calls.push(input);
+            return Effect.succeed({
+              decision: "run",
+              workers: [{ scope: "Server routing", questions: ["Where is routing decided?"] }],
+            });
+          },
+        }),
+      );
+      const textGeneration = TextGeneration.makeTextGenerationFromRegistry(
+        makeStubRegistry([planner]),
+      );
+      const modelSelection = createModelSelection(plannerId, "claude-opus-4-6", [
+        { id: "effort", value: "high" },
+      ]);
+
+      const generated = yield* textGeneration.planFetchExploration({
+        cwd: "/repo/worktree",
+        userRequest: "Trace the routing path.",
+        repositoryOrientation: "Top-level areas: apps/server",
+        maxRecommendedWorkers: 10,
+        modelSelection,
+      });
+
+      expect(generated).toEqual({
+        decision: "run",
+        workers: [{ scope: "Server routing", questions: ["Where is routing decided?"] }],
+      });
+      expect(calls).toEqual([
+        {
+          cwd: "/repo/worktree",
+          userRequest: "Trace the routing path.",
+          repositoryOrientation: "Top-level areas: apps/server",
+          maxRecommendedWorkers: 10,
+          modelSelection,
+        },
+      ]);
+    }),
+  );
+
+  it.effect("routes Knowledge Graph enrichment to the selected provider instance", () =>
+    Effect.gen(function* () {
+      const providerId = ProviderInstanceId.make("openai_graph");
+      const request = decodeKnowledgeGraphSemanticModelRequest({
+        version: 1,
+        environmentId: "environment-graph",
+        scopeId: "scope-graph",
+        baseRevision: 1,
+        modelGeneration: 1,
+        items: [
+          {
+            sourceNode: {
+              version: 1,
+              nodeId: "node-graph",
+              scopeId: "scope-graph",
+              kind: "file",
+              label: "src/index.ts",
+              provenance: "deterministic",
+              confidence: 1,
+              evidenceIds: [],
+              nodeRevision: 1,
+            },
+            candidates: [],
+          },
+        ],
+        evidence: [],
+      });
+      const calls: TextGeneration.KnowledgeGraphEnrichmentGenerationInput[] = [];
+      const provider = makeStubInstance(
+        providerId,
+        makeStubTextGeneration({
+          enrichKnowledgeGraph: (input) => {
+            calls.push(input);
+            return Effect.succeed({ version: 1, edges: [] });
+          },
+        }),
+      );
+      const textGeneration = TextGeneration.makeTextGenerationFromRegistry(
+        makeStubRegistry([provider]),
+      );
+      const modelSelection = createModelSelection(providerId, "gpt-5.6-sol");
+
+      const result = yield* textGeneration.enrichKnowledgeGraph({ request, modelSelection });
+
+      expect(result).toEqual({ version: 1, edges: [] });
+      expect(calls).toEqual([{ request, modelSelection }]);
+    }),
+  );
+
+  it.effect("fails closed for providers without Knowledge Graph conformance", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        TextGeneration.unsupportedKnowledgeGraphEnrichment("Unverified Provider")({
+          request: decodeKnowledgeGraphSemanticModelRequest({
+            version: 1,
+            environmentId: "environment-unsupported",
+            scopeId: "scope-unsupported",
+            baseRevision: 0,
+            modelGeneration: 1,
+            items: [
+              {
+                sourceNode: {
+                  version: 1,
+                  nodeId: "node-unsupported",
+                  scopeId: "scope-unsupported",
+                  kind: "file",
+                  label: "src/index.ts",
+                  provenance: "deterministic",
+                  confidence: 1,
+                  evidenceIds: [],
+                  nodeRevision: 1,
+                },
+                candidates: [],
+              },
+            ],
+            evidence: [],
+          }),
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("unverified"),
+            "unverified-model",
+          ),
+        }),
+      );
+
+      expect(error).toMatchObject({
+        operation: "enrichKnowledgeGraph",
+        reason: "model-unavailable",
+      });
     }),
   );
 
