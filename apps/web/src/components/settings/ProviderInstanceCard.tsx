@@ -31,6 +31,11 @@ import {
   readCustomModelEntries,
   toCustomModelSetting,
 } from "@t3tools/shared/model";
+import { ProviderSubscriptionAuthBridge } from "./ProviderSubscriptionAuthBridge";
+import { deriveProviderSubscriptionPresentation } from "./ProviderSubscriptionAuth";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
+import type { EnvironmentId } from "@t3tools/contracts";
+
 import { cn } from "../../lib/utils";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { normalizeProviderAccentColor } from "../../providerInstances";
@@ -343,6 +348,8 @@ function ProviderEnvironmentSection(props: {
 }
 
 interface ProviderInstanceCardProps {
+  readonly environmentId?: EnvironmentId;
+  readonly providerAuthFlow?: "browser" | "device-code";
   readonly instanceId: ProviderInstanceId;
   readonly instance: ProviderInstanceConfig;
   readonly driverOption: DriverOption | undefined;
@@ -398,6 +405,8 @@ interface ProviderInstanceCardProps {
  *     false wins, then envelope, then config, then the driver default).
  */
 export function ProviderInstanceCard({
+  environmentId,
+  providerAuthFlow = "device-code",
   instanceId,
   instance,
   driverOption,
@@ -419,6 +428,13 @@ export function ProviderInstanceCard({
   onRunUpdate,
   isUpdating = false,
 }: ProviderInstanceCardProps) {
+  const translate = useInterfaceTranslator().message;
+  const subscriptionPresentation = deriveProviderSubscriptionPresentation({
+    providerName: instance.displayName?.trim() || driverOption?.label || String(instance.driver),
+    auth: liveProvider?.auth ?? { status: "unknown" },
+    ...(liveProvider?.message ? { message: liveProvider.message } : {}),
+    ...(liveProvider?.rateLimit ? { rateLimit: liveProvider.rateLimit } : {}),
+  });
   const enabled = resolveProviderInstanceEnabled(instance);
   // A locally disabled provider reads "Disabled" with a muted dot even if its
   // last server status is stale. Enabled providers use the server status.
@@ -679,9 +695,9 @@ export function ProviderInstanceCard({
 
   const editorHeaderAction = (
     <div className="flex shrink-0 items-center gap-1.5">
-      {driverOption?.badgeLabel ? (
+      {driverOption?.badgeMessageKey ? (
         <Badge variant="warning" size="sm" className="shrink-0">
-          {driverOption.badgeLabel}
+          {translate(driverOption.badgeMessageKey)}
         </Badge>
       ) : null}
       {versionCodeNode}
@@ -837,6 +853,17 @@ export function ProviderInstanceCard({
         />
       </SettingsSection>
 
+      {environmentId && subscriptionPresentation && instance.driver !== "antigravity" ? (
+        <SettingsSection title="Account">
+          <ProviderSubscriptionAuthBridge
+            environmentId={environmentId}
+            instanceId={instanceId}
+            flow={providerAuthFlow}
+            readOnly={readOnly}
+            presentation={subscriptionPresentation}
+          />
+        </SettingsSection>
+      ) : null}
       {setup ? (
         <SettingsSection title="Setup">
           <div className="px-3 py-3 sm:px-4">{setup}</div>
@@ -853,6 +880,7 @@ export function ProviderInstanceCard({
           <ProviderSettingsForm
             definition={driverOption}
             value={instance.config}
+            models={modelsForDisplay}
             idPrefix={`provider-instance-${instanceId}`}
             variant="settings"
             onChange={updateConfig}

@@ -79,6 +79,14 @@ export function isProviderInstancePickerReady(entry: ProviderInstanceEntry): boo
   return entry.enabled && entry.isAvailable && entry.status === "ready";
 }
 
+/** Authenticated catalogs remain browsable while a default-model choice is still required. */
+export function isProviderInstancePickerBrowsable(entry: ProviderInstanceEntry): boolean {
+  if (!entry.enabled || !entry.isAvailable) return false;
+  if (entry.status === "ready") return true;
+  if (entry.status !== "warning" || entry.snapshot.auth.status !== "authenticated") return false;
+  return entry.models.some((model) => model.isSelectable !== false);
+}
+
 /** Picker rails contain configured, enabled instances only. */
 export function isProviderInstancePickerVisible(entry: ProviderInstanceEntry): boolean {
   return entry.enabled;

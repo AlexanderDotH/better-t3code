@@ -36,6 +36,13 @@ const settingsSearchState = vi.hoisted(() => ({
   effects: [] as Array<() => void>,
 }));
 
+vi.mock("../../hooks/useInterfaceTranslator", async () => {
+  const { createInterfaceTranslator } = await import("@t3tools/shared/interfaceLanguage");
+  return {
+    useInterfaceTranslator: () => createInterfaceTranslator({ language: "en", locale: "en-US" }),
+  };
+});
+
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
   const { reactHookHarness } = await import("../../test/reactHookHarness");

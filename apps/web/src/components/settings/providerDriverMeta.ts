@@ -1,21 +1,28 @@
 import {
   AntigravitySettings,
   ClaudeSettings,
+  ChatGptSettings,
   CodexSettings,
   CursorSettings,
+  GeminiSettings,
   GrokSettings,
+  OpenAiSettings,
   OpenCodeSettings,
+  OpenRouterSettings,
   ProviderDriverKind,
 } from "@t3tools/contracts";
 import type * as Schema from "effect/Schema";
+import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
 import {
   AntigravityIcon,
   ClaudeAI,
   CursorIcon,
+  GeminiIcon,
   GrokIcon,
   type Icon,
   OpenAI,
   OpenCodeIcon,
+  OpenRouterIcon,
 } from "../Icons";
 
 type ProviderSettingsSchema = {
@@ -40,10 +47,12 @@ export interface ProviderClientDefinition {
    * kind (not a specific instance), so every instance of that driver —
    * built-in default or custom — advertises the same marker.
    */
-  readonly badgeLabel?: string;
+  readonly badgeMessageKey?: InterfaceMessageKey;
 }
 
-const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
+const EARLY_ACCESS_BADGE = "settings.providers.badge.earlyAccess" as const;
+
+export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
   {
     value: ProviderDriverKind.make("codex"),
     label: "Codex",
@@ -60,14 +69,14 @@ const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
     value: ProviderDriverKind.make("cursor"),
     label: "Cursor",
     icon: CursorIcon,
-    badgeLabel: "Early Access",
+    badgeMessageKey: EARLY_ACCESS_BADGE,
     settingsSchema: CursorSettings,
   },
   {
     value: ProviderDriverKind.make("grok"),
     label: "Grok",
     icon: GrokIcon,
-    badgeLabel: "Early Access",
+    badgeMessageKey: EARLY_ACCESS_BADGE,
     settingsSchema: GrokSettings,
   },
   {
@@ -81,6 +90,34 @@ const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
     label: "Antigravity",
     icon: AntigravityIcon,
     settingsSchema: AntigravitySettings,
+  },
+  {
+    value: ProviderDriverKind.make("gemini"),
+    label: "Gemini",
+    icon: GeminiIcon,
+    badgeMessageKey: EARLY_ACCESS_BADGE,
+    settingsSchema: GeminiSettings,
+  },
+  {
+    value: ProviderDriverKind.make("chatgpt"),
+    label: "ChatGPT Subscription",
+    icon: OpenAI,
+    badgeMessageKey: EARLY_ACCESS_BADGE,
+    settingsSchema: ChatGptSettings,
+  },
+  {
+    value: ProviderDriverKind.make("openrouter"),
+    label: "OpenRouter",
+    icon: OpenRouterIcon,
+    badgeMessageKey: EARLY_ACCESS_BADGE,
+    settingsSchema: OpenRouterSettings,
+  },
+  {
+    value: ProviderDriverKind.make("openai"),
+    label: "OpenAI Responses",
+    icon: OpenAI,
+    badgeMessageKey: EARLY_ACCESS_BADGE,
+    settingsSchema: OpenAiSettings,
   },
 ];
 

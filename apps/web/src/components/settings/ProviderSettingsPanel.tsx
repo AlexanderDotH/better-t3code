@@ -25,10 +25,13 @@ import * as Arr from "effect/Array";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Result from "effect/Result";
+import { isLoopbackHost } from "@t3tools/shared/preview";
 import { PlusIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
+import { partitionBetterT3ProviderRows } from "./BetterT3SettingsPanel.logic";
 import { isElectron } from "../../env";
 import { usePrimarySessionState } from "../../environments/primary";
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
@@ -101,6 +104,7 @@ import {
   buildProviderEnvironmentOptions,
   classifyProviderEnvironmentAccess,
   isProviderSettingsEnvironmentAvailable,
+  resolveProviderAuthFlow,
   type ProviderEnvironmentAccess,
   type ProviderOperateAccess,
   resolvePrimaryOperateAccess,
@@ -310,16 +314,13 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
       hasServerConfig: environment.serverConfig !== null,
     }),
   )?.environmentId;
-  useEffect(() => {
-    if (
-      (searchTargetId === searchableSetting("provider-health-check-interval").id ||
-        searchTargetId === searchableSetting("usage-providers").id) &&
-      !selectedEnvironmentCanRenderSettings &&
-      searchableEnvironmentId !== undefined
-    ) {
-      setSelectedEnvironmentId(searchableEnvironmentId);
-    }
-  }, [searchTargetId, searchableEnvironmentId, selectedEnvironmentCanRenderSettings]);
+  if (
+    (searchTargetId === searchableSetting("provider-health-check-interval").id ||
+      searchTargetId === searchableSetting("usage-providers").id) &&
+    !selectedEnvironmentCanRenderSettings &&
+    searchableEnvironmentId !== undefined
+  )
+    setSelectedEnvironmentId(searchableEnvironmentId);
   const onlyPrimaryDevice =
     options.length === 1 && options[0]?.entry.target._tag === "PrimaryConnectionTarget";
   const deviceTabs =
@@ -532,6 +533,13 @@ function AccessGatedProviderSettings({
     <EnvironmentProviderSettings
       environmentId={environment.environmentId}
       environmentLabel={environment.label}
+      authFlow={resolveProviderAuthFlow({
+        surface: isElectron ? "desktop" : "web",
+        local:
+          (environment.entry.target._tag === "PrimaryConnectionTarget" &&
+            isLoopbackHost(URL.parse(environment.entry.target.httpBaseUrl)?.hostname ?? "")) ||
+          isDesktopLocalConnectionTarget(environment.entry.target),
+      })}
       readOnly={access.kind === "read-only"}
       deviceTabs={deviceTabs}
       targetInstanceId={targetInstanceId}
@@ -540,6 +548,7 @@ function AccessGatedProviderSettings({
 }
 
 export function EnvironmentProviderSettings({
+  authFlow = "device-code",
   environmentId,
   environmentLabel,
   readOnly = false,
@@ -548,6 +557,7 @@ export function EnvironmentProviderSettings({
 }: {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
+  readonly authFlow?: "browser" | "device-code";
   readonly deviceTabs?: ReactNode;
   readonly targetInstanceId?: ProviderInstanceId | undefined;
   /**
@@ -558,6 +568,7 @@ export function EnvironmentProviderSettings({
    */
   readonly readOnly?: boolean;
 }) {
+  const translate = useInterfaceTranslator().message;
   const settings = useEnvironmentSettings(environmentId);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const serverProviders =
@@ -770,6 +781,7 @@ export function EnvironmentProviderSettings({
     }
   }
 
+  const providerGroups = partitionBetterT3ProviderRows(rows);
   const targetInstanceMissing =
     targetInstanceId !== undefined &&
     selectedInstanceId === targetInstanceId &&
@@ -891,6 +903,8 @@ export function EnvironmentProviderSettings({
     return (
       <ProviderInstanceCard
         key={row.instanceId}
+        environmentId={environmentId}
+        providerAuthFlow={authFlow}
         instanceId={row.instanceId}
         instance={row.instance}
         driverOption={driverOption}
@@ -1045,7 +1059,17 @@ export function EnvironmentProviderSettings({
           <div className="border-b border-border/60 bg-muted/10 lg:flex lg:min-h-0 lg:flex-col lg:border-r lg:border-b-0">
             <ScrollArea scrollFade chainVerticalScroll className="lg:min-h-0 lg:flex-1">
               <div className="divide-y divide-border/50">
-                {rows.map((row) => renderProviderInstance(row, "list"))}
+                {providerGroups.core.map((row) => renderProviderInstance(row, "list"))}
+                {providerGroups.additional.length > 0 ? (
+                  <div data-provider-group="better-t3">
+                    <div className="border-t border-border/60 px-3 py-2 text-xs font-medium text-muted-foreground">
+                      {translate("settings.betterT3.providers.additionalHeading")}
+                    </div>
+                    <div className="divide-y divide-border/50">
+                      {providerGroups.additional.map((row) => renderProviderInstance(row, "list"))}
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </ScrollArea>
           </div>
