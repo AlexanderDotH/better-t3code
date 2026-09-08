@@ -782,7 +782,7 @@ const EMPTY_THREAD_DRAFT = Object.freeze<ComposerThreadDraftState>({
  * slice — adding a new field to the interface (e.g. `elementContexts`) only
  * has to be reflected here, not in every stub.
  */
-function createEmptyThreadDraft(): ComposerThreadDraftState {
+export function createEmptyThreadDraft(): ComposerThreadDraftState {
   return {
     prompt: "",
     images: [],
