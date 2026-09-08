@@ -322,6 +322,10 @@
     "./client-settings": {
       "types": "./src/clientSettings.ts",
       "default": "./src/clientSettings.ts"
+    },
+    "./thread-transcript": {
+      "types": "./src/threadTranscript.ts",
+      "default": "./src/threadTranscript.ts"
     }
   },
   "scripts": {

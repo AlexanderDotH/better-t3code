@@ -1,3 +1,4 @@
+import { copyThreadTranscript } from "@t3tools/client-runtime/thread-transcript";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import {
   StackActions,
@@ -783,33 +784,43 @@ function ThreadRouteContent(
     }
 
     setTranscriptExportBusy(true);
+    let interrupted = false;
+    let writingClipboard = false;
     try {
-      const result = await exportThreadTranscript({
-        environmentId: selectedThread.environmentId,
-        input: { threadId: selectedThread.id },
+      await copyThreadTranscript({
+        threadId: selectedThread.id,
+        exportThreadTranscript: async (input) => {
+          const result = await exportThreadTranscript({
+            environmentId: selectedThread.environmentId,
+            input,
+          });
+          if (result._tag === "Failure") {
+            interrupted = isAtomCommandInterrupted(result);
+            throw squashAtomCommandFailure(result);
+          }
+          return result.value;
+        },
+        writeText: async (content) => {
+          writingClipboard = true;
+          await Clipboard.setStringAsync(content);
+        },
       });
-      if (result._tag === "Failure") {
-        if (!isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          Alert.alert(
-            "Could not copy transcript",
-            error instanceof Error ? error.message : "The transcript export failed.",
-          );
-        }
-        return;
-      }
-
-      try {
-        await Clipboard.setStringAsync(result.value.content);
-      } catch {
-        Alert.alert("Could not copy transcript", "The clipboard could not be updated.");
-        return;
-      }
       void Haptics.selectionAsync().catch(() => undefined);
       Alert.alert(
         "Transcript copied",
         "The complete, unredacted Markdown transcript is now on your clipboard.",
       );
+    } catch (error) {
+      if (!interrupted) {
+        Alert.alert(
+          "Could not copy transcript",
+          writingClipboard
+            ? "The clipboard could not be updated."
+            : error instanceof Error
+              ? error.message
+              : "The transcript export failed.",
+        );
+      }
     } finally {
       setTranscriptExportBusy(false);
     }
