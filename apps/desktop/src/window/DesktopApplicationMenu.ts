@@ -51,21 +51,6 @@ const { logInfo: logUpdaterInfo } = makeComponentLogger("desktop-updater");
 
 const { logError: logMenuError } = makeComponentLogger("desktop-menu");
 
-const updateDisabledReasonMessageId = (
-  reason: DesktopUpdates.DesktopUpdateDisabledReason,
-): Parameters<typeof translateInterfaceMessage>[1] => {
-  switch (reason) {
-    case "no-update-feed":
-      return "desktop.update.disabled.noFeed";
-    case "development-build":
-      return "desktop.update.disabled.development";
-    case "disabled-by-environment":
-      return "desktop.update.disabled.environment";
-    case "linux-package-required":
-      return "desktop.update.disabled.linuxPackage";
-  }
-};
-
 const dispatchMenuAction = Effect.fn("desktop.menu.dispatchMenuAction")(function* (
   action: string,
 ): Effect.fn.Return<void, DesktopWindow.DesktopWindowError, DesktopWindow.DesktopWindow> {
@@ -123,7 +108,7 @@ const handleCheckForUpdatesMenuClick = (language: ResolvedInterfaceLanguage) =>
         message: translateInterfaceMessage(language, "desktop.update.unavailableMessage"),
         detail: translateInterfaceMessage(
           language,
-          updateDisabledReasonMessageId(disabledReason.value),
+          DesktopUpdates.updateDisabledReasonMessageId(disabledReason.value),
         ),
         buttons: [translateInterfaceMessage(language, "common.ok")],
       });

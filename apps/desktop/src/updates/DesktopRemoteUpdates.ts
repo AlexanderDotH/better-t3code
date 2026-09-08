@@ -3,6 +3,7 @@ import type {
   DesktopUpdateRemoteOutcome,
   DesktopUpdateState,
 } from "@t3tools/contracts";
+import { translateInterfaceMessage } from "@t3tools/shared/interfaceLanguage";
 import * as Duration from "effect/Duration";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
@@ -179,7 +180,11 @@ export const listen: Effect.Effect<
         yield* Ref.set(activeRequestIdRef, Option.some(request.requestId));
         yield* logInfo("remote update requested", { requestId: request.requestId });
         const { latest, changes } = yield* updates.subscribe;
-        const disabledReason = Option.getOrNull(yield* updates.disabledReason);
+        const disabledReason = Option.getOrNull(
+          Option.map(yield* updates.disabledReason, (reason) =>
+            translateInterfaceMessage("en", DesktopUpdates.updateDisabledReasonMessageId(reason)),
+          ),
+        );
         let attempts: RemoteDesktopUpdateAttempts = { checks: 0, downloads: 0 };
         // The updater admits one action at a time. A state event can land
         // while the action that produced it still holds the reservation

@@ -6,6 +6,7 @@ import {
   type DesktopUpdateCheckResult,
   type DesktopUpdateState,
 } from "@t3tools/contracts";
+import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -61,6 +62,21 @@ export type DesktopUpdateDisabledReason =
   | "development-build"
   | "disabled-by-environment"
   | "linux-package-required";
+
+export const updateDisabledReasonMessageId = (
+  reason: DesktopUpdateDisabledReason,
+): InterfaceMessageKey => {
+  switch (reason) {
+    case "no-update-feed":
+      return "desktop.update.disabled.noFeed";
+    case "development-build":
+      return "desktop.update.disabled.development";
+    case "disabled-by-environment":
+      return "desktop.update.disabled.environment";
+    case "linux-package-required":
+      return "desktop.update.disabled.linuxPackage";
+  }
+};
 
 const AppUpdateYmlConfig = Schema.Record(Schema.String, Schema.String);
 type AppUpdateYmlConfig = typeof AppUpdateYmlConfig.Type;
