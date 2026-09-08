@@ -1,4 +1,9 @@
 import {
+  HarnessChatSyncSourceId,
+  HarnessChatContinuationKey,
+  HarnessChatSessionId,
+} from "@t3tools/contracts";
+import {
   CommandId,
   EventId,
   ProjectId,
@@ -32,9 +37,9 @@ function linkEvent(input: {
     payload: {
       threadId: ThreadId.make("thread-1"),
       projectId: ProjectId.make("project-1"),
-      sourceId: "codex-home",
-      continuationKey: "codex:/tmp/home",
-      nativeSessionId: "native-session-1",
+      sourceId: HarnessChatSyncSourceId.make("codex-home"),
+      continuationKey: HarnessChatContinuationKey.make("codex:/tmp/home"),
+      nativeSessionId: HarnessChatSessionId.make("native-session-1"),
       providerInstanceId: ProviderInstanceId.make("codex-work"),
       providerLabel: "Codex Work",
       activity: input.activity,

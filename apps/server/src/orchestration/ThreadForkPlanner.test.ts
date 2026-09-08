@@ -225,6 +225,7 @@ const seedReadModel = Effect.gen(function* () {
     correlationId: CommandId.make("command-project-fork"),
     metadata: {},
     payload: {
+      checkpointsEnabled: true,
       projectId,
       title: "Fork project",
       workspaceRoot: "/tmp/fork-project",

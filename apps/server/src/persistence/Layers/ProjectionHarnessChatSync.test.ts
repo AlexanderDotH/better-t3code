@@ -1,3 +1,4 @@
+import { HarnessChatNativeMessageId } from "../Services/ProjectionHarnessChatSync.ts";
 import {
   HarnessChatContinuationKey,
   HarnessChatSessionId,
@@ -63,20 +64,20 @@ it.effect("keeps the first local mapping when the same native message is replaye
 
     yield* repository.upsertMessageLink({
       threadId,
-      nativeMessageId: "native-message-1",
+      nativeMessageId: HarnessChatNativeMessageId.make("native-message-1"),
       messageId: MessageId.make("message-original"),
       linkedAt: "2026-08-23T10:01:00.000Z",
     });
     yield* repository.upsertMessageLink({
       threadId,
-      nativeMessageId: "native-message-1",
+      nativeMessageId: HarnessChatNativeMessageId.make("native-message-1"),
       messageId: MessageId.make("message-replayed"),
       linkedAt: "2026-08-23T10:02:00.000Z",
     });
 
     const mapping = yield* repository.getMessageLink({
       threadId,
-      nativeMessageId: "native-message-1",
+      nativeMessageId: HarnessChatNativeMessageId.make("native-message-1"),
     });
     const mappings = yield* repository.listMessageLinksByThreadId({ threadId });
 

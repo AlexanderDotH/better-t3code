@@ -1,4 +1,9 @@
 import {
+  HarnessChatSyncSourceId,
+  HarnessChatContinuationKey,
+  HarnessChatSessionId,
+} from "@t3tools/contracts";
+import {
   CommandId,
   EventId,
   MessageId,
@@ -46,6 +51,7 @@ it.layer(TestLayer)("harness chat sync projection", (it) => {
         correlationId: CommandId.make("command-project"),
         metadata: {},
         payload: {
+          checkpointsEnabled: true,
           projectId: ProjectId.make("project-1"),
           title: "Project",
           workspaceRoot: "/tmp/project",
@@ -94,9 +100,9 @@ it.layer(TestLayer)("harness chat sync projection", (it) => {
         payload: {
           threadId: ThreadId.make("thread-1"),
           projectId: ProjectId.make("project-1"),
-          sourceId: "codex-home",
-          continuationKey: "codex:/tmp/home",
-          nativeSessionId: "native-session-1",
+          sourceId: HarnessChatSyncSourceId.make("codex-home"),
+          continuationKey: HarnessChatContinuationKey.make("codex:/tmp/home"),
+          nativeSessionId: HarnessChatSessionId.make("native-session-1"),
           providerInstanceId: ProviderInstanceId.make("codex-work"),
           providerLabel: "Codex Work",
           activity: "idle",
@@ -181,7 +187,11 @@ it.layer(TestLayer)("harness chat sync projection", (it) => {
       `;
 
       assert.deepStrictEqual(links, [
-        { projectId: "project-1", nativeSessionId: "native-session-1", activity: "idle" },
+        {
+          projectId: "project-1",
+          nativeSessionId: HarnessChatSessionId.make("native-session-1"),
+          activity: "idle",
+        },
       ]);
       assert.deepStrictEqual(messageLinks, [
         { nativeMessageId: "native-message-1", messageId: "message-original" },

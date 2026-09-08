@@ -1,3 +1,7 @@
+import { EventId } from "@t3tools/contracts";
+import { TurnId } from "@t3tools/contracts";
+import { MessageId } from "@t3tools/contracts";
+import { ProviderDriverKind } from "@t3tools/contracts";
 import {
   ProviderInstanceId,
   SubagentId,
@@ -26,7 +30,7 @@ const expectedSummary: OrchestrationSubagentSummary = {
   id: subagentId,
   origin: "t3-fetch",
   providerInstanceId: ProviderInstanceId.make("claude-work"),
-  providerDriver: "claudeAgent",
+  providerDriver: ProviderDriverKind.make("claudeAgent"),
   providerThreadId: "provider-agent-subagent-query",
   parentId: null,
   path: "/root/query",
@@ -251,8 +255,8 @@ it.layer(TestLayer)("ProjectionSnapshotQuery subagent details", (it) => {
           ...expectedSummary,
           messages: [
             {
-              id: "message-subagent-query",
-              turnId: "turn-subagent-query",
+              id: MessageId.make("message-subagent-query"),
+              turnId: TurnId.make("turn-subagent-query"),
               role: "assistant",
               text: "lazy child output",
               streaming: false,
@@ -263,7 +267,7 @@ it.layer(TestLayer)("ProjectionSnapshotQuery subagent details", (it) => {
           proposedPlans: [
             {
               id: "plan-subagent-query",
-              turnId: "turn-subagent-query",
+              turnId: TurnId.make("turn-subagent-query"),
               planMarkdown: "# Lazy plan",
               implementedAt: null,
               implementationThreadId: null,
@@ -273,8 +277,8 @@ it.layer(TestLayer)("ProjectionSnapshotQuery subagent details", (it) => {
           ],
           activities: [
             {
-              id: "activity-subagent-query",
-              turnId: "turn-subagent-query",
+              id: EventId.make("activity-subagent-query"),
+              turnId: TurnId.make("turn-subagent-query"),
               tone: "info",
               kind: "command.completed",
               summary: "Focused query completed",
@@ -337,7 +341,9 @@ it.layer(TestLayer)("ProjectionSnapshotQuery subagent details", (it) => {
 
         const olderPage = yield* query.getSubagentDetailSnapshot(threadId, subagentId, {
           activityLimit: 2,
-          beforeCursor: recentPage.value.page?.beforeCursor ?? undefined,
+          ...(recentPage.value.page?.beforeCursor
+            ? { beforeCursor: recentPage.value.page.beforeCursor }
+            : {}),
         });
         assert.equal(olderPage._tag, "Some");
         if (olderPage._tag === "Some") {
@@ -624,7 +630,7 @@ it.layer(TestLayer)("ProjectionSnapshotQuery subagent details", (it) => {
               createdAt: completedAt,
             },
             latestTurn: {
-              turnId: "child-turn",
+              turnId: TurnId.make("child-turn"),
               state: "completed",
               requestedAt: createdAt,
               startedAt: createdAt,

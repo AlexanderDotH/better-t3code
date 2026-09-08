@@ -1,3 +1,4 @@
+import type { OrchestrationEvent } from "@t3tools/contracts";
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
@@ -158,6 +159,7 @@ function createProviderServiceHarness(options?: {
         },
       });
     },
+    assertConversationRollbackSupported: () => Effect.void,
     rollbackConversation: () => unsupported(),
     uploadFeedback: () => unsupported(),
     get streamEvents() {
@@ -230,7 +232,6 @@ async function waitForThread(
   return poll();
 }
 describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
-
   let runtime: ManagedRuntime.ManagedRuntime<
     OrchestrationEngineService | ProviderRuntimeIngestionService | ProjectionSnapshotQuery,
     unknown
@@ -239,7 +240,6 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
   let scope: Scope.Closeable | null = null;
 
   const tempDirs: string[] = [];
-
 
   it("bounds transient provider buffers for high-fan-out agent work", () => {
     expect(
@@ -252,13 +252,11 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
     ).toBeLessThanOrEqual(24_576_000);
   });
 
-
   function makeTempDir(prefix: string): string {
     const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), prefix));
     tempDirs.push(dir);
     return dir;
   }
-
 
   afterEach(async () => {
     if (scope) {
@@ -273,7 +271,6 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
       NodeFS.rmSync(dir, { recursive: true, force: true });
     }
   });
-
 
   async function createHarness(options?: {
     serverSettings?: Partial<ServerSettings>;
@@ -405,7 +402,6 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
     };
   }
 
-
   it("drops terminal events from a replaced runtime generation", async () => {
     const harness = await createHarness();
     const threadId = asThreadId("thread-1");
@@ -459,12 +455,11 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
     expect(
       events.some(
         (event) =>
-          event.type === "thread-session-set" &&
+          event.type === "thread.session-set" &&
           String(event.commandId).includes("evt-stale-runtime-completed"),
       ),
     ).toBe(false);
   });
-
 
   it("hard-drops replacement runtime events while starting if a previous runtimeSessionId remains projected", async () => {
     const harness = await createHarness({ serverSettings: { enableLegacyTokenStreaming: true } });
@@ -536,7 +531,6 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
       ),
     ).toBe(false);
   });
-
 
   it("adopts a replacement runtime generation while starting when projected runtimeSessionId is null", async () => {
     const harness = await createHarness({ serverSettings: { enableLegacyTokenStreaming: true } });
@@ -615,7 +609,6 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
       providerName: "claudeAgent",
     });
   });
-
 
   it("drops stale runtime events while starting once a replacement generation is bound", async () => {
     const harness = await createHarness({ serverSettings: { enableLegacyTokenStreaming: true } });
@@ -719,12 +712,11 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
     expect(
       events.some(
         (event) =>
-          event.type === "thread-session-set" &&
+          event.type === "thread.session-set" &&
           String(event.commandId).includes("evt-stale-turn-started-while-starting"),
       ),
     ).toBe(false);
   });
-
 
   it("finalizes buffered output and settles an exact abort terminal cooperatively", async () => {
     const harness = await createHarness({
@@ -834,7 +826,6 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
       },
     ]);
   });
-
 
   it("finalizes buffered output when a forced abort settles without a runtime terminal", async () => {
     const harness = await createHarness({
@@ -949,7 +940,6 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
     expect(harness.abortSettlements).toEqual([]);
   });
 
-
   it("accumulates complete provider reasoning and flushes it when the item completes", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
@@ -1017,7 +1007,6 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
     });
   });
 
-
   it("flushes non-assistant output on interruption without truncating it", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
@@ -1061,7 +1050,6 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
 
     expect(persisted).toBe(output);
   });
-
 
   it("buffers assistant deltas by default until completion", async () => {
     const harness = await createHarness();
@@ -1131,7 +1119,6 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
     expect(message?.streaming).toBe(false);
   });
 
-
   it("does not project provider diff checkpoints when project checkpoints are disabled", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
@@ -1161,7 +1148,6 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
     const thread = snapshot.threads.find((entry) => entry.id === asThreadId("thread-1"));
     expect(thread?.checkpoints).toEqual([]);
   });
-
 
   it("compacts at 50 percent only after the entire subagent group settles", async () => {
     const harness = await createHarness({ manualCompaction: true });
@@ -1263,7 +1249,6 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
     expect(harness.compactThread).toHaveBeenCalledWith(threadId, runtimeSessionId);
   });
 
-
   it("does not compact a completed root turn while an approval is pending", async () => {
     const harness = await createHarness({ manualCompaction: true });
     const threadId = asThreadId("thread-1");
@@ -1343,7 +1328,6 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
     expect(harness.compactThread).not.toHaveBeenCalled();
   });
 
-
   it("keeps a completed turn usable when milestone compaction fails", async () => {
     const compactFailure = new ProviderAdapterRequestError({
       provider: "codex",
@@ -1418,7 +1402,6 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
     expect(thread?.session).toMatchObject({ status: "ready", activeTurnId: null });
   });
 
-
   it("titles task completion from persisted activities after the description cache is swept", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
@@ -1486,11 +1469,17 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
     expect(completedPayload?.title).toBe("Watch round-3 CI and bots");
   });
 
-
   it("projects complete deterministic subagent summaries with stable display-name fallbacks", async () => {
     const harness = await createHarness();
     const discoveredAt = "2026-07-30T10:00:00.000Z";
-    const cases = [
+    const cases: ReadonlyArray<{
+      id: SubagentId;
+      providerThreadId: string;
+      agentPath?: string;
+      nickname?: string;
+      role?: string;
+      expectedName: string;
+    }> = [
       {
         id: asSubagentId("codex:provider-nickname"),
         providerThreadId: "provider-nickname",
@@ -1586,7 +1575,6 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
     }
   });
 
-
   it("upserts a placeholder before discovery and applies subagent state without changing root lifecycle", async () => {
     const harness = await createHarness();
     const subagentId = asSubagentId("codex:provider-late-discovery");
@@ -1656,17 +1644,20 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
 
     const events = await harness.readEvents();
     const upsertIndex = events.findIndex(
-      (event) =>
+      (
+        event,
+      ): event is Extract<OrchestrationEvent, { readonly type: "thread.subagent-upserted" }> =>
         event.type === "thread.subagent-upserted" && event.payload.subagent.id === subagentId,
     );
     const stateIndex = events.findIndex(
-      (event) =>
+      (
+        event,
+      ): event is Extract<OrchestrationEvent, { readonly type: "thread.subagent-state-set" }> =>
         event.type === "thread.subagent-state-set" && event.payload.subagentId === subagentId,
     );
     expect(upsertIndex).toBeGreaterThanOrEqual(0);
     expect(stateIndex).toBeGreaterThan(upsertIndex);
   });
-
 
   it("keeps background liveness synchronized with authoritative subagent state", async () => {
     const harness = await createHarness();
@@ -1753,7 +1744,6 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
     expect(shell?.backgroundLiveness).toBeNull();
   });
 
-
   it("uses a child turn completion as authoritative lifecycle state", async () => {
     const harness = await createHarness();
     const subagentId = asSubagentId("codex:provider-terminal-turn");
@@ -1824,7 +1814,6 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
     expect(thread.session).toMatchObject({ status: "ready", activeTurnId: null });
   });
 
-
   it("interrupts active child turns when their root provider session exits", async () => {
     const harness = await createHarness();
     const subagentId = asSubagentId("codex:provider-session-exit-child");
@@ -1879,7 +1868,6 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
     });
   });
 
-
   it("flushes and releases child stream buffers when the root provider session exits", async () => {
     const harness = await createHarness();
     const subagentId = asSubagentId("codex:buffered-child");
@@ -1913,7 +1901,9 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
     await harness.drain();
 
     const activitiesAfterExit = (await harness.readEvents()).filter(
-      (event) =>
+      (
+        event,
+      ): event is Extract<OrchestrationEvent, { readonly type: "thread.activity-appended" }> =>
         event.type === "thread.activity-appended" &&
         event.payload.subagentId === subagentId &&
         event.payload.activity.kind === "reasoning.text",
@@ -1938,14 +1928,15 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
     await harness.drain();
 
     const activitiesAfterLateCompletion = (await harness.readEvents()).filter(
-      (event) =>
+      (
+        event,
+      ): event is Extract<OrchestrationEvent, { readonly type: "thread.activity-appended" }> =>
         event.type === "thread.activity-appended" &&
         event.payload.subagentId === subagentId &&
         event.payload.activity.kind === "reasoning.text",
     );
     expect(activitiesAfterLateCompletion).toHaveLength(1);
   });
-
 
   it("routes child assistant, plan, and activity events to namespaced subagent commands", async () => {
     const harness = await createHarness();
@@ -2029,7 +2020,7 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
 
     const events = await harness.readEvents();
     const childMessages = events.filter(
-      (event) =>
+      (event): event is Extract<OrchestrationEvent, { readonly type: "thread.message-sent" }> =>
         event.type === "thread.message-sent" &&
         (event.payload.subagentId === subagentA || event.payload.subagentId === subagentB),
     );
@@ -2046,20 +2037,23 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
     expect(agentBMessageIds.every((id) => id.includes(String(subagentB)))).toBe(true);
 
     const childPlan = events.find(
-      (event) =>
+      (
+        event,
+      ): event is Extract<OrchestrationEvent, { readonly type: "thread.proposed-plan-upserted" }> =>
         event.type === "thread.proposed-plan-upserted" && event.payload.subagentId === subagentA,
     );
     expect(childPlan?.payload.proposedPlan.id).toContain(String(subagentA));
 
     const childActivity = events.find(
-      (event) =>
+      (
+        event,
+      ): event is Extract<OrchestrationEvent, { readonly type: "thread.activity-appended" }> =>
         event.type === "thread.activity-appended" &&
         event.payload.subagentId === subagentA &&
         event.payload.activity.kind === "tool.started",
     );
     expect(childActivity?.payload.activity.id).toContain(String(subagentA));
   });
-
 
   it("mirrors child approval interactions to root while preserving child activity origin", async () => {
     const harness = await createHarness();
@@ -2115,7 +2109,9 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
     const events = await harness.readEvents();
     for (const activityId of ["evt-child-approval-opened", "evt-child-input-requested"]) {
       const mirrored = events.filter(
-        (event) =>
+        (
+          event,
+        ): event is Extract<OrchestrationEvent, { readonly type: "thread.activity-appended" }> =>
           event.type === "thread.activity-appended" &&
           String(event.payload.activity.id).includes(activityId),
       );
@@ -2123,7 +2119,6 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
       expect(mirrored.some((event) => event.payload.subagentId === subagentId)).toBe(true);
     }
   });
-
 
   it("updates subagent progress from state and item lifecycle but not content deltas", async () => {
     const harness = await createHarness();
@@ -2161,7 +2156,12 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
     let events = await harness.readEvents();
     expect(
       events.filter(
-        (event) =>
+        (
+          event,
+        ): event is Extract<
+          OrchestrationEvent,
+          { readonly type: "thread.subagent-progress-set" }
+        > =>
           event.type === "thread.subagent-progress-set" && event.payload.subagentId === subagentId,
       ),
     ).toHaveLength(0);
@@ -2197,7 +2197,12 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
     events = await harness.readEvents();
     expect(
       events.filter(
-        (event) =>
+        (
+          event,
+        ): event is Extract<
+          OrchestrationEvent,
+          { readonly type: "thread.subagent-progress-set" }
+        > =>
           event.type === "thread.subagent-progress-set" && event.payload.subagentId === subagentId,
       ),
     ).toHaveLength(1);

@@ -86,6 +86,7 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-curs
           correlationId: null,
           metadata: {},
           payload: {
+            checkpointsEnabled: true,
             projectId: ProjectId.make("project-cursor-batch"),
             title: "Cursor batch project",
             workspaceRoot: "/tmp/project-cursor-batch",
@@ -191,6 +192,8 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-import-shell-")
           payload: {
             threadId,
             session: {
+              runtimeSessionId: null,
+              abortState: null,
               threadId,
               status: "ready",
               providerName: "codex",
@@ -315,6 +318,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         correlationId: CommandId.make("cmd-1"),
         metadata: {},
         payload: {
+          checkpointsEnabled: true,
           projectId: ProjectId.make("project-1"),
           title: "Project 1",
           workspaceRoot: "/tmp/project-1",
@@ -789,6 +793,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           correlationId: CommandId.make("cmd-clear-attachments-1"),
           metadata: {},
           payload: {
+            checkpointsEnabled: true,
             projectId: ProjectId.make("project-clear-attachments"),
             title: "Project Clear Attachments",
             workspaceRoot: "/tmp/project-clear-attachments",
@@ -918,6 +923,7 @@ it.layer(
         correlationId: CommandId.make("cmd-overwrite-1"),
         metadata: {},
         payload: {
+          checkpointsEnabled: true,
           projectId: ProjectId.make("project-overwrite"),
           title: "Project Overwrite",
           workspaceRoot: "/tmp/project-overwrite",
@@ -1067,6 +1073,7 @@ it.layer(
         correlationId: CorrelationId.make("cmd-rollback-1"),
         metadata: {},
         payload: {
+          checkpointsEnabled: true,
           projectId: ProjectId.make("project-rollback"),
           title: "Project Rollback",
           workspaceRoot: "/tmp/project-rollback",
@@ -1225,6 +1232,7 @@ it.layer(
         correlationId: CorrelationId.make("cmd-revert-files-1"),
         metadata: {},
         payload: {
+          checkpointsEnabled: true,
           projectId: ProjectId.make("project-revert-files"),
           title: "Project Revert Files",
           workspaceRoot: "/tmp/project-revert-files",
@@ -1577,6 +1585,7 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-atta
           correlationId: CorrelationId.make("cmd-delete-files-1"),
           metadata: {},
           payload: {
+            checkpointsEnabled: true,
             projectId: ProjectId.make("project-delete-files"),
             title: "Project Delete Files",
             workspaceRoot: "/tmp/project-delete-files",
@@ -1805,6 +1814,7 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-atta
           correlationId: CorrelationId.make("cmd-replay-project"),
           metadata: {},
           payload: {
+            checkpointsEnabled: true,
             projectId,
             title: "Replay",
             workspaceRoot: "/tmp/project-replay",
@@ -1866,6 +1876,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
             correlationId: CorrelationId.make(commandId),
             metadata: {},
             payload: {
+              checkpointsEnabled: true,
               projectId,
               title: `Bootstrap backlog ${index}`,
               workspaceRoot: "/tmp/project-bootstrap-backlog",
@@ -1929,6 +1940,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         correlationId: CorrelationId.make("cmd-a1"),
         metadata: {},
         payload: {
+          checkpointsEnabled: true,
           projectId: ProjectId.make("project-a"),
           title: "Project A",
           workspaceRoot: "/tmp/project-a",
@@ -2138,6 +2150,8 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         payload: {
           threadId,
           session: {
+            runtimeSessionId: null,
+            abortState: null,
             threadId,
             status: "running",
             providerName: "claude",
@@ -2199,6 +2213,8 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         payload: {
           threadId,
           session: {
+            runtimeSessionId: null,
+            abortState: null,
             threadId,
             status: "ready",
             providerName: "claude",
@@ -2283,6 +2299,8 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           payload: {
             threadId,
             session: {
+              runtimeSessionId: null,
+              abortState: null,
               threadId,
               status: "running",
               providerName: "opencode",
@@ -2336,6 +2354,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         correlationId: CorrelationId.make("cmd-empty-1"),
         metadata: {},
         payload: {
+          checkpointsEnabled: true,
           projectId: ProjectId.make("project-empty"),
           title: "Project Empty",
           workspaceRoot: "/tmp/project-empty",
@@ -2476,6 +2495,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           correlationId: CorrelationId.make("cmd-conflict-1"),
           metadata: {},
           payload: {
+            checkpointsEnabled: true,
             projectId: ProjectId.make("project-conflict"),
             title: "Project Conflict",
             workspaceRoot: "/tmp/project-conflict",
@@ -2620,6 +2640,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         correlationId: CorrelationId.make("cmd-stale-approval-1"),
         metadata: {},
         payload: {
+          checkpointsEnabled: true,
           projectId: ProjectId.make("project-stale-approval"),
           title: "Project Stale Approval",
           workspaceRoot: "/tmp/project-stale-approval",
@@ -2763,6 +2784,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         correlationId: CorrelationId.make("cmd-stale-user-input-1"),
         metadata: {},
         payload: {
+          checkpointsEnabled: true,
           projectId: ProjectId.make("project-stale-user-input"),
           title: "Project Stale User Input",
           workspaceRoot: "/tmp/project-stale-user-input",
@@ -2948,6 +2970,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         correlationId: CorrelationId.make("cmd-shell-summary-1"),
         metadata: {},
         payload: {
+          checkpointsEnabled: true,
           projectId: ProjectId.make("project-shell-summary"),
           title: "Project Shell Summary",
           workspaceRoot: "/tmp/project-shell-summary",
@@ -3178,6 +3201,8 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           payload: {
             threadId: ThreadId.make("thread-shell-summary"),
             session: {
+              runtimeSessionId: null,
+              abortState: null,
               threadId: ThreadId.make("thread-shell-summary"),
               status: "ready",
               providerName: "codex",
@@ -3260,6 +3285,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         correlationId: CorrelationId.make("cmd-nonstale-approval-1"),
         metadata: {},
         payload: {
+          checkpointsEnabled: true,
           projectId: ProjectId.make("project-nonstale-approval"),
           title: "Project Non-Stale Approval",
           workspaceRoot: "/tmp/project-nonstale-approval",
@@ -3519,6 +3545,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         correlationId: CorrelationId.make("cmd-revert-1"),
         metadata: {},
         payload: {
+          checkpointsEnabled: true,
           projectId: ProjectId.make("project-revert"),
           title: "Project Revert",
           workspaceRoot: "/tmp/project-revert",
@@ -3747,6 +3774,8 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
             payload: {
               threadId,
               session: {
+                runtimeSessionId: null,
+                abortState: null,
                 threadId,
                 status,
                 providerName: "codex",
@@ -3904,6 +3933,8 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
         payload: {
           threadId,
           session: {
+            runtimeSessionId: null,
+            abortState: null,
             threadId,
             status: "running",
             providerName: "codex",
@@ -4190,6 +4221,8 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
         commandId: CommandId.make("cmd-retry-session-1"),
         threadId,
         session: {
+          runtimeSessionId: null,
+          abortState: null,
           threadId,
           status: "running",
           providerName: "codex",

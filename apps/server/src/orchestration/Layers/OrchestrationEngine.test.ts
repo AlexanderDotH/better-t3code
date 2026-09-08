@@ -159,6 +159,8 @@ describe("OrchestrationEngine", () => {
             threadId,
             createdAt: now(),
             session: {
+              runtimeSessionId: null,
+              abortState: null,
               threadId,
               status,
               providerName: "codex",
@@ -348,6 +350,9 @@ describe("OrchestrationEngine", () => {
       updatedAt: "2026-03-03T00:00:04.000Z",
       projects: [
         {
+          coordinationClaims: [],
+          checkpointsEnabled: true,
+          autoPull: false,
           id: asProjectId("project-bootstrap"),
           title: "Bootstrap Project",
           workspaceRoot: "/tmp/project-bootstrap",
@@ -363,6 +368,7 @@ describe("OrchestrationEngine", () => {
       ],
       threads: [
         {
+          subagents: [],
           id: ThreadId.make("thread-bootstrap"),
           projectId: asProjectId("project-bootstrap"),
           title: "Bootstrap Thread",
@@ -403,7 +409,7 @@ describe("OrchestrationEngine", () => {
 
     const layer = OrchestrationEngineLive.pipe(
       Layer.provide(
-        Layer.succeed(ProjectionSnapshotQuery, {
+        Layer.mock(ProjectionSnapshotQuery, {
           getUserInputActivity: () => Effect.die("unused"),
           getCommandReadModel: () => Effect.succeed(commandReadModel),
           getSnapshot: () =>
@@ -516,6 +522,8 @@ describe("OrchestrationEngine", () => {
         threadId,
         createdAt,
         session: {
+          runtimeSessionId: null,
+          abortState: null,
           threadId,
           status: "running",
           providerName: "codex",
@@ -948,7 +956,6 @@ describe("OrchestrationEngine", () => {
           createdAt,
           updatedAt: createdAt,
         },
-        createdAt,
       }),
     );
 
@@ -1674,9 +1681,18 @@ describe("OrchestrationEngine", () => {
       bootstrap: Effect.void,
       projectEvent: () => Effect.void,
       projectEventDeferred: (event) => {
-        if (shouldFailForkProjection && event.commandId === CommandId.make("cmd-fork-atomic") && event.type === "thread.forked") {
+        if (
+          shouldFailForkProjection &&
+          event.commandId === CommandId.make("cmd-fork-atomic") &&
+          event.type === "thread.forked"
+        ) {
           shouldFailForkProjection = false;
-          return Effect.fail(new PersistenceSqlError({ operation: "test.projection", detail: "fork projection failed" }));
+          return Effect.fail(
+            new PersistenceSqlError({
+              operation: "test.projection",
+              detail: "fork projection failed",
+            }),
+          );
         }
         if (
           shouldFailRequestedProjection &&

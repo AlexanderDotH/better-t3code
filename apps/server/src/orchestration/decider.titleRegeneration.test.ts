@@ -18,6 +18,7 @@ const readModel: OrchestrationReadModel = {
   projects: [],
   threads: [
     {
+      subagents: [],
       id: ThreadId.make("thread-1"),
       projectId: ProjectId.make("project-1"),
       title: "Manual title",

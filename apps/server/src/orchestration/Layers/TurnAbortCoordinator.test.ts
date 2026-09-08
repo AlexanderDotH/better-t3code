@@ -133,7 +133,7 @@ const makeHarness = (initialSession: OrchestrationSession | null = runningSessio
       readEvents: () => Stream.empty,
       streamDomainEvents: Stream.empty,
       latestSequence: Effect.succeed(0),
-    } satisfies OrchestrationEngineShape;
+    } satisfies Partial<OrchestrationEngineShape>;
 
     const query = {
       getThreadDetailById: () =>
@@ -142,7 +142,7 @@ const makeHarness = (initialSession: OrchestrationSession | null = runningSessio
 
     const layer = TurnAbortCoordinatorLive.pipe(
       Layer.provideMerge(Layer.succeed(ProviderService, providerService)),
-      Layer.provideMerge(Layer.succeed(OrchestrationEngineService, engine)),
+      Layer.provideMerge(Layer.mock(OrchestrationEngineService, engine)),
       Layer.provideMerge(Layer.succeed(ProjectionSnapshotQuery, query)),
       Layer.provideMerge(NodeServices.layer),
     );

@@ -21,6 +21,9 @@ const turnId = TurnId.make("turn-export-1");
 
 function makeProject(): OrchestrationProject {
   return {
+    coordinationClaims: [],
+    checkpointsEnabled: true,
+    autoPull: false,
     id: projectId,
     title: "T3 Code",
     workspaceRoot: "/workspace/t3code",
@@ -34,6 +37,7 @@ function makeProject(): OrchestrationProject {
 
 function makeThread(overrides: Partial<OrchestrationThread> = {}): OrchestrationThread {
   return {
+    subagents: [],
     id: threadId,
     projectId,
     title: "Export everything / safely?",
@@ -49,6 +53,8 @@ function makeThread(overrides: Partial<OrchestrationThread> = {}): Orchestration
     createdAt,
     updatedAt,
     archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
     deletedAt: null,
     messages: [],
     proposedPlans: [],

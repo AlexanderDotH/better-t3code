@@ -105,6 +105,7 @@ function thread(
 }
 
 const project = {
+  checkpointsEnabled: true,
   id: PROJECT_ID,
   title: "Project",
   workspaceRoot: "/workspace/project",
@@ -339,6 +340,8 @@ describe("ThreadPullRequestReactor", () => {
             payload: {
               threadId: current.id,
               session: {
+                runtimeSessionId: null,
+                abortState: null,
                 threadId: current.id,
                 status: "ready",
                 providerName: "Codex",

@@ -118,6 +118,13 @@ function createProviderServiceHarness() {
 
   const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
   const service: ProviderServiceShape = {
+    forkSession: () => unsupported(),
+    startTransientSession: () => unsupported(),
+    resolveAbortTarget: () => unsupported(),
+    interruptAbortTarget: () => unsupported(),
+    forceStopAbortTarget: () => unsupported(),
+    isAbortTargetCurrent: () => Effect.succeed(false),
+    stopTransientSession: () => unsupported(),
     startSession: () => unsupported(),
     sendTurn: () => unsupported(),
     compactThread: () => unsupported(),
@@ -307,7 +314,9 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provideMerge(ThreadPlanProgress.layer),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
-      Layer.provide(Layer.mock(TurnAbortCoordinator, { settleCooperative: () => Effect.succeed(false) })),
+      Layer.provide(
+        Layer.mock(TurnAbortCoordinator, { settleCooperative: () => Effect.succeed(false) }),
+      ),
       Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
       Layer.provideMerge(CheckpointStore.layer.pipe(Layer.provide(VcsDriverRegistry.layer))),
       Layer.provideMerge(VcsProcess.layer),
@@ -364,6 +373,8 @@ describe("ProviderRuntimeIngestion", () => {
       commandId: CommandId.make("cmd-session-seed"),
       threadId: ThreadId.make("thread-1"),
       session: {
+        runtimeSessionId: null,
+        abortState: null,
         threadId: ThreadId.make("thread-1"),
         status: "ready",
         providerName: "codex",
@@ -876,6 +887,8 @@ describe("ProviderRuntimeIngestion", () => {
           commandId: CommandId.make("cmd-session-starting-pending-reconnect"),
           threadId,
           session: {
+            runtimeSessionId: null,
+            abortState: null,
             threadId,
             status: "starting",
             providerName: "codex",
@@ -978,6 +991,8 @@ describe("ProviderRuntimeIngestion", () => {
         commandId: CommandId.make("cmd-session-starting-before-stop"),
         threadId,
         session: {
+          runtimeSessionId: null,
+          abortState: null,
           threadId,
           status: "starting",
           providerName: "codex",
@@ -993,6 +1008,8 @@ describe("ProviderRuntimeIngestion", () => {
         commandId: CommandId.make("cmd-session-stop-pending-start"),
         threadId,
         session: {
+          runtimeSessionId: null,
+          abortState: null,
           threadId,
           status: "stopped",
           providerName: "codex",
@@ -1097,6 +1114,8 @@ describe("ProviderRuntimeIngestion", () => {
         commandId: CommandId.make("cmd-session-seed-claude-placeholder"),
         threadId: ThreadId.make("thread-1"),
         session: {
+          runtimeSessionId: null,
+          abortState: null,
           threadId: ThreadId.make("thread-1"),
           status: "ready",
           providerName: "claudeAgent",
@@ -1205,6 +1224,8 @@ describe("ProviderRuntimeIngestion", () => {
       commandId: CommandId.make("cmd-session-seed-untargeted-completion"),
       threadId: ThreadId.make("thread-1"),
       session: {
+        runtimeSessionId: null,
+        abortState: null,
         threadId: ThreadId.make("thread-1"),
         status: "starting",
         providerName: "claudeAgent",
@@ -1244,6 +1265,8 @@ describe("ProviderRuntimeIngestion", () => {
       commandId: CommandId.make("cmd-session-seed-targeted-completion"),
       threadId: ThreadId.make("thread-1"),
       session: {
+        runtimeSessionId: null,
+        abortState: null,
         threadId: ThreadId.make("thread-1"),
         status: "starting",
         providerName: "claudeAgent",
@@ -1634,6 +1657,8 @@ describe("ProviderRuntimeIngestion", () => {
         commandId: CommandId.make("cmd-session-set-plan-source"),
         threadId: sourceThreadId,
         session: {
+          runtimeSessionId: null,
+          abortState: null,
           threadId: sourceThreadId,
           status: "ready",
           providerName: "codex",
@@ -1669,6 +1694,8 @@ describe("ProviderRuntimeIngestion", () => {
         commandId: CommandId.make("cmd-session-set-plan-target"),
         threadId: targetThreadId,
         session: {
+          runtimeSessionId: null,
+          abortState: null,
           threadId: targetThreadId,
           status: "ready",
           providerName: "codex",
@@ -1845,6 +1872,8 @@ describe("ProviderRuntimeIngestion", () => {
           commandId: CommandId.make("cmd-session-set-plan-source-guarded"),
           threadId: sourceThreadId,
           session: {
+            runtimeSessionId: null,
+            abortState: null,
             threadId: sourceThreadId,
             status: "ready",
             providerName: "codex",
@@ -2085,6 +2114,8 @@ describe("ProviderRuntimeIngestion", () => {
         commandId: CommandId.make("cmd-session-set-plan-source-unrelated"),
         threadId: sourceThreadId,
         session: {
+          runtimeSessionId: null,
+          abortState: null,
           threadId: sourceThreadId,
           status: "ready",
           providerName: "codex",
@@ -2120,6 +2151,8 @@ describe("ProviderRuntimeIngestion", () => {
         commandId: CommandId.make("cmd-session-set-plan-target-unrelated"),
         threadId: targetThreadId,
         session: {
+          runtimeSessionId: null,
+          abortState: null,
           threadId: targetThreadId,
           status: "ready",
           providerName: "codex",

@@ -1,3 +1,4 @@
+import type { OrchestrationEvent } from "@t3tools/contracts";
 import { ProviderAuthService } from "../../provider/Services/ProviderAuthService.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
@@ -54,7 +55,7 @@ import {
   type ProviderServiceShape,
 } from "../../provider/Services/ProviderService.ts";
 import { makeProviderRegistryLayer } from "../../provider/testUtils/providerRegistryMock.ts";
-import { TextGeneration, type TextGenerationShape } from "../../textGeneration/TextGeneration.ts";
+import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
@@ -186,7 +187,6 @@ async function waitFor(
   return poll();
 }
 describe("ProviderCommandReactor.test.ts fork regressions", () => {
-
   let runtime: ManagedRuntime.ManagedRuntime<
     | OrchestrationEngineService
     | ProviderCommandReactor
@@ -200,7 +200,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
   const createdStateDirs = new Set<string>();
 
   const createdBaseDirs = new Set<string>();
-
 
   afterEach(async () => {
     if (scope) {
@@ -220,7 +219,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     }
     createdBaseDirs.clear();
   });
-
 
   describe("provider error attribution", () => {
     it("uses the current provider instance slug when current instance lookup fails", () => {
@@ -242,10 +240,11 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     });
 
     it("uses the unknown driver kind when the resolved driver is not registered locally", () => {
-      expect(providerErrorLabelFromInstanceHint({ sessionProvider: "third_party_driver" })).toBe("third_party_driver");
+      expect(providerErrorLabelFromInstanceHint({ sessionProvider: "third_party_driver" })).toBe(
+        "third_party_driver",
+      );
     });
   });
-
 
   describe("Fetch context input budgeting", () => {
     it("appends collected Fetch evidence without changing the main request", () => {
@@ -294,7 +293,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
       expect(remainingFetchContextChars("u".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS))).toBe(0);
     });
   });
-
 
   async function createHarness(input?: {
     readonly baseDir?: string;
@@ -348,7 +346,7 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
       execution: number,
     ) => Effect.Effect<ProviderTurnStartResult, ProviderAdapterRequestError>;
     readonly projectMemoryRead?: ProjectMemoryReadResponse;
-    readonly decideAutoReasoningEffect?: TextGenerationShape["decideAutoReasoning"];
+    readonly decideAutoReasoningEffect?: TextGeneration["Service"]["decideAutoReasoning"];
   }) {
     const now = "2026-01-01T00:00:00.000Z";
     const baseDir =
@@ -426,7 +424,7 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
       );
     });
     let sendTurnExecutions = 0;
-    const sendTurn = vi.fn((_: unknown) =>
+    const sendTurn = vi.fn<ProviderServiceShape["sendTurn"]>(() =>
       Effect.suspend(() => {
         sendTurnExecutions += 1;
         return (
@@ -495,7 +493,7 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
         pr: null,
       }),
     );
-    const generateBranchName = vi.fn<TextGenerationShape["generateBranchName"]>((_) =>
+    const generateBranchName = vi.fn<TextGeneration["Service"]["generateBranchName"]>((_) =>
       Effect.fail(
         new TextGenerationError({
           operation: "generateBranchName",
@@ -503,7 +501,7 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
         }),
       ),
     );
-    const generateThreadMetadata = vi.fn<TextGenerationShape["generateThreadMetadata"]>((_) =>
+    const generateThreadMetadata = vi.fn<TextGeneration["Service"]["generateThreadMetadata"]>((_) =>
       Effect.fail(
         new TextGenerationError({
           operation: "generateThreadMetadata",
@@ -511,7 +509,7 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
         }),
       ),
     );
-    const generateThreadTitle = vi.fn<TextGenerationShape["generateThreadTitle"]>((_) =>
+    const generateThreadTitle = vi.fn<TextGeneration["Service"]["generateThreadTitle"]>((_) =>
       Effect.fail(
         new TextGenerationError({
           operation: "generateThreadTitle",
@@ -519,7 +517,7 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
         }),
       ),
     );
-    const decideAutoReasoning = vi.fn<TextGenerationShape["decideAutoReasoning"]>(
+    const decideAutoReasoning = vi.fn<TextGeneration["Service"]["decideAutoReasoning"]>(
       (request) =>
         input?.decideAutoReasoningEffect?.(request) ??
         Effect.fail(
@@ -672,6 +670,7 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
           },
         });
       },
+      assertConversationRollbackSupported: () => Effect.void,
       rollbackConversation: () => unsupported(),
       uploadFeedback: () => unsupported(),
       get streamEvents() {
@@ -702,6 +701,8 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
         const engine = yield* OrchestrationEngineService;
         return {
           readEvents: engine.readEvents,
+          readThreadEvents: engine.readThreadEvents,
+          getThreadReplayStats: engine.getThreadReplayStats,
           dispatch: (command) => {
             if (command.type === "thread.title.regeneration.complete") {
               titleRegenerationCompletionDispatchAttempts += 1;
@@ -726,7 +727,9 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
       Layer.provideMerge(reactorOrchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
-      Layer.provide(Layer.mock(ProviderAuthService, { tryHandlePromptCommand: () => Effect.succeed(false) })),
+      Layer.provide(
+        Layer.mock(ProviderAuthService, { tryHandlePromptCommand: () => Effect.succeed(false) }),
+      ),
       Layer.provideMerge(
         Layer.succeed(TurnAbortCoordinator, {
           requestAbort,
@@ -752,6 +755,7 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
       Layer.provideMerge(
         Layer.succeed(VcsStatusBroadcaster, {
           getStatus: () => Effect.die("getStatus should not be called in this test"),
+          refreshPullRequestStatus: () => Effect.succeed(null),
           refreshLocalStatus: () =>
             Effect.die("refreshLocalStatus should not be called in this test"),
           refreshStatus,
@@ -772,7 +776,7 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
     );
-    runtime = ManagedRuntime.make(layer);
+    runtime = ManagedRuntime.make(layer.pipe(Layer.provide(SqlitePersistenceMemory)));
 
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
@@ -1167,7 +1171,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     };
   }
 
-
   it("applies current agent enhancement settings only to newly activated turns", async () => {
     const harness = await createHarness({
       serverSettings: {
@@ -1234,7 +1237,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
         .map((message) => message.text) ?? [];
     expect(storedUserMessages).toEqual(["first request", "second request"]);
   });
-
 
   it("starts a fork in a fresh provider session and completes its handoff exactly once", async () => {
     const harness = await createHarness({ forkBeforeStart: true });
@@ -1325,7 +1327,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     expect(harness.sendTurn.mock.calls[1]?.[0]?.input).toBe("ordinary follow-up");
   });
 
-
   it("uses the persisted Codex fork cursor without injecting transcript bytes", async () => {
     const modelSelection = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.6-sol", [
       { id: "reasoningEffort", value: "max" },
@@ -1386,7 +1387,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     expect(harness.sendTurn.mock.calls[0]?.[0]).not.toHaveProperty("transcriptHandoff");
   });
 
-
   it("falls back to a compact handoff when the native fork RPC fails", async () => {
     const harness = await createHarness({
       forkBeforeStart: true,
@@ -1430,7 +1430,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     );
   });
 
-
   it("passes a compact fork handoff while retaining the exact source history in projection", async () => {
     const sourceText = "source context ".repeat(10_000);
     const harness = await createHarness({
@@ -1467,7 +1466,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     const forkThread = readModel.threads.find((thread) => thread.id === ThreadId.make("thread-1"));
     expect(forkThread?.messages.some((message) => message.text === sourceText)).toBe(true);
   });
-
 
   it("keeps a failed fork handoff pending and retries it in another fresh session", async () => {
     const harness = await createHarness({
@@ -1546,7 +1544,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     });
   });
 
-
   it("keeps a full-size first fork prompt separate from compact inherited context", async () => {
     const harness = await createHarness({
       forkBeforeStart: true,
@@ -1585,7 +1582,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
       );
     });
   });
-
 
   describe("startup session reconciliation", () => {
     const projectedAt = "2025-12-31T23:59:00.000Z";
@@ -1742,7 +1738,7 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
 
       const events = await harness.readEvents();
       const interruptionIndex = events.findIndex(
-        (event) =>
+        (event): event is Extract<OrchestrationEvent, { readonly type: "thread.session-set" }> =>
           event.type === "thread.session-set" && event.payload.session.status === "interrupted",
       );
       expect(interruptionIndex).toBeGreaterThan(-1);
@@ -1750,7 +1746,9 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
         events
           .slice(interruptionIndex + 1)
           .some(
-            (event) =>
+            (
+              event,
+            ): event is Extract<OrchestrationEvent, { readonly type: "thread.message-sent" }> =>
               event.type === "thread.message-sent" &&
               event.payload.messageId === partialAssistantMessageId &&
               event.payload.streaming === false,
@@ -1818,7 +1816,9 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
         hasPendingUserInput: false,
       });
       const repairEvents = (await harness.readEvents()).filter(
-        (event) =>
+        (
+          event,
+        ): event is Extract<OrchestrationEvent, { readonly type: "thread.activity-appended" }> =>
           event.type === "thread.activity-appended" &&
           event.payload.activity.kind === "user-input.resolved",
       );
@@ -2253,6 +2253,7 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
       const partialContext = "Partial response before shutdown";
       const harness = await createHarness({
         projectedSessionBeforeStart: {
+          abortState: null,
           status: "running",
           providerName: "codex",
           providerInstanceId: ProviderInstanceId.make("codex"),
@@ -2304,7 +2305,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
       );
     });
   });
-
 
   it("starts Codex with project memory isolated and sends only relevant memory as handoff", async () => {
     const markdown = "# Project memory\n\n## Active decisions\n\nUse native forks.\n";
@@ -2358,7 +2358,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
       `<t3code_project_memory>\n${markdown.trim()}\n</t3code_project_memory>`,
     );
   });
-
 
   it("retries an interrupted result-less turn with the existing user message", async () => {
     const harness = await createHarness();
@@ -2477,7 +2476,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     ).toHaveLength(1);
   });
 
-
   it("injects project-agent coordination instructions when another project thread is active", async () => {
     const harness = await createHarness({ activeProjectPeerBeforeStart: true });
     const now = "2026-01-01T00:00:00.000Z";
@@ -2504,7 +2502,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
       coordinatedProviderInput("coordinate this change"),
     );
   });
-
 
   effectIt.effect("waits for independent Claude Fetch workers before sending a Codex turn", () =>
     Effect.gen(function* () {
@@ -2592,7 +2589,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     }),
   );
 
-
   it.each([
     {
       label: "Cursor main with Codex Fetch",
@@ -2674,7 +2670,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     });
   });
 
-
   it.each([
     {
       label: "planner failure",
@@ -2752,7 +2747,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     );
   });
 
-
   it("keeps a full-size main request unchanged and warns when no Fetch context space remains", async () => {
     const mainRequest = "u".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
     const harness = await createHarness({
@@ -2806,7 +2800,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
       ]),
     );
   });
-
 
   it("continues unchanged and warns when an explicit Fetch selection is unavailable", async () => {
     const harness = await createHarness({
@@ -2867,7 +2860,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     );
   });
 
-
   it("does not invoke Fetch coordination when the turn has no Fetch mode", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
@@ -2893,7 +2885,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     expect(harness.fetchHandoffInputs).toHaveLength(0);
   });
 
-
   it("does not dispatch the main turn when Fetch cancellation wins the handoff", async () => {
     const harness = await createHarness({ fetchHandoffAllowed: false });
     const now = "2026-01-01T00:00:00.000Z";
@@ -2918,7 +2909,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     await waitFor(() => harness.fetchHandoffInputs.length === 1);
     expect(harness.sendTurnExecutions).toBe(0);
   });
-
 
   it("generates first-turn title and worktree branch in one metadata call", async () => {
     const harness = await createHarness({
@@ -3010,7 +3000,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     });
     expect(harness.refreshStatus.mock.calls[0]?.[0]).toBe("/tmp/provider-project-worktree");
   });
-
 
   it("resolves Auto Reasoning once per submitted user message and reuses it for retries", async () => {
     const model = "gpt-5.6-sol";
@@ -3322,7 +3311,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     });
   });
 
-
   it("bypasses Auto Reasoning for manual Codex effort selections", async () => {
     const model = "gpt-5.6-sol";
     const manualSelection = createModelSelection(ProviderInstanceId.make("codex"), model, [
@@ -3364,7 +3352,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     });
   });
 
-
   it("falls back to the stored concrete effort for an invalid routing decision", async () => {
     const model = "gpt-5.6-sol";
     const autoSelection = createModelSelection(ProviderInstanceId.make("codex"), model, [
@@ -3405,7 +3392,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
       },
     });
   });
-
 
   it("falls back to the stored concrete effort when routing fails", async () => {
     const model = "gpt-5.6-sol";
@@ -3454,7 +3440,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     });
   });
 
-
   it("uses the concrete fallback without routing when live efforts are unavailable", async () => {
     const model = "gpt-5.6-sol";
     const autoSelection = createModelSelection(ProviderInstanceId.make("codex"), model, [
@@ -3488,7 +3473,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
       },
     });
   });
-
 
   it("canonicalizes legacy codex fast mode through session start and turn send", async () => {
     const harness = await createHarness();
@@ -3531,7 +3515,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
       ]),
     });
   });
-
 
   it("starts fresh with transcript handoff when a provider requires a new session for model changes", async () => {
     const harness = await createHarness({ requiresNewThreadForModelChange: true });
@@ -3617,7 +3600,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     });
   });
 
-
   it("restarts and resumes a gateway GPT session when effort changes", async () => {
     const harness = await createHarness({
       threadModelSelection: {
@@ -3694,7 +3676,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     });
   });
 
-
   it("restarts and resumes a gateway GPT session when Fast is enabled and disabled", async () => {
     const model = "claude-codex-gpt-5.4";
     const providerInstanceId = ProviderInstanceId.make("claudeAgent");
@@ -3749,7 +3730,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
 
     expect(harness.startSession).toHaveBeenCalledTimes(3);
   });
-
 
   it("switches cross-driver providers with a fresh session and compact transcript handoff", async () => {
     const oldRuntimeSessionId = RuntimeSessionId.make("runtime-codex-before-switch");
@@ -3825,7 +3805,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     expect(thread?.session?.runtimeSessionId).not.toBe(oldRuntimeSessionId);
     expect(thread?.modelSelection.instanceId).toBe(ProviderInstanceId.make("claudeAgent"));
   });
-
 
   effectIt.effect(
     "clears the old runtime generation before switching a Codex thread to OpenCode Gemini",
@@ -3915,7 +3894,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
       }),
   );
 
-
   it("starts cross-driver provider changes fresh after the existing thread session has stopped", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
@@ -3926,6 +3904,8 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
         commandId: CommandId.make("cmd-session-set-stopped-provider-switch"),
         threadId: ThreadId.make("thread-1"),
         session: {
+          runtimeSessionId: null,
+          abortState: null,
           threadId: ThreadId.make("thread-1"),
           status: "stopped",
           providerName: "codex",
@@ -3968,7 +3948,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     });
     expect(harness.sendTurn.mock.calls[0]?.[0]?.input).toContain("continue with claude");
   });
-
 
   it("routes thread.turn.interrupt-requested through the server abort lane", async () => {
     const harness = await createHarness();
@@ -4013,7 +3992,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     expect(harness.interruptTurn).not.toHaveBeenCalled();
   });
 
-
   it("offers a stop to the active Fetch preflight before the normal abort lane", async () => {
     const harness = await createHarness({ fetchInterruptHandled: true });
     const now = "2026-01-01T00:00:00.000Z";
@@ -4055,7 +4033,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     expect(harness.requestAbort).not.toHaveBeenCalled();
   });
 
-
   effectIt.effect("records a server abort-lane failure without owning provider settlement", () =>
     Effect.gen(function* () {
       const harness = yield* Effect.promise(() => createHarness());
@@ -4066,6 +4043,8 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
         commandId: CommandId.make("cmd-session-set-abort-lane-failure"),
         threadId: ThreadId.make("thread-1"),
         session: {
+          runtimeSessionId: null,
+          abortState: null,
           threadId: ThreadId.make("thread-1"),
           status: "running",
           providerName: "codex",
@@ -4116,7 +4095,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     }),
   );
 
-
   it("reacts to thread.approval.respond by forwarding provider approval response", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
@@ -4127,6 +4105,8 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
         commandId: CommandId.make("cmd-session-set-for-approval"),
         threadId: ThreadId.make("thread-1"),
         session: {
+          runtimeSessionId: null,
+          abortState: null,
           threadId: ThreadId.make("thread-1"),
           status: "running",
           providerName: "codex",
@@ -4158,7 +4138,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     });
   });
 
-
   it("reacts to thread.user-input.respond by forwarding structured user input answers", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
@@ -4169,6 +4148,8 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
         commandId: CommandId.make("cmd-session-set-for-user-input"),
         threadId: ThreadId.make("thread-1"),
         session: {
+          runtimeSessionId: null,
+          abortState: null,
           threadId: ThreadId.make("thread-1"),
           status: "running",
           providerName: "codex",
@@ -4204,7 +4185,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     });
   });
 
-
   effectIt("surfaces non-resumable provider user-input callbacks as stale failures", () =>
     Effect.gen(function* () {
       const harness = yield* Effect.promise(() => createHarness());
@@ -4224,6 +4204,8 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
         commandId: CommandId.make("cmd-session-set-for-user-input-error"),
         threadId: ThreadId.make("thread-1"),
         session: {
+          runtimeSessionId: null,
+          abortState: null,
           threadId: ThreadId.make("thread-1"),
           status: "running",
           providerName: "claudeAgent",
@@ -4312,7 +4294,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     }),
   );
 
-
   effectIt(
     "reacts to thread.session.stop by stopping provider session and clearing thread session state",
     () =>
@@ -4325,6 +4306,8 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
           commandId: CommandId.make("cmd-session-set-for-stop"),
           threadId: ThreadId.make("thread-1"),
           session: {
+            runtimeSessionId: null,
+            abortState: null,
             threadId: ThreadId.make("thread-1"),
             status: "ready",
             providerName: "codex",
@@ -4343,6 +4326,9 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
           commandId: CommandId.make("cmd-subagent-set-for-stop"),
           threadId: ThreadId.make("thread-1"),
           subagent: {
+            origin: "provider-native",
+            providerInstanceId: null,
+            providerDriver: null,
             id: activeChildId,
             providerThreadId: "child-before-explicit-stop",
             parentId: null,

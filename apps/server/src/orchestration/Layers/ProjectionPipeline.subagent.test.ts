@@ -1,3 +1,4 @@
+import { ProviderDriverKind } from "@t3tools/contracts";
 import {
   EventId,
   MessageId,
@@ -51,7 +52,7 @@ function summary(): OrchestrationSubagentSummary {
     id: subagentId,
     origin: "t3-fetch",
     providerInstanceId: ProviderInstanceId.make("claude-work"),
-    providerDriver: "claudeAgent",
+    providerDriver: ProviderDriverKind.make("claudeAgent"),
     providerThreadId: "provider-agent-subagent-projection",
     parentId: null,
     path: "/root/projection",

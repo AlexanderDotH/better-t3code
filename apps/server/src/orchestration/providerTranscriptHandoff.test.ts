@@ -61,7 +61,6 @@ describe("buildProviderTranscriptHandoff", () => {
       latestTurnState: "interrupted",
       checkpoints: [
         {
-          turnId: TurnId.make("turn-checkpoint"),
           checkpointTurnCount: 3,
           checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread/3"),
           status: "ready",
@@ -69,7 +68,6 @@ describe("buildProviderTranscriptHandoff", () => {
             { path: "src/z.ts", kind: "modified", additions: 4, deletions: 1 },
             { path: "src/a.ts", kind: "added", additions: 8, deletions: 0 },
           ],
-          assistantMessageId: MessageId.make("latest-assistant"),
           completedAt: "2026-01-01T00:00:01.000Z",
         },
       ],
@@ -209,11 +207,11 @@ describe("fork transcript handoff", () => {
       checkpoints: [
         {
           turnId: TurnId.make("turn-1"),
+          assistantMessageId: MessageId.make("latest-assistant"),
           checkpointTurnCount: 1,
           checkpointRef: CheckpointRef.make("refs/t3/checkpoints/source/1"),
           status: "ready",
           files: [{ path: "src/index.ts", kind: "modified", additions: 2, deletions: 1 }],
-          assistantMessageId: MessageId.make("latest-assistant"),
           completedAt: "2026-01-01T00:00:02.000Z",
           historyOrigin: origin("checkpoint-1", 7),
         },

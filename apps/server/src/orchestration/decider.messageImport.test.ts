@@ -30,6 +30,7 @@ const seedReadModel = Effect.gen(function* () {
     correlationId: CommandId.make("server:import-project"),
     metadata: {},
     payload: {
+      checkpointsEnabled: true,
       projectId,
       title: "Imported project",
       workspaceRoot: "/tmp/imported",

@@ -1,3 +1,4 @@
+import { HarnessChatNativeMessageId } from "./persistence/Services/ProjectionHarnessChatSync.ts";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -79,7 +80,11 @@ function makeHistoryInstance(input: {
       getSnapshot: Effect.succeed({
         models: [{ slug: "custom-default", isDefault: true }],
       } as never),
-    } as ProviderInstance["snapshot"],
+      resolveMaintenance: () => Effect.die("unused"),
+      refresh: Effect.die("unused"),
+      streamChanges: Stream.empty,
+      applyUsageLimits: () => Effect.void,
+    },
     adapter: {} as ProviderInstance["adapter"],
     historySync: makeSupportedProviderHistorySync({
       source: {
@@ -148,15 +153,17 @@ function makeHarnessSyncTestLayer(input: {
     listMessageLinksByThreadId: ({ threadId }) =>
       Effect.succeed([...messageLinks.values()].filter((link) => link.threadId === threadId)),
   });
-  const projectionLayer = Layer.succeed(ProjectionSnapshotQuery, {
+  const projectionLayer = Layer.mock(ProjectionSnapshotQuery, {
     getShellSnapshot: () =>
       Effect.succeed({ snapshotSequence: 0, projects, threads: [], updatedAt: createdAt }),
     getActiveProjectByWorkspaceRoot: (workspaceRoot) =>
       Effect.succeed(
-        Option.fromNullishOr(projects.find((project) => project.workspaceRoot === workspaceRoot)),
+        Option.fromNullishOr(
+          projects.find((project) => project.workspaceRoot === workspaceRoot),
+        ).pipe(Option.map((project) => ({ ...project, deletedAt: null, coordinationClaims: [] }))),
       ),
-  } as ProjectionSnapshotQuery["Service"]);
-  const orchestrationLayer = Layer.succeed(OrchestrationEngineService, {
+  });
+  const orchestrationLayer = Layer.mock(OrchestrationEngineService, {
     readEvents: () => Stream.empty,
     dispatch: (command) =>
       Effect.sync(() => {
@@ -181,7 +188,7 @@ function makeHarnessSyncTestLayer(input: {
           if (!messageLinks.has(key)) {
             messageLinks.set(key, {
               threadId: command.threadId,
-              nativeMessageId: command.nativeMessageId,
+              nativeMessageId: HarnessChatNativeMessageId.make(command.nativeMessageId),
               messageId: command.message.id,
               linkedAt: command.linkedAt,
             });
@@ -209,14 +216,14 @@ function makeHarnessSyncTestLayer(input: {
     streamDomainEvents: Stream.empty,
     latestSequence: Effect.succeed(0),
   });
-  const instanceRegistryLayer = Layer.succeed(ProviderInstanceRegistry, {
+  const instanceRegistryLayer = Layer.mock(ProviderInstanceRegistry, {
     getInstance: (instanceId) =>
       Effect.succeed(input.instances.find((instance) => instance.instanceId === instanceId)),
     listInstances: Effect.succeed(input.instances),
     listUnavailable: Effect.succeed(input.unavailable ?? []),
     streamChanges: Stream.empty,
-  } as ProviderInstanceRegistry["Service"]);
-  const sessionDirectoryLayer = Layer.succeed(ProviderSessionDirectory, {
+  });
+  const sessionDirectoryLayer = Layer.mock(ProviderSessionDirectory, {
     upsert: (binding) => Effect.sync(() => void bindings.push(binding)),
     getProvider: () => Effect.die("not used"),
     getBinding: () => Effect.succeed(Option.none()),
@@ -625,7 +632,7 @@ describe("Harness chat sync", () => {
           sourceId,
           query: "match",
           includeArchived: false,
-          cursor: first.nextCursor ?? undefined,
+          ...(first.nextCursor ? { cursor: first.nextCursor } : {}),
           limit: 10,
         });
         const legacyCursor = yield* service.list({

@@ -21,6 +21,7 @@ const seedProjectCreated = (sequence: number): OrchestrationEvent => ({
   correlationId: CommandId.make(`cmd-project-checkpoints-enabled-${sequence}`),
   metadata: {},
   payload: {
+    checkpointsEnabled: true,
     projectId,
     title: "Checkpoint setting",
     workspaceRoot: "/tmp/checkpoint-setting",
