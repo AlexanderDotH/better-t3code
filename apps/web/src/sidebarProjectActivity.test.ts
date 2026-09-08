@@ -55,6 +55,7 @@ function makeProject(
     groupedProjectCount: members.length,
     environmentPresence: "local-only",
     allRemoteMembersAreDesktopLocal: false,
+    allRemoteMembersAreWsl: false,
     memberProjects: members,
     memberProjectRefs: members.map((member) => ({
       environmentId: member.environmentId,

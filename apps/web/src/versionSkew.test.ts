@@ -144,6 +144,7 @@ describe("versionSkew", () => {
           serverVersion: "0.0.33",
           capabilities: {
             repositoryIdentity: true,
+            midChatProviderSwitching: false,
           },
         },
       }),
@@ -185,6 +186,7 @@ describe("versionSkew", () => {
           serverVersion: "9.9.9",
           capabilities: {
             repositoryIdentity: true,
+            midChatProviderSwitching: false,
             serverSelfUpdate: "desktop-managed",
           },
         },
@@ -202,6 +204,7 @@ describe("versionSkew", () => {
         serverVersion: "9.9.9",
         capabilities: {
           repositoryIdentity: true,
+          midChatProviderSwitching: false,
           serverSelfUpdate: "desktop-managed" as const,
           ...(desktopAppUpdate === undefined ? {} : { desktopAppUpdate }),
         },

@@ -108,7 +108,11 @@ beforeEach(() => {
   bridge.checkSnapShotShortcut.mockResolvedValue({ available: true, message: null });
   bridge.setupSnapShot.mockReset().mockResolvedValue(undefined);
   settingsStore.update.mockImplementation(async (patch) => {
-    settingsStore.current = { ...settingsStore.current, ...patch };
+    settingsStore.current = {
+      ...settingsStore.current,
+      ...patch,
+      betterT3Device: { ...settingsStore.current.betterT3Device, ...patch.betterT3Device },
+    };
     state = { ...state, shortcut: settingsStore.current.snapShotShortcut };
   });
 });
