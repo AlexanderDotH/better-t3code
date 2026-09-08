@@ -184,6 +184,42 @@ describe("previewStateStore (single-tab)", () => {
     expect(state.snapshot?.navStatus._tag).toBe("LoadFailed");
   });
 
+  it("failed event snapshot recovers state for an event-only consumer", () => {
+    const snapshot = makeSnapshot({
+      navStatus: {
+        _tag: "LoadFailed",
+        url: "http://localhost:5173/",
+        title: "",
+        code: -105,
+        description: "ERR_NAME_NOT_RESOLVED",
+      },
+      canGoBack: true,
+      viewport: { _tag: "freeform", width: 1024, height: 768 },
+      updatedAt: "2026-01-01T00:00:01.000Z",
+    });
+
+    applyPreviewServerEvent(ref, {
+      type: "failed",
+      threadId: "thread-1",
+      tabId: snapshot.tabId,
+      createdAt: snapshot.updatedAt,
+      url: "http://localhost:5173/",
+      title: "",
+      code: -105,
+      description: "ERR_NAME_NOT_RESOLVED",
+      snapshot,
+    });
+
+    expect(readThreadPreviewState(ref)).toMatchObject({
+      activeTabId: snapshot.tabId,
+      snapshot: {
+        canGoBack: true,
+        viewport: { _tag: "freeform", width: 1024, height: 768 },
+        navStatus: { _tag: "LoadFailed", code: -105 },
+      },
+    });
+  });
+
   it("failed event for a non-active tab is ignored", () => {
     const snapshot = makeSnapshot({ tabId: "tab_a" });
     applyPreviewServerEvent(ref, {
