@@ -1,29 +1,83 @@
-import type { ProviderInteractionMode } from "@t3tools/contracts";
+import {
+  type ProviderInteractionMode,
+  WORKSPACE_CONTEXT_MAX_QUERIES,
+  WORKSPACE_CONTEXT_MAX_READS,
+} from "@t3tools/contracts";
+
+export interface CodexT3ToolAvailability {
+  readonly preview: boolean;
+  readonly workspace: boolean;
+  readonly workspaceWrite: boolean;
+  readonly coordination: boolean;
+  readonly threadContext: boolean;
+  readonly projectMemory: boolean;
+  readonly knowledgeGraph: boolean;
+}
 import { buildRuntimeInstructions } from "./RuntimeInstructions.ts";
 
-const T3_CODE_BROWSER_TOOL_INSTRUCTIONS = `
+const ALL_T3_TOOLS: CodexT3ToolAvailability = {
+  preview: true,
+  workspace: true,
+  workspaceWrite: true,
+  coordination: true,
+  threadContext: true,
+  projectMemory: true,
+  knowledgeGraph: true,
+};
 
-## T3 Code collaborative browser
+const NO_T3_TOOLS: CodexT3ToolAvailability = {
+  preview: false,
+  workspace: false,
+  workspaceWrite: false,
+  coordination: false,
+  threadContext: false,
+  projectMemory: false,
+  knowledgeGraph: false,
+};
 
-You are running inside T3 Code. The \`t3-code\` MCP server is the product-native collaborative browser shared with the user. When it exposes \`preview_*\` tools, prefer those tools for browser navigation, inspection, interaction, screenshots, and recordings.
+function availability(value: boolean | CodexT3ToolAvailability): CodexT3ToolAvailability {
+  return typeof value === "boolean" ? (value ? ALL_T3_TOOLS : NO_T3_TOOLS) : value;
+}
 
-For browser work, first call \`preview_status\`. If no automation-capable preview is attached, call \`preview_open\` before concluding that the browser is unavailable. Then use \`preview_navigate\`, \`preview_snapshot\`, and the focused interaction tools. Prefer snapshot-provided locators over coordinates.
+function toolInstructions(
+  value: boolean | CodexT3ToolAvailability,
+  workspaceEditAllowed: boolean,
+): string {
+  const tools = availability(value);
+  return [
+    tools.preview
+      ? `## T3 browser
 
-Do not switch to global browser skills, Chrome, Node REPL browser automation, standalone Playwright, or agent-browser merely because the preview is initially closed or a first call fails. Use an alternative browser system only when the T3 preview tools are absent, the user explicitly requests another browser, or \`preview_open\` returns an explicit unsupported/unavailable error. A failed T3 preview tool call should be inspected and retried with corrected arguments when the error is actionable.
-`;
+Use the attached T3 preview tools for browser work. Start with \`preview_status\`, open a preview when needed, prefer snapshot locators, and retry actionable failures before switching browser systems.`
+      : "",
+    tools.workspace
+      ? `## T3 workspace
 
-/**
- * The browser block is omitted entirely when the preview tools aren't attached.
- * Describing `preview_*` tools that aren't in the turn's tool list would be
- * worse than saying nothing: the instructions actively steer the model away
- * from Playwright and agent-browser, so leaving them in would talk it out of
- * the only browser automation it still has.
- */
-const browserToolInstructions = (browserToolsAvailable: boolean): string =>
-  browserToolsAvailable ? T3_CODE_BROWSER_TOOL_INSTRUCTIONS : "";
+Prefer \`workspace_find\` for path or content searches and \`workspace_read\` for bounded line reads. Batch at most ${WORKSPACE_CONTEXT_MAX_QUERIES} queries or ${WORKSPACE_CONTEXT_MAX_READS} reads per call; split larger sets and use \`workspace_context\` only for mixed batches. Do not use shell text readers or searchers.${
+          tools.workspaceWrite && workspaceEditAllowed
+            ? " Prefer `workspace_edit` for small UTF-8 edits; create new files with write mode `create` and prefer exact replacements for existing text. Use provider patch or command tools only for approval-required or large edits, formatters, generators, binaries, large files, or permissions."
+            : ""
+        }`
+      : "",
+    tools.projectMemory
+      ? `## Project memory
 
-const codexPlanModeDeveloperInstructions = (
-  browserToolsAvailable: boolean,
+Use \`project_memory\` only for verified durable facts or explicit requests. Never store credentials.`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function delegationInstructions(value: boolean | CodexT3ToolAvailability): string {
+  const tools = availability(value);
+  return `## Delegation history
+
+Automatic delegation uses \`fork_turns: "none"\` and a self-contained brief. Use a positive fork_turns count only for necessary recent exchanges, and full history only when explicitly requested.${tools.threadContext ? " Retrieve exact older messages with `thread_context`." : ""} Do not impose an agent-count cap.`;
+}
+
+export const codexPlanModeDeveloperInstructions = (
+  tools: boolean | CodexT3ToolAvailability,
 ): string => `<collaboration_mode># Plan Mode (Conversational)
 
 You work in 3 phases, and you should *chat your way* to a great plan before finalizing it. A great plan is very detailed-intent- and implementation-wise-so that it can be handed to another engineer or agent to be implemented right away. It must be **decision complete**, where the implementer does not need to make any decisions.
@@ -76,100 +130,26 @@ Do not ask questions that can be answered from the repo or system (for example, 
 
 ## PHASE 2 - Intent chat (what they actually want)
 
-* Keep asking until you can clearly state: goal + success criteria, audience, in/out of scope, constraints, current state, and the key preferences/tradeoffs.
-* Bias toward questions over guessing: if any high-impact ambiguity remains, do NOT plan yet-ask.
+Plan Mode remains active until a developer message changes it. Explore with non-mutating reads, searches, tests, and builds, but do not edit tracked files or execute the plan.
 
-## PHASE 3 - Implementation chat (what/how we'll build)
+Resolve discoverable facts before asking. Ask only when a material product choice cannot be inferred safely. A final plan must be decision complete, concise by default, and wrapped once in \`<proposed_plan>\` and \`</proposed_plan>\`. A revision is a complete replacement of the prior plan.
 
-* Once intent is stable, keep asking until the spec is decision complete: approach, interfaces (APIs/schemas/I/O), data flow, edge cases/failure modes, testing + acceptance criteria, rollout/monitoring, and any migrations/compat constraints.
-
-## Asking questions
-
-Critical rules:
-
-* Strongly prefer using the \`request_user_input\` tool to ask any questions.
-* Offer only meaningful multiple-choice options; don't include filler choices that are obviously wrong or irrelevant.
-* In rare cases where an unavoidable, important question can't be expressed with reasonable multiple-choice options (due to extreme ambiguity), you may ask it directly without the tool.
-
-You SHOULD ask many questions, but each question must:
-
-* materially change the spec/plan, OR
-* confirm/lock an assumption, OR
-* choose between meaningful tradeoffs.
-* not be answerable by non-mutating commands.
-
-Use the \`request_user_input\` tool only for decisions that materially change the plan, for confirming important assumptions, or for information that cannot be discovered via non-mutating exploration.
-
-## Two kinds of unknowns (treat differently)
-
-1. **Discoverable facts** (repo/system truth): explore first.
-
-   * Before asking, run targeted searches and check likely sources of truth (configs/manifests/entrypoints/schemas/types/constants).
-   * Ask only if: multiple plausible candidates; nothing found but you need a missing identifier/context; or ambiguity is actually product intent.
-   * If asking, present concrete candidates (paths/service names) + recommend one.
-   * Never ask questions you can answer from your environment (e.g., "where is this struct").
-
-2. **Preferences/tradeoffs** (not discoverable): ask early.
-
-   * These are intent or implementation preferences that cannot be derived from exploration.
-   * Provide 2-4 mutually exclusive options + a recommended default.
-   * If unanswered, proceed with the recommended option and record it as an assumption in the final plan.
-
-## Finalization rule
-
-Only output the final plan when it is decision complete and leaves no decisions to the implementer.
-
-When you present the official plan, wrap it in a \`<proposed_plan>\` block so the client can render it specially:
-
-1) The opening tag must be on its own line.
-2) Start the plan content on the next line (no text on the same line as the tag).
-3) The closing tag must be on its own line.
-4) Use Markdown inside the block.
-5) Keep the tags exactly as \`<proposed_plan>\` and \`</proposed_plan>\` (do not translate or rename them), even if the plan content is in another language.
-
-Example:
-
-<proposed_plan>
-plan content
-</proposed_plan>
-
-plan content should be human and agent digestible. The final plan must be plan-only, concise by default, and include:
-
-* A clear title
-* A brief summary section
-* Important changes or additions to public APIs/interfaces/types
-* Test cases and scenarios
-* Explicit assumptions and defaults chosen where needed
-
-When possible, prefer a compact structure with 3-5 short sections, usually: Summary, Key Changes or Implementation Changes, Test Plan, and Assumptions. Do not include a separate Scope section unless scope boundaries are genuinely important to avoid mistakes.
-
-Prefer grouped implementation bullets by subsystem or behavior over file-by-file inventories. Mention files only when needed to disambiguate a non-obvious change, and avoid naming more than 3 paths unless extra specificity is necessary to prevent mistakes. Prefer behavior-level descriptions over symbol-by-symbol removal lists. For v1 feature-addition plans, do not invent detailed schema, validation, precedence, fallback, or wire-shape policy unless the request establishes it or it is needed to prevent a concrete implementation mistake; prefer the intended capability and minimum interface/behavior changes.
-
-Keep bullets short and avoid explanatory sub-bullets unless they are needed to prevent ambiguity. Prefer the minimum detail needed for implementation safety, not exhaustive coverage. Within each section, compress related changes into a few high-signal bullets and omit branch-by-branch logic, repeated invariants, and long lists of unaffected behavior unless they are necessary to prevent a likely implementation mistake. Avoid repeated repo facts and irrelevant edge-case or rollout detail. For straightforward refactors, keep the plan to a compact summary, key edits, tests, and assumptions. If the user asks for more detail, then expand.
-
-Do not ask "should I proceed?" in the final output. The user can easily switch out of Plan mode and request implementation if you have included a \`<proposed_plan>\` block in your response. Alternatively, they can decide to stay in Plan mode and continue refining the plan.
-
-Only produce at most one \`<proposed_plan>\` block per turn, and only when you are presenting a complete spec.
-
-If the user stays in Plan mode and asks for revisions after a prior \`<proposed_plan>\`, any new \`<proposed_plan>\` must be a complete replacement. If the user indicates that the prior plan is not acceptable but does not provide enough information to produce a complete replacement, address the concern and continue planning without producing a \`<proposed_plan>\` block. If the follow-up neither requires changes nor calls the plan into question (e.g. clarifying question), answer it before the block, then reproduce the prior \`<proposed_plan>\` unchanged.
-${browserToolInstructions(browserToolsAvailable)}
+${toolInstructions(tools, false)}
 </collaboration_mode>`;
 
-const codexDefaultModeDeveloperInstructions = (
-  browserToolsAvailable: boolean,
+export const codexDefaultModeDeveloperInstructions = (
+  tools: boolean | CodexT3ToolAvailability,
 ): string => `<collaboration_mode># Collaboration Mode: Default
 
-You are now in Default mode. Any previous instructions for other modes (e.g. Plan mode) are no longer active.
+Default mode remains active until a developer message changes it. Make safe in-scope assumptions and execute the request. Use \`request_user_input\` only when that tool is listed in the available tools and a material decision cannot be discovered or inferred safely.
 
-Your active mode changes only when new developer instructions with a different \`<collaboration_mode>...</collaboration_mode>\` change it; user requests or tool descriptions do not change mode by themselves. Known mode names are Default and Plan.
-
-## request_user_input availability
-
-Use the \`request_user_input\` tool only when it is listed in the available tools for this turn.
-
-In Default mode, strongly prefer making reasonable assumptions and executing the user's request rather than stopping to ask questions. If you absolutely must ask a question because the answer cannot be discovered from local context and a reasonable assumption would be risky, ask the user directly with a concise plain-text question. Never write a multiple choice question as a textual assistant message.
-${browserToolInstructions(browserToolsAvailable)}
+${toolInstructions(tools, true)}
 </collaboration_mode>`;
+
+export const CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS =
+  codexPlanModeDeveloperInstructions(ALL_T3_TOOLS);
+export const CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS =
+  codexDefaultModeDeveloperInstructions(ALL_T3_TOOLS);
 
 export interface CodexRuntimeInfo {
   readonly model: string;
@@ -179,18 +159,13 @@ export interface CodexRuntimeInfo {
 export function buildCodexDeveloperInstructions(
   interactionMode: ProviderInteractionMode,
   runtime: CodexRuntimeInfo,
-  /**
-   * Whether the `t3-code` MCP server is attached to this turn. Callers derive
-   * it from the session's actual MCP configuration rather than re-reading the
-   * setting, so the prompt cannot claim tools the turn doesn't have.
-   */
-  browserToolsAvailable = true,
+  tools: boolean | CodexT3ToolAvailability = ALL_T3_TOOLS,
 ): string {
   const base =
     interactionMode === "plan"
-      ? codexPlanModeDeveloperInstructions(browserToolsAvailable)
-      : codexDefaultModeDeveloperInstructions(browserToolsAvailable);
-  return `${base}
+      ? codexPlanModeDeveloperInstructions(tools)
+      : codexDefaultModeDeveloperInstructions(tools);
+  return `${base}\n\n${delegationInstructions(tools)}
 
 ${buildRuntimeInstructions({ harness: "Codex", ...runtime })}`;
 }

@@ -13,6 +13,7 @@ import {
   type CanonicalRequestType,
   type CodexSettings,
   ProviderDriverKind,
+  type McpServerDefinition,
   type ProviderEvent,
   ProviderInstanceId,
   type ProviderRuntimeEvent,
@@ -28,6 +29,7 @@ import {
   type RuntimeTaskUsage,
   type TurnTokenUsage,
   ProviderApprovalDecision,
+  RuntimeSessionId,
   ThreadId,
   ProviderSendTurnInput,
 } from "@t3tools/contracts";
@@ -37,7 +39,7 @@ import * as Crypto from "effect/Crypto";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
-import * as Queue from "effect/Queue";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -45,9 +47,18 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
-import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import {
+  getModelSelectionStringOptionValue,
+  resolveCodexContextWindowTokens,
+} from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as ResourceProtection from "../../resourceProtection/SubagentResourceGovernor.ts";
+import {
+  codexResourceGovernorHookLaunchConfiguration,
+  RESOURCE_PROTECTION_CONFIGURATION_ENV,
+  RESOURCE_PROTECTION_URL_ENV,
+} from "../../resourceProtection/CodexResourceGovernorHook.ts";
 
 import {
   ProviderAdapterRequestError,
@@ -58,6 +69,7 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import { type CodexAdapterShape } from "../Services/CodexAdapter.ts";
+import type { ProviderNativeThreadForkInput } from "../Services/ProviderAdapter.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import {
@@ -77,6 +89,29 @@ import {
   codexUsageLimitMessage,
   mergeCodexRateLimits,
 } from "./codexUsageLimits.ts";
+import { stampProviderRuntimeEventOrigin } from "../runtimeEventOrigin.ts";
+import {
+  makeBoundedProviderEventQueue,
+  providerEventEncodedBytes,
+  PROVIDER_RUNTIME_EVENT_QUEUE_BYTE_CAPACITY,
+  PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY,
+} from "../boundedEventQueue.ts";
+import {
+  type CodexMcpStartupObservation,
+  codexManagedMcpServers,
+  observeCodexMcpEvent,
+  sanitizeCodexMcpNativeEvent,
+} from "./CodexMcpRuntimeView.ts";
+import { makeCodexRuntimeEventMapper } from "./CodexRuntimeEventMapper.ts";
+import type { CodexSubagentRuntimeMetadata } from "./CodexRuntimeEventShared.ts";
+import { makeCodexMcpRuntime } from "./CodexMcpRuntime.ts";
+import { makeCodexAdapterSessionStore } from "./CodexAdapterSession.ts";
+
+export { sanitizeCodexMcpNativeEvent } from "./CodexMcpRuntimeView.ts";
+export {
+  normalizeCodexCollabAgentStatus,
+  makeCodexRuntimeEventMapper,
+} from "./CodexRuntimeEventMapper.ts";
 const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
 const isCodexAppServerTransportError = Schema.is(CodexErrors.CodexAppServerTransportError);
 const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
@@ -98,15 +133,9 @@ export interface CodexAdapterLiveOptions {
   >;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
-}
-
-interface CodexAdapterSessionContext {
-  readonly threadId: ThreadId;
-  readonly scope: Scope.Closeable;
-  readonly runtime: CodexSessionRuntimeShape;
-  readonly eventFiber: Fiber.Fiber<void, never>;
-  readonly turnTokenUsage: CodexTurnTokenUsageState;
-  stopped: boolean;
+  readonly resolveMcpServers?: (input: {
+    readonly cwd: string;
+  }) => Effect.Effect<ReadonlyArray<McpServerDefinition>>;
 }
 
 type CodexCumulativeTokenUsage = {
@@ -133,7 +162,7 @@ interface CodexTurnTokenUsageState {
   readonly byTurnId: Map<string, CodexTurnTokenUsageAccumulator>;
 }
 
-function mapCodexRuntimeError(
+export function mapCodexRuntimeError(
   threadId: ThreadId,
   method: string,
   error: CodexSessionRuntimeError,
@@ -2221,6 +2250,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   const fileSystem = yield* FileSystem.FileSystem;
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const crypto = yield* Crypto.Crypto;
+  const resourceGovernor = Option.getOrUndefined(
+    yield* Effect.serviceOption(ResourceProtection.SubagentResourceGovernor),
+  );
   const serverConfig = yield* Effect.service(ServerConfig);
   const nativeEventLogger =
     options?.nativeEventLogger ??
@@ -2231,8 +2263,24 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       : undefined);
   const managedNativeEventLogger =
     options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
-  const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
-  const sessions = new Map<ThreadId, CodexAdapterSessionContext>();
+  const runtimeEventQueue = yield* makeBoundedProviderEventQueue<ProviderRuntimeEvent>({
+    capacity: PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY,
+    byteCapacity: PROVIDER_RUNTIME_EVENT_QUEUE_BYTE_CAPACITY,
+    sizeOf: providerEventEncodedBytes,
+  });
+  const sessionStore = makeCodexAdapterSessionStore({
+    boundInstanceId,
+    ...(resourceGovernor ? { resourceGovernor } : {}),
+  });
+  const {
+    forceStopSession,
+    hasSession,
+    listSessions,
+    requireMcpRuntimeSession,
+    requireSession,
+    stopAll,
+    stopSession,
+  } = sessionStore;
 
   const startSession: CodexAdapterShape["startSession"] = (input) =>
     Effect.scoped(
@@ -2245,46 +2293,120 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           });
         }
 
-        const existing = sessions.get(input.threadId);
-        if (existing && !existing.stopped) {
-          yield* Effect.suspend(() => stopSessionInternal(existing));
-        }
+        yield* sessionStore.stopExisting(input.threadId);
+        const runtimeSessionId =
+          input.runtimeSessionId ??
+          RuntimeSessionId.make(
+            yield* crypto.randomUUIDv4.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapterRequestError({
+                    provider: PROVIDER,
+                    method: "crypto/randomUUIDv4",
+                    detail: "Failed to generate Codex runtime identifier.",
+                    cause,
+                  }),
+              ),
+            ),
+          );
 
         const serviceTier =
           input.modelSelection?.instanceId === boundInstanceId
             ? getCodexServiceTierOptionValue(input.modelSelection)
             : undefined;
+        const reasoningEffort =
+          input.modelSelection?.instanceId === boundInstanceId
+            ? getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort")
+            : undefined;
+        const contextWindow =
+          input.modelSelection?.instanceId === boundInstanceId
+            ? resolveCodexContextWindowTokens(input.modelSelection)
+            : undefined;
+        const fetchWorker = input.purpose === "fetch-worker";
+        const transientWorker = fetchWorker || input.purpose === "subagent-worker";
+        const runtimeMode = fetchWorker ? "approval-required" : input.runtimeMode;
+        const cwd = input.cwd ?? process.cwd();
+        const resolvedMcpServers =
+          !fetchWorker && options?.resolveMcpServers
+            ? yield* options.resolveMcpServers({ cwd })
+            : [];
         const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+        const resourceHook =
+          !transientWorker && resourceGovernor && mcpSession
+            ? codexResourceGovernorHookLaunchConfiguration({})
+            : undefined;
+        const resourceConfigurationKey = ResourceProtection.resourceConfigurationKey([
+          PROVIDER,
+          boundInstanceId,
+          input.modelSelection ?? null,
+          resolvedMcpServers,
+          mcpSession ? "t3-code" : "",
+        ]);
+        const appServerArgs = [
+          ...(transientWorker ? ["--disable", "multi_agent"] : []),
+          ...(input.projectMemoryMode === "project" || input.projectMemoryMode === "off"
+            ? ["-c", "memories.use_memories=false", "-c", "memories.generate_memories=false"]
+            : []),
+          ...(fetchWorker && mcpSession === undefined ? ["-c", "mcp_servers={}"] : []),
+          ...(mcpSession
+            ? [
+                "-c",
+                `mcp_servers.t3-code.url=${mcpSession.endpoint}`,
+                "-c",
+                'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+              ]
+            : []),
+          ...(resourceHook?.appServerArgs ?? []),
+        ];
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
           providerInstanceId: boundInstanceId,
-          cwd: input.cwd ?? process.cwd(),
+          cwd,
           binaryPath: codexConfig.binaryPath,
           launchArgs: resolveCodexLaunchArgs(codexConfig.launchArgs, options?.environment),
           ...(options?.environment ? { environment: options.environment } : {}),
           ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
-          ...(isCodexResumeCursorSchema(input.resumeCursor)
+          ...(!transientWorker &&
+          !input.freshSession &&
+          isCodexResumeCursorSchema(input.resumeCursor)
             ? { resumeCursor: input.resumeCursor }
             : {}),
-          runtimeMode: input.runtimeMode,
+          runtimeMode,
           ...(input.modelSelection?.instanceId === boundInstanceId
             ? { model: input.modelSelection.model }
             : {}),
+          ...(reasoningEffort
+            ? {
+                reasoningEffort:
+                  reasoningEffort as EffectCodexSchema.V2TurnStartParams__ReasoningEffort,
+              }
+            : {}),
+          ...(contextWindow !== undefined ? { contextWindow } : {}),
           ...(serviceTier ? { serviceTier } : {}),
           ...(mcpSession
             ? {
                 environment: {
                   ...(options?.environment ?? process.env),
                   T3_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
+                  ...(resourceHook
+                    ? {
+                        [RESOURCE_PROTECTION_URL_ENV]: new URL(
+                          "/internal/resource-protection/codex-admit",
+                          mcpSession.endpoint,
+                        ).toString(),
+                        [RESOURCE_PROTECTION_CONFIGURATION_ENV]: resourceConfigurationKey,
+                      }
+                    : {}),
                 },
-                appServerArgs: [
-                  "-c",
-                  `mcp_servers.t3-code.url=${mcpSession.endpoint}`,
-                  "-c",
-                  'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
-                ],
+                internalMcpServer: {
+                  url: mcpSession.endpoint,
+                  bearerTokenEnvVar: "T3_MCP_BEARER_TOKEN",
+                },
               }
             : {}),
+          ...(appServerArgs.length > 0 ? { appServerArgs } : {}),
+          ...(resourceHook ? { appServerGlobalArgs: resourceHook.globalArgs } : {}),
+          ...(options?.resolveMcpServers ? { mcpServers: resolvedMcpServers } : {}),
         };
         const turnTokenUsage = makeCodexTurnTokenUsageState();
         // Codex reports a usage-limit stop as OpenAI's own sentence, which on a
@@ -2313,6 +2435,16 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               }),
           ),
         );
+        const subagentMetadata: CodexSubagentRuntimeMetadata = {
+          model: runtimeInput.model,
+          reasoningEffort,
+          serviceTier,
+        };
+        const mapRuntimeEvent = makeCodexRuntimeEventMapper(
+          runtimeInput.resumeCursor?.threadId,
+          subagentMetadata,
+        );
+        const mcpStartupStatuses = new Map<string, CodexMcpStartupObservation>();
 
         // Fork into the session scope, not the calling fiber. `forkChild` makes
         // this a child of `startSession`, and Effect interrupts a fiber's
@@ -2320,7 +2452,8 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         // runtime event the session emitted afterwards was dropped.
         const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
           Effect.gen(function* () {
-            yield* writeNativeEvent(event);
+            yield* writeNativeEvent(sanitizeCodexMcpNativeEvent(event));
+            observeCodexMcpEvent(event, mcpStartupStatuses);
             if (event.method === "turn/started" && event.turnId) {
               if (turnTokenUsage.activeTurnId !== event.turnId) {
                 turnTokenUsage.byTurnId.clear();
@@ -2393,7 +2526,13 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               }
             }
 
-            const mappedEvents = mapToRuntimeEvents(event, event.threadId).map((runtimeEvent) => {
+            const forkEvents = mapRuntimeEvent(event, event.threadId);
+            const baseEvents = mapToRuntimeEvents(event, event.threadId);
+            const mappedEvents = (
+              event.subagentId || event.method.startsWith("collabAgent/") || baseEvents.length === 0
+                ? forkEvents
+                : baseEvents
+            ).map((runtimeEvent) => {
               if (runtimeEvent.type === "turn.completed" && runtimeEvent.turnId) {
                 return {
                   ...runtimeEvent,
@@ -2435,7 +2574,11 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               });
               return;
             }
-            yield* Queue.offerAll(runtimeEventQueue, runtimeEvents);
+            yield* runtimeEventQueue.offerAll(
+              runtimeEvents.map((runtimeEvent) =>
+                stampProviderRuntimeEventOrigin(runtimeSessionId, runtimeEvent),
+              ),
+            );
           }),
         ).pipe(Effect.forkIn(sessionScope));
 
@@ -2458,17 +2601,26 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           ),
         );
 
-        sessions.set(input.threadId, {
+        sessionStore.install({
           threadId: input.threadId,
+          runtimeSessionId,
+          cwd,
           scope: sessionScope,
           runtime,
           eventFiber,
           turnTokenUsage,
+          managedMcpServers: codexManagedMcpServers(resolvedMcpServers),
+          mcpStartupStatuses,
+          builtInMcpExpected: mcpSession !== undefined,
+          subagentMetadata,
           stopped: false,
         });
         sessionScopeTransferred = true;
 
-        return started;
+        return {
+          ...started,
+          runtimeSessionId,
+        };
       }),
     );
 
@@ -2523,6 +2675,11 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       input.modelSelection?.instanceId === boundInstanceId
         ? getCodexServiceTierOptionValue(input.modelSelection)
         : undefined;
+    if (input.modelSelection?.instanceId === boundInstanceId) {
+      session.subagentMetadata.model = input.modelSelection.model;
+      session.subagentMetadata.reasoningEffort = reasoningEffort;
+      session.subagentMetadata.serviceTier = serviceTier;
+    }
     return yield* session.runtime
       .sendTurn({
         ...(input.input !== undefined ? { input: input.input } : {}),
@@ -2541,33 +2698,79 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       .pipe(Effect.mapError((cause) => mapCodexRuntimeError(input.threadId, "turn/start", cause)));
   });
 
-  const requireSession = Effect.fn("requireSession")(function* (threadId: ThreadId) {
-    const session = sessions.get(threadId);
-    if (!session || session.stopped) {
-      return yield* new ProviderAdapterSessionNotFoundError({
-        provider: PROVIDER,
-        threadId,
-      });
-    }
-    return session;
+  const mcpRuntime = makeCodexMcpRuntime({
+    boundInstanceId,
+    requireSession: requireMcpRuntimeSession,
+    mapRuntimeError: mapCodexRuntimeError,
+    ...(options?.resolveMcpServers ? { resolveMcpServers: options.resolveMcpServers } : {}),
+  });
+  const forkSession: CodexAdapterShape["forkSession"] = Effect.fn("forkSession")(function* (
+    input: ProviderNativeThreadForkInput,
+  ) {
+    const source = yield* requireSession(input.sourceThreadId);
+    const forked = yield* source.runtime
+      .forkThread({
+        sourceProviderThreadId: input.sourceProviderThreadId,
+        ...(input.lastProviderTurnId !== undefined
+          ? { lastProviderTurnId: input.lastProviderTurnId }
+          : {}),
+      })
+      .pipe(
+        Effect.mapError((cause) =>
+          mapCodexRuntimeError(input.sourceThreadId, "thread/fork", cause),
+        ),
+      );
+    return yield* startSession({
+      ...input.session,
+      provider: PROVIDER,
+      providerInstanceId: boundInstanceId,
+      threadId: input.destinationThreadId,
+      freshSession: false,
+      resumeCursor: { threadId: forked.threadId },
+    });
   });
 
-  const interruptTurn: CodexAdapterShape["interruptTurn"] = (threadId, turnId) =>
-    requireSession(threadId).pipe(
-      Effect.flatMap((session) => session.runtime.interruptTurn(turnId)),
+  const compactThread: CodexAdapterShape["compactThread"] = (threadId, expectedRuntimeSessionId) =>
+    Effect.gen(function* () {
+      const current = sessionStore.get(threadId);
+      if (
+        expectedRuntimeSessionId !== undefined &&
+        (!current || current.stopped || current.runtimeSessionId !== expectedRuntimeSessionId)
+      ) {
+        return;
+      }
+      const session = yield* requireSession(threadId);
+      yield* session.runtime.compactThread;
+    }).pipe(
+      Effect.mapError((cause) =>
+        cause._tag === "ProviderAdapterSessionNotFoundError"
+          ? cause
+          : mapCodexRuntimeError(threadId, "thread/compact/start", cause),
+      ),
+    );
+
+  const interruptTurn: CodexAdapterShape["interruptTurn"] = (
+    threadId,
+    turnId,
+    expectedRuntimeSessionId,
+  ) =>
+    Effect.gen(function* () {
+      const current = sessionStore.get(threadId);
+      if (
+        expectedRuntimeSessionId !== undefined &&
+        (!current || current.stopped || current.runtimeSessionId !== expectedRuntimeSessionId)
+      ) {
+        return;
+      }
+      const session = yield* requireSession(threadId);
+      yield* session.runtime.interruptTurn(turnId);
+    }).pipe(
       Effect.mapError((cause) =>
         cause._tag === "ProviderAdapterSessionNotFoundError"
           ? cause
           : mapCodexRuntimeError(threadId, "turn/interrupt", cause),
       ),
     );
-
-  const compactThread = Effect.fn("compactThread")(function* (threadId: ThreadId) {
-    const session = yield* requireSession(threadId);
-    yield* session.runtime.compactThread.pipe(
-      Effect.mapError((cause) => mapCodexRuntimeError(threadId, "thread/compact/start", cause)),
-    );
-  });
 
   const readThread: CodexAdapterShape["readThread"] = (threadId) =>
     requireSession(threadId).pipe(
@@ -2660,47 +2863,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     yield* nativeEventLogger.write(event, event.threadId);
   });
 
-  const stopSessionInternal = Effect.fn("stopSessionInternal")(function* (
-    session: CodexAdapterSessionContext,
-  ) {
-    if (session.stopped) {
-      return;
-    }
-    session.stopped = true;
-    sessions.delete(session.threadId);
-    yield* session.runtime.close.pipe(Effect.ignore);
-    yield* Effect.ignore(Scope.close(session.scope, Exit.void));
-    yield* Fiber.interrupt(session.eventFiber).pipe(Effect.ignore);
-  });
-
-  const stopSession: CodexAdapterShape["stopSession"] = (threadId) =>
-    Effect.gen(function* () {
-      const session = sessions.get(threadId);
-      if (!session) {
-        return;
-      }
-      yield* stopSessionInternal(session);
-    });
-
-  const listSessions: CodexAdapterShape["listSessions"] = () =>
-    Effect.forEach(
-      Array.from(sessions.values()).filter((session) => !session.stopped),
-      (session) => session.runtime.getSession,
-      { concurrency: 1 },
-    );
-
-  const hasSession: CodexAdapterShape["hasSession"] = (threadId) =>
-    Effect.succeed(Boolean(sessions.get(threadId) && !sessions.get(threadId)?.stopped));
-
-  const stopAll: CodexAdapterShape["stopAll"] = () =>
-    Effect.forEach(Array.from(sessions.values()), stopSessionInternal, {
-      concurrency: 1,
-      discard: true,
-    }).pipe(Effect.asVoid);
-
   yield* Effect.acquireRelease(Effect.void, () =>
     stopAll().pipe(
-      Effect.andThen(Queue.shutdown(runtimeEventQueue)),
+      Effect.andThen(runtimeEventQueue.shutdown),
       Effect.andThen(managedNativeEventLogger?.close() ?? Effect.void),
       Effect.ignore,
     ),
@@ -2711,11 +2876,18 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     capabilities: {
       sessionModelSwitch: "in-session",
       promptlessTurnContinuation: true,
+      mcp: "nativeConfig",
+      nativeThreadFork: true,
+      manualCompaction: true,
     },
+    mcpRuntime,
     startSession,
+    forkSession,
     sendTurn,
-    compaction: { type: "native", start: compactThread },
+    compaction: { type: "native", start: (threadId) => compactThread(threadId) },
+    compactThread,
     interruptTurn,
+    forceStopSession,
     readThread,
     rollbackThread,
     uploadFeedback,
@@ -2726,7 +2898,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     hasSession,
     stopAll,
     get streamEvents() {
-      return Stream.fromQueue(runtimeEventQueue);
+      return runtimeEventQueue.stream;
     },
   } satisfies CodexAdapterShape;
 });
