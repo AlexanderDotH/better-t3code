@@ -16,7 +16,7 @@ import {
 import { fromYaml } from "@t3tools/shared/schemaYaml";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/relayAuth";
-import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
 import rootPackageJson from "../package.json" with { type: "json" };
 import desktopPackageJson from "../apps/desktop/package.json" with { type: "json" };
 import gnomeCaptureBundle from "../apps/desktop/gnome-extension/bundle.json" with { type: "json" };
@@ -51,6 +51,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import sharp from "sharp";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
 const DESKTOP_APP_ID = "com.t3tools.t3code";
@@ -164,6 +165,7 @@ interface BuildCliInput {
   readonly mockUpdates: Option.Option<boolean>;
   readonly mockUpdateServerPort: Option.Option<number>;
   readonly wslPrebuild: Option.Option<string>;
+  readonly wslResourceMonitorPrebuild: Option.Option<string>;
 }
 
 function detectHostBuildPlatform(hostPlatform: string): typeof BuildPlatform.Type | undefined {
@@ -469,6 +471,20 @@ export class DesktopIconSourceMissingError extends Schema.TaggedError<DesktopIco
   }
 }
 
+export class DesktopIconGenerationError extends Schema.TaggedError<DesktopIconGenerationError>()(
+  "DesktopIconGenerationError",
+  {
+    platform: BuildPlatform,
+    sourcePath: Schema.String,
+    targetPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Could not generate the Desktop ${desktopIconPlatformNames[this.platform]} icon from ${this.sourcePath}`;
+  }
+}
+
 export class DesktopDmgBackgroundSourceMissingError extends Schema.TaggedError<DesktopDmgBackgroundSourceMissingError>()(
   "DesktopDmgBackgroundSourceMissingError",
   {
@@ -478,6 +494,20 @@ export class DesktopDmgBackgroundSourceMissingError extends Schema.TaggedError<D
 ) {
   override get message(): string {
     return `Desktop ${this.channel} DMG background source is missing at ${this.sourcePath}`;
+  }
+}
+
+export class DesktopDmgBackgroundRasterizationError extends Schema.TaggedError<DesktopDmgBackgroundRasterizationError>()(
+  "DesktopDmgBackgroundRasterizationError",
+  {
+    channel: Schema.Literals(["latest", "nightly"]),
+    sourcePath: Schema.String,
+    targetPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Could not rasterize the Desktop ${this.channel} DMG background at ${this.sourcePath}`;
   }
 }
 
@@ -677,6 +707,17 @@ export class WslNodePtyPrebuildMissingError extends Schema.TaggedError<WslNodePt
 ) {
   override get message(): string {
     return `WSL node-pty prebuild not found at ${this.prebuildPath}.`;
+  }
+}
+
+export class WslResourceMonitorPrebuildMissingError extends Schema.TaggedError<WslResourceMonitorPrebuildMissingError>()(
+  "WslResourceMonitorPrebuildMissingError",
+  {
+    prebuildPath: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `WSL resource-monitor prebuild not found at ${this.prebuildPath}.`;
   }
 }
 
@@ -933,6 +974,7 @@ interface ResolvedBuildOptions {
   readonly mockUpdates: boolean;
   readonly mockUpdateServerPort: number | undefined;
   readonly wslPrebuild: string | undefined;
+  readonly wslResourceMonitorPrebuild: string | undefined;
 }
 
 interface StagePackageJson {
@@ -1004,6 +1046,8 @@ export const WINDOWS_SERVER_ASAR_RESOURCE = "server.asar";
 // asar redirect convention). Everything else stays packed.
 export const WINDOWS_NATIVE_ASAR_UNPACK_GLOB =
   "{**/*.node,**/*.dll,**/*.exe,**/*.so,**/*.so.*,**/*.dylib}";
+export const WINDOWS_SERVER_ASAR_UNPACK_GLOB =
+  "{**/*.node,**/*.dll,**/*.exe,**/*.so,**/*.so.*,**/*.dylib,**/resource-monitor/**/t3-resource-monitor}";
 // Mirrors DESKTOP_FILE_EXCLUSIONS for the hand-packed sidecar: the Claude SDK
 // platform packages are dead weight (see above), and node_modules/.bin shims
 // are never spawned at runtime (and are symlinks on POSIX build hosts, which
@@ -1113,6 +1157,8 @@ export const LINUX_CAPTURE_EXTRA_RESOURCES = [
 export const LINUX_BROWSER_SECRET_EXTRA_RESOURCES = [
   { from: "apps/desktop/prod-resources/browser-secret", to: "browser-secret" },
 ] as const;
+export const WSL_RESOURCE_MONITOR_DIRECTORY = "resource-monitor/linux-x64-gnu";
+export const WSL_RESOURCE_MONITOR_MARKER_NAME = "t3code-wsl-resource-monitor.json";
 
 export interface MacPasskeySigningConfiguration {
   readonly appId: string;
@@ -1590,6 +1636,12 @@ const BuildEnvConfig = Config.all({
   // into the staged node-pty so the WSL backend ships a ready binary and never
   // compiles on the user's machine.
   wslPrebuild: Config.string("T3CODE_DESKTOP_WSL_PREBUILD").pipe(Config.option),
+  // Raw Linux x64/glibc resource-monitor executable built on Linux CI. This is
+  // deliberately separate from the Windows resource monitor built in this job:
+  // WSL launches the extracted server tree with the distro's Linux runtime.
+  wslResourceMonitorPrebuild: Config.string("T3CODE_DESKTOP_WSL_RESOURCE_MONITOR_PREBUILD").pipe(
+    Config.option,
+  ),
 });
 
 const MockUpdateServerPortSchema = Schema.NumberFromString.check(
@@ -1683,6 +1735,9 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
 
   const wslPrebuild =
     Option.getOrUndefined(input.wslPrebuild) ?? Option.getOrUndefined(env.wslPrebuild);
+  const wslResourceMonitorPrebuild =
+    Option.getOrUndefined(input.wslResourceMonitorPrebuild) ??
+    Option.getOrUndefined(env.wslResourceMonitorPrebuild);
 
   return {
     platform,
@@ -1697,6 +1752,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     mockUpdates,
     mockUpdateServerPort,
     wslPrebuild,
+    wslResourceMonitorPrebuild,
   } satisfies ResolvedBuildOptions;
 });
 
@@ -1892,6 +1948,42 @@ export const preflightWindowsDesktopBuild = Effect.fn("preflightWindowsDesktopBu
     }
   },
 );
+const resolveBuildVpCommand = Effect.fn("resolveBuildVpCommand")(function* (
+  args: ReadonlyArray<string>,
+  options: { env?: NodeJS.ProcessEnv } = {},
+) {
+  if (yield* isCommandAvailable("bunx")) {
+    return { command: "bunx", args: ["--bun", "vp", ...args], shell: false };
+  }
+
+  if (yield* isCommandAvailable("bun")) {
+    return { command: "bun", args: ["run", "vp", ...args], shell: false };
+  }
+
+  return yield* resolveSpawnCommand("vp", args, options);
+});
+
+const resolveBuildPnpmCommand = Effect.fn("resolveBuildPnpmCommand")(function* () {
+  if (process.env.T3CODE_PNPM_BIN) {
+    return { command: process.env.T3CODE_PNPM_BIN, args: [] as string[], shell: false };
+  }
+
+  return yield* resolveSpawnCommand("pnpm", []);
+});
+
+const STAGE_PACKAGE_MANAGER = (() => {
+  const explicitManager = process.env.T3CODE_PNPM_MANAGER?.trim();
+  if (explicitManager) {
+    return explicitManager;
+  }
+
+  const explicitPnpmPath = process.env.T3CODE_PNPM_BIN;
+  const versionMatch = explicitPnpmPath?.match(/pnpm\/(\d+\.\d+\.\d+)\//);
+  if (versionMatch?.[1]) {
+    return `pnpm@${versionMatch[1]}`;
+  }
+  return rootPackageJson.packageManager;
+})();
 
 /**
  * Every `node_modules` directory that would be visible from `startDir`.
@@ -2106,6 +2198,9 @@ const verifyPackagedBundleIsSelfContained = Effect.fn("verifyPackagedBundleIsSel
       });
     }
 
+    const probeEnv: NodeJS.ProcessEnv = { ...process.env, NODE_PATH: "" };
+    delete probeEnv.ELECTRON_RUN_AS_NODE;
+
     // --version exercises the eagerly loaded module graph, which is where a
     // missing dependency shows up, without starting a server or touching disk
     // state. It does not cover lazily imported externals: node-pty is checked
@@ -2127,7 +2222,7 @@ const verifyPackagedBundleIsSelfContained = Effect.fn("verifyPackagedBundleIsSel
           // NODE_PATH would let a createRequire call inside the bundle resolve
           // a missing external from outside the packaged tree, which is the
           // whole thing this is trying to rule out.
-          env: { ...process.env, NODE_PATH: "" },
+          env: probeEnv,
         },
       ),
       {
@@ -2341,40 +2436,45 @@ export const stageBrowserSecret = Effect.fn("stageBrowserSecret")(function* (inp
   );
 });
 
-function generateMacIconSet(
-  sourcePng: string,
-  targetIcns: string,
-  tmpRoot: string,
-  path: Path.Path,
-  verbose: boolean,
-) {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const iconsetDir = path.join(tmpRoot, "icon.iconset");
-    yield* fs.makeDirectory(iconsetDir, { recursive: true });
-
-    const iconSizes = [16, 32, 128, 256, 512] as const;
-    for (const size of iconSizes) {
-      yield* runCommand(
-        ChildProcess.make(
-          {},
-        )`sips -z ${size} ${size} ${sourcePng} --out ${path.join(iconsetDir, `icon_${size}x${size}.png`)}`,
-        { label: `sips icon ${size}x${size}`, verbose },
+export function generateMacIconSet(sourcePng: string, targetIcns: string) {
+  return Effect.tryPromise({
+    try: async () => {
+      const entries = await Promise.all(
+        (
+          [
+            ["icp4", 16],
+            ["icp5", 32],
+            ["icp6", 64],
+            ["ic07", 128],
+            ["ic08", 256],
+            ["ic09", 512],
+            ["ic10", 1024],
+          ] as const
+        ).map(async ([type, size]) => ({
+          type,
+          png: await sharp(sourcePng).resize(size, size, { fit: "fill" }).png().toBuffer(),
+        })),
       );
-
-      const retinaSize = size * 2;
-      yield* runCommand(
-        ChildProcess.make(
-          {},
-        )`sips -z ${retinaSize} ${retinaSize} ${sourcePng} --out ${path.join(iconsetDir, `icon_${size}x${size}@2x.png`)}`,
-        { label: `sips icon ${size}x${size}@2x`, verbose },
-      );
-    }
-
-    yield* runCommand(ChildProcess.make({})`iconutil -c icns ${iconsetDir} -o ${targetIcns}`, {
-      label: "iconutil icns",
-      verbose,
-    });
+      const totalLength = 8 + entries.reduce((length, entry) => length + 8 + entry.png.length, 0);
+      const icns = Buffer.allocUnsafe(totalLength);
+      icns.write("icns", 0, 4, "ascii");
+      icns.writeUInt32BE(totalLength, 4);
+      let offset = 8;
+      for (const entry of entries) {
+        icns.write(entry.type, offset, 4, "ascii");
+        icns.writeUInt32BE(entry.png.length + 8, offset + 4);
+        entry.png.copy(icns, offset + 8);
+        offset += entry.png.length + 8;
+      }
+      await NodeFSP.writeFile(targetIcns, icns);
+    },
+    catch: (cause) =>
+      new DesktopIconGenerationError({
+        platform: "mac",
+        sourcePath: sourcePng,
+        targetPath: targetIcns,
+        cause,
+      }),
   });
 }
 
@@ -2389,19 +2489,29 @@ function stageMacIcons(stageResourcesDir: string, sourcePng: string, verbose: bo
       });
     }
 
-    const tmpRoot = yield* fs.makeTempDirectoryScoped({
-      prefix: "t3code-icon-build-",
-    });
-
     const iconPngPath = path.join(stageResourcesDir, "icon.png");
     const iconIcnsPath = path.join(stageResourcesDir, "icon.icns");
 
-    yield* runCommand(ChildProcess.make({})`sips -z 512 512 ${sourcePng} --out ${iconPngPath}`, {
-      label: "sips mac icon",
-      verbose,
+    yield* Effect.tryPromise({
+      try: () =>
+        sharp(sourcePng)
+          .resize(512, 512, { fit: "fill" })
+          .png()
+          .toFile(iconPngPath)
+          .then(() => undefined),
+      catch: (cause) =>
+        new DesktopIconGenerationError({
+          platform: "mac",
+          sourcePath: sourcePng,
+          targetPath: iconPngPath,
+          cause,
+        }),
     });
 
-    yield* generateMacIconSet(sourcePng, iconIcnsPath, tmpRoot, path, verbose);
+    yield* generateMacIconSet(sourcePng, iconIcnsPath);
+    if (verbose) {
+      yield* Effect.log("[desktop-artifact] Generated macOS PNG and ICNS icons.");
+    }
   });
 }
 
@@ -2426,15 +2536,26 @@ export const stageDesktopDmgBackground = Effect.fn("stageDesktopDmgBackground")(
       "dmg",
       `dmg-background-${channel}${output.suffix}.png`,
     );
-    yield* runCommand(
-      ChildProcess.make(
-        {},
-      )`sips -s format png -z ${output.height} ${output.width} ${sourcePath} --out ${targetPath}`,
-      {
-        label: `sips ${channel} DMG background${output.suffix || "@1x"}`,
-        verbose,
-      },
-    );
+    yield* Effect.tryPromise({
+      try: () =>
+        sharp(sourcePath)
+          .resize(output.width, output.height, { fit: "fill" })
+          .png()
+          .toFile(targetPath)
+          .then(() => undefined),
+      catch: (cause) =>
+        new DesktopDmgBackgroundRasterizationError({
+          channel,
+          sourcePath,
+          targetPath,
+          cause,
+        }),
+    });
+    if (verbose) {
+      yield* Effect.log(
+        `[desktop-artifact] Rasterized ${channel} DMG background${output.suffix || "@1x"}.`,
+      );
+    }
   }
 });
 
@@ -2642,9 +2763,12 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
 
 export function resolveDesktopProductName(version: string): string {
   return resolveDesktopUpdateChannel(version) === "nightly"
-    ? "T3 Code (Nightly)"
+    ? "Better T3 Code (Nightly)"
     : (desktopPackageJson.productName ?? "T3 Code");
 }
+
+export const DESKTOP_MICROPHONE_USAGE_DESCRIPTION =
+  "T3 Code uses the microphone only while you are actively dictating a chat message.";
 
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
@@ -2716,6 +2840,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       extendInfo: {
         NSScreenCaptureUsageDescription:
           "T3 Code captures the active window when you use the window capture shortcut.",
+        NSMicrophoneUsageDescription: DESKTOP_MICROPHONE_USAGE_DESCRIPTION,
       },
       protocols: [
         {
@@ -2891,6 +3016,65 @@ const stageWslNodePtyPrebuild = Effect.fn("stageWslNodePtyPrebuild")(function* (
   );
 });
 
+// The Windows host monitor is an .exe and cannot serve the Linux WSL backend.
+// Place the separately built x64/glibc executable in the server sidecar so the
+// normal version-keyed WSL extraction publishes both the server and its monitor
+// atomically. The runtime marker rejects stale or wrong-platform payloads before
+// their path reaches the Linux backend.
+export const stageWslResourceMonitorPrebuild = Effect.fn("stageWslResourceMonitorPrebuild")(
+  function* (input: {
+    readonly serverStageDir: string;
+    readonly arch: typeof BuildArch.Type;
+    readonly appVersion: string;
+    readonly prebuildPath: string | undefined;
+  }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+
+    if (input.prebuildPath === undefined) {
+      yield* Effect.logWarning(
+        "[desktop-artifact] No WSL resource-monitor prebuild provided (--wsl-resource-monitor-prebuild / T3CODE_DESKTOP_WSL_RESOURCE_MONITOR_PREBUILD); WSL process telemetry will be unavailable without affecting the backend.",
+      );
+      return;
+    }
+
+    if (input.arch !== "x64") {
+      yield* Effect.logWarning(
+        `[desktop-artifact] WSL resource-monitor prebuilds currently support x64 only; skipping arch "${input.arch}".`,
+      );
+      return;
+    }
+
+    const prebuildExists = yield* fs
+      .exists(input.prebuildPath)
+      .pipe(Effect.orElseSucceed(() => false));
+    if (!prebuildExists) {
+      return yield* new WslResourceMonitorPrebuildMissingError({
+        prebuildPath: input.prebuildPath,
+      });
+    }
+
+    const destinationDirectory = path.join(input.serverStageDir, WSL_RESOURCE_MONITOR_DIRECTORY);
+    const destinationPath = path.join(destinationDirectory, "t3-resource-monitor");
+    yield* fs.makeDirectory(destinationDirectory, { recursive: true });
+    yield* fs.copyFile(input.prebuildPath, destinationPath);
+    yield* fs.chmod(destinationPath, 0o755);
+
+    const markerJson = yield* encodeJsonString({
+      arch: "x64",
+      libc: "glibc",
+      version: input.appVersion,
+    });
+    yield* fs.writeFileString(
+      path.join(destinationDirectory, WSL_RESOURCE_MONITOR_MARKER_NAME),
+      `${markerJson}\n`,
+    );
+
+    yield* Effect.log(
+      `[desktop-artifact] Staged WSL resource monitor (linux-x64-gnu, version ${input.appVersion}).`,
+    );
+  },
+);
 // tar reads an `-f` target containing a colon as `host:path` and tries to reach
 // it over rsh, so handing it a Windows drive path (C:\...\wsl-runtime.tar.gz)
 // makes Git for Windows' GNU tar fail with "Cannot connect to C: resolve
@@ -2957,7 +3141,7 @@ export const packWindowsServerAsar = Effect.fn("packWindowsServerAsar")(function
     try: () =>
       createPackageWithOptions(input.sourceDir, input.asarPath, {
         dot: true,
-        unpack: WINDOWS_NATIVE_ASAR_UNPACK_GLOB,
+        unpack: WINDOWS_SERVER_ASAR_UNPACK_GLOB,
         globOptions: { ignore: resolveWindowsServerAsarIgnoreGlobs(input.arch) },
       }),
     catch: (cause) => new WindowsServerSidecarPackError({ asarPath: input.asarPath, cause }),
@@ -2998,6 +3182,7 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
   readonly patchedDependencies: Record<string, string>;
   readonly overrides: Record<string, string>;
   readonly wslPrebuildPath: string | undefined;
+  readonly wslResourceMonitorPrebuildPath: string | undefined;
   readonly asarPath: string;
   readonly wslRuntimeArchivePath: string;
   readonly wslRuntimeArchiveHashPath: string;
@@ -3026,7 +3211,7 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
     name: "t3code-server",
     version: input.appVersion,
     private: true,
-    packageManager: rootPackageJson.packageManager,
+    packageManager: STAGE_PACKAGE_MANAGER,
     dependencies: sidecarDependencies,
   };
   const sidecarPackageJsonString = yield* encodeJsonString(sidecarPackageJson);
@@ -3052,19 +3237,31 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
   }
 
   yield* Effect.log("[desktop-artifact] Installing server sidecar runtime externals...");
-  const installCommand = yield* resolveSpawnCommand("vp", [...STAGE_INSTALL_ARGS]);
+  const installCommand = yield* resolveBuildPnpmCommand();
   yield* runCommand(
-    ChildProcess.make(installCommand.command, installCommand.args, {
+    ChildProcess.make(installCommand.command, ["install", "--prod"], {
       cwd: serverStageDir,
+      env: {
+        ...process.env,
+        ...(process.env.T3CODE_PNPM_COREPACK_ROOT
+          ? { COREPACK_ROOT: process.env.T3CODE_PNPM_COREPACK_ROOT }
+          : {}),
+      },
       shell: installCommand.shell,
     }),
-    { label: "vp install --prod (server sidecar)", verbose: input.verbose },
+    { label: "pnpm install --prod (server sidecar)", verbose: input.verbose },
   );
 
   yield* stageWslNodePtyPrebuild({
     stageAppDir: serverStageDir,
     arch: input.arch,
     prebuildPath: input.wslPrebuildPath,
+  });
+  yield* stageWslResourceMonitorPrebuild({
+    serverStageDir,
+    arch: input.arch,
+    appVersion: input.appVersion,
+    prebuildPath: input.wslResourceMonitorPrebuildPath,
   });
   // Skip the archive entirely rather than shipping one the install script must
   // extract and reject on every launch. The desktop app treats a missing
@@ -3537,7 +3734,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   if (!options.skipBuild) {
     yield* Effect.log("[desktop-artifact] Building desktop/server/web artifacts...");
-    const spawnCommand = yield* resolveSpawnCommand("vp", ["run", "build:desktop"]);
+    const spawnCommand = yield* resolveBuildVpCommand(["run", "build:desktop"]);
     yield* runCommand(
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         cwd: repoRoot,
@@ -3772,7 +3969,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
     private: true,
-    packageManager: rootPackageJson.packageManager,
+    packageManager: STAGE_PACKAGE_MANAGER,
     description: "T3 Code desktop build",
     author: "T3 Tools",
     main: "apps/desktop/dist-electron/main.cjs",
@@ -3818,10 +4015,16 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   }
 
   yield* Effect.log("[desktop-artifact] Installing staged production dependencies...");
-  const installCommand = yield* resolveSpawnCommand("vp", [...STAGE_INSTALL_ARGS]);
+  const installCommand = yield* resolveBuildPnpmCommand();
   yield* runCommand(
-    ChildProcess.make(installCommand.command, installCommand.args, {
+    ChildProcess.make(installCommand.command, ["install", "--prod"], {
       cwd: stageAppDir,
+      env: {
+        ...process.env,
+        ...(process.env.T3CODE_PNPM_COREPACK_ROOT
+          ? { COREPACK_ROOT: process.env.T3CODE_PNPM_COREPACK_ROOT }
+          : {}),
+      },
       shell: installCommand.shell,
     }),
     { label: "vp install --prod", verbose: options.verbose },
@@ -3845,6 +4048,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       patchedDependencies: workspacePatchedDependencies,
       overrides: resolvedOverrides,
       wslPrebuildPath: options.wslPrebuild,
+      wslResourceMonitorPrebuildPath: options.wslResourceMonitorPrebuild,
       asarPath: windowsServerAsarPath,
       wslRuntimeArchivePath: path.join(stageAppDir, WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE.from),
       wslRuntimeArchiveHashPath: path.join(
@@ -3862,7 +4066,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const buildEnv: NodeJS.ProcessEnv = {
     ...process.env,
   };
-  buildEnv.npm_config_user_agent = resolvePackageManagerUserAgent(rootPackageJson.packageManager);
+  buildEnv.npm_config_user_agent = resolvePackageManagerUserAgent(STAGE_PACKAGE_MANAGER);
   for (const [key, value] of Object.entries(buildEnv)) {
     if (value === "") {
       delete buildEnv[key];
@@ -4040,6 +4244,12 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   wslPrebuild: Flag.string("wsl-prebuild").pipe(
     Flag.withDescription(
       "Path to a prebuilt Linux node-pty (pty.node) for the target arch, staged for the WSL backend (env: T3CODE_DESKTOP_WSL_PREBUILD).",
+    ),
+    Flag.optional,
+  ),
+  wslResourceMonitorPrebuild: Flag.string("wsl-resource-monitor-prebuild").pipe(
+    Flag.withDescription(
+      "Path to a prebuilt Linux x64/glibc resource monitor, staged for WSL telemetry (env: T3CODE_DESKTOP_WSL_RESOURCE_MONITOR_PREBUILD).",
     ),
     Flag.optional,
   ),
