@@ -2,6 +2,7 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useRef } from "react";
 
+import { resolveThreadListShelfPreferences } from "./thread-list-shelf-preferences";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 
 /**
@@ -13,10 +14,9 @@ export function useThreadListV2ShelfPreferences() {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const loaded = AsyncResult.isSuccess(preferencesResult);
-  const snoozedShelfExpanded =
-    loaded && preferencesResult.value.threadListSnoozedShelfExpanded === true;
-  const settledShelfExpanded =
-    loaded && preferencesResult.value.threadListSettledShelfExpanded === true;
+  const { snoozedShelfExpanded, settledShelfExpanded } = resolveThreadListShelfPreferences(
+    loaded ? preferencesResult.value : undefined,
+  );
   const snoozedShelfExpandedRef = useRef(snoozedShelfExpanded);
   const settledShelfExpandedRef = useRef(settledShelfExpanded);
   snoozedShelfExpandedRef.current = snoozedShelfExpanded;
