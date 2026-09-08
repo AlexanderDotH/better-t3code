@@ -4,6 +4,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   UsageLimitSourceId,
+  McpServerId,
+  resolveBetterT3FeatureFlag,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
@@ -16,6 +18,7 @@ import {
   isModelSelectionProviderEnabled,
   parsePersistedServerObservabilitySettings,
   resolveSourceControlWriterModelSelection,
+  resolveVoiceTranslationModelSelection,
   resolveProjectAgentBrowserAccess,
   resolveProjectAutoPull,
 } from "./serverSettings.ts";
@@ -96,6 +99,135 @@ describe("serverSettings helpers", () => {
     ]);
     expect(resolveProjectScripts(reset, secondProject)).toEqual([secondAction]);
     expect(resolveProjectScripts(secondUpdate, firstProject)).toEqual([firstAction]);
+  });
+
+  it("keeps the Better T3 Deep Thinking flag and legacy setting bidirectionally compatible", () => {
+    const enabledByCurrentClient = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      betterT3Environment: { flags: { "agent.deepThinking": true } },
+    });
+    expect(enabledByCurrentClient.agentEnhancement.deepThinking.enabled).toBe(true);
+
+    const disabledByLegacyClient = applyServerSettingsPatch(enabledByCurrentClient, {
+      agentEnhancement: { deepThinking: { enabled: false } },
+    });
+    expect(
+      resolveBetterT3FeatureFlag(disabledByLegacyClient.betterT3Environment, "agent.deepThinking"),
+    ).toBe(false);
+
+    const currentClientWins = applyServerSettingsPatch(disabledByLegacyClient, {
+      betterT3Environment: { flags: { "agent.deepThinking": true } },
+      agentEnhancement: { deepThinking: { enabled: false } },
+    });
+    expect(
+      resolveBetterT3FeatureFlag(currentClientWins.betterT3Environment, "agent.deepThinking"),
+    ).toBe(true);
+    expect(currentClientWins.agentEnhancement.deepThinking.enabled).toBe(true);
+  });
+
+  it("rejects stale locale writes while preserving the newest compatible legacy mirror", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      interfaceLanguageSyncRecord: {
+        preference: "de" as const,
+        updatedAt: 20,
+        updateId: "desktop:de:20",
+      },
+      interfaceLocaleSyncRecordV1: {
+        version: 1 as const,
+        preference: "fr" as const,
+        updatedAt: 30,
+        updateId: "mobile:fr:30",
+      },
+    };
+
+    const staleLocale = applyServerSettingsPatch(current, {
+      interfaceLocaleSyncRecordV1: {
+        version: 1,
+        preference: "en",
+        updatedAt: 10,
+        updateId: "web:en:10",
+      },
+    });
+    expect(staleLocale.interfaceLocaleSyncRecordV1).toEqual(current.interfaceLocaleSyncRecordV1);
+    expect(staleLocale.interfaceLanguageSyncRecord).toEqual(current.interfaceLanguageSyncRecord);
+
+    const staleLegacy = applyServerSettingsPatch(current, {
+      interfaceLanguageSyncRecord: {
+        preference: "en",
+        updatedAt: 10,
+        updateId: "legacy:en:10",
+      },
+    });
+    expect(staleLegacy.interfaceLocaleSyncRecordV1).toEqual(current.interfaceLocaleSyncRecordV1);
+    expect(staleLegacy.interfaceLanguageSyncRecord).toEqual(current.interfaceLanguageSyncRecord);
+  });
+
+  it("maps the former streaming patch key without overriding the current key", () => {
+    expect(
+      applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, { enableAssistantStreaming: true })
+        .enableLegacyTokenStreaming,
+    ).toBe(true);
+
+    expect(
+      applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+        enableAssistantStreaming: true,
+        enableLegacyTokenStreaming: false,
+      }).enableLegacyTokenStreaming,
+    ).toBe(false);
+  });
+
+  it("replaces the project thread preview sync record atomically and preserves it when omitted", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectThreadPreviewSyncRecord: {
+        count: 3,
+        updatedAt: 1_777_000_000_000,
+        updateId: "device-a:initial",
+      },
+    };
+    const replacement = {
+      count: 6,
+      updatedAt: 1_777_000_001_000,
+      updateId: "device-b:replacement",
+    };
+
+    const replaced = applyServerSettingsPatch(current, {
+      projectThreadPreviewSyncRecord: replacement,
+    });
+    const afterUnrelatedPatch = applyServerSettingsPatch(replaced, {
+      addProjectBaseDirectory: "~/Development",
+    });
+
+    expect(replaced.projectThreadPreviewSyncRecord).toEqual(replacement);
+    expect(afterUnrelatedPatch.projectThreadPreviewSyncRecord).toEqual(replacement);
+    expect(afterUnrelatedPatch.addProjectBaseDirectory).toBe("~/Development");
+  });
+
+  it("replaces the chat visual mode sync record atomically and preserves it when omitted", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      chatVisualModeSyncRecord: {
+        mode: "current" as const,
+        updatedAt: 1_777_000_000_000,
+        updateId: "device-a:current",
+      },
+    };
+    const replacement = {
+      mode: "classic" as const,
+      updatedAt: 1_777_000_001_000,
+      updateId: "device-b:classic",
+    };
+
+    const replaced = applyServerSettingsPatch(current, {
+      chatVisualModeSyncRecord: replacement,
+    });
+    const afterUnrelatedPatch = applyServerSettingsPatch(replaced, {
+      addProjectBaseDirectory: "~/Development",
+    });
+
+    expect(replaced.chatVisualModeSyncRecord).toEqual(replacement);
+    expect(afterUnrelatedPatch.chatVisualModeSyncRecord).toEqual(replacement);
+    expect(afterUnrelatedPatch.addProjectBaseDirectory).toBe("~/Development");
   });
 
   it("inherits automatic pull while preserving legacy opt-ins and explicit overrides", () => {
@@ -326,6 +458,37 @@ describe("serverSettings helpers", () => {
     });
   });
 
+  it("replaces the parallel plan reviewer selection without leaking Codex options", () => {
+    expect(
+      applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+        parallelPlanReviewModelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+      }).parallelPlanReviewModelSelection,
+    ).toEqual({
+      instanceId: "opencode",
+      model: "openai/gpt-5",
+    });
+  });
+
+  it("merges option-only parallel plan reviewer patches by option id", () => {
+    expect(
+      applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+        parallelPlanReviewModelSelection: {
+          options: [{ id: "serviceTier", value: "standard" }],
+        },
+      }).parallelPlanReviewModelSelection,
+    ).toEqual({
+      instanceId: "codex",
+      model: "gpt-5.6-luna",
+      options: [
+        { id: "reasoningEffort", value: "low" },
+        { id: "serviceTier", value: "standard" },
+      ],
+    });
+  });
+
   it("replaces source control writer selection without retaining stale options", () => {
     const current = {
       ...DEFAULT_SERVER_SETTINGS,
@@ -363,6 +526,81 @@ describe("serverSettings helpers", () => {
         sourceControlWriterModelSelection: null,
       }).sourceControlWriterModelSelection,
     ).toBeNull();
+  });
+
+  it("replaces and clears the voice translation model without retaining stale options", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      voiceTranslationModelSelection: createModelSelection(
+        ProviderInstanceId.make("codex"),
+        "gpt-5.6-luna",
+        [{ id: "reasoningEffort", value: "high" }],
+      ),
+    };
+    const replacement = applyServerSettingsPatch(current, {
+      voiceTranslationModelSelection: {
+        instanceId: ProviderInstanceId.make("opencode"),
+        model: "openai/gpt-5",
+      },
+    });
+
+    expect(replacement.voiceTranslationModelSelection).toEqual({
+      instanceId: "opencode",
+      model: "openai/gpt-5",
+    });
+    expect(
+      applyServerSettingsPatch(replacement, { voiceTranslationModelSelection: null })
+        .voiceTranslationModelSelection,
+    ).toBeNull();
+  });
+
+  it("replaces and clears the Fetch model without retaining stale options", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      fetchModelSelection: createModelSelection(
+        ProviderInstanceId.make("codex"),
+        "gpt-5.3-codex-spark",
+        [
+          { id: "reasoningEffort", value: "high" },
+          { id: "serviceTier", value: "priority" },
+        ],
+      ),
+    };
+    const replacement = applyServerSettingsPatch(current, {
+      fetchModelSelection: {
+        instanceId: ProviderInstanceId.make("claude_work"),
+        model: "claude-opus-4-6",
+      },
+    });
+
+    expect(replacement.fetchModelSelection).toEqual({
+      instanceId: "claude_work",
+      model: "claude-opus-4-6",
+    });
+    expect(
+      applyServerSettingsPatch(replacement, { fetchModelSelection: null }).fetchModelSelection,
+    ).toBeNull();
+  });
+
+  it("falls back from a disabled voice translation provider without clearing the override", () => {
+    const instanceId = ProviderInstanceId.make("codex_voice");
+    const voiceTranslationModelSelection = createModelSelection(instanceId, "gpt-5.6-luna");
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: {
+        [instanceId]: {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: false,
+          config: {},
+        },
+      },
+      voiceTranslationModelSelection,
+    };
+
+    expect(resolveVoiceTranslationModelSelection(settings)).toBe(
+      settings.textGenerationModelSelection,
+    );
+    expect(settings.voiceTranslationModelSelection).toBe(voiceTranslationModelSelection);
   });
 
   it("falls back from a disabled source control writer provider without clearing its selection", () => {
@@ -716,5 +954,62 @@ describe("serverSettings helpers", () => {
     });
 
     expect(resolved.pauseWhenOnBattery).toBe(false);
+  });
+
+  it("replaces disabled skill ids instead of deep-merging stale values", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      skills: {
+        disabledSkillIds: [
+          "global:/tmp/t3/skills/review/SKILL.md",
+          "project:/tmp/repo/.t3code/skills/test/SKILL.md",
+        ],
+      },
+    };
+
+    expect(
+      applyServerSettingsPatch(current, {
+        skills: {
+          disabledSkillIds: ["global:/tmp/t3/skills/review/SKILL.md"],
+        },
+      }).skills.disabledSkillIds,
+    ).toEqual(["global:/tmp/t3/skills/review/SKILL.md"]);
+  });
+
+  it("replaces MCP server arrays instead of deep-merging stale entries", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      mcp: {
+        servers: [
+          {
+            id: McpServerId.make("old"),
+            scope: "global" as const,
+            name: "old",
+            enabled: true,
+            providerRouting: { mode: "all" as const },
+            transport: "stdio" as const,
+            command: "old",
+            args: [],
+            env: {},
+          },
+        ],
+      },
+    };
+
+    const servers = [
+      {
+        id: McpServerId.make("new"),
+        scope: "global" as const,
+        name: "new",
+        enabled: true,
+        providerRouting: { mode: "all" as const },
+        transport: "stdio" as const,
+        command: "new",
+        args: [],
+        env: {},
+      },
+    ];
+
+    expect(applyServerSettingsPatch(current, { mcp: { servers } }).mcp.servers).toEqual(servers);
   });
 });

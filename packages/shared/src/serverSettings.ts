@@ -68,11 +68,11 @@ export function isModelSelectionProviderEnabled(
   );
 }
 
-export function resolveSourceControlWriterModelSelection(
+function resolveTextGenerationModelOverride(
   settings: ServerSettings,
+  selection: ModelSelection | null,
   providers?: ReadonlyArray<ServerProvider>,
 ): ModelSelection {
-  const selection = settings.sourceControlWriterModelSelection;
   if (!selection || !isModelSelectionProviderEnabled(settings, selection)) {
     return settings.textGenerationModelSelection;
   }
@@ -84,6 +84,28 @@ export function resolveSourceControlWriterModelSelection(
   return provider?.enabled === true && isProviderAvailable(provider)
     ? selection
     : settings.textGenerationModelSelection;
+}
+
+export function resolveSourceControlWriterModelSelection(
+  settings: ServerSettings,
+  providers?: ReadonlyArray<ServerProvider>,
+): ModelSelection {
+  return resolveTextGenerationModelOverride(
+    settings,
+    settings.sourceControlWriterModelSelection,
+    providers,
+  );
+}
+
+export function resolveVoiceTranslationModelSelection(
+  settings: ServerSettings,
+  providers?: ReadonlyArray<ServerProvider>,
+): ModelSelection {
+  return resolveTextGenerationModelOverride(
+    settings,
+    settings.voiceTranslationModelSelection,
+    providers,
+  );
 }
 
 export interface PersistedServerObservabilitySettings {
@@ -120,10 +142,22 @@ export function parsePersistedServerObservabilitySettings(
   return { otlpTracesUrl: undefined, otlpMetricsUrl: undefined };
 }
 
-function shouldReplaceTextGenerationModelSelection(
-  patch: ServerSettingsPatch["textGenerationModelSelection"] | undefined,
-): boolean {
+type ModelSelectionPatch = NonNullable<ServerSettingsPatch["textGenerationModelSelection"]>;
+
+function shouldReplaceModelSelection(patch: ModelSelectionPatch | undefined): boolean {
   return Boolean(patch && (patch.instanceId !== undefined || patch.model !== undefined));
+}
+
+function applyModelSelectionPatch(
+  current: ModelSelection,
+  patch: ModelSelectionPatch,
+): ModelSelection {
+  const instanceId = patch.instanceId ?? current.instanceId;
+  const model = patch.model ?? current.model;
+  const options = shouldReplaceModelSelection(patch)
+    ? patch.options
+    : mergeModelSelectionOptionsById({ current: current.options, patch: patch.options });
+  return createModelSelection(instanceId, model, options);
 }
 
 function mergeModelSelectionOptionsById(input: {
@@ -160,12 +194,95 @@ function mergeSettingsEntries<Value>(
   return Object.fromEntries(next);
 }
 
+type LegacyLocaleRecord = ServerSettings["interfaceLanguageSyncRecord"];
+type LocaleRecordV1 = ServerSettings["interfaceLocaleSyncRecordV1"];
+
+function localeRecordIsNewer(
+  candidate: { readonly updatedAt: number; readonly updateId: string },
+  current: { readonly updatedAt: number; readonly updateId: string } | undefined,
+): boolean {
+  if (current === undefined) return true;
+  if (candidate.updatedAt !== current.updatedAt) return candidate.updatedAt > current.updatedAt;
+  return candidate.updateId > current.updateId;
+}
+
+function resolveInterfaceLocalePatch(
+  current: ServerSettings,
+  patch: {
+    readonly interfaceLanguageSyncRecord: LegacyLocaleRecord;
+    readonly interfaceLocaleSyncRecordV1: LocaleRecordV1;
+  },
+): Partial<Pick<ServerSettings, "interfaceLanguageSyncRecord" | "interfaceLocaleSyncRecordV1">> {
+  if (patch.interfaceLocaleSyncRecordV1 !== undefined) {
+    const nextV1 = patch.interfaceLocaleSyncRecordV1;
+    if (!localeRecordIsNewer(nextV1, current.interfaceLocaleSyncRecordV1)) {
+      return {
+        ...(current.interfaceLanguageSyncRecord === undefined
+          ? {}
+          : { interfaceLanguageSyncRecord: current.interfaceLanguageSyncRecord }),
+        ...(current.interfaceLocaleSyncRecordV1 === undefined
+          ? {}
+          : { interfaceLocaleSyncRecordV1: current.interfaceLocaleSyncRecordV1 }),
+      };
+    }
+    if (nextV1.preference === "fr") {
+      return {
+        ...(current.interfaceLanguageSyncRecord === undefined
+          ? {}
+          : { interfaceLanguageSyncRecord: current.interfaceLanguageSyncRecord }),
+        interfaceLocaleSyncRecordV1: nextV1,
+      };
+    }
+    return {
+      interfaceLanguageSyncRecord: {
+        preference: nextV1.preference,
+        updatedAt: nextV1.updatedAt,
+        updateId: nextV1.updateId,
+      },
+      interfaceLocaleSyncRecordV1: nextV1,
+    };
+  }
+
+  const legacy = patch.interfaceLanguageSyncRecord;
+  if (legacy === undefined) {
+    return {
+      ...(current.interfaceLanguageSyncRecord === undefined
+        ? {}
+        : { interfaceLanguageSyncRecord: current.interfaceLanguageSyncRecord }),
+      ...(current.interfaceLocaleSyncRecordV1 === undefined
+        ? {}
+        : { interfaceLocaleSyncRecordV1: current.interfaceLocaleSyncRecordV1 }),
+    };
+  }
+  const nextLegacy = localeRecordIsNewer(legacy, current.interfaceLanguageSyncRecord)
+    ? legacy
+    : current.interfaceLanguageSyncRecord;
+  const nextV1 = localeRecordIsNewer(legacy, current.interfaceLocaleSyncRecordV1)
+    ? { version: 1 as const, ...legacy }
+    : current.interfaceLocaleSyncRecordV1;
+  return {
+    ...(nextLegacy === undefined ? {} : { interfaceLanguageSyncRecord: nextLegacy }),
+    ...(nextV1 === undefined ? {} : { interfaceLocaleSyncRecordV1: nextV1 }),
+  };
+}
+
 export function applyServerSettingsPatch(
   current: ServerSettings,
   patch: ServerSettingsPatch,
 ): ServerSettings {
-  const selectionPatch = patch.textGenerationModelSelection;
+  const textGenerationSelectionPatch = patch.textGenerationModelSelection;
+  const fetchModelSelectionPatch = patch.fetchModelSelection;
+  const voiceTranslationSelectionPatch = patch.voiceTranslationModelSelection;
+  const knowledgeGraphSelectionPatch = patch.knowledgeGraphModelSelection;
+  const parallelPlanReviewSelectionPatch = patch.parallelPlanReviewModelSelection;
+  const deepThinkingCompatibilityValue =
+    patch.betterT3Environment?.flags?.["agent.deepThinking"] ??
+    patch.agentEnhancement?.deepThinking?.enabled;
   const {
+    betterT3Environment,
+    enableAssistantStreaming,
+    interfaceLanguageSyncRecord,
+    interfaceLocaleSyncRecordV1,
     automaticGitFetchInterval,
     providerHealthRefreshInterval,
     backgroundActivityProfile,
@@ -175,6 +292,11 @@ export function applyServerSettingsPatch(
     usagePriceOverrides: usagePriceOverridesPatch,
     projectAgentBrowserAccessOverrides: projectAgentBrowserAccessOverridesPatch,
     projectAutoPullOverrides: projectAutoPullOverridesPatch,
+    textGenerationModelSelection: _textGenerationModelSelection,
+    fetchModelSelection: _fetchModelSelection,
+    voiceTranslationModelSelection: _voiceTranslationModelSelection,
+    knowledgeGraphModelSelection: _knowledgeGraphModelSelection,
+    parallelPlanReviewModelSelection: _parallelPlanReviewModelSelection,
     ...patchForMerge
   } = patch;
   const currentBackgroundActivity = normalizeServerBackgroundActivitySettings(current);
@@ -212,9 +334,43 @@ export function applyServerSettingsPatch(
             },
           }
         : undefined;
-  const next = deepMerge(current, patchForMerge);
+  const next = deepMerge(current, {
+    ...patchForMerge,
+    ...(enableAssistantStreaming !== undefined && patch.enableLegacyTokenStreaming === undefined
+      ? { enableLegacyTokenStreaming: enableAssistantStreaming }
+      : {}),
+  });
   const nextWithReplacementsBase = {
     ...next,
+    ...(betterT3Environment !== undefined || deepThinkingCompatibilityValue !== undefined
+      ? {
+          betterT3Environment: {
+            ...current.betterT3Environment,
+            flags: {
+              ...current.betterT3Environment.flags,
+              ...betterT3Environment?.flags,
+              ...(deepThinkingCompatibilityValue === undefined
+                ? {}
+                : { "agent.deepThinking": deepThinkingCompatibilityValue }),
+            },
+          },
+        }
+      : {}),
+    ...(deepThinkingCompatibilityValue === undefined
+      ? {}
+      : {
+          agentEnhancement: {
+            ...next.agentEnhancement,
+            deepThinking: {
+              ...next.agentEnhancement.deepThinking,
+              enabled: deepThinkingCompatibilityValue,
+            },
+          },
+        }),
+    ...resolveInterfaceLocalePatch(current, {
+      interfaceLanguageSyncRecord,
+      interfaceLocaleSyncRecordV1,
+    }),
     ...(backgroundActivity !== undefined
       ? {
           backgroundActivity: {
@@ -280,6 +436,21 @@ export function applyServerSettingsPatch(
     ...(patch.sourceControlWriterModelSelection !== undefined
       ? { sourceControlWriterModelSelection: patch.sourceControlWriterModelSelection }
       : {}),
+    ...(fetchModelSelectionPatch !== undefined
+      ? { fetchModelSelection: fetchModelSelectionPatch }
+      : {}),
+    ...(voiceTranslationSelectionPatch !== undefined
+      ? { voiceTranslationModelSelection: voiceTranslationSelectionPatch }
+      : {}),
+    ...(knowledgeGraphSelectionPatch !== undefined
+      ? { knowledgeGraphModelSelection: knowledgeGraphSelectionPatch }
+      : {}),
+    ...(patch.mcp?.servers !== undefined
+      ? { mcp: { ...next.mcp, servers: patch.mcp.servers } }
+      : {}),
+    ...(patch.skills?.disabledSkillIds !== undefined
+      ? { skills: { ...next.skills, disabledSkillIds: patch.skills.disabledSkillIds } }
+      : {}),
     ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
     ...(providerHealthRefreshInterval !== undefined ? { providerHealthRefreshInterval } : {}),
   };
@@ -296,21 +467,23 @@ export function applyServerSettingsPatch(
     providerHealthRefreshInterval: resolvedBackgroundActivity.providerHealthRefreshInterval,
     backgroundActivityProfile: resolvedBackgroundActivity.profile,
   };
-  if (!selectionPatch) {
-    return nextWithReplacements;
-  }
-
-  const instanceId = selectionPatch.instanceId ?? current.textGenerationModelSelection.instanceId;
-  const model = selectionPatch.model ?? current.textGenerationModelSelection.model;
-  const options = shouldReplaceTextGenerationModelSelection(selectionPatch)
-    ? selectionPatch.options
-    : mergeModelSelectionOptionsById({
-        current: current.textGenerationModelSelection.options,
-        patch: selectionPatch.options,
-      });
-
   return {
     ...nextWithReplacements,
-    textGenerationModelSelection: createModelSelection(instanceId, model, options),
+    ...(textGenerationSelectionPatch !== undefined
+      ? {
+          textGenerationModelSelection: applyModelSelectionPatch(
+            current.textGenerationModelSelection,
+            textGenerationSelectionPatch,
+          ),
+        }
+      : {}),
+    ...(parallelPlanReviewSelectionPatch !== undefined
+      ? {
+          parallelPlanReviewModelSelection: applyModelSelectionPatch(
+            current.parallelPlanReviewModelSelection,
+            parallelPlanReviewSelectionPatch,
+          ),
+        }
+      : {}),
   };
 }

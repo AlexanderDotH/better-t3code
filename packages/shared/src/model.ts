@@ -1,10 +1,12 @@
 import {
   type CustomModelSetting,
+  CODEX_REASONING_EFFORT_OPTION_ID,
   MODEL_SLUG_ALIASES_BY_PROVIDER,
   ModelCapabilities,
   type ModelSelection,
   ProviderDriverKind,
   ProviderInstanceId,
+  T3_AUTO_REASONING_OPTION_ID,
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
 } from "@t3tools/contracts";
@@ -21,9 +23,19 @@ export interface SelectableModelOption {
 
 export function createModelCapabilities(input: {
   optionDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
+  contextWindow?: ModelCapabilities["contextWindow"];
+  inputModalities?: ModelCapabilities["inputModalities"];
+  outputModalities?: ModelCapabilities["outputModalities"];
+  pricing?: ModelCapabilities["pricing"];
+  toolSupport?: ModelCapabilities["toolSupport"];
 }): ModelCapabilities {
   return {
     optionDescriptors: input.optionDescriptors.map(cloneDescriptor),
+    ...(input.contextWindow ? { contextWindow: { ...input.contextWindow } } : {}),
+    ...(input.inputModalities ? { inputModalities: [...input.inputModalities] } : {}),
+    ...(input.outputModalities ? { outputModalities: [...input.outputModalities] } : {}),
+    ...(input.pricing ? { pricing: { ...input.pricing } } : {}),
+    ...(input.toolSupport ? { toolSupport: { ...input.toolSupport } } : {}),
   };
 }
 
@@ -72,6 +84,179 @@ export function getModelSelectionBooleanOptionValue(
   return getProviderOptionBooleanSelectionValue(modelSelection?.options, id);
 }
 
+function withoutModelSelectionOption(
+  selection: ModelSelection,
+  optionId: string,
+): Array<ProviderOptionSelection> {
+  return (selection.options ?? []).filter((option) => option.id !== optionId).map(cloneSelection);
+}
+
+function withModelSelectionOption(
+  selection: ModelSelection,
+  option: ProviderOptionSelection,
+): ModelSelection {
+  const options = (selection.options ?? []).map(cloneSelection);
+  const index = options.findIndex((candidate) => candidate.id === option.id);
+  if (index >= 0) {
+    options[index] = option;
+  } else {
+    options.push(option);
+  }
+  return { ...selection, options };
+}
+
+export function isAutoReasoningEnabled(selection: ModelSelection | null | undefined): boolean {
+  return getModelSelectionBooleanOptionValue(selection, T3_AUTO_REASONING_OPTION_ID) === true;
+}
+
+export function enableAutoReasoning(selection: ModelSelection): ModelSelection {
+  return withModelSelectionOption(selection, { id: T3_AUTO_REASONING_OPTION_ID, value: true });
+}
+
+export function stripAutoReasoning(selection: ModelSelection): ModelSelection {
+  const options = withoutModelSelectionOption(selection, T3_AUTO_REASONING_OPTION_ID);
+  return options.length > 0
+    ? { ...selection, options }
+    : { instanceId: selection.instanceId, model: selection.model };
+}
+
+export function selectManualReasoningEffort(
+  selection: ModelSelection,
+  effort: string,
+): ModelSelection {
+  const manual = stripAutoReasoning(selection);
+  return withModelSelectionOption(manual, {
+    id: CODEX_REASONING_EFFORT_OPTION_ID,
+    value: effort,
+  });
+}
+
+export type AutoReasoningResolution = {
+  readonly effectiveEffort: string;
+  readonly fallback: boolean;
+};
+
+export function readAutoReasoningResolution(
+  activities: ReadonlyArray<{
+    readonly kind: string;
+    readonly payload: unknown;
+    readonly turnId?: string | null;
+  }>,
+  expectedTurnId?: string | null,
+): AutoReasoningResolution | null {
+  for (let index = activities.length - 1; index >= 0; index -= 1) {
+    const activity = activities[index];
+    if (
+      activity?.kind !== "auto-reasoning.resolved" ||
+      (expectedTurnId !== undefined && activity.turnId !== expectedTurnId) ||
+      typeof activity.payload !== "object" ||
+      activity.payload === null
+    ) {
+      continue;
+    }
+    const payload = activity.payload as Record<string, unknown>;
+    const effort = payload["autoReasoningEffort"];
+    const fallback = payload["autoReasoningFallback"];
+    if (typeof effort !== "string" || effort.trim().length === 0 || typeof fallback !== "boolean") {
+      continue;
+    }
+    return { effectiveEffort: effort.trim(), fallback };
+  }
+  return null;
+}
+
+export const CODEX_CONTEXT_WINDOW_OPTION_ID = "contextWindow";
+export const CODEX_CONTEXT_WINDOW_DEFAULT_VALUE = "default";
+
+const CODEX_CONTEXT_WINDOW_MIN_TOKENS = 16_384;
+const CODEX_CONTEXT_WINDOW_CUSTOM_MAX_TOKENS = 1_000_000;
+const CODEX_CONTEXT_WINDOW_STABLE_TOKENS = [
+  16_384, 32_768, 49_152, 65_536, 81_920, 98_304, 131_072, 163_840, 196_608, 262_144, 327_680,
+  393_216, 458_752, 524_288, 655_360, 786_432, 851_968, 917_504, 1_000_000,
+] as const;
+
+export function formatModelContextWindowTokens(tokens: number): string {
+  if (tokens >= 1_000_000) {
+    const millions = tokens / 1_000_000;
+    return `${Number.isInteger(millions) ? millions.toFixed(0) : millions.toFixed(2).replace(/0+$/u, "").replace(/\.$/u, "")}M`;
+  }
+  const thousands = (CODEX_CONTEXT_WINDOW_STABLE_TOKENS as readonly number[]).includes(tokens)
+    ? tokens / 1_024
+    : Math.round(tokens / 1_000);
+  return `${thousands}K`;
+}
+
+export function createCodexContextWindowDescriptor(
+  metadata: NonNullable<ModelCapabilities["contextWindow"]>,
+): Extract<ProviderOptionDescriptor, { type: "select" }> {
+  const defaultLabel = formatModelContextWindowTokens(metadata.defaultTokens);
+  const maximumSelectableTokens = Math.min(
+    metadata.maxTokens,
+    CODEX_CONTEXT_WINDOW_CUSTOM_MAX_TOKENS,
+  );
+  const numericTokens = new Set<number>(
+    CODEX_CONTEXT_WINDOW_STABLE_TOKENS.filter(
+      (tokens) =>
+        tokens <= maximumSelectableTokens &&
+        tokens !== metadata.defaultTokens &&
+        formatModelContextWindowTokens(tokens) !== defaultLabel,
+    ),
+  );
+  if (
+    maximumSelectableTokens >= CODEX_CONTEXT_WINDOW_MIN_TOKENS &&
+    maximumSelectableTokens !== metadata.defaultTokens
+  ) {
+    numericTokens.add(maximumSelectableTokens);
+  }
+  const choices = [
+    ...Array.from(numericTokens, (tokens) => ({
+      tokens,
+      choice: { id: String(tokens), label: formatModelContextWindowTokens(tokens) },
+    })),
+    {
+      tokens: metadata.defaultTokens,
+      choice: {
+        id: CODEX_CONTEXT_WINDOW_DEFAULT_VALUE,
+        label: defaultLabel,
+        description: "Model default",
+        isDefault: true,
+      },
+    },
+  ].sort((left, right) => left.tokens - right.tokens);
+
+  return {
+    id: CODEX_CONTEXT_WINDOW_OPTION_ID,
+    label: "Context window",
+    description: "Override the active model context window for this chat.",
+    type: "select",
+    options: choices.map(({ choice }) => choice),
+    currentValue: CODEX_CONTEXT_WINDOW_DEFAULT_VALUE,
+  };
+}
+
+export const CODEX_CONTEXT_WINDOW_DESCRIPTOR = createCodexContextWindowDescriptor({
+  defaultTokens: 272_000,
+  maxTokens: CODEX_CONTEXT_WINDOW_CUSTOM_MAX_TOKENS,
+  effectivePercent: 95,
+});
+
+export const CODEX_CONTEXT_WINDOW_CHOICES = CODEX_CONTEXT_WINDOW_DESCRIPTOR.options;
+
+export function resolveCodexContextWindowTokens(
+  modelSelection: ModelSelection | null | undefined,
+): number | undefined {
+  const value = getModelSelectionStringOptionValue(modelSelection, CODEX_CONTEXT_WINDOW_OPTION_ID);
+  if (!value || value === CODEX_CONTEXT_WINDOW_DEFAULT_VALUE) {
+    return undefined;
+  }
+  const tokens = Number(value);
+  return Number.isSafeInteger(tokens) &&
+    tokens >= CODEX_CONTEXT_WINDOW_MIN_TOKENS &&
+    tokens <= CODEX_CONTEXT_WINDOW_CUSTOM_MAX_TOKENS
+    ? tokens
+    : undefined;
+}
+
 function resolveDescriptorChoiceValue(
   descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
   raw: string | null | undefined,
@@ -91,6 +276,21 @@ function resolveDescriptorChoiceValue(
   }
   if (descriptor.options.some((option) => option.id === trimmed)) {
     return trimmed;
+  }
+  if (descriptor.id === CODEX_CONTEXT_WINDOW_OPTION_ID) {
+    const requestedTokens = Number(trimmed);
+    const maximumChoiceTokens = Math.max(
+      ...descriptor.options
+        .map((option) => Number(option.id))
+        .filter((tokens) => Number.isSafeInteger(tokens) && tokens > 0),
+    );
+    if (
+      Number.isSafeInteger(requestedTokens) &&
+      requestedTokens > maximumChoiceTokens &&
+      Number.isFinite(maximumChoiceTokens)
+    ) {
+      return String(maximumChoiceTokens);
+    }
   }
   return descriptor.currentValue ?? descriptor.options.find((option) => option.isDefault)?.id;
 }
