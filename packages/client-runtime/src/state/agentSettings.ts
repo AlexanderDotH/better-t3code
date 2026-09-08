@@ -3,7 +3,7 @@ import { Atom } from "effect/unstable/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { createMcpEnvironmentAtoms } from "../mcp/state.ts";
-import { createEnvironmentRpcCommand } from "./runtime.ts";
+import { createEnvironmentRpcCommand, createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
 
 export function createAgentSettingsEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
@@ -39,6 +39,14 @@ export function createAgentSettingsEnvironmentAtoms<R, E>(
       }),
     },
     skills: {
+      listQuery: createEnvironmentRpcQueryAtomFamily(runtime, {
+        label: "environment-data:skills:list-query",
+        tag: WS_METHODS.skillsList,
+      }),
+      importSourcesQuery: createEnvironmentRpcQueryAtomFamily(runtime, {
+        label: "environment-data:skills:import-sources-query",
+        tag: WS_METHODS.skillsDiscoverImportSources,
+      }),
       list: createEnvironmentRpcCommand(runtime, {
         label: "environment-data:skills:list",
         tag: WS_METHODS.skillsList,
