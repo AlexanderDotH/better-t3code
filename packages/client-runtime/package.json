@@ -282,6 +282,14 @@
     "./state/thread-retry": {
       "types": "./src/state/threadRetry.ts",
       "default": "./src/state/threadRetry.ts"
+    },
+    "./plan-implementation": {
+      "types": "./src/planImplementation.ts",
+      "default": "./src/planImplementation.ts"
+    },
+    "./proposed-plan": {
+      "types": "./src/proposedPlan.ts",
+      "default": "./src/proposedPlan.ts"
     }
   },
   "scripts": {
