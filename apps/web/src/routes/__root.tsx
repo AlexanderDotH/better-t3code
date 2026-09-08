@@ -1,3 +1,4 @@
+import { isMacElectron } from "../env";
 import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -242,6 +243,14 @@ function ContrastAppearanceSync() {
 
 function GlassAppearanceSync() {
   const glassOpacity = useClientSettings((settings) => settings.glassOpacity);
+  const macosWindowTransparency = useClientSettings((settings) => settings.macosWindowTransparency);
+  useEffect(() => {
+    document.documentElement.classList.toggle(
+      "macos-vibrancy",
+      isMacElectron && macosWindowTransparency,
+    );
+    return () => document.documentElement.classList.remove("macos-vibrancy");
+  }, [macosWindowTransparency]);
 
   useEffect(() => {
     document.documentElement.style.setProperty("--glass-opacity", `${glassOpacity}%`);

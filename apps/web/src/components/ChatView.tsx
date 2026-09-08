@@ -8388,7 +8388,7 @@ export default function ChatView(props: ChatViewProps) {
   );
 
   return (
-    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
+    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden window-surface bg-background">
       {routeKind === "draft" && draftId && activeProject && !threadHasStarted(activeThread) ? (
         <ProjectSpeechSetup
           key={`${activeProject.environmentId}:${activeProject.id}:${draftId}`}
@@ -8411,7 +8411,7 @@ export default function ChatView(props: ChatViewProps) {
           data-chat-header
           electron={isElectron}
           reserveNativeControls={reserveTitleBarControlInset && !inlineRightPanelOwnsTitleBar}
-          className="relative bg-background"
+          className="relative window-surface bg-background"
         >
           {isElectron && rightPanelControlsAtRoot ? (
             <span
