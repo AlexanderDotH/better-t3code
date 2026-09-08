@@ -234,6 +234,22 @@
     "./assembly-ai": {
       "types": "./src/assemblyAiStreaming.ts",
       "default": "./src/assemblyAiStreaming.ts"
+    },
+    "./project-thread-preview": {
+      "types": "./src/projectThreadPreview.ts",
+      "default": "./src/projectThreadPreview.ts"
+    },
+    "./project-thread-preview-sync": {
+      "types": "./src/projectThreadPreviewSync.ts",
+      "default": "./src/projectThreadPreviewSync.ts"
+    },
+    "./chat-visual-mode-sync": {
+      "types": "./src/chatVisualModeSync.ts",
+      "default": "./src/chatVisualModeSync.ts"
+    },
+    "./interface-language-sync": {
+      "types": "./src/interfaceLanguageSync.ts",
+      "default": "./src/interfaceLanguageSync.ts"
     }
   },
   "scripts": {
