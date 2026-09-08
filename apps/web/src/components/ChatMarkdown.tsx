@@ -1,3 +1,20 @@
+import { useBetterT3DeviceFeature } from "../hooks/useBetterT3Feature";
+import { useStreamingTextMotion } from "./chat/useStreamingTextMotion";
+import type { StreamingTextMotionFrame } from "./chat/streamingTextMotion";
+import {
+  StreamingTextRenderContext,
+  StreamingTextNode,
+  StreamingLabelText,
+  resolveMaterializedLabelMotion,
+  type StreamingLabelMotion,
+  type ChatMarkdownHastNode,
+  rehypeMarkStreamingText,
+  createStreamingCodeTransformer,
+  resolveFencedCodeSourceStart,
+  renderSkillAwareMarkdownChildren,
+  nodeToPlainText,
+} from "./chat/streamingMarkdown";
+import "./chat/streamingMarkdown.css";
 import { useAtomValue } from "@effect/atom-react";
 import {
   CheckIcon,
@@ -82,7 +99,6 @@ import {
   remarkCodexDirectives,
   renderCodexFileCitationsAsMarkdown,
 } from "@t3tools/client-runtime/codex-markdown-directives";
-import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import {
   resolveMarkdownMediaPreview,
   type ExpandedImagePreview,
@@ -193,6 +209,9 @@ interface ChatMarkdownProps {
   environmentId?: EnvironmentId | undefined;
   onTaskListChange?: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
   isStreaming?: boolean;
+  streamId?: string | undefined;
+  animateInitialStreamChunk?: boolean | undefined;
+  streamingMotionEnabled?: boolean | undefined;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   className?: string;
   /** Treat single newlines as hard breaks — chat-style user input. */
@@ -242,6 +261,8 @@ export function shouldUseMarkdownFileBrowserPrimaryAction(input: {
       (!input.canOpenInEditor && !input.canOpenInPanel))
   );
 }
+
+const EMPTY_STREAMING_FRAMES: readonly StreamingTextMotionFrame[] = [];
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 const EMPTY_REMARK_PLUGINS: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = [];
@@ -616,19 +637,6 @@ function remarkNormalizeLinksAndTagInlineCode() {
   };
 }
 
-function nodeToPlainText(node: ReactNode): string {
-  if (typeof node === "string" || typeof node === "number") {
-    return String(node);
-  }
-  if (Array.isArray(node)) {
-    return node.map((child) => nodeToPlainText(child)).join("");
-  }
-  if (isValidElement<{ children?: ReactNode }>(node)) {
-    return nodeToPlainText(node.props.children);
-  }
-  return "";
-}
-
 function extractCodeBlock(
   children: ReactNode,
 ): { className: string | undefined; code: string } | null {
@@ -851,7 +859,9 @@ function MarkdownCodeBlockTitleContent({
   fenceTitle,
   language,
   theme,
+  labelMotion,
 }: {
+  labelMotion?: StreamingLabelMotion | null | undefined;
   fenceTitle: string | null;
   language: string;
   theme: "light" | "dark";
@@ -860,14 +870,20 @@ function MarkdownCodeBlockTitleContent({
     return (
       <>
         <PierreEntryIcon pathValue={fenceTitle} kind="file" theme={theme} className="size-3.5" />
-        <span className="truncate">{fenceTitle}</span>
+        <span className="truncate">
+          <StreamingLabelText motion={labelMotion} text={fenceTitle} />
+        </span>
       </>
     );
   }
 
   const fileName = syntheticFileNameForLanguageId(language);
   if (!hasSpecificPierreIconForFileName(fileName)) {
-    return <span className="truncate">{language}</span>;
+    return (
+      <span className="truncate">
+        <StreamingLabelText motion={labelMotion} text={language} />
+      </span>
+    );
   }
   return (
     <Tooltip>
@@ -889,7 +905,9 @@ function MarkdownCodeBlock({
   fenceTitle,
   theme,
   children,
+  labelMotion,
 }: {
+  labelMotion?: StreamingLabelMotion | null | undefined;
   code: string;
   language: string;
   fenceTitle: string | null;
@@ -949,6 +967,7 @@ function MarkdownCodeBlock({
       <div className="chat-markdown-codeblock-header flex items-center justify-between gap-2 pt-1.5 pr-1.5 pb-0 pl-3 select-none">
         <span className="inline-flex min-w-0 items-center gap-[0.4rem] [font-family:var(--font-mono,ui-monospace,SFMono-Regular,monospace)] [font-size:0.6875rem]">
           <MarkdownCodeBlockTitleContent
+            labelMotion={labelMotion}
             fenceTitle={fenceTitle}
             language={language}
             theme={theme}
@@ -998,6 +1017,10 @@ function MarkdownCodeBlock({
 }
 
 interface SuspenseShikiCodeBlockProps {
+  animationTimeMs: number;
+  streamingFrames: readonly StreamingTextMotionFrame[];
+  source: string;
+  codeSourceStart: number | null;
   className: string | undefined;
   code: string;
   themeName: DiffThemeName;
@@ -1009,10 +1032,15 @@ function SuspenseShikiCodeBlock({
   code,
   themeName,
   isStreaming,
+  animationTimeMs,
+  streamingFrames,
+  source,
+  codeSourceStart,
 }: SuspenseShikiCodeBlockProps) {
   const language = extractFenceLanguage(className);
   const cacheKey = createHighlightCacheKey(code, language, themeName);
-  const cachedHighlightedHtml = !isStreaming ? highlightedCodeCache.get(cacheKey) : null;
+  const cachedHighlightedHtml =
+    !isStreaming && streamingFrames.length === 0 ? highlightedCodeCache.get(cacheKey) : null;
 
   if (cachedHighlightedHtml != null) {
     return (
@@ -1030,11 +1058,19 @@ function SuspenseShikiCodeBlock({
       themeName={themeName}
       cacheKey={cacheKey}
       isStreaming={isStreaming}
+      animationTimeMs={animationTimeMs}
+      streamingFrames={streamingFrames}
+      source={source}
+      codeSourceStart={codeSourceStart}
     />
   );
 }
 
 interface UncachedShikiCodeBlockProps {
+  animationTimeMs: number;
+  streamingFrames: readonly StreamingTextMotionFrame[];
+  source: string;
+  codeSourceStart: number | null;
   code: string;
   language: string;
   themeName: DiffThemeName;
@@ -1048,11 +1084,32 @@ function UncachedShikiCodeBlock({
   themeName,
   cacheKey,
   isStreaming,
+  animationTimeMs,
+  streamingFrames,
+  source,
+  codeSourceStart,
 }: UncachedShikiCodeBlockProps) {
   const highlighter = use(getSyntaxHighlighterPromise(language));
   const highlightedHtml = useMemo(() => {
+    const highlight = (lang: string) =>
+      highlighter.codeToHtml(code, {
+        lang,
+        theme: themeName,
+        ...(streamingFrames.length > 0 && codeSourceStart !== null
+          ? {
+              transformers: [
+                createStreamingCodeTransformer({
+                  animationTimeMs,
+                  codeSourceStart,
+                  frames: streamingFrames,
+                  source,
+                }),
+              ],
+            }
+          : {}),
+      });
     try {
-      return highlighter.codeToHtml(code, { lang: language, theme: themeName });
+      return highlight(language);
     } catch (error) {
       // Log highlighting failures for debugging while falling back to plain text
       console.warn(
@@ -1060,19 +1117,28 @@ function UncachedShikiCodeBlock({
         error instanceof Error ? error.message : error,
       );
       // If highlighting fails for this language, render as plain text
-      return highlighter.codeToHtml(code, { lang: "text", theme: themeName });
+      return highlight("text");
     }
-  }, [code, highlighter, language, themeName]);
+  }, [
+    animationTimeMs,
+    code,
+    codeSourceStart,
+    highlighter,
+    language,
+    source,
+    streamingFrames,
+    themeName,
+  ]);
 
   useEffect(() => {
-    if (!isStreaming) {
+    if (!isStreaming && streamingFrames.length === 0) {
       highlightedCodeCache.set(
         cacheKey,
         highlightedHtml,
         estimateHighlightedSize(highlightedHtml, code),
       );
     }
-  }, [cacheKey, code, highlightedHtml, isStreaming]);
+  }, [cacheKey, code, highlightedHtml, isStreaming, streamingFrames.length]);
 
   return (
     <div className="chat-markdown-shiki" dangerouslySetInnerHTML={{ __html: highlightedHtml }} />
@@ -1089,6 +1155,7 @@ interface MarkdownFileLinkProps {
   panelPath: string | null;
   line?: number | undefined;
   label: string;
+  sourceNode?: ChatMarkdownHastNode | undefined;
   copyMarkdown: string;
   theme: "light" | "dark";
   threadRef?: ScopedThreadRef | undefined;
@@ -1786,6 +1853,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   panelPath,
   line,
   label,
+  sourceNode,
   copyMarkdown,
   theme,
   threadRef,
@@ -1798,6 +1866,16 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   revealLabel,
   className,
 }: MarkdownFileLinkProps) {
+  const motion = use(StreamingTextRenderContext);
+  const labelMotion =
+    motion && sourceNode
+      ? resolveMaterializedLabelMotion({
+          animationTimeMs: motion.animationTimeMs,
+          frames: [...motion.framesByGeneration.values()],
+          node: sourceNode,
+          source: motion.source,
+        })
+      : null;
   const handleOpenInEditor = useCallback(() => {
     if (!onOpen) {
       return;
@@ -2089,7 +2167,12 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
               }}
               onContextMenu={handleContextMenu}
             >
-              <FileTagChipContent path={iconPath} label={label} theme={theme} selectable />
+              <FileTagChipContent
+                path={iconPath}
+                label={<StreamingLabelText motion={labelMotion} text={label} />}
+                theme={theme}
+                selectable
+              />
             </a>
           ) : (
             <button
@@ -2106,7 +2189,12 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
               onClick={handleContextMenu}
               onContextMenu={handleContextMenu}
             >
-              <FileTagChipContent path={iconPath} label={label} theme={theme} selectable />
+              <FileTagChipContent
+                path={iconPath}
+                label={<StreamingLabelText motion={labelMotion} text={label} />}
+                theme={theme}
+                selectable
+              />
             </button>
           )
         }
@@ -2137,6 +2225,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.panelPath === next.panelPath &&
     previous.line === next.line &&
     previous.label === next.label &&
+    previous.sourceNode === next.sourceNode &&
     previous.copyMarkdown === next.copyMarkdown &&
     previous.theme === next.theme &&
     previous.threadRef === next.threadRef &&
@@ -2493,6 +2582,7 @@ function useChatMarkdownState({
       copyMarkdown: string,
       className?: string,
       mediaSource?: string,
+      sourceNode?: ChatMarkdownHastNode,
     ) => {
       const parentSuffix = fileLinkParentSuffixByPath.get(
         fileLinkMeta.filePath.replaceAll("\\", "/"),
@@ -2526,6 +2616,7 @@ function useChatMarkdownState({
           panelPath={panelPath}
           line={fileLinkMeta.line}
           label={labelParts.join(" · ")}
+          sourceNode={sourceNode}
           copyMarkdown={copyMarkdown}
           theme={resolvedTheme}
           threadRef={threadRef}
@@ -2639,6 +2730,7 @@ const ChatMarkdownRendererContext = React.createContext<
 
 // Keep component types stable when streaming changes the message state.
 const CHAT_MARKDOWN_COMPONENTS = {
+  "stream-text": StreamingTextNode,
   div: function MarkdownDiv({ node, children, ...props }) {
     const { onUseArtifactTemplate } = use(ChatMarkdownRendererContext);
     const artifactTemplate = artifactTemplateFromHastProperties(node?.properties);
@@ -2651,7 +2743,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
   },
   p: function MarkdownParagraph({ node: _node, children, ...props }) {
     const { skills } = use(ChatMarkdownRendererContext);
-    return <p {...props}>{renderSkillInlineMarkdownChildren(children, skills)}</p>;
+    return <p {...props}>{renderSkillAwareMarkdownChildren(children, skills)}</p>;
   },
   blockquote: function MarkdownBlockquote({ node: _node, children, ...props }) {
     const alert =
@@ -2687,7 +2779,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       typeof listItemStart === "number" ? findTaskListMarkerOffset(text, listItemStart) : null;
     return (
       <li {...props} data-task-marker-offset={markerOffset ?? undefined}>
-        {renderSkillInlineMarkdownChildren(children, skills)}
+        {renderSkillAwareMarkdownChildren(children, skills)}
       </li>
     );
   },
@@ -2968,6 +3060,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       `[${fileLinkMeta.basename}](${normalizedHref})`,
       props.className,
       normalizedHref,
+      node,
     );
   },
   code: function MarkdownCode({ node, children, className, ...props }) {
@@ -2985,6 +3078,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
           `\`${codeText}\``,
           undefined,
           inlineCodeFilePathCandidate(codeText) ?? codeText.trim(),
+          node,
         );
       }
     }
@@ -3081,7 +3175,30 @@ const CHAT_MARKDOWN_COMPONENTS = {
   },
   pre: function MarkdownPre({ node, children, ...props }) {
     const { resolvedTheme, diffThemeName, isStreaming } = use(ChatMarkdownRendererContext);
+    const motion = use(StreamingTextRenderContext);
     const codeBlock = extractCodeBlock(children);
+    const codeSourceStart =
+      motion && node && codeBlock
+        ? resolveFencedCodeSourceStart(motion.source, node, codeBlock.code)
+        : null;
+    const frames = useMemo(() => {
+      if (!motion || codeSourceStart === null || !codeBlock) return EMPTY_STREAMING_FRAMES;
+      const matching = [...motion.framesByGeneration.values()].filter(
+        (frame) =>
+          frame.sourceEnd > codeSourceStart &&
+          frame.sourceStart < codeSourceStart + codeBlock.code.length,
+      );
+      return matching.length > 0 ? matching : EMPTY_STREAMING_FRAMES;
+    }, [motion?.framesByGeneration, codeSourceStart, codeBlock?.code.length]);
+    const labelMotion =
+      motion && node
+        ? resolveMaterializedLabelMotion({
+            animationTimeMs: motion.animationTimeMs,
+            frames: [...motion.framesByGeneration.values()],
+            node,
+            source: motion.source,
+          })
+        : null;
     if (!codeBlock) {
       return <pre {...props}>{children}</pre>;
     }
@@ -3093,6 +3210,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
         code={codeBlock.code}
         language={language}
         fenceTitle={fenceTitle}
+        labelMotion={labelMotion}
         theme={resolvedTheme}
       >
         <RenderErrorBoundary
@@ -3105,16 +3223,24 @@ const CHAT_MARKDOWN_COMPONENTS = {
               code={codeBlock.code}
               themeName={diffThemeName}
               isStreaming={isStreaming}
+              animationTimeMs={frames.length > 0 ? (motion?.animationTimeMs ?? 0) : 0}
+              streamingFrames={frames}
+              source={frames.length > 0 ? (motion?.source ?? "") : ""}
+              codeSourceStart={frames.length > 0 ? codeSourceStart : null}
             />
           </Suspense>
         </RenderErrorBoundary>
       </MarkdownCodeBlock>
     );
   },
-} satisfies Components;
+} satisfies Components & { "stream-text": typeof StreamingTextNode };
 
 function ChatMarkdown({
   text,
+  isStreaming = false,
+  streamId,
+  animateInitialStreamChunk = false,
+  streamingMotionEnabled = false,
   className,
   lineBreaks = false,
   parseRawHtml = true,
@@ -3128,7 +3254,30 @@ function ChatMarkdown({
     markdownUrlTransform,
     localMediaPreview,
     setLocalMediaPreview,
-  } = useChatMarkdownState({ text, ...props });
+  } = useChatMarkdownState({ text, isStreaming, ...props });
+  const characterMotionEnabled = useBetterT3DeviceFeature("chat.characterStreamingMotion");
+  const motionEnabled = streamingMotionEnabled && characterMotionEnabled;
+  const motion = useStreamingTextMotion({
+    text,
+    streamId,
+    isStreaming: isStreaming && motionEnabled,
+    animateInitialStreamChunk: animateInitialStreamChunk && motionEnabled,
+  });
+  const streamingContext = useMemo(
+    () => ({
+      animationTimeMs: motion.animationTimeMs,
+      framesByGeneration: new Map(motion.frames.map((frame) => [frame.generation, frame])),
+      skills: componentState.skills,
+      source: text,
+    }),
+    [componentState.skills, motion.animationTimeMs, motion.frames, text],
+  );
+  const rehypePlugins = useMemo<NonNullable<ReactMarkdownOptions["rehypePlugins"]>>(() => {
+    const base = parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS : [];
+    return motion.frames.length > 0
+      ? [...base, [rehypeMarkStreamingText, { frames: motion.frames, source: text }]]
+      : base;
+  }, [motion.frames, parseRawHtml, text]);
   const remarkPlugins = useMemo(
     () => [
       ...(lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS),
@@ -3149,17 +3298,19 @@ function ChatMarkdown({
       )}
       onCopy={handleCopy}
     >
-      <ChatMarkdownRendererContext value={componentState}>
-        <ReactMarkdown
-          remarkPlugins={remarkPlugins}
-          rehypePlugins={parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS : undefined}
-          skipHtml={false}
-          components={CHAT_MARKDOWN_COMPONENTS}
-          urlTransform={markdownUrlTransform}
-        >
-          {text}
-        </ReactMarkdown>
-      </ChatMarkdownRendererContext>
+      <StreamingTextRenderContext value={streamingContext}>
+        <ChatMarkdownRendererContext value={componentState}>
+          <ReactMarkdown
+            remarkPlugins={remarkPlugins}
+            rehypePlugins={rehypePlugins}
+            skipHtml={false}
+            components={CHAT_MARKDOWN_COMPONENTS}
+            urlTransform={markdownUrlTransform}
+          >
+            {text}
+          </ReactMarkdown>
+        </ChatMarkdownRendererContext>
+      </StreamingTextRenderContext>
       {localMediaPreview ? (
         <ExpandedImageDialog
           preview={localMediaPreview}

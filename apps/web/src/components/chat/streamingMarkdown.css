@@ -1,0 +1,24 @@
+@keyframes stream-character-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(0.22em);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+[data-stream-character] {
+  display: inline-block;
+  animation: stream-character-reveal var(--stream-character-duration) cubic-bezier(0.22, 1, 0.36, 1)
+    var(--stream-character-delay) backwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-stream-character] {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+}

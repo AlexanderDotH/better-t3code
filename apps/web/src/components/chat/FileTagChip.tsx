@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { inferEntryKindFromPath } from "../../pierre-icons";
 import {
   CHAT_INLINE_CHIP_CLASS_NAME,
@@ -13,7 +14,7 @@ export const CHAT_FILE_TAG_CHIP_CLASS_NAME = CHAT_INLINE_CHIP_CLASS_NAME;
 
 export function FileTagChipContent(props: {
   path: string;
-  label: string;
+  label: ReactNode;
   theme: "light" | "dark";
   selectable?: boolean;
 }) {

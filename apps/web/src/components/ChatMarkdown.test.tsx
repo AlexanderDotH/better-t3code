@@ -1,7 +1,7 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { act, type ComponentProps, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { create, type ReactTestRenderer, type ReactTestInstance } from "react-test-renderer";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
@@ -9,6 +9,10 @@ import { GitHubIcon } from "./Icons";
 import { Button } from "./ui/button";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
 
+const motionPreferences = vi.hoisted(() => ({ enabled: false }));
+vi.mock("../hooks/useBetterT3Feature", () => ({
+  useBetterT3DeviceFeature: () => motionPreferences.enabled,
+}));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
 vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
 vi.mock("../hooks/useSettings", async (importOriginal) => {
@@ -110,6 +114,53 @@ describe("ChatMarkdown favicon privacy", () => {
 });
 
 describe("ChatMarkdown streaming", () => {
+  it("animates appended graphemes while retaining parsed formatting and clears motion when disabled", async () => {
+    motionPreferences.enabled = true;
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    const markdown = (text: string, enabled = true) => (
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={text}
+        isStreaming
+        streamId="message-1"
+        streamingMotionEnabled={enabled}
+      />
+    );
+    const animated = () =>
+      renderer!.root.findAll(
+        (node) => node.type === "span" && node.props["data-stream-character"] !== undefined,
+      );
+    try {
+      await act(async () => {
+        renderer = create(markdown("Existing paragraph.\n\n"));
+      });
+      expect(animated()).toHaveLength(0);
+      await act(async () => {
+        renderer!.update(markdown("Existing paragraph.\n\n**New 👋🏽**"));
+      });
+      expect(
+        animated()
+          .map((node) => node.children.join(""))
+          .join(""),
+      ).toBe("New👋🏽");
+      expect(renderer!.root.findAllByType("strong")).toHaveLength(1);
+      await act(async () => {
+        renderer!.update(markdown("Existing paragraph.\n\n**New 👋🏽**", false));
+      });
+      expect(animated()).toHaveLength(0);
+      const renderedText = (node: ReactTestInstance | string): string =>
+        typeof node === "string" ? node : node.children.map(renderedText).join("");
+      expect(renderedText(renderer!.root.findAllByType("strong")[0]!)).toBe("New 👋🏽");
+    } finally {
+      await act(async () => {
+        renderer?.unmount();
+      });
+      motionPreferences.enabled = false;
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("recovers highlighting after a failed fence changes without resetting its controls", async () => {
     const highlighter = await getSyntaxHighlighterPromise("text");
     const codeToHtml = highlighter.codeToHtml.bind(highlighter);
@@ -154,87 +205,110 @@ describe("ChatMarkdown streaming", () => {
     }
   });
 
-  it("preserves code controls and details without highlighting an unchanged fence again", async () => {
-    const highlighter = await getSyntaxHighlighterPromise("text");
-    const highlight = vi.spyOn(highlighter, "codeToHtml");
-    const writeText = vi.fn(async (_text: string) => {});
-    vi.stubGlobal("navigator", { clipboard: { writeText } });
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    let renderer: ReactTestRenderer | undefined;
-    const text = [
-      "```text",
-      "First code block",
-      "```",
-      "",
-      "<details><summary>More</summary>",
-      "",
-      "Details content",
-      "",
-      "</details>",
-      "",
-      "Streaming reply",
-    ].join("\n");
+  it.each([false, true])(
+    "preserves code controls and avoids rehighlighting settled fences (motion %s)",
+    async (motionEnabled) => {
+      motionPreferences.enabled = motionEnabled;
+      const highlighter = await getSyntaxHighlighterPromise("text");
+      const highlight = vi.spyOn(highlighter, "codeToHtml");
+      const writeText = vi.fn(async (_text: string) => {});
+      vi.stubGlobal("navigator", { clipboard: { writeText } });
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      let renderer: ReactTestRenderer | undefined;
+      const text = [
+        "```text",
+        "First code block",
+        "```",
+        "",
+        "<details><summary>More</summary>",
+        "",
+        "Details content",
+        "",
+        "</details>",
+        "",
+        "Streaming reply",
+      ].join("\n");
 
-    try {
-      await act(async () => {
-        renderer = create(<ChatMarkdown cwd="/tmp/project" text={text} isStreaming />);
-      });
-      const mounted = renderer!;
-      const codeBlock = mounted.root.findByProps({ "data-language": "text" });
-      const initialWrap = codeBlock.props["data-wrap"] === "true";
-      const wrap = codeButton(mounted, initialWrap ? "Disable line wrap" : "Wrap lines");
-      const copy = codeButton(mounted, "Copy code");
-      await act(async () => {
-        wrap.onClick?.({} as Parameters<NonNullable<typeof wrap.onClick>>[0]);
-        copy.onClick?.({} as Parameters<NonNullable<typeof copy.onClick>>[0]);
-      });
-
-      const detailsButton = mounted.root.find(
-        (instance) =>
-          instance.type === "button" && instance.props["data-markdown-details-summary"] === "",
-      );
-      await act(async () => {
-        detailsButton.props.onClick({ nativeEvent: new Event("click") });
-      });
-      const details = mounted.root.findByProps({ "data-markdown-details": "" });
-      expect(details.props["data-markdown-details-open"]).toBe("true");
-      expect(writeText).toHaveBeenCalledWith("First code block\n");
-      expect(highlight).toHaveBeenCalledTimes(1);
-
-      for (let index = 0; index < 10; index += 1) {
+      try {
         await act(async () => {
-          mounted.update(<ChatMarkdown cwd="/tmp/project" text={`${text} ${index}`} isStreaming />);
+          renderer = create(
+            <ChatMarkdown
+              cwd="/tmp/project"
+              text={text}
+              isStreaming
+              streamingMotionEnabled={motionEnabled}
+              streamId="code-stream"
+            />,
+          );
         });
-      }
+        const mounted = renderer!;
+        const codeBlock = mounted.root.findByProps({ "data-language": "text" });
+        const initialWrap = codeBlock.props["data-wrap"] === "true";
+        const wrap = codeButton(mounted, initialWrap ? "Disable line wrap" : "Wrap lines");
+        const copy = codeButton(mounted, "Copy code");
+        await act(async () => {
+          wrap.onClick?.({} as Parameters<NonNullable<typeof wrap.onClick>>[0]);
+          copy.onClick?.({} as Parameters<NonNullable<typeof copy.onClick>>[0]);
+        });
 
-      expect(highlight).toHaveBeenCalledTimes(1);
-      expect(mounted.root.findByProps({ "data-language": "text" })).toBe(codeBlock);
-      expect(codeBlock.props["data-wrap"]).toBe(String(!initialWrap));
-      expect(mounted.root.findByProps({ "data-markdown-details": "" })).toBe(details);
-      expect(details.props["data-markdown-details-open"]).toBe("true");
-      await act(async () => {
-        mounted.update(
-          <ChatMarkdown
-            cwd="/tmp/project"
-            text={text.replace("First code block", "Updated code block")}
-            isStreaming
-          />,
+        const detailsButton = mounted.root.find(
+          (instance) =>
+            instance.type === "button" && instance.props["data-markdown-details-summary"] === "",
         );
-      });
-      const copyUpdated = codeButton(mounted, "Copied");
-      await act(async () => {
-        copyUpdated.onClick?.({} as Parameters<NonNullable<typeof copyUpdated.onClick>>[0]);
-      });
-      expect(writeText).toHaveBeenLastCalledWith("Updated code block\n");
-      expect(highlight).toHaveBeenCalledTimes(2);
-    } finally {
-      await act(async () => renderer?.unmount());
-      vi.useRealTimers();
-      vi.unstubAllGlobals();
-      vi.restoreAllMocks();
-    }
-  });
+        await act(async () => {
+          detailsButton.props.onClick({ nativeEvent: new Event("click") });
+        });
+        const details = mounted.root.findByProps({ "data-markdown-details": "" });
+        expect(details.props["data-markdown-details-open"]).toBe("true");
+        expect(writeText).toHaveBeenCalledWith("First code block\n");
+        expect(highlight).toHaveBeenCalledTimes(1);
+
+        for (let index = 0; index < 10; index += 1) {
+          await act(async () => {
+            mounted.update(
+              <ChatMarkdown
+                cwd="/tmp/project"
+                text={`${text} ${Array.from({ length: index + 1 }, (_, value) => value).join(" ")}`}
+                isStreaming
+                streamingMotionEnabled={motionEnabled}
+                streamId="code-stream"
+              />,
+            );
+          });
+        }
+
+        expect(highlight).toHaveBeenCalledTimes(1);
+        expect(mounted.root.findByProps({ "data-language": "text" })).toBe(codeBlock);
+        expect(codeBlock.props["data-wrap"]).toBe(String(!initialWrap));
+        expect(mounted.root.findByProps({ "data-markdown-details": "" })).toBe(details);
+        expect(details.props["data-markdown-details-open"]).toBe("true");
+        await act(async () => {
+          mounted.update(
+            <ChatMarkdown
+              cwd="/tmp/project"
+              text={text.replace("First code block", "Updated code block")}
+              isStreaming
+              streamingMotionEnabled={motionEnabled}
+              streamId="code-stream"
+            />,
+          );
+        });
+        const copyUpdated = codeButton(mounted, "Copied");
+        await act(async () => {
+          copyUpdated.onClick?.({} as Parameters<NonNullable<typeof copyUpdated.onClick>>[0]);
+        });
+        expect(writeText).toHaveBeenLastCalledWith("Updated code block\n");
+        expect(highlight).toHaveBeenCalledTimes(2);
+      } finally {
+        await act(async () => renderer?.unmount());
+        motionPreferences.enabled = false;
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+        vi.restoreAllMocks();
+      }
+    },
+  );
 
   it("edits the current task text and marker after reusing a renderer", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
