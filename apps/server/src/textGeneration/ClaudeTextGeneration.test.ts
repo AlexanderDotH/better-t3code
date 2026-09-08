@@ -1,3 +1,4 @@
+import { ClaudeGatewayModelProfile } from "../provider/Drivers/ClaudeGatewayCatalog.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { ClaudeSettings, ProviderInstanceId } from "@t3tools/contracts";
@@ -130,6 +131,7 @@ function withFakeClaudeEnv<A, E, R>(
     configDirMustBe?: string;
     cwdMustNotBe?: string;
     claudeConfig?: Partial<ClaudeSettings>;
+    gatewayProfile?: ClaudeGatewayModelProfile;
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
 ) {
@@ -425,6 +427,122 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
           });
 
           expect(generated.branch).toBe("call-script");
+        }),
+    ),
+  );
+
+  it.effect("translates transcripts through Claude structured output", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            text: "  Update `useThreadOutbox` without changing `drainQueue`.  ",
+          },
+        }),
+        stdinMustContain: "Actualiza `useThreadOutbox` sin cambiar `drainQueue`.",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.translateTranscriptToEnglish({
+            cwd: process.cwd(),
+            text: "Actualiza `useThreadOutbox` sin cambiar `drainQueue`.",
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("claudeAgent"),
+              "claude-sonnet-4-6",
+            ),
+          });
+
+          expect(generated).toEqual({
+            text: "Update `useThreadOutbox` without changing `drainQueue`.",
+          });
+        }),
+    ),
+  );
+
+  it.effect("improves prompts through Claude without changing their language", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            text: "  Corrige `reconnectSession` sin cambiar el contrato RPC.  ",
+          },
+        }),
+        stdinMustContain: "corrige reconnectSession no cambies contrato RPC",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.improvePrompt({
+            cwd: process.cwd(),
+            text: "corrige reconnectSession no cambies contrato RPC",
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("claudeAgent"),
+              "claude-sonnet-4-6",
+            ),
+          });
+
+          expect(generated).toEqual({
+            text: "Corrige `reconnectSession` sin cambiar el contrato RPC.",
+          });
+        }),
+    ),
+  );
+
+  it.effect("reviews plan parallelism through Claude structured output", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: { recommendedSubagents: 6 },
+        }),
+        stdinMustContain: "between 2 and 10",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.reviewPlanParallelism({
+            cwd: process.cwd(),
+            planMarkdown: "## Contracts\nAdd schemas.\n\n## Server\nAdd routing.",
+            maxSubagents: 10,
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("claudeAgent"),
+              "claude-fable-5",
+            ),
+          });
+
+          expect(generated).toEqual({ recommendedSubagents: 6 });
+        }),
+    ),
+  );
+
+  it.effect("plans Fetch exploration with the exact Claude traits and provider budget", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            decision: "run",
+            workers: [{ scope: "Contracts", questions: ["Which contracts cross the wire?"] }],
+          },
+        }),
+        stdinMustContain: "between 1 and 9 workers",
+        argsMustContain: "--permission-mode dontAsk",
+        argsMustNotContain: "--dangerously-skip-permissions",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.planFetchExploration({
+            cwd: process.cwd(),
+            userRequest: "Trace Fetch contracts.",
+            repositoryOrientation: "Top-level areas: packages/contracts",
+            maxRecommendedWorkers: 9,
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("claudeAgent"),
+              "claude-opus-4-6",
+              [{ id: "effort", value: "high" }],
+            ),
+          });
+
+          expect(generated).toEqual({
+            decision: "run",
+            workers: [{ scope: "Contracts", questions: ["Which contracts cross the wire?"] }],
+          });
         }),
     ),
   );

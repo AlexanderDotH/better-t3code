@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 
 import {
@@ -17,8 +18,13 @@ import { resolveAttachmentPath } from "../attachmentStore.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildFetchExplorationPrompt,
+  buildPlanParallelismReviewPrompt,
+  buildPromptImprovementPrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
+  buildThreadMetadataPrompt,
+  buildTranscriptTranslationPrompt,
 } from "./TextGenerationPrompts.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import {
@@ -28,12 +34,23 @@ import {
 } from "./TextGenerationUtils.ts";
 import * as OpenCodeRuntime from "../provider/opencodeRuntime.ts";
 import * as OpenCodeServerOwner from "../provider/OpenCodeServerOwner.ts";
+import { buildAutoReasoningPrompt, validateAutoReasoningDecision } from "./AutoReasoning.ts";
+
+const OPENCODE_MODEL_SELECTION_FORMAT_ERROR =
+  "OpenCode model selection must use the 'provider/model' format (for example: google/gemini-2.5-flash).";
+const isTextGenerationError = Schema.is(TextGenerationError);
 
 const OpenCodeTextGenerationOperation = Schema.Literals([
+  "decideAutoReasoning",
   "generateCommitMessage",
   "generatePrContent",
   "generateBranchName",
+  "generateThreadMetadata",
   "generateThreadTitle",
+  "translateTranscriptToEnglish",
+  "improvePrompt",
+  "reviewPlanParallelism",
+  "planFetchExploration",
 ]);
 
 type OpenCodeTextGenerationOperation = typeof OpenCodeTextGenerationOperation.Type;
@@ -173,6 +190,7 @@ function getOpenCodeTextResponse(parts: ReadonlyArray<unknown> | undefined): str
 export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration")(function* (
   openCodeSettings: OpenCodeSettings,
 ) {
+  const fileSystem = yield* FileSystem.FileSystem;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const openCodeRuntime = yield* OpenCodeRuntime.OpenCodeRuntime;
   const serverOwner = yield* OpenCodeServerOwner.OpenCodeServerOwner;
@@ -189,7 +207,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
     if (!parsedModel) {
       return yield* new TextGenerationError({
         operation: input.operation,
-        detail: "OpenCode model selection must use the 'provider/model' format.",
+        detail: OPENCODE_MODEL_SELECTION_FORMAT_ERROR,
       });
     }
 
@@ -198,7 +216,6 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
       resolveAttachmentPath: (attachment) =>
         resolveAttachmentPath({ attachmentsDir: serverConfig.attachmentsDir, attachment }),
     });
-
     const runAgainstServer = Effect.fn("runOpenCodeJson.runAgainstServer")(
       function* (
         server: Pick<
@@ -230,7 +247,10 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
             cwd: input.cwd,
           });
         }
-        const selectedAgent = getModelSelectionStringOptionValue(input.modelSelection, "agent");
+        const selectedAgent =
+          input.operation === "decideAutoReasoning"
+            ? undefined
+            : getModelSelectionStringOptionValue(input.modelSelection, "agent");
         const selectedVariant = getModelSelectionStringOptionValue(input.modelSelection, "variant");
         const promptContext = {
           operation: input.operation,
@@ -241,14 +261,17 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
         };
 
         const result = yield* Effect.tryPromise({
-          try: () =>
-            client.session.prompt({
-              sessionID: session.data.id,
-              model: parsedModel,
-              ...(selectedAgent ? { agent: selectedAgent } : {}),
-              ...(selectedVariant ? { variant: selectedVariant } : {}),
-              parts: [{ type: "text", text: input.prompt }, ...fileParts],
-            }),
+          try: (signal) =>
+            client.session.prompt(
+              {
+                sessionID: session.data.id,
+                model: parsedModel,
+                ...(selectedAgent ? { agent: selectedAgent } : {}),
+                ...(selectedVariant ? { variant: selectedVariant } : {}),
+                parts: [{ type: "text", text: input.prompt }, ...fileParts],
+              },
+              { signal },
+            ),
           catch: (cause) =>
             new OpenCodeTextGenerationPromptRequestError({
               ...promptContext,
@@ -359,6 +382,35 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
     );
   });
 
+  const decideAutoReasoning: TextGeneration.TextGeneration["Service"]["decideAutoReasoning"] =
+    Effect.fn("OpenCodeTextGeneration.decideAutoReasoning")(function* (input) {
+      return yield* Effect.gen(function* () {
+        const cwd = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-auto-reasoning-opencode-cwd-",
+        });
+        const { prompt, outputSchema } = buildAutoReasoningPrompt(input);
+        const generated = yield* runOpenCodeJson({
+          operation: "decideAutoReasoning",
+          cwd,
+          prompt,
+          outputSchemaJson: outputSchema,
+          modelSelection: input.modelSelection,
+        });
+        return yield* validateAutoReasoningDecision(input.allowedEfforts, generated);
+      }).pipe(
+        Effect.mapError((cause) =>
+          isTextGenerationError(cause)
+            ? cause
+            : new TextGenerationError({
+                operation: "decideAutoReasoning",
+                detail: "Failed to prepare isolated OpenCode Auto Reasoning.",
+                cause,
+              }),
+        ),
+        Effect.scoped,
+      );
+    });
+
   const generateCommitMessage: TextGeneration.TextGeneration["Service"]["generateCommitMessage"] =
     Effect.fn("OpenCodeTextGeneration.generateCommitMessage")(function* (input) {
       const { prompt, outputSchema } = buildCommitMessagePrompt({
@@ -422,7 +474,6 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
         prompt,
         outputSchemaJson: outputSchema,
         modelSelection: input.modelSelection,
-        attachments: input.attachments,
       });
 
       return {
@@ -443,7 +494,6 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
         prompt,
         outputSchemaJson: outputSchema,
         modelSelection: input.modelSelection,
-        attachments: input.attachments,
       });
 
       return {
@@ -451,10 +501,88 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
       };
     });
 
+  const generateThreadMetadata: TextGeneration.TextGeneration["Service"]["generateThreadMetadata"] =
+    Effect.fn("OpenCodeTextGeneration.generateThreadMetadata")(function* (input) {
+      const { prompt, outputSchema } = buildThreadMetadataPrompt(input);
+      const generated = yield* runOpenCodeJson({
+        operation: "generateThreadMetadata",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+      return {
+        title: sanitizeThreadTitle(generated.title),
+        branch: sanitizeBranchFragment(generated.branch),
+      };
+    });
+
+  const translateTranscriptToEnglish: TextGeneration.TextGeneration["Service"]["translateTranscriptToEnglish"] =
+    Effect.fn("OpenCodeTextGeneration.translateTranscriptToEnglish")(function* (input) {
+      const { prompt, outputSchema } = buildTranscriptTranslationPrompt({ text: input.text });
+      const generated = yield* runOpenCodeJson({
+        operation: "translateTranscriptToEnglish",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      return { text: generated.text.trim() };
+    });
+
+  const improvePrompt: TextGeneration.TextGeneration["Service"]["improvePrompt"] = Effect.fn(
+    "OpenCodeTextGeneration.improvePrompt",
+  )(function* (input) {
+    const { prompt, outputSchema } = buildPromptImprovementPrompt({ text: input.text });
+    const generated = yield* runOpenCodeJson({
+      operation: "improvePrompt",
+      cwd: input.cwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      modelSelection: input.modelSelection,
+    });
+
+    return { text: generated.text.trim() };
+  });
+
+  const reviewPlanParallelism: TextGeneration.TextGeneration["Service"]["reviewPlanParallelism"] =
+    Effect.fn("OpenCodeTextGeneration.reviewPlanParallelism")(function* (input) {
+      const { prompt, outputSchema } = buildPlanParallelismReviewPrompt(input);
+      const generated = yield* runOpenCodeJson({
+        operation: "reviewPlanParallelism",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      return { recommendedSubagents: generated.recommendedSubagents };
+    });
+
+  const planFetchExploration: TextGeneration.TextGeneration["Service"]["planFetchExploration"] =
+    Effect.fn("OpenCodeTextGeneration.planFetchExploration")(function* (input) {
+      const { prompt, outputSchema } = buildFetchExplorationPrompt(input);
+      return yield* runOpenCodeJson({
+        operation: "planFetchExploration",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+    });
+
   return {
+    decideAutoReasoning,
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
+    generateThreadMetadata,
     generateThreadTitle,
+    translateTranscriptToEnglish,
+    improvePrompt,
+    reviewPlanParallelism,
+    planFetchExploration,
+    enrichKnowledgeGraph: TextGeneration.unsupportedKnowledgeGraphEnrichment("OpenCode"),
   } satisfies TextGeneration.TextGeneration["Service"];
 });

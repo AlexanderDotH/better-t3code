@@ -132,6 +132,51 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
     ),
   );
 
+  it.effect("reviews plan parallelism through Grok ACP", () =>
+    withFakeAcpGrok(
+      {
+        T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({ recommendedSubagents: 4 }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.reviewPlanParallelism({
+            cwd: process.cwd(),
+            planMarkdown: "## Tests\nCover the reviewer flow.",
+            maxSubagents: 8,
+            modelSelection: createModelSelection(ProviderInstanceId.make("grok"), "grok-mock-alt"),
+          });
+
+          expect(generated).toEqual({ recommendedSubagents: 4 });
+        }),
+    ),
+  );
+
+  it.effect("plans Fetch exploration through Grok ACP", () =>
+    withFakeAcpGrok(
+      {
+        T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
+          decision: "run",
+          workers: [{ scope: "Provider runtime", questions: ["Where is Grok started?"] }],
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.planFetchExploration({
+            cwd: process.cwd(),
+            userRequest: "Trace the Grok runtime.",
+            repositoryOrientation: "Top-level areas: apps/server/provider",
+            maxRecommendedWorkers: 9,
+            modelSelection: createModelSelection(ProviderInstanceId.make("grok"), "grok-mock-alt"),
+          });
+
+          expect(generated).toEqual({
+            decision: "run",
+            workers: [{ scope: "Provider runtime", questions: ["Where is Grok started?"] }],
+          });
+        }),
+    ),
+  );
+
   it.effect("surfaces ACP request failures as text generation errors", () =>
     withFakeAcpGrok(
       {

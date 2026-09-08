@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as NetService from "@t3tools/shared/Net";
+import { createModelSelection } from "@t3tools/shared/model";
 import { beforeEach, expect } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
@@ -20,6 +21,7 @@ const runtimeMock = {
     startCalls: [] as string[],
     promptUrls: [] as string[],
     promptParts: [] as ReadonlyArray<unknown>[],
+    promptCalls: [] as Array<{ readonly parts: ReadonlyArray<unknown> }>,
     authHeaders: [] as Array<string | null>,
     closeCalls: [] as string[],
     sessionCreateCalls: 0,
@@ -35,6 +37,7 @@ const runtimeMock = {
     this.state.startCalls.length = 0;
     this.state.promptUrls.length = 0;
     this.state.promptParts.length = 0;
+    this.state.promptCalls.length = 0;
     this.state.authHeaders.length = 0;
     this.state.closeCalls.length = 0;
     this.state.sessionCreateCalls = 0;
@@ -104,6 +107,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
         prompt: async (input: { readonly parts: ReadonlyArray<unknown> }) => {
           runtimeMock.state.promptUrls.push(baseUrl);
           runtimeMock.state.promptParts.push(input.parts);
+          runtimeMock.state.promptCalls.push(input);
           runtimeMock.state.authHeaders.push(
             serverPassword ? `Basic ${btoa(`opencode:${serverPassword}`)}` : null,
           );
@@ -268,7 +272,6 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
 
         expect(runtimeMock.state.promptParts[0]).toEqual([
           expect.objectContaining({ type: "text" }),
-          expect.objectContaining({ type: "file", filename: "screenshot.png" }),
         ]);
       }),
     ),
@@ -347,6 +350,102 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
         expect(runtimeMock.state.closeCalls).toEqual(["http://127.0.0.1:4301"]);
       }),
     ).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("forwards Google Gemini model selections to OpenCode prompts", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        yield* textGeneration.generateCommitMessage({
+          ...DEFAULT_COMMIT_MESSAGE_INPUT,
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("opencode"),
+            model: "google/gemini-2.5-flash",
+          },
+        });
+
+        expect(runtimeMock.state.promptCalls.at(-1)).toMatchObject({
+          sessionID: "http://127.0.0.1:4301/session",
+          model: {
+            providerID: "google",
+            modelID: "gemini-2.5-flash",
+          },
+        });
+      }),
+    ),
+  );
+
+  it.effect("rejects malformed OpenCode model selections before prompt", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        const error = yield* textGeneration
+          .generateCommitMessage({
+            ...DEFAULT_COMMIT_MESSAGE_INPUT,
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("opencode"),
+              model: "google-gemini-2.5-flash",
+            },
+          })
+          .pipe(Effect.flip);
+
+        expect(error.message).toContain(
+          "OpenCode model selection must use the 'provider/model' format (for example: google/gemini-2.5-flash).",
+        );
+      }),
+    ),
+  );
+
+  it.effect("keeps naming-job image attachments as metadata-only prompt context", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        const attachments = [
+          {
+            type: "image" as const,
+            id: "naming-job-image-attachment",
+            name: "bug.png",
+            mimeType: "image/png",
+            sizeBytes: 5,
+          },
+        ];
+
+        runtimeMock.state.promptResult = {
+          data: {
+            parts: [{ type: "text", text: JSON.stringify({ branch: "fix/ui-regression" }) }],
+          },
+        };
+        yield* textGeneration.generateBranchName({
+          cwd: process.cwd(),
+          message: "Fix layout bug from screenshot.",
+          attachments,
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        });
+
+        expect(runtimeMock.state.promptCalls.at(-1)?.parts).toEqual([
+          {
+            type: "text",
+            text: expect.stringContaining("Attachment metadata:"),
+          },
+        ]);
+
+        runtimeMock.state.promptResult = {
+          data: {
+            parts: [{ type: "text", text: JSON.stringify({ title: "Fix UI regression" }) }],
+          },
+        };
+        yield* textGeneration.generateThreadTitle({
+          cwd: process.cwd(),
+          message: "Fix layout bug from screenshot.",
+          attachments,
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        });
+
+        expect(runtimeMock.state.promptCalls.at(-1)?.parts).toEqual([
+          {
+            type: "text",
+            text: expect.stringContaining("Attachment metadata:"),
+          },
+        ]);
+      }),
+    ),
   );
 
   it.effect("starts a new server after the warm server idles out", () =>
@@ -502,6 +601,73 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
         expect(result).toEqual({
           subject: "Tighten OpenCode parsing",
           body: "Handle JSON text output locally.",
+        });
+      }),
+    ),
+  );
+
+  it.effect("reviews plan parallelism through OpenCode structured output", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        runtimeMock.state.promptResult = {
+          data: {
+            parts: [
+              {
+                type: "text",
+                text: JSON.stringify({ recommendedSubagents: 6 }),
+              },
+            ],
+          },
+        };
+
+        const result = yield* textGeneration.reviewPlanParallelism({
+          cwd: process.cwd(),
+          planMarkdown: "## Provider\nAdd structured plan review.",
+          maxSubagents: 8,
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        });
+
+        expect(result).toEqual({ recommendedSubagents: 6 });
+      }),
+    ),
+  );
+
+  it.effect("plans Fetch exploration with the exact OpenCode selection and provider budget", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        runtimeMock.state.promptResult = {
+          data: {
+            parts: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  decision: "run",
+                  workers: [
+                    { scope: "OpenCode runtime", questions: ["How is the runtime started?"] },
+                  ],
+                }),
+              },
+            ],
+          },
+        };
+        const selection = createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "google/gemini-2.5-flash",
+          [{ id: "variant", value: "high" }],
+        );
+
+        const result = yield* textGeneration.planFetchExploration({
+          cwd: process.cwd(),
+          userRequest: "Trace the OpenCode runtime.",
+          repositoryOrientation: "Top-level areas: apps/server/provider",
+          maxRecommendedWorkers: 11,
+          modelSelection: selection,
+        });
+
+        expect(result.workers).toHaveLength(1);
+        expect(runtimeMock.state.promptCalls.at(-1)).toMatchObject({
+          model: { providerID: "google", modelID: "gemini-2.5-flash" },
+          variant: "high",
         });
       }),
     ),

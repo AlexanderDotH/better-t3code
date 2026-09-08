@@ -1,13 +1,36 @@
 import { describe, expect, it } from "vite-plus/test";
+import * as Schema from "effect/Schema";
 
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildFetchExplorationPrompt,
+  buildPlanParallelismReviewPrompt,
+  buildPromptImprovementPrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
+  buildThreadMetadataPrompt,
+  buildTranscriptTranslationPrompt,
+  PLAN_PARALLELISM_REVIEW_PLAN_MAX_CHARS,
+  PLAN_PARALLELISM_REVIEW_REQUEST_MAX_CHARS,
+  FETCH_EXPLORATION_REQUEST_MAX_CHARS,
+  FetchExplorationOutputSchema,
+  PlanParallelismReviewOutputSchema,
+  PromptImprovementOutputSchema,
+  truncatePlanParallelismReviewContext,
+  TranscriptTranslationOutputSchema,
 } from "./TextGenerationPrompts.ts";
 import { normalizeCliError, sanitizeThreadTitle } from "./TextGenerationUtils.ts";
 import { TextGenerationError } from "@t3tools/contracts";
+
+const decodePromptImprovementOutput = Schema.decodeUnknownSync(PromptImprovementOutputSchema);
+const decodeTranscriptTranslationOutput = Schema.decodeUnknownSync(
+  TranscriptTranslationOutputSchema,
+);
+const decodePlanParallelismReviewOutput = Schema.decodeUnknownSync(
+  PlanParallelismReviewOutputSchema,
+);
+const decodeFetchExplorationOutput = Schema.decodeUnknownSync(FetchExplorationOutputSchema);
 
 describe("buildCommitMessagePrompt", () => {
   it("includes staged patch and summary in the prompt", () => {
@@ -142,6 +165,8 @@ describe("buildBranchNamePrompt", () => {
     expect(result.prompt).toContain("screenshot.png");
     expect(result.prompt).toContain("image/png");
     expect(result.prompt).toContain("12345 bytes");
+    expect(result.prompt).toContain("Attachment contents are unavailable");
+    expect(result.prompt).not.toContain("use them as primary context");
   });
 });
 
@@ -174,6 +199,8 @@ describe("buildThreadTitlePrompt", () => {
     expect(result.prompt).toContain("thread.png");
     expect(result.prompt).toContain("image/png");
     expect(result.prompt).toContain("67890 bytes");
+    expect(result.prompt).toContain("Attachment contents are unavailable");
+    expect(result.prompt).not.toContain("Use attached images as primary context");
   });
 
   it("regenerates from recent thread contents and identifies the previous title", () => {
@@ -212,6 +239,163 @@ describe("buildThreadTitlePrompt", () => {
       `Thread contents:\n[Earlier content truncated]\n\n${retainedContext}`,
     );
     expect(result.prompt.match(/\[Earlier content truncated\]/g)).toHaveLength(1);
+  });
+});
+
+describe("buildThreadMetadataPrompt", () => {
+  it("requests one structured title and branch result from metadata-only context", () => {
+    const result = buildThreadMetadataPrompt({
+      message: "Fix reconnect handling from the attached trace",
+      attachments: [
+        {
+          type: "file",
+          id: "trace",
+          name: "trace.txt",
+          mimeType: "text/plain",
+          sizeBytes: 512,
+        },
+      ],
+    });
+    const decode = Schema.decodeUnknownSync(result.outputSchema);
+
+    expect(result.prompt).toContain("<t3code_metadata_call>");
+    expect(result.prompt).toContain('exactly two keys: "title" and "branch"');
+    expect(result.prompt).toContain("Attachment metadata:");
+    expect(result.prompt).not.toContain("Attachment contents:");
+    expect(decode({ title: "Fix reconnect handling", branch: "fix-reconnect-handling" })).toEqual({
+      title: "Fix reconnect handling",
+      branch: "fix-reconnect-handling",
+    });
+  });
+});
+
+describe("buildTranscriptTranslationPrompt", () => {
+  it("requires faithful concise English while preserving code identifiers", () => {
+    const result = buildTranscriptTranslationPrompt({
+      text: "Actualiza `useThreadOutbox` sin cambiar drainQueue.",
+    });
+
+    expect(result.prompt).toContain("faithful, concise English");
+    expect(result.prompt).toContain("Preserve code identifiers");
+    expect(result.prompt).toContain("Actualiza `useThreadOutbox` sin cambiar drainQueue.");
+    expect(decodeTranscriptTranslationOutput({ text: "Update `useThreadOutbox`." })).toEqual({
+      text: "Update `useThreadOutbox`.",
+    });
+  });
+});
+
+describe("buildPromptImprovementPrompt", () => {
+  it("preserves language, requirements, identifiers, and scope", () => {
+    const result = buildPromptImprovementPrompt({
+      text: "Corrige reconnectSession, no cambies el contrato RPC.",
+    });
+
+    expect(result.prompt).toContain("Keep the same language");
+    expect(result.prompt).toContain("Preserve the original intent and every requirement");
+    expect(result.prompt).toContain("Do not add scope");
+    expect(result.prompt).toContain("Corrige reconnectSession, no cambies el contrato RPC.");
+    expect(decodePromptImprovementOutput({ text: "Corrige `reconnectSession`." })).toEqual({
+      text: "Corrige `reconnectSession`.",
+    });
+  });
+});
+
+describe("buildPlanParallelismReviewPrompt", () => {
+  it("asks only for a direct-child count within the implementation provider ceiling", () => {
+    const result = buildPlanParallelismReviewPrompt({
+      planMarkdown: "## Server\nAdd the RPC.\n\n## Web\nAdd the review state.",
+      userRequest: "Implement the plan with useful parallelism.",
+      maxSubagents: 12,
+    });
+
+    expect(result.prompt).toContain("direct child subagents");
+    expect(result.prompt).toContain("between 2 and 12");
+    expect(result.prompt).toContain("Do not artificially stop at four");
+    expect(result.prompt).toContain("Do not execute the plan, use tools, inspect the filesystem");
+    expect(result.prompt).toContain("Originating user request:");
+    expect(result.prompt).toContain("Proposed plan:");
+    expect(result.prompt).not.toContain('workstreams":');
+    expect(decodePlanParallelismReviewOutput({ recommendedSubagents: 6 })).toEqual({
+      recommendedSubagents: 6,
+    });
+    expect(() => decodePlanParallelismReviewOutput({ recommendedSubagents: 2.5 })).toThrow();
+  });
+
+  it("keeps each review context inside its exact character budget", () => {
+    const plan = `${"p".repeat(PLAN_PARALLELISM_REVIEW_PLAN_MAX_CHARS)}PLAN_TAIL`;
+    const request = `${"r".repeat(PLAN_PARALLELISM_REVIEW_REQUEST_MAX_CHARS)}REQUEST_TAIL`;
+
+    const truncatedPlan = truncatePlanParallelismReviewContext(
+      plan,
+      PLAN_PARALLELISM_REVIEW_PLAN_MAX_CHARS,
+    );
+    const truncatedRequest = truncatePlanParallelismReviewContext(
+      request,
+      PLAN_PARALLELISM_REVIEW_REQUEST_MAX_CHARS,
+    );
+    const result = buildPlanParallelismReviewPrompt({
+      planMarkdown: plan,
+      userRequest: request,
+      maxSubagents: 8,
+    });
+
+    expect(truncatedPlan).toHaveLength(PLAN_PARALLELISM_REVIEW_PLAN_MAX_CHARS);
+    expect(truncatedRequest).toHaveLength(PLAN_PARALLELISM_REVIEW_REQUEST_MAX_CHARS);
+    expect(truncatedPlan).toContain("[truncated]");
+    expect(truncatedRequest).toContain("[truncated]");
+    expect(result.prompt).not.toContain("PLAN_TAIL");
+    expect(result.prompt).not.toContain("REQUEST_TAIL");
+  });
+});
+
+describe("buildFetchExplorationPrompt", () => {
+  it("gives the main agent first refusal and keeps parallel exploration conservative", () => {
+    const result = buildFetchExplorationPrompt({
+      userRequest: "Explain how authentication works.",
+      repositoryOrientation: "Top-level areas: apps, packages\nTests: apps/server/auth.test.ts",
+      maxRecommendedWorkers: 12,
+    });
+
+    expect(result.prompt).toContain("Default to decision=skip");
+    expect(result.prompt).toContain("main agent can inspect the repository with its own tools");
+    expect(result.prompt).toContain("simple, narrow, or briefly investigative requests");
+    expect(result.prompt).toContain("asks the main agent to work alone");
+    expect(result.prompt).toContain("If uncertain, skip");
+    expect(result.prompt).toContain("smallest useful worker count");
+    expect(result.prompt).toContain("Never use three workers as a default");
+    expect(result.prompt).toContain("between 1 and 12 workers");
+    expect(result.prompt).toContain("concrete, non-overlapping");
+    expect(result.prompt).toContain("repository-read-only discovery");
+    expect(result.prompt).toContain("zero workers");
+    expect(result.prompt).toContain("Top-level areas: apps, packages");
+    expect(decodeFetchExplorationOutput({ decision: "skip", workers: [] })).toEqual({
+      decision: "skip",
+      workers: [],
+    });
+    expect(
+      decodeFetchExplorationOutput({
+        decision: "run",
+        workers: [{ scope: "Authentication contracts", questions: ["Where is auth decoded?"] }],
+      }),
+    ).toEqual({
+      decision: "run",
+      workers: [{ scope: "Authentication contracts", questions: ["Where is auth decoded?"] }],
+    });
+  });
+
+  it("truncates the original request to exactly 16,000 characters with a marker", () => {
+    const result = buildFetchExplorationPrompt({
+      userRequest: `${"r".repeat(FETCH_EXPLORATION_REQUEST_MAX_CHARS)}REQUEST_TAIL`,
+      repositoryOrientation: "Repository orientation",
+      maxRecommendedWorkers: 8,
+    });
+
+    const requestSection = result.prompt
+      .split("Original user request:\n", 2)[1]
+      ?.split("\n\nRepository orientation:", 1)[0];
+    expect(requestSection).toHaveLength(FETCH_EXPLORATION_REQUEST_MAX_CHARS);
+    expect(requestSection).toContain("[truncated]");
+    expect(result.prompt).not.toContain("REQUEST_TAIL");
   });
 });
 

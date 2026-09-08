@@ -20,13 +20,19 @@ import { type AcpError, AcpRequestError } from "effect-acp/errors";
 import { applyAntigravityAcpModelSelection } from "../provider/acp/AntigravityAcpSupport.ts";
 import { removeAntigravitySessionFiles } from "../provider/acp/AntigravitySessionFiles.ts";
 import type { AcpSessionRuntime } from "../provider/acp/AcpSessionRuntime.ts";
-import type * as TextGeneration from "./TextGeneration.ts";
+import * as TextGeneration from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
+  buildThreadMetadataPrompt,
+  buildTranscriptTranslationPrompt,
+  buildPromptImprovementPrompt,
+  buildPlanParallelismReviewPrompt,
+  buildFetchExplorationPrompt,
 } from "./TextGenerationPrompts.ts";
+import { buildAutoReasoningPrompt, validateAutoReasoningDecision } from "./AutoReasoning.ts";
 import {
   sanitizeCommitSubject,
   sanitizePrTitle,
@@ -401,7 +407,78 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
       return { title: sanitizeThreadTitle(generated.title) };
     });
 
+  const generateThreadMetadata: TextGeneration.TextGeneration["Service"]["generateThreadMetadata"] =
+    Effect.fn("AntigravityTextGeneration.generateThreadMetadata")(function* (input) {
+      const generated = yield* runAntigravityJson({
+        operation: "generateThreadMetadata",
+        ...buildThreadMetadataPrompt(input),
+        modelSelection: input.modelSelection,
+      });
+      return {
+        title: sanitizeThreadTitle(generated.title),
+        branch: sanitizeBranchFragment(generated.branch),
+      };
+    });
+
+  const translateTranscriptToEnglish: TextGeneration.TextGeneration["Service"]["translateTranscriptToEnglish"] =
+    Effect.fn("AntigravityTextGeneration.translateTranscriptToEnglish")(function* (input) {
+      const generated = yield* runAntigravityJson({
+        operation: "translateTranscriptToEnglish",
+        ...buildTranscriptTranslationPrompt(input),
+        modelSelection: input.modelSelection,
+      });
+      return { text: generated.text.trim() };
+    });
+
+  const improvePrompt: TextGeneration.TextGeneration["Service"]["improvePrompt"] = Effect.fn(
+    "AntigravityTextGeneration.improvePrompt",
+  )(function* (input) {
+    const generated = yield* runAntigravityJson({
+      operation: "improvePrompt",
+      ...buildPromptImprovementPrompt(input),
+      modelSelection: input.modelSelection,
+    });
+    return { text: generated.text.trim() };
+  });
+
+  const reviewPlanParallelism: TextGeneration.TextGeneration["Service"]["reviewPlanParallelism"] =
+    Effect.fn("AntigravityTextGeneration.reviewPlanParallelism")(function* (input) {
+      const generated = yield* runAntigravityJson({
+        operation: "reviewPlanParallelism",
+        ...buildPlanParallelismReviewPrompt(input),
+        modelSelection: input.modelSelection,
+      });
+      return generated;
+    });
+
+  const planFetchExploration: TextGeneration.TextGeneration["Service"]["planFetchExploration"] =
+    Effect.fn("AntigravityTextGeneration.planFetchExploration")(function* (input) {
+      const generated = yield* runAntigravityJson({
+        operation: "planFetchExploration",
+        ...buildFetchExplorationPrompt(input),
+        modelSelection: input.modelSelection,
+      });
+      return generated;
+    });
+
+  const decideAutoReasoning: TextGeneration.TextGeneration["Service"]["decideAutoReasoning"] =
+    Effect.fn("AntigravityTextGeneration.decideAutoReasoning")(function* (input) {
+      const generated = yield* runAntigravityJson({
+        operation: "decideAutoReasoning",
+        ...buildAutoReasoningPrompt(input),
+        modelSelection: input.modelSelection,
+      });
+      return yield* validateAutoReasoningDecision(input.allowedEfforts, generated);
+    });
+
   return {
+    generateThreadMetadata,
+    translateTranscriptToEnglish,
+    improvePrompt,
+    reviewPlanParallelism,
+    planFetchExploration,
+    decideAutoReasoning,
+    enrichKnowledgeGraph: TextGeneration.unsupportedKnowledgeGraphEnrichment("Antigravity"),
     generateCommitMessage,
     generatePrContent,
     generateBranchName,

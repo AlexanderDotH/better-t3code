@@ -1,5 +1,6 @@
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -14,8 +15,13 @@ import * as TextGeneration from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildFetchExplorationPrompt,
+  buildPlanParallelismReviewPrompt,
+  buildPromptImprovementPrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
+  buildThreadMetadataPrompt,
+  buildTranscriptTranslationPrompt,
 } from "./TextGenerationPrompts.ts";
 import {
   sanitizeCommitSubject,
@@ -26,6 +32,7 @@ import {
   applyCursorAcpModelSelection,
   makeCursorAcpRuntime,
 } from "../provider/acp/CursorAcpSupport.ts";
+import { buildAutoReasoningPrompt, validateAutoReasoningDecision } from "./AutoReasoning.ts";
 
 const CURSOR_TIMEOUT_MS = 180_000;
 
@@ -39,6 +46,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
   cursorSettings: CursorSettings,
   environment?: NodeJS.ProcessEnv,
 ) {
+  const fileSystem = yield* FileSystem.FileSystem;
   const crypto = yield* Crypto.Crypto;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const resolvedEnvironment = environment ?? process.env;
@@ -49,22 +57,30 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
     prompt,
     outputSchemaJson,
     modelSelection,
+    environmentOverride,
   }: {
     operation:
+      | "decideAutoReasoning"
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadMetadata"
+      | "generateThreadTitle"
+      | "translateTranscriptToEnglish"
+      | "improvePrompt"
+      | "reviewPlanParallelism"
+      | "planFetchExploration";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
     modelSelection: ModelSelection;
+    environmentOverride?: NodeJS.ProcessEnv;
   }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
     Effect.gen(function* () {
       const outputRef = yield* Ref.make("");
       const runtime = yield* makeCursorAcpRuntime({
         cursorSettings,
-        environment: resolvedEnvironment,
+        environment: environmentOverride ?? resolvedEnvironment,
         childProcessSpawner: commandSpawner,
         cwd,
         clientInfo: { name: "t3-code-git-text", version: "0.0.0" },
@@ -165,6 +181,46 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       Effect.scoped,
     );
 
+  const decideAutoReasoning: TextGeneration.TextGeneration["Service"]["decideAutoReasoning"] =
+    Effect.fn("CursorTextGeneration.decideAutoReasoning")(function* (input) {
+      return yield* Effect.gen(function* () {
+        const cwd = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-auto-reasoning-cursor-cwd-",
+        });
+        const configHome = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-auto-reasoning-cursor-config-",
+        });
+        const { prompt, outputSchema } = buildAutoReasoningPrompt(input);
+        const generated = yield* runCursorJson({
+          operation: "decideAutoReasoning",
+          cwd,
+          prompt,
+          outputSchemaJson: outputSchema,
+          modelSelection: input.modelSelection,
+          environmentOverride: {
+            ...resolvedEnvironment,
+            HOME: configHome,
+            USERPROFILE: configHome,
+            XDG_CONFIG_HOME: configHome,
+            APPDATA: configHome,
+            LOCALAPPDATA: configHome,
+          },
+        });
+        return yield* validateAutoReasoningDecision(input.allowedEfforts, generated);
+      }).pipe(
+        Effect.mapError((cause) =>
+          isTextGenerationError(cause)
+            ? cause
+            : new TextGenerationError({
+                operation: "decideAutoReasoning",
+                detail: "Failed to prepare isolated Cursor Auto Reasoning.",
+                cause,
+              }),
+        ),
+        Effect.scoped,
+      );
+    });
+
   const generateCommitMessage: TextGeneration.TextGeneration["Service"]["generateCommitMessage"] =
     Effect.fn("CursorTextGeneration.generateCommitMessage")(function* (input) {
       const { prompt, outputSchema } = buildCommitMessagePrompt({
@@ -259,10 +315,88 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
+  const generateThreadMetadata: TextGeneration.TextGeneration["Service"]["generateThreadMetadata"] =
+    Effect.fn("CursorTextGeneration.generateThreadMetadata")(function* (input) {
+      const { prompt, outputSchema } = buildThreadMetadataPrompt(input);
+      const generated = yield* runCursorJson({
+        operation: "generateThreadMetadata",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+      return {
+        title: sanitizeThreadTitle(generated.title),
+        branch: sanitizeBranchFragment(generated.branch),
+      };
+    });
+
+  const translateTranscriptToEnglish: TextGeneration.TextGeneration["Service"]["translateTranscriptToEnglish"] =
+    Effect.fn("CursorTextGeneration.translateTranscriptToEnglish")(function* (input) {
+      const { prompt, outputSchema } = buildTranscriptTranslationPrompt({ text: input.text });
+      const generated = yield* runCursorJson({
+        operation: "translateTranscriptToEnglish",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      return { text: generated.text.trim() };
+    });
+
+  const improvePrompt: TextGeneration.TextGeneration["Service"]["improvePrompt"] = Effect.fn(
+    "CursorTextGeneration.improvePrompt",
+  )(function* (input) {
+    const { prompt, outputSchema } = buildPromptImprovementPrompt({ text: input.text });
+    const generated = yield* runCursorJson({
+      operation: "improvePrompt",
+      cwd: input.cwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      modelSelection: input.modelSelection,
+    });
+
+    return { text: generated.text.trim() };
+  });
+
+  const reviewPlanParallelism: TextGeneration.TextGeneration["Service"]["reviewPlanParallelism"] =
+    Effect.fn("CursorTextGeneration.reviewPlanParallelism")(function* (input) {
+      const { prompt, outputSchema } = buildPlanParallelismReviewPrompt(input);
+      const generated = yield* runCursorJson({
+        operation: "reviewPlanParallelism",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      return { recommendedSubagents: generated.recommendedSubagents };
+    });
+
+  const planFetchExploration: TextGeneration.TextGeneration["Service"]["planFetchExploration"] =
+    Effect.fn("CursorTextGeneration.planFetchExploration")(function* (input) {
+      const { prompt, outputSchema } = buildFetchExplorationPrompt(input);
+      return yield* runCursorJson({
+        operation: "planFetchExploration",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+    });
+
   return {
+    decideAutoReasoning,
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
+    generateThreadMetadata,
     generateThreadTitle,
+    translateTranscriptToEnglish,
+    improvePrompt,
+    reviewPlanParallelism,
+    planFetchExploration,
+    enrichKnowledgeGraph: TextGeneration.unsupportedKnowledgeGraphEnrichment("Cursor"),
   } satisfies TextGeneration.TextGeneration["Service"];
 });
