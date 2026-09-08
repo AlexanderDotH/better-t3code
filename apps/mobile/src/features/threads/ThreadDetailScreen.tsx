@@ -7,6 +7,7 @@ import type {
   CodexFeedbackSubmission,
   EnvironmentThreadStatus,
 } from "@t3tools/client-runtime/state/threads";
+import type { PlanImplementationStrategy } from "@t3tools/client-runtime/plan-implementation";
 import { useKeyboardChatComposerInset, useKeyboardScrollToEnd } from "@legendapp/list/keyboard";
 import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
 import type { LegendListRef } from "@legendapp/list/react-native";
@@ -17,10 +18,13 @@ import type {
   MessageId,
   ModelSelection,
   OrchestrationThreadShell,
+  OrchestrationProposedPlan,
+  OrchestrationSubagentSummary,
   ProviderApprovalDecision,
   ProviderInteractionMode,
   RuntimeMode,
   ServerConfig as T3ServerConfig,
+  ThreadForkBoundary,
   ThreadId,
   UsageLimitsReport,
   UserInputQuestion,
@@ -60,6 +64,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { collectProviderUsageLimits } from "@t3tools/shared/usageLimits";
@@ -99,9 +104,12 @@ import {
   COMPOSER_TRANSITION_DURATION_MS,
   ThreadComposer,
 } from "./ThreadComposer";
-import { ThreadFeed } from "./ThreadFeed";
+import { ThreadFeed, type ThreadFeedRetryAction } from "./ThreadFeed";
+import { ThreadSubagentStack } from "./ThreadSubagentStack";
+import { useMobilePlanParallelismReview } from "./use-plan-parallelism-review";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
+import { resolveForkComposerBudget } from "./thread-fork";
 
 export interface ThreadDetailScreenProps {
   readonly selectedThread: OrchestrationThreadShell;
@@ -112,6 +120,7 @@ export interface ThreadDetailScreenProps {
   readonly feedbackSubmissions: ReadonlyArray<CodexFeedbackSubmission>;
   readonly onDismissFeedback: (id: MessageId) => void;
   readonly selectedThreadFeed: ReadonlyArray<ThreadFeedEntry>;
+  readonly subagents: ReadonlyArray<OrchestrationSubagentSummary>;
   readonly activeWorkStartedAt: string | null;
   readonly isCompacting: boolean;
   /**
@@ -142,6 +151,8 @@ export interface ThreadDetailScreenProps {
   readonly selectedThreadQueueCount: number;
   readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
   readonly dispatchingMessageId: MessageId | null;
+  readonly activeThreadBusy: boolean;
+  readonly autoReasoningEffort: string | null;
   readonly serverConfig: T3ServerConfig | null;
   readonly layoutVariant?: LayoutVariant;
   readonly usesAutomaticContentInsets?: boolean;
@@ -158,6 +169,26 @@ export interface ThreadDetailScreenProps {
   readonly onUpdateThreadModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateThreadRuntimeMode: (runtimeMode: RuntimeMode) => void;
   readonly onUpdateThreadInteractionMode: (interactionMode: ProviderInteractionMode) => void;
+  readonly fetchSupported: boolean;
+  readonly fetchEnabled: boolean;
+  readonly isImprovingPrompt: boolean;
+  readonly onImproveDraft: () => Promise<void>;
+  readonly onUpdateFetchEnabled: (enabled: boolean) => void;
+  readonly onCopyTranscript?: () => Promise<void>;
+  readonly transcriptExportBusy?: boolean;
+  readonly parallelPlanImplementationEnabled: boolean;
+  readonly onImplementPlan: (
+    plan: OrchestrationProposedPlan,
+    strategy: PlanImplementationStrategy,
+  ) => Promise<MessageId | null>;
+  readonly forkActionSupported: boolean;
+  readonly forkActionEnabled: boolean;
+  readonly pendingForkBoundaryKey: string | null;
+  readonly onFork: (boundary: ThreadForkBoundary) => void;
+  readonly forkSourceAvailable: boolean;
+  readonly onOpenForkSource: () => void;
+  readonly retryAction: ThreadFeedRetryAction | null;
+  readonly focusComposerOnMount?: boolean;
   readonly onRespondToApproval: (
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
@@ -253,6 +284,7 @@ const USER_INPUT_TOGGLE_TIMING = {
 };
 
 export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: ThreadDetailScreenProps) {
+  const translator = useMobileInterfaceTranslator();
   const insets = useSafeAreaInsets();
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const liveKeyboardHeight = useKeyboardState((state) => state.height);
@@ -298,6 +330,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const listRef = useRef<LegendListRef>(null);
   const feedTouchStartRef = useRef<{ pageX: number; pageY: number } | null>(null);
   const selectedThreadKeyRef = useRef(selectedThreadKey);
+  const focusedForkThreadKeyRef = useRef<string | null>(null);
   const lastScrolledSubmittedMessageIdRef = useRef<MessageId | null>(null);
   const [composerExpanded, setComposerExpanded] = useState(false);
   const [composerFocused, setComposerFocused] = useState(false);
@@ -397,6 +430,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           entry.message.text.trim().toLowerCase() !== "/compact"),
     ) ||
     (Boolean(props.loadEarlier) && props.selectedThread.latestUserMessageAt !== null);
+  const forkComposerBudget = resolveForkComposerBudget({
+    handoff: props.selectedThread.fork?.handoff ?? null,
+    draftMessage: props.draftMessage,
+    draftAttachmentCount: props.draftAttachments.length,
+  });
   const composerChrome = composerExpanded ? COMPOSER_EXPANDED_CHROME : COMPOSER_COLLAPSED_CHROME;
   const composerOverlapHeight = composerChrome + composerBottomInset;
   // While a user-input request is pending, the questionnaire owns the
@@ -655,12 +693,62 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       ? resolveProviderSkillsForCwd(provider, props.threadCwd ?? props.projectWorkspaceRoot)
       : [];
   }, [props.projectWorkspaceRoot, props.serverConfig, props.threadCwd, selectedInstanceId]);
+  const selectedProvider = useMemo(
+    () =>
+      props.serverConfig?.providers.find(
+        (provider) => provider.instanceId === selectedInstanceId,
+      ) ?? null,
+    [props.serverConfig, selectedInstanceId],
+  );
+  const workflowActionsSupported =
+    (props.serverConfig?.environment.capabilities.agentWorkflowVersion ?? 0) >= 1;
+  const latestActionablePlan = useMemo(() => {
+    for (let index = props.selectedThreadFeed.length - 1; index >= 0; index -= 1) {
+      const entry = props.selectedThreadFeed[index];
+      if (
+        entry?.type === "proposed-plan" &&
+        entry.proposedPlan.implementedAt === null &&
+        !entry.proposedPlan.historyOrigin
+      ) {
+        return entry.proposedPlan;
+      }
+    }
+    return null;
+  }, [props.selectedThreadFeed]);
+  const reviewedSubagentCount = useMobilePlanParallelismReview({
+    enabled: workflowActionsSupported && props.parallelPlanImplementationEnabled,
+    environmentId: props.environmentId,
+    threadId: props.selectedThread.id,
+    plan: latestActionablePlan,
+    implementationProvider: selectedProvider,
+    reviewerSelection: props.serverConfig?.settings.parallelPlanReviewModelSelection ?? null,
+    providers: props.serverConfig?.providers ?? [],
+  });
+  const reviewedPlanSubagentCounts = useMemo(
+    () =>
+      latestActionablePlan && reviewedSubagentCount !== null
+        ? { [latestActionablePlan.id]: reviewedSubagentCount }
+        : undefined,
+    [latestActionablePlan, reviewedSubagentCount],
+  );
 
   useLayoutEffect(() => {
     selectedThreadKeyRef.current = selectedThreadKey;
     // A replaced or unmounted native editor may not emit a blur event.
     setComposerFocused(false);
   }, [selectedThreadKey, showContent]);
+
+  useEffect(() => {
+    if (
+      props.focusComposerOnMount !== true ||
+      focusedForkThreadKeyRef.current === selectedThreadKey
+    ) {
+      return;
+    }
+    focusedForkThreadKeyRef.current = selectedThreadKey;
+    const frame = requestAnimationFrame(() => composerEditorRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [props.focusComposerOnMount, selectedThreadKey]);
 
   useEffect(() => {
     setAnchorMessageId(null);
@@ -778,6 +866,18 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       );
     }
   }, []);
+  const handleImplementPlan = useCallback(
+    async (plan: OrchestrationProposedPlan, strategy: PlanImplementationStrategy) => {
+      if (!workflowActionsSupported) return null;
+      const targetThreadKey = selectedThreadKey;
+      const messageId = await props.onImplementPlan(plan, strategy);
+      if (messageId !== null && selectedThreadKeyRef.current === targetThreadKey) {
+        setAnchorMessageId(messageId);
+      }
+      return messageId;
+    },
+    [props.onImplementPlan, selectedThreadKey, workflowActionsSupported],
+  );
 
   const collapseComposer = useCallback(() => {
     composerEditorRef.current?.blur();
@@ -879,6 +979,18 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             onEndFollowEnabledChange={setEndFollowEnabled}
             skills={selectedProviderSkills}
             onUseArtifactTemplate={handleUseArtifactTemplate}
+            planImplementationProvider={selectedProvider}
+            parallelPlanImplementationEnabled={props.parallelPlanImplementationEnabled}
+            reviewedPlanSubagentCounts={reviewedPlanSubagentCounts}
+            onImplementPlan={workflowActionsSupported ? handleImplementPlan : undefined}
+            forkActionSupported={props.forkActionSupported}
+            forkActionEnabled={props.forkActionEnabled}
+            pendingForkBoundaryKey={props.pendingForkBoundaryKey}
+            onFork={props.onFork}
+            forkProvenance={props.selectedThread.fork?.provenance ?? null}
+            forkSourceAvailable={props.forkSourceAvailable}
+            onOpenForkSource={props.onOpenForkSource}
+            retryAction={props.retryAction}
             loadEarlier={props.loadEarlier ?? null}
           />
         </View>
@@ -916,6 +1028,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 onScrollToEnd={handleScrollToEnd}
               />
               <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
+                <ThreadSubagentStack
+                  environmentId={props.environmentId}
+                  threadId={props.selectedThread.id}
+                  subagents={props.subagents}
+                />
                 {props.feedbackSubmissions.map((submission) => (
                   <ComposerFeedback
                     key={submission.id}
@@ -1005,9 +1122,28 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               >
                 <ThreadComposer
                   editorRef={composerEditorRef}
+                  connectionError={props.connectionError}
+                  threadSyncPhase={
+                    threadSyncLabel === null
+                      ? null
+                      : contentPresentationKind === "ready"
+                        ? "syncing"
+                        : "loading"
+                  }
+                  activeThreadBusy={props.activeThreadBusy}
+                  autoReasoningEffort={props.autoReasoningEffort}
+                  onReconnectEnvironment={props.onReconnectEnvironment}
+                  fetchSupported={props.fetchSupported}
+                  fetchEnabled={props.fetchEnabled}
+                  isImprovingPrompt={props.isImprovingPrompt}
+                  onImproveDraft={props.onImproveDraft}
+                  onUpdateFetchEnabled={props.onUpdateFetchEnabled}
+                  onCopyTranscript={props.onCopyTranscript}
+                  transcriptExportBusy={props.transcriptExportBusy}
+                  forkComposerBudget={forkComposerBudget}
                   draftMessage={props.draftMessage}
                   draftAttachments={props.draftAttachments}
-                  placeholder="Ask the repo agent, or run a command…"
+                  placeholder={translator.message("mobile.thread.repoPrompt")}
                   contentMaxWidth={contentMaxWidth}
                   connectionState={props.connectionStateLabel}
                   environmentLabel={props.environmentLabel}

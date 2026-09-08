@@ -1,3 +1,21 @@
+import { useAtomCommand } from "../../state/use-atom-command";
+import { agentSettingsEnvironment } from "../../state/agent-settings";
+import { serverEnvironment } from "../../state/server";
+import { useEnvironmentQuery } from "../../state/query";
+import { resolveMobileResourceProtectionStatus } from "./resource-protection-status";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import { resolveThreadAbortPresentation } from "@t3tools/client-runtime/state/thread-abort";
+import type { ForkComposerBudget } from "./thread-fork";
+import { filterStartedThreadModelOptions } from "../../lib/modelOptions";
+import { resolveBetterT3FeatureFlag } from "@t3tools/contracts";
+import { useNativeAssemblyAiDictation } from "./use-native-assembly-ai-dictation";
+import { NativeVoiceDictationControl } from "./NativeVoiceDictationControl";
+import { mobilePreferencesAtom } from "../../state/preferences";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentId,
@@ -135,6 +153,19 @@ export interface ThreadComposerProps {
   readonly onUpdateModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateRuntimeMode: (runtimeMode: RuntimeMode) => void;
   readonly onUpdateInteractionMode: (interactionMode: ProviderInteractionMode) => void;
+  readonly fetchSupported: boolean;
+  readonly fetchEnabled: boolean;
+  readonly isImprovingPrompt: boolean;
+  readonly onImproveDraft: () => Promise<void>;
+  readonly onUpdateFetchEnabled: (enabled: boolean) => void;
+  readonly onCopyTranscript?: () => Promise<void>;
+  readonly transcriptExportBusy?: boolean;
+  readonly forkComposerBudget?: ForkComposerBudget | null;
+  readonly onReconnectEnvironment: () => void;
+  readonly connectionError: string | null;
+  readonly threadSyncPhase?: "loading" | "syncing" | null;
+  readonly activeThreadBusy: boolean;
+  readonly autoReasoningEffort: string | null;
   readonly onExpandedChange?: (expanded: boolean) => void;
   /** Fires on editor focus/blur; hosts use it to vet stale keyboard state. */
   readonly onEditorFocusChange?: (focused: boolean) => void;
@@ -246,10 +277,62 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
   const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
   const hasContent = props.draftMessage.trim().length > 0 || props.draftAttachments.length > 0;
-  const showStopAction =
-    !hasContent &&
-    (props.selectedThread.session?.status === "running" ||
-      props.selectedThread.session?.status === "starting");
+  const stopAction = resolveThreadAbortPresentation(props.selectedThread.session);
+  const showStopAction = stopAction.showStopAction && (!hasContent || stopAction.phase !== null);
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const { interfaceLanguage } = useAppearancePreferences();
+  const resourceProtectionQuery = useEnvironmentQuery(
+    serverEnvironment.resourceProtection({ environmentId: props.environmentId, input: {} }),
+  );
+  const resourceStatus = resolveMobileResourceProtectionStatus(
+    resourceProtectionQuery.data,
+    props.selectedThread.id,
+    interfaceLanguage.language,
+  );
+  const refreshHarness = useAtomCommand(agentSettingsEnvironment.harnessChatSync.status, {
+    reportFailure: false,
+  });
+  const [refreshingHarness, setRefreshingHarness] = useState(false);
+  async function refreshHarnessStatus() {
+    if (refreshingHarness) return;
+    setRefreshingHarness(true);
+    const result = await refreshHarness({
+      environmentId: props.environmentId,
+      input: { threadId: props.selectedThread.id },
+    });
+    setRefreshingHarness(false);
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      Alert.alert(
+        "Could not refresh provider session",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    }
+  }
+
+  const voiceOutputLanguage =
+    AsyncResult.isSuccess(preferencesResult) &&
+    preferencesResult.value.voiceInputOutputLanguage === "english"
+      ? "english"
+      : "native";
+  const assemblyAiKey = props.serverConfig?.settings.speechTranscription.assemblyAi.apiKey;
+  const voiceConfigured =
+    props.serverConfig !== null &&
+    resolveBetterT3FeatureFlag(
+      props.serverConfig.settings.betterT3Environment,
+      "voice.assemblyAi",
+    ) &&
+    (assemblyAiKey?.valueRedacted === true || (assemblyAiKey?.value.trim().length ?? 0) > 0);
+  const voiceDictation = useNativeAssemblyAiDictation({
+    configured: voiceConfigured,
+    environmentId: props.environmentId,
+    projectId: props.selectedThread.projectId,
+    lifecycleKey: scopedThreadKey(props.environmentId, props.selectedThread.id),
+    draftText: props.draftMessage,
+    outputLanguage: voiceOutputLanguage,
+    onChangeDraftText: props.onChangeDraftMessage,
+    onNotice: (title, error) => Alert.alert(title, error.message),
+  });
 
   const uploadStates = useAtomValue(composerAttachmentUploadsAtom);
   const attachmentsUploading =
@@ -336,7 +419,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   );
   const isVoiceInputPresented = voicePresentation.statusLabel !== null;
   // An open draft stays visible; only a collapsed composer becomes a voice strip.
-  const isExpanded = isFocused || settingsSheetPresentation.isActive;
+  const isExpanded = isFocused || settingsSheetPresentation.isActive || voiceDictation.active;
   const showsCompactDictation = isVoiceInputPresented && !isExpanded;
   const isToolbarVisible = isExpanded || isVoiceInputPresented;
   const attachmentBlockReason = composerAttachmentUploadBlockReason({
@@ -348,7 +431,15 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   });
   const sendBlockedReason = props.sendBlockedReason ?? attachmentBlockReason;
   const canSend =
-    hasContent && !voiceInput.blocksSubmission && sendBlockedReason === null && !modelUnavailable;
+    hasContent &&
+    !voiceInput.blocksSubmission &&
+    !voiceDictation.active &&
+    !props.isImprovingPrompt &&
+    stopAction.phase === null &&
+    props.forkComposerBudget?.canSend !== false &&
+    props.selectedThread.harnessSync?.activity !== "active" &&
+    sendBlockedReason === null &&
+    !modelUnavailable;
 
   // Keep the feed inset aligned with the card or compact dictation strip.
   useEffect(() => {
@@ -408,7 +499,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       if (openUsageLimits()) onChangeDraftMessage("");
       return;
     }
-    if (voiceInput.blocksSubmission) return;
+    if (!canSend) return;
     const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
     if (inFlightThreadIdsRef.current.has(threadKey)) return;
     inFlightThreadIdsRef.current.add(threadKey);
@@ -440,7 +531,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     props.environmentLabel,
     props.selectedThread.id,
     props.selectedThread.title,
-    voiceInput.blocksSubmission,
+    canSend,
   ]);
 
   // ── Model menu ───────────────────────────────────────────
@@ -448,12 +539,23 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     () => buildModelOptions(props.serverConfig, currentModelSelection),
     [props.serverConfig, currentModelSelection],
   );
-  const providerGroups = useMemo(() => groupByProvider(modelOptions), [modelOptions]);
-  // An existing thread is bound to its harness: sessions can't move between
-  // provider instances, so the picker only offers the thread's own group.
   const threadProviderGroups = useMemo(
-    () => providerGroups.filter((group) => group.providerKey === currentModelSelection.instanceId),
-    [providerGroups, currentModelSelection.instanceId],
+    () =>
+      groupByProvider(
+        filterStartedThreadModelOptions({
+          options: modelOptions,
+          currentSelection: currentModelSelection,
+          hasStarted: props.hasCompactableConversation,
+          allowMidChatProviderSwitching:
+            props.serverConfig?.environment.capabilities.midChatProviderSwitching === true,
+        }),
+      ),
+    [
+      modelOptions,
+      currentModelSelection,
+      props.hasCompactableConversation,
+      props.serverConfig?.environment.capabilities.midChatProviderSwitching,
+    ],
   );
   const currentModelOption =
     modelOptions.find(
@@ -483,12 +585,24 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         props.onUpdateModelSelection({ ...currentModelSelection, options }),
       runtimeMode: currentRuntimeMode,
       onUpdateRuntimeMode: props.onUpdateRuntimeMode,
+      fetchSupported: props.fetchSupported,
+      fetchEnabled: props.fetchEnabled,
+      onUpdateFetchEnabled: props.onUpdateFetchEnabled,
+      onCopyTranscript: props.onCopyTranscript,
+      transcriptExportBusy: props.transcriptExportBusy,
+      autoReasoningEffort: props.autoReasoningEffort,
     }),
     [
       currentModelSelection,
       currentRuntimeMode,
       props.onUpdateModelSelection,
       props.onUpdateRuntimeMode,
+      props.fetchSupported,
+      props.fetchEnabled,
+      props.onUpdateFetchEnabled,
+      props.onCopyTranscript,
+      props.transcriptExportBusy,
+      props.autoReasoningEffort,
       providerOptionDescriptors,
       settingsOwnerId,
       threadProviderGroups,
@@ -567,12 +681,52 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           </View>
         ) : null}
 
+        {props.connectionState !== "connected" ? (
+          <Pressable onPress={props.onReconnectEnvironment} className="px-3 py-2">
+            <Text className="text-foreground-muted">
+              {props.connectionError ?? "Reconnect environment"}
+            </Text>
+          </Pressable>
+        ) : null}
+        {props.selectedThread.harnessSync?.activity === "active" ? (
+          <Pressable
+            disabled={refreshingHarness}
+            onPress={() => void refreshHarnessStatus()}
+            className="px-3 py-2"
+          >
+            <Text className="text-foreground-muted">
+              {refreshingHarness
+                ? "Checking provider session…"
+                : "Provider session is active elsewhere · Check again"}
+            </Text>
+          </Pressable>
+        ) : null}
+        {resourceStatus ? (
+          <Text className="px-3 py-2 text-foreground-muted">{resourceStatus.label}</Text>
+        ) : null}
+        {props.autoReasoningEffort ? (
+          <Text className="px-3 text-foreground-muted">
+            Auto reasoning: {props.autoReasoningEffort}
+          </Text>
+        ) : null}
         {modelUnavailable ? (
           <Pressable accessibilityRole="button" className="px-3 py-2" onPress={openSettings}>
             <Text className="text-xs text-foreground">Model unavailable. Open model settings.</Text>
           </Pressable>
         ) : null}
 
+        {props.onCopyTranscript ? (
+          <Pressable
+            accessibilityRole="button"
+            disabled={props.transcriptExportBusy}
+            onPress={() => void props.onCopyTranscript?.()}
+            className="self-end px-3 py-1"
+          >
+            <Text className="text-foreground-muted">
+              {props.transcriptExportBusy ? "Preparing transcript…" : "Copy transcript"}
+            </Text>
+          </Pressable>
+        ) : null}
         <ComposerSurface
           style={
             isExpanded
@@ -686,15 +840,27 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             ) : null}
             {!isExpanded ? (
               <View className="flex-row items-center">
-                <ComposerDictationStartAction
-                  state={voiceInput.state}
-                  isAvailable={voiceInput.isAvailable}
-                  onStart={voiceInput.start}
-                  onCancel={voiceInput.cancel}
-                />
+                {voiceConfigured ? (
+                  <NativeVoiceDictationControl
+                    state={voiceDictation.state}
+                    audioWaveform={voiceDictation.audioWaveform}
+                    disabled={voiceInput.isBusy}
+                    onStart={voiceDictation.start}
+                    onStop={voiceDictation.stop}
+                    onCancel={voiceDictation.cancel}
+                  />
+                ) : (
+                  <ComposerDictationStartAction
+                    state={voiceInput.state}
+                    isAvailable={voiceInput.isAvailable}
+                    onStart={voiceInput.start}
+                    onCancel={voiceInput.cancel}
+                  />
+                )}
                 {showStopAction ? (
                   <ComposerActionButton
-                    accessibilityLabel="Stop agent"
+                    accessibilityLabel={stopAction.accessibilityLabel}
+                    disabled={stopAction.disabled}
                     icon="stop.fill"
                     variant="danger"
                     onPress={props.onStopThread}
@@ -760,6 +926,28 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                       onPickMedia={props.onPickDraftMedia}
                       onPickFiles={props.onPickDraftFiles}
                     />
+                    {props.fetchSupported ? (
+                      <Pressable
+                        accessibilityRole="switch"
+                        accessibilityState={{ checked: props.fetchEnabled }}
+                        onPress={() => props.onUpdateFetchEnabled(!props.fetchEnabled)}
+                        className="p-2"
+                      >
+                        <Text className="text-foreground">
+                          Fetch {props.fetchEnabled ? "on" : "off"}
+                        </Text>
+                      </Pressable>
+                    ) : null}
+                    <Pressable
+                      accessibilityRole="button"
+                      disabled={props.isImprovingPrompt || !props.draftMessage.trim()}
+                      onPress={() => void props.onImproveDraft()}
+                      className="p-2"
+                    >
+                      <Text className="text-foreground">
+                        {props.isImprovingPrompt ? "Improving…" : "Improve"}
+                      </Text>
+                    </Pressable>
                     <View className="min-w-0 shrink" style={{ maxWidth: 152 }}>
                       <ComposerInlineControl
                         accessibilityLabel="Model and reasoning settings"
@@ -775,17 +963,29 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   </View>
                 )}
                 <View className="shrink-0 flex-row items-center">
-                  <ComposerDictationPrimaryAction
-                    state={voiceInput.state}
-                    presentation={voicePresentation}
-                    isAvailable={voiceInput.isAvailable}
-                    onStart={voiceInput.start}
-                    onConfirm={voiceInput.stop}
-                    onCancel={voiceInput.cancel}
-                  />
+                  {voiceConfigured ? (
+                    <NativeVoiceDictationControl
+                      state={voiceDictation.state}
+                      audioWaveform={voiceDictation.audioWaveform}
+                      disabled={voiceInput.isBusy}
+                      onStart={voiceDictation.start}
+                      onStop={voiceDictation.stop}
+                      onCancel={voiceDictation.cancel}
+                    />
+                  ) : (
+                    <ComposerDictationPrimaryAction
+                      state={voiceInput.state}
+                      presentation={voicePresentation}
+                      isAvailable={voiceInput.isAvailable}
+                      onStart={voiceInput.start}
+                      onConfirm={voiceInput.stop}
+                      onCancel={voiceInput.cancel}
+                    />
+                  )}
                   {showStopAction ? (
                     <ComposerActionButton
-                      accessibilityLabel="Stop agent"
+                      accessibilityLabel={stopAction.accessibilityLabel}
+                      disabled={stopAction.disabled}
                       icon="stop.fill"
                       variant="danger"
                       onPress={props.onStopThread}
