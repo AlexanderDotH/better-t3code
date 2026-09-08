@@ -1,0 +1,438 @@
+import {
+  EnvironmentId,
+  EventId,
+  MessageId,
+  ORCHESTRATION_WS_METHODS,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  SubagentId,
+  ThreadId,
+  type OrchestrationSubagentDetail,
+  type OrchestrationSubagentDetailSnapshot,
+  type OrchestrationSubagentStreamItem,
+} from "@t3tools/contracts";
+import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
+
+import {
+  AVAILABLE_CONNECTION_STATE,
+  PrimaryConnectionTarget,
+  type PreparedConnection,
+  type SupervisorConnectionState,
+} from "../connection/model.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
+import * as RpcSession from "../rpc/session.ts";
+import {
+  makeEnvironmentSubagentState,
+  requestOlderSubagentActivities,
+  SubagentSnapshotLoader,
+  type EnvironmentSubagentState,
+} from "./subagents.ts";
+
+const TARGET = new PrimaryConnectionTarget({
+  environmentId: EnvironmentId.make("environment-1"),
+  label: "Test environment",
+  httpBaseUrl: "https://environment.example.test",
+  wsBaseUrl: "wss://environment.example.test",
+});
+const THREAD_ID = ThreadId.make("thread-1");
+const SUBAGENT_ID = SubagentId.make("agent-client-runtime");
+const SNAPSHOT_SEQUENCE = 5;
+const PREPARED: PreparedConnection = {
+  environmentId: TARGET.environmentId,
+  label: TARGET.label,
+  httpBaseUrl: TARGET.httpBaseUrl,
+  socketUrl: TARGET.wsBaseUrl,
+  httpAuthorization: null,
+  target: TARGET,
+};
+const BASE_SUBAGENT: OrchestrationSubagentDetail = {
+  id: SUBAGENT_ID,
+  origin: "t3-fetch",
+  providerInstanceId: ProviderInstanceId.make("claude-work"),
+  providerDriver: ProviderDriverKind.make("claudeAgent"),
+  providerThreadId: "provider-agent-client-runtime",
+  parentId: null,
+  path: "/root/client_runtime",
+  name: "client_runtime",
+  nickname: "Carson",
+  role: "worker",
+  task: "Implement client runtime",
+  model: "gpt-5.6-codex",
+  reasoningEffort: "ultra",
+  depth: 1,
+  status: "running",
+  statusMessage: "Implementing",
+  latestProgress: null,
+  latestTurn: null,
+  startedAt: "2026-07-30T10:00:00.000Z",
+  updatedAt: "2026-07-30T10:00:00.000Z",
+  completedAt: null,
+  messages: [],
+  proposedPlans: [],
+  activities: [],
+};
+
+type TestSubagentInput = OrchestrationSubagentStreamItem | Error;
+
+function testSession(
+  client: WsRpcProtocolClient,
+  supportsPagination: boolean,
+): RpcSession.RpcSession {
+  return {
+    client,
+    initialConfig: Effect.succeed({ subagentSnapshotPagination: supportsPagination } as never),
+    ready: Effect.void,
+    probe: Effect.void,
+    closed: Effect.never,
+  };
+}
+
+function awaitSubagentState(
+  observed: Queue.Queue<EnvironmentSubagentState>,
+  predicate: (state: EnvironmentSubagentState) => boolean,
+) {
+  return Queue.take(observed).pipe(Effect.repeat({ until: predicate }));
+}
+
+const makeHarness = Effect.fn("TestEnvironmentSubagents.makeHarness")(function* (options?: {
+  readonly httpSnapshot?: Option.Option<OrchestrationSubagentDetailSnapshot>;
+  readonly httpSnapshots?: ReadonlyArray<Option.Option<OrchestrationSubagentDetailSnapshot>>;
+  readonly supportsPagination?: boolean;
+}) {
+  const inputs = yield* Queue.unbounded<TestSubagentInput>();
+  const observed = yield* Queue.unbounded<EnvironmentSubagentState>();
+  const subscriptionCount = yield* Ref.make(0);
+  const loaderCalls = yield* Ref.make(0);
+  const loaderWindows = yield* Ref.make<
+    ReadonlyArray<{ readonly activityLimit: number; readonly beforeCursor?: string } | undefined>
+  >([]);
+  const subscribeInputs = yield* Ref.make<
+    ReadonlyArray<{
+      readonly threadId: ThreadId;
+      readonly subagentId: SubagentId;
+      readonly afterSequence?: number;
+      readonly activityLimit?: number;
+    }>
+  >([]);
+  const supervisorState = yield* SubscriptionRef.make<SupervisorConnectionState>(
+    AVAILABLE_CONNECTION_STATE,
+  );
+  const streamFrom = (queue: Queue.Queue<TestSubagentInput>) =>
+    Stream.fromQueue(queue).pipe(
+      Stream.mapEffect((input) =>
+        input instanceof Error ? Effect.fail(input) : Effect.succeed(input),
+      ),
+    );
+  const client = {
+    [ORCHESTRATION_WS_METHODS.subscribeSubagent]: (input: {
+      readonly threadId: ThreadId;
+      readonly subagentId: SubagentId;
+      readonly afterSequence?: number;
+      readonly activityLimit?: number;
+    }) =>
+      Stream.unwrap(
+        Ref.updateAndGet(subscriptionCount, (count) => count + 1).pipe(
+          Effect.andThen(Ref.update(subscribeInputs, (current) => [...current, input])),
+          Effect.as(streamFrom(inputs)),
+        ),
+      ),
+  } as unknown as WsRpcProtocolClient;
+  const supervisorSession = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(
+    Option.some(testSession(client, options?.supportsPagination ?? true)),
+  );
+  const prepared = yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(
+    Option.some(PREPARED),
+  );
+  const snapshotLoader = SubagentSnapshotLoader.of({
+    load: (
+      _prepared,
+      threadId,
+      subagentId,
+      window?: { readonly activityLimit: number; readonly beforeCursor?: string },
+    ) =>
+      Effect.gen(function* () {
+        const call = yield* Ref.getAndUpdate(loaderCalls, (count) => count + 1);
+        yield* Ref.update(loaderWindows, (current) => [...current, window]);
+        if (threadId !== THREAD_ID || subagentId !== SUBAGENT_ID) {
+          return Option.none<OrchestrationSubagentDetailSnapshot>();
+        }
+        return (
+          options?.httpSnapshots?.[call] ??
+          options?.httpSnapshot ??
+          Option.none<OrchestrationSubagentDetailSnapshot>()
+        );
+      }),
+  });
+  const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+    target: TARGET,
+    state: supervisorState,
+    session: supervisorSession,
+    prepared,
+    connect: Effect.void,
+    disconnect: Effect.void,
+    retryNow: Effect.void,
+  } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+  const subagentState = yield* makeEnvironmentSubagentState(THREAD_ID, SUBAGENT_ID).pipe(
+    Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+    Effect.provideService(SubagentSnapshotLoader, snapshotLoader),
+  );
+  yield* SubscriptionRef.changes(subagentState).pipe(
+    Stream.runForEach((state) => Queue.offer(observed, state)),
+    Effect.forkScoped,
+  );
+
+  return {
+    inputs,
+    observed,
+    subscriptionCount,
+    loaderCalls,
+    loaderWindows,
+    subscribeInputs,
+    subagentState,
+    supervisorSession,
+    replaceSession: SubscriptionRef.set(
+      supervisorSession,
+      Option.some(testSession(client, options?.supportsPagination ?? true)),
+    ),
+  };
+});
+
+function detailSnapshot(sequence = SNAPSHOT_SEQUENCE): OrchestrationSubagentDetailSnapshot {
+  return {
+    snapshotSequence: sequence,
+    threadId: THREAD_ID,
+    subagent: BASE_SUBAGENT,
+  };
+}
+
+function message(
+  text: string,
+  sequence: number,
+  messageId = `message-${sequence}`,
+): OrchestrationSubagentStreamItem {
+  const timestamp = `2026-07-30T10:00:${sequence.toString().padStart(2, "0")}.000Z`;
+  return {
+    kind: "event",
+    event: {
+      eventId: EventId.make(`event-${sequence}`),
+      sequence,
+      occurredAt: timestamp,
+      commandId: null,
+      causationEventId: null,
+      correlationId: null,
+      metadata: {},
+      aggregateKind: "thread",
+      aggregateId: THREAD_ID,
+      type: "thread.message-sent",
+      payload: {
+        threadId: THREAD_ID,
+        subagentId: SUBAGENT_ID,
+        messageId: MessageId.make(messageId),
+        role: "assistant",
+        text,
+        turnId: null,
+        streaming: false,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      },
+    },
+  };
+}
+
+describe("EnvironmentSubagents", () => {
+  it.effect("loads the selected transcript over HTTP and resumes its filtered stream", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        httpSnapshot: Option.some(detailSnapshot()),
+      });
+      yield* Queue.offer(harness.inputs, message("Live output", 6));
+
+      const state = yield* awaitSubagentState(
+        harness.observed,
+        (value) =>
+          value.status === "live" &&
+          Option.isSome(value.data) &&
+          value.data.value.messages[0]?.text === "Live output",
+      );
+
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(1);
+      expect((yield* Ref.get(harness.subscribeInputs))[0]).toEqual({
+        threadId: THREAD_ID,
+        subagentId: SUBAGENT_ID,
+        afterSequence: SNAPSHOT_SEQUENCE,
+        activityLimit: 100,
+      });
+      expect(Option.getOrThrow(state.data).messages).toHaveLength(1);
+      expect(Option.getOrThrow(state.data)).toMatchObject({
+        origin: "t3-fetch",
+        providerInstanceId: "claude-work",
+        providerDriver: "claudeAgent",
+      });
+    }),
+  );
+
+  it.effect("loads bounded activity pages and merges older history on demand", () =>
+    Effect.gen(function* () {
+      const activity = (sequence: number) => ({
+        id: EventId.make(`activity-${sequence}`),
+        tone: "tool" as const,
+        kind: "tool.completed",
+        summary: `Activity ${sequence}`,
+        payload: { sequence },
+        turnId: null,
+        sequence,
+        createdAt: `2026-07-30T10:00:${sequence.toString().padStart(2, "0")}.000Z`,
+      });
+      const recent: OrchestrationSubagentDetailSnapshot = {
+        ...detailSnapshot(),
+        subagent: { ...BASE_SUBAGENT, activities: [activity(4), activity(5)] },
+        page: {
+          beforeCursor: "before-activity-4",
+          hasMore: true,
+          snapshotSequence: SNAPSHOT_SEQUENCE,
+          threadSequence: SNAPSHOT_SEQUENCE,
+        },
+      };
+      const older: OrchestrationSubagentDetailSnapshot = {
+        ...detailSnapshot(),
+        subagent: { ...BASE_SUBAGENT, activities: [activity(2), activity(3)] },
+        page: {
+          beforeCursor: null,
+          hasMore: false,
+          snapshotSequence: SNAPSHOT_SEQUENCE,
+          threadSequence: SNAPSHOT_SEQUENCE,
+        },
+      };
+      const harness = yield* makeHarness({
+        httpSnapshots: [Option.some(recent), Option.some(older)],
+      });
+
+      yield* awaitSubagentState(
+        harness.observed,
+        (value) => Option.isSome(value.data) && value.data.value.activities.length === 2,
+      );
+      expect(requestOlderSubagentActivities(TARGET.environmentId, THREAD_ID, SUBAGENT_ID)).toBe(
+        true,
+      );
+
+      const state = yield* awaitSubagentState(
+        harness.observed,
+        (value) => Option.isSome(value.data) && value.data.value.activities.length === 4,
+      );
+      expect(Option.getOrThrow(state.data).activities.map((entry) => entry.sequence)).toEqual([
+        2, 3, 4, 5,
+      ]);
+      expect(Option.getOrThrow(state.page).hasMore).toBe(false);
+      expect(yield* Ref.get(harness.loaderWindows)).toEqual([
+        { activityLimit: 100 },
+        { activityLimit: 200, beforeCursor: "before-activity-4" },
+      ]);
+    }),
+  );
+
+  it.effect("keeps full snapshots when the connected server lacks pagination", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        httpSnapshot: Option.some(detailSnapshot()),
+        supportsPagination: false,
+      });
+      yield* Queue.offer(harness.inputs, message("Legacy live output", 6));
+      yield* awaitSubagentState(
+        harness.observed,
+        (value) =>
+          Option.isSome(value.data) && value.data.value.messages[0]?.text === "Legacy live output",
+      );
+
+      expect(yield* Ref.get(harness.loaderWindows)).toEqual([undefined]);
+      expect((yield* Ref.get(harness.subscribeInputs))[0]).toEqual({
+        threadId: THREAD_ID,
+        subagentId: SUBAGENT_ID,
+        afterSequence: SNAPSHOT_SEQUENCE,
+      });
+    }),
+  );
+
+  it.effect("advances cursor frames so older filtered events cannot regress the transcript", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        httpSnapshot: Option.some(detailSnapshot()),
+      });
+      yield* Queue.offer(harness.inputs, { kind: "cursor", sequence: 9 });
+      yield* Queue.offer(harness.inputs, message("Stale output", 8));
+      yield* Queue.offer(harness.inputs, message("Live output", 10));
+
+      const state = yield* awaitSubagentState(
+        harness.observed,
+        (value) =>
+          value.status === "live" &&
+          Option.isSome(value.data) &&
+          value.data.value.messages.some((entry) => entry.text === "Live output"),
+      );
+
+      expect(Option.getOrThrow(state.data).messages.map((entry) => entry.text)).toEqual([
+        "Live output",
+      ]);
+    }),
+  );
+
+  it.effect("deduplicates replay after the connection replaces its RPC session", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        httpSnapshot: Option.some(detailSnapshot()),
+      });
+      yield* Queue.offer(harness.inputs, message("First output", 6, "message-first"));
+      yield* awaitSubagentState(
+        harness.observed,
+        (value) => Option.isSome(value.data) && value.data.value.messages.length === 1,
+      );
+
+      yield* harness.replaceSession;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(harness.subscriptionCount)) >= 2) {
+          break;
+        }
+        yield* Effect.yieldNow;
+      }
+      yield* Queue.offer(harness.inputs, message("First output", 6, "message-first"));
+      yield* Queue.offer(harness.inputs, message("Second output", 7, "message-second"));
+
+      const state = yield* awaitSubagentState(
+        harness.observed,
+        (value) => Option.isSome(value.data) && value.data.value.messages.length === 2,
+      );
+
+      expect(Option.getOrThrow(state.data).messages.map((entry) => entry.id)).toEqual([
+        "message-first",
+        "message-second",
+      ]);
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+    }),
+  );
+
+  it.effect("returns cached transcript state to live after an empty resume", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        httpSnapshot: Option.some(detailSnapshot()),
+      });
+      yield* awaitSubagentState(
+        harness.observed,
+        (value) => value.status === "live" && Option.isSome(value.data),
+      );
+
+      yield* harness.replaceSession;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(harness.subscriptionCount)) >= 2) break;
+        yield* Effect.yieldNow;
+      }
+
+      expect((yield* SubscriptionRef.get(harness.subagentState)).status).toBe("live");
+    }),
+  );
+});

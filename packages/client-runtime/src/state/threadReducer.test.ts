@@ -6,7 +6,10 @@ import {
   EventId,
   MessageId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
+  RuntimeSessionId,
+  SubagentId,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -41,9 +44,55 @@ const baseThread: OrchestrationThread = {
   messages: [],
   proposedPlans: [],
   activities: [],
+  subagents: [],
   checkpoints: [],
   session: null,
 };
+
+const RUNTIME_ONE = RuntimeSessionId.make("runtime-1");
+const RUNTIME_TWO = RuntimeSessionId.make("runtime-2");
+
+function makeAbortingThread(): OrchestrationThread {
+  return {
+    ...baseThread,
+    latestTurn: {
+      turnId: TurnId.make("turn-1"),
+      state: "running",
+      requestedAt: "2026-04-01T07:00:00.000Z",
+      startedAt: "2026-04-01T07:00:01.000Z",
+      completedAt: null,
+      assistantMessageId: MessageId.make("assistant-1"),
+    },
+    messages: [
+      {
+        id: MessageId.make("assistant-1"),
+        role: "assistant",
+        text: "Partial output remains visible.",
+        turnId: TurnId.make("turn-1"),
+        streaming: false,
+        createdAt: "2026-04-01T07:00:01.000Z",
+        updatedAt: "2026-04-01T07:00:02.000Z",
+      },
+    ],
+    session: {
+      threadId: ThreadId.make("thread-1"),
+      status: "running",
+      providerName: "codex",
+      runtimeSessionId: RUNTIME_ONE,
+      runtimeMode: "full-access",
+      activeTurnId: TurnId.make("turn-1"),
+      abortState: {
+        runtimeSessionId: RUNTIME_ONE,
+        targetTurnId: TurnId.make("turn-1"),
+        phase: "interrupting",
+        requestedAt: "2026-04-01T07:00:03.000Z",
+        forceAt: "2026-04-01T07:00:08.000Z",
+      },
+      lastError: null,
+      updatedAt: "2026-04-01T07:00:03.000Z",
+    },
+  };
+}
 
 describe("applyThreadDetailEvent", () => {
   describe("project events", () => {
@@ -100,6 +149,7 @@ describe("applyThreadDetailEvent", () => {
         expect(result.thread.title).toBe("New Thread");
         expect(result.thread.branch).toBe("main");
         expect(result.thread.messages).toEqual([]);
+        expect(result.thread.subagents).toEqual([]);
         expect(result.thread.session).toBeNull();
       }
     });
@@ -545,8 +595,10 @@ describe("applyThreadDetailEvent", () => {
           threadId: ThreadId.make("thread-1"),
           status: "running",
           providerName: "claude",
+          runtimeSessionId: null,
           runtimeMode: "full-access",
           activeTurnId: TurnId.make("turn-1"),
+          abortState: null,
           lastError: null,
           updatedAt: "2026-04-01T06:59:00.000Z",
         },
@@ -720,6 +772,82 @@ describe("applyThreadDetailEvent", () => {
     });
   });
 
+  describe("thread.harness-sync-message-imported", () => {
+    it("appends an imported native message through the live thread stream", () => {
+      const result = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 9,
+        occurredAt: "2026-04-01T07:30:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.harness-sync-message-imported",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("imported-message-1"),
+          role: "assistant",
+          text: "Imported from the native harness.",
+          attachments: [],
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-04-01T07:29:00.000Z",
+          updatedAt: "2026-04-01T07:29:00.000Z",
+          nativeMessageId: "native-message-1",
+          linkedAt: "2026-04-01T07:30:00.000Z",
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.messages).toContainEqual(
+          expect.objectContaining({
+            id: MessageId.make("imported-message-1"),
+            text: "Imported from the native harness.",
+          }),
+        );
+      }
+    });
+  });
+
+  describe("thread.harness-sync-linked", () => {
+    it("updates the compact harness sync state used by composer guards", () => {
+      const result = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 10,
+        occurredAt: "2026-04-01T07:31:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.harness-sync-linked",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          projectId: ProjectId.make("project-1"),
+          sourceId: "codex:home:/tmp/codex" as never,
+          continuationKey: "codex:home:/tmp/codex" as never,
+          nativeSessionId: "native-session-1" as never,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          providerLabel: "Codex",
+          activity: "active",
+          sourceUpdatedAt: "2026-04-01T07:30:00.000Z",
+          lastSyncedAt: "2026-04-01T07:31:00.000Z",
+        },
+      });
+
+      expect(result).toEqual({
+        kind: "updated",
+        thread: {
+          ...baseThread,
+          harnessSync: {
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            providerLabel: "Codex",
+            activity: "active",
+            sourceUpdatedAt: "2026-04-01T07:30:00.000Z",
+            lastSyncedAt: "2026-04-01T07:31:00.000Z",
+          },
+          updatedAt: "2026-04-01T07:31:00.000Z",
+        },
+      });
+    });
+  });
+
   describe("thread.session-set", () => {
     it("settles a running latestTurn when the session leaves the running status", () => {
       const threadWithRunningTurn: OrchestrationThread = {
@@ -747,8 +875,10 @@ describe("applyThreadDetailEvent", () => {
             threadId: ThreadId.make("thread-1"),
             status: "ready",
             providerName: "claude",
+            runtimeSessionId: null,
             runtimeMode: "full-access",
             activeTurnId: null,
+            abortState: null,
             lastError: null,
             updatedAt: "2026-04-01T08:00:00.000Z",
           },
@@ -776,8 +906,10 @@ describe("applyThreadDetailEvent", () => {
             threadId: ThreadId.make("thread-1"),
             status: "running",
             providerName: "codex",
+            runtimeSessionId: null,
             runtimeMode: "full-access",
             activeTurnId: TurnId.make("turn-1"),
+            abortState: null,
             lastError: null,
             updatedAt: "2026-04-01T08:00:00.000Z",
           },
@@ -801,8 +933,10 @@ describe("applyThreadDetailEvent", () => {
           threadId: ThreadId.make("thread-1"),
           status: "running",
           providerName: "codex",
+          runtimeSessionId: null,
           runtimeMode: "full-access",
           activeTurnId: TurnId.make("turn-1"),
+          abortState: null,
           lastError: null,
           updatedAt: "2026-04-01T08:00:00.000Z",
         },
@@ -1436,6 +1570,183 @@ describe("applyThreadDetailEvent", () => {
         expect(result.thread.messages).toHaveLength(2);
         expect(result.thread.latestTurn?.turnId).toBe("turn-1");
       }
+    });
+  });
+
+  describe("subagent routing", () => {
+    const subagentId = SubagentId.make("agent-client-runtime");
+    const subagent = {
+      id: subagentId,
+      origin: "t3-fetch" as const,
+      providerInstanceId: ProviderInstanceId.make("claude-work"),
+      providerDriver: ProviderDriverKind.make("claudeAgent"),
+      providerThreadId: "provider-agent-client-runtime",
+      parentId: null,
+      path: "/root/client_runtime",
+      name: "client_runtime",
+      nickname: "Carson",
+      role: "worker",
+      task: "Implement client runtime",
+      model: "gpt-5.6-codex",
+      reasoningEffort: "ultra",
+      depth: 1,
+      status: "running" as const,
+      statusMessage: "Adding tests",
+      latestProgress: null,
+      latestTurn: null,
+      startedAt: "2026-07-30T10:00:00.000Z",
+      updatedAt: "2026-07-30T10:00:01.000Z",
+      completedAt: null,
+    };
+
+    it("upserts authoritative subagent summaries", () => {
+      const result = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 16,
+        occurredAt: "2026-07-30T10:00:01.000Z",
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.subagent-upserted",
+        payload: {
+          threadId: baseThread.id,
+          subagent,
+        },
+      });
+
+      expect(result).toMatchObject({
+        kind: "updated",
+        thread: {
+          subagents: [subagent],
+          updatedAt: "2026-07-30T10:00:01.000Z",
+        },
+      });
+    });
+
+    it("applies lifecycle and progress updates without duplicating a summary", () => {
+      const waiting = applyThreadDetailEvent(
+        { ...baseThread, subagents: [subagent] },
+        {
+          ...baseEventFields,
+          sequence: 17,
+          occurredAt: "2026-07-30T10:00:02.000Z",
+          aggregateKind: "thread",
+          aggregateId: baseThread.id,
+          type: "thread.subagent-state-set",
+          payload: {
+            threadId: baseThread.id,
+            subagentId,
+            status: "waiting",
+            statusMessage: "Waiting for another agent",
+            updatedAt: "2026-07-30T10:00:02.000Z",
+          },
+        },
+      );
+      expect(waiting.kind).toBe("updated");
+      if (waiting.kind !== "updated") {
+        return;
+      }
+
+      const progressed = applyThreadDetailEvent(waiting.thread, {
+        ...baseEventFields,
+        sequence: 18,
+        occurredAt: "2026-07-30T10:00:03.000Z",
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.subagent-progress-set",
+        payload: {
+          threadId: baseThread.id,
+          subagentId,
+          progress: {
+            kind: "test",
+            summary: "Running focused tests",
+            detail: null,
+            createdAt: "2026-07-30T10:00:03.000Z",
+          },
+          updatedAt: "2026-07-30T10:00:03.000Z",
+        },
+      });
+
+      expect(progressed).toMatchObject({
+        kind: "updated",
+        thread: {
+          subagents: [
+            {
+              id: subagentId,
+              status: "waiting",
+              statusMessage: "Waiting for another agent",
+              latestProgress: {
+                summary: "Running focused tests",
+              },
+            },
+          ],
+        },
+      });
+    });
+
+    it.each([
+      {
+        type: "thread.message-sent" as const,
+        payload: {
+          threadId: baseThread.id,
+          subagentId,
+          messageId: MessageId.make("child-message"),
+          role: "assistant" as const,
+          text: "Child output",
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-07-30T10:00:02.000Z",
+          updatedAt: "2026-07-30T10:00:02.000Z",
+        },
+      },
+      {
+        type: "thread.proposed-plan-upserted" as const,
+        payload: {
+          threadId: baseThread.id,
+          subagentId,
+          proposedPlan: {
+            id: "child-plan",
+            turnId: null,
+            planMarkdown: "# Child plan",
+            implementedAt: null,
+            implementationThreadId: null,
+            createdAt: "2026-07-30T10:00:02.000Z",
+            updatedAt: "2026-07-30T10:00:02.000Z",
+          },
+        },
+      },
+      {
+        type: "thread.activity-appended" as const,
+        payload: {
+          threadId: baseThread.id,
+          subagentId,
+          activity: {
+            id: EventId.make("child-activity"),
+            tone: "tool" as const,
+            kind: "command",
+            summary: "Ran tests",
+            payload: {},
+            turnId: null,
+            createdAt: "2026-07-30T10:00:02.000Z",
+          },
+        },
+      },
+    ])("keeps routed $type data out of the root transcript", ({ type, payload }) => {
+      const result = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 19,
+        occurredAt: "2026-07-30T10:00:02.000Z",
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type,
+        payload,
+      } as never);
+
+      expect(result).toEqual({ kind: "unchanged" });
+      expect(baseThread).toMatchObject({
+        messages: [],
+        proposedPlans: [],
+        activities: [],
+      });
     });
   });
 
