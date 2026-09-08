@@ -1,4 +1,7 @@
-import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import {
+  type EnvironmentConnectionPhase,
+  type EnvironmentConnectionPresentation,
+} from "@t3tools/client-runtime/connection";
 import { EnvironmentId, ThreadId, type ServerConfig } from "@t3tools/contracts";
 
 export interface EnvironmentRuntimeState {
@@ -16,6 +19,10 @@ export interface ConnectedEnvironmentSummary {
   readonly connectionState: EnvironmentConnectionPhase;
   readonly connectionError: string | null;
   readonly connectionErrorTraceId: string | null;
+  /** Full runtime truth when projected from the live registry; optional for static fixtures. */
+  readonly connection?: EnvironmentConnectionPresentation;
+  /** Newest local cache write for this environment, in epoch milliseconds. */
+  readonly cacheUpdatedAt?: number | null;
 }
 
 export interface SelectedThreadRef {
