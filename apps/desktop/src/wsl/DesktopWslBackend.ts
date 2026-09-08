@@ -36,6 +36,7 @@ import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "./DesktopWslEnvironment.ts";
+import { translateDesktopInterfaceMessage } from "../settings/DesktopInterfaceLanguage.ts";
 
 // Exported so callers that parse pool ids (e.g. the pickFolder IPC
 // handler in ipc/methods/window.ts) reference the same prefix this
@@ -72,7 +73,9 @@ const isWslInstanceId = (id: DesktopBackendPool.BackendInstanceId): boolean =>
   id.startsWith(WSL_INSTANCE_ID_PREFIX);
 
 const buildLabel = (distro: string | null): string =>
-  distro === null ? "WSL (default distro)" : `WSL (${distro})`;
+  distro === null
+    ? translateDesktopInterfaceMessage("desktop.wsl.defaultEnvironmentLabel")
+    : translateDesktopInterfaceMessage("desktop.wsl.environmentLabel", { distro });
 
 // Loopback-only port scan starting one above the primary's port. The
 // WSL backend is reachable via 127.0.0.1 from Windows (wslhost

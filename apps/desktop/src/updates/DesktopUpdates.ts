@@ -56,6 +56,12 @@ interface DesktopPreparedUpdateInstallResult extends DesktopUpdateActionResult {
   readonly failed: boolean;
 }
 
+export type DesktopUpdateDisabledReason =
+  | "no-update-feed"
+  | "development-build"
+  | "disabled-by-environment"
+  | "linux-package-required";
+
 const AppUpdateYmlConfig = Schema.Record(Schema.String, Schema.String);
 type AppUpdateYmlConfig = typeof AppUpdateYmlConfig.Type;
 
@@ -175,7 +181,7 @@ export class DesktopUpdates extends Context.Service<
       Scope.Scope
     >;
     readonly emitState: Effect.Effect<void>;
-    readonly disabledReason: Effect.Effect<Option.Option<string>>;
+    readonly disabledReason: Effect.Effect<Option.Option<DesktopUpdateDisabledReason>>;
     readonly configure: Effect.Effect<void, DesktopUpdateConfigureError, Scope.Scope>;
     readonly setChannel: (
       channel: DesktopUpdateChannel,
@@ -251,18 +257,18 @@ function getAutoUpdateDisabledReason(args: {
   appImage?: string | undefined;
   disabledByEnv: boolean;
   hasUpdateFeedConfig: boolean;
-}): string | null {
+}): DesktopUpdateDisabledReason | null {
   if (!args.hasUpdateFeedConfig) {
-    return "Automatic updates are not available because no update feed is configured.";
+    return "no-update-feed";
   }
   if (args.isDevelopment || !args.isPackaged) {
-    return "Automatic updates are only available in packaged production builds.";
+    return "development-build";
   }
   if (args.disabledByEnv) {
-    return "Automatic updates are disabled by the T3CODE_DISABLE_AUTO_UPDATE setting.";
+    return "disabled-by-environment";
   }
   if (args.platform === "linux" && !args.appImage) {
-    return "Automatic updates on Linux require running the AppImage build.";
+    return "linux-package-required";
   }
   return null;
 }

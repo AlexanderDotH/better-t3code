@@ -10,6 +10,7 @@ import * as Path from "effect/Path";
 
 import * as DesktopSshEnvironment from "./DesktopSshEnvironment.ts";
 import * as DesktopSshPasswordPrompts from "./DesktopSshPasswordPrompts.ts";
+import { setDesktopInterfaceLanguage } from "../settings/DesktopInterfaceLanguage.ts";
 
 function makeTempHomeDir() {
   return Effect.gen(function* () {
@@ -19,6 +20,20 @@ function makeTempHomeDir() {
 }
 
 describe("sshEnvironment", () => {
+  it("localizes prompt infrastructure failures with the current desktop language", () => {
+    setDesktopInterfaceLanguage("fr");
+    const cause = new DesktopSshPasswordPrompts.DesktopSshPromptServiceStoppedError({
+      requestId: "prompt-1",
+      destination: "devbox",
+    });
+
+    assert.equal(
+      DesktopSshEnvironment.toSshPasswordPromptError(cause).message,
+      "Le service de demande de mot de passe SSH s’est arrêté.",
+    );
+    setDesktopInterfaceLanguage("en");
+  });
+
   it("keeps prompt presentation diagnostics distinct from the legacy wrapper message", () => {
     const cause = new DesktopSshPasswordPrompts.DesktopSshPromptPresentationError({
       requestId: "prompt-1",
