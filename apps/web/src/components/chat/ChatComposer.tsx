@@ -1376,6 +1376,7 @@ export interface ChatComposerProps {
   focusComposer: () => void;
   scheduleComposerFocus: () => void;
   setThreadError: (threadId: ThreadId | null, error: string | null) => void;
+  onVoiceRecordingActiveChange?: (active: boolean) => void;
   onExpandImage: (preview: ExpandedImagePreview) => void;
   onFileOpen: (attachment: ChatFileAttachment) => void;
 }
@@ -1470,6 +1471,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     focusComposer,
     scheduleComposerFocus,
     setThreadError,
+    onVoiceRecordingActiveChange,
     onExpandImage,
     onFileOpen,
   } = props;
@@ -3059,6 +3061,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
       : {}),
   });
+
+  useEffect(() => {
+    onVoiceRecordingActiveChange?.(voiceDictation.active);
+  }, [onVoiceRecordingActiveChange, voiceDictation.active]);
 
   const submitComposer = useCallback(
     (event?: { preventDefault: () => void }, intent: ComposerSubmissionIntent = "foreground") => {
