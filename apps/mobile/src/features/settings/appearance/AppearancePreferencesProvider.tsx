@@ -12,6 +12,7 @@ import { Appearance, useColorScheme } from "react-native";
 
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
+import type { ChatVisualMode, ProjectThreadPreviewCount } from "@t3tools/contracts";
 
 import { ScopedTheme, Uniwind } from "uniwind";
 
@@ -21,6 +22,12 @@ import {
   type ResolvedAppearance,
 } from "../../../lib/appearancePreferences";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../state/preferences";
+import { useChatVisualModeSync } from "../../../state/use-chat-visual-mode-sync";
+import { useProjectThreadPreviewSync } from "../../../state/use-project-thread-preview-sync";
+import {
+  useInterfaceLanguageSync,
+  type MobileInterfaceLanguageSyncState,
+} from "../../../state/use-interface-language-sync";
 import type { Preferences } from "../../../persistence/mobile-preferences";
 import {
   createMobileThemePairPatch,
@@ -40,7 +47,9 @@ import {
 
 interface AppearancePreferencesContextValue {
   /** Effective values with base-size derivation applied. Use this for rendering. */
-  readonly appearance: ResolvedAppearance;
+  readonly appearance: ResolvedAppearance & {
+    readonly projectThreadPreviewCount: ProjectThreadPreviewCount;
+  };
   readonly themeId: MobileThemeId;
   readonly themeIds: MobileThemeIds;
   readonly themeMode: MobileThemeMode;
@@ -58,6 +67,22 @@ interface AppearancePreferencesContextValue {
   /** Pass null to clear the override and follow the base font size. */
   readonly setCodeFontSize: (value: number | null) => void;
   readonly setCodeWordBreak: (value: boolean) => void;
+  readonly setProjectThreadPreviewCount: (value: ProjectThreadPreviewCount) => void;
+  readonly chatVisualMode: ChatVisualMode;
+  readonly setChatVisualMode: (value: ChatVisualMode) => void;
+  readonly chatVisualModeSyncStatus: {
+    readonly isSyncing: boolean;
+    readonly failedEnvironmentLabels: readonly string[];
+    readonly deferredEnvironmentLabels: readonly string[];
+    readonly unsupportedEnvironmentLabels: readonly string[];
+  };
+  readonly projectThreadPreviewSyncStatus: {
+    readonly isSyncing: boolean;
+    readonly failedEnvironmentLabels: readonly string[];
+    readonly deferredEnvironmentLabels: readonly string[];
+    readonly unsupportedEnvironmentLabels: readonly string[];
+  };
+  readonly interfaceLanguage: MobileInterfaceLanguageSyncState;
 }
 
 const AppearancePreferencesContext = createContext<AppearancePreferencesContextValue | null>(null);
@@ -65,6 +90,9 @@ const AppearancePreferencesContext = createContext<AppearancePreferencesContextV
 export function AppearancePreferencesProvider(props: { readonly children: ReactNode }) {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const chatVisualModeSync = useChatVisualModeSync();
+  const projectThreadPreviewSync = useProjectThreadPreviewSync();
+  const interfaceLanguage = useInterfaceLanguageSync();
   const systemColorScheme = useColorScheme() === "dark" ? "dark" : "light";
   const storedPreferences = AsyncResult.isSuccess(preferencesResult)
     ? preferencesResult.value
@@ -228,7 +256,10 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
 
   const value = useMemo(
     (): AppearancePreferencesContextValue => ({
-      appearance,
+      appearance: {
+        ...appearance,
+        projectThreadPreviewCount: projectThreadPreviewSync.count,
+      },
       themeId,
       themeIds,
       themeMode,
@@ -241,9 +272,28 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       setTerminalFontSize,
       setCodeFontSize,
       setCodeWordBreak,
+      chatVisualMode: chatVisualModeSync.mode,
+      setChatVisualMode: chatVisualModeSync.setMode,
+      chatVisualModeSyncStatus: {
+        isSyncing: chatVisualModeSync.isSyncing,
+        failedEnvironmentLabels: chatVisualModeSync.failedEnvironmentLabels,
+        deferredEnvironmentLabels: chatVisualModeSync.deferredEnvironmentLabels,
+        unsupportedEnvironmentLabels: chatVisualModeSync.unsupportedEnvironmentLabels,
+      },
+      setProjectThreadPreviewCount: projectThreadPreviewSync.setCount,
+      projectThreadPreviewSyncStatus: {
+        isSyncing: projectThreadPreviewSync.isSyncing,
+        failedEnvironmentLabels: projectThreadPreviewSync.failedEnvironmentLabels,
+        deferredEnvironmentLabels: projectThreadPreviewSync.deferredEnvironmentLabels,
+        unsupportedEnvironmentLabels: projectThreadPreviewSync.unsupportedEnvironmentLabels,
+      },
+      interfaceLanguage,
     }),
     [
       appearance,
+      chatVisualModeSync,
+      projectThreadPreviewSync,
+      interfaceLanguage,
       themeId,
       themeIds,
       themeMode,
