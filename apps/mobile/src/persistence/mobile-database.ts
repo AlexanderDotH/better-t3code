@@ -51,6 +51,7 @@ const MobileDatabaseOperation = Schema.Literals([
   "migrate",
   "load-cache",
   "list-cache",
+  "load-environment-cache-freshness",
   "save-cache",
   "remove-cache",
   "clear-cache-kind",
@@ -202,6 +203,9 @@ export class MobileDatabase extends Context.Service<
     readonly listCache: (
       kind: ClientCacheKind,
     ) => Effect.Effect<ReadonlyArray<string>, MobileDatabaseError>;
+    readonly loadEnvironmentCacheUpdatedAt: (
+      environmentId: EnvironmentId,
+    ) => Effect.Effect<Option.Option<number>, MobileDatabaseError>;
     readonly saveCache: (
       environmentId: EnvironmentId,
       kind: ClientCacheKind,
@@ -311,6 +315,19 @@ const makeAvailable = Effect.gen(function* () {
           ),
         catch: databaseError("list-cache"),
       }).pipe(Effect.map((rows) => rows.map((row) => row.payload))),
+    ),
+    loadEnvironmentCacheUpdatedAt: Effect.fn("MobileDatabase.loadEnvironmentCacheUpdatedAt")(
+      (environmentId) =>
+        Effect.tryPromise({
+          try: () =>
+            database.getFirstAsync<{ readonly updatedAt: number | null }>(
+              `SELECT MAX(updated_at) AS updatedAt
+                     FROM client_cache
+                     WHERE environment_id = ?`,
+              environmentId,
+            ),
+          catch: databaseError("load-environment-cache-freshness"),
+        }).pipe(Effect.map((row) => Option.fromNullishOr(row?.updatedAt))),
     ),
     saveCache: Effect.fn("MobileDatabase.saveCache")(
       (environmentId, kind, cacheKey, schemaVersion, payload) =>
@@ -426,6 +443,7 @@ function makeUnavailable(error: MobileDatabaseError): MobileDatabase["Service"] 
   return MobileDatabase.of({
     loadCache: () => fail,
     listCache: () => fail,
+    loadEnvironmentCacheUpdatedAt: () => fail,
     saveCache: () => fail,
     removeCache: () => fail,
     clearCacheKind: () => fail,

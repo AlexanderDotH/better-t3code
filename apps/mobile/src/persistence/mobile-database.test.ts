@@ -1,5 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
+import { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { vi } from "vite-plus/test";
 
 const openDatabaseAsync = vi.hoisted(() => vi.fn());
@@ -68,4 +70,39 @@ describe("mobile database legacy cache migration", () => {
       ),
     ).toBeNull();
   });
+});
+
+describe("mobile database cache freshness", () => {
+  it.effect("returns the newest persisted cache timestamp for one environment", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const databaseHandle = {
+          closeAsync: vi.fn(async () => undefined),
+          execAsync: vi.fn(async () => undefined),
+          withExclusiveTransactionAsync: vi.fn(async (run) =>
+            run({ execAsync: vi.fn(async () => undefined) }),
+          ),
+          getFirstAsync: vi.fn(async (sql: string) => {
+            if (sql === "PRAGMA user_version") return { user_version: 1 };
+            if (sql.includes("MAX(updated_at)")) return { updatedAt: 1_787_169_600_000 };
+            return null;
+          }),
+          runAsync: vi.fn(async () => undefined),
+          getAllAsync: vi.fn(async () => []),
+        };
+        openDatabaseAsync.mockResolvedValueOnce(databaseHandle);
+        const database = yield* make;
+
+        const updatedAt = yield* database.loadEnvironmentCacheUpdatedAt(
+          EnvironmentId.make("environment-1"),
+        );
+
+        expect(Option.getOrNull(updatedAt)).toBe(1_787_169_600_000);
+        expect(databaseHandle.getFirstAsync).toHaveBeenCalledWith(
+          expect.stringContaining("MAX(updated_at)"),
+          "environment-1",
+        );
+      }),
+    ),
+  );
 });
