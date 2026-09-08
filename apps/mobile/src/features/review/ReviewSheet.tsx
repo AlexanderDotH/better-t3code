@@ -1,3 +1,5 @@
+import { useMobileGitWorkbenchAvailability } from "../threads/git/use-mobile-git-workbench";
+import { mobileGitWorkbenchCanActivate } from "../threads/git/mobile-git-workbench";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
@@ -372,8 +374,10 @@ export function ReviewSheet(props: ReviewSheetProps) {
   );
   // The selection-based git hooks only apply when this review belongs to the
   // selected thread (it always does when reached from the thread's toolbar).
+  const gitWorkbenchAvailability = useMobileGitWorkbenchAvailability({ environmentId, threadId });
+  const gitEnabled = mobileGitWorkbenchCanActivate(gitWorkbenchAvailability);
   const gitMenuAvailable =
-    selectedThread !== null && String(selectedThread.id) === String(threadId);
+    gitEnabled && selectedThread !== null && String(selectedThread.id) === String(threadId);
   // With a solid (non-overlay) header the content lays out below the header
   // natively, so no manual top inset is needed. (Android renders its own
   // in-flow AndroidScreenHeader, so it needs no inset either.)
@@ -721,6 +725,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
           ) : null}
           {gitMenuAvailable && selectedThread !== null ? (
             <ThreadGitMenu
+              gitEnabled={gitEnabled}
               environmentId={environmentId}
               threadId={threadId}
               currentBranch={selectedThread.branch ?? null}
