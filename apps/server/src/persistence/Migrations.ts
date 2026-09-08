@@ -10,6 +10,10 @@
 
 import * as Migrator from "effect/unstable/sql/Migrator";
 import * as Effect from "effect/Effect";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+
+import Migration0061 from "./Migrations/061_IndependentMigrationLedgers.ts";
+import { migrationManifest as legacyForkManifest } from "./Migrations/LegacyForkMigrations.ts";
 
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -72,7 +76,7 @@ import Migration0049 from "./Migrations/049_ProjectionThreadsActiveOrderKey.ts";
  * Uses Migrator.fromRecord which parses the key format and
  * returns migrations sorted by ID.
  */
-const migrationEntries = [
+export const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
   [2, "OrchestrationCommandReceipts", Migration0002],
   [3, "CheckpointDiffBlobs", Migration0003],
@@ -126,7 +130,7 @@ const migrationEntries = [
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
 
-const makeMigrationLoader = (throughId?: number) =>
+export const makeMigrationLoader = (throughId?: number) =>
   Migrator.fromRecord(
     Object.fromEntries(
       migrationEntries
@@ -141,6 +145,84 @@ const makeMigrationLoader = (throughId?: number) =>
  */
 const run = Migrator.make({});
 
+export const upstreamMigrationTable = "effect_sql_upstream_migrations";
+export const forkMigrationTable = "effect_sql_fork_migrations";
+const upstreamBaseline = 49;
+const forkMigrationEntries = [[61, "IndependentMigrationLedgers", Migration0061]] as const;
+
+const convergeLegacyDatabase = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const tables = yield* sql<{ readonly name: string }>`
+    SELECT name FROM sqlite_master
+    WHERE type = 'table' AND name IN (
+      'effect_sql_migrations', 'effect_sql_upstream_migrations', 'effect_sql_fork_migrations'
+    )
+  `;
+  const hasUpstream = tables.some(({ name }) => name === upstreamMigrationTable);
+  const hasFork = tables.some(({ name }) => name === forkMigrationTable);
+  if (hasUpstream && hasFork) return [];
+  if (hasUpstream || hasFork) {
+    return yield* new Migrator.MigrationError({
+      kind: "BadState",
+      message:
+        "Only one independent migration ledger exists; restore a consistent database backup.",
+    });
+  }
+
+  const legacy = tables.some(({ name }) => name === "effect_sql_migrations")
+    ? yield* sql<{ readonly migration_id: number; readonly name: string }>`
+        SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id
+      `
+    : [];
+  const knownMigrations = new Set(
+    [
+      ...migrationManifest,
+      ...legacyForkManifest,
+      [33, "ProjectSpeechProfiles"],
+      [34, "ProjectionThreadSubagents"],
+    ].map(([id, name]) => `${id}_${name}`),
+  );
+  if (legacy.some(({ migration_id, name }) => !knownMigrations.has(`${migration_id}_${name}`))) {
+    return yield* new Migrator.MigrationError({
+      kind: "BadState",
+      message: "The legacy migration ledger contains an unknown migration; use a compatible build.",
+    });
+  }
+
+  const upstreamNames = new Map<number, string>(migrationManifest);
+  const isFork = legacy.some(({ migration_id, name }) => upstreamNames.get(migration_id) !== name);
+  const latestLegacyId = legacy.at(-1)?.migration_id ?? 0;
+  const executed: Array<readonly [number, string]> = [];
+  for (const [id, name, migration] of migrationEntries) {
+    if (id > upstreamBaseline) continue;
+    if (id <= 32 && id <= latestLegacyId) continue;
+    if (legacy.some((row) => row.migration_id === id && row.name === name)) continue;
+    // Fork project creation can carry an explicit default. Upstream's cleanup
+    // cannot distinguish that choice from its own automatically seeded value.
+    if (isFork && id === 44) continue;
+    yield* migration;
+    executed.push([id, name]);
+  }
+  yield* Migration0061;
+  executed.push([61, "IndependentMigrationLedgers"]);
+
+  // Seed only after convergence succeeds, in the caller's transaction. The
+  // original ledger remains an immutable record of the database's history.
+  yield* run({ table: upstreamMigrationTable, loader: Migrator.fromRecord({}) });
+  yield* run({ table: forkMigrationTable, loader: Migrator.fromRecord({}) });
+  yield* sql`INSERT INTO ${sql(upstreamMigrationTable)} ${sql.insert(
+    migrationManifest
+      .filter(([id]) => id <= upstreamBaseline)
+      .map(([migration_id, name]) => ({ migration_id, name })),
+  )}`;
+  yield* sql`INSERT INTO ${sql(forkMigrationTable)} ${sql.insert(
+    forkMigrationEntries
+      .filter(([id]) => id <= 61)
+      .map(([migration_id, name]) => ({ migration_id, name })),
+  )}`;
+  return executed;
+});
+
 export interface RunMigrationsOptions {
   readonly toMigrationInclusive?: number | undefined;
 }
@@ -148,17 +230,34 @@ export interface RunMigrationsOptions {
 /**
  * Run all pending migrations.
  *
- * Creates the migrations tracking table (effect_sql_migrations) if it doesn't exist,
- * then runs any migrations with ID greater than the latest recorded migration.
- *
- * Returns array of [id, name] tuples for migrations that were run.
- *
- * @returns Effect containing array of executed migrations
+ * Historical fixture runs retain upstream numbering. Normal startup converges
+ * legacy databases atomically, then tracks upstream and fork migrations separately.
  */
 export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
-  const executedMigrations = yield* run({ loader: makeMigrationLoader(toMigrationInclusive) });
+  if (toMigrationInclusive !== undefined) {
+    return yield* run({ loader: makeMigrationLoader(toMigrationInclusive) });
+  }
+  const sql = yield* SqlClient.SqlClient;
+  const executedMigrations = yield* sql.withTransaction(
+    Effect.gen(function* () {
+      const converged = yield* convergeLegacyDatabase;
+      const upstream = yield* run({
+        table: upstreamMigrationTable,
+        loader: makeMigrationLoader(),
+      });
+      const fork = yield* run({
+        table: forkMigrationTable,
+        loader: Migrator.fromRecord(
+          Object.fromEntries(
+            forkMigrationEntries.map(([id, name, migration]) => [`${id}_${name}`, migration]),
+          ),
+        ),
+      });
+      return [...converged, ...upstream, ...fork];
+    }),
+  );
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
   yield* migrations.length === 0
     ? Effect.logDebug("Database schema is current")
