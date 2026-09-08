@@ -5,6 +5,7 @@ import { ProviderInstanceId, type ProviderOptionSelection } from "@t3tools/contr
 import type { ModelOption } from "../../lib/modelOptions";
 import {
   canCommitPendingModel,
+  filterOpenRouterProviderCatalog,
   modelMatchesCatalogQuery,
   pendingModelAfterPress,
 } from "./thread-settings-sheet-state";
@@ -22,6 +23,10 @@ function modelOption(
     providerDriver: "codex",
     isDefault: false,
     isLegacy: false,
+    isSelectable: true,
+    unavailableReason: null,
+    continuationGroupKey: null,
+    requiresNewThreadForModelChange: false,
     capabilities: null,
     selection: {
       instanceId: ProviderInstanceId.make("codex"),
@@ -116,4 +121,19 @@ describe("thread settings sheet state", () => {
       ]),
     ).toBe(false);
   });
+});
+
+it("combines model favorites with remote catalog search", () => {
+  const first = modelOption("code-one");
+  const second = modelOption("code-two");
+  expect(
+    filterOpenRouterProviderCatalog({
+      models: [first, second],
+      providerLabel: "OpenRouter",
+      query: "code",
+      filters: new Set(),
+      favoritesOnly: true,
+      isFavorite: (option) => option.key === second.key,
+    }),
+  ).toEqual([second]);
 });
