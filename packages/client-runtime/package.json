@@ -318,6 +318,10 @@
     "./thread-fork": {
       "types": "./src/threadFork.ts",
       "default": "./src/threadFork.ts"
+    },
+    "./client-settings": {
+      "types": "./src/clientSettings.ts",
+      "default": "./src/clientSettings.ts"
     }
   },
   "scripts": {

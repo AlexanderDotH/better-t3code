@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { shouldOfferProjectSpeechPreindex, resolvePromptForSend } from "./promptImprovement";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { shouldOfferProjectSpeechPreindex, resolvePromptForSend } from "./promptImprovement.js";
 
 describe("shouldOfferProjectSpeechPreindex", () => {
   const emptyDraft = {

@@ -1,6 +1,6 @@
 import { ProviderInstanceId } from "@t3tools/contracts";
-import { describe, expect, it } from "vitest";
-import { isStartedThreadModelChangeAllowed } from "./providerSelection";
+import { describe, expect, it } from "vite-plus/test";
+import { isStartedThreadModelChangeAllowed } from "./providerSelection.js";
 
 const instanceId = ProviderInstanceId.make("codex-work");
 const otherInstanceId = ProviderInstanceId.make("codex-personal");

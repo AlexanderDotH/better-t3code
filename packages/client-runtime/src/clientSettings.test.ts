@@ -1,6 +1,6 @@
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
-import { describe, expect, it } from "vitest";
-import { mergeClientSettingsPatch } from "./clientSettings";
+import { describe, expect, it } from "vite-plus/test";
+import { mergeClientSettingsPatch } from "./clientSettings.js";
 
 describe("client preference patches", () => {
   it("retains device initialization and unrelated feature flags", () => {
