@@ -425,11 +425,15 @@ const makeEventStore = Effect.gen(function* () {
       Effect.map((row) => ({ ...row, hasCreateEvent: row.hasCreateEvent !== 0 })),
     );
 
+  const readByThreadId: OrchestrationEventStoreShape["readByThreadId"] = (threadId) =>
+    readAggregateRange({ aggregateKind: "thread", aggregateId: threadId, fromSequenceExclusive: 0, toSequenceInclusive: Number.MAX_SAFE_INTEGER, limit: Number.MAX_SAFE_INTEGER });
+
   return {
     append,
     readFromSequence,
     readAggregateRange,
     getAggregateReplayStats,
+    readByThreadId,
     readAll: () => readFromSequence(0, Number.MAX_SAFE_INTEGER),
     hasEventAfter,
   } satisfies OrchestrationEventStoreShape;

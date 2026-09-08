@@ -1,8 +1,10 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
+import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
+import { OrchestrationHistoryOrigin } from "@t3tools/contracts";
 
 import { toPersistenceSqlError } from "../Errors.ts";
 import {
@@ -14,6 +16,28 @@ import {
   ProjectionThreadProposedPlanRepository,
   type ProjectionThreadProposedPlanRepositoryShape,
 } from "../Services/ProjectionThreadProposedPlans.ts";
+
+const ProjectionThreadProposedPlanDbRow = ProjectionThreadProposedPlan.mapFields(
+  Struct.assign({
+    historyOrigin: Schema.NullOr(Schema.fromJsonString(OrchestrationHistoryOrigin)),
+  }),
+);
+
+function toProjectionThreadProposedPlan(
+  row: typeof ProjectionThreadProposedPlanDbRow.Type,
+): ProjectionThreadProposedPlan {
+  return {
+    planId: row.planId,
+    threadId: row.threadId,
+    turnId: row.turnId,
+    planMarkdown: row.planMarkdown,
+    implementedAt: row.implementedAt,
+    implementationThreadId: row.implementationThreadId,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    ...(row.historyOrigin !== null ? { historyOrigin: row.historyOrigin } : {}),
+  };
+}
 
 const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -30,6 +54,7 @@ const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
         implementation_thread_id,
         created_at,
         updated_at
+        , history_origin_json
       )
       VALUES (
         ${row.planId},
@@ -40,6 +65,7 @@ const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
         ${row.implementationThreadId},
         ${row.createdAt},
         ${row.updatedAt}
+        , ${row.historyOrigin === undefined ? null : JSON.stringify(row.historyOrigin)}
       )
       ON CONFLICT (plan_id)
       DO UPDATE SET
@@ -50,6 +76,10 @@ const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
         implementation_thread_id = excluded.implementation_thread_id,
         created_at = excluded.created_at,
         updated_at = excluded.updated_at
+        , history_origin_json = COALESCE(
+          excluded.history_origin_json,
+          projection_thread_proposed_plans.history_origin_json
+        )
     `,
   });
 
@@ -73,7 +103,7 @@ const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
 
   const listProjectionThreadProposedPlanRows = SqlSchema.findAll({
     Request: ListProjectionThreadProposedPlansInput,
-    Result: ProjectionThreadProposedPlan,
+    Result: ProjectionThreadProposedPlanDbRow,
     execute: ({ threadId }) => sql`
       SELECT
         plan_id AS "planId",
@@ -84,6 +114,7 @@ const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
         implementation_thread_id AS "implementationThreadId",
         created_at AS "createdAt",
         updated_at AS "updatedAt"
+        , history_origin_json AS "historyOrigin"
       FROM projection_thread_proposed_plans
       WHERE thread_id = ${threadId}
       ORDER BY created_at ASC, plan_id ASC
@@ -111,12 +142,12 @@ const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
         implemented_at AS "implementedAt",
         updated_at AS "updatedAt"
       FROM projection_thread_proposed_plans
-      WHERE thread_id = ${threadId}
+      WHERE thread_id = ${threadId} AND history_origin_json IS NULL
         AND (
           turn_id = ${latestTurnId}
           OR NOT EXISTS (
             SELECT 1 FROM projection_thread_proposed_plans
-            WHERE thread_id = ${threadId} AND turn_id = ${latestTurnId}
+            WHERE thread_id = ${threadId} AND history_origin_json IS NULL AND turn_id = ${latestTurnId}
           )
         )
       ORDER BY created_at ASC, plan_id ASC
@@ -164,6 +195,7 @@ const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
       Effect.mapError(
         toPersistenceSqlError("ProjectionThreadProposedPlanRepository.listByThreadId:query"),
       ),
+      Effect.map((rows) => rows.map(toProjectionThreadProposedPlan)),
     );
 
   const deleteByThreadId: ProjectionThreadProposedPlanRepositoryShape["deleteByThreadId"] = (

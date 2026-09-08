@@ -19,13 +19,18 @@ import type {
   OrchestrationSearchThreadsInput,
   OrchestrationSearchThreadsResult,
   OrchestrationShellSnapshot,
+  OrchestrationSubagentDetail,
+  OrchestrationSubagentDetailSnapshot,
+  OrchestrationSubagentDetailWindow,
   OrchestrationThread,
   OrchestrationThreadActivity,
   OrchestrationThreadDetailSnapshot,
   OrchestrationThreadDetailWindow,
   OrchestrationThreadShell,
   ProjectId,
+  SubagentId,
   ThreadId,
+  ThreadForkHistory,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Option from "effect/Option";
@@ -52,7 +57,9 @@ export interface ProjectionThreadCheckpointContext {
   readonly projectId: ProjectId;
   readonly workspaceRoot: string;
   readonly worktreePath: string | null;
+  readonly checkpointsEnabled: boolean;
   readonly checkpoints: ReadonlyArray<OrchestrationCheckpointSummary>;
+  readonly baselineCheckpointThreadId?: ThreadId;
 }
 
 export interface ProjectionFullThreadDiffContext {
@@ -62,6 +69,7 @@ export interface ProjectionFullThreadDiffContext {
   readonly worktreePath: string | null;
   readonly latestCheckpointTurnCount: number;
   readonly toCheckpointRef: CheckpointRef | null;
+  readonly baselineCheckpointThreadId?: ThreadId;
 }
 
 export interface ProjectionThreadDetailQuery {
@@ -183,6 +191,14 @@ export interface ProjectionSnapshotQueryShape {
   >;
 
   /**
+   * Check whether another retained root thread in the same project is actively
+   * starting or running work.
+   */
+  readonly hasActiveProjectAgentPeer: (
+    threadId: ThreadId,
+  ) => Effect.Effect<boolean, ProjectionRepositoryError>;
+
+  /**
    * Read the checkpoint context needed to resolve a single thread diff.
    */
   readonly getThreadCheckpointContext: (
@@ -229,12 +245,38 @@ export interface ProjectionSnapshotQueryShape {
   >;
 
   /**
-   * Read a single active thread detail snapshot by id.
+   * Read a single retained (active or archived, but not deleted) thread detail snapshot by id.
    */
   readonly getThreadDetailById: (
     threadId: ThreadId,
     query?: ProjectionThreadDetailQuery,
   ) => Effect.Effect<Option.Option<OrchestrationThread>, ProjectionRepositoryError>;
+
+  /** Rehydrate only the immutable inherited prefix required for first-turn provider handoff. */
+  readonly getThreadForkHistory: (
+    threadId: ThreadId,
+  ) => Effect.Effect<Option.Option<ThreadForkHistory>, ProjectionRepositoryError>;
+
+  /**
+   * Read one retained subagent and its transcript without hydrating the
+   * transcripts of sibling agents.
+   */
+  readonly getSubagentDetailById: (
+    threadId: ThreadId,
+    subagentId: SubagentId,
+  ) => Effect.Effect<Option.Option<OrchestrationSubagentDetail>, ProjectionRepositoryError>;
+
+  /**
+   * Read one retained subagent transcript together with the projection
+   * sequence in one transaction. This prevents a streaming event from being
+   * represented in the detail while still being replayed after an older
+   * independently-read cursor.
+   */
+  readonly getSubagentDetailSnapshot: (
+    threadId: ThreadId,
+    subagentId: SubagentId,
+    window?: OrchestrationSubagentDetailWindow,
+  ) => Effect.Effect<Option.Option<OrchestrationSubagentDetailSnapshot>, ProjectionRepositoryError>;
 
   /**
    * Read a single active thread detail together with the projection snapshot

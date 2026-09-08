@@ -1,6 +1,6 @@
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
-import { NonNegativeInt } from "@t3tools/contracts";
+import { NonNegativeInt, OrchestrationHistoryOrigin } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -22,6 +22,7 @@ const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
   Struct.assign({
     payload: Schema.fromJsonString(Schema.Unknown),
     sequence: Schema.NullOr(NonNegativeInt),
+    historyOrigin: Schema.NullOr(Schema.fromJsonString(OrchestrationHistoryOrigin)),
   }),
 );
 
@@ -38,6 +39,7 @@ function toProjectionThreadActivity(
     payload: row.payload,
     ...(row.sequence !== null ? { sequence: row.sequence } : {}),
     createdAt: row.createdAt,
+    ...(row.historyOrigin !== null ? { historyOrigin: row.historyOrigin } : {}),
   };
 }
 
@@ -69,6 +71,7 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
               payload_json,
               sequence,
               created_at
+              , history_origin_json
             )
             VALUES (
               ${row.activityId},
@@ -80,6 +83,7 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
               ${JSON.stringify(row.payload)},
               ${row.sequence ?? null},
               ${row.createdAt}
+              , ${row.historyOrigin === undefined ? null : JSON.stringify(row.historyOrigin)}
             )
             ON CONFLICT (activity_id)
             DO UPDATE SET
@@ -91,6 +95,10 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
               payload_json = excluded.payload_json,
               sequence = excluded.sequence,
               created_at = excluded.created_at
+              , history_origin_json = COALESCE(
+                excluded.history_origin_json,
+                projection_thread_activities.history_origin_json
+              )
           `,
   });
 
@@ -108,7 +116,8 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
           summary,
           payload_json AS "payload",
           sequence,
-          created_at AS "createdAt"
+          created_at AS "createdAt",
+          history_origin_json AS "historyOrigin"
         FROM (
           SELECT *
           FROM projection_thread_activities
@@ -140,8 +149,10 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
           payload_json AS "payload",
           sequence,
           created_at AS "createdAt"
+          , history_origin_json AS "historyOrigin"
         FROM projection_thread_activities
         WHERE thread_id = ${threadId}
+          AND history_origin_json IS NULL
           AND kind IN (
             'user-input.requested',
             'user-input.resolved',
@@ -169,9 +180,11 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
           summary,
           payload_json AS "payload",
           sequence,
-          created_at AS "createdAt"
+          created_at AS "createdAt",
+          history_origin_json AS "historyOrigin"
         FROM projection_thread_activities
         WHERE thread_id = ${threadId}
+          AND history_origin_json IS NULL
           AND kind IN ('task.started', 'task.progress')
           AND json_extract(payload_json, '$.taskId') = ${taskId}
           AND length(trim(
