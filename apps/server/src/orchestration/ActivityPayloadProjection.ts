@@ -371,14 +371,23 @@ export function projectActivityPayload(
   // projection below deliberately summarizes.
   const projectedPayload = { ...payload };
   delete projectedPayload.canonicalPayload;
+  if (projectedPayload.eventId === activity.id) {
+    delete projectedPayload.eventId;
+  }
+  if (
+    typeof projectedPayload.itemId === "string" &&
+    projectedPayload.itemId === payload.toolCallId
+  ) {
+    delete projectedPayload.itemId;
+  }
+  for (const key of ["providerInstanceId", "subagentId", "itemId", "requestId", "providerRefs"]) {
+    if (projectedPayload[key] === null) {
+      delete projectedPayload[key];
+    }
+  }
 
   if (!data) {
-    return "canonicalPayload" in payload
-      ? {
-          ...activity,
-          payload: projectedPayload,
-        }
-      : activity;
+    return { ...activity, payload: projectedPayload };
   }
 
   const itemStatus = asRecord(data.item)?.status;
