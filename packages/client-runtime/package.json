@@ -258,6 +258,10 @@
     "./openrouter-model-selection": {
       "types": "./src/openRouterModelSelection.ts",
       "default": "./src/openRouterModelSelection.ts"
+    },
+    "./mcp": {
+      "types": "./src/mcp/index.ts",
+      "default": "./src/mcp/index.ts"
     }
   },
   "scripts": {
