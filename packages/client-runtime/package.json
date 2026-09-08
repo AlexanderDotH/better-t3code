@@ -266,6 +266,14 @@
     "./git-workbench": {
       "types": "./src/git-workbench/index.ts",
       "default": "./src/git-workbench/index.ts"
+    },
+    "./knowledge-graph": {
+      "types": "./src/knowledgeGraphViewModel.ts",
+      "default": "./src/knowledgeGraphViewModel.ts"
+    },
+    "./state/knowledge-graph": {
+      "types": "./src/state/knowledgeGraph.ts",
+      "default": "./src/state/knowledgeGraph.ts"
     }
   },
   "scripts": {
