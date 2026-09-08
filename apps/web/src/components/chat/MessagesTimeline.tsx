@@ -1,3 +1,4 @@
+import { resolveForkBoundaryTimelineEntryId } from "../../lib/threadFork";
 import { forkBoundaryKey } from "@t3tools/client-runtime/thread-fork";
 import { ForkChatButton } from "./ForkChatButton";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
@@ -219,7 +220,14 @@ export interface TimelineRetryAction {
   readonly onRetry: (messageId: MessageId) => void;
 }
 
+export interface TimelineForkProvenance {
+  readonly sourceTitle: string;
+  readonly boundary: ThreadForkBoundary;
+  readonly onOpenSource?: (() => void) | undefined;
+}
+
 interface TimelineRowSharedState {
+  forkDividerAfterRowId: string | null;
   forkActions: TimelineForkActions | null;
   retryAction: TimelineRetryAction | null;
   citationRequest: AssistantCitationTarget | null;
@@ -323,7 +331,29 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END = {
 // Props (public API)
 // ---------------------------------------------------------------------------
 
+function TimelineForkProvenanceBanner({ sourceTitle, onOpenSource }: TimelineForkProvenance) {
+  const translate = useInterfaceTranslator().message;
+  return (
+    <div className="pb-4" data-fork-provenance="true">
+      <p className="px-1 text-xs text-muted-foreground">
+        {translate("chat.timeline.forkedFrom")}{" "}
+        {onOpenSource ? (
+          <button
+            type="button"
+            className="font-medium text-foreground underline decoration-border underline-offset-4 hover:decoration-foreground"
+            onClick={onOpenSource}
+          >
+            {sourceTitle}
+          </button>
+        ) : (
+          <span className="font-medium text-foreground">{sourceTitle}</span>
+        )}
+      </p>
+    </div>
+  );
+}
 interface MessagesTimelineProps {
+  forkProvenance?: TimelineForkProvenance | null;
   forkActions?: TimelineForkActions | null;
   retryAction?: TimelineRetryAction | null;
   citationRequest?: AssistantCitationRequest | null;
@@ -387,6 +417,7 @@ interface MessagesTimelineProps {
 // ---------------------------------------------------------------------------
 
 export const MessagesTimeline = memo(function MessagesTimeline({
+  forkProvenance = null,
   forkActions = null,
   retryAction = null,
   citationRequest = null,
@@ -600,6 +631,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     supportsConversationRollback,
   ]);
   const rows = useStableRows(rawRows);
+  const forkDividerAfterRowId = useMemo(
+    () =>
+      forkProvenance
+        ? resolveForkBoundaryTimelineEntryId(timelineEntries, forkProvenance.boundary)
+        : null,
+    [forkProvenance, timelineEntries],
+  );
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
@@ -788,6 +826,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       agentPanelModel,
       onOpenAgents,
       forkActions,
+      forkDividerAfterRowId,
       retryAction,
     }),
     [
@@ -814,6 +853,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       agentPanelModel,
       onOpenAgents,
       forkActions,
+      forkDividerAfterRowId,
       retryAction,
     ],
   );
@@ -899,17 +939,20 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               topFadeEnabled && "topbar-scroll-fade",
             )}
             ListHeaderComponent={
-              loadEarlier !== null ? (
-                <TimelineLoadEarlierHeader
-                  loading={loadEarlier.loading}
-                  onLoadEarlier={loadEarlier.onLoadEarlier}
-                  fade={topFadeEnabled}
-                />
-              ) : topFadeEnabled ? (
-                TIMELINE_LIST_FADE_HEADER
-              ) : (
-                TIMELINE_LIST_HEADER
-              )
+              <>
+                {loadEarlier !== null ? (
+                  <TimelineLoadEarlierHeader
+                    loading={loadEarlier.loading}
+                    onLoadEarlier={loadEarlier.onLoadEarlier}
+                    fade={topFadeEnabled}
+                  />
+                ) : topFadeEnabled ? (
+                  TIMELINE_LIST_FADE_HEADER
+                ) : (
+                  TIMELINE_LIST_HEADER
+                )}
+                {forkProvenance ? <TimelineForkProvenanceBanner {...forkProvenance} /> : null}
+              </>
             }
             ListFooterComponent={timelineListFooter}
           />
@@ -1290,6 +1333,8 @@ type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["grouped
 type TimelineRow = MessagesTimelineRow;
 
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
+  const { forkDividerAfterRowId } = use(TimelineRowCtx);
+  const translate = useInterfaceTranslator().message;
   const isExpandedToolGroup = row.kind === "work" && row.isExpandedToolGroup;
   const isExpandedToolGroupHeader =
     (row.kind === "work-toggle" && row.expanded) || (row.kind === "work-live" && row.expanded);
@@ -1345,6 +1390,16 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "assistant-meta" ? <AssistantMetaTimelineRow row={row} /> : null}
       {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
       {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
+      {forkDividerAfterRowId === row.id ? (
+        <div
+          className="flex items-center gap-3 pb-4 pt-1 text-xs text-muted-foreground"
+          data-fork-start-divider="true"
+        >
+          <span className="h-px flex-1 bg-border" />
+          <span>{translate("chat.timeline.forkStartsHere")}</span>
+          <span className="h-px flex-1 bg-border" />
+        </div>
+      ) : null}
       {row.kind === "thinking" ? <ThinkingTimelineRow /> : null}
     </div>
   );

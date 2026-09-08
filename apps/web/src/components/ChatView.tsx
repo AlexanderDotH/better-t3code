@@ -1886,6 +1886,14 @@ export default function ChatView(props: ChatViewProps) {
     [activeThreadEnvironmentId, activeThreadId],
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
+  const forkSourceRef = useMemo(
+    () =>
+      activeThread?.fork
+        ? scopeThreadRef(activeThread.environmentId, activeThread.fork.provenance.sourceThreadId)
+        : null,
+    [activeThread?.environmentId, activeThread?.fork],
+  );
+  const forkSourceShell = useThreadShell(forkSourceRef);
   const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
   const [timelineAnchor, setTimelineAnchor] = useState<{
     readonly threadKey: string | null;
@@ -8085,6 +8093,30 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
 
+  const timelineForkProvenance = useMemo(
+    () =>
+      activeThread?.fork
+        ? {
+            sourceTitle: activeThread.fork.provenance.sourceTitle,
+            boundary: activeThread.fork.provenance.boundary,
+            ...(forkSourceRef && forkSourceShell
+              ? {
+                  onOpenSource: () => {
+                    void navigate({
+                      to: "/$environmentId/$threadId",
+                      params: {
+                        environmentId: forkSourceRef.environmentId,
+                        threadId: forkSourceRef.threadId,
+                      },
+                    });
+                  },
+                }
+              : {}),
+          }
+        : null,
+    [activeThread?.fork, forkSourceRef, forkSourceShell, navigate],
+  );
+
   const onExpandTimelineImage = useCallback((preview: ExpandedImagePreview) => {
     setExpandedImage(preview);
   }, []);
@@ -8477,6 +8509,7 @@ export default function ChatView(props: ChatViewProps) {
               <MessagesTimeline
                 retryAction={timelineRetryAction}
                 forkActions={timelineForkActions}
+                forkProvenance={timelineForkProvenance}
                 citationRequest={citationRequest}
                 citationHistoryLoading={threadDetailLoading}
                 onCiteAssistantText={citeAssistantText}
