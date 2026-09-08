@@ -111,3 +111,26 @@ On web and desktop, use **Agents** to follow work delegated to subagents.
 Expand a tool call in the conversation to see its full command and output.
 Summaries shorten shell wrappers and can still describe the latest call after it
 finishes; the call's own result shows its status.
+
+## Continue from an earlier message
+
+On web and desktop, use the fork action on a user message, assistant response, or proposed plan to
+start a separate thread from that point. The source conversation remains available. Follow the
+source link in the fork to return to it; the history boundary shows where new work begins.
+
+When supported by the connected server, an interrupted turn offers a retry beside its eligible
+user message. Retry continues that request without requiring you to reconstruct its text. Wait for
+the current turn to stop before retrying. You can also edit a new prompt and send a different task.
+
+Use the thread's stop control to interrupt current work. The stopping state remains visible while
+the environment finishes cancellation and cleanup. See [subagents](./general-subagents.md) for how
+stopping a parent affects delegated work.
+
+## Workspace cards
+
+On web and desktop, the thread's workspace cards keep Chat, [Git](./git-workbench.md), and
+[MCP](./mcp-servers.md) together. Bring a card forward to use that workspace view, or expand it for
+more detail. The selected thread still determines its environment and worktree.
+
+Enable or disable the card deck in **Settings → Better T3 → Visual**. An older server may offer
+only the compact Git status and existing Git actions; update the environment for the full workbench.

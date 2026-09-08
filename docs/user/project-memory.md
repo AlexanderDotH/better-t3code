@@ -3,7 +3,7 @@
 Project memory keeps stable decisions, verified workflows, and known pitfalls available across
 threads and worktrees. It is separate from the chat transcript.
 
-Choose the project's memory source in Settings:
+Open **Settings → Projects**, select the project and checkout, then choose its memory source:
 
 - **Project file** uses T3 Code's shared project memory.
 - **Provider memory** leaves memory to the selected provider without also injecting the project file.

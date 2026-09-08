@@ -80,7 +80,24 @@ Stashes containing uploaded files must be restored in their original environment
 Those files are retained for 24 hours. After an upload expires, restore the prompt
 and use **Attach again** or remove the missing file before sending.
 
-## Voice input on iPhone
+## Dictate and refine a prompt
+
+On web and desktop, open **Settings → Connections → Voice input**, enable dictation, and add an
+AssemblyAI key. Start the microphone in the composer, then stop to finish the transcript. Review
+and edit the text before sending. Canceling restores the draft you had before recording.
+
+Choose **Spoken language** to preserve the transcript's language or **English** to translate the
+finished transcript with the configured translation model. Project speech profiles in the same
+settings section improve recognition of repository names and terminology; re-index a profile after
+substantial project changes, or return it to its basic profile.
+
+**Improve prompts before sending** uses the selected text-generation model to refine a prompt.
+It is separate from transcription and can be turned off independently. Server dictation sends audio
+through the connected environment to AssemblyAI; translation and prompt improvement use the
+configured provider. Mobile uses server dictation when it is configured and otherwise retains its
+supported native recording flow.
+
+## Native voice input on iPhone
 
 On supported iPhones with iOS 26 or later, use the composer's microphone to record,
 then confirm to transcribe. Text is inserted where your selection was when

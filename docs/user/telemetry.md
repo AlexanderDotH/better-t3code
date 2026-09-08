@@ -1,11 +1,7 @@
 # Product usage data
 
-The T3 Code server sends product usage events to PostHog, associated with a hashed account or
-installation identifier. Events include the provider, model, reasoning effort, permission mode,
-turn result, duration, and main-agent token totals when available.
+This fork disables the server's product analytics sender. It does not record or send server product
+usage events to PostHog, and no opt-out setting is required.
 
-Events do not include prompts, responses, file contents, authentication tokens, conversation IDs,
-raw provider events, or child-agent output. Child-agent token use is excluded from the totals.
-
-To disable collection, set `T3CODE_TELEMETRY_ENABLED=false` in the server's environment before
-starting it. This stops product events from being recorded or sent.
+The [Usage screen](./usage.md) still reads provider history to show your usage and limits. Local
+diagnostic logs and requests to your configured providers remain part of normal operation.
