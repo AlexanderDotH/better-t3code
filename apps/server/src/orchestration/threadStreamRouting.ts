@@ -49,7 +49,9 @@ function isSelectedSubagentDetailEvent(event: OrchestrationEvent, subagentId: Su
   }
 }
 
-export function toRootThreadStreamItem(event: OrchestrationEvent): OrchestrationThreadStreamItem {
+export function toRootThreadStreamItem(
+  event: OrchestrationEvent,
+): Extract<OrchestrationThreadStreamItem, { readonly kind: "event" | "cursor" }> {
   return isRootThreadDetailEvent(event)
     ? { kind: "event", event }
     : { kind: "cursor", sequence: event.sequence };
@@ -58,7 +60,7 @@ export function toRootThreadStreamItem(event: OrchestrationEvent): Orchestration
 export function toSubagentStreamItem(
   event: OrchestrationEvent,
   subagentId: SubagentId,
-): OrchestrationSubagentStreamItem {
+): Extract<OrchestrationSubagentStreamItem, { readonly kind: "event" | "cursor" }> {
   return isSelectedSubagentDetailEvent(event, subagentId)
     ? { kind: "event", event }
     : { kind: "cursor", sequence: event.sequence };
