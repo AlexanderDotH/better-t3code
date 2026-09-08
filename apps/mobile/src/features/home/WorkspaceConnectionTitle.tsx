@@ -14,6 +14,7 @@ import {
   workspaceConnectionStatusPresentation,
   type WorkspaceConnectionStatusPresentation,
 } from "./workspace-connection-status";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 /**
  * Delay before a connection interruption surfaces in the title slot. Sub-second
@@ -103,6 +104,7 @@ export function WorkspaceConnectionTitle(props: {
   /** Space available beside the native header actions. */
   readonly maxWidth?: number;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const status = useDelayedConnectionStatus();
   const size = props.size ?? "navbar";
 
@@ -119,7 +121,7 @@ export function WorkspaceConnectionTitle(props: {
   return (
     <StatusFadeIn grow={props.grow} maxWidth={props.maxWidth}>
       <Pressable
-        accessibilityHint="Opens environment settings"
+        accessibilityHint={translator.message("mobile.connection.openSettingsHint")}
         accessibilityLabel={status.label}
         accessibilityRole="button"
         disabled={props.onPress === undefined}
