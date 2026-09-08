@@ -18,6 +18,7 @@ Stopping the parent turn cancels its unfinished delegated work. Completed result
 thread history. Subagents can search project memory, while the root agent owns changes to it when
 agent writes are enabled.
 
-For read-only repository exploration before a turn, use **Fetch** instead. Choose its model in
-**Settings → Better T3 → Agents**. Fetch gathers context; it does not replace a subagent assigned to
-edit or test code.
+For read-only repository exploration before a turn, enable **Fetch** in
+**Settings → Better T3 → Agents** and choose its model there. Subsequent requests can gather
+repository context before the main agent starts. Turn Fetch off in the same settings to skip that
+preparation. Fetch does not replace a subagent assigned to edit or test code.

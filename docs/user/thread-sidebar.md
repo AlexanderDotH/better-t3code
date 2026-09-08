@@ -134,3 +134,12 @@ more detail. The selected thread still determines its environment and worktree.
 
 Enable or disable the card deck in **Settings → Better T3 → Visual**. An older server may offer
 only the compact Git status and existing Git actions; update the environment for the full workbench.
+
+## Copy the full conversation
+
+On web or desktop, use **Copy transcript** in the chat header. On mobile, use **Copy transcript**
+in the thread settings. The environment must support transcript export and be connected; wait for
+the current turn to settle before copying.
+
+The clipboard receives the full saved Markdown transcript, including content outside the currently
+loaded part of the conversation. This export is unredacted.

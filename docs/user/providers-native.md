@@ -35,6 +35,10 @@ After authentication, choose **Default model** in the provider configuration. Yo
 available catalog while this choice is missing, but the provider is not ready for a turn until a
 default is configured. Refresh provider status after changing credentials or model access.
 
+In the OpenRouter model picker on web and desktop, narrow the catalog by agent readiness,
+capabilities, author, minimum context size, or favorites, and choose its sort order. Text search
+applies within those filters. Use **Reset filters** if a model you expect is hidden.
+
 A [Claude instance routed through OpenRouter](./providers-claude.md#openrouter) is a separate setup
 and continues to use Claude Code and its configuration.
 
