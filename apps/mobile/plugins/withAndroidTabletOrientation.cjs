@@ -45,36 +45,42 @@ function insertAfter(contents, anchor, insertion, description) {
   return contents.slice(0, end) + insertion + contents.slice(end);
 }
 
+function patchMainActivity(contents, language = "kt") {
+  if (language !== "kt") {
+    throw new Error("withAndroidTabletOrientation: MainActivity must be Kotlin.");
+  }
+  if (contents.includes("SCREEN_ORIENTATION_FULL_USER")) {
+    return contents;
+  }
+
+  let patched = insertAfter(
+    contents,
+    "import android.os.Bundle",
+    "\nimport android.content.pm.ActivityInfo\nimport android.content.res.Configuration",
+    "the android.os.Bundle import",
+  );
+  patched = insertAfter(
+    patched,
+    "class MainActivity : ReactActivity() {",
+    ORIENTATION_METHODS,
+    "the MainActivity class declaration",
+  );
+  return insertAfter(
+    patched,
+    "super.onCreate(null)",
+    ORIENTATION_ON_CREATE_CALL,
+    "the super.onCreate call",
+  );
+}
+
 module.exports = function withAndroidTabletOrientation(config) {
   return withMainActivity(config, (nextConfig) => {
-    let contents = nextConfig.modResults.contents;
-    if (nextConfig.modResults.language !== "kt") {
-      throw new Error("withAndroidTabletOrientation: MainActivity must be Kotlin.");
-    }
-    if (contents.includes("SCREEN_ORIENTATION_FULL_USER")) {
-      return nextConfig;
-    }
-
-    contents = insertAfter(
-      contents,
-      "import android.os.Bundle",
-      "\nimport android.content.pm.ActivityInfo\nimport android.content.res.Configuration",
-      "the android.os.Bundle import",
+    nextConfig.modResults.contents = patchMainActivity(
+      nextConfig.modResults.contents,
+      nextConfig.modResults.language,
     );
-    contents = insertAfter(
-      contents,
-      "class MainActivity : ReactActivity() {",
-      ORIENTATION_METHODS,
-      "the MainActivity class declaration",
-    );
-    contents = insertAfter(
-      contents,
-      "super.onCreate(null)",
-      ORIENTATION_ON_CREATE_CALL,
-      "the super.onCreate call",
-    );
-
-    nextConfig.modResults.contents = contents;
     return nextConfig;
   });
 };
+
+module.exports.patchMainActivity = patchMainActivity;

@@ -4,19 +4,25 @@ const { withGradleProperties } = require("expo/config-plugins");
 // causing OutOfMemoryError in :app:mergeExtDexDebug.
 const JVM_ARGS = "-Xmx4096m -XX:MaxMetaspaceSize=1024m";
 
+function configureGradleProperties(gradleProperties) {
+  const properties = gradleProperties.filter(
+    (item) => !(item.type === "property" && item.key === "org.gradle.jvmargs"),
+  );
+
+  properties.push({
+    type: "property",
+    key: "org.gradle.jvmargs",
+    value: JVM_ARGS,
+  });
+
+  return properties;
+}
+
 module.exports = function withAndroidGradleHeap(config) {
   return withGradleProperties(config, (nextConfig) => {
-    const properties = nextConfig.modResults.filter(
-      (item) => !(item.type === "property" && item.key === "org.gradle.jvmargs"),
-    );
-
-    properties.push({
-      type: "property",
-      key: "org.gradle.jvmargs",
-      value: JVM_ARGS,
-    });
-
-    nextConfig.modResults = properties;
+    nextConfig.modResults = configureGradleProperties(nextConfig.modResults);
     return nextConfig;
   });
 };
+
+module.exports.configureGradleProperties = configureGradleProperties;

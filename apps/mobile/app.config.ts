@@ -5,6 +5,12 @@ import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
 
 type AppVariant = "development" | "preview" | "production";
 
+export const IOS_APP_TRANSPORT_SECURITY = {
+  NSAllowsLocalNetworking: true,
+} as const;
+
+export const MOBILE_IOS_DEPLOYMENT_TARGET = "18.0";
+
 const repoEnv = loadRepoEnv();
 Object.assign(process.env, repoEnv);
 
@@ -211,7 +217,7 @@ const config: ExpoConfig = {
     },
     infoPlist: {
       NSAppTransportSecurity: {
-        NSAllowsArbitraryLoads: true,
+        ...IOS_APP_TRANSPORT_SECURITY,
       },
       NSLocalNetworkUsageDescription:
         "Allow T3 Code to connect to T3 Code servers on your local network or tailnet.",
@@ -316,7 +322,7 @@ const config: ExpoConfig = {
       "expo-audio",
       {
         microphonePermission: "Allow T3 Code to use your microphone for voice input.",
-        recordAudioAndroid: false,
+        recordAudioAndroid: true,
         enableBackgroundPlayback: false,
         enableBackgroundRecording: false,
       },
@@ -330,7 +336,15 @@ const config: ExpoConfig = {
         recordAudioAndroid: false,
       },
     ],
-    ["expo-image-picker", { photosPermission: false, microphonePermission: false }],
+    [
+      "expo-image-picker",
+      {
+        photosPermission: false,
+        // `false` blocks RECORD_AUDIO globally, including the permission that
+        // expo-audio needs for live voice input.
+        microphonePermission: "Allow $(PRODUCT_NAME) to turn speech into coding prompts.",
+      },
+    ],
     [
       "expo-splash-screen",
       {
@@ -357,7 +371,7 @@ const config: ExpoConfig = {
       "expo-build-properties",
       {
         ios: {
-          deploymentTarget: "18.0",
+          deploymentTarget: MOBILE_IOS_DEPLOYMENT_TARGET,
           // AppCheckCore 11.3+ includes Swift and needs module maps for these Objective-C dependencies.
           extraPods: [
             { name: "GoogleUtilities", modular_headers: true },

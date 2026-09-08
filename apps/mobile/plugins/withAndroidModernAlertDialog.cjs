@@ -45,6 +45,10 @@ const COLORS = {
   },
 };
 
+const DRAWABLES = {
+  "alert_dialog_background.xml": DIALOG_BACKGROUND_DRAWABLE,
+};
+
 function assignStyleItem(style, name, value) {
   style.item = style.item ?? [];
   const existing = style.item.find((item) => item.$?.name === name);
@@ -55,75 +59,78 @@ function assignStyleItem(style, name, value) {
   }
 }
 
+function configureStyles(androidResources) {
+  const resources = androidResources.resources;
+  resources.style = resources.style ?? [];
+
+  const appTheme = resources.style.find((style) => style.$?.name === "AppTheme");
+  if (appTheme) {
+    // React Native's dialog module builds an androidx.appcompat AlertDialog,
+    // which resolves its theme from the AppCompat attr; the framework attr is
+    // set too for any native code that inflates a platform AlertDialog.
+    assignStyleItem(appTheme, "alertDialogTheme", "@style/AppAlertDialog");
+    assignStyleItem(appTheme, "android:alertDialogTheme", "@style/AppAlertDialog");
+  }
+
+  resources.style = resources.style.filter(
+    (style) =>
+      !["AppAlertDialog", "AppAlertDialog.Title", "AppAlertDialog.Button"].includes(style.$?.name),
+  );
+  resources.style.push(
+    {
+      $: { name: "AppAlertDialog", parent: "ThemeOverlay.AppCompat.Dialog.Alert" },
+      item: [
+        { _: "@drawable/alert_dialog_background", $: { name: "android:windowBackground" } },
+        // The message body resolves textColorPrimary in AppCompat's alert
+        // layout; pointing it at the secondary token dims the message
+        // relative to the title, which keeps full-strength text via the
+        // explicit color in AppAlertDialog.Title.
+        { _: "@color/alert_dialog_secondary_text", $: { name: "android:textColorPrimary" } },
+        { _: "@color/alert_dialog_secondary_text", $: { name: "android:textColorSecondary" } },
+        // Theme-level fontFamily is the lowest-priority fallback in attribute
+        // resolution, so it reaches every text view in the dialog that does
+        // not carry its own fontFamily (the message body in particular).
+        { _: "@font/xml_dm_sans_regular", $: { name: "android:fontFamily" } },
+        // AppCompat's alert title view styles itself from the framework
+        // attr (?android:attr/windowTitleStyle); there is no unprefixed
+        // AppCompat equivalent.
+        { _: "@style/AppAlertDialog.Title", $: { name: "android:windowTitleStyle" } },
+        { _: "@style/AppAlertDialog.Button", $: { name: "buttonBarPositiveButtonStyle" } },
+        { _: "@style/AppAlertDialog.Button", $: { name: "buttonBarNegativeButtonStyle" } },
+        { _: "@style/AppAlertDialog.Button", $: { name: "buttonBarNeutralButtonStyle" } },
+      ],
+    },
+    {
+      $: { name: "AppAlertDialog.Title", parent: "RtlOverlay.DialogWindowTitle.AppCompat" },
+      item: [
+        { _: "@font/dm_sans_500medium", $: { name: "android:fontFamily" } },
+        { _: "18sp", $: { name: "android:textSize" } },
+        { _: "@color/alert_dialog_text", $: { name: "android:textColor" } },
+      ],
+    },
+    {
+      $: {
+        name: "AppAlertDialog.Button",
+        parent: "Widget.AppCompat.Button.ButtonBar.AlertDialog",
+      },
+      item: [
+        // The AppCompat button appearance hardcodes sans-serif-medium, so
+        // the font must be set here rather than relying on the theme
+        // fallback.
+        { _: "@font/dm_sans_500medium", $: { name: "android:fontFamily" } },
+        { _: "@color/alert_dialog_button_text", $: { name: "android:textColor" } },
+        { _: "false", $: { name: "android:textAllCaps" } },
+        { _: "0", $: { name: "android:letterSpacing" } },
+      ],
+    },
+  );
+
+  return androidResources;
+}
+
 function withAlertDialogStyles(config) {
   return withAndroidStyles(config, (config) => {
-    const resources = config.modResults.resources;
-    resources.style = resources.style ?? [];
-
-    const appTheme = resources.style.find((style) => style.$?.name === "AppTheme");
-    if (appTheme) {
-      // React Native's dialog module builds an androidx.appcompat AlertDialog,
-      // which resolves its theme from the AppCompat attr; the framework attr is
-      // set too for any native code that inflates a platform AlertDialog.
-      assignStyleItem(appTheme, "alertDialogTheme", "@style/AppAlertDialog");
-      assignStyleItem(appTheme, "android:alertDialogTheme", "@style/AppAlertDialog");
-    }
-
-    resources.style = resources.style.filter(
-      (style) =>
-        !["AppAlertDialog", "AppAlertDialog.Title", "AppAlertDialog.Button"].includes(
-          style.$?.name,
-        ),
-    );
-    resources.style.push(
-      {
-        $: { name: "AppAlertDialog", parent: "ThemeOverlay.AppCompat.Dialog.Alert" },
-        item: [
-          { _: "@drawable/alert_dialog_background", $: { name: "android:windowBackground" } },
-          // The message body resolves textColorPrimary in AppCompat's alert
-          // layout; pointing it at the secondary token dims the message
-          // relative to the title, which keeps full-strength text via the
-          // explicit color in AppAlertDialog.Title.
-          { _: "@color/alert_dialog_secondary_text", $: { name: "android:textColorPrimary" } },
-          { _: "@color/alert_dialog_secondary_text", $: { name: "android:textColorSecondary" } },
-          // Theme-level fontFamily is the lowest-priority fallback in attribute
-          // resolution, so it reaches every text view in the dialog that does
-          // not carry its own fontFamily (the message body in particular).
-          { _: "@font/xml_dm_sans_regular", $: { name: "android:fontFamily" } },
-          // AppCompat's alert title view styles itself from the framework
-          // attr (?android:attr/windowTitleStyle); there is no unprefixed
-          // AppCompat equivalent.
-          { _: "@style/AppAlertDialog.Title", $: { name: "android:windowTitleStyle" } },
-          { _: "@style/AppAlertDialog.Button", $: { name: "buttonBarPositiveButtonStyle" } },
-          { _: "@style/AppAlertDialog.Button", $: { name: "buttonBarNegativeButtonStyle" } },
-          { _: "@style/AppAlertDialog.Button", $: { name: "buttonBarNeutralButtonStyle" } },
-        ],
-      },
-      {
-        $: { name: "AppAlertDialog.Title", parent: "RtlOverlay.DialogWindowTitle.AppCompat" },
-        item: [
-          { _: "@font/dm_sans_500medium", $: { name: "android:fontFamily" } },
-          { _: "18sp", $: { name: "android:textSize" } },
-          { _: "@color/alert_dialog_text", $: { name: "android:textColor" } },
-        ],
-      },
-      {
-        $: {
-          name: "AppAlertDialog.Button",
-          parent: "Widget.AppCompat.Button.ButtonBar.AlertDialog",
-        },
-        item: [
-          // The AppCompat button appearance hardcodes sans-serif-medium, so
-          // the font must be set here rather than relying on the theme
-          // fallback.
-          { _: "@font/dm_sans_500medium", $: { name: "android:fontFamily" } },
-          { _: "@color/alert_dialog_button_text", $: { name: "android:textColor" } },
-          { _: "false", $: { name: "android:textAllCaps" } },
-          { _: "0", $: { name: "android:letterSpacing" } },
-        ],
-      },
-    );
-
+    config.modResults = configureStyles(config.modResults);
     return config;
   });
 }
@@ -149,13 +156,21 @@ function assignColors(colorsResource, palette) {
   return result;
 }
 
+function configureColors(androidResources, appearance) {
+  const palette = COLORS[appearance];
+  if (palette == null) {
+    throw new Error(`Unsupported Android alert dialog appearance: ${appearance}`);
+  }
+  return assignColors(androidResources, palette);
+}
+
 function withAlertDialogColors(config) {
   config = withAndroidColors(config, (config) => {
-    config.modResults = assignColors(config.modResults, COLORS.light);
+    config.modResults = configureColors(config.modResults, "light");
     return config;
   });
   config = withAndroidColorsNight(config, (config) => {
-    config.modResults = assignColors(config.modResults, COLORS.night);
+    config.modResults = configureColors(config.modResults, "night");
     return config;
   });
   return config;
@@ -174,10 +189,9 @@ function withAlertDialogBackgroundDrawable(config) {
         "drawable",
       );
       fs.mkdirSync(drawableDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(drawableDir, "alert_dialog_background.xml"),
-        DIALOG_BACKGROUND_DRAWABLE,
-      );
+      for (const [fileName, contents] of Object.entries(DRAWABLES)) {
+        fs.writeFileSync(path.join(drawableDir, fileName), contents);
+      }
       return config;
     },
   ]);
@@ -186,3 +200,7 @@ function withAlertDialogBackgroundDrawable(config) {
 module.exports = function withAndroidModernAlertDialog(config) {
   return withAlertDialogBackgroundDrawable(withAlertDialogColors(withAlertDialogStyles(config)));
 };
+
+module.exports.configureColors = configureColors;
+module.exports.configureStyles = configureStyles;
+module.exports.drawables = DRAWABLES;
