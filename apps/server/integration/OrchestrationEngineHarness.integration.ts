@@ -89,6 +89,12 @@ import * as VcsProcess from "../src/vcs/VcsProcess.ts";
 import * as AgentAwarenessRelay from "../src/relay/AgentAwarenessRelay.ts";
 import * as PullRequestService from "../src/pullRequest/PullRequestService.ts";
 
+import { TurnAbortCoordinatorLive } from "../src/orchestration/Layers/TurnAbortCoordinator.ts";
+import { TurnQuiescenceNotifierLive } from "../src/git-workbench/TurnQuiescenceNotifier.ts";
+import { FetchWorkerCoordinator } from "../src/fetch/FetchWorkerCoordinator.ts";
+import { NoOpSkillEngineLayer } from "../src/skills/testUtils/NoOpSkillEngine.ts";
+import { ProjectMemoryStore } from "../src/projectMemory/ProjectMemoryStore.ts";
+
 const decodeCodexSettings = Schema.decodeEffect(CodexSettings);
 
 function runGit(cwd: string, args: ReadonlyArray<string>) {
@@ -320,6 +326,40 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(ThreadBackgroundLiveness.layer),
       Layer.provideMerge(ThreadPlanProgress.layer),
     );
+    const forkRuntimeLayer = Layer.mergeAll(
+      TurnAbortCoordinatorLive.pipe(Layer.provide(runtimeServicesLayer)),
+      TurnQuiescenceNotifierLive,
+      NoOpSkillEngineLayer,
+      Layer.succeed(FetchWorkerCoordinator, {
+        run: (input) =>
+          Effect.succeed({
+            runId: "integration-fetch-disabled",
+            status: "skipped",
+            warnings: [],
+            plannedWorkers: 0,
+            completedWorkers: 0,
+            successfulWorkers: 0,
+            providerInstanceId: input.modelSelection.instanceId,
+            providerDriver: input.providerDriver,
+            modelSelection: input.modelSelection,
+          }),
+        handoffToMain: (_input, sendMain) => sendMain.pipe(Effect.as(true)),
+        requestInterrupt: () => Effect.succeed(false),
+        hasActiveRun: () => Effect.succeed(false),
+      }),
+      Layer.mock(ProjectMemoryStore)({
+        read: () =>
+          Effect.succeed({
+            mode: "provider",
+            storage: null,
+            entries: [],
+            markdown: "",
+            tokenBudget: 2560,
+            estimatedTokens: 0,
+            truncated: false,
+          }),
+      }),
+    );
     const serverSettingsLayer = ServerSettingsService.layerTest();
     const runtimeIngestionLayer = ProviderRuntimeIngestionLive.pipe(
       Layer.provideMerge(runtimeServicesLayer),
@@ -332,10 +372,10 @@ export const makeOrchestrationIntegrationHarness = (
         readonly newBranch: string;
       }) => Effect.succeed({ branch: input.newBranch }),
     });
-    const textGenerationLayer = Layer.succeed(TextGeneration, {
+    const textGenerationLayer = Layer.mock(TextGeneration)({
       generateBranchName: () => Effect.succeed({ branch: "update" }),
       generateThreadTitle: () => Effect.succeed({ title: "New thread" }),
-    } as unknown as TextGeneration["Service"]);
+    });
     const providerCommandReactorLayer = ProviderCommandReactorLive.pipe(
       Layer.provide(
         Layer.mock(ProviderAuthService)({
@@ -414,6 +454,8 @@ export const makeOrchestrationIntegrationHarness = (
     const layer = Layer.empty.pipe(
       Layer.provideMerge(runtimeServicesLayer),
       Layer.provideMerge(orchestrationReactorLayer),
+      Layer.provideMerge(forkRuntimeLayer),
+      Layer.provideMerge(VcsProcess.layer),
       Layer.provideMerge(providerRegistryLayer),
       Layer.provide(persistenceLayer),
       Layer.provideMerge(RepositoryIdentityResolver.layer),
