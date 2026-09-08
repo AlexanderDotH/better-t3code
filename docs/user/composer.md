@@ -44,6 +44,10 @@ returns to the remembered selection.
 
 Leaving reasoning level or service tier unset uses the provider's own configuration.
 
+On web and desktop, a Codex model that advertises context choices offers **Context window** in the
+composer's model controls. Choose from that model's supported sizes, or return to its default.
+The choice belongs to the current thread and does not become a global default for new threads.
+
 ## Quote an assistant response
 
 On web and desktop, select text within one assistant response and choose
