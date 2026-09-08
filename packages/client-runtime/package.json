@@ -306,6 +306,14 @@
     "./state/agent-settings": {
       "types": "./src/state/agentSettings.ts",
       "default": "./src/state/agentSettings.ts"
+    },
+    "./prompt-improvement": {
+      "types": "./src/promptImprovement.ts",
+      "default": "./src/promptImprovement.ts"
+    },
+    "./provider-selection": {
+      "types": "./src/providerSelection.ts",
+      "default": "./src/providerSelection.ts"
     }
   },
   "scripts": {

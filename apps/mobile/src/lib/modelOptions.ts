@@ -1,3 +1,4 @@
+import { isStartedThreadModelChangeAllowed } from "@t3tools/client-runtime/provider-selection";
 import {
   ProviderDriverKind,
   type ModelCapabilities,
@@ -320,13 +321,6 @@ export function filterStartedThreadModelOptions(input: {
     ) {
       return false;
     }
-    if (
-      (current.requiresNewThreadForModelChange || option.requiresNewThreadForModelChange) &&
-      (option.selection.instanceId !== current.selection.instanceId ||
-        option.selection.model !== current.selection.model)
-    ) {
-      return false;
-    }
-    return true;
+    return isStartedThreadModelChangeAllowed({ hasStarted: input.hasStarted, allowMidChatProviderSwitching: input.allowMidChatProviderSwitching, currentSelection: input.currentSelection, nextSelection: option.selection, currentProviderInstanceId: input.currentProviderInstanceId, currentRequiresNewThread: current.requiresNewThreadForModelChange, nextRequiresNewThread: option.requiresNewThreadForModelChange });
   });
 }
