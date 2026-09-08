@@ -49,6 +49,41 @@ function parseLogLine(line: string) {
 }
 
 describe("EventNdjsonLogger", () => {
+  it.effect("truncates only oversized diagnostic copies and records original bytes plus hash", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "provider-native.ndjson");
+      const fullResult = "x".repeat(300 * 1024);
+
+      try {
+        const logger = yield* makeEventNdjsonLogger(basePath, { stream: "native" });
+        assert.exists(logger);
+        if (!logger) return;
+        const event = { type: "tool.result", result: fullResult };
+        yield* logger.write(event, ThreadId.make("thread-large"));
+        yield* logger.close();
+
+        assert.equal(event.result.length, fullResult.length);
+        const line = parseLogLine(
+          NodeFS.readFileSync(ownedLogPath(basePath, "thread-large"), "utf8").trim(),
+        );
+        const logged = JSON.parse(line.payload) as {
+          readonly _t3DiagnosticTruncation: {
+            readonly originalBytes: number;
+            readonly sha256: string;
+          };
+          readonly preview: string;
+        };
+        assert.isAbove(logged._t3DiagnosticTruncation.originalBytes, 256 * 1024);
+        assert.match(logged._t3DiagnosticTruncation.sha256, /^[a-f0-9]{64}$/);
+        assert.isBelow(Buffer.byteLength(line.payload), 256 * 1024);
+        assert.isBelow(logged.preview.length, fullResult.length);
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
   it.effect("logs bounded diagnostics when an event cannot be serialized", () => {
     const messages: Array<unknown> = [];
     const logCapture = Logger.make<unknown, void>(({ message }) => {
