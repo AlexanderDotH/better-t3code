@@ -5,6 +5,7 @@ import { FILL_PREVIEW_VIEWPORT } from "@t3tools/contracts";
 import { useEffect, useMemo } from "react";
 
 import { isElectron } from "~/env";
+import { useInterfaceLanguage } from "~/interfaceLanguageSync";
 import { useTheme } from "~/hooks/useTheme";
 import { useActivePreviewSessions } from "~/previewStateStore";
 
@@ -15,6 +16,7 @@ import { previewRuntimeTabId } from "./previewRuntimeTabId";
 
 export function ElectronBrowserHost() {
   const { resolvedTheme } = useTheme();
+  const interfaceLanguage = useInterfaceLanguage().language;
   const previewByThreadKey = useActivePreviewSessions();
   const sessions = useMemo(
     () =>
@@ -44,7 +46,7 @@ export function ElectronBrowserHost() {
 
     let lastSerializedTheme = "";
     const syncTheme = () => {
-      const theme = readPreviewAnnotationTheme();
+      const theme = readPreviewAnnotationTheme(interfaceLanguage);
       const serializedTheme = JSON.stringify(theme);
       if (serializedTheme === lastSerializedTheme) return;
       lastSerializedTheme = serializedTheme;
@@ -69,7 +71,7 @@ export function ElectronBrowserHost() {
       observer.disconnect();
       headObserver.disconnect();
     };
-  }, [resolvedTheme]);
+  }, [interfaceLanguage, resolvedTheme]);
 
   useEffect(() => {
     const preview = window.desktopBridge?.preview;

@@ -1,12 +1,16 @@
 import type { DesktopPreviewAnnotationTheme } from "@t3tools/contracts";
+import type { ResolvedInterfaceLanguage } from "@t3tools/shared/interfaceLanguage";
 
 const readVariable = (styles: CSSStyleDeclaration, name: string, fallback: string): string =>
   styles.getPropertyValue(name).trim() || fallback;
 
-export function readPreviewAnnotationTheme(): DesktopPreviewAnnotationTheme {
+export function readPreviewAnnotationTheme(
+  interfaceLanguage: ResolvedInterfaceLanguage = "en",
+): DesktopPreviewAnnotationTheme {
   const root = document.documentElement;
   const styles = getComputedStyle(root);
   return {
+    interfaceLanguage,
     colorScheme: root.classList.contains("dark") ? "dark" : "light",
     radius: readVariable(styles, "--radius", "0.625rem"),
     background: readVariable(styles, "--background", "white"),
