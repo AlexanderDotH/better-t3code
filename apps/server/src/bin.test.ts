@@ -37,6 +37,7 @@ import * as ServerConfig from "./config.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
+import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
@@ -363,6 +364,12 @@ const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Ef
     const routesLayer = HttpApiBuilder.layer(ProjectCliHttpApi).pipe(
       Layer.provide(orchestrationHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
+      Layer.provide(
+        Layer.succeed(ThreadDeletionReactor, {
+          start: () => Effect.void,
+          drainThrough: () => Effect.void,
+        }),
+      ),
     );
     const appLayer = HttpRouter.serve(routesLayer, {
       disableListenLog: true,
@@ -412,6 +419,17 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
 
       assert.include(output, "0.0.0");
     }),
+  );
+
+  it.effect(
+    "keeps the provider resource hook available without advertising it as a user command",
+    () =>
+      Effect.gen(function* () {
+        const help = yield* captureStdout(runCli(["--help"]));
+        assert.notInclude(help.output, "resource-governor-hook");
+        const hookHelp = yield* captureStdout(runCli(["resource-governor-hook", "--help"]));
+        assert.include(hookHelp.output, "resource-governor-hook");
+      }),
   );
 
   it.effect("accepts canonical --no-<flag> boolean negation", () =>
