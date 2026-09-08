@@ -37,7 +37,8 @@ A graph may report that it is truncated when the repository exceeds a safety bou
 
 T3 Code watches eligible project files after the initial index. External edits that arrive while an update is running are coalesced into one follow-up update instead of repeatedly restarting the active work. Restarting the server recovers interrupted indexing state and background enrichment work.
 
-Use the controls in **Settings → Better T3 → Knowledge** when needed:
+Use **Settings → Better T3 → Knowledge** to select a project, inspect progress, rebuild, or pause
+indexing. Open a thread's graph for its full controls, including Cancel and Clear:
 
 - **Pause** stops watching and background processing while retaining the graph and queue.
 - **Resume** reconciles the project again and continues queued work.

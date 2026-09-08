@@ -153,3 +153,18 @@ automatically. HTML previews cannot access your T3 Code session.
 
 On mobile, select a PDF attachment or link to open it. iOS uses the native viewer;
 Android opens the system chooser.
+
+## Implement a proposed plan
+
+On web and desktop, enable **Parallel plan implementation** under
+**Settings → Better T3 → Agents** to offer delegated implementation for supported providers.
+Choose a review model there if you want a particular model to assess the proposed split.
+
+When a settled plan is eligible, wait for its review before choosing **Implement**. The main
+action uses the suggested strategy. Its menu lets you choose standard implementation or an explicit
+subagent count, in the current thread or a new thread. If review fails, the interface identifies
+that its recommendation uses a fallback estimate.
+
+With an empty composer, Enter follows the plan's available implementation action. To refine the
+plan instead, type feedback and send it. A provider or model change can make a previously offered
+parallel strategy unavailable; choose a supported strategy before continuing.
