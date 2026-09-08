@@ -14,14 +14,16 @@ import { getLocalStorageItem, removeLocalStorageItem } from "../hooks/useLocalSt
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
-import { useEnvironmentIdentificationMode, useLegacySidebarEnabled } from "../hooks/useSettings";
+import {
+  useClientSettings,
+  useEnvironmentIdentificationMode,
+  useLegacySidebarEnabled,
+} from "../hooks/useSettings";
 import {
   PanelAnimationSuppressionProvider,
   usePanelAnimationSettings,
   usePanelNavigationSuppression,
 } from "../panelAnimations";
-import LegacyThreadSidebar from "./LegacySidebar";
-import ThreadSidebar from "./Sidebar";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import {
@@ -31,6 +33,7 @@ import {
 import { useProjects } from "../state/entities";
 import {
   resolveInitialThreadSidebarWidth,
+  resolveRenderedThreadSidebarWidth,
   resolveThreadSidebarMaximumWidth,
   THREAD_MAIN_CONTENT_MIN_WIDTH,
   THREAD_SIDEBAR_MIN_WIDTH,
@@ -45,6 +48,10 @@ import {
   useSidebarVisibility,
 } from "./ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { resolveThreadSidebarLayout, ThreadSidebarSelection } from "./ThreadSidebarSelection";
+import { resolveAppSidebarPlacement } from "./AppSidebarLayout.logic";
+import { useBetterT3DeviceFeature } from "../hooks/useBetterT3Feature";
+import { useInterfaceTranslator } from "../hooks/useInterfaceTranslator";
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "90px";
 
@@ -69,7 +76,8 @@ function readInitialThreadSidebarWidth(): number {
   }
 }
 
-function SidebarControl() {
+function SidebarControl({ side }: { readonly side: "left" | "right" }) {
+  const translator = useInterfaceTranslator();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { toggleSidebar } = useSidebar();
   const isSidebarVisible = useSidebarVisibility();
@@ -78,6 +86,7 @@ function SidebarControl() {
     environmentIdentificationMode === "artwork",
   );
   const shortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle");
+  const placement = resolveAppSidebarPlacement(side);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -101,17 +110,19 @@ function SidebarControl() {
   }, [keybindings, toggleSidebar]);
 
   return (
-    // The right-side layout controls carry mr-px (border compensation inside
-    // the panel), so the trigger mirrors it: both clusters sit one extra pixel
-    // off their edge and the titlebar reads symmetric.
     <div
-      className="pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 ml-px flex h-[var(--workspace-topbar-height)] items-center"
+      className={cn(
+        "pointer-events-none fixed top-[var(--workspace-controls-top)] z-50 flex h-[var(--workspace-topbar-height)] items-center",
+        placement.controlClassName,
+      )}
       data-sidebar-control=""
+      data-side={side}
     >
       <Tooltip>
         <TooltipTrigger
           render={
             <SidebarTrigger
+              side={side}
               className={cn(
                 "pointer-events-auto",
                 isSidebarVisible &&
@@ -121,12 +132,13 @@ function SidebarControl() {
                   stageBackdropVariant &&
                   resolveSidebarStageFocusRingOffsetClass(stageBackdropVariant),
               )}
-              aria-label="Toggle main sidebar"
+              aria-label={translator.message("sidebar.toggleMain")}
             />
           }
         />
         <TooltipPopup side="bottom">
-          Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
+          {translator.message("sidebar.toggleMain")}
+          {shortcutLabel ? ` (${shortcutLabel})` : ""}
         </TooltipPopup>
       </Tooltip>
     </div>
@@ -146,6 +158,12 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const legacySidebarEnabled = useLegacySidebarEnabled();
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
+  const classicSidebarEnabled = useBetterT3DeviceFeature("chat.classicSidebar");
+  const sidebarPosition = useClientSettings((settings) => settings.sidebarPosition);
+  const sidebarPlacement = resolveAppSidebarPlacement(sidebarPosition);
+  const threadSidebarLayout = resolveThreadSidebarLayout(
+    legacySidebarEnabled && classicSidebarEnabled,
+  );
   // Settings routes show the settings nav in place of whichever thread
   // sidebar is active.
   const pathname = useLocation({ select: (location) => location.pathname });
@@ -159,6 +177,9 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   // that would otherwise refresh a render-time snapshot.
   const viewportWidth = useSyncExternalStore(subscribeToViewportWidth, readViewportWidth);
   const sidebarMaximumWidth = resolveThreadSidebarMaximumWidth(viewportWidth);
+  // Keep the user's preferred width in state, but clamp the rendered width on
+  // every window resize so the chat cannot be squeezed below its layout floor.
+  const renderedSidebarWidth = resolveRenderedThreadSidebarWidth(sidebarWidth, viewportWidth);
   const resetSidebarWidth = () => {
     try {
       removeLocalStorageItem(THREAD_SIDEBAR_WIDTH_STORAGE_KEY);
@@ -174,7 +195,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       : false;
   });
   const sidebarProviderStyle = {
-    "--sidebar-width": `${sidebarWidth}px`,
+    "--sidebar-width": `${renderedSidebarWidth}px`,
     "--panel-animation-duration": `${panelAnimationDurationMs}ms`,
     ...(isMacosDesktop && !isWindowFullscreen
       ? { "--workspace-controls-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET }
@@ -221,17 +242,22 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   return (
     <PanelAnimationSuppressionProvider value={panelAnimationsSuppressed}>
       <SidebarProvider
-        className="h-dvh! min-h-0!"
+        className={cn("h-dvh! min-h-0!", sidebarPlacement.providerDirectionClassName)}
         data-panel-animations={routePanelAnimationsActive ? "true" : "false"}
+        data-sidebar-position={sidebarPosition}
         defaultOpen
         style={sidebarProviderStyle}
       >
         <ProjectProjectionRetention />
         <Sidebar
-          side="left"
+          side={sidebarPosition}
           collapsible="offcanvas"
           data-app-sidebar=""
-          className="border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
+          data-thread-sidebar-layout={threadSidebarLayout}
+          className={cn(
+            sidebarPlacement.borderClassName,
+            "border-sidebar-border bg-sidebar text-sidebar-foreground",
+          )}
           resizable={{
             maxWidth: sidebarMaximumWidth,
             minWidth: THREAD_SIDEBAR_MIN_WIDTH,
@@ -247,15 +273,13 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
               <SidebarChromeHeader isElectron={isElectron} />
               <SettingsSidebarNav pathname={pathname} />
             </>
-          ) : legacySidebarEnabled ? (
-            <LegacyThreadSidebar />
           ) : (
-            <ThreadSidebar />
+            <ThreadSidebarSelection layout={threadSidebarLayout} />
           )}
           <SidebarRail onDoubleClick={resetSidebarWidth} />
         </Sidebar>
         {children}
-        <SidebarControl />
+        <SidebarControl side={sidebarPosition} />
       </SidebarProvider>
     </PanelAnimationSuppressionProvider>
   );
