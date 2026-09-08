@@ -72,7 +72,11 @@ export const resolveHeadlessConnectionString = (
   host: string | undefined,
   port: number,
   interfaces: NetworkInterfacesMap = NodeOS.networkInterfaces(),
+  advertisedUrl?: URL,
 ): string => {
+  if (advertisedUrl) {
+    return new URL(`${advertisedUrl.protocol}//${advertisedUrl.host}/`).toString();
+  }
   const connectionHost = resolveHeadlessConnectionHost(host, interfaces);
   return `http://${formatHostForUrl(connectionHost)}:${port}`;
 };
@@ -137,6 +141,8 @@ export const issueHeadlessServeAccessInfo = Effect.fn("issueHeadlessServeAccessI
   const connectionString = resolveHeadlessConnectionString(
     serverConfig.host,
     resolveListeningPort(httpServer.address, serverConfig.port),
+    undefined,
+    serverConfig.advertisedUrl,
   );
   const issued = yield* serverAuth.issueStartupPairingCredential();
 

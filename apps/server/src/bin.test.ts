@@ -432,6 +432,18 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       }),
   );
 
+  it.effect("rejects non-HTTP advertised addresses before starting the server", () =>
+    Effect.gen(function* () {
+      const error = yield* runCliWithRuntime(["--advertised-url", "ftp://code.example.com"]).pipe(
+        Effect.flip,
+      );
+      if (error._tag !== "ShowHelp") {
+        assert.fail(`Expected ShowHelp, got ${error._tag}`);
+      }
+      assert.include(error.errors.map((issue) => issue.message).join(" "), "HTTP(S)");
+    }),
+  );
+
   it.effect("accepts canonical --no-<flag> boolean negation", () =>
     Effect.gen(function* () {
       const { output } = yield* captureStdout(runCli(["--no-log-websocket-events", "--version"]));

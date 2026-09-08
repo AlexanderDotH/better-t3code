@@ -43,6 +43,17 @@ const baseState = {
 } as const satisfies PersistedServerRuntimeState;
 
 describe("pair base URL selection", () => {
+  it("uses the advertised public origin before local and dev addresses", () => {
+    expect(
+      resolveDirectPairingBaseUrl({
+        ...baseState,
+        advertisedUrl: "https://code.example.com/",
+        devUrl: "http://localhost:5733/",
+        host: "0.0.0.0",
+      }),
+    ).toBe("https://code.example.com/");
+  });
+
   it("pairs through the dev web origin when the server fronts a dev server", () => {
     expect(resolveDirectPairingBaseUrl({ ...baseState, devUrl: "http://localhost:5733/" })).toBe(
       "http://localhost:5733/",

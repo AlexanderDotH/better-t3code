@@ -18,7 +18,7 @@ import {
 import * as NetService from "@t3tools/shared/Net";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { deriveServerPaths } from "../config.ts";
-import { resolveServerConfig } from "./config.ts";
+import { resolveCliAuthConfig, resolveServerConfig } from "./config.ts";
 
 const deriveExplicitServerPaths = (baseDir: string, devUrl: URL | undefined) =>
   deriveServerPaths(baseDir, devUrl, { baseDirIsExplicit: true });
@@ -146,6 +146,70 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     }),
   );
 
+  it.effect("resolves the container deployment profile and advertised public URL", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-container-config-" });
+      const resolved = yield* resolveServerConfig(
+        {
+          mode: Option.none(),
+          port: Option.none(),
+          host: Option.none(),
+          baseDir: Option.some(baseDir),
+          cwd: Option.none(),
+          devUrl: Option.none(),
+          noBrowser: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+          tailscaleServeEnabled: Option.none(),
+          tailscaleServePort: Option.none(),
+        },
+        Option.none(),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: {
+                  T3CODE_DEPLOYMENT: "container",
+                  T3CODE_ADVERTISED_URL: "https://code.example.com/t3",
+                },
+              }),
+            ),
+            NetService.layer,
+          ),
+        ),
+      );
+
+      expect(resolved.deploymentKind).toBe("container");
+      expect(resolved.advertisedUrl?.toString()).toBe("https://code.example.com/");
+    }),
+  );
+
+  it.effect("rejects advertised URLs that cannot serve HTTP pairing links", () =>
+    Effect.gen(function* () {
+      for (const advertisedUrl of [
+        "ftp://code.example.com",
+        "file:///tmp/server",
+        "javascript:void(0)",
+      ]) {
+        const result = yield* resolveCliAuthConfig({ baseDir: Option.none() }, Option.none()).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({ env: { T3CODE_ADVERTISED_URL: advertisedUrl } }),
+              ),
+              NetService.layer,
+            ),
+          ),
+          Effect.result,
+        );
+        expect(result._tag).toBe("Failure");
+      }
+    }),
+  );
+
   it.effect("uses CLI flags when provided", () =>
     Effect.gen(function* () {
       const { join } = yield* Path.Path;
@@ -168,6 +232,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.some(true),
           tailscaleServeEnabled: Option.some(true),
           tailscaleServePort: Option.some(8443),
+          advertisedUrl: Option.some(new URL("https://code.example.com/ignored?key=value#state")),
         },
         Option.some("Debug"),
       ).pipe(
@@ -177,6 +242,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
               ConfigProvider.fromEnv({
                 env: {
                   T3CODE_LOG_LEVEL: "Warn",
+                  T3CODE_ADVERTISED_URL: "https://ignored.example.com",
                   T3CODE_MODE: "desktop",
                   T3CODE_PORT: "4001",
                   T3CODE_HOST: "0.0.0.0",
@@ -211,6 +277,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: true,
         tailscaleServeEnabled: true,
         tailscaleServePort: 8443,
+        advertisedUrl: new URL("https://code.example.com/"),
       });
       assert.equal(resolved.dbPath, join(baseDir, "userdata", "state.sqlite"));
     }),
