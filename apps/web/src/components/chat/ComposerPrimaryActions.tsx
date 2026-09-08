@@ -1,3 +1,4 @@
+import type { ThreadAbortPresentation } from "@t3tools/client-runtime/state/thread-abort";
 import { memo, type PointerEventHandler } from "react";
 import { ChevronDownIcon, ChevronLeftIcon } from "lucide-react";
 import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
@@ -20,6 +21,7 @@ interface ComposerPrimaryActionsProps {
   compact: boolean;
   pendingAction: PendingActionState | null;
   isRunning: boolean;
+  abortPresentation?: ThreadAbortPresentation;
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
@@ -63,6 +65,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   compact,
   pendingAction,
   isRunning,
+  abortPresentation,
   showPlanFollowUpPrompt,
   promptHasText,
   isSendBusy,
@@ -99,7 +102,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       )}
       {...pointerFocusProps}
       onClick={onInterrupt}
-      aria-label="Stop generation"
+      aria-label={abortPresentation?.accessibilityLabel ?? "Stop generation"}
+      disabled={abortPresentation?.disabled === true}
+      aria-busy={abortPresentation?.phase === "force-stopping" || undefined}
     >
       <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
         <rect x="2" y="2" width="8" height="8" rx="1.5" />
@@ -110,7 +115,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   if (pendingAction) {
     return (
       <div className={cn("flex items-center justify-end", compact ? "gap-1.5" : "gap-2")}>
-        {isRunning ? renderStopGenerationButton(true) : null}
+        {isRunning || abortPresentation?.showStopAction ? renderStopGenerationButton(true) : null}
         {pendingAction.questionIndex > 0 ? (
           compact ? (
             <Button
@@ -271,7 +276,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     </button>
   );
 
-  if (!isRunning) {
+  if (!isRunning && !abortPresentation?.showStopAction) {
     return sendButton;
   }
 

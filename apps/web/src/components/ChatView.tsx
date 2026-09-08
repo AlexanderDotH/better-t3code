@@ -1,3 +1,4 @@
+import { resolveThreadAbortPresentation } from "@t3tools/client-runtime/state/thread-abort";
 import { KnowledgeGraphPanelController } from "./knowledge-graph/KnowledgeGraphPanelController";
 import { ChatWorkspaceDeckController } from "./workspace-deck/ChatWorkspaceDeckController";
 import { GitWorkspaceChangesIndicator } from "./git-workbench/GitWorkspaceChangesIndicator";
@@ -3580,7 +3581,12 @@ export default function ChatView(props: ChatViewProps) {
   interruptContextRef.current = { activeThread, phase, setThreadError };
   const onInterrupt = useCallback(async () => {
     const { activeThread, phase, setThreadError } = interruptContextRef.current;
-    const input = buildRunningThreadTurnInterruptInput(activeThread, phase);
+    const abort = resolveThreadAbortPresentation(activeThread?.session ?? null);
+    if (abort.disabled) return;
+    const input =
+      activeThread && abort.showStopAction
+        ? buildThreadTurnInterruptInput(activeThread)
+        : buildRunningThreadTurnInterruptInput(activeThread, phase);
     if (!input || !activeThread) return;
     const result = await interruptThreadTurn({
       environmentId: activeThread.environmentId,
@@ -3594,8 +3600,11 @@ export default function ChatView(props: ChatViewProps) {
       );
     }
   }, [interruptThreadTurn]);
+  const threadAbort = resolveThreadAbortPresentation(activeThread?.session ?? null);
   const canInterruptRunningThread =
-    buildRunningThreadTurnInterruptInput(activeThread, phase) !== null;
+    !threadAbort.disabled &&
+    (threadAbort.showStopAction ||
+      buildRunningThreadTurnInterruptInput(activeThread, phase) !== null);
 
   const focusComposer = useCallback(() => {
     composerRef.current?.focusAtEnd();
