@@ -5,6 +5,11 @@ import {
   foldSubagentActivities,
   formatSubagentModelLabel,
   formatSubagentTokenCount,
+  isAgentAttributedToolActivity,
+  isSubagentActivityKind,
+  isTimelineBypassActivity,
+  summarizeSubagentUsage,
+  workflowCardMembers,
 } from "./subagentRuntime.ts";
 
 let sequence = 0;
@@ -559,6 +564,21 @@ describe("formatSubagentTokenCount", () => {
     expect(formatSubagentTokenCount(41200)).toBe("41.2k");
     expect(formatSubagentTokenCount(247000)).toBe("247k");
     expect(formatSubagentTokenCount(1_400_000)).toBe("1.4M");
+  });
+});
+
+describe("summarizeSubagentUsage", () => {
+  it("sums the reported input, output, and total counters without inventing missing fields", () => {
+    expect(
+      summarizeSubagentUsage([
+        { totalTokens: 900, inputTokens: 700, outputTokens: 150 },
+        { totalTokens: 600, inputTokens: 400, outputTokens: 100 },
+      ]),
+    ).toEqual({ totalTokens: 1_500, inputTokens: 1_100, outputTokens: 250 });
+
+    expect(summarizeSubagentUsage([{ totalTokens: 400 }, null])).toEqual({
+      totalTokens: 400,
+    });
   });
 });
 
