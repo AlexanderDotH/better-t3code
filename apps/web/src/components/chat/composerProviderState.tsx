@@ -19,6 +19,11 @@ import type { ReactNode } from "react";
 import type { buttonVariants } from "../ui/button";
 import type { DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
+import {
+  ContextWindowPicker,
+  ContextWindowMenuContent,
+  shouldRenderContextWindowControl,
+} from "./ContextWindowPicker";
 import type { ComposerControlSize } from "./ComposerControl";
 import { shouldRenderTraitsControls, TraitsMenuContent, TraitsPicker } from "./TraitsPicker";
 
@@ -230,4 +235,34 @@ export function renderProviderTraitsMenuContent(input: TraitsRenderInput): React
 
 export function renderProviderTraitsPicker(input: TraitsRenderInput): ReactNode {
   return renderTraitsControl(TraitsPicker, input);
+}
+
+function renderContextWindowControl(
+  Component: typeof ContextWindowMenuContent | typeof ContextWindowPicker,
+  input: TraitsRenderInput,
+): ReactNode {
+  if (
+    (input.threadRef === undefined && input.draftId === undefined) ||
+    !shouldRenderContextWindowControl(input)
+  )
+    return null;
+  return (
+    <Component
+      provider={input.provider}
+      {...(input.instanceId ? { instanceId: input.instanceId } : {})}
+      models={input.models}
+      {...(input.threadRef ? { threadRef: input.threadRef } : {})}
+      {...(input.draftId ? { draftId: input.draftId } : {})}
+      model={input.model}
+      modelOptions={input.modelOptions}
+    />
+  );
+}
+
+export function renderProviderContextWindowPicker(input: TraitsRenderInput): ReactNode {
+  return renderContextWindowControl(ContextWindowPicker, input);
+}
+
+export function renderProviderContextWindowMenuContent(input: TraitsRenderInput): ReactNode {
+  return renderContextWindowControl(ContextWindowMenuContent, input);
 }
