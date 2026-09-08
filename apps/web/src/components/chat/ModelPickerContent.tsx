@@ -4,6 +4,11 @@ import {
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
+import { OpenRouterCatalogFilterPanel } from "./openrouter-model-picker/OpenRouterCatalogFilterPanel";
+import {
+  buildOpenRouterModelCatalogView,
+  DEFAULT_OPENROUTER_MODEL_CATALOG_FILTER_STATE,
+} from "@t3tools/shared/modelCatalogFilters";
 import { resolveSelectableModel } from "@t3tools/shared/model";
 import { useAtomValue } from "@effect/atom-react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
@@ -48,6 +53,7 @@ import {
 import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
 
 type ModelPickerItem = {
+  capabilities?: NonNullable<ModelEsque["capabilities"]>;
   slug: string;
   name: string;
   shortName?: string;
@@ -197,6 +203,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       activeEntry,
       modelOptionsByInstance.get(props.activeInstanceId) ?? [],
     );
+  const [catalogFilters, setCatalogFilters] = useState(
+    DEFAULT_OPENROUTER_MODEL_CATALOG_FILTER_STATE,
+  );
   const [selectedInstanceId, setSelectedInstanceId] = useState<ProviderInstanceId | "favorites">(
     () => {
       if (
@@ -330,6 +339,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         out.push({
           slug: model.slug,
           name: model.name,
+          ...(model.capabilities ? { capabilities: model.capabilities } : {}),
           ...(model.shortName ? { shortName: model.shortName } : {}),
           ...(model.subProvider ? { subProvider: model.subProvider } : {}),
           ...(model.badge ? { badge: model.badge } : {}),
@@ -347,6 +357,17 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     }
     return out;
   }, [modelOptionsByInstance, entryByInstanceId, props.activeInstanceId, activeModelSlug]);
+
+  const catalogInstance =
+    selectedInstanceId !== "favorites" ? entryByInstanceId.get(selectedInstanceId) : undefined;
+  const openRouterCatalog = useMemo(() => {
+    if (catalogInstance?.driverKind !== "openrouter") return null;
+    return buildOpenRouterModelCatalogView(
+      flatModels.filter((model) => model.instanceId === catalogInstance.instanceId),
+      catalogFilters,
+      { isFavorite: (model) => favoritesSet.has(providerModelKey(model.instanceId, model.slug)) },
+    );
+  }, [catalogInstance, catalogFilters, flatModels, favoritesSet]);
 
   const isLocked = props.lockedProvider !== null;
   const isSearching = searchQuery.trim().length > 0;
@@ -378,7 +399,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     }
     return [...available, ...disabled];
   }, [instanceEntries, isLocked, matchesLockedProvider]);
-  const showSidebar = !isSearching && sidebarInstanceEntries.length > 0;
+  const showSidebar =
+    (!isSearching || openRouterCatalog !== null) && sidebarInstanceEntries.length > 0;
   const instanceOrder = useMemo(
     () => instanceEntries.map((entry) => entry.instanceId),
     [instanceEntries],
@@ -386,7 +408,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   // Filter models based on search query and selected instance
   const filteredModels = useMemo(() => {
-    let result = flatModels;
+    let result = openRouterCatalog ? [...openRouterCatalog.models] : flatModels;
 
     // Apply tokenized fuzzy search across the combined provider/model search fields.
     if (searchQuery.trim()) {
@@ -396,6 +418,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           score: scoreModelPickerSearch(
             {
               name: model.name,
+              slug: model.slug,
               ...(model.shortName ? { shortName: model.shortName } : {}),
               ...(model.subProvider ? { subProvider: model.subProvider } : {}),
               driverKind: model.driverKind,
@@ -407,6 +430,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           isFavorite: favoritesSet.has(providerModelKey(model.instanceId, model.slug)),
           tieBreaker: buildModelPickerSearchText({
             name: model.name,
+            slug: model.slug,
             ...(model.shortName ? { shortName: model.shortName } : {}),
             ...(model.subProvider ? { subProvider: model.subProvider } : {}),
             driverKind: model.driverKind,
@@ -475,6 +499,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       result = result.filter((m) => m.instanceId === selectedInstanceId);
     }
 
+    if (openRouterCatalog) return result;
     return sortProviderModelItems(result, {
       favoriteModelKeys: favoritesSet,
       groupFavorites: selectedInstanceId !== "favorites",
@@ -483,6 +508,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   }, [
     favoritesSet,
     flatModels,
+    openRouterCatalog,
     instanceOrder,
     matchesLockedProvider,
     props.lockedProvider,
@@ -840,6 +866,14 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               </div>
             </div>
 
+            {openRouterCatalog ? (
+              <OpenRouterCatalogFilterPanel
+                state={catalogFilters}
+                view={{ ...openRouterCatalog, matchingCount: filteredModels.length }}
+                {...(catalogInstance ? { instanceDisplayName: catalogInstance.displayName } : {})}
+                onChange={setCatalogFilters}
+              />
+            ) : null}
             {/* Model list */}
             <div className="relative min-h-0 flex-1 overflow-hidden pr-px">
               <ComboboxListVirtualized className="size-full min-w-0 p-0 not-empty:p-0">

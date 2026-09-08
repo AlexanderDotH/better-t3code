@@ -80,6 +80,7 @@ function readInstanceCustomModels(
 }
 
 export interface AppModelOption {
+  capabilities?: ServerProvider["models"][number]["capabilities"];
   slug: string;
   name: string;
   shortName?: string;
@@ -119,6 +120,7 @@ function toAppModelOption(model: ServerProvider["models"][number]): AppModelOpti
     name: model.name,
     isCustom: model.isCustom,
   };
+  if (model.capabilities) option.capabilities = model.capabilities;
   if (model.shortName) option.shortName = model.shortName;
   if (model.subProvider) option.subProvider = model.subProvider;
   if (model.aliases) option.aliases = model.aliases;
