@@ -115,6 +115,13 @@ import {
   ProjectFaviconPickerDialog,
 } from "./ProjectFaviconPickerDialog";
 import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
+import { ProjectCheckpointControls } from "./ProjectCheckpointControls";
+import { ProjectMemorySettingsController } from "./ProjectMemorySettingsController";
+import {
+  resolveProjectCheckpointSetting,
+  runExclusiveProjectGroupUpdate,
+  updateProjectGroupMembers,
+} from "./projectCheckpointSettings";
 
 const ProjectIconPickerDialog = lazy(() =>
   import("./ProjectIconPickerDialog").then((module) => ({
@@ -671,6 +678,33 @@ function ProjectDetail({
       ),
     [updateAllMembers],
   );
+
+  const checkpointSetting = resolveProjectCheckpointSetting(group.memberProjects);
+  const [isSavingCheckpoints, setIsSavingCheckpoints] = useState(false);
+  const savingCheckpointsRef = useRef(false);
+  const setCheckpointsEnabled = async (enabled: boolean) => {
+    if (checkpointSetting.state !== "mixed" && checkpointSetting.effectiveEnabled === enabled)
+      return;
+    await runExclusiveProjectGroupUpdate(savingCheckpointsRef, async () => {
+      setIsSavingCheckpoints(true);
+      try {
+        const { failures } = await updateProjectGroupMembers(group.memberProjects, (member) =>
+          updateProject({
+            environmentId: member.environmentId,
+            input: { projectId: member.id, checkpointsEnabled: enabled },
+          }),
+        );
+        for (const failure of failures) {
+          reportFailure(
+            `Failed to update checkpoints on ${failure.member.environmentLabel ?? "this environment"}`,
+            mapAtomCommandResult(failure.result, () => undefined),
+          );
+        }
+      } finally {
+        setIsSavingCheckpoints(false);
+      }
+    });
+  };
 
   const autoPull = resolveProjectAutoPull(
     projectSettings,
@@ -1247,6 +1281,20 @@ function ProjectDetail({
           />
         </SettingsSection>
 
+        <SettingsSection title="Checkpoints">
+          <SettingsRow
+            title="Create checkpoints"
+            description="Capture changes after each turn so you can review and restore them. Existing checkpoints remain available when disabled."
+            control={
+              <ProjectCheckpointControls
+                setting={checkpointSetting}
+                isSaving={isSavingCheckpoints}
+                onChange={(enabled) => void setCheckpointsEnabled(enabled)}
+              />
+            }
+          />
+        </SettingsSection>
+
         <SettingsSection title="Checkout">
           {hasMultipleCheckouts ? (
             <SettingsRow
@@ -1421,6 +1469,11 @@ function ProjectDetail({
             />
           ) : null}
         </SettingsSection>
+
+        <ProjectMemorySettingsController
+          key={`${selectedCheckout.environmentId}:${selectedCheckout.id}`}
+          project={selectedCheckout}
+        />
 
         <SettingsSection title="Danger">
           <SettingsRow

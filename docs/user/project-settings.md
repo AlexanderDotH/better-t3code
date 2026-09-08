@@ -33,3 +33,12 @@ upstream.
 T3 Code only pulls when it can fast-forward and the checkout has no changed files, untracked files,
 or local commits. It skips checkouts on another branch or without an upstream. If a checkout has
 local work, resolve it yourself before automatic pulls can resume.
+
+## Checkpoints and project memory
+
+Select a project to turn checkpoint capture on or off for its selected checkouts. Turning it off
+stops new captures; existing checkpoints remain available to review or restore. A mixed value
+means the selected checkouts have different settings.
+
+The checkout picker also selects whose [project memory](project-memory.md) you edit. Choose its
+memory source, allow or prevent agent writes, and import, export, or clear the shared document.
