@@ -9,20 +9,17 @@ import {
 
 const scopeId = "scope-1" as KnowledgeGraphNodeV1["scopeId"];
 
-const nodes = Array.from(
-  { length: 305 },
-  (_, index): KnowledgeGraphNodeV1 => ({
-    version: 1,
-    nodeId: `node-${index}` as KnowledgeGraphNodeV1["nodeId"],
-    scopeId,
-    kind: "file",
-    label: `Node ${index}`,
-    provenance: "deterministic",
-    confidence: 1,
-    evidenceIds: [],
-    nodeRevision: 1,
-  }),
-);
+const nodes = Array.from({ length: 305 }, (_, index): KnowledgeGraphNodeV1 => ({
+  version: 1,
+  nodeId: `node-${index}` as KnowledgeGraphNodeV1["nodeId"],
+  scopeId,
+  kind: "file",
+  label: `Node ${index}`,
+  provenance: "deterministic",
+  confidence: 1,
+  evidenceIds: [],
+  nodeRevision: 1,
+}));
 
 describe("makeKnowledgeGraphLayoutRequest", () => {
   it("caps worker work and disables iterative motion for reduced-motion users", () => {

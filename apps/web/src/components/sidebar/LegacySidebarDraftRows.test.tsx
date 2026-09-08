@@ -136,5 +136,4 @@ describe("classic sidebar draft rows", () => {
       }),
     ).toBe("1 attachment");
   });
-
 });

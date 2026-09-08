@@ -76,10 +76,10 @@ computer.
 | Grok Build  | Install [Grok Build CLI](https://x.ai/cli), then run `grok login`.                           |
 | OpenCode    | Install [OpenCode](https://opencode.ai), then run `opencode auth login`.                     |
 | Antigravity | Install and sign in with Google from T3 Code's provider settings.                            |
-| ChatGPT | Use the ChatGPT provider's sign-in action; Codex CLI is required for that login. |
-| OpenAI | Add an OpenAI API key in the provider's account settings. |
-| OpenRouter | Add an OpenRouter API key or use its sign-in action, then choose a default model. |
-| Gemini | Set `GOOGLE_API_KEY` or `GEMINI_API_KEY` in the provider instance's environment variables. |
+| ChatGPT     | Use the ChatGPT provider's sign-in action; Codex CLI is required for that login.             |
+| OpenAI      | Add an OpenAI API key in the provider's account settings.                                    |
+| OpenRouter  | Add an OpenRouter API key or use its sign-in action, then choose a default model.            |
+| Gemini      | Set `GOOGLE_API_KEY` or `GEMINI_API_KEY` in the provider instance's environment variables.   |
 
 Provider CLIs must be on the server's `PATH`. If T3 Code cannot find one, set its
 **Binary path** in provider settings, especially when using a version manager.

@@ -230,15 +230,21 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                 eventStore.readByThreadId(envelope.command.sourceThreadId),
               ).pipe(Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)))
             : null;
-        const eventBase = yield* (envelope.command.type === "thread.fork"
-          ? planThreadFork({ command: envelope.command, readModel: commandReadModel, sourceEvents: sourceEvents ?? [] })
-          : decideOrchestrationCommand({
-          command: envelope.command,
-          readModel: commandReadModel,
-          ...(Option.isSome(userInputActivity)
-            ? { userInputActivity: userInputActivity.value }
-            : {}),
-        })).pipe(
+        const eventBase = yield* (
+          envelope.command.type === "thread.fork"
+            ? planThreadFork({
+                command: envelope.command,
+                readModel: commandReadModel,
+                sourceEvents: sourceEvents ?? [],
+              })
+            : decideOrchestrationCommand({
+                command: envelope.command,
+                readModel: commandReadModel,
+                ...(Option.isSome(userInputActivity)
+                  ? { userInputActivity: userInputActivity.value }
+                  : {}),
+              })
+        ).pipe(
           Effect.provideService(Crypto.Crypto, crypto),
           Effect.mapError((cause) =>
             isOrchestrationCommandRejection(cause)

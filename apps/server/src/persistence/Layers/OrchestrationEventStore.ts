@@ -426,7 +426,13 @@ const makeEventStore = Effect.gen(function* () {
     );
 
   const readByThreadId: OrchestrationEventStoreShape["readByThreadId"] = (threadId) =>
-    readAggregateRange({ aggregateKind: "thread", aggregateId: threadId, fromSequenceExclusive: 0, toSequenceInclusive: Number.MAX_SAFE_INTEGER, limit: Number.MAX_SAFE_INTEGER });
+    readAggregateRange({
+      aggregateKind: "thread",
+      aggregateId: threadId,
+      fromSequenceExclusive: 0,
+      toSequenceInclusive: Number.MAX_SAFE_INTEGER,
+      limit: Number.MAX_SAFE_INTEGER,
+    });
 
   return {
     append,

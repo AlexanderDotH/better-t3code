@@ -321,6 +321,14 @@ export function filterStartedThreadModelOptions(input: {
     ) {
       return false;
     }
-    return isStartedThreadModelChangeAllowed({ hasStarted: input.hasStarted, allowMidChatProviderSwitching: input.allowMidChatProviderSwitching, currentSelection: input.currentSelection, nextSelection: option.selection, currentProviderInstanceId: input.currentProviderInstanceId, currentRequiresNewThread: current.requiresNewThreadForModelChange, nextRequiresNewThread: option.requiresNewThreadForModelChange });
+    return isStartedThreadModelChangeAllowed({
+      hasStarted: input.hasStarted,
+      allowMidChatProviderSwitching: input.allowMidChatProviderSwitching,
+      currentSelection: input.currentSelection,
+      nextSelection: option.selection,
+      currentProviderInstanceId: input.currentProviderInstanceId,
+      currentRequiresNewThread: current.requiresNewThreadForModelChange,
+      nextRequiresNewThread: option.requiresNewThreadForModelChange,
+    });
   });
 }

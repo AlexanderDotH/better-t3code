@@ -331,7 +331,12 @@ export function useThreadComposerState() {
     (selectedThread.session?.status === "running" || selectedThread.session?.status === "starting");
 
   const onSendMessage = useCallback(async () => {
-    if (!selectedThreadShell || isImprovingPrompt || selectedThreadShell.harnessSync?.activity === "active" || resolveThreadAbortPresentation(selectedThreadShell.session).phase !== null) {
+    if (
+      !selectedThreadShell ||
+      isImprovingPrompt ||
+      selectedThreadShell.harnessSync?.activity === "active" ||
+      resolveThreadAbortPresentation(selectedThreadShell.session).phase !== null
+    ) {
       return null;
     }
     // The server has not created this thread yet. Queuing a follow-up against

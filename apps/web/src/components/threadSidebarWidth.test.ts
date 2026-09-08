@@ -45,5 +45,4 @@ describe("thread sidebar width", () => {
       preferredSidebarWidth,
     );
   });
-
 });

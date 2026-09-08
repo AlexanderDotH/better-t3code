@@ -1158,7 +1158,10 @@ const make = Effect.gen(function* () {
       readonly resumeCursor?: unknown;
       readonly provider?: ProviderDriverKind;
       readonly freshSession?: boolean;
-    }) => providerService.startSession(threadId, providerSessionInput(input)).pipe(Effect.tap(() => refreshWorkspaceSnapshot));
+    }) =>
+      providerService
+        .startSession(threadId, providerSessionInput(input))
+        .pipe(Effect.tap(() => refreshWorkspaceSnapshot));
 
     const bindSessionToThread = (session: ProviderSession) =>
       Effect.gen(function* () {
@@ -1384,7 +1387,9 @@ const make = Effect.gen(function* () {
       project?.workspaceRoot ??
       process.cwd();
     const reasoningHistory = isAutoReasoningEnabled(durableModelSelection)
-      ? yield* projectionSnapshotQuery.getThreadDetailById(input.threadId).pipe(Effect.map(Option.getOrUndefined))
+      ? yield* projectionSnapshotQuery
+          .getThreadDetailById(input.threadId)
+          .pipe(Effect.map(Option.getOrUndefined))
       : undefined;
     const autoReasoning =
       input.resultOnly === true
@@ -1467,8 +1472,12 @@ const make = Effect.gen(function* () {
             ...(project ? { projectCwd: project.workspaceRoot } : {}),
             prompt: input.messageText,
           });
-    const needsTranscriptHandoff = (forkHandoffRequired && sessionPreparation.forkStrategy !== "provider-native") || sessionPreparation.transcriptHandoffRequired;
-    const transcriptHistory = needsTranscriptHandoff ? yield* resolveThreadDetail(input.threadId) : undefined;
+    const needsTranscriptHandoff =
+      (forkHandoffRequired && sessionPreparation.forkStrategy !== "provider-native") ||
+      sessionPreparation.transcriptHandoffRequired;
+    const transcriptHistory = needsTranscriptHandoff
+      ? yield* resolveThreadDetail(input.threadId)
+      : undefined;
     const compactHandoff =
       (forkHandoffRequired && sessionPreparation.forkStrategy !== "provider-native") ||
       sessionPreparation.transcriptHandoffRequired
@@ -2842,24 +2851,39 @@ const make = Effect.gen(function* () {
           );
         },
         onSuccess: () =>
-          subagentRepository.listByThreadId({ threadId: thread.id }).pipe(Effect.flatMap((subagents) => settleActiveSubagents({ id: thread.id, subagents }, now, "session-stop-subagent-runtime-loss-upsert"))).pipe(Effect.andThen(setThreadSession({
-            threadId: thread.id,
-            session: {
-              threadId: thread.id,
-              status: "stopped",
-              providerName: thread.session?.providerName ?? null,
-              ...(thread.session?.providerInstanceId !== undefined
-                ? { providerInstanceId: thread.session.providerInstanceId }
-                : {}),
-              runtimeMode: thread.session?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
-              runtimeSessionId: null,
-              abortState: null,
-              activeTurnId: null,
-              lastError: thread.session?.lastError ?? null,
-              updatedAt: now,
-            },
-            createdAt: now,
-          }))),
+          subagentRepository
+            .listByThreadId({ threadId: thread.id })
+            .pipe(
+              Effect.flatMap((subagents) =>
+                settleActiveSubagents(
+                  { id: thread.id, subagents },
+                  now,
+                  "session-stop-subagent-runtime-loss-upsert",
+                ),
+              ),
+            )
+            .pipe(
+              Effect.andThen(
+                setThreadSession({
+                  threadId: thread.id,
+                  session: {
+                    threadId: thread.id,
+                    status: "stopped",
+                    providerName: thread.session?.providerName ?? null,
+                    ...(thread.session?.providerInstanceId !== undefined
+                      ? { providerInstanceId: thread.session.providerInstanceId }
+                      : {}),
+                    runtimeMode: thread.session?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+                    runtimeSessionId: null,
+                    abortState: null,
+                    activeTurnId: null,
+                    lastError: thread.session?.lastError ?? null,
+                    updatedAt: now,
+                  },
+                  createdAt: now,
+                }),
+              ),
+            ),
       }),
       Effect.ensuring(clearStopping),
     );
@@ -3043,4 +3067,6 @@ const make = Effect.gen(function* () {
   } satisfies ProviderCommandReactorShape;
 });
 
-export const ProviderCommandReactorLive = Layer.effect(ProviderCommandReactor, make).pipe(Layer.provide(ProjectionThreadSubagentRepositoryLive));
+export const ProviderCommandReactorLive = Layer.effect(ProviderCommandReactor, make).pipe(
+  Layer.provide(ProjectionThreadSubagentRepositoryLive),
+);

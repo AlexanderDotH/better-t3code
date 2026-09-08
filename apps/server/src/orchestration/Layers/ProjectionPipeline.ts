@@ -464,7 +464,11 @@ function collectThreadAttachmentRelativePaths(
 const runAttachmentSideEffects = Effect.fn("runAttachmentSideEffects")(function* (
   sideEffects: AttachmentSideEffects,
 ) {
-  if (sideEffects.candidateAttachmentIds.size === 0 && sideEffects.deletedThreadIds.size === 0 && sideEffects.prunedThreadRelativePaths.size === 0) {
+  if (
+    sideEffects.candidateAttachmentIds.size === 0 &&
+    sideEffects.deletedThreadIds.size === 0 &&
+    sideEffects.prunedThreadRelativePaths.size === 0
+  ) {
     return;
   }
   const serverConfig = yield* Effect.service(ServerConfig);
@@ -525,10 +529,13 @@ const runAttachmentSideEffects = Effect.fn("runAttachmentSideEffects")(function*
       return;
     }
     const retainedPaths = [...sideEffects.prunedThreadRelativePaths].find(
-      ([threadId]) => toSafeThreadAttachmentSegment(threadId) === parseThreadSegmentFromAttachmentId(attachmentId),
+      ([threadId]) =>
+        toSafeThreadAttachmentSegment(threadId) ===
+        parseThreadSegmentFromAttachmentId(attachmentId),
     )?.[1];
     if (retainedPaths?.has(relativePath)) return;
-    if (!sideEffects.candidateAttachmentIds.has(attachmentId) && retainedPaths === undefined) return;
+    if (!sideEffects.candidateAttachmentIds.has(attachmentId) && retainedPaths === undefined)
+      return;
     if (yield* attachmentReferences.hasReference({ attachmentId })) {
       return;
     }
@@ -2788,12 +2795,19 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           prunedThreadRelativePaths.set(threadId, retainedPaths);
         }
 
-        yield* runAttachmentSideEffects({ deletedThreadIds, prunedThreadRelativePaths, candidateAttachmentIds: sideEffects.candidateAttachmentIds });
+        yield* runAttachmentSideEffects({
+          deletedThreadIds,
+          prunedThreadRelativePaths,
+          candidateAttachmentIds: sideEffects.candidateAttachmentIds,
+        });
       },
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
       Effect.provideService(ServerConfig, serverConfig),
-      Effect.provideService(ProjectionAttachmentReferenceRepository, projectionAttachmentReferenceRepository),
+      Effect.provideService(
+        ProjectionAttachmentReferenceRepository,
+        projectionAttachmentReferenceRepository,
+      ),
       (effect, event) =>
         effect.pipe(
           Effect.as(true),

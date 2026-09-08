@@ -17,7 +17,11 @@ export function mergeQueuedMessagesIntoThreadFeed(
         role: "user",
         text: message.text,
         attachments: message.attachments.map(({ id, type, name, mimeType, sizeBytes }) => ({
-          id, type, name, mimeType, sizeBytes,
+          id,
+          type,
+          name,
+          mimeType,
+          sizeBytes,
         })),
         turnId: null,
         streaming: false,

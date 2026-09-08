@@ -1937,7 +1937,12 @@ const make = Effect.gen(function* () {
     event: ProviderCommandSource;
     threadId: ThreadId;
     subagentId?: SubagentId;
-    threadProposedPlans?: ReadonlyArray<{ id: string; createdAt: string; implementedAt: string | null; implementationThreadId: ThreadId | null }>;
+    threadProposedPlans?: ReadonlyArray<{
+      id: string;
+      createdAt: string;
+      implementedAt: string | null;
+      implementationThreadId: ThreadId | null;
+    }>;
     planId: string;
     turnId?: TurnId;
     fallbackMarkdown?: string;
@@ -2014,22 +2019,24 @@ const make = Effect.gen(function* () {
 
     yield* Effect.forEach(
       assistantMessageIds,
-      (assistantMessageId) => Effect.gen(function* () {
-        const existingMessage = input.subagentId === undefined ? yield* getThreadMessageById(input.threadId, assistantMessageId) : undefined;
-        yield* finalizeAssistantMessage({
-          event: input.event,
-          threadId: input.threadId,
-          ...(input.subagentId !== undefined ? { subagentId: input.subagentId } : {}),
-          messageId: assistantMessageId,
-          turnId: input.turnId,
-          createdAt: input.settledAt,
-          commandTag: "assistant-complete-finalize",
-          finalDeltaCommandTag: "assistant-delta-finalize-fallback",
-          hasProjectedMessage:
-            input.subagentId !== undefined ||
-            existingMessage !== undefined,
-        });
-      }),
+      (assistantMessageId) =>
+        Effect.gen(function* () {
+          const existingMessage =
+            input.subagentId === undefined
+              ? yield* getThreadMessageById(input.threadId, assistantMessageId)
+              : undefined;
+          yield* finalizeAssistantMessage({
+            event: input.event,
+            threadId: input.threadId,
+            ...(input.subagentId !== undefined ? { subagentId: input.subagentId } : {}),
+            messageId: assistantMessageId,
+            turnId: input.turnId,
+            createdAt: input.settledAt,
+            commandTag: "assistant-complete-finalize",
+            finalDeltaCommandTag: "assistant-delta-finalize-fallback",
+            hasProjectedMessage: input.subagentId !== undefined || existingMessage !== undefined,
+          });
+        }),
       { concurrency: 1 },
     ).pipe(Effect.asVoid);
     yield* clearAssistantMessageIdsForTurn(input.threadId, input.turnId, input.subagentId);
@@ -2563,7 +2570,11 @@ const make = Effect.gen(function* () {
             },
             createdAt: now,
           });
-          if (event.type === "turn.completed" && runtimeSessionId !== null && latestRootUsage.has(thread.id)) {
+          if (
+            event.type === "turn.completed" &&
+            runtimeSessionId !== null &&
+            latestRootUsage.has(thread.id)
+          ) {
             const detailedThread = yield* getLoadedThreadDetail();
             if (detailedThread !== null) {
               yield* maybeCompactAtMilestone({

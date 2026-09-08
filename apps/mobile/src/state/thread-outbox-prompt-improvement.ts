@@ -21,7 +21,12 @@ export async function prepareQueuedPromptForDelivery(input: {
 
   let text: string;
   try {
-    text = (await resolvePromptForSend({ prompt: input.message.text, improve: (prompt) => input.improve(prompt, input.projectId) })).trim();
+    text = (
+      await resolvePromptForSend({
+        prompt: input.message.text,
+        improve: (prompt) => input.improve(prompt, input.projectId),
+      })
+    ).trim();
   } catch (error) {
     input.onError?.("improve", error);
     return { _tag: "retry" };

@@ -55,7 +55,9 @@ const HistoryListCursorState = Schema.Struct({
 });
 const decodeHistoryListCursorState = Schema.decodeUnknownOption(HistoryListCursorState);
 
-type HistoryProviderInstance = ProviderInstance & { readonly historySync: NonNullable<ProviderInstance["historySync"]> };
+type HistoryProviderInstance = ProviderInstance & {
+  readonly historySync: NonNullable<ProviderInstance["historySync"]>;
+};
 
 interface DecodedHistoryListCursor {
   readonly providerCursor?: string | undefined;
@@ -145,7 +147,12 @@ function groupProviderHistorySources(
   instances: ReadonlyArray<ProviderInstance>,
   unavailable: ReadonlyArray<ServerProvider>,
 ): ReadonlyArray<HarnessHistorySourceGroup> {
-  const grouped = Map.groupBy(instances.filter((instance): instance is HistoryProviderInstance => instance.historySync !== undefined), (instance) => instance.historySync.source.continuationKey);
+  const grouped = Map.groupBy(
+    instances.filter(
+      (instance): instance is HistoryProviderInstance => instance.historySync !== undefined,
+    ),
+    (instance) => instance.historySync.source.continuationKey,
+  );
   const sources: HarnessHistorySourceGroup[] = [];
   for (const [continuationKeyRaw, sourceInstances] of grouped) {
     const first = sourceInstances[0];

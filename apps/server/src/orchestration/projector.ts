@@ -227,7 +227,10 @@ function retainThreadActivities(activities: OrchestrationThread["activities"]) {
   }
   const pendingActivities = new Set(pending.values());
   return activities.filter(
-    (activity, index) => activity.historyOrigin !== undefined || index >= recentStart || pendingActivities.has(activity),
+    (activity, index) =>
+      activity.historyOrigin !== undefined ||
+      index >= recentStart ||
+      pendingActivities.has(activity),
   );
 }
 
@@ -303,7 +306,8 @@ export function retainThreadMessagesAfterRevert<T extends OrchestrationMessage>(
   const retainedUserCount = messages.filter(
     (message) =>
       message.role === "user" &&
-      !isImportedAgentSessionMessageId(message.id) && !isFrozen(message) &&
+      !isImportedAgentSessionMessageId(message.id) &&
+      !isFrozen(message) &&
       retainedMessageIds.has(message.id),
   ).length;
   const missingUserCount = Math.max(0, turnCount - retainedUserCount);
@@ -330,7 +334,8 @@ export function retainThreadMessagesAfterRevert<T extends OrchestrationMessage>(
   const retainedAssistantCount = messages.filter(
     (message) =>
       message.role === "assistant" &&
-      !isImportedAgentSessionMessageId(message.id) && !isFrozen(message) &&
+      !isImportedAgentSessionMessageId(message.id) &&
+      !isFrozen(message) &&
       retainedMessageIds.has(message.id),
   ).length;
   const missingAssistantCount = Math.max(0, turnCount - retainedAssistantCount);
