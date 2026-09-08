@@ -19,6 +19,7 @@ import {
   getDefaultCloneUrl,
   normalizePastedCloneUrl,
   resolveAddProjectPath,
+  resolveCloneDestinationPath,
   sortAddProjectProviderSources,
 } from "./projects.ts";
 import type { EnvironmentProject } from "../state/models.ts";
@@ -175,6 +176,72 @@ describe("add project shared logic", () => {
     ).toEqual({ ok: true, path: "/work/next" });
   });
 
+  it("clones into a repository-named child of a selected parent folder", () => {
+    expect(
+      resolveCloneDestinationPath({
+        rawPath: "/work/",
+        platform: "Linux",
+        destinationIsParent: true,
+        repositoryNameWithOwner: "t3-oss/t3-env",
+        remoteUrl: "git@github.com:t3-oss/t3-env.git",
+      }),
+    ).toEqual({ ok: true, path: "/work/t3-env" });
+    expect(
+      resolveCloneDestinationPath({
+        rawPath: "/work",
+        platform: "Linux",
+        destinationIsParent: true,
+        repositoryNameWithOwner: "t3-oss/t3-env",
+        remoteUrl: "git@github.com:t3-oss/t3-env.git",
+      }),
+    ).toEqual({ ok: true, path: "/work/t3-env" });
+  });
+
+  it("derives repository folders from HTTPS and SCP-style clone URLs", () => {
+    expect(
+      resolveCloneDestinationPath({
+        rawPath: "/work/",
+        platform: "Linux",
+        destinationIsParent: true,
+        repositoryNameWithOwner: null,
+        remoteUrl: "https://git.example.com/team/repository.git?ref=main#readme",
+      }),
+    ).toEqual({ ok: true, path: "/work/repository" });
+    expect(
+      resolveCloneDestinationPath({
+        rawPath: "/work/",
+        platform: "Linux",
+        destinationIsParent: true,
+        repositoryNameWithOwner: null,
+        remoteUrl: "git@git.example.com:team/other-repository.git",
+      }),
+    ).toEqual({ ok: true, path: "/work/other-repository" });
+  });
+
+  it("preserves an explicitly typed clone destination", () => {
+    expect(
+      resolveCloneDestinationPath({
+        rawPath: "/work/custom-name",
+        platform: "Linux",
+        destinationIsParent: false,
+        repositoryNameWithOwner: "t3-oss/t3-env",
+        remoteUrl: "git@github.com:t3-oss/t3-env.git",
+      }),
+    ).toEqual({ ok: true, path: "/work/custom-name" });
+  });
+
+  it("uses the selected environment's path separator for the clone child", () => {
+    expect(
+      resolveCloneDestinationPath({
+        rawPath: "C:\\Work\\",
+        platform: "Win32",
+        destinationIsParent: true,
+        repositoryNameWithOwner: "t3-oss/t3-env",
+        remoteUrl: "git@github.com:t3-oss/t3-env.git",
+      }),
+    ).toEqual({ ok: true, path: "C:\\Work\\t3-env" });
+  });
+
   it("marks authenticated source control providers as ready", () => {
     const discovery: SourceControlDiscoveryResult = {
       versionControlSystems: [],
@@ -230,6 +297,7 @@ describe("add project shared logic", () => {
         updatedAt: "2026-01-01T00:00:00.000Z",
         repositoryIdentity: null,
         defaultModelSelection: null,
+        checkpointsEnabled: true,
         scripts: [],
       },
       {
@@ -241,6 +309,7 @@ describe("add project shared logic", () => {
         updatedAt: "2026-01-01T00:00:00.000Z",
         repositoryIdentity: null,
         defaultModelSelection: null,
+        checkpointsEnabled: true,
         scripts: [],
       },
     ];
