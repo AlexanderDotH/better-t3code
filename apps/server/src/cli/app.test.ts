@@ -17,6 +17,7 @@ import * as NetService from "@t3tools/shared/Net";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { Command } from "effect/unstable/cli";
 import { afterEach, describe, expect, vi } from "vite-plus/test";
 
@@ -33,10 +34,10 @@ const runCli = (args: ReadonlyArray<string>, env: Record<string, string> = {}) =
   Command.runWith(makeCli(), { version: "0.0.0" })(args).pipe(
     Effect.provide(
       Layer.mergeAll(
-        NodeServices.layer,
+        WorkspacePaths.layer,
         NetService.layer,
         ConfigProvider.layer(ConfigProvider.fromEnv({ env })),
-      ),
+      ).pipe(Layer.provideMerge(NodeServices.layer)),
     ),
   );
 

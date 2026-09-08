@@ -10,6 +10,7 @@ import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/unstable/cli";
 
@@ -32,7 +33,9 @@ import {
 
 import packageJson from "../../package.json" with { type: "json" };
 
-const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
+const CliRuntimeLayer = Layer.mergeAll(WorkspacePaths.layer, NetService.layer).pipe(
+  Layer.provideMerge(NodeServices.layer),
+);
 
 const baseState = {
   version: 1,
@@ -43,6 +46,17 @@ const baseState = {
 } as const satisfies PersistedServerRuntimeState;
 
 describe("pair base URL selection", () => {
+  it("uses the advertised public origin before local and dev addresses", () => {
+    expect(
+      resolveDirectPairingBaseUrl({
+        ...baseState,
+        advertisedUrl: "https://code.example.com/",
+        devUrl: "http://localhost:5733/",
+        host: "0.0.0.0",
+      }),
+    ).toBe("https://code.example.com/");
+  });
+
   it("pairs through the dev web origin when the server fronts a dev server", () => {
     expect(resolveDirectPairingBaseUrl({ ...baseState, devUrl: "http://localhost:5733/" })).toBe(
       "http://localhost:5733/",

@@ -37,6 +37,7 @@ import * as ServerConfig from "./config.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
+import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
@@ -50,9 +51,15 @@ import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { environmentAuthenticatedAuthLayer } from "./auth/http.ts";
 
+import { ProjectSetupScriptRunner } from "./project/ProjectSetupScriptRunner.ts";
+import { GitWorkflowService } from "./git/GitWorkflowService.ts";
+import { VcsStatusBroadcaster } from "./vcs/VcsStatusBroadcaster.ts";
+
 import packageJson from "../package.json" with { type: "json" };
 
-const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
+const CliRuntimeLayer = Layer.mergeAll(WorkspacePaths.layer, NetService.layer).pipe(
+  Layer.provideMerge(NodeServices.layer),
+);
 const DisconnectedLauncherChildLayer = Layer.mergeAll(
   Layer.succeed(HostProcessEnvironment, {
     ...process.env,
@@ -121,13 +128,13 @@ const makeCliTestServerConfig = (baseDir: string) =>
   });
 
 const makeProjectPersistenceLayer = (config: ServerConfig.ServerConfig["Service"]) =>
-  Layer.mergeAll(
-    OrchestrationLayerLive.pipe(
-      Layer.provideMerge(RepositoryIdentityResolver.layer),
-      Layer.provideMerge(SqlitePersistenceLayerLive),
-    ),
-    WorkspacePaths.layer,
-  ).pipe(Layer.provideMerge(NodeServices.layer), Layer.provide(ServerConfig.layer(config)));
+  OrchestrationLayerLive.pipe(
+    Layer.provideMerge(RepositoryIdentityResolver.layer),
+    Layer.provideMerge(SqlitePersistenceLayerLive),
+    Layer.provideMerge(WorkspacePaths.layer),
+    Layer.provideMerge(NodeServices.layer),
+    Layer.provide(ServerConfig.layer(config)),
+  );
 
 const readPersistedSnapshot = (baseDir: string) =>
   Effect.gen(function* () {
@@ -363,6 +370,12 @@ const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Ef
     const routesLayer = HttpApiBuilder.layer(ProjectCliHttpApi).pipe(
       Layer.provide(orchestrationHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
+      Layer.provide(
+        Layer.succeed(ThreadDeletionReactor, {
+          start: () => Effect.void,
+          drainThrough: () => Effect.void,
+        }),
+      ),
     );
     const appLayer = HttpRouter.serve(routesLayer, {
       disableListenLog: true,
@@ -376,6 +389,9 @@ const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Ef
         ),
       ),
       Layer.provideMerge(makeProjectPersistenceLayer(config)),
+      Layer.provide(Layer.mock(GitWorkflowService)({})),
+      Layer.provide(Layer.mock(VcsStatusBroadcaster)({})),
+      Layer.provide(Layer.mock(ProjectSetupScriptRunner)({})),
       Layer.provideMerge(
         NodeHttpServer.layer(NodeHttp.createServer, {
           host: "127.0.0.1",
@@ -414,6 +430,29 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
     }),
   );
 
+  it.effect(
+    "keeps the provider resource hook available without advertising it as a user command",
+    () =>
+      Effect.gen(function* () {
+        const help = yield* captureStdout(runCli(["--help"]));
+        assert.notInclude(help.output, "resource-governor-hook");
+        const hookHelp = yield* captureStdout(runCli(["resource-governor-hook", "--help"]));
+        assert.include(hookHelp.output, "resource-governor-hook");
+      }),
+  );
+
+  it.effect("rejects non-HTTP advertised addresses before starting the server", () =>
+    Effect.gen(function* () {
+      const error = yield* runCliWithRuntime(["--advertised-url", "ftp://code.example.com"]).pipe(
+        Effect.flip,
+      );
+      if (!(error instanceof CliError.ShowHelp)) {
+        assert.fail("Expected ShowHelp");
+      }
+      assert.include(error.errors.map((issue) => issue.message).join(" "), "HTTP(S)");
+    }),
+  );
+
   it.effect("accepts canonical --no-<flag> boolean negation", () =>
     Effect.gen(function* () {
       const { output } = yield* captureStdout(runCli(["--no-log-websocket-events", "--version"]));
@@ -444,8 +483,8 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       if (!CliError.isCliError(error)) {
         assert.fail(`Expected CliError, got ${String(error)}`);
       }
-      if (error._tag !== "ShowHelp") {
-        assert.fail(`Expected ShowHelp, got ${error._tag}`);
+      if (!(error instanceof CliError.ShowHelp)) {
+        assert.fail("Expected ShowHelp");
       }
       assert.deepEqual(error.commandPath, ["t3", "connect"]);
       assert.include(error.errors[0]?.message ?? "", "missing T3 Connect public configuration");
@@ -673,8 +712,8 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       if (!CliError.isCliError(error)) {
         assert.fail(`Expected CliError, got ${String(error)}`);
       }
-      if (error._tag !== "ShowHelp") {
-        assert.fail(`Expected ShowHelp, got ${error._tag}`);
+      if (!(error instanceof CliError.ShowHelp)) {
+        assert.fail("Expected ShowHelp");
       }
       assert.deepEqual(error.commandPath, ["t3", "auth", "pairing", "create"]);
       const ttlError = error.errors[0] as CliError.CliError | undefined;
@@ -841,8 +880,8 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       if (!CliError.isCliError(error)) {
         assert.fail(`Expected CliError, got ${String(error)}`);
       }
-      if (error._tag !== "ShowHelp") {
-        assert.fail(`Expected ShowHelp, got ${error._tag}`);
+      if (!(error instanceof CliError.ShowHelp)) {
+        assert.fail("Expected ShowHelp");
       }
       assert.deepEqual(error.commandPath, ["t3", "project", "add"]);
       const optionError = error.errors[0] as CliError.CliError | undefined;
