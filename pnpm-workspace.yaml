@@ -9,6 +9,8 @@ packages:
 # true = allowed to run build scripts; false mirrors the pnpm 10 behavior
 # where anything outside onlyBuiltDependencies was silently not built.
 allowBuilds:
+  "@google/genai": false
+  protobufjs: false
   browser-tabs-lock: false
   bufferutil: false
   core-js: false
@@ -163,6 +165,7 @@ packageExtensions:
       vite: "catalog:"
 
 patchedDependencies:
+  "react-native-shiki-engine@0.3.12": patches/react-native-shiki-engine@0.3.12.patch
   "@clerk/expo@4.2.0": patches/@clerk__expo@4.2.0.patch
   "@effect/vitest@4.0.0-rc.112": patches/@effect__vitest@4.0.0-rc.112.patch
   "@expo/metro-config@57.0.12": patches/@expo__metro-config@57.0.12.patch

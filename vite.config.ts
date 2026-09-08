@@ -31,6 +31,9 @@ export default defineConfig({
   },
   fmt: {
     ignorePatterns: [
+      ".agents/skills/**",
+      ".claude/skills/**",
+      ".t3code/skills/**",
       ".repos/**",
       ".alchemy",
       "dist",
@@ -56,6 +59,9 @@ export default defineConfig({
   },
   lint: {
     ignorePatterns: [
+      ".agents/skills/**",
+      ".claude/skills/**",
+      ".t3code/skills/**",
       ".repos",
       ".repos/**",
       "dist",
@@ -172,7 +178,9 @@ export default defineConfig({
         "apps/server/src/orchestration/Layers/OrchestrationEngine.test.ts": 5,
         "apps/server/src/orchestration/Layers/OrchestrationReactor.test.ts": 4,
         "apps/server/src/orchestration/Layers/ProviderCommandReactor.test.ts": 66,
+        "apps/server/src/orchestration/Layers/ProviderCommandReactor.fork-regressions.test.ts": 39,
         "apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.test.ts": 29,
+        "apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.fork-regressions.test.ts": 18,
         "apps/server/src/orchestration/Layers/ThreadDeletionReactor.test.ts": 2,
         "apps/server/src/orchestration/commandInvariants.test.ts": 5,
         "apps/server/src/orchestration/projector.test.ts": 20,
