@@ -9,6 +9,8 @@ import { expandHomePath } from "../../pathExpansion.ts";
 
 const quotePath = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 
+const DEFAULT_CLAUDE_CODE_MAX_OUTPUT_TOKENS = "128000";
+
 export const resolveClaudeHomePath = Effect.fn("resolveClaudeHomePath")(function* (
   config: Pick<ClaudeSettings, "homePath">,
 ): Effect.fn.Return<string, never, Path.Path> {
@@ -17,16 +19,31 @@ export const resolveClaudeHomePath = Effect.fn("resolveClaudeHomePath")(function
   return path.resolve(homePath.length > 0 ? expandHomePath(homePath) : NodeOS.homedir());
 });
 
+export const resolveClaudeConfigDir = Effect.fn("resolveClaudeConfigDir")(function* (
+  config: Pick<ClaudeSettings, "homePath">,
+): Effect.fn.Return<string, never, Path.Path> {
+  const path = yield* Path.Path;
+  const resolvedHomePath = yield* resolveClaudeHomePath(config);
+  return config.homePath.trim().length > 0
+    ? resolvedHomePath
+    : path.join(resolvedHomePath, ".claude");
+});
+
 export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function* (
   config: Pick<ClaudeSettings, "homePath">,
   baseEnv?: NodeJS.ProcessEnv,
 ): Effect.fn.Return<NodeJS.ProcessEnv, never, Path.Path> {
   const resolvedBaseEnv = baseEnv ?? process.env;
+  const environment = {
+    ...resolvedBaseEnv,
+    CLAUDE_CODE_MAX_OUTPUT_TOKENS:
+      resolvedBaseEnv.CLAUDE_CODE_MAX_OUTPUT_TOKENS ?? DEFAULT_CLAUDE_CODE_MAX_OUTPUT_TOKENS,
+  };
   const homePath = config.homePath.trim();
-  if (homePath.length === 0) return resolvedBaseEnv;
+  if (homePath.length === 0) return environment;
   const resolvedHomePath = yield* resolveClaudeHomePath(config);
   return {
-    ...resolvedBaseEnv,
+    ...environment,
     // Isolate this instance's config via CLAUDE_CONFIG_DIR rather than HOME.
     // Overriding HOME also relocates the macOS login keychain lookup
     // ($HOME/Library/Keychains), so the spawned CLI can't find its stored

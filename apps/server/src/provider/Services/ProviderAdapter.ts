@@ -9,13 +9,21 @@
  */
 import type {
   ApprovalRequestId,
+  McpLiveApplyOutcome,
+  McpRuntimeAction,
+  McpRuntimeActionResult,
+  McpRuntimeServer,
+  McpRuntimeServerDetailsResult,
+  McpRuntimeServerKey,
   ProviderApprovalDecision,
   ProviderDriverKind,
+  ProviderInstanceId,
   ProviderUserInputAnswers,
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
   ProviderSession,
   ProviderSessionStartInput,
+  RuntimeSessionId,
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
   ThreadId,
@@ -26,6 +34,26 @@ import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 
 export type ProviderSessionModelSwitchMode = "in-session" | "unsupported";
+export type ProviderMcpSupportMode = "unsupported" | "sessionConfig" | "nativeConfig";
+
+export type ProviderForceStopMechanism =
+  | "process-tree"
+  | "runtime-close"
+  | "remote-cancel"
+  | "local-detach"
+  | "already-stopped";
+
+export type ProviderForceStopResult =
+  | {
+      readonly outcome: "terminated";
+      readonly mechanism: Exclude<ProviderForceStopMechanism, "local-detach">;
+      readonly detail?: string;
+    }
+  | {
+      readonly outcome: "detached";
+      readonly mechanism: "local-detach";
+      readonly detail: string;
+    };
 
 /**
  * How ProviderService runs manual context compaction for an adapter.
@@ -52,6 +80,62 @@ export interface ProviderAdapterCapabilities {
   readonly promptlessTurnContinuation?: boolean;
   /** False when native conversation history cannot be rewound. */
   readonly supportsConversationRollback?: boolean;
+  /**
+   * Declares how this adapter consumes T3-owned MCP server settings.
+   */
+  readonly mcp?: ProviderMcpSupportMode;
+  /** Whether the adapter can fork a provider thread without replaying its transcript. */
+  readonly nativeThreadFork?: boolean;
+  /** Whether the adapter exposes provider-native manual compaction. */
+  readonly manualCompaction?: boolean;
+}
+
+export interface ProviderNativeThreadForkInput {
+  readonly sourceThreadId: ThreadId;
+  readonly destinationThreadId: ThreadId;
+  readonly sourceProviderThreadId: string;
+  readonly lastProviderTurnId?: string;
+  readonly session: ProviderSessionStartInput;
+}
+
+/** Exact provider runtime selected for an MCP inspection or mutation. */
+export interface ProviderMcpRuntimeTarget {
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly threadId: ThreadId;
+  readonly runtimeSessionId: RuntimeSessionId;
+}
+
+export interface ProviderMcpRuntimeServerTarget extends ProviderMcpRuntimeTarget {
+  readonly providerKey: McpRuntimeServerKey;
+}
+
+export interface ProviderMcpRuntimeActionInput extends ProviderMcpRuntimeServerTarget {
+  readonly action: McpRuntimeAction;
+}
+
+export type ProviderMcpRuntimeApplyOutcome = Exclude<McpLiveApplyOutcome, "failed">;
+
+/**
+ * Optional provider-native MCP inspection boundary.
+ *
+ * Adapters resolve credentials and native configuration internally. Keeping
+ * those values out of this interface prevents runtime status responses from
+ * accidentally carrying secrets across the WebSocket boundary.
+ */
+export interface ProviderMcpRuntimeAdapter<TError> {
+  readonly getSnapshot: (
+    input: ProviderMcpRuntimeTarget,
+  ) => Effect.Effect<ReadonlyArray<McpRuntimeServer>, TError>;
+  readonly getServerDetails?: (
+    input: ProviderMcpRuntimeServerTarget,
+  ) => Effect.Effect<McpRuntimeServerDetailsResult, TError>;
+  readonly runAction?: (
+    input: ProviderMcpRuntimeActionInput,
+  ) => Effect.Effect<McpRuntimeActionResult, TError>;
+  /** Re-resolve T3-owned MCP settings inside the adapter's active session. */
+  readonly applyConfiguration?: (
+    input: ProviderMcpRuntimeTarget,
+  ) => Effect.Effect<void | ProviderMcpRuntimeApplyOutcome, TError>;
 }
 
 export interface ProviderThreadTurnSnapshot {
@@ -70,12 +154,18 @@ export interface ProviderAdapterShape<TError> {
    */
   readonly provider: ProviderDriverKind;
   readonly capabilities: ProviderAdapterCapabilities;
+  readonly mcpRuntime?: ProviderMcpRuntimeAdapter<TError>;
 
   /**
    * Start a provider-backed session.
    */
   readonly startSession: (
     input: ProviderSessionStartInput,
+  ) => Effect.Effect<ProviderSession, TError>;
+
+  /** Fork a provider-native thread into a new T3 session when supported. */
+  readonly forkSession?: (
+    input: ProviderNativeThreadForkInput,
   ) => Effect.Effect<ProviderSession, TError>;
 
   /**
@@ -88,10 +178,30 @@ export interface ProviderAdapterShape<TError> {
   /** Omitted when this adapter does not support manual context compaction. */
   readonly compaction?: ProviderCompaction<TError>;
 
+  /** Compact the active provider thread when supported. */
+  readonly compactThread?: (
+    threadId: ThreadId,
+    expectedRuntimeSessionId?: RuntimeSessionId,
+  ) => Effect.Effect<void, TError>;
+
   /**
    * Interrupt an active turn.
    */
-  readonly interruptTurn: (threadId: ThreadId, turnId?: TurnId) => Effect.Effect<void, TError>;
+  readonly interruptTurn: (
+    threadId: ThreadId,
+    turnId?: TurnId,
+    expectedRuntimeSessionId?: RuntimeSessionId,
+  ) => Effect.Effect<void, TError>;
+
+  /**
+   * Immediately tear down the exact provider runtime owned by this adapter.
+   * Implementations must fence the operation by runtime session id so a stale
+   * watchdog cannot stop a replacement session for the same thread.
+   */
+  readonly forceStopSession: (
+    threadId: ThreadId,
+    expectedRuntimeSessionId: RuntimeSessionId,
+  ) => Effect.Effect<ProviderForceStopResult, TError>;
 
   /**
    * Respond to an interactive approval request.

@@ -23,13 +23,17 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { McpConfigEngine, toAcpMcpServers } from "../../mcp/McpConfigEngine.ts";
 import { makeCursorTextGeneration } from "../../textGeneration/CursorTextGeneration.ts";
+import { buildCursorAcpSpawnInput } from "../acp/CursorAcpSupport.ts";
 import { ProviderDriverError } from "../Errors.ts";
+import { makeAcpHistorySync } from "../history/AcpHistorySync.ts";
 import { makeCursorAdapter } from "../Layers/CursorAdapter.ts";
 import {
   buildInitialCursorProviderSnapshot,
   checkCursorProviderStatus,
   makeCursorModelDiscovery,
+  CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES,
   enrichCursorSnapshot,
 } from "../Layers/CursorProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
@@ -40,6 +44,7 @@ import {
   type ProviderInstance,
 } from "../ProviderDriver.ts";
 import { withInstanceIdentity } from "./instanceIdentity.ts";
+import { makeInstanceHistorySyncSource } from "../Services/ProviderHistorySync.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
   makeCachedProviderMaintenanceResolution,
@@ -84,6 +89,7 @@ export type CursorDriverEnv =
   | Crypto.Crypto
   | FileSystem.FileSystem
   | HttpClient.HttpClient
+  | McpConfigEngine
   | Path.Path
   | ProviderEventLoggers
   | ServerConfig
@@ -104,8 +110,10 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
+      const serverConfig = yield* ServerConfig;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
+      const mcpConfigEngine = yield* McpConfigEngine;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
@@ -119,6 +127,21 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       const effectiveConfig = { ...config, enabled } satisfies CursorSettings;
+      const historySyncSource = makeInstanceHistorySyncSource({
+        driverKind: DRIVER_KIND,
+        instanceId,
+        continuationKey: continuationIdentity.continuationKey,
+        displayName: displayName ?? "Cursor",
+        capabilities: { search: true, archived: false, resume: true, activity: false },
+      });
+      const historySync = makeAcpHistorySync({
+        source: historySyncSource,
+        defaultCwd: serverConfig.cwd,
+        spawn: buildCursorAcpSpawnInput(effectiveConfig, serverConfig.cwd, processEnv),
+        childProcessSpawner: spawner,
+        authMethodId: "cursor_login",
+        clientCapabilities: CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES,
+      });
       const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
         resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
           binaryPath: effectiveConfig.binaryPath,
@@ -134,6 +157,15 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         instanceId,
+        resolveMcpServers: ({ cwd }) =>
+          mcpConfigEngine.resolveActiveServers({ cwd, providerInstanceId: instanceId }).pipe(
+            Effect.map(toAcpMcpServers),
+            Effect.catch((cause) =>
+              Effect.logWarning("Failed to resolve MCP servers for Cursor session", {
+                detail: cause.detail,
+              }).pipe(Effect.as([])),
+            ),
+          ),
       });
       const textGeneration = yield* makeCursorTextGeneration(effectiveConfig, processEnv);
 
@@ -159,13 +191,14 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         initialSnapshot: (settings) =>
           buildInitialCursorProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
         checkProvider,
-        // Model catalog and capabilities come exclusively from Cursor's
-        // list_available_models extension method during provider checks.
+        // Primary catalog comes from list_available_models; the enrichment hook
+        // can fill capabilities for models that still come back empty.
         enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
           resolveMaintenance().pipe(
             Effect.flatMap((maintenanceCapabilities) =>
               enrichCursorSnapshot({
                 settings: settings.provider,
+                environment: processEnv,
                 snapshot: currentSnapshot,
                 maintenanceCapabilities,
                 enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
@@ -174,6 +207,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
                 httpClient,
               }),
             ),
+            Effect.provideService(Crypto.Crypto, crypto),
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           ),
       }).pipe(
@@ -216,6 +250,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
                 ),
               ]).pipe(Effect.map(([machineSnapshot, skills]) => ({ ...machineSnapshot, skills }))),
         adapter,
+        historySync,
         textGeneration,
       } satisfies ProviderInstance;
     }),

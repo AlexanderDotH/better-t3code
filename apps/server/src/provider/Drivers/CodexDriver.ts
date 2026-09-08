@@ -35,6 +35,7 @@ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { McpConfigEngine } from "../../mcp/McpConfigEngine.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCodexAdapter } from "../Layers/CodexAdapter.ts";
 import {
@@ -48,11 +49,16 @@ import {
   withCodexAppServerClient,
 } from "../Layers/CodexProvider.ts";
 import { resolveCodexLaunchArgs } from "../Layers/codexLaunchArgs.ts";
+import { makeLiveCodexHistorySyncAdapter } from "../history/CodexHistorySync.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import type { ProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
 import { withInstanceIdentity } from "./instanceIdentity.ts";
+import {
+  makeInstanceHistorySyncSource,
+  makeSupportedProviderHistorySync,
+} from "../Services/ProviderHistorySync.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
@@ -97,6 +103,12 @@ function makeCodexMaintenanceResolver(sharedHomePath: string) {
     },
   });
 }
+const HISTORY_SYNC_CAPABILITIES = {
+  search: true,
+  archived: true,
+  resume: true,
+  activity: true,
+} as const;
 
 /**
  * Services the driver needs to materialize an instance. Surfaced as the
@@ -110,6 +122,7 @@ export type CodexDriverEnv =
   | Crypto.Crypto
   | FileSystem.FileSystem
   | HttpClient.HttpClient
+  | McpConfigEngine
   | ModelManifest.ModelManifest
   | Path.Path
   | ProviderEventLoggers
@@ -130,9 +143,11 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       const resetCreditCoordinator = yield* CodexResetCreditCoordinator;
       const fileSystem = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
+      const { cwd } = yield* ServerConfig;
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
+      const mcpConfigEngine = yield* McpConfigEngine;
       const modelManifest = yield* ModelManifest.ModelManifest;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const homeLayout = yield* resolveCodexHomeLayout(config);
@@ -161,6 +176,23 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         binaryPath: expandHomePath(config.binaryPath),
         homePath: homeLayout.effectiveHomePath ?? "",
       } satisfies CodexSettings;
+      const historySource = makeInstanceHistorySyncSource({
+        driverKind: DRIVER_KIND,
+        instanceId,
+        continuationKey: continuationIdentity.continuationKey,
+        displayName: displayName ?? "Codex",
+        capabilities: HISTORY_SYNC_CAPABILITIES,
+      });
+      const historyAdapter = yield* makeLiveCodexHistorySyncAdapter({
+        sourceId: historySource.sourceId,
+        config: effectiveConfig,
+        environment: processEnv,
+        cwd,
+      });
+      const historySync = makeSupportedProviderHistorySync({
+        source: historySource,
+        adapter: historyAdapter,
+      });
       const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
         resolveProviderMaintenanceCapabilitiesEffect(
           makeCodexMaintenanceResolver(homeLayout.sharedHomePath),
@@ -185,6 +217,14 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         instanceId,
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
+        resolveMcpServers: ({ cwd }) =>
+          mcpConfigEngine.resolveActiveServers({ cwd, providerInstanceId: instanceId }).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Failed to resolve MCP servers for Codex session", {
+                detail: cause.detail,
+              }).pipe(Effect.as([])),
+            ),
+          ),
       });
       const textGeneration = yield* makeCodexTextGeneration(effectiveConfig, processEnv);
 
@@ -344,6 +384,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         snapshotForCwd,
         consumeResetCredit,
         adapter,
+        historySync,
         textGeneration,
       } satisfies ProviderInstance;
     }),

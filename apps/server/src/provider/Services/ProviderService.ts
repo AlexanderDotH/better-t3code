@@ -21,10 +21,12 @@ import type {
   ProviderSession,
   ProviderSessionStartInput,
   ProviderStopSessionInput,
+  RuntimeSessionId,
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
   MessageId,
   ThreadId,
+  TurnId,
   ProviderTurnStartResult,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -32,8 +34,38 @@ import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 
 import type { ProviderServiceError } from "../Errors.ts";
-import type { ProviderAdapterCapabilities } from "./ProviderAdapter.ts";
+import type { ProviderAdapterCapabilities, ProviderForceStopResult } from "./ProviderAdapter.ts";
+import type { ProviderNativeThreadForkInput } from "./ProviderAdapter.ts";
 import type { ProviderInstanceRoutingInfo } from "./ProviderAdapterRegistry.ts";
+
+export interface ProviderAbortTarget {
+  readonly threadId: ThreadId;
+  readonly runtimeSessionId: RuntimeSessionId;
+  readonly turnId: TurnId | null;
+  readonly providerInstanceId: ProviderInstanceId;
+}
+
+/** Exact in-memory provider runtime owned by a transient T3 workflow. */
+export interface ProviderTransientSessionTarget {
+  readonly threadId: ThreadId;
+  readonly runtimeSessionId: RuntimeSessionId;
+  readonly providerInstanceId: ProviderInstanceId;
+}
+
+export interface ProviderTransientSessionOptions {
+  /**
+   * Durable parent thread whose authenticated workspace may be exposed to the
+   * transient worker. The provider runtime itself remains keyed by the
+   * synthetic transient thread id.
+   */
+  readonly workspaceContextThreadId?: ThreadId;
+  /**
+   * MCP surface mounted into the transient runtime. Existing callers that
+   * provide workspaceContextThreadId without this option retain the constrained
+   * workspace-only Fetch profile.
+   */
+  readonly mcpMode?: "none" | "workspace-only" | "full";
+}
 
 /**
  * ProviderServiceShape - Service API for provider session and turn orchestration.
@@ -47,6 +79,22 @@ export interface ProviderServiceShape {
     input: ProviderSessionStartInput,
   ) => Effect.Effect<ProviderSession, ProviderServiceError>;
 
+  /** Fork a provider-native conversation into a new durable T3 session. */
+  readonly forkSession: (
+    input: ProviderNativeThreadForkInput,
+  ) => Effect.Effect<ProviderSession, ProviderServiceError>;
+
+  /**
+   * Start a fresh provider runtime without creating a durable session binding.
+   * Callers reserve the runtime id before startup so early events can be
+   * generation-fenced by the transient workflow that owns them.
+   */
+  readonly startTransientSession: (
+    threadId: ThreadId,
+    input: ProviderSessionStartInput,
+    options?: ProviderTransientSessionOptions,
+  ) => Effect.Effect<ProviderSession, ProviderServiceError>;
+
   /**
    * Send a provider turn.
    */
@@ -56,7 +104,7 @@ export interface ProviderServiceShape {
 
   readonly compactThread: (
     threadId: ThreadId,
-    modelSelection?: ProviderSendTurnInput["modelSelection"],
+    modelSelection?: ProviderSendTurnInput["modelSelection"] | RuntimeSessionId,
     requestId?: MessageId,
   ) => Effect.Effect<void, ProviderServiceError>;
 
@@ -66,6 +114,20 @@ export interface ProviderServiceShape {
   readonly interruptTurn: (
     input: ProviderInterruptTurnInput,
   ) => Effect.Effect<void, ProviderServiceError>;
+
+  readonly resolveAbortTarget: (
+    input: ProviderInterruptTurnInput,
+  ) => Effect.Effect<ProviderAbortTarget, ProviderServiceError>;
+
+  readonly interruptAbortTarget: (
+    target: ProviderAbortTarget,
+  ) => Effect.Effect<void, ProviderServiceError>;
+
+  readonly forceStopAbortTarget: (
+    target: ProviderAbortTarget,
+  ) => Effect.Effect<ProviderForceStopResult, ProviderServiceError>;
+
+  readonly isAbortTargetCurrent: (target: ProviderAbortTarget) => Effect.Effect<boolean>;
 
   /**
    * Respond to a provider approval request.
@@ -86,6 +148,11 @@ export interface ProviderServiceShape {
    */
   readonly stopSession: (
     input: ProviderStopSessionInput,
+  ) => Effect.Effect<void, ProviderServiceError>;
+
+  /** Gracefully stop one exact transient runtime and remove its in-memory binding. */
+  readonly stopTransientSession: (
+    target: ProviderTransientSessionTarget,
   ) => Effect.Effect<void, ProviderServiceError>;
 
   /**
