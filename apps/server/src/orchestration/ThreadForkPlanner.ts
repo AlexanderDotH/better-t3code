@@ -29,7 +29,10 @@ import {
   retainThreadProposedPlansAfterRevert,
 } from "./projector.ts";
 
-type PlannedEvent = Omit<OrchestrationEvent, "sequence">;
+type PlannedEvent<Type extends OrchestrationEvent["type"]> = Omit<
+  Extract<OrchestrationEvent, { readonly type: Type }>,
+  "sequence"
+>;
 
 interface MutableHistoryState {
   messages: ThreadForkHistoryMessage[];
@@ -919,7 +922,7 @@ const remapHistory = Effect.fn("remapThreadForkHistory")(function* (input: {
 function makeEventBase(input: {
   readonly eventId: EventId;
   readonly command: ThreadForkCommand;
-}): Omit<PlannedEvent, "type" | "payload"> {
+}): Omit<PlannedEvent<"thread.created">, "type" | "payload"> {
   return {
     eventId: input.eventId,
     aggregateKind: "thread",
@@ -994,7 +997,7 @@ export const planThreadFork = Effect.fn("planThreadFork")(function* (input: {
   const crypto = yield* Crypto.Crypto;
   const createdEventId = EventId.make(yield* crypto.randomUUIDv4);
   const forkedEventId = EventId.make(yield* crypto.randomUUIDv4);
-  const createdEvent: PlannedEvent = {
+  const createdEvent: PlannedEvent<"thread.created"> = {
     ...makeEventBase({ eventId: createdEventId, command: input.command }),
     type: "thread.created",
     payload: {
@@ -1011,7 +1014,7 @@ export const planThreadFork = Effect.fn("planThreadFork")(function* (input: {
     },
   };
   const localWorkspace = input.command.workspace.mode === "local";
-  const forkedEvent: PlannedEvent = {
+  const forkedEvent: PlannedEvent<"thread.forked"> = {
     ...makeEventBase({ eventId: forkedEventId, command: input.command }),
     causationEventId: createdEventId,
     type: "thread.forked",

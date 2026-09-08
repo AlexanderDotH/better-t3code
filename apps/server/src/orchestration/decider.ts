@@ -196,11 +196,11 @@ const makeThreadLifecycleResetEvents = Effect.fn("makeThreadLifecycleResetEvents
     readonly occurredAt: string;
     readonly commandId: OrchestrationCommand["commandId"];
   }): Effect.fn.Return<
-    ReadonlyArray<Omit<OrchestrationEvent, "sequence">>,
+    ReadonlyArray<PlannedOrchestrationEvent>,
     PlatformError.PlatformError,
     Crypto.Crypto
   > {
-    const events: Array<Omit<OrchestrationEvent, "sequence">> = [];
+    const events: Array<PlannedOrchestrationEvent> = [];
     if (input.thread.settledOverride !== null) {
       events.push({
         ...(yield* withEventBase({
@@ -237,7 +237,8 @@ const makeThreadLifecycleResetEvents = Effect.fn("makeThreadLifecycleResetEvents
   },
 );
 
-type PlannedOrchestrationEvent = Omit<OrchestrationEvent, "sequence">;
+type WithoutSequence<Event> = Event extends OrchestrationEvent ? Omit<Event, "sequence"> : never;
+type PlannedOrchestrationEvent = WithoutSequence<OrchestrationEvent>;
 
 type DecideOrchestrationCommandResult =
   | PlannedOrchestrationEvent
@@ -615,7 +616,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             turnId: activeProjectAgentTurnId(recipient),
           }),
       );
-      const messageEvent: Omit<OrchestrationEvent, "sequence"> = {
+      const messageEvent: PlannedOrchestrationEvent = {
         ...(yield* withEventBase({
           aggregateKind: "project",
           aggregateId: command.projectId,
@@ -638,10 +639,16 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       ).filter(
         (recipient) =>
           !isActiveProjectAgentThread(recipient) &&
-          !threadHasQueuedTurnStart({
-            ...recipient,
-            latestUserMessageAt: recipient.messages.findLast((message) => message.role === "user" && message.historyOrigin === undefined)?.createdAt ?? null,
-          }, command.sentAt),
+          !threadHasQueuedTurnStart(
+            {
+              ...recipient,
+              latestUserMessageAt:
+                recipient.messages.findLast(
+                  (message) => message.role === "user" && message.historyOrigin === undefined,
+                )?.createdAt ?? null,
+            },
+            command.sentAt,
+          ),
       );
       const wakeEvents = yield* Effect.forEach(inactiveRecipients, (recipient) =>
         Effect.gen(function* () {
@@ -657,7 +664,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             commandId: command.commandId,
           });
           const wakeMessageId = MessageId.make(wakeMessageBase.eventId);
-          const wakeMessageEvent: Omit<OrchestrationEvent, "sequence"> = {
+          const wakeMessageEvent: PlannedOrchestrationEvent = {
             ...wakeMessageBase,
             type: "thread.message-sent",
             payload: {
@@ -682,7 +689,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             occurredAt: command.sentAt,
             commandId: command.commandId,
           });
-          const wakeTurnEvent: Omit<OrchestrationEvent, "sequence"> = {
+          const wakeTurnEvent: PlannedOrchestrationEvent = {
             ...wakeTurnBase,
             causationEventId: wakeMessageEvent.eventId,
             type: "thread.turn-start-requested",
@@ -778,7 +785,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         threadId: command.threadId,
       });
       const occurredAt = yield* nowIso;
-      const deletedEvent: Omit<OrchestrationEvent, "sequence"> = {
+      const deletedEvent: PlannedOrchestrationEvent = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -820,7 +827,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         threadId: command.threadId,
       });
       const occurredAt = yield* nowIso;
-      const archivedEvent: Omit<OrchestrationEvent, "sequence"> = {
+      const archivedEvent: PlannedOrchestrationEvent = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -944,7 +951,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
       // Settling is "I'm done with this": clear states that would keep the
       // row pinned or snoozed instead of showing the new settled state.
-      const companionEvents: Array<Omit<OrchestrationEvent, "sequence">> = [];
+      const companionEvents: Array<PlannedOrchestrationEvent> = [];
       for (const [requestId, request] of pendingRequests) {
         companionEvents.push({
           ...(yield* withEventBase({
@@ -1162,7 +1169,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // silently outranking them. An explicit settle un-settles (reason
       // "user", same override the un-settle button stamps), and a snooze's
       // return ticket is spent — the thread is on top NOW, not on Tuesday.
-      const promotionEvents: Array<Omit<OrchestrationEvent, "sequence">> = [];
+      const promotionEvents: Array<PlannedOrchestrationEvent> = [];
       if (thread.settledOverride === "settled") {
         promotionEvents.push({
           ...(yield* withEventBase({
@@ -1523,7 +1530,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           detail: `Proposed plan '${sourceProposedPlan?.planId}' belongs to thread '${sourceThread.id}' in a different project.`,
         });
       }
-      const userMessageEvent: Omit<OrchestrationEvent, "sequence"> = {
+      const userMessageEvent: PlannedOrchestrationEvent = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -1543,7 +1550,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: command.createdAt,
         },
       };
-      const turnStartRequestedEvent: Omit<OrchestrationEvent, "sequence"> = {
+      const turnStartRequestedEvent: PlannedOrchestrationEvent = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -1640,7 +1647,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         });
       }
 
-      const turnStartRequestedEvent: Omit<OrchestrationEvent, "sequence"> = {
+      const turnStartRequestedEvent: PlannedOrchestrationEvent = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -2004,7 +2011,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
-      const sessionSetEvent: Omit<OrchestrationEvent, "sequence"> = {
+      const sessionSetEvent: PlannedOrchestrationEvent = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -2034,7 +2041,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         lease !== undefined &&
         command.session.status !== "starting" &&
         command.session.status !== "running";
-      const releaseEvent: Omit<OrchestrationEvent, "sequence"> | undefined = releasesLease
+      const releaseEvent: PlannedOrchestrationEvent | undefined = releasesLease
         ? {
             ...(yield* withEventBase({
               aggregateKind: "project",
@@ -2054,7 +2061,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       if (thread.settledOverride === null || !isSessionActivity) {
         return releaseEvent ? [sessionSetEvent, releaseEvent] : sessionSetEvent;
       }
-      const unsettledEvent: Omit<OrchestrationEvent, "sequence"> = {
+      const unsettledEvent: PlannedOrchestrationEvent = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -2501,7 +2508,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ? ((command.activity.payload as { requestId: string })
               .requestId as OrchestrationEvent["metadata"]["requestId"])
           : undefined;
-      const activityAppendedEvent: Omit<OrchestrationEvent, "sequence"> = {
+      const activityAppendedEvent: PlannedOrchestrationEvent = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -2525,7 +2532,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       if (thread.settledOverride === null || !wakesSettledThread) {
         return activityAppendedEvent;
       }
-      const unsettledEvent: Omit<OrchestrationEvent, "sequence"> = {
+      const unsettledEvent: PlannedOrchestrationEvent = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
