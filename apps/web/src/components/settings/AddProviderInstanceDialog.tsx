@@ -11,6 +11,7 @@ import {
 } from "@t3tools/contracts";
 
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { cn } from "../../lib/utils";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { Button } from "../ui/button";
@@ -98,7 +99,7 @@ const COMING_SOON_DRIVER_OPTIONS: readonly ComingSoonDriverOption[] = [
     label: "Pi Agent",
     icon: PiAgentIcon,
   },
-];
+].filter((option) => !DRIVER_OPTIONS.some((driver) => driver.value === option.value));
 
 /**
  * Validate an instance id against the same slug rules the server applies in
@@ -128,6 +129,7 @@ export function AddProviderInstanceDialog({
   environmentLabel,
   onOpenChange,
 }: AddProviderInstanceDialogProps) {
+  const translate = useInterfaceTranslator().message;
   const settings = useEnvironmentSettings(environmentId);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
 
@@ -275,9 +277,9 @@ export function AddProviderInstanceDialog({
                       >
                         <CheckIcon className="size-3.5 shrink-0" />
                       </RadioPrimitive.Indicator>
-                      {option.badgeLabel ? (
+                      {option.badgeMessageKey ? (
                         <Badge variant="warning" size="sm">
-                          {option.badgeLabel}
+                          {translate(option.badgeMessageKey)}
                         </Badge>
                       ) : null}
                     </RadioPrimitive.Root>

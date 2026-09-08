@@ -6,6 +6,7 @@ import {
   deriveProviderInstanceEntries,
   getDefaultProviderInstanceModel,
   isProviderInstancePickerReady,
+  isProviderInstancePickerBrowsable,
   isProviderInstancePickerVisible,
   resolveDefaultProviderModelSelection,
   resolveSelectableProviderInstance,
@@ -578,5 +579,28 @@ describe("resolveDefaultProviderModelSelection", () => {
         null,
       ),
     ).toBeNull();
+  });
+});
+
+describe("setup catalogs", () => {
+  it("lets an authenticated account choose a model before becoming turn-ready", () => {
+    const [entry] = deriveProviderInstanceEntries([
+      provider({
+        provider: ProviderDriverKind.make("openrouter"),
+        instanceId: "openrouter",
+        status: "warning",
+        models: [model("model-to-configure")],
+      }),
+    ]);
+    expect(entry && isProviderInstancePickerBrowsable(entry)).toBe(true);
+    expect(entry && isProviderInstancePickerReady(entry)).toBe(false);
+    expect(entry && isProviderInstancePickerBrowsable({ ...entry, enabled: false })).toBe(false);
+    expect(
+      entry &&
+        isProviderInstancePickerBrowsable({
+          ...entry,
+          snapshot: { ...entry.snapshot, auth: { status: "unauthenticated" } },
+        }),
+    ).toBe(false);
   });
 });
