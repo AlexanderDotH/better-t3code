@@ -55,6 +55,11 @@ in the receiving app. Connection settings are under **Settings → Connections**
 on web and desktop and **Settings → Environments** on mobile. A loopback address
 such as `127.0.0.1` reaches only the device opening the link.
 
+On mobile, review the host address and connection encryption before confirming.
+If a saved connection needs attention, open **Settings → Environments** to retry,
+edit its address, or pair again. Saved environments remain listed when offline
+or signed out of T3 Connect.
+
 Pairing authorizes that device for future connections. Use a fresh one-time link
 for each new device; you do not need the original token to reconnect. Links
 created in Settings can only be copied from the client that created them while
