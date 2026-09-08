@@ -149,6 +149,7 @@ export const upstreamMigrationTable = "effect_sql_upstream_migrations";
 export const forkMigrationTable = "effect_sql_fork_migrations";
 const upstreamBaseline = 49;
 const forkMigrationEntries = [[61, "IndependentMigrationLedgers", Migration0061]] as const;
+export const forkMigrationManifest = forkMigrationEntries.map(([id, name]) => [id, name] as const);
 
 const convergeLegacyDatabase = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
