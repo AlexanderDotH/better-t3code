@@ -11,6 +11,10 @@ export function createAgentSettingsEnvironmentAtoms<R, E>(
   const mcp = createMcpEnvironmentAtoms(runtime);
   return {
     chatImport: {
+      discoverQuery: createEnvironmentRpcQueryAtomFamily(runtime, {
+        label: "environment-data:chat-import:discover-query",
+        tag: WS_METHODS.chatImportDiscover,
+      }),
       discover: createEnvironmentRpcCommand(runtime, {
         label: "environment-data:chat-import:discover",
         tag: WS_METHODS.chatImportDiscover,
@@ -21,6 +25,14 @@ export function createAgentSettingsEnvironmentAtoms<R, E>(
       }),
     },
     harnessChatSync: {
+      sourcesQuery: createEnvironmentRpcQueryAtomFamily(runtime, {
+        label: "environment-data:harness-chat-sync:sources-query",
+        tag: WS_METHODS.harnessChatSyncSources,
+      }),
+      listQuery: createEnvironmentRpcQueryAtomFamily(runtime, {
+        label: "environment-data:harness-chat-sync:list-query",
+        tag: WS_METHODS.harnessChatSyncList,
+      }),
       sources: createEnvironmentRpcCommand(runtime, {
         label: "environment-data:harness-chat-sync:sources",
         tag: WS_METHODS.harnessChatSyncSources,
