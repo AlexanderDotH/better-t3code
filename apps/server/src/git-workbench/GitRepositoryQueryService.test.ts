@@ -1,6 +1,7 @@
 import { HostProcessWorkingDirectory } from "@t3tools/shared/hostProcess";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -21,6 +22,7 @@ const GitLayer = GitVcsDriver.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
 );
 const TestLayer = GitRepositoryQueryService.layer.pipe(Layer.provideMerge(GitLayer));
+const TEST_NOW = DateTime.makeUnsafe("2026-09-08T12:00:00.000Z");
 
 const git = (cwd: string, args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) =>
   Effect.gen(function* () {
@@ -30,6 +32,8 @@ const git = (cwd: string, args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) 
       cwd,
       args,
       env: {
+        GIT_AUTHOR_DATE: DateTime.formatIso(TEST_NOW),
+        GIT_COMMITTER_DATE: DateTime.formatIso(TEST_NOW),
         ...env,
         GIT_CONFIG_COUNT: "1",
         GIT_CONFIG_KEY_0: "commit.gpgsign",
@@ -339,10 +343,10 @@ it.effect("marks binary changes and truncates oversized file patches", () =>
 
 it.effect("aggregates mailmap-aware contributors, daily activity, and tracked Code mix", () =>
   Effect.gen(function* () {
-    yield* TestClock.setTime(Date.now());
+    yield* TestClock.setTime(DateTime.toEpochMillis(TEST_NOW));
     const cwd = yield* createRepository;
-    const recent = new Date(Date.now() - 2 * 24 * 60 * 60 * 1_000);
-    const earlier = new Date(Date.now() - 4 * 24 * 60 * 60 * 1_000);
+    const recent = DateTime.formatIso(DateTime.subtract(TEST_NOW, { days: 2 }));
+    const earlier = DateTime.formatIso(DateTime.subtract(TEST_NOW, { days: 4 }));
     yield* writeFile(
       cwd,
       ".mailmap",
@@ -357,10 +361,10 @@ it.effect("aggregates mailmap-aware contributors, daily activity, and tracked Co
     yield* git(cwd, ["commit", "-m", "seed repository"], {
       GIT_AUTHOR_NAME: "Alias Alice",
       GIT_AUTHOR_EMAIL: "alias@example.test",
-      GIT_AUTHOR_DATE: earlier.toISOString(),
+      GIT_AUTHOR_DATE: earlier,
       GIT_COMMITTER_NAME: "Alias Alice",
       GIT_COMMITTER_EMAIL: "alias@example.test",
-      GIT_COMMITTER_DATE: earlier.toISOString(),
+      GIT_COMMITTER_DATE: earlier,
     });
     yield* commitAs({
       cwd,
@@ -369,7 +373,7 @@ it.effect("aggregates mailmap-aware contributors, daily activity, and tracked Co
       message: "update app",
       name: "Alice Canonical",
       email: "alice@example.test",
-      timestamp: recent.toISOString(),
+      timestamp: recent,
     });
     yield* commitAs({
       cwd,
@@ -378,7 +382,7 @@ it.effect("aggregates mailmap-aware contributors, daily activity, and tracked Co
       message: "update tool",
       name: "Bob Builder",
       email: "bob@example.test",
-      timestamp: recent.toISOString(),
+      timestamp: recent,
     });
     const service = yield* GitRepositoryQueryService.GitRepositoryQueryService;
 
@@ -393,9 +397,10 @@ it.effect("aggregates mailmap-aware contributors, daily activity, and tracked Co
       ],
     );
     assert.ok(insights.contributors.every(({ identityKey }) => /^[0-9a-f]{64}$/.test(identityKey)));
+    // @effect-diagnostics-next-line preferSchemaOverJson:off - Check the complete serialized result for accidental email disclosure, including unexpected fields.
     assert.strictEqual(/@example\.test/.test(JSON.stringify(insights)), false);
     assert.strictEqual(
-      insights.activity.find(({ date }) => date === recent.toISOString().slice(0, 10))?.commitCount,
+      insights.activity.find(({ date }) => date === recent.slice(0, 10))?.commitCount,
       2,
     );
     assert.deepStrictEqual(
@@ -417,12 +422,12 @@ it.effect(
   "coalesces insight scans by Git common directory and HEAD and caps them at 5000 commits",
   () =>
     Effect.gen(function* () {
-      yield* TestClock.setTime(Date.now());
+      yield* TestClock.setTime(DateTime.toEpochMillis(TEST_NOW));
       const cwd = yield* createRepository;
       yield* commitFile(cwd, 1);
       const driver = yield* GitVcsDriver.GitVcsDriver;
       const operationCounts = new Map<string, number>();
-      const timestamp = new Date().toISOString();
+      const timestamp = DateTime.formatIso(TEST_NOW);
       const oversizedHistory = `${`Alice\0alice@example.test\0${timestamp}\0`.repeat(5_001)}`;
       const countingDriver = GitVcsDriver.GitVcsDriver.of({
         ...driver,
@@ -487,7 +492,7 @@ it.effect(
 
 it.effect("keeps the five largest Code mix categories and folds the remainder into Other", () =>
   Effect.gen(function* () {
-    yield* TestClock.setTime(Date.now());
+    yield* TestClock.setTime(DateTime.toEpochMillis(TEST_NOW));
     const cwd = yield* createRepository;
     for (const [path, contents] of [
       ["src/a.cs", "class A {}\n"],
@@ -518,7 +523,7 @@ it.effect("keeps the five largest Code mix categories and folds the remainder in
 
 it.effect("returns empty history and insights for an unborn Git repository", () =>
   Effect.gen(function* () {
-    yield* TestClock.setTime(Date.now());
+    yield* TestClock.setTime(DateTime.toEpochMillis(TEST_NOW));
     const cwd = yield* createRepository;
     const service = yield* GitRepositoryQueryService.GitRepositoryQueryService;
 

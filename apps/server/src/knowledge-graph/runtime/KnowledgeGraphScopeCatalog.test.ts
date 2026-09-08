@@ -3,12 +3,17 @@ import * as NodePath from "node:path";
 
 import { assert, describe, it } from "@effect/vitest";
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 
 import {
   isKnowledgeGraphWorkspaceRootIndexable,
   makeKnowledgeGraphScopeCatalog,
 } from "./KnowledgeGraphScopeCatalog.ts";
+
+class MissingWorkspaceRoot extends Data.TaggedError("MissingWorkspaceRoot")<{
+  message: string;
+}> {}
 
 const environmentId = EnvironmentId.make("environment-1");
 const projectOne = ProjectId.make("project-1");
@@ -137,7 +142,7 @@ describe("KnowledgeGraphScopeCatalog", () => {
         }),
         canonicalizeWorkspaceRoot: (root) =>
           root === "/deleted-worktree"
-            ? Effect.fail(new Error("worktree no longer exists"))
+            ? Effect.fail(new MissingWorkspaceRoot({ message: "worktree no longer exists" }))
             : Effect.succeed("/canonical/repo"),
         homeDirectory,
       });
@@ -178,7 +183,7 @@ describe("KnowledgeGraphScopeCatalog", () => {
         }),
         canonicalizeWorkspaceRoot: (root) =>
           root === "/missing"
-            ? Effect.fail(new Error("project root no longer exists"))
+            ? Effect.fail(new MissingWorkspaceRoot({ message: "project root no longer exists" }))
             : Effect.succeed("/canonical/healthy"),
         homeDirectory,
       });

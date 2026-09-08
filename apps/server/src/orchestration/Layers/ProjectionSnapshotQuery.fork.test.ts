@@ -28,6 +28,7 @@ it.layer(TestLayer)("ProjectionSnapshotQuery fork history", (it) => {
       const sql = yield* SqlClient.SqlClient;
       const threadId = ThreadId.make("thread-fork-snapshot");
       const sourceThreadId = ThreadId.make("thread-source-snapshot");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Seed a raw database fixture to exercise the snapshot decoder.
       const forkJson = JSON.stringify({
         provenance: {
           sourceThreadId,

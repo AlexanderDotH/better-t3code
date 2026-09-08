@@ -10,11 +10,16 @@ import {
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { SqlitePersistenceMemory } from "./Sqlite.ts";
 import { ProjectionHarnessChatSyncRepositoryLive } from "./ProjectionHarnessChatSync.ts";
 import { ProjectionHarnessChatSyncRepository } from "../Services/ProjectionHarnessChatSync.ts";
+
+const TestLayer = ProjectionHarnessChatSyncRepositoryLive.pipe(
+  Layer.provide(SqlitePersistenceMemory),
+);
 
 it.effect("finds a harness history link by thread, source, and continuation identity", () =>
   Effect.gen(function* () {
@@ -51,10 +56,7 @@ it.effect("finds a harness history link by thread, source, and continuation iden
     assert.strictEqual(Option.getOrThrow(byContinuation).threadId, threadId);
     assert.strictEqual(byContinuationList[0]?.projectId, "project-1");
     assert.strictEqual(bySourceList[0]?.projectId, "project-1");
-  }).pipe(
-    Effect.provide(ProjectionHarnessChatSyncRepositoryLive),
-    Effect.provide(SqlitePersistenceMemory),
-  ),
+  }).pipe(Effect.provide(TestLayer)),
 );
 
 it.effect("keeps the first local mapping when the same native message is replayed", () =>
@@ -86,10 +88,7 @@ it.effect("keeps the first local mapping when the same native message is replaye
       mappings.map((entry) => entry.nativeMessageId),
       ["native-message-1"],
     );
-  }).pipe(
-    Effect.provide(ProjectionHarnessChatSyncRepositoryLive),
-    Effect.provide(SqlitePersistenceMemory),
-  ),
+  }).pipe(Effect.provide(TestLayer)),
 );
 
 it.effect("does not let an older status refresh replace a newer link", () =>
@@ -128,8 +127,5 @@ it.effect("does not let an older status refresh replace a newer link", () =>
     });
     const refreshedStatus = yield* repository.getLinkByThreadId({ threadId: base.threadId });
     assert.strictEqual(Option.getOrThrow(refreshedStatus).activity, "active");
-  }).pipe(
-    Effect.provide(ProjectionHarnessChatSyncRepositoryLive),
-    Effect.provide(SqlitePersistenceMemory),
-  ),
+  }).pipe(Effect.provide(TestLayer)),
 );

@@ -88,6 +88,7 @@ describe("general subagent state", () => {
         task: "Inspect state",
         startedAt: IsoDateTime.make("2026-08-29T12:00:00.000Z"),
       });
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Keep the provider's raw JSON fixture independent of the production decoder.
       worker.finalAssistantMessage = JSON.stringify({
         outcome: "Finished the state inspection.",
         changesOrFindings: [],

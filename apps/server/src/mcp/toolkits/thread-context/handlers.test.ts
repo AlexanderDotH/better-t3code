@@ -15,6 +15,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -23,6 +24,7 @@ import { invokeThreadContext } from "./handlers.ts";
 const rootThreadId = ThreadId.make("thread-context-root");
 const projectId = ProjectId.make("thread-context-project");
 const toolItemId = "large-tool-item";
+const decodeJsonText = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 const invocation = McpInvocationContext.McpInvocationContext.of({
   environmentId: EnvironmentId.make("environment-thread-context"),
@@ -259,7 +261,7 @@ it.effect("retrieves an exact one MiB tool result through paginated references",
       if (!page.hasMore) break;
     } while (cursor);
 
-    const retrieved = JSON.parse(chunks.join("")) as typeof payload;
+    const retrieved = decodeJsonText(chunks.join("")) as typeof payload;
     expect(chunks.length).toBeGreaterThan(1);
     expect(retrieved).toEqual(payload);
     expect(retrieved.data.stdout).toHaveLength(1024 * 1024);
@@ -290,7 +292,7 @@ it.effect("retrieves an exact General Subagent transcript reference", () => {
           ref: `subagent:${agentId}`,
           contentType: "application/json",
         });
-        expect(JSON.parse(result.reference!.content)).toEqual(transcript);
+        expect(decodeJsonText(result.reference!.content)).toEqual(transcript);
       }),
     ),
     (effect) => provide(effect, query),
@@ -368,7 +370,7 @@ it.effect("resolves a tool result inherited from authenticated fork ancestry", (
   return invokeThreadContext({ ref: `tool-result:${toolItemId}` }).pipe(
     Effect.tap((result) =>
       Effect.sync(() => {
-        expect(JSON.parse(result.reference!.content)).toEqual({ data: { secret: true } });
+        expect(decodeJsonText(result.reference!.content)).toEqual({ data: { secret: true } });
       }),
     ),
     (effect) => provide(effect, query),

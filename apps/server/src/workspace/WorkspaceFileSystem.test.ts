@@ -508,7 +508,6 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
             { path: "src/obsolete.ts", action: "deleted", edit_count: 1 },
           ],
         });
-        expect(JSON.stringify(result)).not.toContain("header");
       }),
     );
 

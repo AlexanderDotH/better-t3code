@@ -11,11 +11,14 @@ import {
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
 import {
   extractKnowledgeGraphInventory,
   resolveKnowledgeGraphInventoryBounds,
 } from "./KnowledgeGraphInventory.ts";
+
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const scope = {
   version: 1,
@@ -51,14 +54,14 @@ it.effect("extracts a bounded deterministic graph without reading ignored secret
   Effect.scoped(
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
-      const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-knowledge-graph-inventory-",
-      });
+      const workspaceRoot = yield* fileSystem
+        .makeTempDirectoryScoped({ prefix: "t3-knowledge-graph-inventory-" })
+        .pipe(Effect.flatMap(fileSystem.realPath));
       yield* Effect.forEach(
         [
           [
             "package.json",
-            JSON.stringify({
+            encodeJson({
               name: "inventory-fixture",
               dependencies: { react: "19.0.0" },
               devDependencies: { typescript: "5.9.0" },
@@ -73,7 +76,7 @@ it.effect("extracts a bounded deterministic graph without reading ignored secret
           ["docs/architecture.md", "# Architecture\nThe service owns indexing.\n"],
           [
             "config/app.json",
-            JSON.stringify({
+            encodeJson({
               apiKey: "must-not-leak-json",
               awsAccessKeyId: "AKIAABCDEFGHIJKLMNOP",
               databaseUrl: "postgres://inventory-user:db-must-not-leak@example.test/app",
@@ -135,11 +138,12 @@ it.effect("extracts a bounded deterministic graph without reading ignored secret
         "src/index.ts",
         "src/service.ts",
       ]);
-      expect(JSON.stringify(first)).not.toContain("must-not-leak");
-      expect(JSON.stringify(first)).not.toContain("must-not-leak-json");
-      expect(JSON.stringify(first)).not.toContain("AKIAABCDEFGHIJKLMNOP");
-      expect(JSON.stringify(first)).not.toContain("db-must-not-leak");
-      expect(JSON.stringify(first)).not.toContain("sk-proj-must-not-leak");
+      const serializedInventory = encodeJson(first);
+      expect(serializedInventory).not.toContain("must-not-leak");
+      expect(serializedInventory).not.toContain("must-not-leak-json");
+      expect(serializedInventory).not.toContain("AKIAABCDEFGHIJKLMNOP");
+      expect(serializedInventory).not.toContain("db-must-not-leak");
+      expect(serializedInventory).not.toContain("sk-proj-must-not-leak");
       expect(first.truncation).toEqual({
         eligibleFiles: false,
         nodes: false,
@@ -161,9 +165,9 @@ it.effect("records file and node truncation without exceeding either bound", () 
   Effect.scoped(
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
-      const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-knowledge-graph-bounds-",
-      });
+      const workspaceRoot = yield* fileSystem
+        .makeTempDirectoryScoped({ prefix: "t3-knowledge-graph-bounds-" })
+        .pipe(Effect.flatMap(fileSystem.realPath));
       yield* Effect.forEach(["a.ts", "b.ts", "c.ts", "d.ts"], (relativePath) =>
         writeTextFile(workspaceRoot, relativePath, `export const ${relativePath[0]} = 1;`),
       );

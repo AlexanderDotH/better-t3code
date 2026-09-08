@@ -226,6 +226,7 @@ describe("OpenAI Responses protocol", () => {
           },
         },
       ]);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the provider wire payload independently of its schema.
       expect(JSON.stringify(Array.from(events))).toContain("encrypted-reasoning");
     }),
   );
@@ -252,6 +253,7 @@ describe("OpenAI Responses protocol", () => {
         ).pipe(Stream.runCollect),
       );
       expect(malformedError).toBeInstanceOf(OpenAiProtocolError);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
       expect(JSON.stringify(malformedError)).not.toContain(secret);
     }),
   );
@@ -279,6 +281,7 @@ describe("OpenAI Responses protocol", () => {
       );
       expect(failedError).toBeInstanceOf(OpenAiProtocolError);
       expect(failedError.message).toBe("OpenAI response ended with failed");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
       expect(JSON.stringify(failedError)).not.toContain(secret);
 
       const streamError = yield* Effect.flip(
@@ -297,6 +300,7 @@ describe("OpenAI Responses protocol", () => {
       );
       expect(streamError).toBeInstanceOf(OpenAiProtocolError);
       expect(streamError.message).toBe("OpenAI response stream reported an error");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
       expect(JSON.stringify(streamError)).not.toContain(secret);
     }),
   );

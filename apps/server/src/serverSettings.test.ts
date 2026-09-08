@@ -269,6 +269,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const serverSettings = yield* ServerSettingsService;
       yield* fileSystem.writeFileString(
         serverConfig.settingsPath,
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - Seed legacy settings without applying current schema defaults.
         JSON.stringify({ agentEnhancement: { deepThinking: { enabled: true } } }),
       );
 
@@ -286,6 +287,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const serverSettings = yield* ServerSettingsService;
       yield* fileSystem.writeFileString(
         serverConfig.settingsPath,
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - Persist conflicting legacy and current flags for migration coverage.
         JSON.stringify({
           betterT3Environment: {
             version: 1,
@@ -312,6 +314,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const serverSettings = yield* ServerSettingsService;
       yield* fileSystem.writeFileString(
         serverConfig.settingsPath,
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - Seed a sparse record to verify preservation of explicit disables.
         JSON.stringify({
           betterT3Environment: {
             version: 1,
@@ -352,6 +355,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       };
       yield* fileSystem.writeFileString(
         serverConfig.settingsPath,
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - Seed the old locale format before the migration under test.
         JSON.stringify({ interfaceLanguageSyncRecord: legacy }),
       );
 
@@ -395,6 +399,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       yield* fileSystem.writeFileString(
         serverConfig.settingsPath,
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - Legacy plaintext credentials must reach the migration unchanged.
         JSON.stringify({
           providers: {
             openrouter: {
@@ -432,6 +437,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.notInclude(persisted, "apiKey");
       assert.notInclude(persisted, "preferredMaxCatalogContextTokens");
       assert.notInclude(persisted, "baseUrl");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect raw persisted keys without schema defaults or field stripping.
       assert.isUndefined(JSON.parse(persisted).providers?.openrouter);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
@@ -456,6 +462,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             },
           },
         });
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect every serialized field for plaintext credential leakage.
         assert.notInclude(JSON.stringify(clientProjection), legacyApiKey);
         assert.notProperty(clientProjection.providerInstances[instanceId]?.config ?? {}, "apiKey");
 
@@ -478,6 +485,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           contextCompression: false,
           customModels: ["@preset/legacy-client"],
         });
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect every serialized field for plaintext credential leakage.
         assert.notInclude(JSON.stringify(redactServerSettingsForClient(saved)), legacyApiKey);
 
         const stored = yield* secretStore.get(openRouterApiKeySecretName(instanceId));
@@ -510,6 +518,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         );
         yield* fileSystem.writeFileString(
           serverConfig.settingsPath,
+          // @effect-diagnostics-next-line preferSchemaOverJson:off - Preserve obsolete credential fields for the compatibility migration.
           JSON.stringify({
             providerInstances: {
               [instanceId]: {
@@ -564,6 +573,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       yield* fileSystem.writeFileString(
         serverConfig.settingsPath,
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - Seed both legacy and explicit instance formats before migration.
         JSON.stringify({
           providers: {
             openrouter: {
@@ -620,6 +630,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const fileSystem = yield* FileSystem.FileSystem;
       const serverSettings = yield* ServerSettingsService;
       const legacyApiKey = "sk-or-must-stay-on-disk";
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Verify failed secret migration leaves the original bytes unchanged.
       const original = JSON.stringify({
         providerInstances: {
           openrouter: {
@@ -639,6 +650,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       });
       assert.strictEqual(error.cause, cause);
       assert.notInclude(error.message, legacyApiKey);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Check the complete serialized error for credential leakage.
       assert.notInclude(JSON.stringify(error), legacyApiKey);
       assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), original);
     }).pipe(Effect.provide(settingsLayer));
@@ -1228,6 +1240,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         const serverConfig = yield* ServerConfig.ServerConfig;
         const fileSystem = yield* FileSystem.FileSystem;
         const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - Intentionally invalid settings must not be normalized by fixture setup.
         const persisted = JSON.stringify({
           addProjectBaseDirectory: 42,
           interfaceLanguageSyncRecord: {
@@ -2005,11 +2018,13 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       });
       assert.deepEqual(saved.autoReasoningModelSelection, selection);
       const savedRaw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Check the raw stored model rather than a decoded default.
       assert.deepEqual(JSON.parse(savedRaw).autoReasoningModelSelection, selection);
 
       const reset = yield* serverSettings.updateSettings({ autoReasoningModelSelection: null });
       assert.equal(reset.autoReasoningModelSelection, null);
       const resetRaw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Clearing the selection must remove its persisted key.
       assert.equal(JSON.parse(resetRaw).autoReasoningModelSelection, undefined);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
@@ -2385,11 +2400,13 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const saved = yield* serverSettings.updateSettings({ fetchModelSelection: selection });
       assert.deepEqual(saved.fetchModelSelection, selection);
       const savedRaw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Check the raw stored model rather than a decoded default.
       assert.deepEqual(JSON.parse(savedRaw).fetchModelSelection, selection);
 
       const reset = yield* serverSettings.updateSettings({ fetchModelSelection: null });
       assert.equal(reset.fetchModelSelection, null);
       const resetRaw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Clearing the selection must remove its persisted key.
       assert.equal(JSON.parse(resetRaw).fetchModelSelection, undefined);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
@@ -2408,11 +2425,13 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       });
       assert.deepEqual(saved.voiceTranslationModelSelection, selection);
       const savedRaw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Check the raw stored model rather than a decoded default.
       assert.deepEqual(JSON.parse(savedRaw).voiceTranslationModelSelection, selection);
 
       const reset = yield* serverSettings.updateSettings({ voiceTranslationModelSelection: null });
       assert.equal(reset.voiceTranslationModelSelection, null);
       const resetRaw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Clearing the selection must remove its persisted key.
       assert.equal(JSON.parse(resetRaw).voiceTranslationModelSelection, undefined);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );

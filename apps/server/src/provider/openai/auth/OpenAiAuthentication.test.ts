@@ -76,6 +76,7 @@ describe("OpenAiAuthentication", () => {
       );
 
       expect(error).toMatchObject({ code: "credential-invalid", retryable: false });
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
       expect(JSON.stringify(error)).not.toContain("sk-new-secret");
       expect(Redacted.value((yield* store.resolve).apiKey)).toBe("sk-old");
     }),
@@ -97,6 +98,7 @@ describe("OpenAiAuthentication", () => {
         label: "sk-p…7890",
         capabilities: { canDisconnect: true },
       });
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
       expect(JSON.stringify(result)).not.toContain("1234567890");
     }),
   );

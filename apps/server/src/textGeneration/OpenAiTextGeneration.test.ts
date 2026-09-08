@@ -147,6 +147,8 @@ describe("OpenAiTextGeneration", () => {
         Effect.sync(() => {
           requests.push(request);
           return {
+            // Keep the external model fixture independent of the decoder under test.
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
             text: JSON.stringify({
               version: 1,
               edges: [
@@ -196,6 +198,8 @@ describe("OpenAiTextGeneration", () => {
             return { text: '{"recommendedSubagents":4}' };
           }
           return {
+            // Keep the external model fixture independent of the decoder under test.
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
             text: JSON.stringify({
               decision: "run",
               workers: [
@@ -375,6 +379,8 @@ describe("OpenAiTextGeneration", () => {
           reason,
           detail: "OpenAI text generation request failed.",
         });
+        // A schema encoder could hide leaked properties by stripping unknown fields.
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
         expect(JSON.stringify(error)).not.toContain("secret upstream detail");
       }
     }),
@@ -416,6 +422,8 @@ describe("OpenAiTextGeneration", () => {
       );
 
       expect(error.detail).toBe("OpenAI text generation request failed.");
+      // A schema encoder could hide leaked properties by stripping unknown fields.
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.stringify(error)).not.toContain(secret);
     }),
   );

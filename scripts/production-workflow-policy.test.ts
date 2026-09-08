@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - Reads the real workflow files to verify deployment safeguards.
 import * as NodeFS from "node:fs";
 import { describe, expect, it } from "vite-plus/test";
 import { parse } from "yaml";

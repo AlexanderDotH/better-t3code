@@ -105,6 +105,7 @@ describe("ChatGptAuthBroker", () => {
           },
         },
       ]);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
       expect(JSON.stringify(events)).not.toContain("access-secret");
     }),
   );

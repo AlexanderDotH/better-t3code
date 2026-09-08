@@ -42,7 +42,10 @@ import {
 } from "./toolkits/workspace/tools.ts";
 
 const decodeToolAnnotations = Schema.decodeUnknownSync(McpSchema.ToolAnnotations);
-const decodeListToolsResult = Schema.decodeUnknownSync(McpSchema.ListToolsResult);
+const decodeListToolsResponse = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Struct({ result: McpSchema.ListToolsResult })),
+);
+const encodeJsonText = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
 const threadId = ThreadId.make("thread-mcp-test");
@@ -917,8 +920,7 @@ it.effect(
               "application/json",
             ),
           });
-          const body = JSON.parse(yield* response.text) as { readonly result: unknown };
-          return decodeListToolsResult(body.result).tools;
+          return decodeListToolsResponse(yield* response.text).result.tools;
         });
         const workspaceReadToolNames = [
           "workspace_context",
@@ -1126,8 +1128,8 @@ it.effect(
             openWorldHint: false,
           });
         }
-        const fullSchemaBytes = Buffer.byteLength(JSON.stringify(workspaceTools));
-        const narrowSchemaBytes = Buffer.byteLength(JSON.stringify(workspaceOnlyTools));
+        const fullSchemaBytes = Buffer.byteLength(encodeJsonText(workspaceTools));
+        const narrowSchemaBytes = Buffer.byteLength(encodeJsonText(workspaceOnlyTools));
         expect(narrowSchemaBytes).toBeLessThanOrEqual(fullSchemaBytes / 2);
         expect(workspaceTools.map(({ name }) => name)).toEqual(
           expect.arrayContaining([

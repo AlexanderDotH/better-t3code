@@ -591,6 +591,7 @@ describe("GeneralSubagentCoordinator", () => {
         });
         expect(waited.agents[0]).not.toHaveProperty("task");
         expect(waited.agents[0]).not.toHaveProperty("output");
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect every returned field without a schema dropping unexpected commentary.
         expect(JSON.stringify(waited)).not.toContain("Streaming implementation commentary");
         const start = (yield* Ref.get(harness.starts))[0]!;
         expect(start.input).toMatchObject({

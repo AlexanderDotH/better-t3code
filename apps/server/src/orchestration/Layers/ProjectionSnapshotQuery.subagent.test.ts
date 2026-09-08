@@ -12,6 +12,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -25,6 +26,7 @@ const threadId = ThreadId.make("thread-subagent-query");
 const subagentId = SubagentId.make("agent-subagent-query");
 const createdAt = "2026-07-30T11:00:00.000Z";
 const updatedAt = "2026-07-30T11:00:01.000Z";
+const encodeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 const expectedSummary: OrchestrationSubagentSummary = {
   id: subagentId,
@@ -155,7 +157,7 @@ it.layer(TestLayer)("ProjectionSnapshotQuery subagent details", (it) => {
           ${expectedSummary.depth},
           ${expectedSummary.status},
           ${expectedSummary.statusMessage},
-          ${JSON.stringify(expectedSummary.latestProgress)},
+          ${encodeJson(expectedSummary.latestProgress)},
           NULL,
           ${createdAt},
           ${updatedAt},
@@ -355,7 +357,7 @@ it.layer(TestLayer)("ProjectionSnapshotQuery subagent details", (it) => {
         }
       }
 
-      const largePayload = JSON.stringify({ output: "x".repeat(2_500_000) });
+      const largePayload = encodeJson({ output: "x".repeat(2_500_000) });
       for (const sequence of [8, 9, 10]) {
         yield* sql`
           INSERT INTO projection_thread_subagent_activities (
@@ -555,7 +557,7 @@ it.layer(TestLayer)("ProjectionSnapshotQuery subagent details", (it) => {
             'running',
             'Running',
             '{"kind":"state.running","summary":"Running","detail":null,"createdAt":"2026-07-30T12:04:00.000Z"}',
-            ${JSON.stringify({
+            ${encodeJson({
               turnId: "child-turn",
               state: "completed",
               requestedAt: createdAt,
@@ -583,7 +585,7 @@ it.layer(TestLayer)("ProjectionSnapshotQuery subagent details", (it) => {
             'running',
             'Running',
             '{"kind":"state.running","summary":"Running","detail":null,"createdAt":"2026-07-30T12:04:00.000Z"}',
-            ${JSON.stringify({
+            ${encodeJson({
               turnId: "active-turn",
               state: "running",
               requestedAt: createdAt,

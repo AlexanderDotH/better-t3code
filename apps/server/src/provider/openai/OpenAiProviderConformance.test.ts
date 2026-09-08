@@ -500,6 +500,7 @@ describe("OpenAI provider conformance", () => {
             },
           ],
         });
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
         expect(JSON.stringify(requests[0]?.history)).not.toContain("input_file");
       }),
     ).pipe(Effect.provide(testLayer)),

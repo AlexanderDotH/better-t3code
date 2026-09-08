@@ -330,6 +330,7 @@ it.effect("persists per-project settings and exposes the effective document stat
         "project-settings",
         "settings.json",
       );
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Assert the persisted fields without schema defaults or transformations.
       expect(JSON.parse(yield* fileSystem.readFileString(settingsPath))).toEqual({
         memoryMode: "provider",
         allowAgentWrites: false,
@@ -435,10 +436,7 @@ it.effect("locally excludes only .t3/MEMORY.md when Git needs an ignore rule", (
       const harness = yield* makeHarness();
       const workspaceRoot = path.join(harness.root, "git-workspace");
       yield* fileSystem.makeDirectory(workspaceRoot, { recursive: true });
-      yield* Effect.tryPromise({
-        try: () => execFile("git", ["-C", workspaceRoot, "init", "--quiet"]),
-        catch: Effect.die,
-      });
+      yield* Effect.promise(() => execFile("git", ["-C", workspaceRoot, "init", "--quiet"]));
       const scope = testScope("project-git-exclude", workspaceRoot);
 
       yield* harness.store.save(scope, saveRequest(scope, "git.exclude", "Keep it local."));

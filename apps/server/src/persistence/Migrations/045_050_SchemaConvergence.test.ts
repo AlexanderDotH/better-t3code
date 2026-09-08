@@ -87,7 +87,7 @@ interface ScenarioSnapshot {
   readonly integrity: ReadonlyArray<string>;
 }
 
-const captureScenario = (setup: Effect.Effect<void, unknown, SqlClient.SqlClient>) =>
+const captureScenario = <E>(setup: Effect.Effect<void, E, SqlClient.SqlClient>) =>
   Effect.gen(function* () {
     yield* setup;
     const sql = yield* SqlClient.SqlClient;

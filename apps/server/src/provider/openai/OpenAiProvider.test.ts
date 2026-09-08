@@ -112,6 +112,7 @@ describe("OpenAI provider snapshot", () => {
         },
       });
       expect(snapshot.models).toHaveLength(1);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
       expect(JSON.stringify(snapshot)).not.toContain("1234567890");
       expect(snapshot.nativeSubagents).toEqual(OPENAI_RESPONSES_PRESENTATION.nativeSubagents);
     }),

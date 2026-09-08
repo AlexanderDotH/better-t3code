@@ -16,6 +16,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -36,6 +37,7 @@ const firstRuntimeSessionId = RuntimeSessionId.make("runtime-1");
 const secondRuntimeSessionId = RuntimeSessionId.make("runtime-2");
 const providerKey = McpRuntimeServerKey.make("notion");
 const secondProviderKey = McpRuntimeServerKey.make("linear");
+const encodeJsonText = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 function session(
   runtimeSessionId: RuntimeSessionId,
@@ -1093,7 +1095,7 @@ describe("McpRuntimeRegistry", () => {
       });
 
       expect(details.server.issue?.message).not.toContain("provider-secret");
-      expect(JSON.stringify(details.server)).not.toContain("version-secret");
+      expect(encodeJsonText(details.server)).not.toContain("version-secret");
       expect(details.tools).toEqual([
         {
           name: "search",
@@ -1103,8 +1105,8 @@ describe("McpRuntimeRegistry", () => {
         },
       ]);
       expect(details.tools[0]).not.toHaveProperty("inputSchema");
-      expect(JSON.stringify(details.resources)).not.toContain("resource-secret");
-      expect(JSON.stringify(details.templates)).not.toContain("template-secret");
+      expect(encodeJsonText(details.resources)).not.toContain("resource-secret");
+      expect(encodeJsonText(details.templates)).not.toContain("template-secret");
     }).pipe(Effect.provide(registryLayer(adapter)));
   });
 

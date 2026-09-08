@@ -1,4 +1,5 @@
 import { HarnessChatNativeMessageId } from "./persistence/Services/ProjectionHarnessChatSync.ts";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Fixtures use synchronous host-path normalization outside Effect services.
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";

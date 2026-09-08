@@ -174,7 +174,9 @@ describe("ClaudeGatewayCatalog", () => {
             },
             { id: "fastMode", label: "Fast Mode", type: "boolean", currentValue: true },
           ]);
+          // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
           expect(JSON.stringify(catalog)).not.toContain("instance-token");
+          // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
           expect(JSON.stringify(catalog)).not.toContain("settings-token");
         }),
       );

@@ -41,6 +41,7 @@ describe("OpenAiKeyValidation", () => {
       expect(profile).toEqual({ label: "sk-p…7890", supportedModelCount: 1 });
       expect(requests).toHaveLength(1);
       expect(requests[0]?.headers.authorization).toBe("Bearer sk-proj-1234567890");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
       expect(JSON.stringify(profile)).not.toContain("1234567890");
     }),
   );
@@ -67,7 +68,9 @@ describe("OpenAiKeyValidation", () => {
             ? { code: "credential-invalid", status: 401, retryable: false }
             : { code: "rate-limited", status: 429, retryAfterSeconds: 11, retryable: true },
         );
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
         expect(JSON.stringify(error)).not.toContain("secret validation body");
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
         expect(JSON.stringify(error)).not.toContain("sk-secret-key");
       }
     }),

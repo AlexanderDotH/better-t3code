@@ -1,7 +1,10 @@
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Real Git fixtures use synchronous subprocesses independent of the driver under test.
 import * as NodeChildProcess from "node:child_process";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Synchronous helpers prepare and clean isolated repository fixtures.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Paths belong to the synchronous repository fixture helpers.
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";

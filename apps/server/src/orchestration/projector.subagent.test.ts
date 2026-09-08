@@ -7,7 +7,6 @@ import {
   SubagentId,
   ThreadId,
   type OrchestrationEvent,
-  type OrchestrationReadModel,
   type OrchestrationSubagentSummary,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -43,7 +42,7 @@ function makeEvent(
   } as OrchestrationEvent;
 }
 
-function createThread(): Effect.Effect<OrchestrationReadModel, unknown> {
+function createThread() {
   return projectEvent(
     createEmptyReadModel(createdAt),
     makeEvent(1, "thread.created", createdAt, {

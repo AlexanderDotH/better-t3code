@@ -409,7 +409,7 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
 
         runtimeMock.state.promptResult = {
           data: {
-            parts: [{ type: "text", text: JSON.stringify({ branch: "fix/ui-regression" }) }],
+            parts: [{ type: "text", text: '{"branch":"fix/ui-regression"}' }],
           },
         };
         yield* textGeneration.generateBranchName({
@@ -428,7 +428,7 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
 
         runtimeMock.state.promptResult = {
           data: {
-            parts: [{ type: "text", text: JSON.stringify({ title: "Fix UI regression" }) }],
+            parts: [{ type: "text", text: '{"title":"Fix UI regression"}' }],
           },
         };
         yield* textGeneration.generateThreadTitle({
@@ -614,7 +614,7 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
             parts: [
               {
                 type: "text",
-                text: JSON.stringify({ recommendedSubagents: 6 }),
+                text: '{"recommendedSubagents":6}',
               },
             ],
           },
@@ -640,6 +640,8 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
             parts: [
               {
                 type: "text",
+                // Keep the external model fixture independent of the decoder under test.
+                // @effect-diagnostics-next-line preferSchemaOverJson:off
                 text: JSON.stringify({
                   decision: "run",
                   workers: [

@@ -1,4 +1,6 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Synchronous fixtures create isolated databases for native SQLite snapshot tests.
 import * as NodeFS from "node:fs";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Paths belong to the synchronous native SQLite fixture setup.
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 
@@ -124,10 +126,8 @@ it.effect(
       const directory = yield* isolatedDatabase;
       const source = NodePath.join(directory, "fork60.sqlite");
       const filename = NodePath.join(directory, "snapshot.sqlite");
-      const payload = JSON.stringify({
-        defaultModelSelection: { provider: "opencode", model: "custom" },
-        forkMetadata: { retained: true },
-      });
+      const payload =
+        '{"defaultModelSelection":{"provider":"opencode","model":"custom"},"forkMetadata":{"retained":true}}';
       yield* Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         yield* runLegacyForkMigrations();
@@ -137,7 +137,7 @@ it.effect(
       `;
         yield* sql`
         INSERT INTO projection_projects (project_id, title, workspace_root, default_model_selection_json, scripts_json, created_at, updated_at, deleted_at, checkpoints_enabled)
-        VALUES ('project-preserved', 'Fork', '/workspace/fork', ${JSON.stringify({ provider: "opencode", model: "custom" })}, '[]', '2026-09-01', '2026-09-01', NULL, 0)
+        VALUES ('project-preserved', 'Fork', '/workspace/fork', '{"provider":"opencode","model":"custom"}', '[]', '2026-09-01', '2026-09-01', NULL, 0)
       `;
         yield* sql`
         INSERT INTO projection_thread_subagents (thread_id, subagent_id, provider_thread_id, name, depth, status, started_at, updated_at, origin, service_tier, history_origin_json)

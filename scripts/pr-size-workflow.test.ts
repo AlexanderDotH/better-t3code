@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - Runs the workflow's synchronous Node subprocess boundary with real oversized output.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeProcess from "node:process";

@@ -60,13 +60,7 @@ it.effect("persists only incremental changes across repeated external edits", ()
           errorMessage: "stale indexing failure",
           retryAt: 123,
         });
-        yield* Effect.promise(() =>
-          NodeFSP.utimes(
-            NodePath.join(workspaceRoot, "index.ts"),
-            new Date(1_000),
-            new Date(2_000),
-          ),
-        );
+        yield* Effect.promise(() => NodeFSP.utimes(NodePath.join(workspaceRoot, "index.ts"), 1, 2));
         const unchanged = yield* indexer.indexScope(scope);
         const recoveredStatus = Option.getOrThrow(yield* repository.getStatus(scope.scopeId));
         yield* Effect.promise(() =>

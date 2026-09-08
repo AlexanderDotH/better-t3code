@@ -21,6 +21,17 @@ import {
 } from "./EventNdjsonLogger.ts";
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const decodeDiagnosticPayload = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      _t3DiagnosticTruncation: Schema.Struct({
+        originalBytes: Schema.Int,
+        sha256: Schema.String,
+      }),
+      preview: Schema.String,
+    }),
+  ),
+);
 
 function ownedLogPath(basePath: string, segment: string): string {
   const basename = NodePath.basename(basePath);
@@ -67,13 +78,7 @@ describe("EventNdjsonLogger", () => {
         const line = parseLogLine(
           NodeFS.readFileSync(ownedLogPath(basePath, "thread-large"), "utf8").trim(),
         );
-        const logged = JSON.parse(line.payload) as {
-          readonly _t3DiagnosticTruncation: {
-            readonly originalBytes: number;
-            readonly sha256: string;
-          };
-          readonly preview: string;
-        };
+        const logged = yield* decodeDiagnosticPayload(line.payload);
         assert.isAbove(logged._t3DiagnosticTruncation.originalBytes, 256 * 1024);
         assert.match(logged._t3DiagnosticTruncation.sha256, /^[a-f0-9]{64}$/);
         assert.isBelow(Buffer.byteLength(line.payload), 256 * 1024);

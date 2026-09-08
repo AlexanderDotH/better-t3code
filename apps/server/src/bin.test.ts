@@ -19,6 +19,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServer from "effect/unstable/http/HttpServer";
 import * as HttpApi from "effect/unstable/httpapi/HttpApi";
@@ -56,6 +57,8 @@ import { GitWorkflowService } from "./git/GitWorkflowService.ts";
 import { VcsStatusBroadcaster } from "./vcs/VcsStatusBroadcaster.ts";
 
 import packageJson from "../package.json" with { type: "json" };
+
+const isShowHelp = Schema.is(CliError.ShowHelp);
 
 const CliRuntimeLayer = Layer.mergeAll(WorkspacePaths.layer, NetService.layer).pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -446,7 +449,7 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       const error = yield* runCliWithRuntime(["--advertised-url", "ftp://code.example.com"]).pipe(
         Effect.flip,
       );
-      if (!(error instanceof CliError.ShowHelp)) {
+      if (!isShowHelp(error)) {
         assert.fail("Expected ShowHelp");
       }
       assert.include(error.errors.map((issue) => issue.message).join(" "), "HTTP(S)");
@@ -483,7 +486,7 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       if (!CliError.isCliError(error)) {
         assert.fail(`Expected CliError, got ${String(error)}`);
       }
-      if (!(error instanceof CliError.ShowHelp)) {
+      if (!isShowHelp(error)) {
         assert.fail("Expected ShowHelp");
       }
       assert.deepEqual(error.commandPath, ["t3", "connect"]);
@@ -712,7 +715,7 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       if (!CliError.isCliError(error)) {
         assert.fail(`Expected CliError, got ${String(error)}`);
       }
-      if (!(error instanceof CliError.ShowHelp)) {
+      if (!isShowHelp(error)) {
         assert.fail("Expected ShowHelp");
       }
       assert.deepEqual(error.commandPath, ["t3", "auth", "pairing", "create"]);
@@ -880,7 +883,7 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       if (!CliError.isCliError(error)) {
         assert.fail(`Expected CliError, got ${String(error)}`);
       }
-      if (!(error instanceof CliError.ShowHelp)) {
+      if (!isShowHelp(error)) {
         assert.fail("Expected ShowHelp");
       }
       assert.deepEqual(error.commandPath, ["t3", "project", "add"]);

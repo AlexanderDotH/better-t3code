@@ -13,6 +13,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { HttpServer } from "effect/unstable/http";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -53,9 +54,8 @@ const makeRegistry = (
                 }),
               }
             : {},
-        ),
+        ).pipe(Layer.provideMerge(NodeServices.layer)),
       ),
-      Effect.provide(NodeServices.layer),
     );
 
 it.effect("stores only a token hash, resolves the bearer token, and revokes by thread", () =>

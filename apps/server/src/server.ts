@@ -522,6 +522,7 @@ const WorkspaceFileSystemLayerLive = WorkspaceFileSystem.layer.pipe(
 
 const WorkspaceContextLayerLive = WorkspaceContext.layer.pipe(
   Layer.provide(WorkspaceFileSystemLayerLive),
+  Layer.provide(WorkspacePaths.layer),
 );
 
 const WorkspaceLayerLive = Layer.mergeAll(

@@ -208,7 +208,9 @@ describe("NativeHarnessTools", () => {
           ],
         },
       });
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
       expect(JSON.stringify(result)).not.toContain("old");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
       expect(JSON.stringify(result)).not.toContain("new");
     }),
   );
@@ -258,6 +260,7 @@ describe("NativeHarnessTools", () => {
           change_index: 0,
         },
       });
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
       expect(JSON.stringify(result)).not.toContain("secret contents");
     }),
   );

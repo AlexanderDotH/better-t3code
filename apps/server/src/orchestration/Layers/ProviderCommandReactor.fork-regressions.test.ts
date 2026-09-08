@@ -4185,7 +4185,7 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     });
   });
 
-  effectIt("surfaces non-resumable provider user-input callbacks as stale failures", () =>
+  effectIt.effect("surfaces non-resumable provider user-input callbacks as stale failures", () =>
     Effect.gen(function* () {
       const harness = yield* Effect.promise(() => createHarness());
       const now = "2026-01-01T00:00:00.000Z";
@@ -4294,7 +4294,7 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     }),
   );
 
-  effectIt(
+  effectIt.effect(
     "reacts to thread.session.stop by stopping provider session and clearing thread session state",
     () =>
       Effect.gen(function* () {

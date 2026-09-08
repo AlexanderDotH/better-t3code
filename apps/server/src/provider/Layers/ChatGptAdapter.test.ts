@@ -34,6 +34,7 @@ const testLayer = ServerConfig.layerTest(process.cwd(), {
 }).pipe(Layer.provideMerge(NodeServices.layer));
 const decodeChatAttachment = Schema.decodeSync(ChatAttachment);
 const decodeMcpServer = Schema.decodeSync(McpServerDefinition);
+const encodeUnknownJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const noToolsHarness: ChatGptHarness = {
   declarations: () => Effect.succeed([]),
@@ -145,7 +146,7 @@ describe("ChatGptAdapter", () => {
 
         const beforeResume = yield* adapter.readThread(threadId);
         expect(beforeResume.turns).toHaveLength(1);
-        expect(JSON.stringify(beforeResume.turns)).toContain("Hello from ChatGPT.");
+        expect(encodeUnknownJson(beforeResume.turns)).toContain("Hello from ChatGPT.");
         yield* adapter.stopSession(threadId);
         yield* adapter.startSession({
           threadId,
@@ -304,10 +305,10 @@ describe("ChatGptAdapter", () => {
           },
         ]);
         expect(requests).toHaveLength(2);
-        expect(JSON.stringify(requests[1]?.input)).toContain("function_call_output");
-        expect(JSON.stringify(requests[1]?.input)).toContain("notes.txt");
+        expect(encodeUnknownJson(requests[1]?.input)).toContain("function_call_output");
+        expect(encodeUnknownJson(requests[1]?.input)).toContain("notes.txt");
         const beforeResume = yield* adapter.readThread(threadId);
-        expect(JSON.stringify(beforeResume)).toContain("Done.");
+        expect(encodeUnknownJson(beforeResume)).toContain("Done.");
 
         yield* adapter.stopSession(threadId);
         yield* adapter.startSession({
@@ -419,8 +420,8 @@ describe("ChatGptAdapter", () => {
         expect(executed.toSorted()).toEqual(["tool_a", "tool_b"]);
         yield* Deferred.succeed(release, undefined);
         yield* Fiber.join(turnFiber);
-        expect(JSON.stringify(requests[1]?.input)).toContain("call-0");
-        expect(JSON.stringify(requests[1]?.input)).toContain("call-1");
+        expect(encodeUnknownJson(requests[1]?.input)).toContain("call-0");
+        expect(encodeUnknownJson(requests[1]?.input)).toContain("call-1");
       }),
     ).pipe(Effect.provide(testLayer)),
   );
@@ -707,7 +708,7 @@ describe("ChatGptAdapter", () => {
         yield* adapter.sendTurn({ threadId, input: "x".repeat(800) });
 
         expect(compactedInputs).toHaveLength(1);
-        expect(JSON.stringify(requests.at(-1)?.input)).toContain("Compacted conversation.");
+        expect(encodeUnknownJson(requests.at(-1)?.input)).toContain("Compacted conversation.");
 
         const failingTransport: ChatGptAdapterTransport = {
           ...transport,
@@ -791,11 +792,11 @@ describe("ChatGptAdapter", () => {
           sandboxMode: "danger-full-access",
         });
         yield* adapter.sendTurn({ threadId, attachments: [attachment] });
-        expect(JSON.stringify(requests[0]?.input)).toContain("data:image/png;base64,AQIDBA==");
+        expect(encodeUnknownJson(requests[0]?.input)).toContain("data:image/png;base64,AQIDBA==");
         expect(reservations[0]?.attachmentBytes).toBe(4);
 
         yield* adapter.sendTurn({ threadId, input: "What was attached?" });
-        const continuedInput = JSON.stringify(requests[1]?.input);
+        const continuedInput = encodeUnknownJson(requests[1]?.input);
         expect(continuedInput).toContain("[Attached image: image.png");
         expect(continuedInput).not.toContain("data:image/png;base64");
       }),

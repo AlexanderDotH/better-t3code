@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - The synchronous stop-acknowledgement hook writes a temporary test fixture.
 import * as NodeFS from "node:fs";
 import {
   HostProcessArguments,

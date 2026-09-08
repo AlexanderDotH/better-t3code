@@ -1827,6 +1827,7 @@ describe("CodexAdapter MCP runtime", () => {
           openWorld: true,
         },
       ]);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
       NodeAssert.doesNotMatch(JSON.stringify(details), /secretSchemaValue/);
       NodeAssert.deepStrictEqual(runtime.listMcpServerStatusesImpl.mock.calls, [
         ["toolsAndAuthOnly"],

@@ -78,20 +78,14 @@ const writeTextFile = Effect.fn("WorkspaceContextTest.writeTextFile")(function* 
 });
 
 const initializeGit = Effect.fn("WorkspaceContextTest.initializeGit")(function* (cwd: string) {
-  yield* Effect.tryPromise({
-    try: () => execFile("git", ["-C", cwd, "init", "--quiet"]),
-    catch: Effect.die,
-  });
+  yield* Effect.promise(() => execFile("git", ["-C", cwd, "init", "--quiet"]));
 });
 
 const gitAdd = Effect.fn("WorkspaceContextTest.gitAdd")(function* (
   cwd: string,
   paths: ReadonlyArray<string>,
 ) {
-  yield* Effect.tryPromise({
-    try: () => execFile("git", ["-C", cwd, "add", "--", ...paths]),
-    catch: Effect.die,
-  });
+  yield* Effect.promise(() => execFile("git", ["-C", cwd, "add", "--", ...paths]));
 });
 
 it.layer(TestLayer, { excludeTestServices: true })("WorkspaceContextLive", (it) => {

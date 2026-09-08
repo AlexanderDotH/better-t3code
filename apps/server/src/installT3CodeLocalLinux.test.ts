@@ -1,7 +1,10 @@
 import * as NodeAssert from "node:assert/strict";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Installer tests exercise the real shell against isolated fake home directories.
 import * as NodeChildProcess from "node:child_process";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Synchronous fixture setup and cleanup surrounds shell subprocesses.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Shell fixture paths must use the host platform's path conventions.
 import * as NodePath from "node:path";
 import { afterEach, describe, it } from "vite-plus/test";
 

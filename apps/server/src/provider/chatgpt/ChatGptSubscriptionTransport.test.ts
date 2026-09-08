@@ -135,7 +135,9 @@ describe("ChatGptSubscriptionTransport", () => {
       expect(error._tag).toBe("ChatGptAuthenticationError");
       expect(harness.refreshes()).toBe(1);
       expect(harness.invalidations()).toBe(1);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
       expect(JSON.stringify(error)).not.toContain("old-token");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
       expect(JSON.stringify(error)).not.toContain("new-token");
     }),
   );

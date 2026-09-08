@@ -15,6 +15,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { ServerConfig } from "../../config.ts";
@@ -23,6 +24,8 @@ import * as ResourceProtection from "../../resourceProtection/SubagentResourceGo
 import type { GeminiClient } from "../GeminiClient.ts";
 import type { GeminiHarnessToolExecutor } from "./GeminiHarness.ts";
 import { makeGeminiAdapter } from "./GeminiAdapter.ts";
+
+const encodeUnknownJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const testLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3code-gemini-adapter-test-",
@@ -132,7 +135,7 @@ describe("GeminiAdapter", () => {
 
         expect(executed).toBe(65);
         expect(requests).toHaveLength(66);
-        expect(JSON.stringify(requests.at(-1)?.contents)).toContain('"id":"call-64"');
+        expect(encodeUnknownJson(requests.at(-1)?.contents)).toContain('"id":"call-64"');
         const transcript = yield* adapter.readThread(threadId);
         expect(transcript.turns).toHaveLength(1);
         expect(transcript.turns[0]?.items).toHaveLength(66);
@@ -274,8 +277,8 @@ describe("GeminiAdapter", () => {
         ]);
         expect(requests).toHaveLength(2);
         const secondContents = requests[1]?.contents;
-        expect(JSON.stringify(secondContents)).toContain("functionResponse");
-        expect(JSON.stringify(secondContents)).toContain("notes.txt");
+        expect(encodeUnknownJson(secondContents)).toContain("functionResponse");
+        expect(encodeUnknownJson(secondContents)).toContain("notes.txt");
         expect(requests[0]?.config?.systemInstruction).toContain("T3 Code is the harness");
         expect(requests[0]?.config?.systemInstruction).toContain("workspace_context");
         expect(requests[0]?.config?.systemInstruction).toContain("workspace_edit");
@@ -425,7 +428,7 @@ describe("GeminiAdapter", () => {
         expect(requests[0]?.config?.systemInstruction).toContain("workspace_read");
         expect(requests[0]?.config?.systemInstruction).toContain("workspace_context");
         expect(requests[0]?.config?.systemInstruction).not.toContain("workspace_edit");
-        expect(JSON.stringify(requests[1]?.contents)).toContain(
+        expect(encodeUnknownJson(requests[1]?.contents)).toContain(
           "Tool 'exec_command' is not available in this session mode.",
         );
       }),

@@ -259,6 +259,7 @@ it.layer(TestLayer)("OrchestrationProjectionPipeline subagent projections", (it)
         assert.equal(summaryRows[0]?.serviceTier, "priority");
         assert.equal(summaryRows[0]?.status, "completed");
         assert.equal(summaryRows[0]?.statusMessage, "Done");
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - Assert the raw persisted representation without schema normalization.
         assert.deepEqual(JSON.parse(summaryRows[0]?.progressJson ?? "null"), {
           kind: "test",
           summary: "Running focused tests",
