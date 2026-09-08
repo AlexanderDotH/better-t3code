@@ -1,3 +1,6 @@
+import { useThreadFork } from "../hooks/useThreadFork";
+import { resolveInterruptedTurnRetryTarget } from "@t3tools/client-runtime/state/thread-retry";
+import { resolveFetchMode } from "@t3tools/shared/fetchMode";
 import { resolveThreadAbortPresentation } from "@t3tools/client-runtime/state/thread-abort";
 import { KnowledgeGraphPanelController } from "./knowledge-graph/KnowledgeGraphPanelController";
 import { ChatWorkspaceDeckController } from "./workspace-deck/ChatWorkspaceDeckController";
@@ -42,6 +45,7 @@ import {
   type ThreadId,
   type ThreadLinkedPullRequest,
   type TurnId,
+  type ThreadForkBoundary,
   type KeybindingCommand,
   OrchestrationThreadActivity,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -1437,6 +1441,9 @@ export default function ChatView(props: ChatViewProps) {
     reportFailure: false,
   });
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
+  const retryThreadTurn = useAtomCommand(threadEnvironment.retryTurn, { reportFailure: false });
+  const retryDispatchInFlightRef = useRef(false);
+  const [retryingMessageId, setRetryingMessageId] = useState<MessageId | null>(null);
   const createAttachmentAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
     refresh: true,
@@ -2349,6 +2356,9 @@ export default function ChatView(props: ChatViewProps) {
   });
   const pullRequestsCapabilityKnown = serverConfig !== null;
   const supportsPullRequests = serverConfig?.environment.capabilities.pullRequests === true;
+  const supportsThreadForking = serverConfig?.environment.capabilities.threadForking === true;
+  const supportsInterruptedTurnRetry =
+    serverConfig?.environment.capabilities.interruptedTurnRetry === true;
   const attachmentEnvironmentConfig = environmentById.get(environmentId)?.serverConfig ?? null;
   const attachmentUploadsCapabilityKnown = attachmentEnvironmentConfig !== null;
   const supportsQuestionAttachments =
@@ -7924,6 +7934,157 @@ export default function ChatView(props: ChatViewProps) {
     }
   };
 
+  const interruptedTurnRetryTarget = useMemo(
+    () =>
+      resolveInterruptedTurnRetryTarget({
+        latestTurn: activeLatestTurn,
+        messages: activeThread?.messages ?? [],
+        session: activeThread?.session ?? null,
+      }),
+    [activeLatestTurn, activeThread?.messages, activeThread?.session],
+  );
+  const onRetryInterruptedTurn = useCallback(
+    async (messageId: MessageId) => {
+      const target = interruptedTurnRetryTarget;
+      if (
+        !activeThread ||
+        !isServerThread ||
+        !supportsInterruptedTurnRetry ||
+        target === null ||
+        target.messageId !== messageId ||
+        retryDispatchInFlightRef.current
+      ) {
+        return;
+      }
+      if (activeEnvironmentUnavailable || isConnecting) {
+        setThreadError(activeThread.id, "Reconnect this environment before retrying the response.");
+        return;
+      }
+
+      const targetThreadId = activeThread.id;
+      retryDispatchInFlightRef.current = true;
+      setRetryingMessageId(target.messageId);
+      setThreadError(targetThreadId, null);
+      beginLocalDispatch({ preparingWorktree: false });
+
+      try {
+        const fetchMode = resolveFetchMode({ featureEnabled: settings.experimentalFetch });
+        const result = await retryThreadTurn({
+          environmentId: activeThread.environmentId,
+          input: {
+            threadId: targetThreadId,
+            turnId: target.turnId,
+            messageId: target.messageId,
+            ...(fetchMode !== undefined ? { fetchMode } : {}),
+            modelSelection:
+              composerRef.current?.getSendContext().selectedModelSelection ??
+              activeThread.modelSelection,
+            createdAt: new Date().toISOString(),
+          },
+        });
+        if (result._tag === "Failure") {
+          resetLocalDispatch();
+          if (!isAtomCommandInterrupted(result)) {
+            setThreadError(targetThreadId, String(squashAtomCommandFailure(result)));
+          }
+          return;
+        }
+        acknowledgeActiveThreadWoke();
+      } catch (error) {
+        resetLocalDispatch();
+        setThreadError(
+          targetThreadId,
+          error instanceof Error ? error.message : "Could not retry this response.",
+        );
+      } finally {
+        retryDispatchInFlightRef.current = false;
+        setRetryingMessageId(null);
+      }
+    },
+    [
+      acknowledgeActiveThreadWoke,
+      activeEnvironmentUnavailable,
+      activeThread,
+      beginLocalDispatch,
+      composerRef,
+      interruptedTurnRetryTarget,
+      isConnecting,
+      isServerThread,
+      resetLocalDispatch,
+      retryThreadTurn,
+      setThreadError,
+      settings.experimentalFetch,
+      supportsInterruptedTurnRetry,
+    ],
+  );
+  const timelineRetryAction = useMemo(
+    () =>
+      isServerThread && supportsInterruptedTurnRetry && interruptedTurnRetryTarget
+        ? {
+            available: !activeEnvironmentUnavailable && !isConnecting,
+            messageId: interruptedTurnRetryTarget.messageId,
+            pending: retryingMessageId === interruptedTurnRetryTarget.messageId,
+            onRetry: (targetMessageId: MessageId) => void onRetryInterruptedTurn(targetMessageId),
+          }
+        : null,
+    [
+      activeEnvironmentUnavailable,
+      interruptedTurnRetryTarget,
+      isConnecting,
+      isServerThread,
+      onRetryInterruptedTurn,
+      retryingMessageId,
+      supportsInterruptedTurnRetry,
+    ],
+  );
+
+  const getForkModelSelection = useCallback(
+    () => composerRef.current?.getSendContext().selectedModelSelection,
+    [composerRef],
+  );
+  const forkControl = useThreadFork({
+    thread: activeThread ?? null,
+    project: activeProject,
+    available:
+      isServerThread && supportsThreadForking && !activeEnvironmentUnavailable && !isConnecting,
+    settings: primaryServerSettings,
+    runtimeMode,
+    interactionMode,
+    getModelSelection: getForkModelSelection,
+    onError: setThreadError,
+    onReady: scheduleComposerFocus,
+  });
+  const forkableMessageIds = useMemo(
+    () => new Set(displayServerMessages.map((message) => message.id)),
+    [displayServerMessages],
+  );
+  const forkableProposedPlanIds = useMemo(
+    () => new Set((activeThread?.proposedPlans ?? []).map((plan) => plan.id)),
+    [activeThread?.proposedPlans],
+  );
+  const timelineForkActions = useMemo(
+    () =>
+      isServerThread && supportsThreadForking
+        ? {
+            available: !activeEnvironmentUnavailable && !isConnecting,
+            pendingBoundary: forkControl.pendingBoundary,
+            forkableMessageIds,
+            forkableProposedPlanIds,
+            onFork: (boundary: ThreadForkBoundary) => void forkControl.onFork(boundary),
+          }
+        : null,
+    [
+      activeEnvironmentUnavailable,
+      forkControl.onFork,
+      forkControl.pendingBoundary,
+      forkableMessageIds,
+      forkableProposedPlanIds,
+      isConnecting,
+      isServerThread,
+      supportsThreadForking,
+    ],
+  );
+
   const onExpandTimelineImage = useCallback((preview: ExpandedImagePreview) => {
     setExpandedImage(preview);
   }, []);
@@ -8314,6 +8475,8 @@ export default function ChatView(props: ChatViewProps) {
             <div className="relative flex min-h-0 flex-1 flex-col">
               {/* Messages — LegendList handles virtualization and scrolling internally */}
               <MessagesTimeline
+                retryAction={timelineRetryAction}
+                forkActions={timelineForkActions}
                 citationRequest={citationRequest}
                 citationHistoryLoading={threadDetailLoading}
                 onCiteAssistantText={citeAssistantText}
