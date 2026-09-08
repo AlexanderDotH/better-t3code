@@ -78,6 +78,7 @@ const BASE_THREAD: OrchestrationThread = {
   deletedAt: null,
   messages: [],
   proposedPlans: [],
+  subagents: [],
   activities: [],
   checkpoints: [],
   session: null,
@@ -95,6 +96,8 @@ const ACTIVE_THREAD: OrchestrationThread = {
   session: {
     threadId: THREAD_ID,
     status: "running",
+    runtimeSessionId: null,
+    abortState: null,
     providerName: "codex",
     runtimeMode: "full-access",
     activeTurnId: TurnId.make("turn-1"),

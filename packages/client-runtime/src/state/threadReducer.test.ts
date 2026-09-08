@@ -644,6 +644,8 @@ describe("applyThreadDetailEvent", () => {
         session: {
           threadId: ThreadId.make("thread-1"),
           status: "running",
+          runtimeSessionId: null,
+          abortState: null,
           providerName: "claude",
           runtimeMode: "full-access",
           activeTurnId: TurnId.make("turn-1"),
@@ -716,6 +718,8 @@ describe("applyThreadDetailEvent", () => {
         session: {
           threadId: ThreadId.make("thread-1"),
           status: "running",
+          runtimeSessionId: null,
+          abortState: null,
           providerName: "claude",
           runtimeMode: "full-access",
           activeTurnId: TurnId.make("turn-1"),
