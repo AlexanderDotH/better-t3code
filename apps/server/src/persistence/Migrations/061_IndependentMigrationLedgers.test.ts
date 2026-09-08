@@ -61,6 +61,13 @@ const assertCurrent = Effect.gen(function* () {
   assert.deepStrictEqual(yield* sql`SELECT migration_id, name FROM ${sql(forkMigrationTable)}`, [
     { migration_id: 61, name: "IndependentMigrationLedgers" },
   ]);
+  for (const table of ["knowledge_graph_node_evidence", "knowledge_graph_edge_evidence"]) {
+    const plan = yield* sql.unsafe<{ readonly detail: string }>(
+      `EXPLAIN QUERY PLAN SELECT 1 FROM ${table} WHERE scope_id = ? AND evidence_id = ?`,
+      ["scope", "evidence"],
+    );
+    assert.isTrue(plan.some(({ detail }) => detail.includes("scope_id=? AND evidence_id=?")));
+  }
   const before = yield* readSchema;
   const changes = yield* sql`SELECT total_changes() AS changes`;
   assert.deepStrictEqual(yield* runMigrations(), []);
