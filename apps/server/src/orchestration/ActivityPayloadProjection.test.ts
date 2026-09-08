@@ -249,6 +249,42 @@ describe("projectActivityPayload", () => {
     expect(JSON.stringify(projected.payload).length).toBeLessThan(500);
   });
 
+  it("omits duplicate identities and empty runtime context without mutating stored activities", () => {
+    const source = activity({
+      eventId: "activity-1",
+      toolCallId: "tool-1",
+      itemId: "tool-1",
+      provider: "codex",
+      providerInstanceId: "codex-custom",
+      subagentId: null,
+      requestId: null,
+      providerRefs: null,
+    });
+    const projected = projectActivityPayload(source);
+    expect(projected.payload).toEqual({
+      toolCallId: "tool-1",
+      provider: "codex",
+      providerInstanceId: "codex-custom",
+    });
+    expect(source.payload).toMatchObject({
+      eventId: "activity-1",
+      itemId: "tool-1",
+      requestId: null,
+    });
+  });
+
+  it("retains distinct runtime identities and pending request references", () => {
+    const source = activity({
+      eventId: "provider-event-1",
+      itemId: "provider-item-1",
+      toolCallId: "tool-1",
+      requestId: "pending-request-1",
+      subagentId: "worker-1",
+      providerRefs: { providerItemId: "native-1" },
+    });
+    expect(projectActivityPayload(source).payload).toEqual(source.payload);
+  });
+
   it("keeps canonical provider payloads in persistence but off the client wire", () => {
     const source = activity({
       itemType: "mcp_tool_call",
