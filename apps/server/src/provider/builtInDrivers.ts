@@ -21,11 +21,15 @@
  * @module provider/builtInDrivers
  */
 import { ClaudeDriver, type ClaudeDriverEnv } from "./Drivers/ClaudeDriver.ts";
+import { ChatGptDriver, type ChatGptDriverEnv } from "./Drivers/ChatGptDriver.ts";
 import { CodexDriver, type CodexDriverEnv } from "./Drivers/CodexDriver.ts";
 import { CursorDriver, type CursorDriverEnv } from "./Drivers/CursorDriver.ts";
 import { GrokDriver, type GrokDriverEnv } from "./Drivers/GrokDriver.ts";
+import { GeminiDriver, type GeminiDriverEnv } from "./Drivers/GeminiDriver.ts";
+import { OpenAiDriver, type OpenAiDriverEnv } from "./Drivers/OpenAiDriver.ts";
 import { OpenCodeDriver, type OpenCodeDriverEnv } from "./Drivers/OpenCodeDriver.ts";
 import { AntigravityDriver, type AntigravityDriverEnv } from "./Drivers/AntigravityDriver.ts";
+import { OpenRouterDriver, type OpenRouterDriverEnv } from "./Drivers/OpenRouterDriver.ts";
 import type { AnyProviderDriver } from "./ProviderDriver.ts";
 
 /**
@@ -35,10 +39,14 @@ import type { AnyProviderDriver } from "./ProviderDriver.ts";
  */
 export type BuiltInDriversEnv =
   | ClaudeDriverEnv
+  | ChatGptDriverEnv
   | CodexDriverEnv
   | CursorDriverEnv
+  | GeminiDriverEnv
   | GrokDriverEnv
+  | OpenAiDriverEnv
   | OpenCodeDriverEnv
+  | OpenRouterDriverEnv
   | AntigravityDriverEnv;
 
 /**
@@ -48,9 +56,13 @@ export type BuiltInDriversEnv =
  */
 export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv>> = [
   CodexDriver,
+  ChatGptDriver,
+  OpenRouterDriver,
+  OpenAiDriver,
   ClaudeDriver,
   CursorDriver,
   GrokDriver,
   OpenCodeDriver,
   AntigravityDriver,
+  GeminiDriver,
 ];

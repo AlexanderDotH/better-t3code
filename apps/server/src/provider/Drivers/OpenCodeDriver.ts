@@ -35,6 +35,9 @@ import {
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import { OpenCodeRuntime } from "../opencodeRuntime.ts";
+import { McpConfigEngine, toOpenCodeMcpServers } from "../../mcp/McpConfigEngine.ts";
+import { makeOpenCodeHistorySync } from "../history/OpenCodeHistorySync.ts";
+import { makeInstanceHistorySyncSource } from "../Services/ProviderHistorySync.ts";
 import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -77,6 +80,7 @@ const UPDATE = makePackageManagedProviderMaintenanceResolver({
 });
 
 export type OpenCodeDriverEnv =
+  | McpConfigEngine
   | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
@@ -101,6 +105,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
+      const mcpConfigEngine = yield* McpConfigEngine;
       const openCodeRuntime = yield* OpenCodeRuntime;
       const serverConfig = yield* ServerConfig;
       const httpClient = yield* HttpClient.HttpClient;
@@ -119,6 +124,19 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       const effectiveConfig = { ...config, enabled } satisfies OpenCodeSettings;
+      const historySync = makeOpenCodeHistorySync({
+        source: makeInstanceHistorySyncSource({
+          driverKind: DRIVER_KIND,
+          instanceId,
+          continuationKey: continuationIdentity.continuationKey,
+          displayName: displayName ?? "OpenCode",
+          capabilities: { search: true, archived: true, resume: true, activity: true },
+        }),
+        runtime: openCodeRuntime,
+        settings: effectiveConfig,
+        environment: processEnv,
+        defaultCwd: serverConfig.cwd,
+      });
       const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
         resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
           binaryPath: effectiveConfig.binaryPath,
@@ -131,6 +149,15 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
       );
 
       const adapter = yield* makeOpenCodeAdapter(effectiveConfig, {
+        resolveMcpServers: ({ cwd }: { readonly cwd: string }) =>
+          mcpConfigEngine.resolveActiveServers({ cwd, providerInstanceId: instanceId }).pipe(
+            Effect.map(toOpenCodeMcpServers),
+            Effect.catch((cause) =>
+              Effect.logWarning("Failed to resolve OpenCode MCP servers", { cause }).pipe(
+                Effect.as(toOpenCodeMcpServers([])),
+              ),
+            ),
+          ),
         instanceId,
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
@@ -264,6 +291,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
                 ),
               ),
         adapter,
+        historySync,
         textGeneration,
       } satisfies ProviderInstance;
     }),

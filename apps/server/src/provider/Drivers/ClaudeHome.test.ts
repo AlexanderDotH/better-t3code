@@ -10,6 +10,7 @@ import {
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
   makeClaudeEnvironment,
+  resolveClaudeConfigDir,
   resolveClaudeHomePath,
 } from "./ClaudeHome.ts";
 
@@ -19,9 +20,26 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const resolved = path.resolve(NodeOS.homedir());
+        const environment = yield* makeClaudeEnvironment({ homePath: "" }, { HOME: resolved });
+        const configDir = yield* resolveClaudeConfigDir({ homePath: "" });
 
         expect(yield* resolveClaudeHomePath({ homePath: "" })).toBe(resolved);
-        expect(yield* makeClaudeEnvironment({ homePath: "" })).toBe(process.env);
+        expect(configDir).toBe(path.join(resolved, ".claude"));
+        expect(environment).toEqual({
+          HOME: resolved,
+          CLAUDE_CODE_MAX_OUTPUT_TOKENS: "128000",
+        });
+      }),
+    );
+
+    it.effect("preserves an explicit Claude output-token limit", () =>
+      Effect.gen(function* () {
+        const environment = yield* makeClaudeEnvironment(
+          { homePath: "" },
+          { CLAUDE_CODE_MAX_OUTPUT_TOKENS: "64000" },
+        );
+
+        expect(environment.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe("64000");
       }),
     );
 
@@ -30,8 +48,10 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
         const path = yield* Path.Path;
         const homePath = "~/.claude-work";
         const resolved = path.resolve(NodeOS.homedir(), ".claude-work");
+        const configDir = yield* resolveClaudeConfigDir({ homePath });
 
         expect(yield* resolveClaudeHomePath({ homePath })).toBe(resolved);
+        expect(configDir).toBe(resolved);
         expect((yield* makeClaudeEnvironment({ homePath })).CLAUDE_CONFIG_DIR).toBe(resolved);
         expect(yield* makeClaudeContinuationGroupKey({ homePath })).toBe(`claude:home:${resolved}`);
         expect(yield* makeClaudeCapabilitiesCacheKey({ binaryPath: "claude", homePath })).toBe(

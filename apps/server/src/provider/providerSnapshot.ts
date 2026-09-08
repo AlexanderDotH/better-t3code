@@ -7,6 +7,8 @@ import type {
   ServerProviderSkill,
   ServerProviderSlashCommand,
   ServerProviderModel,
+  ServerProviderNativeSubagents,
+  ServerProviderRateLimit,
   ServerProviderState,
   ServerProviderUsageLimits,
 } from "@t3tools/contracts";
@@ -16,6 +18,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { readCustomModelEntries } from "@t3tools/shared/model";
+import { normalizeModelSlug } from "@t3tools/shared/model";
 import { isWindowsCommandNotFound } from "../processRunner.ts";
 import { createProviderVersionAdvisory } from "./providerMaintenance.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
@@ -58,6 +61,7 @@ export interface ProviderProbeResult {
   readonly auth: ServerProviderAuth;
   readonly message?: string;
   readonly usageLimits?: ServerProviderUsageLimits;
+  readonly rateLimit?: ServerProviderRateLimit;
 }
 
 export interface ServerProviderPresentation {
@@ -65,6 +69,8 @@ export interface ServerProviderPresentation {
   readonly badgeLabel?: string;
   readonly showInteractionModeToggle?: boolean;
   readonly requiresNewThreadForModelChange?: boolean;
+  readonly nativeSubagents?: ServerProviderNativeSubagents;
+  readonly fetchWorkers?: ServerProvider["fetchWorkers"];
 }
 
 export type ServerProviderDraft = Omit<ServerProvider, "instanceId" | "driver">;
@@ -119,21 +125,43 @@ export function providerModelsFromSettings(
   builtInModels: ReadonlyArray<ServerProviderModel>,
   customModels: ReadonlyArray<CustomModelSetting>,
   customModelCapabilities: ModelCapabilities,
+): ReadonlyArray<ServerProviderModel>;
+export function providerModelsFromSettings(
+  builtInModels: ReadonlyArray<ServerProviderModel>,
+  provider: ProviderDriverKind,
+  customModels: ReadonlyArray<CustomModelSetting>,
+  customModelCapabilities: ModelCapabilities,
+): ReadonlyArray<ServerProviderModel>;
+export function providerModelsFromSettings(
+  builtInModels: ReadonlyArray<ServerProviderModel>,
+  providerOrCustomModels: ProviderDriverKind | ReadonlyArray<CustomModelSetting>,
+  customModelsOrCapabilities: ReadonlyArray<CustomModelSetting> | ModelCapabilities,
+  maybeCustomModelCapabilities?: ModelCapabilities,
 ): ReadonlyArray<ServerProviderModel> {
+  const provider = Array.isArray(providerOrCustomModels)
+    ? undefined
+    : (providerOrCustomModels as ProviderDriverKind);
+  const customModels = Array.isArray(providerOrCustomModels)
+    ? providerOrCustomModels
+    : (customModelsOrCapabilities as ReadonlyArray<CustomModelSetting>);
+  const customModelCapabilities = Array.isArray(providerOrCustomModels)
+    ? (customModelsOrCapabilities as ModelCapabilities)
+    : maybeCustomModelCapabilities;
   const resolvedBuiltInModels = [...builtInModels];
   const seen = new Set(resolvedBuiltInModels.map((model) => model.slug));
   const customEntries: ServerProviderModel[] = [];
 
   for (const entry of readCustomModelEntries(customModels)) {
-    if (seen.has(entry.slug)) {
+    const slug = provider ? (normalizeModelSlug(entry.slug, provider) ?? entry.slug) : entry.slug;
+    if (seen.has(slug)) {
       continue;
     }
-    seen.add(entry.slug);
+    seen.add(slug);
     customEntries.push({
-      slug: entry.slug,
+      slug,
       name: entry.name,
       isCustom: true,
-      capabilities: entry.capabilities ?? customModelCapabilities,
+      capabilities: entry.capabilities ?? customModelCapabilities!,
     });
   }
 
@@ -215,11 +243,18 @@ export function buildServerProvider(input: {
     ...(typeof input.presentation.requiresNewThreadForModelChange === "boolean"
       ? { requiresNewThreadForModelChange: input.presentation.requiresNewThreadForModelChange }
       : {}),
+    ...(input.presentation.nativeSubagents
+      ? { nativeSubagents: { ...input.presentation.nativeSubagents } }
+      : {}),
+    ...(input.presentation.fetchWorkers
+      ? { fetchWorkers: { ...input.presentation.fetchWorkers } }
+      : {}),
     enabled: input.enabled,
     installed: input.probe.installed,
     version: input.probe.version,
     status: input.enabled ? input.probe.status : "disabled",
     auth: input.probe.auth,
+    ...(input.probe.rateLimit ? { rateLimit: input.probe.rateLimit } : {}),
     checkedAt: input.checkedAt,
     ...(input.probe.message ? { message: input.probe.message } : {}),
     models: input.models,
