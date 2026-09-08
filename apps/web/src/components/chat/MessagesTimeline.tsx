@@ -1,3 +1,4 @@
+import { useChatVisualMode } from "../../chatVisualModeSync";
 import { resolveForkBoundaryTimelineEntryId } from "../../lib/threadFork";
 import { forkBoundaryKey } from "@t3tools/client-runtime/thread-fork";
 import { ForkChatButton } from "./ForkChatButton";
@@ -5,6 +6,7 @@ import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { RefreshCwIcon } from "lucide-react";
 import {
   type AssistantCitation,
+  type ChatVisualMode,
   type EnvironmentId,
   type MessageId,
   type ScopedThreadRef,
@@ -182,7 +184,11 @@ import {
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
-import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
+import {
+  formatChatTimestampTooltip,
+  formatDayAwareTimestamp,
+  formatShortTimestamp,
+} from "../../timestampFormat";
 import {
   buildInlineTerminalContextText,
   formatInlineTerminalContextLabel,
@@ -227,6 +233,7 @@ export interface TimelineForkProvenance {
 }
 
 interface TimelineRowSharedState {
+  chatVisualMode: ChatVisualMode;
   streamingMotionEnabled: boolean;
   forkDividerAfterRowId: string | null;
   forkActions: TimelineForkActions | null;
@@ -465,6 +472,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   loadEarlier = null,
 }: MessagesTimelineProps) {
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
+  const chatVisualMode = useChatVisualMode();
   const citationThreadRef = useMemo(() => parseScopedThreadKey(routeThreadKey), [routeThreadKey]);
   const expandCitedTurn = useCallback((turnId: TurnId) => {
     setExpandedTurnIds((current) =>
@@ -603,6 +611,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     const previous = rowsProjectionRef.current;
     const projection = deriveMessagesTimelineRowsWithState(
       {
+        chatVisualMode,
         timelineEntries,
         latestTurn,
         runningTurnId,
@@ -621,6 +630,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     return projection.rows;
   }, [
     rowsProjectionRef,
+    chatVisualMode,
     routeThreadKey,
     workspaceRoot,
     timelineEntries,
@@ -805,6 +815,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
+      chatVisualMode,
       citationRequest: readyCitationRequest,
       listRef,
       timestampFormat,
@@ -834,6 +845,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       retryAction,
     }),
     [
+      chatVisualMode,
       readyCitationRequest,
       listRef,
       timestampFormat,
@@ -1338,7 +1350,7 @@ type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["grouped
 type TimelineRow = MessagesTimelineRow;
 
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
-  const { forkDividerAfterRowId } = use(TimelineRowCtx);
+  const { forkDividerAfterRowId, chatVisualMode } = use(TimelineRowCtx);
   const translate = useInterfaceTranslator().message;
   const isExpandedToolGroup = row.kind === "work" && row.isExpandedToolGroup;
   const isExpandedToolGroupHeader =
@@ -1349,21 +1361,23 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       className={cn(
         // Commentary (non-terminal assistant) rows carry no metadata row, so
         // they sit closer to the work that follows them.
-        isExpandedToolGroup
-          ? "pb-1"
-          : isExpandedToolGroupHeader
-            ? "pb-0"
-            : row.kind === "turn-fold" || row.kind === "working"
-              ? "pb-1.5"
-              : (row.kind === "message" &&
-                    row.message.role === "assistant" &&
-                    !row.showAssistantMeta) ||
-                  row.kind === "work" ||
-                  row.kind === "work-live" ||
-                  row.kind === "work-toggle" ||
-                  row.kind === "thinking"
-                ? "pb-2"
-                : "pb-4",
+        chatVisualMode === "classic" && (row.kind === "work" || row.kind === "work-toggle")
+          ? "pb-2"
+          : isExpandedToolGroup
+            ? "pb-1"
+            : isExpandedToolGroupHeader
+              ? "pb-0"
+              : row.kind === "turn-fold" || row.kind === "working"
+                ? "pb-1.5"
+                : (row.kind === "message" &&
+                      row.message.role === "assistant" &&
+                      !row.showAssistantMeta) ||
+                    row.kind === "work" ||
+                    row.kind === "work-live" ||
+                    row.kind === "work-toggle" ||
+                    row.kind === "thinking"
+                  ? "pb-2"
+                  : "pb-4",
         (row.kind === "message" && row.message.role === "assistant") ||
           row.kind === "assistant-meta"
           ? "group/assistant"
@@ -1676,7 +1690,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         <div className="flex shrink-0 items-center gap-2">
           <Tooltip>
             <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
-              {formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat)}
+              {(ctx.chatVisualMode === "classic" ? formatShortTimestamp : formatDayAwareTimestamp)(
+                row.message.createdAt,
+                ctx.timestampFormat,
+              )}
             </TooltipTrigger>
             <TooltipPopup>
               {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
@@ -1793,7 +1810,10 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
         aria-expanded={row.expanded}
         data-scroll-anchor-ignore
         onClick={() => ctx.onToggleTurnFold(row.turnId)}
-        className="flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-sm leading-relaxed text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        className={cn(
+          "flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+          ctx.chatVisualMode === "classic" ? "text-xs" : "text-sm leading-relaxed",
+        )}
       >
         <span>{row.label}</span>
         <Icon className="size-3.5" />
@@ -1902,7 +1922,10 @@ function AssistantMessageMeta({
       {!message.streaming && (
         <Tooltip>
           <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
-            {formatDayAwareTimestamp(message.updatedAt, ctx.timestampFormat)}
+            {(ctx.chatVisualMode === "classic" ? formatShortTimestamp : formatDayAwareTimestamp)(
+              message.updatedAt,
+              ctx.timestampFormat,
+            )}
           </TooltipTrigger>
           <TooltipPopup>
             {formatChatTimestampTooltip(message.updatedAt, ctx.timestampFormat)}
@@ -2417,6 +2440,25 @@ function WorkGroupToggleTimelineRow({
   row: Extract<TimelineRow, { kind: "work-toggle" }>;
 }) {
   const ctx = use(TimelineRowCtx);
+  const translate = useInterfaceTranslator().message;
+  if (ctx.chatVisualMode === "classic") {
+    return (
+      <button
+        type="button"
+        className="flex w-full cursor-pointer items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left text-xs leading-5 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
+        aria-expanded={row.expanded}
+        aria-label={row.hasFailure ? `${row.summary}, tool call failed` : undefined}
+        onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
+      >
+        <ChevronDownIcon className={cn("size-3.5 shrink-0", row.expanded && "rotate-180")} />
+        <span className="font-medium">
+          {row.expanded
+            ? translate("chat.timeline.showFewerLogEntries")
+            : `+${translate("chat.timeline.previousLogEntries", { count: row.hiddenCount })}`}
+        </span>
+      </button>
+    );
+  }
   return (
     <button
       type="button"
@@ -3430,7 +3472,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   onToggleEntry?: ((collapsed: boolean) => void) | undefined;
 }) {
   const { workEntry, workspaceRoot, isExpandedToolGroupEntry, displayLabel } = props;
-  const { threadRef, onImageExpand } = use(TimelineRowCtx);
+  const { threadRef, onImageExpand, chatVisualMode } = use(TimelineRowCtx);
   const groupView = use(WorkGroupViewCtx);
   const [expanded, setExpanded] = useState(
     () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
@@ -3490,7 +3532,9 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
     : null;
   // Reserve destructive row styling for severe failures, not routine tool errors.
   const iconWrapperClass = cn(
-    "flex size-6 shrink-0 items-center justify-center",
+    chatVisualMode === "classic"
+      ? "flex size-5 shrink-0 items-center justify-center"
+      : "flex size-6 shrink-0 items-center justify-center",
     showWarningIndicator
       ? "text-warning"
       : showDestructiveRowStyle
@@ -3552,7 +3596,12 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
         </span>
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
           <div className="min-w-0 flex-1 overflow-hidden">
-            <p className="flex min-w-0 w-full items-baseline gap-1.5 text-sm leading-relaxed">
+            <p
+              className={cn(
+                "flex min-w-0 w-full items-baseline gap-1.5",
+                chatVisualMode === "classic" ? "text-xs leading-5" : "text-sm leading-relaxed",
+              )}
+            >
               <span
                 className={cn(
                   "min-w-0 flex-1",

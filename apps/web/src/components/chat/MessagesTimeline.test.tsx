@@ -13,6 +13,9 @@ import type { LegendListRef, MaintainScrollAtEndOptions } from "@legendapp/list/
 import { shouldUseRestingComposerLayout } from "../composerFooterLayout";
 import { useComposerFocusState } from "./useComposerFocusState";
 
+const visualPreference = vi.hoisted(() => ({ mode: "current" as "current" | "classic" }));
+vi.mock("../../chatVisualModeSync", () => ({ useChatVisualMode: () => visualPreference.mode }));
+
 vi.mock("@legendapp/list/react", async () => {
   const legendListTestId = "legend-list";
 
@@ -270,6 +273,80 @@ function buildSnapShotTimelineEntry(previewUrl?: string) {
     },
   };
 }
+
+it("switches visual grouping without remounting the existing user message", async () => {
+  vi.stubGlobal(
+    "Element",
+    class Element {
+      readonly nodeType = 1;
+    },
+  );
+  Object.defineProperty(window, "Element", { configurable: true, value: Element });
+  document.addEventListener = () => {};
+  document.removeEventListener = () => {};
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("requestAnimationFrame", () => 0);
+  vi.stubGlobal("cancelAnimationFrame", () => {});
+  const timelineEntries = [
+    buildUserTimelineEntry("Keep this message"),
+    ...Array.from({ length: 3 }, (_, index) => ({
+      kind: "work" as const,
+      id: `mode-entry-${index}`,
+      createdAt: MESSAGE_CREATED_AT,
+      entry: {
+        id: `mode-work-${index}`,
+        createdAt: MESSAGE_CREATED_AT,
+        label: `Read file ${index}`,
+        tone: "tool" as const,
+        toolLifecycleStatus: "completed" as const,
+      },
+    })),
+  ];
+  const props = buildProps();
+  let renderer: ReactTestRenderer | undefined;
+  try {
+    await act(() => {
+      renderer = create(<MessagesTimeline {...props} timelineEntries={timelineEntries} />);
+    });
+    const user = renderer!.root.findByProps({ "data-message-role": "user" });
+    expect(renderer!.root.findAllByProps({ "data-timeline-row-kind": "work" })).toHaveLength(0);
+    visualPreference.mode = "classic";
+    await act(() => {
+      renderer!.update(
+        <MessagesTimeline {...props} timelineEntries={timelineEntries} timestampFormat="12-hour" />,
+      );
+    });
+    expect(renderer!.root.findByProps({ "data-message-role": "user" })).toBe(user);
+    expect(renderer!.root.findAllByProps({ "data-timeline-row-kind": "work" })).toHaveLength(1);
+    const toggle = renderer!.root
+      .findByProps({ "data-timeline-row-kind": "work-toggle" })
+      .findByType("button");
+    await act(() => toggle.props.onClick());
+    expect(
+      renderer!.root.findByProps({ "data-timeline-row-kind": "work-toggle" }).findByType("button")
+        .props["aria-expanded"],
+    ).toBe(true);
+    visualPreference.mode = "current";
+    await act(() => {
+      renderer!.update(<MessagesTimeline {...props} timelineEntries={timelineEntries} />);
+    });
+    expect(renderer!.root.findByProps({ "data-message-role": "user" })).toBe(user);
+    expect(renderer!.root.findAllByProps({ "data-timeline-row-kind": "work" })).toHaveLength(1);
+    const currentToggle = renderer!.root
+      .findByProps({ "data-timeline-row-kind": "work-toggle" })
+      .findByType("button");
+    expect(currentToggle.props["aria-expanded"]).toBe(true);
+    expect(
+      currentToggle
+        .findAllByType("span")
+        .flatMap((node) => node.children.filter((child) => typeof child === "string"))
+        .join(""),
+    ).not.toContain("Show fewer");
+  } finally {
+    await act(() => renderer?.unmount());
+    visualPreference.mode = "current";
+  }
+});
 
 describe("MessagesTimeline", () => {
   it("renders previous and next controls with the minimap", () => {

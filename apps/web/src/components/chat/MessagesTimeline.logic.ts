@@ -28,7 +28,12 @@ import {
   type WorkLogEntry,
 } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
-import { type MessageId, type OrchestrationLatestTurn, type TurnId } from "@t3tools/contracts";
+import {
+  type ChatVisualMode,
+  type MessageId,
+  type OrchestrationLatestTurn,
+  type TurnId,
+} from "@t3tools/contracts";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 
 const TIMELINE_MINIMAP_ITEM_SPACING = 8;
@@ -845,6 +850,7 @@ function buildRevertTurnCountByUserMessageId(input: {
 }
 
 export function deriveMessagesTimelineRows(input: {
+  chatVisualMode?: ChatVisualMode;
   timelineEntries: ReadonlyArray<TimelineEntry>;
   latestTurn?: TimelineLatestTurn | null;
   runningTurnId?: TurnId | null;
@@ -908,12 +914,17 @@ export function deriveMessagesTimelineRows(input: {
     index >= activeTurnHeaderIndex &&
     (unsettledTurnId === null || timelineEntryTurnId(entry) === unsettledTurnId);
   const workEntryIsInActiveRun = (entry: WorkLogEntry) =>
+    input.chatVisualMode !== "classic" &&
     input.isWorking &&
     unsettledTurnId !== null &&
     entry.toolLifecycleStatus === "inProgress" &&
     entry.turnId === unsettledTurnId;
   const activeToolEntries: Array<Extract<TimelineEntry, { kind: "work" }>> = [];
-  for (let index = input.timelineEntries.length - 1; index >= activeTurnHeaderIndex; index -= 1) {
+  for (
+    let index = input.timelineEntries.length - 1;
+    input.chatVisualMode !== "classic" && index >= activeTurnHeaderIndex;
+    index -= 1
+  ) {
     const entry = input.timelineEntries[index]!;
     if (
       !entryBelongsToActiveTurn(entry, index) ||
@@ -1078,6 +1089,40 @@ export function deriveMessagesTimelineRows(input: {
         ),
         (entry) => entry,
       );
+      if (input.chatVisualMode === "classic" && visibleGroupedEntries.length > 0) {
+        const groupId = `work-group:${timelineEntry.id}`;
+        const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
+        const latestEntry = visibleGroupedEntries.at(-1)!;
+        if (expanded && visibleGroupedEntries.length > 1) {
+          nextRows.push(
+            expandedWorkGroupRow(groupId, timelineEntry.createdAt, visibleGroupedEntries),
+          );
+        } else {
+          nextRows.push({
+            kind: "work",
+            id: latestEntry.id,
+            createdAt: latestEntry.createdAt,
+            groupedEntries: [latestEntry],
+            isExpandedToolGroup: false,
+          });
+        }
+        if (visibleGroupedEntries.length > 1) {
+          nextRows.push({
+            kind: "work-toggle",
+            id: `work-toggle:${timelineEntry.id}`,
+            createdAt: timelineEntry.createdAt,
+            turnId: timelineEntry.entry.turnId ?? null,
+            groupId,
+            hiddenCount: visibleGroupedEntries.length - 1,
+            expanded,
+            summary: summarizeToolGroup(visibleGroupedEntries),
+            summaryKind: toolGroupSummaryKind(visibleGroupedEntries),
+            hasFailure: visibleGroupedEntries.some(workEntryDisplayIndicatesToolFailure),
+          });
+        }
+        index = cursor - 1;
+        continue;
+      }
       if (visibleGroupedEntries.length > 0) {
         const activeInProgressToolEntries = visibleGroupedEntries.filter(workEntryIsInActiveRun);
         if (activeInProgressToolEntries.length > 0) {
