@@ -18,6 +18,19 @@ import * as DesktopClientSettings from "./DesktopClientSettings.ts";
 
 const clientSettings: ClientSettings = {
   ...DEFAULT_CLIENT_SETTINGS,
+  betterT3Device: {
+    ...DEFAULT_CLIENT_SETTINGS.betterT3Device,
+    flags: {
+      "agent.fetch": false,
+      "agent.parallelPlanImplementation": false,
+      "agent.planMode": false,
+      "agent.promptImprovement": true,
+      "agent.expandedComposerControls": true,
+      "agent.reasoningVisibility": false,
+      "chat.classicSidebar": false,
+    },
+  },
+  interfaceLanguageLocalRecord: null,
   appearanceContrast: 100,
   browserDefaultViewport: { _tag: "preset", width: 1024, height: 600, presetId: "nest-hub" },
   browserDefaultZoomFactor: 1.25,
@@ -37,6 +50,8 @@ const clientSettings: ClientSettings = {
   diffIgnoreWhitespace: true,
   diffLayout: "stacked",
   environmentIdentificationMode: "artwork",
+  experimentalFetch: false,
+  experimentalParallelPlanImplementation: false,
   favorites: [],
   fontFamilyCode: "",
   fontFamilyComposer: "",
@@ -52,6 +67,8 @@ const clientSettings: ClientSettings = {
   panelAnimationDurationMs: 0,
   planModeEnabled: false,
   proactivePanelsEnabled: true,
+  showExpandedComposerControls: true,
+  showReasoning: false,
   showSkillsInSlashMenu: false,
   providerModelPreferences: {},
   sidebarProjectGroupingMode: "repository_path",
@@ -66,6 +83,8 @@ const clientSettings: ClientSettings = {
   loadBalancingWeights: { "environment-1": 75, "environment-2": 0 },
   pullRequestMergeMethodOverrides: {},
   timestampFormat: "24-hour",
+  voiceInputOutputLanguage: "english",
+  improvePromptBeforeSend: true,
   wordWrap: true,
 };
 
@@ -196,6 +215,35 @@ describe("DesktopClientSettings", () => {
       ),
     );
   }
+  it.effect("persists and reloads the classic sidebar preference", () =>
+    withClientSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopClientSettings.DesktopClientSettings;
+        const classicSidebarSettings = {
+          ...clientSettings,
+          legacySidebarEnabled: true,
+          betterT3Device: {
+            ...clientSettings.betterT3Device,
+            flags: {
+              ...clientSettings.betterT3Device.flags,
+              "chat.classicSidebar": true,
+            },
+          },
+        };
+
+        yield* settings.set(classicSidebarSettings);
+
+        assert.deepEqual(yield* settings.get, Option.some(classicSidebarSettings));
+        assert.isTrue(
+          (yield* decodeClientSettingsJson(
+            yield* fileSystem.readFileString(environment.clientSettingsPath),
+          )).legacySidebarEnabled,
+        );
+      }),
+    ),
+  );
 
   it.effect("reports the failed client settings write operation and path", () =>
     withClientSettings(
@@ -278,7 +326,84 @@ describe("DesktopClientSettings", () => {
         yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
         yield* fileSystem.writeFileString(environment.clientSettingsPath, "{}\n");
 
-        assert.deepEqual(yield* settings.get, Option.some(yield* decodeClientSettingsJson("{}")));
+        const persisted = yield* settings.get;
+        assert.isTrue(Option.isSome(persisted));
+        if (Option.isSome(persisted)) {
+          assert.equal(persisted.value.betterT3Device.initialization, "existing-install-migration");
+          assert.isFalse(persisted.value.legacySidebarEnabled);
+          assert.isFalse(persisted.value.showExpandedComposerControls);
+        }
+      }),
+    ),
+  );
+
+  it.effect("preserves an explicit Better T3 V1 record", () =>
+    withClientSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopClientSettings.DesktopClientSettings;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          environment.clientSettingsPath,
+          `{
+            "betterT3Device": {
+              "version": 1,
+              "initialization": "clean-install",
+              "flags": { "chat.workspaceCardDeck": true }
+            }
+          }\n`,
+        );
+
+        const persisted = yield* settings.get;
+        assert.isTrue(Option.isSome(persisted));
+        if (Option.isSome(persisted)) {
+          assert.deepEqual(persisted.value.betterT3Device, {
+            version: 1,
+            initialization: "clean-install",
+            flags: { "chat.workspaceCardDeck": true },
+          });
+        }
+      }),
+    ),
+  );
+
+  it.effect("seeds only missing Better T3 flags from explicit legacy fields", () =>
+    withClientSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopClientSettings.DesktopClientSettings;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          environment.clientSettingsPath,
+          `{
+            "legacySidebarEnabled": true,
+            "experimentalFetch": true,
+            "experimentalParallelPlanImplementation": false,
+            "planModeEnabled": true,
+            "betterT3Device": {
+              "version": 1,
+              "initialization": "clean-install",
+              "flags": { "agent.fetch": false, "chat.classicSidebar": false }
+            }
+          }\n`,
+        );
+
+        const persisted = yield* settings.get;
+        assert.isTrue(Option.isSome(persisted));
+        if (Option.isSome(persisted)) {
+          assert.deepEqual(persisted.value.betterT3Device, {
+            version: 1,
+            initialization: "clean-install",
+            flags: {
+              "agent.fetch": false,
+              "chat.classicSidebar": false,
+              "agent.parallelPlanImplementation": false,
+              "agent.planMode": true,
+            },
+          });
+        }
       }),
     ),
   );

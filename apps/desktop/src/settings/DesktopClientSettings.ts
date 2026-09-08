@@ -1,4 +1,9 @@
-import { ClientSettingsSchema, type ClientSettings } from "@t3tools/contracts";
+import {
+  ClientSettingsSchema,
+  bootstrapBetterT3SettingsV1,
+  type BetterT3CompatibilityFlagV1,
+  type ClientSettings,
+} from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -13,6 +18,35 @@ import * as Ref from "effect/Ref";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 
 const ClientSettingsJson = fromLenientJson(ClientSettingsSchema);
+const compatibilityFlags = (
+  document: Readonly<Record<string, unknown>>,
+  settings: ClientSettings,
+): ReadonlyArray<BetterT3CompatibilityFlagV1> => {
+  const flags: BetterT3CompatibilityFlagV1[] = [];
+  const add = (
+    key: keyof ClientSettings,
+    featureId: BetterT3CompatibilityFlagV1["featureId"],
+    enabled: boolean,
+  ) => {
+    if (Object.hasOwn(document, key)) flags.push({ featureId, enabled });
+  };
+  add("legacySidebarEnabled", "chat.classicSidebar", settings.legacySidebarEnabled);
+  add("experimentalFetch", "agent.fetch", settings.experimentalFetch);
+  add(
+    "experimentalParallelPlanImplementation",
+    "agent.parallelPlanImplementation",
+    settings.experimentalParallelPlanImplementation,
+  );
+  add("planModeEnabled", "agent.planMode", settings.planModeEnabled);
+  add("improvePromptBeforeSend", "agent.promptImprovement", settings.improvePromptBeforeSend);
+  add(
+    "showExpandedComposerControls",
+    "agent.expandedComposerControls",
+    settings.showExpandedComposerControls,
+  );
+  add("showReasoning", "agent.reasoningVisibility", settings.showReasoning);
+  return flags;
+};
 const decodeClientSettingsDocument = Schema.decodeEffect(
   fromLenientJson(Schema.Record(Schema.String, Schema.Unknown)),
 );
@@ -20,9 +54,20 @@ const decodeClientSettingsValue = Schema.decodeUnknownEffect(ClientSettingsSchem
 const decodeClientSettingsJson = Effect.fnUntraced(function* (raw: string) {
   const document = yield* decodeClientSettingsDocument(raw);
   // Select the shape before validation so invalid legacy settings cannot become defaults.
-  return yield* decodeClientSettingsValue(
-    Object.hasOwn(document, "settings") ? document.settings : document,
-  );
+  const persisted = Object.hasOwn(document, "settings") ? document.settings : document;
+  const settings = yield* decodeClientSettingsValue(persisted);
+  const persistedDocument = persisted as Readonly<Record<string, unknown>>;
+  return {
+    ...settings,
+    betterT3Device: bootstrapBetterT3SettingsV1({
+      version: 1,
+      initialization: "existing-install-migration",
+      persistedSettings: Object.hasOwn(persistedDocument, "betterT3Device")
+        ? settings.betterT3Device
+        : null,
+      compatibilityFlags: compatibilityFlags(persistedDocument, settings),
+    }),
+  };
 });
 const encodeClientSettingsJson = Schema.encodeEffect(ClientSettingsJson);
 

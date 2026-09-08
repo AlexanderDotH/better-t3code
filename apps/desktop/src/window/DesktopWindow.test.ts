@@ -15,6 +15,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as Electron from "electron";
 import * as NodeEvents from "node:events";
+import { DEFAULT_CLIENT_SETTINGS, type ClientSettings } from "@t3tools/contracts";
 import { vi } from "vite-plus/test";
 
 vi.mock("electron", async (importOriginal) => ({
@@ -113,6 +114,7 @@ function makeFakeBrowserWindow() {
     }),
     restore: vi.fn(),
     setBackgroundColor: vi.fn(),
+    setVibrancy: vi.fn(),
     setAutoHideCursor: vi.fn(),
     setFullScreen: vi.fn(),
     setOpacity: vi.fn(),
@@ -140,6 +142,8 @@ function makeFakeBrowserWindow() {
     setAutoHideCursor: window.setAutoHideCursor,
     setFullScreen: window.setFullScreen,
     setOpacity: window.setOpacity,
+    setVibrancy: window.setVibrancy,
+    setBackgroundColor: window.setBackgroundColor,
     webContentsListeners,
     webContentsOnce: webContents.once,
     windowListeners,
@@ -222,6 +226,8 @@ function makeTestLayer(input: {
   readonly onPopupTemplate?: (input: ElectronMenu.ElectronMenuTemplateInput) => Effect.Effect<void>;
   readonly previewZoomReapplies?: number[];
   readonly onReveal?: (window: Electron.BrowserWindow) => void;
+  readonly clientSettings?: Effect.Effect<Option.Option<ClientSettings>>;
+  readonly platform?: NodeJS.Platform;
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -281,9 +287,15 @@ function makeTestLayer(input: {
     Layer.provide(
       Layer.mergeAll(
         desktopAssetsLayer,
-        desktopEnvironmentLayer,
+        input.platform
+          ? DesktopEnvironment.layer({ ...environmentInput, platform: input.platform }).pipe(
+              Layer.provide(Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({}))),
+            )
+          : desktopEnvironmentLayer,
         desktopAppSettingsLayer,
-        desktopClientSettingsLayer,
+        input.clientSettings
+          ? Layer.mock(DesktopClientSettings.DesktopClientSettings)({ get: input.clientSettings })
+          : desktopClientSettingsLayer,
         desktopServerExposureLayer,
         DesktopState.layer,
         electronAppLayer,
@@ -558,6 +570,81 @@ describe("DesktopWindow", () => {
     assert.equal(fakeWindow.setOpacity.mock.calls.length, 0);
   });
 
+  it.effect("restores macOS vibrancy and reverses it without recreating the window", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const settings = yield* Ref.make({
+        ...DEFAULT_CLIENT_SETTINGS,
+        macosWindowTransparency: true,
+      });
+      const createdWindowOptions: Electron.BrowserWindowConstructorOptions[] = [];
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.createMain;
+        assert.equal(createdWindowOptions[0]?.vibrancy, "under-window");
+        assert.equal(createdWindowOptions[0]?.backgroundColor, "#00000000");
+        yield* desktopWindow.syncAppearance;
+        assert.deepEqual(fakeWindow.setVibrancy.mock.lastCall, ["under-window"]);
+        yield* Ref.update(settings, (previous) => ({
+          ...previous,
+          macosWindowTransparency: false,
+        }));
+        yield* desktopWindow.syncAppearance;
+        assert.deepEqual(fakeWindow.setVibrancy.mock.lastCall, [null]);
+        assert.deepEqual(fakeWindow.setBackgroundColor.mock.lastCall, ["#ffffff"]);
+        yield* Ref.update(settings, (previous) => ({ ...previous, macosWindowTransparency: true }));
+        yield* desktopWindow.syncAppearance;
+        assert.deepEqual(fakeWindow.setVibrancy.mock.lastCall, ["under-window"]);
+        assert.deepEqual(fakeWindow.setBackgroundColor.mock.lastCall, ["#00000000"]);
+        assert.equal(yield* Ref.get(createCount), 1);
+      }).pipe(
+        Effect.provide(
+          makeTestLayer({
+            window: fakeWindow.window,
+            createCount,
+            mainWindow,
+            createdWindowOptions,
+            clientSettings: Ref.get(settings).pipe(Effect.map(Option.some)),
+          }),
+        ),
+      );
+    }),
+  );
+
+  it.effect("keeps non-macOS windows opaque even with the preference enabled", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const createdWindowOptions: Electron.BrowserWindowConstructorOptions[] = [];
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.createMain;
+        yield* desktopWindow.syncAppearance;
+        assert.equal(createdWindowOptions[0]?.vibrancy, undefined);
+        assert.equal(createdWindowOptions[0]?.backgroundColor, "#ffffff");
+        assert.equal(fakeWindow.setVibrancy.mock.calls.length, 0);
+      }).pipe(
+        Effect.provide(
+          makeTestLayer({
+            window: fakeWindow.window,
+            createCount,
+            mainWindow,
+            createdWindowOptions,
+            platform: "win32",
+            clientSettings: Effect.succeed(
+              Option.some({
+                ...DEFAULT_CLIENT_SETTINGS,
+                macosWindowTransparency: true,
+              }),
+            ),
+          }),
+        ),
+      );
+    }),
+  );
   it("restores bounds only when the window fits within a connected display", () => {
     const persistedBounds = { x: 2040, y: 80, width: 1320, height: 880 };
     const displays = [

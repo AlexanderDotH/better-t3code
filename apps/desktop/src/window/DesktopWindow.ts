@@ -18,6 +18,7 @@ import { getDesktopUrl } from "../electron/ElectronProtocol.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import { translateDesktopInterfaceMessage } from "../settings/DesktopInterfaceLanguage.ts";
 import {
   MENU_ACTION_CHANNEL,
   QUIT_SHORTCUT_CHANNEL,
@@ -259,13 +260,21 @@ function syncWindowAppearance(
   window: Electron.BrowserWindow,
   shouldUseDarkColors: boolean,
   platform: NodeJS.Platform,
+  transparency: boolean,
 ): Effect.Effect<void> {
   return Effect.sync(() => {
     if (window.isDestroyed()) {
       return;
     }
 
-    window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
+    if (platform === "darwin") {
+      window.setVibrancy(transparency ? "under-window" : null);
+    }
+    window.setBackgroundColor(
+      platform === "darwin" && transparency
+        ? "#00000000"
+        : getInitialWindowBackgroundColor(shouldUseDarkColors),
+    );
     const { titleBarOverlay } = getWindowTitleBarOptions(shouldUseDarkColors, platform);
     if (typeof titleBarOverlay === "object") {
       window.setTitleBarOverlay(titleBarOverlay);
@@ -352,6 +361,12 @@ export const make = Effect.gen(function* () {
     const iconOption = getIconOption(iconPaths, environment.platform);
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
     const persistedSettings = yield* desktopSettings.get;
+    const transparency =
+      environment.platform === "darwin" &&
+      Option.getOrElse(
+        yield* clientSettings.get.pipe(Effect.orElseSucceed(() => Option.none())),
+        () => DEFAULT_CLIENT_SETTINGS,
+      ).macosWindowTransparency;
     const persistedBounds = persistedSettings.mainWindowBounds;
     const displayBoundsResult = yield* Effect.sync(() => {
       try {
@@ -381,7 +396,10 @@ export const make = Effect.gen(function* () {
       show: false,
       autoHideMenuBar: true,
       ...(environment.platform === "darwin" ? { disableAutoHideCursor: true } : {}),
-      backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors),
+      backgroundColor: transparency
+        ? "#00000000"
+        : getInitialWindowBackgroundColor(shouldUseDarkColors),
+      ...(transparency ? { vibrancy: "under-window" as const } : {}),
       ...iconOption,
       title: environment.displayName,
       ...getWindowTitleBarOptions(shouldUseDarkColors, environment.platform),
@@ -531,7 +549,10 @@ export const make = Effect.gen(function* () {
             });
           }
           if (params.dictionarySuggestions.length === 0) {
-            menuTemplate.push({ label: "No suggestions", enabled: false });
+            menuTemplate.push({
+              label: translateDesktopInterfaceMessage("desktop.contextMenu.noSuggestions"),
+              enabled: false,
+            });
           }
           menuTemplate.push({ type: "separator" });
         }
@@ -539,7 +560,7 @@ export const make = Effect.gen(function* () {
         if (Option.isSome(ElectronShell.parseSafeExternalUrl(params.linkURL))) {
           menuTemplate.push(
             {
-              label: "Copy Link",
+              label: translateDesktopInterfaceMessage("desktop.contextMenu.copyLink"),
               click: () => {
                 void runPromise(electronShell.copyText(params.linkURL));
               },
@@ -550,7 +571,7 @@ export const make = Effect.gen(function* () {
 
         if (params.mediaType === "image") {
           menuTemplate.push({
-            label: "Copy Image",
+            label: translateDesktopInterfaceMessage("desktop.contextMenu.copyImage"),
             click: () => {
               if (!contents.isDestroyed()) contents.copyImageAt(params.x, params.y);
             },
@@ -785,7 +806,10 @@ export const make = Effect.gen(function* () {
       );
     });
 
-    const revealSubscribers: RevealSubscription[] = [(fire) => window.once("ready-to-show", fire)];
+    const revealSubscribers: RevealSubscription[] = [
+      (fire) => window.once("ready-to-show", fire),
+      (fire) => window.webContents.once("did-start-loading", fire),
+    ];
     if (environment.platform === "linux") {
       revealSubscribers.push((fire) => window.webContents.once("did-finish-load", fire));
     }
@@ -991,8 +1015,18 @@ export const make = Effect.gen(function* () {
     }),
     syncAppearance: Effect.gen(function* () {
       const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
+      const transparency = Option.getOrElse(
+        yield* clientSettings.get.pipe(Effect.orElseSucceed(() => Option.none())),
+        () => DEFAULT_CLIENT_SETTINGS,
+      ).macosWindowTransparency;
+      const mainWindow = yield* electronWindow.main;
       yield* electronWindow.syncAllAppearance((window) =>
-        syncWindowAppearance(window, shouldUseDarkColors, environment.platform),
+        syncWindowAppearance(
+          window,
+          shouldUseDarkColors,
+          environment.platform,
+          transparency && Option.isSome(mainWindow) && window === mainWindow.value,
+        ),
       );
     }).pipe(Effect.withSpan("desktop.window.syncAppearance")),
   });
