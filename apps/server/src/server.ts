@@ -1,5 +1,6 @@
 import { EnvironmentHttpApi, ProviderDriverKind } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as NodeProcess from "node:process";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -12,6 +13,7 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as ServerConfig from "./config.ts";
+import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import {
   otlpTracesProxyRouteLayer,
   assetRouteLayer,
@@ -19,6 +21,7 @@ import {
   serverEnvironmentHttpApiLayer,
   staticAndDevRouteLayer,
   browserApiCorsLayer,
+  healthRouteLayer,
   httpCompressionLayer,
 } from "./http.ts";
 import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
@@ -29,8 +32,8 @@ import { pullRequestHttpApiLayer } from "./pullRequest/http.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
+import { ProjectionHarnessChatSyncRepositoryLive } from "./persistence/Layers/ProjectionHarnessChatSync.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
-import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory.ts";
 import * as ProviderSessionRuntime from "./persistence/ProviderSessionRuntime.ts";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry.ts";
@@ -52,15 +55,30 @@ import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
+import * as PlanParallelismReview from "./plan/PlanParallelismReview.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
+import { McpRuntimeRegistryLive } from "./mcp/McpRuntimeRegistry.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as ProcessRunner from "./processRunner.ts";
 import * as GitManager from "./git/GitManager.ts";
+import * as GitRepositoryQueryService from "./git-workbench/GitRepositoryQueryService.ts";
+import * as GitRebaseControlledEditor from "./git-workbench/GitRebaseControlledEditor.ts";
+import * as GitWorkbenchDriver from "./git-workbench/GitWorkbenchDriver.ts";
+import * as GitWorkbenchOperations from "./git-workbench/GitWorkbenchOperations.ts";
+import * as GitWorkbenchQueueReactor from "./git-workbench/GitWorkbenchQueueReactor.ts";
+import * as GitWorkbenchQueueRepository from "./git-workbench/GitWorkbenchQueueRepository.ts";
+import * as GitWorkbenchQueueService from "./git-workbench/GitWorkbenchQueueService.ts";
+import * as GitWorkbenchRuntime from "./git-workbench/GitWorkbenchRuntime.ts";
+import * as GitWorkbenchService from "./git-workbench/GitWorkbenchService.ts";
+import * as GitWorkbenchUndoDriver from "./git-workbench/GitWorkbenchUndoDriver.ts";
+import * as GitWorkbenchUndoService from "./git-workbench/GitWorkbenchUndoService.ts";
+import * as TurnQuiescenceNotifier from "./git-workbench/TurnQuiescenceNotifier.ts";
+import * as GitWorkbenchUndoStorage from "./persistence/Layers/GitWorkbenchUndoStorage.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -68,6 +86,9 @@ import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationRe
 import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus.ts";
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion.ts";
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
+import { FetchWorkerCoordinatorLive } from "./fetch/FetchWorkerCoordinator.ts";
+import { GeneralSubagentCoordinatorLive } from "./subagents/GeneralSubagentCoordinator.ts";
+import { TurnAbortCoordinatorLive } from "./orchestration/Layers/TurnAbortCoordinator.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
 import * as ThreadSettlementReactor from "./orchestration/ThreadSettlementReactor.ts";
@@ -81,8 +102,13 @@ import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
+import * as WorkspaceContext from "./workspace/WorkspaceContext.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
+import * as ProjectMemoryPolicy from "./projectMemory/ProjectMemoryPolicy.ts";
+import * as ProjectMemoryStore from "./projectMemory/ProjectMemoryStore.ts";
+import { McpConfigEngineLive } from "./mcp/McpConfigEngine.ts";
+import { McpConfigurationReconcilerLive } from "./mcp/McpConfigurationReconcilerLive.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
@@ -97,6 +123,7 @@ import * as SourceControlRepositoryService from "./sourceControl/SourceControlRe
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import { ObservabilityLive } from "./observability/Layers/Observability.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
+import { SkillEngineLive } from "./skills/Layers/SkillEngine.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import { authHttpApiLayer, environmentAuthenticatedAuthLayer } from "./auth/http.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
@@ -125,8 +152,15 @@ import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts
 import * as ResourceMonitorBinary from "./resourceTelemetry/ResourceMonitorBinary.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
+import * as SubagentResourceGovernor from "./resourceProtection/SubagentResourceGovernor.ts";
+import * as KnowledgeGraphLive from "./knowledge-graph/KnowledgeGraphLive.ts";
+import { AssemblyAiStreamingTokenLive } from "./speech/Layers/AssemblyAiStreamingToken.ts";
+import * as ProjectSpeechProfileStore from "./speech/ProjectSpeechProfileStore.ts";
+import * as ProjectSpeechWorkspaceScanner from "./speech/ProjectSpeechWorkspaceScanner.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
+import { ProjectAgentCoordinatorLive } from "./projectAgent/ProjectAgentCoordinator.ts";
+import { ProjectionProjectAgentCoordinationRepositoryLive } from "./persistence/Layers/ProjectionProjectAgentCoordination.ts";
 import {
   clearPersistedServerRuntimeState,
   makePersistedServerRuntimeState,
@@ -183,6 +217,10 @@ const ResourceTelemetryLayerLive = ResourceTelemetry.layer.pipe(
   Layer.provideMerge(DesktopTelemetryReceiverLayerLive),
 );
 
+const ResourceProtectionLayerLive = SubagentResourceGovernor.layerLive.pipe(
+  Layer.provide(Layer.merge(NativeTelemetryLayerLive, ServerSettingsLayerLive)),
+);
+
 const HostPowerMonitorLayerLive = HostPowerMonitor.layer.pipe(
   Layer.provide(DesktopTelemetryReceiverLayerLive),
 );
@@ -200,9 +238,17 @@ const BackgroundLayerLive = BackgroundPolicy.layer.pipe(
 
 const UsageLayerLive = UsageService.layer.pipe(Layer.provide(ServerSettingsLayerLive));
 
+const ProjectMemoryStoreLive = Layer.unwrap(
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    return ProjectMemoryStore.layer({ t3Home: config.baseDir });
+  }),
+);
+
 const ResourceDiagnosticsLayerLive = Layer.mergeAll(
   HostResources.layer,
   ResourceTelemetryLayerLive,
+  ResourceProtectionLayerLive,
   ProcessDiagnostics.layer.pipe(Layer.provide(ResourceTelemetryLayerLive)),
   ProcessResourceMonitor.layer.pipe(Layer.provide(ResourceTelemetryLayerLive)),
 );
@@ -274,9 +320,13 @@ const PlatformServicesLive = Layer.unwrap(
 );
 
 const ReactorLayerLive = Layer.empty.pipe(
+  Layer.provideMerge(TurnQuiescenceNotifier.TurnQuiescenceNotifierLive),
   Layer.provideMerge(OrchestrationReactorLive),
   Layer.provideMerge(ProviderRuntimeIngestionLive),
   Layer.provideMerge(ProviderCommandReactorLive),
+  Layer.provideMerge(FetchWorkerCoordinatorLive),
+  Layer.provideMerge(GeneralSubagentCoordinatorLive),
+  Layer.provideMerge(TurnAbortCoordinatorLive),
   Layer.provideMerge(CheckpointReactorLive),
   Layer.provideMerge(ThreadDeletionReactorLive),
   Layer.provideMerge(ThreadSettlementReactor.layer),
@@ -289,6 +339,14 @@ const ProviderSessionDirectoryLayerLive = ProviderSessionDirectoryLive.pipe(
   Layer.provide(ProviderSessionRuntime.layer),
 );
 
+const McpRuntimeRegistryLayerLive = McpRuntimeRegistryLive.pipe(
+  Layer.provide(ProviderAdapterRegistryLive),
+);
+
+const McpConfigurationReconcilerLayerLive = McpConfigurationReconcilerLive.pipe(
+  Layer.provide(McpRuntimeRegistryLayerLive),
+);
+
 // `ProviderAdapterRegistryLive` is now a facade that resolves kind → adapter
 // by looking up the default `ProviderInstance` per driver in the instance
 // registry. Adapter construction itself moved inside each driver's
@@ -298,9 +356,22 @@ const ProviderSessionDirectoryLayerLive = ProviderSessionDirectoryLive.pipe(
 const ProviderLayerLive = ProviderServiceLive.pipe(
   Layer.provide(ProviderAdapterRegistryLive),
   Layer.provideMerge(ProviderSessionDirectoryLayerLive),
+  Layer.provideMerge(McpRuntimeRegistryLayerLive),
 );
 
-const PersistenceLayerLive = Layer.empty.pipe(Layer.provideMerge(SqlitePersistenceLayerLive));
+const ProjectSpeechProfileStoreLayerLive = ProjectSpeechProfileStore.layer.pipe(
+  Layer.provide(SqlitePersistenceLayerLive),
+);
+
+const ProjectionHarnessChatSyncRepositoryLayerLive = ProjectionHarnessChatSyncRepositoryLive.pipe(
+  Layer.provide(SqlitePersistenceLayerLive),
+);
+
+const PersistenceLayerLive = Layer.mergeAll(
+  SqlitePersistenceLayerLive,
+  ProjectSpeechProfileStoreLayerLive,
+  ProjectionHarnessChatSyncRepositoryLayerLive,
+);
 
 const VcsDriverRegistryLayerLive = VcsDriverRegistry.layer.pipe(
   Layer.provide(VcsProjectConfig.layer),
@@ -327,6 +398,10 @@ const GitManagerLayerLive = GitManager.layer.pipe(
   Layer.provideMerge(TextGeneration.layer),
 );
 
+const PlanParallelismReviewLayerLive = PlanParallelismReview.layer.pipe(
+  Layer.provideMerge(TextGeneration.layer),
+);
+
 const GitLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitManagerLayerLive),
   Layer.provideMerge(GitVcsDriver.layer),
@@ -335,6 +410,62 @@ const GitLayerLive = Layer.empty.pipe(
 const GitWorkflowLayerLive = GitWorkflowService.layer.pipe(
   Layer.provideMerge(VcsDriverRegistryLayerLive),
   Layer.provideMerge(GitLayerLive),
+);
+
+const GitWorkbenchFoundationLayerLive = Layer.mergeAll(
+  GitWorkbenchRuntime.GitWorkbenchMutationSchedulerLive,
+  GitWorkbenchDriver.layer,
+  GitRepositoryQueryService.layer,
+  GitWorkbenchOperations.driverLayer,
+  GitRebaseControlledEditor.layer,
+  GitWorkbenchUndoStorage.GitWorkbenchUndoStorageLive,
+  GitWorkbenchQueueRepository.GitWorkbenchQueueRepositoryLive,
+);
+
+const GitWorkbenchStateReadersLayerLive = Layer.mergeAll(
+  GitWorkbenchRuntime.GitWorkbenchOperationStateReaderLive,
+  GitWorkbenchRuntime.GitWorkbenchUndoStateReaderLive,
+).pipe(Layer.provideMerge(GitWorkbenchFoundationLayerLive));
+
+const GitWorkbenchUndoLayerLive = GitWorkbenchUndoService.layer.pipe(
+  Layer.provideMerge(
+    GitWorkbenchUndoDriver.layer.pipe(Layer.provideMerge(GitWorkbenchFoundationLayerLive)),
+  ),
+  Layer.provideMerge(GitWorkbenchStateReadersLayerLive),
+  Layer.provideMerge(GitWorkbenchFoundationLayerLive),
+);
+
+const GitWorkbenchOperationsLayerLive = GitWorkbenchOperations.layer.pipe(
+  Layer.provideMerge(GitWorkbenchUndoLayerLive),
+  Layer.provideMerge(GitWorkbenchStateReadersLayerLive),
+  Layer.provideMerge(GitWorkbenchFoundationLayerLive),
+);
+
+const GitWorkbenchQueueRuntimeLayerLive = GitWorkbenchRuntime.GitWorkbenchQueueRuntimeLive.pipe(
+  Layer.provideMerge(GitWorkbenchOperationsLayerLive),
+  Layer.provideMerge(GitWorkbenchFoundationLayerLive),
+);
+
+const GitWorkbenchQueueLayerLive = GitWorkbenchQueueService.GitWorkbenchQueueLive.pipe(
+  Layer.provideMerge(GitWorkbenchQueueRuntimeLayerLive),
+  Layer.provideMerge(GitWorkbenchFoundationLayerLive),
+);
+
+const GitWorkbenchQueueReactorLayerLive =
+  GitWorkbenchQueueReactor.GitWorkbenchQueueReactorLive.pipe(
+    Layer.provideMerge(GitWorkbenchQueueLayerLive),
+  );
+
+const GitWorkbenchCoreLayerLive = GitWorkbenchService.layer.pipe(
+  Layer.provideMerge(
+    GitWorkbenchQueueReactor.GitWorkbenchQueueReactorWorkerLive.pipe(
+      Layer.provideMerge(GitWorkbenchQueueReactorLayerLive),
+    ),
+  ),
+  Layer.provideMerge(GitWorkbenchQueueLayerLive),
+  Layer.provideMerge(GitWorkbenchOperationsLayerLive),
+  Layer.provideMerge(GitWorkbenchUndoLayerLive),
+  Layer.provideMerge(GitWorkbenchFoundationLayerLive),
 );
 
 const SourceControlRepositoryServiceLayerLive = SourceControlRepositoryService.layer.pipe(
@@ -389,10 +520,16 @@ const WorkspaceFileSystemLayerLive = WorkspaceFileSystem.layer.pipe(
   Layer.provide(WorkspaceEntriesLayerLive),
 );
 
+const WorkspaceContextLayerLive = WorkspaceContext.layer.pipe(
+  Layer.provide(WorkspaceFileSystemLayerLive),
+);
+
 const WorkspaceLayerLive = Layer.mergeAll(
   WorkspacePaths.layer,
   WorkspaceEntriesLayerLive,
   WorkspaceFileSystemLayerLive,
+  WorkspaceContextLayerLive,
+  ProjectSpeechWorkspaceScanner.layer,
 );
 
 const ProjectFaviconResolverLayerLive = ProjectFaviconResolver.layer.pipe(
@@ -418,12 +555,26 @@ const CloudManagedEndpointRuntimeLive = Layer.mergeAll(
   ),
 );
 
+const ProjectAgentCoordinationLayerLive = ProjectAgentCoordinatorLive.pipe(
+  Layer.provideMerge(OrchestrationLayerLive),
+  Layer.provideMerge(ProjectionProjectAgentCoordinationRepositoryLive),
+);
+
 const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
   // Subscribes to `account.rate-limits.updated` so usage bars track live
   // telemetry instead of waiting for the next status probe.
   Layer.provideMerge(ProviderUsageLimitsIngestionLive),
   Layer.provideMerge(ProviderLayerLive),
-  Layer.provideMerge(OrchestrationLayerLive),
+  Layer.provideMerge(ProjectAgentCoordinationLayerLive),
+);
+
+const GitWorkbenchLayerLive = GitWorkbenchCoreLayerLive.pipe(
+  Layer.provideMerge(VcsLayerLive),
+  Layer.provideMerge(ProviderRuntimeLayerLive),
+  Layer.provideMerge(PersistenceLayerLive),
+  Layer.provideMerge(WorkspaceLayerLive),
+  Layer.provideMerge(ServerEnvironment.layer),
+  Layer.provideMerge(TurnQuiescenceNotifier.TurnQuiescenceNotifierLive),
 );
 
 const AntigravityInstallationRefreshLive = Layer.effectDiscard(
@@ -453,7 +604,7 @@ const AntigravityInstallationRefreshLive = Layer.effectDiscard(
   }),
 );
 
-const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
+const RuntimeCoreServicesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(AntigravityInstallationRefreshLive),
   Layer.provideMerge(ProviderAuthServiceLive),
   // Core Services
@@ -464,6 +615,8 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   ),
   Layer.provideMerge(GitLayerLive),
   Layer.provideMerge(VcsLayerLive),
+  Layer.provideMerge(GitWorkbenchLayerLive),
+  Layer.provideMerge(PlanParallelismReviewLayerLive),
   Layer.provideMerge(ProviderRuntimeLayerLive),
   Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive)),
   Layer.provideMerge(PersistenceLayerLive),
@@ -472,7 +625,14 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(
     Layer.mergeAll(Keybindings.layer, EnvironmentTheme.layer, UsageLimitSources.layer),
   ),
+);
+
+const RuntimeCoreDependenciesLive = RuntimeCoreServicesLive.pipe(
+  Layer.provideMerge(ProjectMemoryStoreLive),
+  Layer.provideMerge(ProjectMemoryPolicy.layer),
   Layer.provideMerge(ProviderRegistryLive),
+  Layer.provideMerge(SkillEngineLive),
+  Layer.provideMerge(McpConfigurationReconcilerLayerLive),
   // The instance registry is the new routing keystone — text generation,
   // adapter lookup, and runtime ingestion all resolve `ProviderInstanceId`
   // through this layer. Built-in drivers come from `BUILT_IN_DRIVERS`;
@@ -498,11 +658,13 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // no longer transitively provides it. Exposing it at the runtime level
   // keeps a single Live for all opencode consumers.
   Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
-  Layer.provideMerge(WorkspaceLayerLive),
+  Layer.provideMerge(McpConfigEngineLive),
   Layer.provideMerge(Layer.mergeAll(NativeAppIconResolver.layer, ProjectFaviconResolverLayerLive)),
   Layer.provideMerge(RepositoryIdentityResolver.layer),
+  Layer.provideMerge(WorkspaceLayerLive),
   Layer.provideMerge(ServerEnvironmentLayerLive),
   Layer.provideMerge(AuthLayerLive),
+  Layer.provideMerge(AssemblyAiStreamingTokenLive),
   Layer.provideMerge(ServerSecretStore.layer),
   Layer.provideMerge(
     Layer.mergeAll(
@@ -515,13 +677,18 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   ),
 );
 
-const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
+const RuntimeCoreWithKnowledgeGraphLive = KnowledgeGraphLive.layer.pipe(
+  Layer.provideMerge(RuntimeCoreDependenciesLive),
+);
+
+const RuntimeDependenciesLive = RuntimeCoreWithKnowledgeGraphLive.pipe(
   // Misc.
   Layer.provideMerge(BackgroundLayerLive),
   Layer.provideMerge(ResourceDiagnosticsLayerLive),
   Layer.provideMerge(UsageLayerLive),
+  // Preserve the fork's disabled analytics while retaining upstream event metadata.
+  Layer.provideMerge(AnalyticsService.AnalyticsService.layerTest),
   Layer.provideMerge(TraceDiagnostics.layer),
-  Layer.provideMerge(AnalyticsService.layer),
   Layer.provideMerge(ExternalLauncher.layer),
   Layer.provideMerge(RemoteOpenTargets.layer),
   Layer.provideMerge(ServerLifecycleEvents.layer),
@@ -547,6 +714,7 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(environmentAuthenticatedAuthLayer),
     ),
     otlpTracesProxyRouteLayer,
+    healthRouteLayer,
     assetRouteLayer,
     attachmentUploadRouteLayer,
     staticAndDevRouteLayer,
@@ -737,6 +905,28 @@ const makeServerLayer = Layer.unwrap(
       }),
     );
 
+    const launcherShutdownLayer = Layer.effectDiscard(
+      Effect.gen(function* () {
+        const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
+        if (!launcher.managed) return;
+        yield* launcher.awaitShutdownRequest.pipe(
+          Effect.tap((requestId) =>
+            Effect.logInfo("Service launcher requested an orderly shutdown", { requestId }),
+          ),
+          Effect.catch((error) =>
+            Effect.logWarning(
+              "Service launcher disconnected; shutting down so the service manager can recover",
+              { error },
+            ),
+          ),
+        );
+        // NodeRuntime owns the root-scope signal handler. Emitting the same
+        // event as an OS SIGTERM preserves every existing shutdown finalizer on
+        // Windows, where ChildProcess.kill('SIGTERM') is not a graceful signal.
+        NodeProcess.emit("SIGTERM", "SIGTERM");
+      }).pipe(Effect.forkScoped),
+    ).pipe(Layer.provide(launcherLayer));
+
     const runtimeServicesLive = ServerRuntimeStartup.layerWithOptions({
       activate: Deferred.succeed(activation, undefined).pipe(Effect.asVoid),
       abort: (error) => Deferred.die(activation, error).pipe(Effect.asVoid),
@@ -761,6 +951,7 @@ const makeServerLayer = Layer.unwrap(
       runtimeStateLayer,
       tailscaleServeLayer,
       cloudDesiredLinkReconcileLayer,
+      launcherShutdownLayer,
     );
 
     return serverApplicationLayer.pipe(

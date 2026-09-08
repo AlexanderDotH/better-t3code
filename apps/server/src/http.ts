@@ -56,6 +56,12 @@ const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inlin
 // opaque origin: scripts run, but same-origin cookies, storage, and API calls are
 // out of reach. Relative sibling assets still load through their signed URLs.
 const HTML_CONTENT_SECURITY_POLICY = "sandbox allow-scripts allow-forms allow-popups allow-modals";
+const HEALTH_RESPONSE = HttpServerResponse.jsonUnsafe({ status: "ok" });
+
+export const healthRouteLayer = Layer.mergeAll(
+  HttpRouter.add("GET", "/healthz", HEALTH_RESPONSE),
+  HttpRouter.add("GET", "/readyz", HEALTH_RESPONSE),
+);
 
 // Types a browser may render as a document if a proxy strips the disposition
 // header. Downloads of these fall back to octet-stream.

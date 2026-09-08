@@ -197,12 +197,10 @@ const projectCommandUuid = Crypto.Crypto.pipe(
   ),
 );
 
-const ProjectCliRuntimeLive = Layer.mergeAll(
-  WorkspacePaths.layer,
-  OrchestrationLayerLive.pipe(
-    Layer.provideMerge(RepositoryIdentityResolver.layer),
-    Layer.provideMerge(SqlitePersistenceLayerLive),
-  ),
+const ProjectCliRuntimeLive = OrchestrationLayerLive.pipe(
+  Layer.provideMerge(RepositoryIdentityResolver.layer),
+  Layer.provideMerge(SqlitePersistenceLayerLive),
+  Layer.provideMerge(WorkspacePaths.layer),
 );
 
 const PROJECT_CLI_LIVE_SERVER_TIMEOUT = Duration.seconds(1);
