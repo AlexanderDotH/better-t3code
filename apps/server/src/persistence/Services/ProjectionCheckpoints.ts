@@ -13,6 +13,7 @@ import {
   NonNegativeInt,
   OrchestrationCheckpointFile,
   OrchestrationCheckpointStatus,
+  OrchestrationHistoryOrigin,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -32,6 +33,7 @@ export const ProjectionCheckpoint = Schema.Struct({
   files: Schema.Array(OrchestrationCheckpointFile),
   assistantMessageId: Schema.NullOr(MessageId),
   completedAt: IsoDateTime,
+  historyOrigin: Schema.optional(OrchestrationHistoryOrigin),
 });
 export type ProjectionCheckpoint = typeof ProjectionCheckpoint.Type;
 
@@ -61,6 +63,11 @@ export interface ProjectionCheckpointRepositoryShape {
    * Upserts by composite key `(threadId, checkpointTurnCount)`.
    */
   readonly upsert: (row: ProjectionCheckpoint) => Effect.Effect<void, ProjectionRepositoryError>;
+
+  /** Insert or replace an immutable checkpoint copied into a fork. */
+  readonly upsertHistorical: (
+    row: ProjectionCheckpoint & { readonly historyOrigin: OrchestrationHistoryOrigin },
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
 
   /**
    * List projected checkpoints for a thread.

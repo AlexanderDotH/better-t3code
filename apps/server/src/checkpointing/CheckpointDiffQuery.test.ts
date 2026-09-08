@@ -24,6 +24,7 @@ function makeThreadCheckpointContext(input: {
     projectId: input.projectId,
     workspaceRoot: input.workspaceRoot,
     worktreePath: input.worktreePath,
+    checkpointsEnabled: true,
     checkpoints: [
       {
         turnId: TurnId.make("turn-1"),
@@ -74,7 +75,7 @@ describe("CheckpointDiffQuery.layer", () => {
       const layer = CheckpointDiffQuery.layer.pipe(
         Layer.provideMerge(Layer.succeed(CheckpointStore.CheckpointStore, checkpointStore)),
         Layer.provideMerge(
-          Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+          Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
             getUserInputActivity: () => Effect.die("unused"),
             getCommandReadModel: () =>
               Effect.die("CheckpointDiffQuery should not request the command read model"),
@@ -146,11 +147,13 @@ describe("CheckpointDiffQuery.layer", () => {
     }),
   );
 
-  it.effect("computes diffs using canonical turn-0 checkpoint refs", () =>
+  it.effect("uses source baselines for inherited diffs and fork baselines for native diffs", () =>
     Effect.gen(function* () {
       const projectId = ProjectId.make("project-1");
       const threadId = ThreadId.make("thread-1");
-      const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
+      const sourceThreadId = ThreadId.make("thread-source");
+      const inheritedCheckpointRef = checkpointRefForThreadTurn(sourceThreadId, 1);
+      const nativeCheckpointRef = checkpointRefForThreadTurn(threadId, 2);
       const diffCheckpointsCalls: Array<{
         readonly fromCheckpointRef: CheckpointRef;
         readonly toCheckpointRef: CheckpointRef;
@@ -158,14 +161,38 @@ describe("CheckpointDiffQuery.layer", () => {
         readonly ignoreWhitespace: boolean;
       }> = [];
 
-      const threadCheckpointContext = makeThreadCheckpointContext({
-        projectId,
+      const threadCheckpointContext: ProjectionSnapshotQuery.ProjectionThreadCheckpointContext = {
         threadId,
+        projectId,
         workspaceRoot: "/tmp/workspace",
         worktreePath: null,
-        checkpointTurnCount: 1,
-        checkpointRef: toCheckpointRef,
-      });
+        checkpointsEnabled: true,
+        checkpoints: [
+          {
+            turnId: TurnId.make("turn-inherited"),
+            checkpointTurnCount: 1,
+            checkpointRef: inheritedCheckpointRef,
+            status: "ready",
+            files: [],
+            assistantMessageId: null,
+            completedAt: "2026-01-01T00:00:00.000Z",
+            historyOrigin: {
+              sourceThreadId,
+              sourceId: "checkpoint-source",
+              ordinal: 1,
+            },
+          },
+          {
+            turnId: TurnId.make("turn-native"),
+            checkpointTurnCount: 2,
+            checkpointRef: nativeCheckpointRef,
+            status: "ready",
+            files: [],
+            assistantMessageId: null,
+            completedAt: "2026-01-01T00:01:00.000Z",
+          },
+        ],
+      };
 
       const checkpointStore: CheckpointStore.CheckpointStore["Service"] = {
         isGitRepository: () => Effect.succeed(true),
@@ -188,7 +215,7 @@ describe("CheckpointDiffQuery.layer", () => {
       const layer = CheckpointDiffQuery.layer.pipe(
         Layer.provideMerge(Layer.succeed(CheckpointStore.CheckpointStore, checkpointStore)),
         Layer.provideMerge(
-          Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+          Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
             getUserInputActivity: () => Effect.die("unused"),
             getCommandReadModel: () =>
               Effect.die("CheckpointDiffQuery should not request the command read model"),
@@ -217,29 +244,48 @@ describe("CheckpointDiffQuery.layer", () => {
         ),
       );
 
-      const result = yield* Effect.gen(function* () {
+      const [inheritedResult, nativeResult] = yield* Effect.gen(function* () {
         const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
-        return yield* query.getTurnDiff({
-          threadId,
-          fromTurnCount: 0,
-          toTurnCount: 1,
-          ignoreWhitespace: true,
-        });
+        return yield* Effect.all([
+          query.getTurnDiff({
+            threadId,
+            fromTurnCount: 0,
+            toTurnCount: 1,
+            ignoreWhitespace: true,
+          }),
+          query.getTurnDiff({
+            threadId,
+            fromTurnCount: 0,
+            toTurnCount: 2,
+            ignoreWhitespace: true,
+          }),
+        ]);
       }).pipe(Effect.provide(layer));
 
-      const expectedFromRef = checkpointRefForThreadTurn(threadId, 0);
       expect(diffCheckpointsCalls).toEqual([
         {
           cwd: "/tmp/workspace",
-          fromCheckpointRef: expectedFromRef,
-          toCheckpointRef,
+          fromCheckpointRef: checkpointRefForThreadTurn(sourceThreadId, 0),
+          toCheckpointRef: inheritedCheckpointRef,
+          ignoreWhitespace: true,
+        },
+        {
+          cwd: "/tmp/workspace",
+          fromCheckpointRef: checkpointRefForThreadTurn(threadId, 0),
+          toCheckpointRef: nativeCheckpointRef,
           ignoreWhitespace: true,
         },
       ]);
-      expect(result).toEqual({
+      expect(inheritedResult).toEqual({
         threadId,
         fromTurnCount: 0,
         toTurnCount: 1,
+        diff: "diff patch",
+      });
+      expect(nativeResult).toEqual({
+        threadId,
+        fromTurnCount: 0,
+        toTurnCount: 2,
         diff: "diff patch",
       });
     }),
@@ -277,7 +323,7 @@ describe("CheckpointDiffQuery.layer", () => {
       const layer = CheckpointDiffQuery.layer.pipe(
         Layer.provideMerge(Layer.succeed(CheckpointStore.CheckpointStore, checkpointStore)),
         Layer.provideMerge(
-          Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+          Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
             getUserInputActivity: () => Effect.die("unused"),
             getCommandReadModel: () =>
               Effect.die("CheckpointDiffQuery should not request the command read model"),
@@ -351,7 +397,7 @@ describe("CheckpointDiffQuery.layer", () => {
       const layer = CheckpointDiffQuery.layer.pipe(
         Layer.provideMerge(Layer.succeed(CheckpointStore.CheckpointStore, checkpointStore)),
         Layer.provideMerge(
-          Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+          Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
             getUserInputActivity: () => Effect.die("unused"),
             getCommandReadModel: () =>
               Effect.die("CheckpointDiffQuery should not request the command read model"),
@@ -410,7 +456,7 @@ describe("CheckpointDiffQuery.layer", () => {
       const layer = CheckpointDiffQuery.layer.pipe(
         Layer.provideMerge(Layer.succeed(CheckpointStore.CheckpointStore, checkpointStore)),
         Layer.provideMerge(
-          Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+          Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
             getUserInputActivity: () => Effect.die("unused"),
             getCommandReadModel: () =>
               Effect.die("CheckpointDiffQuery should not request the command read model"),
