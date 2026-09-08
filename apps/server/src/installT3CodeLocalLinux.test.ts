@@ -36,7 +36,7 @@ function writeFakeAppImage(filePath: string, body: string): void {
 }
 
 function installerEnvironment(home: string): NodeJS.ProcessEnv {
-  const environment = {
+  const environment: NodeJS.ProcessEnv = {
     ...process.env,
     HOME: home,
     T3CODE_CANONICAL_CHECKOUT: projectRoot,
@@ -82,41 +82,38 @@ describe("install-t3code-local-linux", () => {
     NodeAssert.match(result.stderr, /only supported on Linux/);
     NodeAssert.equal(NodeFS.existsSync(NodePath.join(home, ".local/bin/t3code-local")), false);
   });
-  it.runIf(linuxHost)(
-    "installs the production Linux icon at its native hicolor size",
-    () => {
-      const home = makeHome();
-      const appImage = NodePath.join(home, "fake.AppImage");
-      const legacyIcon = NodePath.join(
-        home,
-        "data",
-        "icons",
-        "hicolor",
-        "512x512",
-        "apps",
-        "t3code-local.png",
-      );
-      writeFakeAppImage(appImage, "exit 0");
-      NodeFS.mkdirSync(NodePath.dirname(legacyIcon), { recursive: true });
-      NodeFS.writeFileSync(legacyIcon, "legacy-icon");
+  it.runIf(linuxHost)("installs the production Linux icon at its native hicolor size", () => {
+    const home = makeHome();
+    const appImage = NodePath.join(home, "fake.AppImage");
+    const legacyIcon = NodePath.join(
+      home,
+      "data",
+      "icons",
+      "hicolor",
+      "512x512",
+      "apps",
+      "t3code-local.png",
+    );
+    writeFakeAppImage(appImage, "exit 0");
+    NodeFS.mkdirSync(NodePath.dirname(legacyIcon), { recursive: true });
+    NodeFS.writeFileSync(legacyIcon, "legacy-icon");
 
-      const install = runInstaller({ appImage, home, profile: "isolated" });
+    const install = runInstaller({ appImage, home, profile: "isolated" });
 
-      NodeAssert.equal(install.status, 0, install.stderr);
-      const sourceIcon = NodePath.join(projectRoot, "assets", "prod", "black-universal-1024.png");
-      const installedIcon = NodePath.join(
-        home,
-        "data",
-        "icons",
-        "hicolor",
-        "1024x1024",
-        "apps",
-        "t3code-local.png",
-      );
-      NodeAssert.deepEqual(NodeFS.readFileSync(installedIcon), NodeFS.readFileSync(sourceIcon));
-      NodeAssert.equal(NodeFS.existsSync(legacyIcon), false);
-    },
-  );
+    NodeAssert.equal(install.status, 0, install.stderr);
+    const sourceIcon = NodePath.join(projectRoot, "assets", "prod", "black-universal-1024.png");
+    const installedIcon = NodePath.join(
+      home,
+      "data",
+      "icons",
+      "hicolor",
+      "1024x1024",
+      "apps",
+      "t3code-local.png",
+    );
+    NodeAssert.deepEqual(NodeFS.readFileSync(installedIcon), NodeFS.readFileSync(sourceIcon));
+    NodeAssert.equal(NodeFS.existsSync(legacyIcon), false);
+  });
 
   it("requires a separate explicit installation confirmation", () => {
     const home = makeHome();
