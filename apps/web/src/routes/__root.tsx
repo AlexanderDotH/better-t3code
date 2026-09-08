@@ -42,6 +42,7 @@ import { applyAppearanceFontVariables } from "~/appearanceFonts";
 import { applyAppearanceContrast } from "~/appearanceContrast";
 import { useClientSettings } from "../hooks/useSettings";
 import { InterfaceLanguageSyncCoordinator } from "../interfaceLanguageSync";
+import { ProjectThreadPreviewSyncCoordinator } from "../projectThreadPreviewSync";
 import { ChatVisualModeSyncCoordinator } from "../chatVisualModeSync";
 import { PlanAgentSelectionHeal } from "../planAgentSelectionHeal";
 import {
@@ -151,6 +152,7 @@ function RootRouteView() {
           <EnvironmentThemeSync />
           <InterfaceLanguageSyncCoordinator />
           <ChatVisualModeSyncCoordinator />
+          <ProjectThreadPreviewSyncCoordinator />
           <GlassAppearanceSync />
           <FontAppearanceSync />
           <CommandPalette>
@@ -192,6 +194,7 @@ function RootRouteView() {
         <EnvironmentThemeSync />
         <InterfaceLanguageSyncCoordinator />
         <ChatVisualModeSyncCoordinator />
+        <ProjectThreadPreviewSyncCoordinator />
         <GlassAppearanceSync />
         <FontAppearanceSync />
         <FirstRunGate
