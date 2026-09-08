@@ -19,6 +19,7 @@ import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { ControlPill } from "../../components/ControlPill";
 import { cn } from "../../lib/cn";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import {
   isPendingUserInputOptionSelected,
   type PendingUserInput,
@@ -89,6 +90,7 @@ const EXPANDED_CARD_IS_OVERLAY = Platform.OS === "ios";
 const CARD_LAYOUT_TRANSITION = LinearTransition.duration(200);
 
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
+  const translator = useMobileInterfaceTranslator();
   const questionCount = props.pendingUserInput.questions.length;
 
   const cardCoverage = props.cardCoverage;
@@ -168,14 +170,14 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
     >
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`Expand user input, ${questionCount} question${
-          questionCount === 1 ? "" : "s"
-        }`}
+        accessibilityLabel={translator.message("mobile.thread.questionCount", {
+          count: questionCount,
+        })}
         onPress={props.onToggleCollapsed}
         className="min-h-10 flex-1 flex-row items-center gap-2 active:opacity-70"
       >
         <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
-          User input needed
+          {translator.message("mobile.thread.inputNeeded")} needed
         </Text>
         <Text className="font-sans text-xs text-foreground-muted">
           {questionCount} question{questionCount === 1 ? "" : "s"}
@@ -190,7 +192,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
       </Pressable>
       {props.onStopThread ? (
         <ControlPill
-          accessibilityLabel="Stop"
+          accessibilityLabel={translator.message("mobile.thread.stop")}
           icon="stop.fill"
           variant="danger"
           className="h-9 w-9"
@@ -228,13 +230,13 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
     >
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Collapse user input"
+        accessibilityLabel={translator.message("mobile.thread.collapseInput")}
         onPress={props.onToggleCollapsed}
         className="flex-row items-start gap-2"
       >
         <View className="flex-1 gap-2.5">
           <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
-            User input needed
+            {translator.message("mobile.thread.inputNeeded")} needed
           </Text>
           <Text className="font-t3-bold text-lg text-foreground">Fill in the pending answers</Text>
         </View>
@@ -337,7 +339,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
             props.answers ? "text-primary-foreground" : "text-foreground-muted",
           )}
         >
-          Submit answers
+          {translator.message("mobile.thread.submitAnswers")}
         </Text>
       </Pressable>
       {props.pendingUserInput.dismissible ? (

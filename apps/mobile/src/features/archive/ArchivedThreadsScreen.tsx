@@ -40,6 +40,7 @@ import {
   NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
 } from "../layout/native-mail-search-toolbar";
 import type { ArchivedThreadGroup, ArchivedThreadSortOrder } from "./archivedThreadList";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export interface ArchivedThreadsHeaderEnvironment {
   readonly environmentId: EnvironmentId;
@@ -73,6 +74,7 @@ function ArchivedThreadsHeader(props: {
   readonly onSearchQueryChange: (query: string) => void;
   readonly onSortOrderChange: (sortOrder: ArchivedThreadSortOrder) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { width } = useWindowDimensions();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -84,11 +86,11 @@ function ArchivedThreadsHeader(props: {
     () => [
       {
         id: "environment",
-        title: "Environment",
+        title: translator.message("mobile.archive.environment"),
         subactions: [
           {
             id: "environment:all",
-            title: "All environments",
+            title: translator.message("mobile.archive.allEnvironments"),
             state: props.selectedEnvironmentId === null ? ("on" as const) : undefined,
           },
           ...props.environments.map((environment) => ({
@@ -103,22 +105,22 @@ function ArchivedThreadsHeader(props: {
       },
       {
         id: "sort",
-        title: "Sort by archived date",
+        title: translator.message("mobile.archive.sort"),
         subactions: [
           {
             id: "sort:newest",
-            title: "Newest first",
+            title: translator.message("mobile.archive.newest"),
             state: props.sortOrder === "newest" ? ("on" as const) : undefined,
           },
           {
             id: "sort:oldest",
-            title: "Oldest first",
+            title: translator.message("mobile.archive.oldest"),
             state: props.sortOrder === "oldest" ? ("on" as const) : undefined,
           },
         ],
       },
     ],
-    [props.environments, props.selectedEnvironmentId, props.sortOrder],
+    [props.environments, props.selectedEnvironmentId, props.sortOrder, translator],
   );
   const handleAndroidFilterAction = useCallback(
     (event: { nativeEvent: { event: string } }) => {
@@ -150,7 +152,7 @@ function ArchivedThreadsHeader(props: {
         >
           <View className="min-h-12 flex-row items-center gap-2">
             <Pressable
-              accessibilityLabel="Navigate up"
+              accessibilityLabel={translator.message("mobile.archive.navigateUp")}
               accessibilityRole="button"
               hitSlop={8}
               onPress={() => navigation.goBack()}
@@ -171,11 +173,11 @@ function ArchivedThreadsHeader(props: {
                 type="monochrome"
               />
               <TextInput
-                accessibilityLabel="Search archived threads"
+                accessibilityLabel={translator.message("mobile.archive.search")}
                 autoCapitalize="none"
                 onChangeText={props.onSearchQueryChange}
                 value={props.searchQuery}
-                placeholder="Search archived threads"
+                placeholder={translator.message("mobile.archive.search")}
                 placeholderTextColorClassName="accent-placeholder"
                 className="flex-1 py-2 text-base font-sans text-foreground"
               />
@@ -186,7 +188,7 @@ function ArchivedThreadsHeader(props: {
               onPressAction={handleAndroidFilterAction}
             >
               <Pressable
-                accessibilityLabel="Filter and sort archived threads"
+                accessibilityLabel={translator.message("mobile.archive.filter")}
                 accessibilityRole="button"
                 className="size-11 items-center justify-center rounded-full bg-subtle"
               >
@@ -208,15 +210,15 @@ function ArchivedThreadsHeader(props: {
     );
   }
   const archiveFilterMenu = {
-    title: "Archived thread options",
+    title: translator.message("mobile.archive.options"),
     items: [
       {
         type: "submenu" as const,
-        title: "Environment",
+        title: translator.message("mobile.archive.environment"),
         items: [
           {
             type: "action" as const,
-            title: "All environments",
+            title: translator.message("mobile.archive.allEnvironments"),
             state: props.selectedEnvironmentId === null ? ("on" as const) : ("off" as const),
             onPress: () => props.onEnvironmentChange(null),
           },
@@ -233,17 +235,17 @@ function ArchivedThreadsHeader(props: {
       },
       {
         type: "submenu" as const,
-        title: "Sort by archived date",
+        title: translator.message("mobile.archive.sort"),
         items: [
           {
             type: "action" as const,
-            title: "Newest first",
+            title: translator.message("mobile.archive.newest"),
             state: props.sortOrder === "newest" ? ("on" as const) : ("off" as const),
             onPress: () => props.onSortOrderChange("newest"),
           },
           {
             type: "action" as const,
-            title: "Oldest first",
+            title: translator.message("mobile.archive.oldest"),
             state: props.sortOrder === "oldest" ? ("on" as const) : ("off" as const),
             onPress: () => props.onSortOrderChange("oldest"),
           },
@@ -258,6 +260,7 @@ function ArchivedThreadsHeader(props: {
           dynamic toolbar/search wiring is set here. */}
       <NativeStackScreenOptions
         options={{
+          title: translator.message("mobile.archive.title"),
           unstable_headerToolbarItems: usesCompactMailToolbar
             ? () => [
                 createNativeMailSearchToolbarItem({
@@ -270,7 +273,7 @@ function ArchivedThreadsHeader(props: {
                     : "line.3.horizontal.decrease",
                   onComposePress: props.onRefresh,
                   onSearchTextChange: props.onSearchQueryChange,
-                  placeholder: "Search",
+                  placeholder: translator.message("mobile.archive.searchShort"),
                   searchTextChangeId: "archived-search-text",
                 }),
               ]
@@ -293,7 +296,7 @@ function ArchivedThreadsHeader(props: {
                 autoCapitalize: "none",
                 hideNavigationBar: false,
                 obscureBackground: false,
-                placeholder: "Search archived threads",
+                placeholder: translator.message("mobile.archive.search"),
                 onChangeText: (event) => {
                   props.onSearchQueryChange(event.nativeEvent.text);
                 },
@@ -308,29 +311,33 @@ function ArchivedThreadsHeader(props: {
         <NativeHeaderToolbar placement="right">
           {usesNativeChrome ? (
             <NativeHeaderToolbar.Button
-              accessibilityLabel="Refresh archived threads"
+              accessibilityLabel={translator.message("mobile.archive.refresh")}
               icon="arrow.clockwise"
               onPress={props.onRefresh}
               separateBackground
             />
           ) : null}
           <NativeHeaderToolbar.Menu
-            accessibilityLabel="Filter and sort archived threads"
+            accessibilityLabel={translator.message("mobile.archive.filter")}
             icon={
               hasCustomFilter
                 ? "line.3.horizontal.decrease.circle.fill"
                 : "line.3.horizontal.decrease.circle"
             }
             separateBackground
-            title="Archived thread options"
+            title={translator.message("mobile.archive.options")}
           >
-            <NativeHeaderToolbar.Menu title="Environment">
-              <NativeHeaderToolbar.Label>Environment</NativeHeaderToolbar.Label>
+            <NativeHeaderToolbar.Menu title={translator.message("mobile.archive.environment")}>
+              <NativeHeaderToolbar.Label>
+                {translator.message("mobile.archive.environment")}
+              </NativeHeaderToolbar.Label>
               <NativeHeaderToolbar.MenuAction
                 isOn={props.selectedEnvironmentId === null}
                 onPress={() => props.onEnvironmentChange(null)}
               >
-                <NativeHeaderToolbar.Label>All environments</NativeHeaderToolbar.Label>
+                <NativeHeaderToolbar.Label>
+                  {translator.message("mobile.archive.allEnvironments")}
+                </NativeHeaderToolbar.Label>
               </NativeHeaderToolbar.MenuAction>
               {props.environments.map((environment) => (
                 <NativeHeaderToolbar.MenuAction
@@ -343,19 +350,25 @@ function ArchivedThreadsHeader(props: {
               ))}
             </NativeHeaderToolbar.Menu>
 
-            <NativeHeaderToolbar.Menu title="Sort by archived date">
-              <NativeHeaderToolbar.Label>Sort by archived date</NativeHeaderToolbar.Label>
+            <NativeHeaderToolbar.Menu title={translator.message("mobile.archive.sort")}>
+              <NativeHeaderToolbar.Label>
+                {translator.message("mobile.archive.sort")}
+              </NativeHeaderToolbar.Label>
               <NativeHeaderToolbar.MenuAction
                 isOn={props.sortOrder === "newest"}
                 onPress={() => props.onSortOrderChange("newest")}
               >
-                <NativeHeaderToolbar.Label>Newest first</NativeHeaderToolbar.Label>
+                <NativeHeaderToolbar.Label>
+                  {translator.message("mobile.archive.newest")}
+                </NativeHeaderToolbar.Label>
               </NativeHeaderToolbar.MenuAction>
               <NativeHeaderToolbar.MenuAction
                 isOn={props.sortOrder === "oldest"}
                 onPress={() => props.onSortOrderChange("oldest")}
               >
-                <NativeHeaderToolbar.Label>Oldest first</NativeHeaderToolbar.Label>
+                <NativeHeaderToolbar.Label>
+                  {translator.message("mobile.archive.oldest")}
+                </NativeHeaderToolbar.Label>
               </NativeHeaderToolbar.MenuAction>
             </NativeHeaderToolbar.Menu>
           </NativeHeaderToolbar.Menu>
@@ -414,6 +427,7 @@ function ArchivedThreadRow(props: {
   readonly onUnarchive: () => void;
   readonly thread: EnvironmentThreadShell;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { width: windowWidth } = useWindowDimensions();
   const cardColor = useUniwindTheme()["--color-card"];
   const timestamp = relativeTime(props.thread.archivedAt ?? props.thread.updatedAt);
@@ -439,9 +453,11 @@ function ArchivedThreadRow(props: {
       onSwipeableClose={props.onSwipeableClose}
       onSwipeableWillOpen={props.onSwipeableWillOpen}
       primaryAction={{
-        accessibilityLabel: `Unarchive ${props.thread.title}`,
+        accessibilityLabel: translator.message("mobile.archive.unarchiveNamed", {
+          thread: props.thread.title,
+        }),
         icon: "arrow.uturn.backward",
-        label: "Unarchive",
+        label: translator.message("mobile.archive.unarchive"),
         onPress: props.onUnarchive,
       }}
       simultaneousWithExternalGesture={props.simultaneousSwipeGesture}
@@ -496,14 +512,17 @@ function ArchivedThreadRow(props: {
 }
 
 function ArchiveError(props: { readonly message: string; readonly onRetry: () => void }) {
+  const translator = useMobileInterfaceTranslator();
   return (
     <View className="rounded-[20px] border border-danger-border bg-danger p-4">
       <Text className="text-base font-t3-bold text-danger-foreground">
-        Could not load every archive
+        {translator.message("mobile.archive.loadFailed")}
       </Text>
       <Text className="mt-1 text-sm text-foreground-muted">{props.message}</Text>
       <Pressable className="mt-3 self-start active:opacity-60" onPress={props.onRetry}>
-        <Text className="text-sm font-t3-bold text-danger-foreground">Try again</Text>
+        <Text className="text-sm font-t3-bold text-danger-foreground">
+          {translator.message("common.retry")}
+        </Text>
       </Pressable>
     </View>
   );
@@ -524,6 +543,7 @@ export function ArchivedThreadsScreen(props: {
   readonly onSortOrderChange: (sortOrder: ArchivedThreadSortOrder) => void;
   readonly onUnarchiveThread: (thread: EnvironmentThreadShell) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { onDeleteThread, onUnarchiveThread } = props;
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const archiveScrollGesture = useMemo(() => Gesture.Native(), []);
@@ -616,7 +636,9 @@ export function ArchivedThreadsScreen(props: {
       return (
         <View className="items-center py-16">
           <ActivityIndicator colorClassName={"accent-icon"} />
-          <Text className="mt-3 text-sm text-foreground-muted">Loading archive...</Text>
+          <Text className="mt-3 text-sm text-foreground-muted">
+            {translator.message("mobile.archive.loading")}
+          </Text>
         </View>
       );
     }
@@ -625,13 +647,15 @@ export function ArchivedThreadsScreen(props: {
       <EmptyState
         detail={
           isFiltered
-            ? "Try another search or environment."
-            : "Threads you archive will appear here."
+            ? translator.message("mobile.archive.filteredEmptyDetail")
+            : translator.message("mobile.archive.emptyDetail")
         }
-        title={isFiltered ? "No matching threads" : "No archived threads"}
+        title={translator.message(
+          isFiltered ? "mobile.archive.filteredEmpty" : "mobile.archive.empty",
+        )}
       />
     );
-  }, [isFiltered, isInitialLoad]);
+  }, [isFiltered, isInitialLoad, translator]);
 
   return (
     <View className="flex-1 bg-sheet">
