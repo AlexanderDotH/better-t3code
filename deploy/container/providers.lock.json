@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "providers": {
+    "codex": { "version": "0.148.0" },
+    "claude": { "version": "2.1.238" },
+    "cursor": { "version": "vendor-installer" },
+    "grok": { "version": "vendor-installer" },
+    "opencode": { "version": "1.18.19" },
+    "gemini": { "version": "bundled-sdk" }
+  },
+  "tools": {
+    "glab": { "version": "1.109.0" }
+  }
+}

@@ -19,6 +19,7 @@ import * as ServerSelfUpdate from "./selfUpdate.ts";
 
 interface HarnessOptions {
   readonly mode?: "web" | "desktop";
+  readonly deploymentKind?: "native" | "container";
   readonly managed?: boolean;
   readonly preflight?: "ready" | "blocked";
   readonly requestUpdate?: ServiceLauncherClient.ServiceLauncherClient["Service"]["requestUpdate"];
@@ -84,6 +85,7 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
           order.push("accept");
           return "launcher-id";
         })),
+    awaitShutdownRequest: Effect.never,
     prepareTrial: Effect.sync((): undefined => undefined),
   });
   const config = yield* ServerConfig.ServerConfig.pipe(
@@ -100,7 +102,13 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
       },
     ),
     Effect.provideService(HostProcessExecutablePath, "/usr/bin/node"),
-    Effect.provide(ServerConfig.layer({ ...config, mode: options.mode ?? "web" })),
+    Effect.provide(
+      ServerConfig.layer({
+        ...config,
+        mode: options.mode ?? "web",
+        ...(options.deploymentKind ? { deploymentKind: options.deploymentKind } : {}),
+      }),
+    ),
   );
   return { selfUpdate, order };
 });
@@ -368,6 +376,16 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       expect(result).toEqual({ targetVersion: "1.2.0", method: "desktop-app" });
       expect(stages).toEqual(["downloading", "installing"]);
       // The launcher staging path must not run on the desktop path.
+      expect(order).toEqual([]);
+    }),
+  );
+
+  it.effect("leaves container updates to the image lifecycle even when a launcher is present", () =>
+    Effect.gen(function* () {
+      const { selfUpdate, order } = yield* makeHarness({ deploymentKind: "container" });
+      expect(
+        (yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason,
+      ).toContain("recreate the container");
       expect(order).toEqual([]);
     }),
   );
