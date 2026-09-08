@@ -15,7 +15,8 @@ import { Image, StyleSheet } from "react-native";
 
 import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
 import { resolveMarkdownFileIcon } from "@t3tools/mobile-markdown-text/links";
-import { MOBILE_TYPOGRAPHY } from "../lib/typography";
+import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
+import { resolveComposerEditorMetrics } from "./composerEditorMetrics";
 import { useNativePaste } from "../lib/useNativePaste";
 import { useFontFamily } from "../lib/useFontFamily";
 import { useUniwindTheme } from "../lib/useUniwindTheme";
@@ -223,6 +224,8 @@ export function ComposerEditor({
     fileTint: theme["--color-icon-muted"],
   });
   const resolvedTextStyle = StyleSheet.flatten(textStyle) ?? {};
+  const bodyText = useScaledTextRole("body");
+  const resolvedMetrics = resolveComposerEditorMetrics(resolvedTextStyle, bodyText);
   const regularFontFamily = useFontFamily("regular");
   return (
     <TextInputWrapper onPaste={handlePaste} style={[{ minHeight: 0 }, style]}>
@@ -236,16 +239,8 @@ export function ComposerEditor({
             ? resolvedTextStyle.fontFamily
             : regularFontFamily
         }
-        fontSize={
-          typeof resolvedTextStyle.fontSize === "number"
-            ? resolvedTextStyle.fontSize
-            : MOBILE_TYPOGRAPHY.body.fontSize
-        }
-        lineHeight={
-          typeof resolvedTextStyle.lineHeight === "number"
-            ? resolvedTextStyle.lineHeight
-            : MOBILE_TYPOGRAPHY.body.lineHeight
-        }
+        fontSize={resolvedMetrics.fontSize}
+        lineHeight={resolvedMetrics.lineHeight}
         contentInsetVertical={contentInsetVertical}
         singleLineCentered={props.singleLineCentered ?? false}
         editable={(props.editable ?? true) && !(props.readOnly ?? false)}
