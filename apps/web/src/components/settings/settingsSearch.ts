@@ -68,6 +68,13 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
  */
 export const SETTINGS_SEARCH_ITEMS = [
   {
+    id: "voice-input",
+    title: "Voice input",
+    to: "/settings/connections",
+    searchTerms: ["AssemblyAI microphone dictation transcript speech translation API key"],
+    primaryOnly: true,
+  },
+  {
     id: "interface-language",
     title: "Interface language",
     to: "/settings/appearance",

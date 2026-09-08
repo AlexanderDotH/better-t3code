@@ -1,3 +1,4 @@
+import { VoiceInputSettings } from "./VoiceInputSettings";
 import { ChevronsLeftRightEllipsisIcon, PlusIcon, QrCodeIcon, TerminalIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -3597,6 +3598,7 @@ export function ConnectionsSettings() {
         />
       </SettingsSection>
       <LoadBalancingSettings environments={environments} />
+      {primaryEnvironmentId ? <VoiceInputSettings /> : null}
     </SettingsPageContainer>
   );
 }
