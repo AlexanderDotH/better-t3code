@@ -6,6 +6,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { Skeleton } from "../ui/skeleton";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import {
   mobileClientNotificationDetail,
   mobileClientPlatformLabel,
@@ -26,14 +27,16 @@ function MobileClientStatusBadge({
   readonly enabled: boolean;
   readonly label: string;
 }) {
+  const translator = useInterfaceTranslator();
   return (
     <Badge variant={enabled ? "success" : "outline"}>
-      {label}: {enabled ? "On" : "Off"}
+      {label}: {translator.message(enabled ? "common.enabled" : "common.disabled")}
     </Badge>
   );
 }
 
 function MobileClientRow({ device }: { readonly device: RelayClientDeviceRecord }) {
+  const translator = useInterfaceTranslator();
   return (
     <ClerkUserProfileRow icon={<SmartphoneIcon className="size-4" />}>
       <div className="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
@@ -42,30 +45,38 @@ function MobileClientRow({ device }: { readonly device: RelayClientDeviceRecord 
             {device.label}
           </h3>
           <p className="text-xs leading-[1.125rem] text-muted-foreground">
-            {mobileClientPlatformLabel(device)}
+            {mobileClientPlatformLabel(device, translator)}
           </p>
         </div>
         <p className="shrink-0 text-[0.6875rem] leading-4 text-muted-foreground/75">
-          {mobileClientUpdatedAtLabel(device.updatedAt)}
+          {mobileClientUpdatedAtLabel(device.updatedAt, translator)}
         </p>
       </div>
       <div className="mt-2 flex flex-wrap gap-1.5">
         <MobileClientStatusBadge
           enabled={device.notifications.enabled}
-          label="Push notifications"
+          label={translator.message("mobileClients.status.pushNotifications")}
         />
-        <MobileClientStatusBadge enabled={device.liveActivities.enabled} label="Live Activities" />
+        <MobileClientStatusBadge
+          enabled={device.liveActivities.enabled}
+          label={translator.message("mobileClients.status.liveActivities")}
+        />
       </div>
       <p className="mt-1.5 text-xs leading-[1.125rem] text-muted-foreground/80">
-        {mobileClientNotificationDetail(device)}
+        {mobileClientNotificationDetail(device, translator)}
       </p>
     </ClerkUserProfileRow>
   );
 }
 
 function MobileClientsSkeleton() {
+  const translator = useInterfaceTranslator();
   return (
-    <div aria-label="Loading mobile clients" className="divide-y border-t" role="status">
+    <div
+      aria-label={translator.message("mobileClients.loading")}
+      className="divide-y border-t"
+      role="status"
+    >
       {MOBILE_CLIENT_SKELETON_ROWS.map((row) => (
         <div key={row} className="py-4">
           <div className="flex gap-3">
@@ -86,16 +97,18 @@ function MobileClientsSkeleton() {
 }
 
 function EmptyMobileClients() {
+  const translator = useInterfaceTranslator();
   return (
     <Empty className="min-h-64 gap-4 border-t px-6 py-10 md:p-10">
       <EmptyMedia className="mb-0" variant="icon">
         <SmartphoneIcon />
       </EmptyMedia>
       <EmptyHeader>
-        <EmptyTitle className="text-[1.0625rem] leading-6">No mobile clients</EmptyTitle>
+        <EmptyTitle className="text-[1.0625rem] leading-6">
+          {translator.message("mobileClients.empty.title")}
+        </EmptyTitle>
         <EmptyDescription className="text-[0.8125rem] leading-[1.125rem]">
-          Sign in to T3 Code on your iPhone to register it for push notifications and Live
-          Activities.
+          {translator.message("mobileClients.empty.description")}
         </EmptyDescription>
       </EmptyHeader>
     </Empty>
@@ -103,6 +116,7 @@ function EmptyMobileClients() {
 }
 
 export function MobileClientsUserProfilePage() {
+  const translator = useInterfaceTranslator();
   const devicesState = useManagedRelayDevices();
   const devices = devicesState.data ?? [];
   const isInitialLoad =
@@ -111,8 +125,8 @@ export function MobileClientsUserProfilePage() {
 
   return (
     <ClerkUserProfilePage
-      title="Mobile clients"
-      description="Devices registered to receive T3 Connect activity from your environments."
+      title={translator.message("mobileClients.title")}
+      description={translator.message("mobileClients.description")}
       action={
         <ClerkUserProfileRefreshButton
           isPending={devicesState.isPending}
@@ -128,12 +142,12 @@ export function MobileClientsUserProfilePage() {
           >
             <div>
               <p className="font-medium text-destructive-foreground">
-                Could not load mobile clients
+                {translator.message("mobileClients.loadFailed")}
               </p>
               <p className="mt-0.5 text-xs text-muted-foreground">{devicesState.error}</p>
             </div>
             <Button size="xs" variant="outline" onClick={devicesState.refresh}>
-              Try again
+              {translator.message("cloud.action.tryAgain")}
             </Button>
           </div>
         ) : null}

@@ -1,4 +1,5 @@
 import type { RelayClientDeviceRecord } from "@t3tools/contracts/relay";
+import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -6,6 +7,9 @@ import {
   mobileClientPlatformLabel,
   mobileClientUpdatedAtLabel,
 } from "./MobileClientsUserProfilePage.logic";
+
+const english = createInterfaceTranslator({ language: "en", locale: "en-US" });
+const german = createInterfaceTranslator({ language: "de", locale: "de-DE" });
 
 function device(overrides: Partial<RelayClientDeviceRecord> = {}): RelayClientDeviceRecord {
   return {
@@ -31,9 +35,9 @@ describe("mobile client presentation", () => {
   it("describes the client platform and enabled notification events", () => {
     const client = device();
 
-    expect(mobileClientPlatformLabel(client)).toBe("iOS 18 · T3 Code 1.2.3");
-    expect(mobileClientNotificationDetail(client)).toBe(
-      "Alerts enabled for approvals, completions.",
+    expect(mobileClientPlatformLabel(client, english)).toBe("iOS 18 · T3 Code 1.2.3");
+    expect(mobileClientNotificationDetail(client, english)).toBe(
+      "Alerts enabled for approvals and completions.",
     );
   });
 
@@ -41,6 +45,7 @@ describe("mobile client presentation", () => {
     expect(
       mobileClientNotificationDetail(
         device({ notifications: { ...device().notifications, enabled: false } }),
+        english,
       ),
     ).toBe("Push notifications are disabled on this device.");
     expect(
@@ -54,12 +59,20 @@ describe("mobile client presentation", () => {
             notifyOnFailure: false,
           },
         }),
+        english,
       ),
     ).toBe("Push notifications are enabled, but no alert types are selected.");
   });
 
   it("handles missing app versions and invalid update timestamps", () => {
-    expect(mobileClientPlatformLabel(device({ appVersion: null }))).toBe("iOS 18");
-    expect(mobileClientUpdatedAtLabel("not-a-date")).toBe("Update time unavailable");
+    expect(mobileClientPlatformLabel(device({ appVersion: null }), english)).toBe("iOS 18");
+    expect(mobileClientUpdatedAtLabel("not-a-date", english)).toBe("Update time unavailable");
+  });
+
+  it("localizes product copy without changing device data", () => {
+    expect(mobileClientPlatformLabel(device(), german)).toBe("iOS 18 · T3 Code 1.2.3");
+    expect(mobileClientNotificationDetail(device(), german)).toBe(
+      "Hinweise aktiviert für Freigaben und Abschlüsse.",
+    );
   });
 });

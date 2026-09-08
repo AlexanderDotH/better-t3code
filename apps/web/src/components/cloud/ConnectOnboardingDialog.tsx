@@ -1,3 +1,4 @@
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 import { useAuth } from "@clerk/react";
 import { AuthAdministrativeScopes, AuthRelayWriteScope } from "@t3tools/contracts";
 import { useEffect, useRef, useState } from "react";
@@ -46,6 +47,7 @@ export function ConnectOnboardingDialog() {
 type OnboardingStep = "publish" | "devices";
 
 function ConfiguredConnectOnboardingDialog() {
+  const translator = useInterfaceTranslator();
   // Mirrors ManagedRelayAuthProvider: a pending Clerk session must not read as
   // signed-out, or its later activation would look like a fresh sign-in.
   const { isLoaded, isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
@@ -199,10 +201,10 @@ function ConfiguredConnectOnboardingDialog() {
     if (!ok) return;
     toastManager.add({
       type: "success",
-      title: "T3 Connect enabled",
+      title: translator.message("connectOnboarding.enabledTitle"),
       description: exposeEnvironment
-        ? "This environment is available to your other devices through T3 Connect."
-        : "This environment publishes agent activity to your mobile clients.",
+        ? translator.message("connectOnboarding.enabledTunnelDescription")
+        : translator.message("connectOnboarding.enabledActivityDescription"),
     });
     setStep("devices");
   };
@@ -218,14 +220,13 @@ function ConfiguredConnectOnboardingDialog() {
     >
       <DialogPopup className="max-w-xl">
         <DialogHeader>
-          <DialogTitle>Set up T3 Connect</DialogTitle>
+          <DialogTitle>{translator.message("connectOnboarding.title")}</DialogTitle>
           <DialogDescription>
-            Mesh your devices together — publish this environment and connect the rest, all in one
-            place.
+            {translator.message("connectOnboarding.description")}
           </DialogDescription>
           {steps.length > 1 ? (
             <WizardSteps
-              steps={steps.map((id) => ({ id, label: STEP_LABELS[id] }))}
+              steps={steps.map((id) => ({ id, label: translator.message(STEP_LABELS[id]) }))}
               currentStep={step}
               disabled={isApplying}
               onStepSelect={setStep}
@@ -252,13 +253,13 @@ function ConfiguredConnectOnboardingDialog() {
               checked={dontShowAgain}
               onCheckedChange={(checked) => setDontShowAgain(checked === true)}
             />
-            Don&apos;t show this again
+            {translator.message("connectOnboarding.dontShowAgain")}
           </label>
           <div className="flex flex-col-reverse gap-2 sm:flex-row">
             {step === "publish" ? (
               <>
                 <Button variant="ghost" disabled={isApplying} onClick={() => setStep("devices")}>
-                  Not now
+                  {translator.message("cloud.action.notNow")}
                 </Button>
                 <Button
                   disabled={
@@ -266,12 +267,14 @@ function ConfiguredConnectOnboardingDialog() {
                   }
                   onClick={() => void applyPublishSelection()}
                 >
-                  {isApplying ? "Enabling…" : "Continue"}
+                  {translator.message(
+                    isApplying ? "connectOnboarding.enabling" : "cloud.action.continue",
+                  )}
                 </Button>
               </>
             ) : (
               <Button disabled={isApplying} onClick={complete}>
-                Done
+                {translator.message("cloud.action.done")}
               </Button>
             )}
           </div>
@@ -281,10 +284,10 @@ function ConfiguredConnectOnboardingDialog() {
   );
 }
 
-const STEP_LABELS: Record<OnboardingStep, string> = {
-  publish: "Publish",
-  devices: "Connect devices",
-};
+const STEP_LABELS = {
+  publish: "connectOnboarding.step.publish",
+  devices: "connectOnboarding.step.devices",
+} as const;
 
 function PublishStep({
   exposeEnvironment,
@@ -301,19 +304,20 @@ function PublishStep({
   readonly onExposeEnvironmentChange: (enabled: boolean) => void;
   readonly onPublishAgentActivityChange: (enabled: boolean) => void;
 }) {
+  const translator = useInterfaceTranslator();
   return (
     <div className="space-y-3">
       <div className="rounded-lg border">
         <OnboardingToggleRow
-          title="Publish this environment"
-          description="Make this environment available to your other devices through T3 Connect."
+          title={translator.message("connectOnboarding.publishEnvironment.title")}
+          description={translator.message("connectOnboarding.publishEnvironment.description")}
           checked={exposeEnvironment}
           disabled={disabled}
           onCheckedChange={onExposeEnvironmentChange}
         />
         <OnboardingToggleRow
-          title="Publish agent activity"
-          description="Send activity from this environment to your mobile clients for push notifications and Live Activities."
+          title={translator.message("connectOnboarding.publishActivity.title")}
+          description={translator.message("connectOnboarding.publishActivity.description")}
           checked={publishAgentActivity}
           disabled={disabled}
           onCheckedChange={onPublishAgentActivityChange}
@@ -354,6 +358,7 @@ function OnboardingToggleRow({
 }
 
 function DevicesStep() {
+  const translator = useInterfaceTranslator();
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const savedEnvironments = environments.filter(
@@ -368,8 +373,7 @@ function DevicesStep() {
         showSavedEnvironments
         empty={
           <p className="px-4 py-6 text-center text-sm text-muted-foreground">
-            No other environments are published to your account yet. Publish one from another device
-            and it will show up here.
+            {translator.message("connectOnboarding.empty")}
           </p>
         }
       />
