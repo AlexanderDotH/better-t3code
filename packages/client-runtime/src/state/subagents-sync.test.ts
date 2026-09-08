@@ -88,6 +88,7 @@ function testSession(
   return {
     client,
     initialConfig: Effect.succeed({ subagentSnapshotPagination: supportsPagination } as never),
+    subscribeServerConfig: () => Stream.empty,
     ready: Effect.void,
     probe: Effect.void,
     closed: Effect.never,
