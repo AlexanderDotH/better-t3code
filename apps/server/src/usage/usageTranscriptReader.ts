@@ -22,6 +22,8 @@ import type { UsageProviderKind } from "@t3tools/contracts";
 
 import {
   initialCodexScanState,
+  initialClaudeScanState,
+  type ClaudeScanState,
   mightCarryUsage,
   parseClaudeLine,
   parseCodexLine,
@@ -56,6 +58,7 @@ export interface TranscriptParsePosition {
   readonly guardHash: number;
   /** Codex reducer state as of `resumeOffset`; `null` for stateless providers. */
   readonly codexState: CodexScanState | null;
+  readonly claudeState?: ClaudeScanState;
 }
 
 export interface TranscriptParseResult {
@@ -204,25 +207,36 @@ export async function readTranscriptRecords(
 
   try {
     let codexState = initialCodexScanState();
+    let claudeState = initialClaudeScanState();
     let resumed = false;
     let start = 0;
     if (
       resumeFrom !== undefined &&
       resumeFrom.resumeOffset > 0 &&
       (provider !== "codex" || resumeFrom.codexState !== null) &&
+      (provider !== "claude" || resumeFrom.claudeState !== undefined) &&
       (await guardMatches(handle, resumeFrom))
     ) {
-      if (resumeFrom.codexState !== null) codexState = { ...resumeFrom.codexState };
+      if (resumeFrom.codexState !== null) codexState = structuredClone(resumeFrom.codexState);
+      if (resumeFrom.claudeState !== undefined)
+        claudeState = structuredClone(resumeFrom.claudeState);
       start = resumeFrom.resumeOffset;
       resumed = true;
     }
 
-    const parseLine = (line: string, state: CodexScanState, out: UsageRecord[]): void => {
+    const parseLine = (
+      line: string,
+      state: CodexScanState,
+      out: UsageRecord[],
+      claude: ClaudeScanState,
+    ): void => {
       if (provider === "codex") {
         if (
           !mightCarryUsage(line, provider) &&
           !line.includes('"turn_context"') &&
-          !line.includes('"session_meta"')
+          !line.includes('"session_meta"') &&
+          !line.includes('"response_item"') &&
+          !line.includes('"context_compacted"')
         ) {
           return;
         }
@@ -230,12 +244,18 @@ export async function readTranscriptRecords(
         if (record !== null) out.push(record);
         return;
       }
-      if (!mightCarryUsage(line, provider)) return;
       if (provider === "grok") {
+        if (!mightCarryUsage(line, provider)) return;
         for (const grokRecord of parseGrokLine(line)) out.push(grokRecord);
         return;
       }
-      const record = parseClaudeLine(line);
+      if (
+        !mightCarryUsage(line, provider) &&
+        !line.includes("<t3code_") &&
+        !line.includes('"user"')
+      )
+        return;
+      const record = parseClaudeLine(line, claude);
       if (record !== null) out.push(record);
     };
 
@@ -270,7 +290,12 @@ export async function readTranscriptRecords(
       for (;;) {
         const newlineIndex = buffer.indexOf(NEWLINE, lineStart);
         if (newlineIndex === -1) break;
-        parseLine(toLineString(buffer.subarray(lineStart, newlineIndex)), codexState, records);
+        parseLine(
+          toLineString(buffer.subarray(lineStart, newlineIndex)),
+          codexState,
+          records,
+          claudeState,
+        );
         lineStart = newlineIndex + 1;
       }
       resumeOffset += lineStart;
@@ -283,7 +308,13 @@ export async function readTranscriptRecords(
     const tailRecords: UsageRecord[] = [];
     if (pendingChunks.length > 0) {
       const pending = pendingChunks.length === 1 ? pendingChunks[0]! : Buffer.concat(pendingChunks);
-      if (pending.length > 0) parseLine(toLineString(pending), { ...codexState }, tailRecords);
+      if (pending.length > 0)
+        parseLine(
+          toLineString(pending),
+          structuredClone(codexState),
+          tailRecords,
+          structuredClone(claudeState),
+        );
     }
 
     const guardLength = Math.min(GUARD_LENGTH, resumeOffset);
@@ -302,6 +333,7 @@ export async function readTranscriptRecords(
         guardLength,
         guardHash,
         codexState: provider === "codex" ? codexState : null,
+        ...(provider === "claude" ? { claudeState } : {}),
       },
       resumed,
     };

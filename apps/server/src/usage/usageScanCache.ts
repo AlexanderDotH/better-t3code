@@ -17,16 +17,13 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodePath from "node:path";
 
-import type { UsageProviderKind } from "@t3tools/contracts";
+import type { UsageCallKind, UsageContextDiagnostics, UsageProviderKind } from "@t3tools/contracts";
 
 import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptReader.ts";
-import type { CodexScanState, UsageRecord } from "./usageTranscripts.ts";
+import type { CodexScanState, ClaudeScanState, UsageRecord } from "./usageTranscripts.ts";
 
-// v2: Codex fork-copy suppression changed what a file parses to, so v1
-// entries would keep serving double-counted records forever.
-// v3: entries carry the parse position and reducer state so a grown file
-// re-parses only its appended bytes instead of starting over.
-const USAGE_SCAN_CACHE_VERSION = 3 as const;
+// Reducer state and diagnostics must travel with incremental parse offsets.
+export const USAGE_SCAN_CACHE_VERSION = 6 as const;
 
 export interface CachedFile {
   readonly size: number;
@@ -61,6 +58,22 @@ type SerializedRecord = readonly [
   reasoningTokens: number,
   dedupeKey: string | null,
   reportedCostUsd: number | null,
+  callKind: UsageCallKind,
+  diagnostics: SerializedDiagnostics | null,
+];
+
+type SerializedDiagnostics = readonly [
+  nativeForks: number,
+  compactHandoffs: number,
+  totalHandoffChars: number,
+  compactionEvents: number,
+  maxContextTokens: number,
+  instructionChars: number,
+  memoryInjectionChars: number,
+  toolSchemaChars: number,
+  subagentResultChars: number,
+  toolDigestChars: number,
+  autoRoutingChars: number,
 ];
 
 interface SerializedFile {
@@ -75,7 +88,12 @@ interface SerializedFile {
   readonly gl: number;
   readonly gh: number;
   /** Codex reducer state at `o`; `null` for stateless providers. */
-  readonly cs: CodexScanState | null;
+  readonly cs:
+    | (Omit<CodexScanState, "subagentToolCallIds"> & {
+        readonly subagentToolCallIds: readonly string[];
+      })
+    | null;
+  readonly cl?: ClaudeScanState;
 }
 
 interface SerializedCache {
@@ -112,6 +130,22 @@ export function encodeScanCache(cache: ScanCache): SerializedCache {
     record.totals.reasoningTokens,
     record.dedupeKey,
     record.reportedCostUsd,
+    record.callKind ?? "unknown",
+    record.diagnostics === undefined
+      ? null
+      : [
+          record.diagnostics.nativeForks,
+          record.diagnostics.compactHandoffs,
+          record.diagnostics.totalHandoffChars,
+          record.diagnostics.compactionEvents,
+          record.diagnostics.maxContextTokens,
+          record.diagnostics.instructionChars ?? 0,
+          record.diagnostics.memoryInjectionChars ?? 0,
+          record.diagnostics.toolSchemaChars ?? 0,
+          record.diagnostics.subagentResultChars ?? 0,
+          record.diagnostics.toolDigestChars ?? 0,
+          record.diagnostics.autoRoutingChars ?? 0,
+        ],
   ];
 
   const files: Record<string, SerializedFile> = {};
@@ -125,7 +159,14 @@ export function encodeScanCache(cache: ScanCache): SerializedCache {
       o: entry.position.resumeOffset,
       gl: entry.position.guardLength,
       gh: entry.position.guardHash,
-      cs: entry.position.codexState,
+      cs:
+        entry.position.codexState === null
+          ? null
+          : {
+              ...entry.position.codexState,
+              subagentToolCallIds: Array.from(entry.position.codexState.subagentToolCallIds ?? []),
+            },
+      ...(entry.position.claudeState ? { cl: entry.position.claudeState } : {}),
     };
   }
 
@@ -168,7 +209,7 @@ export function decodeScanCache(document: unknown): ScanCache {
   ): UsageRecord[] | null => {
     const records: UsageRecord[] = [];
     for (const row of rows) {
-      if (!isRecordArray(row) || row.length < 10) return null;
+      if (!isRecordArray(row) || row.length < 12) return null;
       const [
         timestampMs,
         modelIndex,
@@ -180,6 +221,8 @@ export function decodeScanCache(document: unknown): ScanCache {
         reasoning,
         dedupeKey,
         reportedCostUsd,
+        callKind,
+        serializedDiagnostics,
       ] = row as SerializedRecord;
 
       const model = typeof modelIndex === "number" ? models[modelIndex] : undefined;
@@ -191,9 +234,53 @@ export function decodeScanCache(document: unknown): ScanCache {
         !Number.isFinite(cached) ||
         !Number.isFinite(cacheCreation) ||
         !Number.isFinite(output) ||
-        !Number.isFinite(reasoning)
+        !Number.isFinite(reasoning) ||
+        (callKind !== "root" &&
+          callKind !== "subagent" &&
+          callKind !== "metadata" &&
+          callKind !== "auto-reasoning" &&
+          callKind !== "unknown")
       ) {
         return null;
+      }
+
+      let diagnostics: UsageContextDiagnostics | undefined;
+      if (serializedDiagnostics !== null) {
+        if (
+          !isRecordArray(serializedDiagnostics) ||
+          serializedDiagnostics.length < 11 ||
+          !serializedDiagnostics.every(
+            (value) => typeof value === "number" && Number.isFinite(value) && value >= 0,
+          )
+        ) {
+          return null;
+        }
+        const [
+          nativeForks,
+          compactHandoffs,
+          totalHandoffChars,
+          compactionEvents,
+          maxContextTokens,
+          instructionChars,
+          memoryInjectionChars,
+          toolSchemaChars,
+          subagentResultChars,
+          toolDigestChars,
+          autoRoutingChars,
+        ] = serializedDiagnostics as SerializedDiagnostics;
+        diagnostics = {
+          nativeForks,
+          compactHandoffs,
+          totalHandoffChars,
+          compactionEvents,
+          maxContextTokens,
+          ...(instructionChars > 0 ? { instructionChars } : {}),
+          ...(memoryInjectionChars > 0 ? { memoryInjectionChars } : {}),
+          ...(toolSchemaChars > 0 ? { toolSchemaChars } : {}),
+          ...(subagentResultChars > 0 ? { subagentResultChars } : {}),
+          ...(toolDigestChars > 0 ? { toolDigestChars } : {}),
+          ...(autoRoutingChars > 0 ? { autoRoutingChars } : {}),
+        };
       }
 
       records.push({
@@ -208,6 +295,8 @@ export function decodeScanCache(document: unknown): ScanCache {
           outputTokens: output,
           reasoningTokens: reasoning,
         },
+        callKind,
+        ...(diagnostics === undefined ? {} : { diagnostics }),
         reportedCostUsd: typeof reportedCostUsd === "number" ? reportedCostUsd : null,
         dedupeKey: typeof dedupeKey === "string" ? dedupeKey : null,
       });
@@ -242,6 +331,8 @@ export function decodeScanCache(document: unknown): ScanCache {
     const codexState = decodeCodexState(entry.cs);
     if (codexState === undefined) continue;
 
+    const claudeState = decodeClaudeState(entry.cl);
+    if (entry.cl !== undefined && claudeState === undefined) continue;
     const provider: UsageProviderKind = entry.p;
     const records = decodeRecords(entry.r, provider);
     const tailRecords = decodeRecords(entry.t, provider);
@@ -258,6 +349,7 @@ export function decodeScanCache(document: unknown): ScanCache {
         guardLength: entry.gl,
         guardHash: entry.gh,
         codexState,
+        ...(claudeState ? { claudeState } : {}),
       },
     });
   }
@@ -273,7 +365,9 @@ export function decodeScanCache(document: unknown): ScanCache {
 function decodeCodexState(value: unknown): CodexScanState | null | undefined {
   if (value === null) return null;
   if (typeof value !== "object") return undefined;
-  const state = value as Partial<CodexScanState>;
+  const state = value as Partial<
+    Omit<CodexScanState, "subagentToolCallIds"> & { subagentToolCallIds: unknown }
+  >;
   if (
     typeof state.model !== "string" ||
     typeof state.sessionId !== "string" ||
@@ -281,7 +375,12 @@ function decodeCodexState(value: unknown): CodexScanState | null | undefined {
     typeof state.sawSessionMeta !== "boolean" ||
     typeof state.suppressingForkCopies !== "boolean" ||
     typeof state.forkCopyAnchorMs !== "number" ||
-    !Number.isFinite(state.forkCopyAnchorMs)
+    !Number.isFinite(state.forkCopyAnchorMs) ||
+    !isCallKind(state.callKind) ||
+    !isCallKind(state.baseCallKind) ||
+    !isDiagnostics(state.pendingDiagnostics) ||
+    !Array.isArray(state.subagentToolCallIds) ||
+    !state.subagentToolCallIds.every((id) => typeof id === "string")
   ) {
     return undefined;
   }
@@ -292,7 +391,47 @@ function decodeCodexState(value: unknown): CodexScanState | null | undefined {
     sawSessionMeta: state.sawSessionMeta,
     suppressingForkCopies: state.suppressingForkCopies,
     forkCopyAnchorMs: state.forkCopyAnchorMs,
+    callKind: state.callKind,
+    baseCallKind: state.baseCallKind,
+    pendingDiagnostics: state.pendingDiagnostics,
+    subagentToolCallIds: new Set(state.subagentToolCallIds),
   };
+}
+
+const isCallKind = (value: unknown): value is UsageCallKind =>
+  value === "root" ||
+  value === "subagent" ||
+  value === "metadata" ||
+  value === "auto-reasoning" ||
+  value === "unknown";
+
+function isDiagnostics(value: unknown): value is ClaudeScanState["pendingDiagnostics"] {
+  if (typeof value !== "object" || value === null) return false;
+  const fields = [
+    "nativeForks",
+    "compactHandoffs",
+    "totalHandoffChars",
+    "compactionEvents",
+    "maxContextTokens",
+    "instructionChars",
+    "memoryInjectionChars",
+    "toolSchemaChars",
+    "subagentResultChars",
+    "toolDigestChars",
+    "autoRoutingChars",
+  ];
+  return fields.every((field) => {
+    const count = (value as Record<string, unknown>)[field];
+    return typeof count === "number" && Number.isFinite(count) && count >= 0;
+  });
+}
+
+function decodeClaudeState(value: unknown): ClaudeScanState | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const state = value as Partial<ClaudeScanState>;
+  return isCallKind(state.callKind) && isDiagnostics(state.pendingDiagnostics)
+    ? { callKind: state.callKind, pendingDiagnostics: state.pendingDiagnostics }
+    : undefined;
 }
 
 export interface PruneOptions {

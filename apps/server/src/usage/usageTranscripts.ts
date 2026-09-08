@@ -6,7 +6,12 @@
  *
  * @module usageTranscripts
  */
-import type { UsageProviderKind, UsageTokenTotals } from "@t3tools/contracts";
+import type {
+  UsageCallKind,
+  UsageContextDiagnostics,
+  UsageProviderKind,
+  UsageTokenTotals,
+} from "@t3tools/contracts";
 
 export interface UsageRecord {
   readonly provider: UsageProviderKind;
@@ -14,6 +19,8 @@ export interface UsageRecord {
   readonly model: string;
   readonly sessionId: string;
   readonly totals: UsageTokenTotals;
+  readonly callKind: UsageCallKind;
+  readonly diagnostics?: UsageContextDiagnostics;
   readonly reportedCostUsd: number | null;
   /**
    * Key for cross-file de-duplication, or `null` when the record is inherently
@@ -29,6 +36,41 @@ const EMPTY_TOTALS: UsageTokenTotals = {
   outputTokens: 0,
   reasoningTokens: 0,
 };
+
+const EMPTY_DIAGNOSTICS: MutableUsageContextDiagnostics = {
+  nativeForks: 0,
+  compactHandoffs: 0,
+  totalHandoffChars: 0,
+  compactionEvents: 0,
+  maxContextTokens: 0,
+  instructionChars: 0,
+  memoryInjectionChars: 0,
+  toolSchemaChars: 0,
+  subagentResultChars: 0,
+  toolDigestChars: 0,
+  autoRoutingChars: 0,
+};
+
+interface MutableUsageContextDiagnostics {
+  nativeForks: number;
+  compactHandoffs: number;
+  totalHandoffChars: number;
+  compactionEvents: number;
+  maxContextTokens: number;
+  instructionChars: number;
+  memoryInjectionChars: number;
+  toolSchemaChars: number;
+  subagentResultChars: number;
+  toolDigestChars: number;
+  autoRoutingChars: number;
+}
+
+const T3_METADATA_CALL_MARKER = "<t3code_metadata_call>";
+const T3_AUTO_REASONING_CALL_MARKER = "<t3code_auto_reasoning_call>";
+const T3_CONTEXT_HANDOFF_OPEN = "<t3code_context_handoff>";
+const T3_CONTEXT_HANDOFF_CLOSE = "</t3code_context_handoff>";
+const T3_PROJECT_MEMORY_OPEN = "<t3code_project_memory>";
+const T3_PROJECT_MEMORY_CLOSE = "</t3code_project_memory>";
 
 function int(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0;
@@ -60,6 +102,51 @@ export function totalTokens(totals: UsageTokenTotals): number {
   );
 }
 
+function measureTaggedText(text: string, open: string, close: string): number {
+  let total = 0;
+  let offset = 0;
+  while (offset < text.length) {
+    const start = text.indexOf(open, offset);
+    if (start < 0) break;
+    const closeIndex = text.indexOf(close, start + open.length);
+    if (closeIndex < 0) break;
+    const end = closeIndex + close.length;
+    total += end - start;
+    offset = end;
+  }
+  return total;
+}
+
+function measureContextHandoff(text: string): number {
+  return measureTaggedText(text, T3_CONTEXT_HANDOFF_OPEN, T3_CONTEXT_HANDOFF_CLOSE);
+}
+
+function measureProjectMemory(text: string): number {
+  return measureTaggedText(text, T3_PROJECT_MEMORY_OPEN, T3_PROJECT_MEMORY_CLOSE);
+}
+
+function contentFreeDiagnostics(
+  diagnostics: MutableUsageContextDiagnostics,
+): UsageContextDiagnostics {
+  return {
+    nativeForks: diagnostics.nativeForks,
+    compactHandoffs: diagnostics.compactHandoffs,
+    totalHandoffChars: diagnostics.totalHandoffChars,
+    compactionEvents: diagnostics.compactionEvents,
+    maxContextTokens: diagnostics.maxContextTokens,
+    ...(diagnostics.instructionChars > 0 ? { instructionChars: diagnostics.instructionChars } : {}),
+    ...(diagnostics.memoryInjectionChars > 0
+      ? { memoryInjectionChars: diagnostics.memoryInjectionChars }
+      : {}),
+    ...(diagnostics.toolSchemaChars > 0 ? { toolSchemaChars: diagnostics.toolSchemaChars } : {}),
+    ...(diagnostics.subagentResultChars > 0
+      ? { subagentResultChars: diagnostics.subagentResultChars }
+      : {}),
+    ...(diagnostics.toolDigestChars > 0 ? { toolDigestChars: diagnostics.toolDigestChars } : {}),
+    ...(diagnostics.autoRoutingChars > 0 ? { autoRoutingChars: diagnostics.autoRoutingChars } : {}),
+  };
+}
+
 /**
  * Cheap substring gate applied before `JSON.parse`.
  *
@@ -79,7 +166,7 @@ export function mightCarryUsage(line: string, provider: UsageProviderKind): bool
  */
 export const GROK_COST_USD_TICKS_PER_DOLLAR = 10_000_000_000;
 
-function grokCostTicksToUsd(ticks: unknown): number | null {
+export function grokCostTicksToUsd(ticks: unknown): number | null {
   if (typeof ticks !== "number" || !Number.isFinite(ticks) || ticks < 0) return null;
   return ticks / GROK_COST_USD_TICKS_PER_DOLLAR;
 }
@@ -87,6 +174,41 @@ function grokCostTicksToUsd(ticks: unknown): number | null {
 /* -------------------------------------------------------------------------- */
 /* Claude Code                                                                */
 /* -------------------------------------------------------------------------- */
+
+export interface ClaudeScanState {
+  callKind: UsageCallKind;
+  pendingDiagnostics: MutableUsageContextDiagnostics;
+}
+
+export function initialClaudeScanState(): ClaudeScanState {
+  return {
+    callKind: "unknown",
+    pendingDiagnostics: { ...EMPTY_DIAGNOSTICS },
+  };
+}
+
+function readClaudeMessageText(record: Record<string, unknown>): string {
+  if (record["type"] !== "user") return "";
+  const message = record["message"];
+  if (typeof message !== "object" || message === null) return "";
+  const content = (message as Record<string, unknown>)["content"];
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .flatMap((item) => {
+      if (typeof item === "string") return [item];
+      if (typeof item !== "object" || item === null) return [];
+      const text = (item as Record<string, unknown>)["text"];
+      return typeof text === "string" ? [text] : [];
+    })
+    .join("\n");
+}
+
+function takeClaudeDiagnostics(state: ClaudeScanState): UsageContextDiagnostics | undefined {
+  const diagnostics = contentFreeDiagnostics(state.pendingDiagnostics);
+  state.pendingDiagnostics = { ...EMPTY_DIAGNOSTICS };
+  return Object.values(diagnostics).some((value) => (value ?? 0) > 0) ? diagnostics : undefined;
+}
 
 /**
  * Parses one line of a Claude Code transcript.
@@ -96,7 +218,10 @@ function grokCostTicksToUsd(ticks: unknown): number | null {
  * message. Summing them overcounts by roughly 2.4x on a real workload, so the
  * caller must drop repeats by `dedupeKey` and keep the first.
  */
-export function parseClaudeLine(line: string): UsageRecord | null {
+export function parseClaudeLine(
+  line: string,
+  state: ClaudeScanState = initialClaudeScanState(),
+): UsageRecord | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(line);
@@ -106,6 +231,24 @@ export function parseClaudeLine(line: string): UsageRecord | null {
   if (typeof parsed !== "object" || parsed === null) return null;
 
   const record = parsed as Record<string, unknown>;
+  if (record["type"] === "user") {
+    const text = readClaudeMessageText(record);
+    state.callKind = text.includes(T3_AUTO_REASONING_CALL_MARKER)
+      ? "auto-reasoning"
+      : text.includes(T3_METADATA_CALL_MARKER)
+        ? "metadata"
+        : "unknown";
+    if (state.callKind === "auto-reasoning") {
+      state.pendingDiagnostics.autoRoutingChars += text.length;
+    }
+    const handoffChars = measureContextHandoff(text);
+    if (handoffChars > 0) {
+      state.pendingDiagnostics.compactHandoffs = 1;
+      state.pendingDiagnostics.totalHandoffChars = handoffChars;
+    }
+    state.pendingDiagnostics.memoryInjectionChars += measureProjectMemory(text);
+    return null;
+  }
   if (record["type"] !== "assistant") return null;
 
   const message = record["message"];
@@ -130,6 +273,18 @@ export function parseClaudeLine(line: string): UsageRecord | null {
     messageId === null && requestId === null ? null : `${messageId ?? ""}:${requestId ?? ""}`;
 
   const cost = record["costUSD"];
+  const observedCallKind =
+    record["isSidechain"] === true
+      ? "subagent"
+      : record["isSidechain"] === false
+        ? "root"
+        : "unknown";
+  const callKind =
+    state.callKind === "metadata" || state.callKind === "auto-reasoning"
+      ? state.callKind
+      : observedCallKind;
+  state.callKind = "unknown";
+  const diagnostics = takeClaudeDiagnostics(state);
 
   return {
     provider: "claude",
@@ -144,6 +299,8 @@ export function parseClaudeLine(line: string): UsageRecord | null {
       // Anthropic folds thinking tokens into output and does not break them out.
       reasoningTokens: 0,
     },
+    callKind,
+    ...(diagnostics === undefined ? {} : { diagnostics }),
     reportedCostUsd: typeof cost === "number" && Number.isFinite(cost) ? cost : null,
     dedupeKey,
   };
@@ -168,6 +325,10 @@ export interface CodexScanState {
   /** While true, leading usage events are re-stamped copies of parent history. */
   suppressingForkCopies: boolean;
   forkCopyAnchorMs: number;
+  callKind: UsageCallKind;
+  baseCallKind: UsageCallKind;
+  pendingDiagnostics: MutableUsageContextDiagnostics;
+  subagentToolCallIds: Set<string>;
 }
 
 export function initialCodexScanState(): CodexScanState {
@@ -178,6 +339,10 @@ export function initialCodexScanState(): CodexScanState {
     sawSessionMeta: false,
     suppressingForkCopies: false,
     forkCopyAnchorMs: 0,
+    callKind: "unknown",
+    baseCallKind: "unknown",
+    pendingDiagnostics: { ...EMPTY_DIAGNOSTICS },
+    subagentToolCallIds: new Set(),
   };
 }
 
@@ -200,6 +365,78 @@ function isForkedSessionMeta(payload: Record<string, unknown>): boolean {
   const spawn = (subagent as Record<string, unknown>)["thread_spawn"];
   if (typeof spawn !== "object" || spawn === null) return false;
   return typeof (spawn as Record<string, unknown>)["parent_thread_id"] === "string";
+}
+
+function isSubagentSessionMeta(payload: Record<string, unknown>): boolean {
+  const source = payload["source"];
+  if (typeof source !== "object" || source === null) return false;
+  const subagent = (source as Record<string, unknown>)["subagent"];
+  return typeof subagent === "object" && subagent !== null;
+}
+
+function readInputText(payload: Record<string, unknown>): string {
+  if (payload["type"] !== "message" || payload["role"] !== "user") return "";
+  const content = payload["content"];
+  if (!Array.isArray(content)) return "";
+  return content
+    .flatMap((item) => {
+      if (typeof item !== "object" || item === null) return [];
+      const text = (item as Record<string, unknown>)["text"];
+      return typeof text === "string" ? [text] : [];
+    })
+    .join("\n");
+}
+
+function takeCodexDiagnostics(
+  state: CodexScanState,
+  maxContextTokens: number,
+): UsageContextDiagnostics | undefined {
+  const diagnostics = contentFreeDiagnostics({
+    ...state.pendingDiagnostics,
+    maxContextTokens: Math.max(state.pendingDiagnostics.maxContextTokens, maxContextTokens),
+  });
+  state.pendingDiagnostics = { ...EMPTY_DIAGNOSTICS };
+  return Object.values(diagnostics).some((value) => (value ?? 0) > 0) ? diagnostics : undefined;
+}
+
+const SUBAGENT_TOOL_NAMES = new Set([
+  "spawn_agent",
+  "send_message",
+  "followup_task",
+  "wait_agent",
+  "interrupt_agent",
+  "list_agents",
+]);
+
+function responseOutputTexts(value: unknown): ReadonlyArray<string> {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap(responseOutputTexts);
+  if (value === null || typeof value !== "object") return [];
+  const record = value as Record<string, unknown>;
+  return [record["text"], record["content"], record["output"]].flatMap(responseOutputTexts);
+}
+
+function recordSubagentResultSize(payload: Record<string, unknown>, state: CodexScanState): void {
+  const type = payload["type"];
+  if (type === "custom_tool_call" || type === "function_call") {
+    const name = payload["name"];
+    const callId = payload["call_id"] ?? payload["id"];
+    if (typeof name === "string" && SUBAGENT_TOOL_NAMES.has(name) && typeof callId === "string") {
+      state.subagentToolCallIds.add(callId);
+    }
+    return;
+  }
+  if (type !== "custom_tool_call_output" && type !== "function_call_output") return;
+  const outputTexts = responseOutputTexts(payload["output"]);
+  state.pendingDiagnostics.toolDigestChars += outputTexts
+    .filter((text) => text.includes('"detailRef"') && text.includes("tool-result:"))
+    .reduce((total, text) => total + text.length, 0);
+  const callId = payload["call_id"] ?? payload["id"];
+  if (typeof callId !== "string" || !state.subagentToolCallIds.delete(callId)) return;
+  state.pendingDiagnostics.subagentResultChars += outputTexts.reduce(
+    (total, text) => total + text.length,
+    0,
+  );
 }
 
 /**
@@ -233,8 +470,15 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
     state.sawSessionMeta = true;
     const id = payloadRecord["id"] ?? payloadRecord["session_id"];
     if (typeof id === "string") state.sessionId = id;
+    state.baseCallKind = isSubagentSessionMeta(payloadRecord) ? "subagent" : "root";
+    state.callKind = state.baseCallKind;
+    const instructions = payloadRecord["base_instructions"];
+    if (typeof instructions === "string") {
+      state.pendingDiagnostics.instructionChars += instructions.length;
+    }
     const metaTimestampMs = parseTimestampMs(record["timestamp"]);
     if (metaTimestampMs !== null && isForkedSessionMeta(payloadRecord)) {
+      state.pendingDiagnostics.nativeForks += 1;
       state.suppressingForkCopies = true;
       state.forkCopyAnchorMs = metaTimestampMs;
     }
@@ -246,6 +490,31 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
     return null;
   }
 
+  if (record["type"] === "response_item") {
+    recordSubagentResultSize(payloadRecord, state);
+    const text = readInputText(payloadRecord);
+    if (text.includes(T3_AUTO_REASONING_CALL_MARKER)) {
+      state.callKind = "auto-reasoning";
+      state.pendingDiagnostics.autoRoutingChars += text.length;
+    } else if (text.includes(T3_METADATA_CALL_MARKER)) {
+      state.callKind = "metadata";
+    }
+    const handoffChars = measureContextHandoff(text);
+    if (handoffChars > 0) {
+      // A fork copy can repeat older handoffs. The last handoff before the next
+      // usage event is the one that supplied that call's context.
+      state.pendingDiagnostics.compactHandoffs = 1;
+      state.pendingDiagnostics.totalHandoffChars = handoffChars;
+    }
+    state.pendingDiagnostics.memoryInjectionChars += measureProjectMemory(text);
+    return null;
+  }
+
+  if (record["type"] === "event_msg" && payloadType === "context_compacted") {
+    state.pendingDiagnostics.compactionEvents += 1;
+    return null;
+  }
+
   if (payloadType !== "token_count") return null;
 
   const info = payloadRecord["info"];
@@ -253,6 +522,7 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
   const last = (info as Record<string, unknown>)["last_token_usage"];
   if (typeof last !== "object" || last === null) return null;
   const lastRecord = last as Record<string, unknown>;
+  const maxContextTokens = int((info as Record<string, unknown>)["model_context_window"]);
 
   // Only an event that is otherwise eligible may consume the duplicate
   // signature. A token_count arriving before its turn_context (no model yet)
@@ -295,6 +565,9 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
   };
 
   if (totalTokens(totals) === 0) return null;
+  const diagnostics = takeCodexDiagnostics(state, maxContextTokens);
+  const callKind = state.callKind;
+  state.callKind = state.baseCallKind;
 
   return {
     provider: "codex",
@@ -302,6 +575,8 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
     model: state.model,
     sessionId: state.sessionId,
     totals,
+    callKind,
+    ...(diagnostics === undefined ? {} : { diagnostics }),
     // Codex does not report cost in the rollout.
     reportedCostUsd: null,
     // Events surviving the fork-copy suppression above are unique to this
@@ -432,6 +707,7 @@ export function parseGrokLine(line: string): readonly UsageRecord[] {
         model: "grok",
         sessionId,
         totals: grokTotalsToUsage(topLevel),
+        callKind: "unknown",
         reportedCostUsd: grokCostTicksToUsd(topLevel.costUsdTicks),
         // No prompt id means we cannot tell two same-second updates apart.
         dedupeKey: promptId === null ? null : `${sessionId}:${promptId}:grok`,
@@ -478,6 +754,7 @@ export function parseGrokLine(line: string): readonly UsageRecord[] {
       model: entry.model,
       sessionId,
       totals,
+      callKind: "unknown",
       reportedCostUsd,
       dedupeKey: promptId === null ? null : `${sessionId}:${promptId}:${entry.model}`,
     });

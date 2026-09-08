@@ -32,6 +32,7 @@ function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
     },
     reportedCostUsd: null,
     dedupeKey: null,
+    callKind: "root",
     ...overrides,
   };
 }
@@ -85,6 +86,77 @@ describe("UsageAggregator", () => {
     expect(result.buckets).toHaveLength(1);
     expect(result.buckets[0]?.records).toBe(1);
     expect(result.buckets[0]?.totals.outputTokens).toBe(50);
+  });
+
+  it("splits root, subagent, metadata, Auto reasoning, and unknown calls without changing token math", () => {
+    const result = aggregate([
+      record({ callKind: "root" }),
+      record({ callKind: "subagent", sessionId: "session-b" }),
+      record({ callKind: "metadata", sessionId: "session-c" }),
+      record({ callKind: "auto-reasoning", sessionId: "session-d" }),
+      record({ callKind: "unknown", sessionId: "session-e" }),
+    ]);
+
+    expect(result.buckets.map((bucket) => bucket.callKind).sort()).toEqual([
+      "auto-reasoning",
+      "metadata",
+      "root",
+      "subagent",
+      "unknown",
+    ]);
+    expect(result.buckets.reduce((sum, bucket) => sum + bucket.totals.cachedInputTokens, 0)).toBe(
+      5_000,
+    );
+  });
+
+  it("aggregates bounded diagnostics after fork de-duplication", () => {
+    const diagnostics = {
+      nativeForks: 1,
+      compactHandoffs: 1,
+      totalHandoffChars: 512,
+      compactionEvents: 2,
+      maxContextTokens: 200_000,
+      instructionChars: 100,
+      memoryInjectionChars: 200,
+      toolSchemaChars: 300,
+      subagentResultChars: 400,
+      toolDigestChars: 500,
+      autoRoutingChars: 600,
+    } as const;
+    const result = aggregate([
+      record({ dedupeKey: "fork-copy", diagnostics }),
+      record({ dedupeKey: "fork-copy", diagnostics }),
+      record({
+        sessionId: "session-b",
+        diagnostics: {
+          nativeForks: 0,
+          compactHandoffs: 1,
+          totalHandoffChars: 128,
+          compactionEvents: 1,
+          maxContextTokens: 128_000,
+          instructionChars: 10,
+          memoryInjectionChars: 20,
+          toolSchemaChars: 30,
+          subagentResultChars: 40,
+          toolDigestChars: 50,
+          autoRoutingChars: 60,
+        },
+      }),
+    ]);
+
+    expect(result.buckets[0]?.diagnostics).toEqual({
+      nativeForks: 1,
+      compactHandoffs: 2,
+      totalHandoffChars: 640,
+      compactionEvents: 3,
+      maxContextTokens: 200_000,
+      instructionChars: 110,
+      memoryInjectionChars: 220,
+      toolSchemaChars: 330,
+      subagentResultChars: 440,
+      toolDigestChars: 550,
+      autoRoutingChars: 660,
+    });
   });
 
   it("still sums records that carry no dedupe key", () => {
