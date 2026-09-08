@@ -12,6 +12,10 @@ Use **Import** to discover configurations on the environment. Export produces Cu
 JSON. Shared definition edits affect every assigned account; account assignment changes affect only
 that account.
 
+Configured MCP servers are supported by Codex, Claude, Cursor, OpenCode, ChatGPT, OpenAI, and
+OpenRouter. Gemini, Grok, and Antigravity currently do not expose this integration. Choose a
+supported provider account when you need these tools.
+
 ## Inspect a running session
 
 The workspace card shows configured servers when there is no live runtime. Expand it to inspect a
