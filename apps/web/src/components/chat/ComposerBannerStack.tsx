@@ -13,6 +13,8 @@ export interface ComposerBannerStackItem {
   readonly id: string;
   readonly variant: ComposerBannerVariant;
   readonly priority?: "urgent" | "activity" | "notice";
+  readonly urgent?: boolean;
+  readonly className?: string;
   readonly icon: ReactNode;
   readonly title: ReactNode;
   readonly description?: ReactNode;
@@ -24,7 +26,7 @@ export interface ComposerBannerStackItem {
 
 export type ComposerBannerStackContent = Pick<
   ComposerBannerStackItem,
-  "id" | "variant" | "priority"
+  "id" | "variant" | "priority" | "className"
 > & { readonly content: ReactNode };
 
 type ComposerBannerStackEntry = ComposerBannerStackItem | ComposerBannerStackContent;
@@ -33,7 +35,12 @@ function bannerPriority(item: ComposerBannerStackEntry) {
   if (item.priority === "activity") {
     return 0;
   }
-  if (item.priority === "urgent" || item.variant === "error" || item.variant === "warning") {
+  if (
+    item.priority === "urgent" ||
+    ("urgent" in item && item.urgent) ||
+    item.variant === "error" ||
+    item.variant === "warning"
+  ) {
     return 1;
   }
   return 2;
@@ -42,9 +49,14 @@ function bannerPriority(item: ComposerBannerStackEntry) {
 interface ComposerBannerStackProps {
   readonly className?: string;
   readonly items: ReadonlyArray<ComposerBannerStackEntry>;
+  readonly placement?: "attached" | "floating";
 }
 
-export function ComposerBannerStack({ className, items }: ComposerBannerStackProps) {
+export function ComposerBannerStack({
+  className,
+  items,
+  placement = "attached",
+}: ComposerBannerStackProps) {
   const [stackExpanded, setStackExpanded] = useState(false);
   const noticesRef = useRef<HTMLDivElement>(null);
   const peekRef = useRef<HTMLButtonElement>(null);
@@ -111,6 +123,39 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
       item.onDismiss?.();
     }, DISMISS_TRANSITION_MS);
   };
+
+  if (placement === "floating") {
+    return (
+      <ComposerBanner.Attachment
+        className={className}
+        data-composer-banner-stack-grouped="true"
+        data-composer-banner-drawer="true"
+        data-chat-composer-collapsed-controls="true"
+      >
+        <div className="divide-y divide-border/60">
+          {orderedItems.map((item) => (
+            <div
+              key={item.id}
+              className={cn(
+                "transition-[translate,opacity] duration-220 ease-in motion-reduce:transition-none",
+                exitingItemId === item.id
+                  ? "pointer-events-none -translate-y-2 opacity-0"
+                  : "opacity-100",
+              )}
+            >
+              <ComposerBannerStackAlert
+                item={item}
+                attached={false}
+                grouped
+                exiting={exitingItemId === item.id}
+                onDismissRequest={() => requestDismiss(item)}
+              />
+            </div>
+          ))}
+        </div>
+      </ComposerBanner.Attachment>
+    );
+  }
 
   return (
     <ComposerBanner.Attachment
@@ -244,11 +289,13 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
 function ComposerBannerStackAlert({
   item,
   attached,
+  grouped = false,
   exiting,
   onDismissRequest,
 }: {
   readonly item: ComposerBannerStackEntry;
   readonly attached: boolean;
+  readonly grouped?: boolean;
   readonly exiting: boolean;
   readonly onDismissRequest: () => void;
 }) {
@@ -256,7 +303,8 @@ function ComposerBannerStackAlert({
     return (
       <ComposerBanner.Root
         density="comfortable"
-        placement={attached ? "attached" : "floating"}
+        placement={grouped ? "grouped" : attached ? "attached" : "floating"}
+        className={item.className}
         variant={item.variant}
       >
         {item.content}
@@ -266,7 +314,8 @@ function ComposerBannerStackAlert({
   return (
     <ComposerBanner.Root
       role="alert"
-      placement={attached ? "attached" : "floating"}
+      placement={grouped ? "grouped" : attached ? "attached" : "floating"}
+      className={item.className}
       variant={item.variant}
       density="comfortable"
     >
