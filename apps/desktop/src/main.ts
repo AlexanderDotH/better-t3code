@@ -24,6 +24,7 @@ import * as DesktopIpc from "./ipc/DesktopIpc.ts";
 import * as ElectronApp from "./electron/ElectronApp.ts";
 import * as ElectronDialog from "./electron/ElectronDialog.ts";
 import * as ElectronMenu from "./electron/ElectronMenu.ts";
+import * as ElectronMediaPermissions from "./electron/ElectronMediaPermissions.ts";
 import * as ElectronPowerMonitor from "./electron/ElectronPowerMonitor.ts";
 import * as ElectronProtocol from "./electron/ElectronProtocol.ts";
 import * as ElectronSafeStorage from "./electron/ElectronSafeStorage.ts";
@@ -85,6 +86,11 @@ const desktopEnvironmentLayer = Layer.unwrap(
   }),
 );
 
+const disableSandbox = process.env.T3_NO_SANDBOX === "1" || process.env.T3_NO_SANDBOX === "true";
+if (disableSandbox) {
+  Electron.app.commandLine.appendSwitch("no-sandbox");
+}
+
 const resolveDesktopSshCliRunner = (
   environment: DesktopEnvironment.DesktopEnvironment["Service"],
   settings: DesktopAppSettings.DesktopSettings,
@@ -122,6 +128,7 @@ const electronLayer = Layer.mergeAll(
   ElectronApp.layer,
   ElectronDialog.layer,
   ElectronMenu.layer,
+  ElectronMediaPermissions.layer,
   ElectronPowerMonitor.layer,
   ElectronProtocol.layer,
   ElectronSafeStorage.layer,
