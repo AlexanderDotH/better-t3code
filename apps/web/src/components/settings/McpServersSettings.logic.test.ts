@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   deriveMcpProviderTabs,
+  mcpInstallationTargets,
   isMcpServerEnabledForProvider,
   mcpMutationToastPresentation,
   runtimeStatePresentation,
@@ -181,4 +182,19 @@ describe("mcpMutationToastPresentation", () => {
     expect(presentation.description).toContain("codex_work: updated now");
     expect(presentation.description).toContain("claude_personal: next session");
   });
+});
+
+it("offers only active, installed, compatible providers as installation targets", () => {
+  const provider = { driver: "codex", enabled: true, installed: true };
+  const targets = mcpInstallationTargets(
+    deriveMcpProviderTabs([
+      { ...provider, instanceId: "active" },
+      { ...provider, instanceId: "disabled", enabled: false },
+      { ...provider, instanceId: "disabled-status", status: "disabled" },
+      { ...provider, instanceId: "missing", installed: false },
+      { ...provider, instanceId: "unavailable", availability: "unavailable" },
+      { ...provider, instanceId: "unsupported", mcpCapability: "unsupported" },
+    ]),
+  );
+  expect(targets.map((target) => target.instanceId)).toEqual(["active"]);
 });

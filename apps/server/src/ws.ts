@@ -86,7 +86,13 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
-import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
+import {
+  FetchHttpClient,
+  HttpRouter,
+  HttpServerRequest,
+  HttpServerRespondable,
+} from "effect/unstable/http";
+import { previewRegistrySkill, searchExtensionCatalog } from "./skills/extensionCatalog.ts";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
@@ -2699,6 +2705,22 @@ const makeWsRpcLayer = (
           }),
         [WS_METHODS.skillsList]: (input) =>
           observeRpcEffect(WS_METHODS.skillsList, skillEngine.list(input), {
+            "rpc.aggregate": "skills",
+          }),
+        [WS_METHODS.extensionCatalogSearch]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.extensionCatalogSearch,
+            searchExtensionCatalog(input).pipe(Effect.provide(FetchHttpClient.layer)),
+            { "rpc.aggregate": "extensions" },
+          ),
+        [WS_METHODS.skillsPreviewRegistry]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.skillsPreviewRegistry,
+            previewRegistrySkill(input).pipe(Effect.provide(FetchHttpClient.layer)),
+            { "rpc.aggregate": "skills" },
+          ),
+        [WS_METHODS.skillsInstallRegistry]: (input) =>
+          observeRpcEffect(WS_METHODS.skillsInstallRegistry, skillEngine.installRegistry(input), {
             "rpc.aggregate": "skills",
           }),
         [WS_METHODS.skillsDiscoverImportSources]: (_input) =>

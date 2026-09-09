@@ -52,6 +52,7 @@ import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { McpProviderWorkspace } from "./McpProviderWorkspace";
+import { ExtensionStoreButton } from "../mcp-workspace/ExtensionStore";
 import { McpScopeFilterControls } from "./McpScopeFilterControls";
 import {
   type McpConfiguredServerView,
@@ -64,6 +65,7 @@ import { useMcpManagementRuntime } from "../mcp-management/mcpManagementRuntime"
 import { deriveMcpManagementSummary } from "../mcp-management/mcpManagementSummary";
 import {
   deriveMcpProviderTabs,
+  mcpInstallationTargets,
   isMcpServerEnabledForProvider,
   mcpMutationToastPresentation,
   type McpSettingsSearch,
@@ -1150,6 +1152,7 @@ export function McpServersSettingsPanel(props: {
   readonly embedded?: boolean;
   readonly showRuntimeSelector?: boolean;
   readonly onProviderChange?: (providerInstanceId: ProviderInstanceId) => void;
+  readonly onBrowseStore?: () => void;
 }) {
   const translate = useInterfaceTranslator().message;
   const runRuntimeDetailsQuery = useAtomQueryRunner(
@@ -1843,7 +1846,7 @@ export function McpServersSettingsPanel(props: {
     >
       <SettingsSection
         className={props.embedded ? "mcp-workspace-settings" : undefined}
-        title={translate("settings.mcp.page.title")}
+        title={translate("settings.mcp.store.installedServers")}
         headerAction={
           <div className="flex items-center gap-1.5">
             <Button size="xs" variant="outline" disabled={readOnly} onClick={openImportDialog}>
@@ -1854,6 +1857,14 @@ export function McpServersSettingsPanel(props: {
               <FileJsonIcon className="size-3.5" />
               {translate("settings.mcp.page.export")}
             </Button>
+            {filterEnvironmentId ? (
+              <ExtensionStoreButton
+                environmentId={filterEnvironmentId}
+                providerInstanceId={selectedProviderInstanceId}
+                projectCwd={selectedFilterProject?.cwd}
+                {...(props.onBrowseStore ? { onBrowse: props.onBrowseStore } : {})}
+              />
+            ) : null}
             <Button size="xs" disabled={readOnly} onClick={openCreateDialog}>
               <PlusIcon className="size-3.5" />
               {translate("settings.mcp.page.new")}
@@ -1967,7 +1978,7 @@ export function McpServersSettingsPanel(props: {
         mode={editorMode}
         draft={editorDraft}
         projects={projectEntries}
-        providers={providerTabs}
+        providers={mcpInstallationTargets(providerTabs)}
         isSaving={upsertMutation.isPending}
         error={editorError}
         onDraftChange={setEditorDraft}
@@ -1984,7 +1995,7 @@ export function McpServersSettingsPanel(props: {
         error={importError}
         scope={importScope}
         projectKey={importProjectKey}
-        providers={providerTabs}
+        providers={mcpInstallationTargets(providerTabs)}
         providerRouting={importProviderRouting}
         replace={replaceOnImport}
         deduplicate={deduplicateOnImport}

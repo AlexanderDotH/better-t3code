@@ -170,12 +170,20 @@ export function deriveMcpProviderTabs(
           : `${displayName} · ${shortInstanceLabel(instanceId)}`,
       tooltip: `${displayName} · ${driverLabel} · ${instanceId}`,
       ...(provider.accentColor ? { accentColor: provider.accentColor } : {}),
-      disabled: !provider.enabled || !provider.installed || provider.availability === "unavailable",
+      disabled:
+        !provider.enabled ||
+        provider.status === "disabled" ||
+        !provider.installed ||
+        provider.availability === "unavailable",
       supportsUserMcp: provider.mcpCapability !== "unsupported",
       ...status,
       ...(account ? { account } : {}),
     };
   });
+}
+
+export function mcpInstallationTargets(providers: ReadonlyArray<McpProviderTab>) {
+  return providers.filter((provider) => !provider.disabled && provider.supportsUserMcp);
 }
 
 interface ProviderRoutingSource {

@@ -13,6 +13,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
+import * as Exit from "effect/Exit";
+import { FetchHttpClient } from "effect/unstable/http";
+import { downloadRegistrySkill } from "../extensionCatalog.ts";
 
 import {
   discoverAgentImportSources,
@@ -454,6 +457,8 @@ function skillPromptBlock(skill: SkillDescriptor): string {
     `<t3-skill name="${skill.name}">`,
     `Title: ${displayName}`,
     `Description: ${description}`,
+    `Skill file: ${skill.path}`,
+    "Resolve relative paths from the directory containing this skill file.",
     "",
     body,
     "</t3-skill>",
@@ -653,6 +658,72 @@ function makeSkillEngine(): Effect.Effect<
         }),
       );
 
+    const installRegistry: SkillEngineShape["installRegistry"] = (input) =>
+      provideCaptured(
+        Effect.scoped(
+          Effect.gen(function* () {
+            if (input.scope === "project" && (!input.projectId || !input.projectCwd)) {
+              return yield* toSkillError(
+                "Project skill installs require a project and project cwd.",
+              );
+            }
+            const downloaded = yield* downloadRegistrySkill(input).pipe(
+              Effect.provide(FetchHttpClient.layer),
+            );
+            if (downloaded.contentHash !== input.contentHash) {
+              return yield* toSkillError(
+                "This skill changed after the preview. Open its preview again before installing.",
+              );
+            }
+            const roots = yield* resolveSkillRoots({ stateDir: serverConfig.stateDir, ...input });
+            const target = yield* resolveOwnedTarget({
+              roots,
+              target: { ...input, name: downloaded.name },
+            });
+            yield* fs
+              .makeDirectory(target.root, { recursive: true })
+              .pipe(Effect.mapError(mapSkillError("Could not create the skills folder.")));
+            yield* Effect.acquireUseRelease(
+              // Readers discover SKILL.md, so publish it atomically after all supporting files.
+              fs
+                .makeDirectory(target.skillDir)
+                .pipe(
+                  Effect.mapError(
+                    mapSkillError(
+                      `Skill '${downloaded.name}' already exists or its folder is not writable.`,
+                    ),
+                  ),
+                ),
+              () =>
+                Effect.gen(function* () {
+                  for (const file of downloaded.files) {
+                    if (file.path === "SKILL.md") continue;
+                    const destination = path.join(target.skillDir, file.path);
+                    yield* fs.makeDirectory(path.dirname(destination), { recursive: true });
+                    yield* fs.writeFileString(destination, file.contents);
+                  }
+                  yield* writeFileStringAtomically({
+                    filePath: target.skillPath,
+                    contents: downloaded.files.find((file) => file.path === "SKILL.md")!.contents,
+                  });
+                }).pipe(Effect.mapError(mapSkillError("Could not install the skill files."))),
+              (_, exit) =>
+                Exit.isFailure(exit)
+                  ? fs
+                      .remove(target.skillDir, { recursive: true })
+                      .pipe(Effect.orElseSucceed(() => undefined))
+                  : Effect.void,
+            );
+            const settings = yield* serverSettings.getSettings.pipe(
+              Effect.mapError(mapSkillError("Failed to read server settings.")),
+            );
+            return {
+              skill: yield* localDescriptorForTarget({ target, settings, includeBody: true }),
+            };
+          }),
+        ),
+      );
+
     const update: SkillEngineShape["update"] = (input) =>
       provideCaptured(
         Effect.gen(function* () {
@@ -807,6 +878,7 @@ function makeSkillEngine(): Effect.Effect<
       discoverImportSources,
       importSources,
       create,
+      installRegistry,
       update,
       rename,
       delete: remove,

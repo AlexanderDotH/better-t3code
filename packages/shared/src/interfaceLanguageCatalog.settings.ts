@@ -43,8 +43,8 @@ export const settingsInterfaceCatalog = defineLocalizedInterfaceCatalog({
     { one: "{{count}} Server", other: "{{count}} Server" },
     { one: "{{count}} serveur", other: "{{count}} serveurs" },
   ],
-  "settings.mcp.workspace.title": ["MCP workspace", "MCP-Workspace", "Espace de travail MCP"],
-  "settings.mcp.workspace.providers": ["MCP providers", "MCP-Provider", "Fournisseurs MCP"],
+  "settings.mcp.workspace.title": ["Tools & skills", "Tools & Skills", "Outils et compétences"],
+  "settings.mcp.workspace.providers": ["Provider", "Provider", "Fournisseur"],
   "settings.mcp.workspace.runtimeSession": [
     "Runtime session",
     "Laufzeitsitzung",

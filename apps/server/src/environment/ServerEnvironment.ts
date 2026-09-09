@@ -243,6 +243,7 @@ export const make = Effect.gen(function* () {
       ...(desktopAppUpdate ? { desktopAppUpdate: true } : {}),
       gitWorkbenchVersion: 1,
       mcpWorkspaceVersion: 1,
+      extensionStoreVersion: 1,
       agentWorkflowVersion: 1,
       environmentSettingsVersion: 5,
       projectSettingsVersion: 1,

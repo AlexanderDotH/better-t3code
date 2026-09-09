@@ -1,4 +1,10 @@
-import type { AgentImportSource, SkillDescriptor, SkillMutationScope } from "@t3tools/contracts";
+import type {
+  AgentImportSource,
+  EnvironmentId,
+  SkillDescriptor,
+  SkillMutationScope,
+} from "@t3tools/contracts";
+import { ExtensionStoreButton } from "../mcp-workspace/ExtensionStore";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import { useSettingsCommand, useSettingsMutation } from "./useSettingsMutation";
 import { agentSettingsEnvironment } from "../../state/agentSettings";
@@ -305,14 +311,26 @@ function SkillEditorDialog(props: {
   );
 }
 
-export function SkillsSettingsPanel() {
+export function SkillsSettingsPanel(props: {
+  readonly environmentId?: EnvironmentId;
+  readonly projectCwd?: string | null;
+  readonly embedded?: boolean;
+  readonly onBrowseStore?: () => void;
+}) {
   const translator = useInterfaceTranslator();
-  const projects = useProjects();
+  const allProjects = useProjects();
+  const projects = props.environmentId
+    ? allProjects.filter((project) => project.environmentId === props.environmentId)
+    : allProjects;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const [scope, setScope] = useState<SkillScopeSelection>("global");
-  const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(() =>
-    projects[0] ? projectKey(projects[0]) : null,
+  const [scope, setScope] = useState<SkillScopeSelection>(() =>
+    projects.some((project) => project.workspaceRoot === props.projectCwd) ? "project" : "global",
   );
+  const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(() => {
+    const project =
+      projects.find((project) => project.workspaceRoot === props.projectCwd) ?? projects[0];
+    return project ? projectKey(project) : null;
+  });
   const [editingSkill, setEditingSkill] = useState<SkillDescriptor | null>(null);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
@@ -328,7 +346,7 @@ export function SkillsSettingsPanel() {
   const selectedProjectCwd = scope === "project" ? (selectedProject?.workspaceRoot ?? null) : null;
   const selectedProjectId = scope === "project" ? (selectedProject?.id ?? null) : null;
   const environmentSelection = {
-    primaryEnvironmentId: scope === "global" ? primaryEnvironmentId : null,
+    primaryEnvironmentId: scope === "global" ? (props.environmentId ?? primaryEnvironmentId) : null,
     selectedEnvironmentId: scope === "project" ? (selectedProject?.environmentId ?? null) : null,
   };
   const environmentId = resolveSettingsEnvironmentId(environmentSelection);
@@ -530,11 +548,26 @@ export function SkillsSettingsPanel() {
   };
 
   return (
-    <SettingsPageContainer>
+    <SettingsPageContainer
+      {...(props.embedded
+        ? {
+            className: "max-w-none gap-3 p-4 sm:p-4",
+            viewportClassName: "overflow-visible p-0 sm:p-0",
+          }
+        : {})}
+    >
       <SettingsSection
-        title={translator.message("settings.skills.title")}
+        title={translator.message("settings.mcp.store.installedSkills")}
         headerAction={
           <div className="flex items-center gap-1.5">
+            {environmentId ? (
+              <ExtensionStoreButton
+                environmentId={environmentId}
+                initialKind="skill"
+                projectCwd={selectedProjectCwd ?? props.projectCwd}
+                {...(props.onBrowseStore ? { onBrowse: props.onBrowseStore } : {})}
+              />
+            ) : null}
             <Button
               size="icon-xs"
               variant="ghost"

@@ -5,6 +5,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import { FetchHttpClient } from "effect/unstable/http";
+import { validateRegistrySkillFiles } from "../extensionCatalog.ts";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
@@ -24,6 +26,57 @@ const makeSkillEngineLayer = () =>
   );
 
 it.layer(NodeServices.layer)("SkillEngineLive", (it) => {
+  it.effect(
+    "installs complete registry skills, rejects replacements, and removes supporting files",
+    () => {
+      const files = [
+        {
+          path: "SKILL.md",
+          contents:
+            "---\nname: registry-review\ndescription: Review changes\n---\nRead references/checks.md",
+        },
+        { path: "references/checks.md", contents: "Check edge cases." },
+      ];
+      return Effect.gen(function* () {
+        const engine = yield* SkillEngine;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const input = {
+          source: "example/skills/registry-review",
+          contentHash: validateRegistrySkillFiles(files).contentHash,
+          scope: "global" as const,
+        };
+        const changed = yield* engine
+          .installRegistry({ ...input, contentHash: "0".repeat(64) })
+          .pipe(Effect.flip);
+        assert.include(changed.message, "changed after the preview");
+        const result = yield* engine.installRegistry(input);
+        const directory = path.dirname(result.skill.path);
+        assert.equal(
+          yield* fs.readFileString(path.join(directory, "references/checks.md")),
+          "Check edge cases.",
+        );
+        assert.equal(yield* fs.readFileString(result.skill.path), files[0]!.contents);
+        const prompt = yield* engine.rewritePromptForProvider({
+          providerInstanceId: "codex",
+          prompt: "/registry-review changes",
+        });
+        assert.include(prompt, result.skill.path);
+        assert.include(prompt, "references/checks.md");
+        const duplicate = yield* engine.installRegistry(input).pipe(Effect.flip);
+        assert.include(duplicate.message, "already exists");
+        assert.equal(yield* fs.readFileString(result.skill.path), files[0]!.contents);
+        yield* engine.delete({ target: { scope: "global", name: result.skill.name } });
+        assert.isFalse(yield* fs.exists(directory));
+      }).pipe(
+        Effect.provide(makeSkillEngineLayer()),
+        Effect.provideService(
+          FetchHttpClient.Fetch,
+          Object.assign(async () => Response.json({ files }), { preconnect: () => {} }),
+        ),
+      );
+    },
+  );
   it.effect("creates, lists, enables, disables, and expands T3-owned skills", () =>
     Effect.gen(function* () {
       const skillEngine = yield* SkillEngine;
@@ -76,7 +129,7 @@ it.layer(NodeServices.layer)("SkillEngineLive", (it) => {
       });
       assert.include(rewritten, '<t3-skill name="review">');
       assert.include(rewritten, "Review code carefully.");
-      assert.notInclude(rewritten, "/review");
+      assert.notMatch(rewritten, /(^|\s)\/review(?=\s|$)/);
     }).pipe(Effect.provide(makeSkillEngineLayer())),
   );
 

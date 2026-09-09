@@ -270,6 +270,13 @@ import {
   SkillUpdateInput,
 } from "./skills.ts";
 import {
+  ExtensionCatalogSearchInput,
+  ExtensionCatalogSearchResult,
+  SkillRegistryPreviewInput,
+  SkillRegistryPreviewResult,
+  SkillRegistryInstallInput,
+} from "./extensionCatalog.ts";
+import {
   TerminalAttachInput,
   TerminalAttachStreamEvent,
   TerminalClearInput,
@@ -556,6 +563,9 @@ export const WS_METHODS = {
   skillsRename: "skills.rename",
   skillsDelete: "skills.delete",
   skillsSetEnabled: "skills.setEnabled",
+  extensionCatalogSearch: "extensions.search",
+  skillsPreviewRegistry: "skills.previewRegistry",
+  skillsInstallRegistry: "skills.installRegistry",
 
   // MCP server settings
   mcpList: "mcp.list",
@@ -1096,6 +1106,22 @@ const WsMcpListRpc = Rpc.make(WS_METHODS.mcpList, {
   payload: McpListInput,
   success: McpListResult,
   error: Schema.Union([McpConfigError, EnvironmentAuthorizationError]),
+});
+
+const WsExtensionCatalogSearchRpc = Rpc.make(WS_METHODS.extensionCatalogSearch, {
+  payload: ExtensionCatalogSearchInput,
+  success: ExtensionCatalogSearchResult,
+  error: Schema.Union([SkillEngineError, EnvironmentAuthorizationError]),
+});
+const WsSkillsPreviewRegistryRpc = Rpc.make(WS_METHODS.skillsPreviewRegistry, {
+  payload: SkillRegistryPreviewInput,
+  success: SkillRegistryPreviewResult,
+  error: Schema.Union([SkillEngineError, EnvironmentAuthorizationError]),
+});
+const WsSkillsInstallRegistryRpc = Rpc.make(WS_METHODS.skillsInstallRegistry, {
+  payload: SkillRegistryInstallInput,
+  success: SkillMutationResult,
+  error: Schema.Union([SkillEngineError, EnvironmentAuthorizationError]),
 });
 
 const WsMcpDiscoverImportSourcesRpc = Rpc.make(WS_METHODS.mcpDiscoverImportSources, {
@@ -2000,6 +2026,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsSkillsRenameRpc,
   WsSkillsDeleteRpc,
   WsSkillsSetEnabledRpc,
+  WsExtensionCatalogSearchRpc,
+  WsSkillsPreviewRegistryRpc,
+  WsSkillsInstallRegistryRpc,
   WsMcpListRpc,
   WsMcpDiscoverImportSourcesRpc,
   WsMcpCreateRpc,

@@ -1,6 +1,208 @@
 import { defineLocalizedInterfaceCatalog } from "./interfaceLanguageCatalog.types.ts";
 
 export const settingsMcpInterfaceCatalog = defineLocalizedInterfaceCatalog({
+  "settings.mcp.store.title": [
+    "Browse tools & skills",
+    "Tools & Skills entdecken",
+    "Explorer les outils et compétences",
+  ],
+  "settings.mcp.store.browse": ["Browse", "Entdecken", "Explorer"],
+  "settings.mcp.store.kind": ["Item type", "Eintragstyp", "Type d’élément"],
+  "settings.mcp.store.installedDescription": [
+    "Manage what you’ve added to this environment and project.",
+    "Verwalte, was du dieser Umgebung und diesem Projekt hinzugefügt hast.",
+    "Gérez les éléments ajoutés à cet environnement et à ce projet.",
+  ],
+  "settings.mcp.store.installedServers": [
+    "Installed MCP servers",
+    "Installierte MCP-Server",
+    "Serveurs MCP installés",
+  ],
+  "settings.mcp.store.installedSkills": [
+    "Installed skills",
+    "Installierte Skills",
+    "Compétences installées",
+  ],
+  "settings.mcp.store.notInstalled": ["Not installed", "Nicht installiert", "Non installé"],
+  "settings.mcp.store.manage": ["Manage", "Verwalten", "Gérer"],
+  "settings.mcp.store.activeProviders": [
+    "Active providers",
+    "Aktive Provider",
+    "Fournisseurs actifs",
+  ],
+  "settings.mcp.store.noActiveProviders": [
+    "No active providers available. Enable a provider in Settings → Providers.",
+    "Keine aktiven Provider verfügbar. Aktiviere einen unter Einstellungen → Provider.",
+    "Aucun fournisseur actif. Activez-en un dans Réglages → Fournisseurs.",
+  ],
+  "settings.mcp.store.sharedSkills": [
+    "Skills are shared across providers in the selected scope.",
+    "Skills werden im gewählten Bereich von allen Providern gemeinsam genutzt.",
+    "Les compétences sont partagées entre les fournisseurs dans la portée choisie.",
+  ],
+  "settings.mcp.store.skills": ["Skills", "Skills", "Compétences"],
+  "settings.mcp.store.servers": ["MCP servers", "MCP-Server", "Serveurs MCP"],
+  "settings.mcp.store.description": [
+    "Explore the catalog. Add what you need to your installed tools and skills.",
+    "Entdecke den Katalog und ergänze deine installierten Tools und Skills.",
+    "Explorez le catalogue et ajoutez des outils et compétences à votre collection.",
+  ],
+  "settings.mcp.store.mcpDescription": [
+    "Connect services, data, and tools from the official MCP Registry.",
+    "Verbinde Dienste, Daten und Tools aus dem offiziellen MCP-Register.",
+    "Connectez des services, des données et des outils du registre MCP officiel.",
+  ],
+  "settings.mcp.store.skillDescription": [
+    "Discover reusable instructions from the skills.sh community catalog.",
+    "Entdecke wiederverwendbare Anleitungen im Community-Katalog von skills.sh.",
+    "Découvrez les instructions réutilisables du catalogue communautaire skills.sh.",
+  ],
+  "settings.mcp.store.search": [
+    "Search the registry",
+    "Register durchsuchen",
+    "Rechercher dans le registre",
+  ],
+  "settings.mcp.store.searchMcp": [
+    "Search servers, e.g. GitHub or Playwright",
+    "Server suchen, z. B. GitHub oder Playwright",
+    "Rechercher des serveurs, par ex. GitHub ou Playwright",
+  ],
+  "settings.mcp.store.searchSkills": [
+    "Search skills, e.g. React or code review",
+    "Skills suchen, z. B. React oder Code-Review",
+    "Rechercher des compétences, par ex. React ou revue de code",
+  ],
+  "settings.mcp.store.searchHint": [
+    "Enter at least two characters or choose a topic below.",
+    "Gib mindestens zwei Zeichen ein oder wähle unten ein Thema.",
+    "Saisissez au moins deux caractères ou choisissez un sujet ci-dessous.",
+  ],
+  "settings.mcp.store.searching": [
+    "Searching the registry…",
+    "Register wird durchsucht…",
+    "Recherche dans le registre…",
+  ],
+  "settings.mcp.store.noResults": [
+    "No matches. Try a different search.",
+    "Keine Treffer. Versuche einen anderen Suchbegriff.",
+    "Aucun résultat. Essayez une autre recherche.",
+  ],
+  "settings.mcp.store.retry": ["Try again", "Erneut versuchen", "Réessayer"],
+  "settings.mcp.store.next": ["More results", "Weitere Ergebnisse", "Plus de résultats"],
+  "settings.mcp.store.back": [
+    "Back to first results",
+    "Zurück zu den ersten Ergebnissen",
+    "Revenir aux premiers résultats",
+  ],
+  "settings.mcp.store.source": ["View source", "Quelle ansehen", "Voir la source"],
+  "settings.mcp.store.openExternal": [
+    "Open in browser",
+    "Im Browser öffnen",
+    "Ouvrir dans le navigateur",
+  ],
+  "settings.mcp.store.sourceLoading": [
+    "Loading source page…",
+    "Quellseite wird geladen…",
+    "Chargement de la page source…",
+  ],
+  "settings.mcp.store.sourceFailed": [
+    "The source page could not be loaded. Try again or open it in your browser.",
+    "Die Quellseite konnte nicht geladen werden. Versuche es erneut oder öffne sie im Browser.",
+    "La page source n’a pas pu être chargée. Réessayez ou ouvrez-la dans votre navigateur.",
+  ],
+  "settings.mcp.store.sourceDesktop": [
+    "The full source page can be viewed here in the desktop app. You can also open it in your browser.",
+    "In der Desktop-App kannst du die vollständige Quellseite hier ansehen. Du kannst sie auch im Browser öffnen.",
+    "L’application de bureau affiche ici la page source complète. Vous pouvez aussi l’ouvrir dans votre navigateur.",
+  ],
+  "settings.mcp.store.preview": [
+    "Preview & install",
+    "Ansehen & installieren",
+    "Aperçu et installation",
+  ],
+  "settings.mcp.store.setup": ["Set up", "Einrichten", "Configurer"],
+  "settings.mcp.store.install": ["Install skill", "Skill installieren", "Installer la compétence"],
+  "settings.mcp.store.addServer": ["Add server", "Server hinzufügen", "Ajouter le serveur"],
+  "settings.mcp.store.installing": ["Installing…", "Wird installiert…", "Installation…"],
+  "settings.mcp.store.installed": ["Installed", "Installiert", "Installé"],
+  "settings.mcp.store.installs": ["installs", "Installationen", "installations"],
+  "settings.mcp.store.success": [
+    "Added to Installed.",
+    "Unter Installiert hinzugefügt.",
+    "Ajouté aux éléments installés.",
+  ],
+  "settings.mcp.store.scope": ["Install for", "Installieren für", "Installer pour"],
+  "settings.mcp.store.global": [
+    "All projects in this environment",
+    "Alle Projekte dieser Umgebung",
+    "Tous les projets de cet environnement",
+  ],
+  "settings.mcp.store.project": ["This project", "Dieses Projekt", "Ce projet"],
+  "settings.mcp.store.connection": ["Connection", "Verbindung", "Connexion"],
+  "settings.mcp.store.provider": ["Provider", "Provider", "Fournisseur"],
+  "settings.mcp.store.allProviders": [
+    "All active providers",
+    "Alle aktiven Provider",
+    "Tous les fournisseurs actifs",
+  ],
+  "settings.mcp.store.required": ["Required", "Erforderlich", "Obligatoire"],
+  "settings.mcp.store.optional": ["Optional", "Optional", "Facultatif"],
+  "settings.mcp.store.files": [
+    "Includes {{count}} files, with supporting resources.",
+    "Enthält {{count}} Dateien einschließlich unterstützender Ressourcen.",
+    "Inclut {{count}} fichiers avec les ressources associées.",
+  ],
+  "settings.mcp.store.previewLoading": [
+    "Loading skill preview…",
+    "Skill-Vorschau wird geladen…",
+    "Chargement de l’aperçu…",
+  ],
+  "settings.mcp.store.instructions": [
+    "Skill instructions",
+    "Skill-Anleitungen",
+    "Instructions de la compétence",
+  ],
+  "settings.mcp.store.community": [
+    "Community content. Review the source and instructions before installing.",
+    "Community-Inhalte. Prüfe Quelle und Anleitungen vor der Installation.",
+    "Contenu communautaire. Consultez la source et les instructions avant l’installation.",
+  ],
+  "settings.mcp.store.localSetup": [
+    "Adding this server allows the environment to run the command below. Its runtime must be installed on the environment host.",
+    "Dieser Server führt den folgenden Befehl in der Umgebung aus. Die Laufzeit muss auf dem Host installiert sein.",
+    "Ce serveur peut exécuter la commande ci-dessous dans l’environnement. Le moteur doit être installé sur l’hôte.",
+  ],
+  "settings.mcp.store.remoteSetup": [
+    "Connect to the endpoint below. Some services require a separate account or subscription.",
+    "Verbinde dich mit dem folgenden Endpunkt. Manche Dienste benötigen ein eigenes Konto oder Abonnement.",
+    "Connectez-vous au point d’accès ci-dessous. Certains services nécessitent un compte ou un abonnement.",
+  ],
+  "settings.mcp.store.manual": [
+    "This server requires manual setup. Follow the source instructions and use New in MCP servers.",
+    "Dieser Server muss manuell eingerichtet werden. Folge der Anleitung in der Quelle und verwende Neu unter MCP-Server.",
+    "Ce serveur nécessite une configuration manuelle. Suivez les instructions de la source puis utilisez Nouveau dans Serveurs MCP.",
+  ],
+  "settings.mcp.store.upgrade": [
+    "Update this environment’s T3 server to browse and install from the store.",
+    "Aktualisiere den T3-Server dieser Umgebung, um den Store zu nutzen.",
+    "Mettez à jour le serveur T3 de cet environnement pour utiliser le catalogue.",
+  ],
+  "settings.mcp.store.readOnly": [
+    "You can browse here. Installing requires permission to operate this environment.",
+    "Du kannst den Store durchsuchen. Installieren erfordert Schreibzugriff auf diese Umgebung.",
+    "Vous pouvez parcourir le catalogue. L’installation nécessite l’autorisation de modifier cet environnement.",
+  ],
+  "settings.mcp.store.diagnostics": ["Diagnostics", "Diagnose", "Diagnostic"],
+  "settings.mcp.store.noSession": [
+    "Connect an agent to see live tools",
+    "Verbinde einen Agenten, um aktive Tools zu sehen",
+    "Connectez un agent pour voir les outils actifs",
+  ],
+  "settings.mcp.store.noSessionDescription": [
+    "Send a message in chat, then return here to inspect connections. You can browse and install tools and skills before starting a session.",
+    "Sende eine Nachricht im Chat und kehre hierher zurück, um Verbindungen zu prüfen. Tools und Skills kannst du schon vorher suchen und installieren.",
+    "Envoyez un message dans le chat, puis revenez vérifier les connexions. Vous pouvez déjà rechercher et installer des outils et compétences.",
+  ],
   "settings.mcp.editor.add": ["Add", "Hinzufügen", "Ajouter"],
   "settings.mcp.editor.emptyValues": [
     "No values configured.",
