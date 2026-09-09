@@ -20,6 +20,7 @@ const MAX_SKILL_BYTES = 4 * 1024 * 1024;
 const decodeCatalogJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeRegistrySource = Schema.decodeUnknownEffect(SkillRegistrySource);
 const isRegistrySource = Schema.is(SkillRegistrySource);
+const isSkillEngineError = Schema.is(SkillEngineError);
 
 function catalogJson(url: string) {
   return Effect.gen(function* () {
@@ -42,7 +43,7 @@ function catalogJson(url: string) {
     Effect.provideService(HttpIncomingMessage.MaxBodySize, FileSystem.Size(MAX_DOWNLOAD_BYTES)),
     Effect.timeout("20 seconds"),
     Effect.mapError((cause) =>
-      cause instanceof SkillEngineError
+      isSkillEngineError(cause)
         ? cause
         : new SkillEngineError({
             message:

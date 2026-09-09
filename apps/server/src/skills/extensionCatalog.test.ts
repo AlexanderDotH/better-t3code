@@ -17,6 +17,23 @@ const files = [
 ];
 
 describe("extension registry packages", () => {
+  it.effect("preserves the registry rate-limit message", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        searchExtensionCatalog({ kind: "mcp", query: "playwright" }),
+      );
+      expect(error.message).toBe("The registry is rate limited. Please try again later.");
+    }).pipe(
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provideService(
+        FetchHttpClient.Fetch,
+        Object.assign(async () => new Response(null, { status: 429 }), {
+          preconnect: () => {},
+        }),
+      ),
+    ),
+  );
+
   it("hashes all skill files and rejects paths that escape or collide", () => {
     const valid = validateRegistrySkillFiles(files);
     expect(valid.name).toBe("review");
