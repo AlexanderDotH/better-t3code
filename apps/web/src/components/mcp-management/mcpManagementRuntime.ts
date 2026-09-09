@@ -112,6 +112,8 @@ export function useMcpManagementRuntime(
     snapshot: runtimeQuery.data,
     contextError: contextsQuery.error,
     runtimeError: runtimeQuery.error,
-    isLoading: contextsQuery.isPending || runtimeQuery.isPending,
+    isLoading:
+      (contextsQuery.data === null && contextsQuery.isPending) ||
+      (runtimeQuery.data === null && runtimeQuery.isPending),
   };
 }

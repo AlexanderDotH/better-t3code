@@ -46,6 +46,7 @@ export * from "./preview.ts";
 export * from "./previewAutomation.ts";
 export * from "./resourceTelemetry.ts";
 export * from "./skills.ts";
+export * from "./extensionCatalog.ts";
 export * from "./mcp.ts";
 export * from "./usage.ts";
 export * from "./rpc.ts";

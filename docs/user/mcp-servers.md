@@ -1,7 +1,7 @@
 # MCP servers
 
-Open **Settings > MCP Servers** or expand the **MCP** workspace card in a web or desktop chat to
-manage tool servers. Definitions belong to the environment that runs them. Select a provider account
+Open **Settings > MCP Servers** or expand the **Tools & skills** workspace card in a web or desktop chat to
+manage tool servers under **Installed > MCP servers**. Definitions belong to the environment that runs them. Select a provider account
 and choose whether a server applies globally or only to a project.
 
 A definition can be assigned to every provider account or only selected accounts. **All** also
@@ -16,9 +16,23 @@ Configured MCP servers are supported by Codex, Claude, Cursor, OpenCode, ChatGPT
 OpenRouter. Gemini, Grok, and Antigravity currently do not expose this integration. Choose a
 supported provider account when you need these tools.
 
+## Find and install servers
+
+Open **Browse** in the chat card or MCP settings to search the
+[official MCP Registry](https://registry.modelcontextprotocol.io). Choose **Set up**, review the
+source, select a connection and provider, and fill in the requested configuration. Catalog setup
+offers active providers only; **All active providers** selects the accounts available at install time.
+Remote servers
+may need an account; local packages require Node.js or uv on the environment host. The installation
+result tells you whether a live session was updated or a new session is needed.
+
+Servers with other installation methods link to their source instructions for manual setup through
+**New**. The store runs against the selected environment, including remote environments. Update an
+older environment's server if its store is unavailable.
+
 ## Inspect a running session
 
-The workspace card shows configured servers when there is no live runtime. Expand it to inspect a
+Open the card's **Diagnostics** tab to inspect a
 specific provider session, view tools and connection issues, or use the provider's supported refresh,
 reconnect, and authorization actions. Selecting another provider here does not change Chat's
 provider. An ended session is not silently replaced with another session.

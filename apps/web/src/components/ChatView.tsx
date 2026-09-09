@@ -346,7 +346,11 @@ import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { resolveTimelineIsAtEnd } from "./chat/MessagesTimeline.logic";
 import { resolveComposerTimelineInset, resolveScrollToEndClearance } from "./composerFooterLayout";
 import { ComposerFloatingBubble } from "./chat/ComposerFloatingBubble";
-import { resolveComposerFloatingBubbleLayout } from "./chat/composerFloatingBubble.logic";
+import {
+  resolveComposerFloatingBubbleEnabled,
+  resolveComposerFloatingBubbleLayout,
+} from "./chat/composerFloatingBubble.logic";
+import { DESKTOP_WORKBENCH_MEDIA_QUERY } from "./git-workbench/GitWorkspaceDeckController.availability";
 import { buildResourceProtectionBanner } from "./resourceProtectionBanner";
 import { useInterfaceLanguage } from "../interfaceLanguageSync";
 import { useInterfaceTranslator } from "../hooks/useInterfaceTranslator";
@@ -1692,6 +1696,11 @@ export default function ChatView(props: ChatViewProps) {
     useState<Record<string, number>>({});
   const shouldUseRightPanelSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   const isMobileViewport = useMediaQuery("max-sm");
+  const desktopDeckLayout = useMediaQuery(DESKTOP_WORKBENCH_MEDIA_QUERY);
+  const composerBubbleEnabled = resolveComposerFloatingBubbleEnabled(
+    settings.betterT3Device,
+    desktopDeckLayout,
+  );
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [pullRequestDialogState, setPullRequestDialogState] =
     useState<PullRequestDialogState | null>(null);
@@ -8666,12 +8675,23 @@ export default function ChatView(props: ChatViewProps) {
     nonChatWorkspaceCardActive,
     workspaceCardExpanded,
   });
-  const composerFloatingBubble = (
+  const composerFloatingBubble = composerBubbleEnabled ? (
     <ComposerFloatingBubble
       active={composerFloatingBubbleLayout.visible}
       hostRef={setComposerFloatingBubbleHost}
     />
-  );
+  ) : null;
+  const activeComposerFloatingBubbleHost =
+    composerBubbleEnabled && composerFloatingBubbleLayout.visible
+      ? composerFloatingBubbleHost
+      : null;
+  const composerPlanTurnId =
+    resolveBetterT3FeatureFlag(settings.betterT3Device, "chat.classicBubbleOnly") &&
+    activeComposerFloatingBubbleHost !== null &&
+    activeComposerTaskSteps !== null &&
+    threadSyncPhase === null
+      ? (activePlan?.turnId ?? null)
+      : null;
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden window-surface bg-background">
@@ -8802,6 +8822,7 @@ export default function ChatView(props: ChatViewProps) {
             <div className="relative flex min-h-0 flex-1 flex-col">
               {/* Messages — LegendList handles virtualization and scrolling internally */}
               <MessagesTimeline
+                composerPlanTurnId={composerPlanTurnId}
                 retryAction={timelineRetryAction}
                 forkActions={timelineForkActions}
                 forkProvenance={timelineForkProvenance}
@@ -9025,7 +9046,7 @@ export default function ChatView(props: ChatViewProps) {
                                 bannerItems={composerBannerItems}
                                 isWorking={isWorking}
                                 activeWorkStartedAt={activeWorkStartedAt}
-                                floatingBubbleHost={composerFloatingBubbleHost}
+                                floatingBubbleHost={activeComposerFloatingBubbleHost}
                                 // With attachments or contexts aboard the pick just inserts the
                                 // text, so it sends as a prompt like the typed path would.
                                 onUsageLimitsCommand={
@@ -9047,8 +9068,12 @@ export default function ChatView(props: ChatViewProps) {
                                 respondingRequestIds={respondingRequestIds}
                                 showPlanFollowUpPrompt={showPlanFollowUpPrompt}
                                 activeProposedPlan={activeProposedPlan}
-                                activeTasksProgress={activeComposerTasksProgress}
-                                activeTaskSteps={activeComposerTaskSteps}
+                                activeTasksProgress={
+                                  composerPlanTurnId === null ? null : activeComposerTasksProgress
+                                }
+                                activeTaskSteps={
+                                  composerPlanTurnId === null ? null : activeComposerTaskSteps
+                                }
                                 threadSyncPhase={
                                   activeEnvironmentUnavailable ? null : threadSyncPhase
                                 }

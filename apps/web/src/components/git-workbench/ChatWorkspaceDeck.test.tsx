@@ -265,7 +265,7 @@ describe("McpWorkspaceCard in the Chat deck", () => {
     );
 
     expect(body).toContain('data-mcp-workspace-card="true"');
-    expect(peek).toContain('aria-label="Open MCP workspace"');
+    expect(peek).toContain('aria-label="Open Tools &amp; skills"');
     expect(peek).toContain('data-workspace-card-peek-id="mcp"');
   });
 });

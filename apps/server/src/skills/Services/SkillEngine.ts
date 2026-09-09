@@ -11,6 +11,7 @@ import type {
   SkillRenameInput,
   SkillSetEnabledInput,
   SkillUpdateInput,
+  SkillRegistryInstallInput,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
@@ -23,6 +24,9 @@ export interface SkillEngineShape {
   ) => Effect.Effect<SkillImportSourcesResult, SkillEngineError>;
   readonly create: (
     input: SkillCreateInput,
+  ) => Effect.Effect<SkillMutationResult, SkillEngineError>;
+  readonly installRegistry: (
+    input: SkillRegistryInstallInput,
   ) => Effect.Effect<SkillMutationResult, SkillEngineError>;
   readonly update: (
     input: SkillUpdateInput,

@@ -67,6 +67,19 @@
   min-width: 0;
 }
 
+/* Follow the reference card's own resize animation without a second, lagging clip. */
+.workspace-card-deck__viewport[data-natural-height="true"] {
+  height: auto;
+  transition: none;
+}
+
+.workspace-card-deck__viewport[data-height-ready="true"][data-natural-height="true"]
+  .workspace-card-deck__card,
+.workspace-card-deck__viewport[data-height-ready="true"][data-natural-height="true"]
+  .workspace-card-deck__intrinsic {
+  height: auto;
+}
+
 .workspace-card-deck__peeks {
   position: absolute;
   z-index: 1;
@@ -153,7 +166,7 @@
   font-size: 0.6875rem;
 }
 
-[data-git-workspace-context-control="true"] {
+.workspace-card-deck__peek-content [data-composer-context-control] {
   position: relative;
   z-index: 3;
   pointer-events: auto;

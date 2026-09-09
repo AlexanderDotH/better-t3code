@@ -137,41 +137,44 @@ describe("classic timeline grouping", () => {
     }
   });
 
-  it("only suppresses historical task chips for Classic bubble-only mode", () => {
+  it("moves only the active plan into the composer bubble", () => {
+    const activeTurnId = TurnId.make("active-plan");
+    const historicalTurnId = TurnId.make("historical-plan");
     const turnPlans = deriveTurnPlans([
       {
-        id: EventId.make("plan"),
+        id: EventId.make("historical-plan"),
         createdAt: "2026-09-08T00:00:00Z",
-        turnId: TurnId.make("planned"),
+        turnId: historicalTurnId,
         kind: "turn.plan.updated",
         tone: "info",
         summary: "Plan",
-        payload: { plan: [{ step: "Done", status: "completed" }] },
+        payload: { plan: [{ step: "Earlier", status: "completed" }] },
+      },
+      {
+        id: EventId.make("active-plan"),
+        createdAt: "2026-09-08T00:01:00Z",
+        turnId: activeTurnId,
+        kind: "turn.plan.updated",
+        tone: "info",
+        summary: "Plan",
+        payload: { plan: [{ step: "Now", status: "inProgress" }] },
       },
     ]);
     const timelineEntries = deriveTimelineEntries([], [], [], turnPlans);
-    const hidden = deriveMessagesTimelineRowsWithState({
+    const inComposer = deriveMessagesTimelineRowsWithState({
       ...input,
       timelineEntries,
-      chatVisualMode: "classic",
-      classicBubbleOnly: true,
+      chatVisualMode: "current",
+      composerPlanTurnId: activeTurnId,
     });
-    expect(hidden.rows).toEqual([]);
-    const visible = deriveMessagesTimelineRowsWithState(
-      { ...input, timelineEntries, chatVisualMode: "classic", classicBubbleOnly: false },
-      hidden,
-    );
-    expect(visible.rows).toMatchObject([
-      { kind: "turn-plan", turnPlan: { plan: { steps: [{ step: "Done" }] } } },
+    expect(inComposer.rows).toMatchObject([
+      { kind: "turn-plan", turnPlan: { turnId: historicalTurnId } },
     ]);
-    expect(
-      deriveMessagesTimelineRows({
-        ...input,
-        timelineEntries,
-        chatVisualMode: "current",
-        classicBubbleOnly: true,
-      }),
-    ).toEqual(visible.rows);
+    const native = deriveMessagesTimelineRowsWithState(
+      { ...input, timelineEntries, chatVisualMode: "classic", composerPlanTurnId: null },
+      inComposer,
+    );
+    expect(native.rows.filter((row) => row.kind === "turn-plan")).toHaveLength(2);
   });
 
   it("keeps failures visible and filters neutral running tools in classic mode", () => {

@@ -50,6 +50,7 @@ describe("Better T3 feature registry", () => {
       "agent.nativeSubagentDisplay",
       "chat.workspaceCardDeck",
       "chat.cardMorphing",
+      "chat.hideComposerDivider",
       "chat.characterStreamingMotion",
       "chat.contextWindowSelector",
       "chat.classicBubbleOnly",
@@ -171,6 +172,19 @@ describe("Better T3 feature registry", () => {
 });
 
 describe("BetterT3SettingsV1", () => {
+  it("persists the optional composer divider preference in both directions", () => {
+    for (const origin of ["clean-install", "existing-install-migration"] as const) {
+      expect(
+        resolveBetterT3FeatureFlag(makeBetterT3SettingsV1(origin), "chat.hideComposerDivider"),
+      ).toBe(false);
+      for (const hidden of [true, false]) {
+        const settings = makeBetterT3SettingsV1(origin, { "chat.hideComposerDivider": hidden });
+        const restored = decodeSettings(encodeSettings(settings));
+        expect(resolveBetterT3FeatureFlag(restored, "chat.hideComposerDivider")).toBe(hidden);
+      }
+    }
+  });
+
   it("disables every switch on clean installs and preserves only formerly implicit switches", () => {
     const switchFeatureIds = BETTER_T3_FEATURE_REGISTRY.filter(
       ({ controlKind }) => controlKind === "switch",
@@ -189,7 +203,6 @@ describe("BetterT3SettingsV1", () => {
       "chat.workspaceCardDeck",
       "chat.cardMorphing",
       "chat.characterStreamingMotion",
-      "chat.classicBubbleOnly",
       "chat.shiftClickShowLess",
       "chat.draftIndicators",
       "workspace.gitWorkbench",
@@ -205,6 +218,7 @@ describe("BetterT3SettingsV1", () => {
 
     expect(resolveBetterT3FeatureFlag(clean, "chat.workspaceCardDeck")).toBe(false);
     expect(resolveBetterT3FeatureFlag(clean, "chat.characterStreamingMotion")).toBe(false);
+    expect(resolveBetterT3FeatureFlag(existing, "chat.classicBubbleOnly")).toBe(false);
     expect(resolveBetterT3FeatureFlag(clean, "knowledge.graph")).toBe(false);
     expect(resolveBetterT3FeatureFlag(existing, "chat.workspaceCardDeck")).toBe(true);
     expect(resolveBetterT3FeatureFlag(existing, "agent.generalSubagents")).toBe(true);

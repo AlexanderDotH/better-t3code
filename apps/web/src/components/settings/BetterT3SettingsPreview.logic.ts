@@ -20,6 +20,7 @@ export interface BetterT3ChatPreviewModel {
   readonly animationKey: string;
   readonly cardMorphing: boolean;
   readonly characterStreamingMotion: boolean;
+  readonly composerPlanBubble: boolean;
   readonly classicSidebar: boolean;
   readonly draftIndicators: boolean;
   readonly presentation: ChatVisualMode;
@@ -66,6 +67,7 @@ export function buildBetterT3SettingsPreviewModel(input: {
       input.features,
       "chat.characterStreamingMotion",
     ),
+    composerPlanBubble: effectiveFeatureEnabled(input.features, "chat.classicBubbleOnly"),
     classicSidebar: effectiveFeatureEnabled(input.features, "chat.classicSidebar"),
     draftIndicators: effectiveFeatureEnabled(input.features, "chat.draftIndicators"),
     presentation: input.chatVisualMode,

@@ -19,7 +19,6 @@ import { readT3ProjectFileDefaultThreadEnvMode } from "../lib/t3ProjectFileDefau
 import { newThreadId } from "../lib/utils";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
-import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { vcsEnvironment } from "../state/vcs";
 import type { Project, Thread } from "../types";
 
@@ -36,9 +35,8 @@ export function useThreadFork(input: {
 }) {
   const navigate = useNavigate();
   const fork = useAtomCommand(threadEnvironment.fork, { reportFailure: false });
-  const readStatus = useAtomQueryRunner(vcsEnvironment.status, {
+  const readStatus = useAtomCommand(vcsEnvironment.refreshStatus, {
     reportFailure: false,
-    refresh: true,
   });
   const inputRef = useRef(input);
   useLayoutEffect(() => {

@@ -33,6 +33,25 @@ function ContextWindowChoiceHarness({ disabled = false }: { disabled?: boolean }
   );
 }
 
+function PlanBubbleChoiceHarness() {
+  const [enabled, setEnabled] = useState(false);
+  return (
+    <BetterT3FeatureChoice
+      disabled={false}
+      featureId="chat.classicBubbleOnly"
+      model={buildBetterT3SettingsPreviewModel({
+        features: [],
+        chatVisualMode: "current",
+        sidebarPosition: "left",
+        contextWindowSelector: "native",
+      })}
+      translate={translate}
+      value={enabled}
+      onChange={(nextValue) => setEnabled(nextValue === true)}
+    />
+  );
+}
+
 describe("context window visual choice", () => {
   it("switches between two translated cards and preserves the selection while disabled", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -63,6 +82,28 @@ describe("context window visual choice", () => {
       expect(radios().every((radio) => radio.props.disabled === false)).toBe(true);
       await act(() => radios()[0]!.props.onClick());
       expect(selection()).toEqual([true, false]);
+    } finally {
+      await act(() => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("plan bubble visual choice", () => {
+  it("defaults to native T3 Code and enables the blue bubble card", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(() => {
+        renderer = create(<PlanBubbleChoiceHarness />);
+      });
+      const radios = renderer!.root.findAllByProps({ role: "radio" });
+      expect(JSON.stringify(renderer!.toJSON())).toContain("Natives T3 Code");
+      expect(JSON.stringify(renderer!.toJSON())).toContain("Blaue Plan-Bubble");
+      expect(radios.map((radio) => radio.props["aria-checked"])).toEqual([true, false]);
+
+      await act(() => radios[1]!.props.onClick());
+      expect(radios.map((radio) => radio.props["aria-checked"])).toEqual([false, true]);
     } finally {
       await act(() => renderer?.unmount());
       vi.unstubAllGlobals();

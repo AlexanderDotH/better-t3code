@@ -33,6 +33,10 @@ import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 
 import type { ChatComposerHandle } from "../chat/ChatComposer";
 import { McpServersSettingsPanel } from "../settings/McpServersSettings";
+import { SkillsSettingsPanel } from "../settings/SkillsSettings";
+import { ExtensionStore } from "./ExtensionStore";
+import { Button } from "../ui/button";
+import { UnplugIcon } from "lucide-react";
 import {
   type McpRuntimeActionPending,
   McpRuntimeServerList,
@@ -410,18 +414,24 @@ function UpgradeRequired() {
 
 function RuntimeUnavailable({
   selectedContextMissing,
+  onBrowse,
 }: {
   readonly selectedContextMissing: boolean;
+  readonly onBrowse: () => void;
 }) {
   const translate = useInterfaceTranslator().message;
   return (
     <div className="mcp-workspace-panel__empty">
-      <strong>{translate("settings.mcp.workspace.noRuntime")}</strong>
+      <UnplugIcon aria-hidden="true" className="size-6 text-muted-foreground" />
+      <strong>{translate("settings.mcp.store.noSession")}</strong>
       <p>
         {selectedContextMissing
           ? translate("settings.mcp.workspace.selectedRuntimeEnded")
-          : translate("settings.mcp.workspace.startSession")}
+          : translate("settings.mcp.store.noSessionDescription")}
       </p>
+      <Button size="sm" variant="outline" onClick={onBrowse}>
+        {translate("settings.mcp.store.browse")}
+      </Button>
     </div>
   );
 }
@@ -430,6 +440,7 @@ function McpWorkspaceControllerView(props: McpWorkspaceCardControllerProps) {
   const translate = useInterfaceTranslator().message;
   const runtime = useContext(McpWorkspaceRuntimeContext);
   const [activeSection, setActiveSection] = useState<McpWorkspaceSection>("servers");
+  const [storeKind, setStoreKind] = useState<"mcp" | "skill">("mcp");
   const expandButtonRef = useRef<HTMLButtonElement | null>(null);
   const sessionAccessQuery = useEnvironmentQuery(
     props.expanded
@@ -469,7 +480,10 @@ function McpWorkspaceControllerView(props: McpWorkspaceCardControllerProps) {
       onManageServers={() => setActiveSection("servers")}
     />
   ) : (
-    <RuntimeUnavailable selectedContextMissing={runtime.selectedContextId !== null} />
+    <RuntimeUnavailable
+      selectedContextMissing={runtime.selectedContextId !== null}
+      onBrowse={() => setActiveSection("store")}
+    />
   );
   const settingsSearch = {
     environment: String(props.environmentId),
@@ -517,6 +531,30 @@ function McpWorkspaceControllerView(props: McpWorkspaceCardControllerProps) {
         >
           <McpWorkspacePanel
             activeSection={activeSection}
+            store={
+              <ExtensionStore
+                key={`${props.environmentId}:${props.projectCwd}`}
+                environmentId={props.environmentId}
+                projectCwd={props.projectCwd}
+                providerInstanceId={selectedProviderInstanceId}
+                initialKind={storeKind}
+                onManageInstalled={(kind) =>
+                  setActiveSection(kind === "mcp" ? "servers" : "skills")
+                }
+              />
+            }
+            skills={
+              <SkillsSettingsPanel
+                key={`${props.environmentId}:${props.projectCwd}`}
+                embedded
+                environmentId={props.environmentId}
+                projectCwd={props.projectCwd}
+                onBrowseStore={() => {
+                  setStoreKind("skill");
+                  setActiveSection("store");
+                }}
+              />
+            }
             contexts={runtime.contexts.map((context) => ({
               id: mcpRuntimeContextId(context),
               label: `${translate(
@@ -536,6 +574,10 @@ function McpWorkspaceControllerView(props: McpWorkspaceCardControllerProps) {
                 {!props.workspaceSupported ? <UpgradeRequired /> : null}
                 <McpServersSettingsPanel
                   embedded
+                  onBrowseStore={() => {
+                    setStoreKind("mcp");
+                    setActiveSection("store");
+                  }}
                   showRuntimeSelector={false}
                   search={settingsSearch}
                   onProviderChange={runtime.selectProvider}
@@ -543,7 +585,15 @@ function McpWorkspaceControllerView(props: McpWorkspaceCardControllerProps) {
               </>
             }
             runtime={runtimeContent}
-            onActiveSectionChange={setActiveSection}
+            onActiveSectionChange={(section) => {
+              if (
+                section === "store" &&
+                (activeSection === "servers" || activeSection === "skills")
+              ) {
+                setStoreKind(activeSection === "servers" ? "mcp" : "skill");
+              }
+              setActiveSection(section);
+            }}
             onContextChange={runtime.selectContext}
             onProviderChange={(providerId) =>
               runtime.selectProvider(providerId as ProviderInstanceId)

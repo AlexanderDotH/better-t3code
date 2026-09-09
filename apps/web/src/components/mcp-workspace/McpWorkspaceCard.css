@@ -155,6 +155,8 @@
 }
 
 .mcp-workspace-drawer > .workspace-card-drawer__content {
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
 
@@ -164,6 +166,25 @@
   gap: 0.25rem;
   border-block-end: 1px solid var(--border);
   padding: 0 1rem 0.75rem;
+  padding-block-start: 0.5rem;
+  overflow-x: auto;
+}
+
+.mcp-workspace-panel__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.875rem;
+  padding: 2rem 1.25rem;
+  font-size: 0.875rem;
+}
+.mcp-workspace-panel__empty p {
+  max-width: 32rem;
+  color: var(--muted-foreground);
+  line-height: 1.6;
+}
+.mcp-workspace-panel__tabs button {
+  flex: none;
 }
 
 .mcp-workspace-panel__selectors {
@@ -322,4 +343,24 @@
   .mcp-workspace-panel * {
     transition-duration: 0ms !important;
   }
+}
+
+.mcp-workspace-panel__installed-intro {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 1.25rem 1.25rem 0.5rem;
+}
+.mcp-workspace-panel__installed-intro h2 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.mcp-workspace-panel__installed-intro p {
+  margin-block-start: 0.25rem;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1.5;
 }

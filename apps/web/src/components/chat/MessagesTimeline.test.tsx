@@ -372,17 +372,13 @@ it("switches visual grouping without remounting the existing user message", asyn
   }
 });
 
-it("updates reasoning and plan-bubble preferences while keeping audio playable in both message roles", async () => {
+it("moves the active plan between the composer and native timeline", async () => {
   const { __setClientSettingsForTests, getClientSettings } =
     await import("../../hooks/useSettings");
   const originalSettings = getClientSettings();
   const settings = {
     ...DEFAULT_CLIENT_SETTINGS,
     showReasoning: true,
-    betterT3Device: {
-      ...DEFAULT_CLIENT_SETTINGS.betterT3Device,
-      flags: { "chat.classicBubbleOnly": true },
-    },
   };
   __setClientSettingsForTests(settings);
   visualPreference.mode = "classic";
@@ -436,7 +432,13 @@ it("updates reasoning and plan-bubble preferences while keeping audio playable i
   let renderer: ReactTestRenderer | undefined;
   try {
     await act(() => {
-      renderer = create(<MessagesTimeline {...buildProps()} timelineEntries={timelineEntries} />);
+      renderer = create(
+        <MessagesTimeline
+          {...buildProps()}
+          composerPlanTurnId={plan.turnId}
+          timelineEntries={timelineEntries}
+        />,
+      );
     });
     expect(renderer!.root.findAllByType("audio").map((node) => node.props["aria-label"])).toEqual([
       "voice.wav",
@@ -451,12 +453,14 @@ it("updates reasoning and plan-bubble preferences while keeping audio playable i
       __setClientSettingsForTests({
         ...settings,
         showReasoning: false,
-        betterT3Device: {
-          ...settings.betterT3Device,
-          flags: { ...settings.betterT3Device.flags, "chat.classicBubbleOnly": false },
-        },
       });
-      renderer!.update(<MessagesTimeline {...buildProps()} timelineEntries={timelineEntries} />);
+      renderer!.update(
+        <MessagesTimeline
+          {...buildProps()}
+          composerPlanTurnId={null}
+          timelineEntries={timelineEntries}
+        />,
+      );
     });
     expect(renderer!.root.findAllByProps({ "data-reasoning-output": "true" })).toHaveLength(0);
     const planNode = renderer!.root.findByProps({ "data-turn-plan": "true" });

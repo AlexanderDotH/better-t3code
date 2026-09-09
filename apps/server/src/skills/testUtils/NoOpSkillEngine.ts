@@ -8,6 +8,10 @@ export const NoOpSkillEngineLayer = Layer.succeed(SkillEngine, {
   list: () => Effect.succeed({ skills: [] }),
   discoverImportSources: Effect.succeed({ sources: [] }),
   importSources: () => Effect.succeed({ skills: [] }),
+  installRegistry: () =>
+    Effect.fail(
+      new SkillEngineError({ message: "Registry installation is not available in this test." }),
+    ),
   create: () =>
     Effect.fail(
       new SkillEngineError({ message: "Skill mutations are not available in this test." }),

@@ -174,7 +174,7 @@ describe("workspace card deck CSS repository motion policy", () => {
         /\.workspace-card-deck__peek-content\s*\{[^}]*position:\s*relative;[^}]*z-index:\s*2;[^}]*pointer-events:\s*none;/,
       );
       expect(css).toMatch(
-        /\[data-git-workspace-context-control="true"\]\s*\{[^}]*z-index:\s*3;[^}]*pointer-events:\s*auto;/,
+        /\.workspace-card-deck__peek-content \[data-composer-context-control\]\s*\{[^}]*z-index:\s*3;[^}]*pointer-events:\s*auto;/,
       );
       expect(css).toMatch(
         /\.workspace-card-deck__peek-content > \[data-workspace-card-peek-id\]\s*\{[^}]*display:\s*flex;[^}]*height:\s*100%;[^}]*align-items:\s*center;[^}]*padding-inline:\s*1rem;/,

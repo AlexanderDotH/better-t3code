@@ -166,7 +166,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     // Prefixed because the slider control already owns the `glass-opacity` id.
     id: "setting-glass-opacity",
     title: "Glass opacity",
-    to: "/settings/appearance",
+    to: "/settings/better-t3",
     searchTerms: ["transparent transparency solid menus dialogs composer"],
   },
   {

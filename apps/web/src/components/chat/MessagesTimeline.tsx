@@ -4,7 +4,6 @@ import { forkBoundaryKey } from "@t3tools/client-runtime/thread-fork";
 import { ForkChatButton } from "./ForkChatButton";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { useClientSettings } from "../../hooks/useSettings";
-import { resolveBetterT3FeatureFlag } from "@t3tools/contracts";
 import { RefreshCwIcon } from "lucide-react";
 import {
   type AssistantCitation,
@@ -368,6 +367,7 @@ function TimelineForkProvenanceBanner({ sourceTitle, onOpenSource }: TimelineFor
   );
 }
 interface MessagesTimelineProps {
+  composerPlanTurnId?: TurnId | null;
   streamingMotionEnabled?: boolean;
   forkProvenance?: TimelineForkProvenance | null;
   forkActions?: TimelineForkActions | null;
@@ -433,6 +433,7 @@ interface MessagesTimelineProps {
 // ---------------------------------------------------------------------------
 
 export const MessagesTimeline = memo(function MessagesTimeline({
+  composerPlanTurnId = null,
   streamingMotionEnabled = false,
   forkProvenance = null,
   forkActions = null,
@@ -481,9 +482,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
   const chatVisualMode = useChatVisualMode();
   const showReasoning = useClientSettings((settings) => settings.showReasoning);
-  const classicBubbleOnly = useClientSettings((settings) =>
-    resolveBetterT3FeatureFlag(settings.betterT3Device, "chat.classicBubbleOnly"),
-  );
   const citationThreadRef = useMemo(() => parseScopedThreadKey(routeThreadKey), [routeThreadKey]);
   const expandCitedTurn = useCallback((turnId: TurnId) => {
     setExpandedTurnIds((current) =>
@@ -624,7 +622,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       {
         chatVisualMode,
         showReasoning,
-        classicBubbleOnly,
+        composerPlanTurnId,
         timelineEntries,
         latestTurn,
         runningTurnId,
@@ -645,7 +643,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     rowsProjectionRef,
     chatVisualMode,
     showReasoning,
-    classicBubbleOnly,
+    composerPlanTurnId,
     routeThreadKey,
     workspaceRoot,
     timelineEntries,

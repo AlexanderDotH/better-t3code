@@ -34,6 +34,8 @@ export const BETTER_T3_VISUAL_FEATURE_IDS = [
   "chat.presentation",
   "chat.contextWindowSelector",
   "chat.workspaceCardDeck",
+  "chat.classicBubbleOnly",
+  "chat.characterStreamingMotion",
 ] as const satisfies ReadonlyArray<BetterT3FeatureId>;
 
 export type BetterT3VisualFeatureId = (typeof BETTER_T3_VISUAL_FEATURE_IDS)[number];
@@ -59,6 +61,15 @@ const agentRows = [
   "settings.betterT3.preview.agent.implementer",
   "settings.betterT3.preview.agent.reviewer",
 ] as const;
+
+function keyedCharacters(text: string) {
+  const occurrences = new Map<string, number>();
+  return Array.from(text, (character) => {
+    const occurrence = (occurrences.get(character) ?? 0) + 1;
+    occurrences.set(character, occurrence);
+    return { character, key: `${character}:${occurrence}` };
+  });
+}
 
 function AgentPromptPreview(props: {
   readonly model: BetterT3AgentPreviewModel;
@@ -416,6 +427,11 @@ function visualChoiceLabel(
         : "settings.betterT3.value.native",
     );
   }
+  if (featureId === "chat.classicBubbleOnly") {
+    return translate(
+      value === true ? "settings.betterT3.value.planBubble" : "settings.betterT3.value.native",
+    );
+  }
   return translate(
     value === true
       ? "settings.betterT3.control.statusEnabled"
@@ -447,6 +463,10 @@ function visualChoiceModel(
       };
     case "chat.workspaceCardDeck":
       return { ...model, chat: { ...model.chat, workspaceCardDeck: value === true } };
+    case "chat.classicBubbleOnly":
+      return { ...model, chat: { ...model.chat, composerPlanBubble: value === true } };
+    case "chat.characterStreamingMotion":
+      return { ...model, chat: { ...model.chat, characterStreamingMotion: value === true } };
     case "chat.contextWindowSelector":
       return {
         ...model,
@@ -521,6 +541,36 @@ function BetterT3FeatureVisual(props: {
           <AgentPromptPreview model={agent} translate={props.translate} />
         </FeatureVisualFrame>
       );
+    case "chat.classicBubbleOnly":
+      return (
+        <FeatureVisualFrame
+          animationKey={`plan-bubble:${chat.composerPlanBubble}`}
+          featureId={props.featureId}
+        >
+          <div className="flex h-full flex-col justify-center gap-2 px-4 py-3">
+            <div
+              className={cn(
+                "rounded-lg border px-3 py-2",
+                chat.composerPlanBubble
+                  ? "border-primary/35 bg-primary/10 text-primary"
+                  : "border-border/60 bg-muted/30 text-foreground/75",
+              )}
+            >
+              <div className="mb-1.5 flex items-center gap-1.5 text-[9px] font-medium">
+                <CheckIcon className="size-3" />
+                {props.translate("settings.betterT3.preview.agent.plan")}
+              </div>
+              <div className="space-y-1">
+                <span className="block h-1 w-[88%] rounded-full bg-current opacity-25" />
+                <span className="block h-1 w-[64%] rounded-full bg-current opacity-20" />
+              </div>
+            </div>
+            {chat.composerPlanBubble ? (
+              <div className="mx-2 h-7 rounded-lg border border-border/55 bg-card shadow-sm" />
+            ) : null}
+          </div>
+        </FeatureVisualFrame>
+      );
     case "agent.generalSubagents":
       return (
         <FeatureVisualFrame
@@ -556,6 +606,33 @@ function BetterT3FeatureVisual(props: {
         >
           <div data-streaming-motion={chat.characterStreamingMotion} className="h-full">
             <ChatPresentationPreview model={chat} translate={props.translate} />
+          </div>
+        </FeatureVisualFrame>
+      );
+    case "chat.characterStreamingMotion":
+      return (
+        <FeatureVisualFrame
+          animationKey={`streaming:${chat.characterStreamingMotion}`}
+          featureId={props.featureId}
+        >
+          <div
+            className="flex h-full items-center gap-2.5 px-4"
+            data-streaming-motion={chat.characterStreamingMotion}
+          >
+            <BotIcon className="size-4 shrink-0 text-muted-foreground" />
+            <span className="text-xs leading-relaxed text-foreground/80">
+              {keyedCharacters(props.translate("settings.betterT3.preview.chat.response")).map(
+                ({ character, key }, index) => (
+                  <span
+                    className="better-t3-preview-stream-character inline-block whitespace-pre"
+                    key={key}
+                    style={{ animationDelay: `${index * 25}ms` }}
+                  >
+                    {character}
+                  </span>
+                ),
+              )}
+            </span>
           </div>
         </FeatureVisualFrame>
       );

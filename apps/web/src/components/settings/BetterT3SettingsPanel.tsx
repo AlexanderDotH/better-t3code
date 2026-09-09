@@ -860,7 +860,9 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
             ? chatVisualMode
             : featureId === "chat.contextWindowSelector"
               ? settings.contextWindowSelector
-              : feature.value === true;
+              : featureId === "chat.classicBubbleOnly" && feature.availability.state !== "available"
+                ? false
+                : feature.value === true;
       choices[featureId] = (
         <BetterT3FeatureChoice
           disabled={feature.availability.state !== "available"}

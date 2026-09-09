@@ -254,11 +254,6 @@
   cursor: pointer;
 }
 
-[data-git-workspace-context-control="true"] {
-  position: relative;
-  z-index: 2;
-}
-
 .git-workspace-card-trigger:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;

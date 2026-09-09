@@ -49,6 +49,7 @@ const featureIds = [
   "agent.projectCoordination",
   "chat.workspaceCardDeck",
   "chat.cardMorphing",
+  "chat.hideComposerDivider",
   "chat.characterStreamingMotion",
   "chat.presentation",
   "chat.contextWindowSelector",
@@ -100,6 +101,7 @@ const switchFeatureIds = [
   "agent.projectCoordination",
   "chat.workspaceCardDeck",
   "chat.cardMorphing",
+  "chat.hideComposerDivider",
   "chat.characterStreamingMotion",
   "chat.classicBubbleOnly",
   "chat.classicSidebar",
@@ -342,6 +344,13 @@ export const BETTER_T3_FEATURE_REGISTRY = [
     surfaces: ["web", "desktop"],
   }),
   descriptor({
+    id: "chat.hideComposerDivider",
+    section: "chat-layout",
+    scope: "device",
+    controlKind: "switch",
+    surfaces: ["web", "desktop"],
+  }),
+  descriptor({
     id: "chat.characterStreamingMotion",
     section: "chat-layout",
     scope: "device",
@@ -369,7 +378,7 @@ export const BETTER_T3_FEATURE_REGISTRY = [
     section: "chat-layout",
     scope: "device",
     controlKind: "switch",
-    existing: true,
+    dependencies: [{ featureId: "chat.workspaceCardDeck", condition: "enabled" }],
     surfaces: ["web", "desktop"],
   }),
   descriptor({

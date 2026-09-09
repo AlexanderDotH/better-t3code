@@ -51,9 +51,19 @@ export function createAgentSettingsEnvironmentAtoms<R, E>(
       }),
     },
     skills: {
+      previewRegistryQuery: createEnvironmentRpcQueryAtomFamily(runtime, {
+        label: "environment-data:skills:registry-preview",
+        tag: WS_METHODS.skillsPreviewRegistry,
+        staleTimeMs: 0,
+      }),
+      installRegistry: createEnvironmentRpcCommand(runtime, {
+        label: "environment-data:skills:registry-install",
+        tag: WS_METHODS.skillsInstallRegistry,
+      }),
       listQuery: createEnvironmentRpcQueryAtomFamily(runtime, {
         label: "environment-data:skills:list-query",
         tag: WS_METHODS.skillsList,
+        staleTimeMs: 0,
       }),
       importSourcesQuery: createEnvironmentRpcQueryAtomFamily(runtime, {
         label: "environment-data:skills:import-sources-query",
@@ -93,5 +103,9 @@ export function createAgentSettingsEnvironmentAtoms<R, E>(
       }),
     },
     mcp,
+    catalogSearchQuery: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:extensions:search",
+      tag: WS_METHODS.extensionCatalogSearch,
+    }),
   };
 }

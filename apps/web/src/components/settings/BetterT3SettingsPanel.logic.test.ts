@@ -168,6 +168,26 @@ describe("buildBetterT3ControlStates", () => {
       controls.find((entry) => entry.descriptor.id === "chat.shiftClickShowLess"),
     ).toMatchObject({ availability: { state: "blocked" }, value: true });
   });
+
+  it("blocks the plan bubble while the Card Deck composer is disabled", () => {
+    const controls = buildBetterT3ControlStates({
+      registry: BETTER_T3_FEATURE_REGISTRY,
+      device: {
+        ...DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
+        flags: {
+          "chat.classicBubbleOnly": true,
+          "chat.workspaceCardDeck": false,
+        },
+      },
+      environment: DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
+      surface: "web",
+      capabilities: {},
+    });
+
+    expect(
+      controls.find((entry) => entry.descriptor.id === "chat.classicBubbleOnly"),
+    ).toMatchObject({ availability: { state: "blocked" }, value: true });
+  });
 });
 
 describe("resolveSelectedBetterT3EnvironmentId", () => {
