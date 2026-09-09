@@ -35,6 +35,7 @@ describe("buildBetterT3SettingsPreviewModel", () => {
         feature("chat.workspaceCardDeck", true),
         feature("chat.cardMorphing", true),
         feature("chat.characterStreamingMotion", true),
+        feature("chat.classicBubbleOnly", true),
         feature("chat.classicSidebar", true),
         feature("chat.draftIndicators", true),
       ],
@@ -55,6 +56,7 @@ describe("buildBetterT3SettingsPreviewModel", () => {
       workspaceCardDeck: true,
       cardMorphing: true,
       characterStreamingMotion: true,
+      composerPlanBubble: true,
       classicSidebar: true,
       draftIndicators: true,
       presentation: "classic",
@@ -69,6 +71,7 @@ describe("buildBetterT3SettingsPreviewModel", () => {
         feature("chat.workspaceCardDeck", false),
         feature("chat.cardMorphing", true, "blocked"),
         feature("chat.characterStreamingMotion", true),
+        feature("chat.classicBubbleOnly", true, "blocked"),
       ],
       chatVisualMode: "current",
       contextWindowSelector: "better-t3",
@@ -78,6 +81,7 @@ describe("buildBetterT3SettingsPreviewModel", () => {
     expect(model.chat.workspaceCardDeck).toBe(false);
     expect(model.chat.cardMorphing).toBe(false);
     expect(model.chat.characterStreamingMotion).toBe(true);
+    expect(model.chat.composerPlanBubble).toBe(false);
   });
 
   it("changes only the relevant animation key when a previewed setting changes", () => {

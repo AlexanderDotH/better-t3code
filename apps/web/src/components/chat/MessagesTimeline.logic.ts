@@ -860,7 +860,7 @@ function buildRevertTurnCountByUserMessageId(input: {
 
 export function deriveMessagesTimelineRows(input: {
   chatVisualMode?: ChatVisualMode;
-  classicBubbleOnly?: boolean;
+  composerPlanTurnId?: TurnId | null;
   showReasoning?: boolean;
   timelineEntries: ReadonlyArray<TimelineEntry>;
   latestTurn?: TimelineLatestTurn | null;
@@ -1255,7 +1255,7 @@ export function deriveMessagesTimelineRows(input: {
     }
 
     if (timelineEntry.kind === "turn-plan") {
-      if (input.chatVisualMode !== "classic" || input.classicBubbleOnly !== true) {
+      if (timelineEntry.turnPlan.turnId !== input.composerPlanTurnId) {
         nextRows.push(timelineEntry);
       }
       continue;

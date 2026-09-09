@@ -237,6 +237,11 @@ export function WorkspaceCardDrawerShell<TabId extends string>(
         ?.querySelector<HTMLElement>("[data-workspace-card-drawer-initial-focus]")
         ?.focus({ preventScroll: true });
     });
+    return () => window.cancelAnimationFrame(focusFrame);
+  }, [props.open]);
+
+  useEffect(() => {
+    if (!props.open || typeof document === "undefined") return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
       if (props.onEscapeBeforeCollapse?.()) {
@@ -248,7 +253,6 @@ export function WorkspaceCardDrawerShell<TabId extends string>(
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => {
-      window.cancelAnimationFrame(focusFrame);
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [closeDrawer, props.onEscapeBeforeCollapse, props.open]);

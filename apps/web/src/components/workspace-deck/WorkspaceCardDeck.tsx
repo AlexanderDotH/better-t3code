@@ -146,6 +146,13 @@ export function WorkspaceCardDeck<CardId extends string>(props: WorkspaceCardDec
       <div
         className="workspace-card-deck__viewport"
         data-height-ready={compactHeight !== null ? "true" : undefined}
+        data-natural-height={
+          (view.activeCard === view.compactHeightReferenceCard &&
+            props.expandedCard !== view.activeCard &&
+            lifecycle.collapsingCard === null &&
+            lifecycle.transition === null) ||
+          undefined
+        }
         data-expanded={props.expandedCard === view.activeCard ? "true" : undefined}
         data-collapsing={lifecycle.collapsingCard !== null ? "true" : undefined}
         onTransitionCancel={lifecycle.onViewportTransitionEnd}

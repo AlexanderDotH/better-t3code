@@ -17,6 +17,11 @@
   display: none;
 }
 
+/* An empty portal still mounts its dock, so :empty cannot detect the idle line. */
+.composer-floating-bubble-region[data-hide-empty="true"]:not(:has([data-composer-banner-surface])) {
+  display: none;
+}
+
 .composer-floating-bubble-host {
   display: grid;
   width: calc(100% - 2.75rem);

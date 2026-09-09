@@ -1567,10 +1567,9 @@ body {
   }
 
   html.macos-vibrancy [data-app-sidebar] {
-    border-color: color-mix(
-      in srgb,
-      var(--contrast-sidebar-border) 80%,
-      var(--contrast-sidebar-foreground)
+    /* The container is transparent, so the divider needs its own opaque tint. */
+    border-color: rgb(
+      from color-mix(in srgb, var(--sidebar) 85%, var(--contrast-sidebar-foreground)) r g b / 1
     );
   }
 

@@ -136,6 +136,11 @@ const betterT3SettingsCatalog = defineLocalizedInterfaceCatalog({
   "settings.betterT3.preview.chat.mcp": ["MCP", "MCP", "MCP"],
   "settings.betterT3.preview.chat.git": ["Git", "Git", "Git"],
   "settings.betterT3.preview.chat.prompt": ["Type a prompt", "Prompt eingeben", "Saisir un prompt"],
+  "settings.betterT3.value.planBubble": [
+    "Blue plan bubble",
+    "Blaue Plan-Bubble",
+    "Bulle de plan bleue",
+  ],
   "settings.betterT3.availability.available": ["Available", "Verfügbar", "Disponible"],
   "settings.betterT3.availability.unavailable": [
     "Unavailable in the current environment",
@@ -535,6 +540,11 @@ const featureLabels = {
     "Jeu de cartes de l’espace de travail",
   ],
   "chat.cardMorphing": ["Card morphing", "Karten-Morphing", "Morphing des cartes"],
+  "chat.hideComposerDivider": [
+    "Hide divider above the input",
+    "Trennlinie über dem Eingabefeld ausblenden",
+    "Masquer la ligne au-dessus de la zone de saisie",
+  ],
   "chat.characterStreamingMotion": [
     "Character streaming motion",
     "Zeichen-Streaming-Animation",
@@ -546,11 +556,7 @@ const featureLabels = {
     "Kontextfenster-Auswahl",
     "Sélecteur de fenêtre de contexte",
   ],
-  "chat.classicBubbleOnly": [
-    "Plan only in the Classic bubble",
-    "Plan nur in der klassischen Bubble",
-    "Plan uniquement dans la bulle classique",
-  ],
+  "chat.classicBubbleOnly": ["Plan presentation", "Plan-Darstellung", "Présentation du plan"],
   "chat.classicSidebar": ["Classic sidebar", "Klassische Seitenleiste", "Barre latérale classique"],
   "chat.previewCount": ["Preview count", "Vorschauanzahl", "Nombre d’aperçus"],
   "chat.sorting": ["Chat sorting", "Chat-Sortierung", "Tri des discussions"],
@@ -688,14 +694,19 @@ const featureDescriptionOverrides: Partial<Record<BetterT3FeatureId, FeatureLabe
     "Utilise le menu natif de T3 Code ou le curseur Better T3 pour Codex. Un seul est affiché ; la taille de contexte choisie est conservée.",
   ],
   "chat.classicBubbleOnly": [
-    "Hide the duplicate plan overview from the Classic transcript while keeping the blue composer bubble.",
-    "Blendet die doppelte Planübersicht im klassischen Transkript aus und behält die blaue Composer-Bubble.",
-    "Masque l’aperçu du plan en double dans la transcription classique tout en conservant la bulle bleue du compositeur.",
+    "Use the native T3 Code plan, or move active plan progress into a blue bubble above the Card Deck composer. The bubble requires Card Deck.",
+    "Nutze den nativen T3-Code-Plan oder verschiebe den aktiven Planfortschritt in eine blaue Bubble über dem Card-Deck-Composer. Die Bubble benötigt das Card Deck.",
+    "Utilisez le plan T3 Code natif ou déplacez la progression du plan actif dans une bulle bleue au-dessus du compositeur Card Deck. La bulle nécessite Card Deck.",
   ],
   "chat.workspaceCardDeck": [
     "Stack Chat, MCP, and Git as quick-switch cards around the composer.",
     "Stapelt Chat, MCP und Git als schnell wechselbare Karten um das Eingabefeld.",
     "Empile Chat, MCP et Git sous forme de cartes accessibles rapidement autour de la zone de saisie.",
+  ],
+  "chat.hideComposerDivider": [
+    "Hide the horizontal line above the input when no status cards are shown. Status cards and requests remain visible when needed.",
+    "Blendet die horizontale Linie über dem Eingabefeld aus, wenn keine Statuskarten angezeigt werden. Statuskarten und Rückfragen bleiben bei Bedarf sichtbar.",
+    "Masque la ligne horizontale au-dessus de la zone de saisie lorsqu’aucune carte d’état n’est affichée. Les cartes d’état et les demandes restent visibles si nécessaire.",
   ],
 };
 
