@@ -3,6 +3,7 @@ import { ExternalLinkIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { acquireDesktopTab } from "~/browser/desktopTabLifetime";
 import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
+import { randomUUID } from "~/lib/utils";
 import { previewBridge } from "../preview/previewBridge";
 import { catalogSourceUrl } from "./extensionStore.logic";
 import { Button } from "../ui/button";
@@ -27,7 +28,7 @@ export function ExtensionSourcePage(props: { environmentId: EnvironmentId; url: 
     if (!bridge || !container) return;
     let disposed = false;
     let removeGuest = () => {};
-    const tabId = `extension-source-${crypto.randomUUID()}-${attempt}`;
+    const tabId = `extension-source-${randomUUID()}-${attempt}`;
     const lease = acquireDesktopTab(tabId);
     setStatus("loading");
     void Promise.all([lease.ready, bridge.getPreviewConfig(props.environmentId)])
