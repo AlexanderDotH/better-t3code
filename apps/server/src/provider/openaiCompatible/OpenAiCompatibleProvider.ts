@@ -20,7 +20,7 @@ import {
 } from "./OpenAiCompatibleModelCatalog.ts";
 import type { OpenAiCompatibleTransportError } from "./OpenAiCompatibleTransport.ts";
 
-export function openAiCompatibleModelsFromCatalog(
+function openAiCompatibleModelsFromCatalog(
   catalog: ReadonlyArray<OpenAiCompatibleCatalogModel>,
   settings: Pick<OpenAiCompatibleSettings, "defaultModel" | "customModels">,
 ): ReadonlyArray<ServerProviderModel> {
