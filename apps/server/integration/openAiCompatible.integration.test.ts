@@ -1,3 +1,4 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Integration test exercises a real Node HTTP server boundary.
 import * as NodeHttp from "node:http";
 import * as NodeStreamConsumers from "node:stream/consumers";
 

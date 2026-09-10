@@ -120,7 +120,7 @@ export const deriveProviderInstanceConfigMap = (
 export class ProviderInstanceSettingsSync extends Context.Service<
   ProviderInstanceSettingsSync,
   { readonly synchronize: Effect.Effect<void, ServerSettingsError> }
->()("t3/provider/ProviderInstanceSettingsSync") {}
+>()("t3/provider/Layers/ProviderInstanceRegistryHydration/ProviderInstanceSettingsSync") {}
 
 export const ProviderInstanceSettingsSyncLive = Layer.effect(
   ProviderInstanceSettingsSync,

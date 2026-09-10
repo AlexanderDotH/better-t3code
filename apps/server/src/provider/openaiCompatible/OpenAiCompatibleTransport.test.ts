@@ -5,6 +5,7 @@ import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import {
@@ -16,6 +17,7 @@ import {
 
 import { makeOpenAiCompatibleTransport } from "./OpenAiCompatibleTransport.ts";
 
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const BASE_URL = "http://127.0.0.1:1234/proxy/local-api";
 const round = { model: "manual/model.gguf", instructions: "", history: [], tools: [] };
 const encoder = new TextEncoder();
@@ -161,7 +163,7 @@ describe("OpenAI-compatible transport", () => {
               : { category }),
           });
           if (status === 429) expect(error).toMatchObject({ retryAfterSeconds: 17 });
-          expect(JSON.stringify(error)).not.toContain("secret-key");
+          expect(encodeJson(error)).not.toContain("secret-key");
         }
       }),
   );
@@ -198,7 +200,7 @@ describe("OpenAI-compatible transport", () => {
               ? { _tag: "OpenAiCompatibleTransportSecurityError" }
               : { _tag: "OpenAiCompatibleHttpError", category: "network" },
           );
-          expect(JSON.stringify(error)).not.toContain("secret-key");
+          expect(encodeJson(error)).not.toContain("secret-key");
           expect(calls).toBe(1);
         }
       }),

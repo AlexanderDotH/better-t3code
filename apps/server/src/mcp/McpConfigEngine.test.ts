@@ -16,8 +16,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { McpConfigurationReconciler } from "./McpConfigurationReconciler.ts";
+
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 import {
   exportCursorMcpServersJson,
   getMcpProviderStatuses,
@@ -376,7 +379,7 @@ effectIt.layer(NodeServices.layer)("McpConfigEngineLive", (it) => {
             configPath: path.join(homePath, "config.toml"),
           },
         ]);
-        expect(JSON.stringify(discovered)).not.toContain("token=secret");
+        expect(encodeJson(discovered)).not.toContain("token=secret");
         expect((yield* settings.getSettings).mcp.servers).toEqual([]);
       }).pipe(
         Effect.provide(

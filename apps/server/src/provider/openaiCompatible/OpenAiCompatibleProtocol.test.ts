@@ -1,11 +1,14 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import {
   buildOpenAiCompatibleChatCompletionRequest,
   decodeOpenAiCompatibleChatCompletionSse,
 } from "./OpenAiCompatibleProtocol.ts";
+
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 function sseBytes(frames: ReadonlyArray<string>) {
   const bytes = new TextEncoder().encode(frames.map((frame) => `data: ${frame}\r\n\r\n`).join(""));
@@ -174,7 +177,7 @@ describe("OpenAI-compatible Chat Completions", () => {
       ]) {
         const error = yield* decodeOpenAiCompatibleChatCompletionSse(
           sseBytes([
-            JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finishReason }] }),
+            encodeJson({ choices: [{ index: 0, delta, finish_reason: finishReason }] }),
             "[DONE]",
           ]),
         ).pipe(Stream.runCollect, Effect.flip);

@@ -9,8 +9,11 @@ import {
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
 import { discoverNativeMcpServers } from "./McpNativeConfig.ts";
+
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const writeFile = Effect.fn("writeNativeMcpConfig")(function* (file: string, contents: string) {
   const fs = yield* FileSystem.FileSystem;
@@ -73,8 +76,8 @@ it.layer(NodeServices.layer)("native MCP configuration discovery", (it) => {
         },
         { name: "off", transport: "stdio", enabled: false, scope: "global", configPath: file },
       ]);
-      assert.notInclude(JSON.stringify(discovered), "private");
-      assert.notInclude(JSON.stringify(discovered), "never-send-this");
+      assert.notInclude(encodeJson(discovered), "private");
+      assert.notInclude(encodeJson(discovered), "never-send-this");
       yield* writeFile(file, '[mcp_servers.replacement]\ncommand = "new-server"');
       assert.deepEqual(
         (yield* discoverNativeMcpServers(input)).map((server) => server.name),
@@ -154,7 +157,7 @@ it.layer(NodeServices.layer)("native MCP configuration discovery", (it) => {
         const configFile = path.join(configDir, ".claude.json");
         yield* writeFile(
           configFile,
-          JSON.stringify({
+          encodeJson({
             mcpServers: { global: { command: "global" } },
             projects: {
               [projectCwd]: { mcpServers: { docs: { command: "local-override" } } },

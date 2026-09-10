@@ -353,7 +353,7 @@ it.effect(
           Effect.gen(function* () {
             probes++;
             if (probes === 10) yield* Deferred.succeed(started, undefined);
-            if (probes <= 10) yield* Effect.never;
+            if (probes <= 10) return yield* Effect.never;
             return false;
           }).pipe(
             Effect.ensuring(
