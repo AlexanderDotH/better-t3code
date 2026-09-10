@@ -41,6 +41,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(() => renderer?.unmount());
   renderer = undefined;
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -87,6 +88,7 @@ it("keeps navigation failures visible, retries with a fresh guest, and cleans up
     ),
   );
   await act(() => guest.dispatchEvent(new Event("dom-ready")));
+  await act(() => guest.dispatchEvent(new Event("did-stop-loading")));
   expect(renderer!.root.findAllByProps({ role: "alert" })).toHaveLength(1);
 
   await act(() => renderer!.root.findByType("button").props.onClick());
@@ -114,4 +116,109 @@ it("does not attach a page if its modal closes while configuration is loading", 
   expect(guests).toHaveLength(0);
   expect(append).not.toHaveBeenCalled();
   expect(mocks.release).toHaveBeenCalledOnce();
+});
+
+it("keeps a loaded page visible during history/hash and subframe navigations", async () => {
+  const { guests, append } = setupGuest();
+  await mount(append);
+  const guest = guests[0]!;
+  await act(() => guest.dispatchEvent(new Event("dom-ready")));
+
+  for (const details of [
+    { isMainFrame: true, isInPlace: true },
+    { isMainFrame: false, isInPlace: false },
+  ]) {
+    await act(() => guest.dispatchEvent(Object.assign(new Event("did-start-navigation"), details)));
+    expect(renderer!.root.findAllByProps({ role: "status" })).toHaveLength(0);
+  }
+});
+
+it("finishes loading when navigation stops without another dom-ready event", async () => {
+  const { guests, append } = setupGuest();
+  await mount(append);
+  const guest = guests[0]!;
+  await act(() =>
+    guest.dispatchEvent(
+      Object.assign(new Event("did-start-navigation"), { isMainFrame: true, isInPlace: false }),
+    ),
+  );
+  expect(renderer!.root.findAllByProps({ role: "status" })).toHaveLength(1);
+  await act(() => guest.dispatchEvent(new Event("did-stop-loading")));
+  expect(renderer!.root.findAllByProps({ role: "status" })).toHaveLength(0);
+  expect(renderer!.root.findAllByProps({ role: "alert" })).toHaveLength(0);
+});
+
+it("does not let an older registration finish a newer navigation", async () => {
+  let registered!: () => void;
+  mocks.register.mockReturnValueOnce(
+    new Promise<void>((resolve) => {
+      registered = resolve;
+    }),
+  );
+  const { guests, append } = setupGuest();
+  await mount(append);
+  const guest = guests[0]!;
+  await act(() => guest.dispatchEvent(new Event("dom-ready")));
+  await act(() =>
+    guest.dispatchEvent(
+      Object.assign(new Event("did-start-navigation"), { isMainFrame: true, isInPlace: false }),
+    ),
+  );
+  await act(() => registered());
+  expect(renderer!.root.findAllByProps({ role: "status" })).toHaveLength(1);
+  await act(() => guest.dispatchEvent(new Event("did-stop-loading")));
+  expect(renderer!.root.findAllByProps({ role: "status" })).toHaveLength(0);
+});
+
+it("offers retry for stalled configuration and ignores its late completion", async () => {
+  vi.useFakeTimers();
+  let resolveConfig!: (value: DesktopPreviewWebviewConfig) => void;
+  mocks.config.mockReturnValueOnce(
+    new Promise((resolve) => {
+      resolveConfig = resolve;
+    }),
+  );
+  const { guests, append } = setupGuest();
+  await mount(append);
+  await act(() => vi.advanceTimersByTime(20_000));
+  expect(renderer!.root.findAllByProps({ role: "alert" })).toHaveLength(1);
+  await act(() => resolveConfig(config));
+  expect(append).not.toHaveBeenCalled();
+
+  await act(() => renderer!.root.findByType("button").props.onClick());
+  expect(guests).toHaveLength(1);
+  await act(() => guests[0]!.dispatchEvent(new Event("dom-ready")));
+  expect(renderer!.root.findAllByProps({ role: "alert" })).toHaveLength(0);
+  expect(renderer!.root.findAllByProps({ role: "status" })).toHaveLength(0);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("reports a crashed guest instead of covering it with an endless loading state", async () => {
+  const { guests, append } = setupGuest();
+  await mount(append);
+  await act(() => guests[0]!.dispatchEvent(new Event("render-process-gone")));
+  expect(renderer!.root.findAllByProps({ role: "alert" })).toHaveLength(1);
+  await act(() => guests[0]!.dispatchEvent(new Event("did-stop-loading")));
+  expect(renderer!.root.findAllByProps({ role: "alert" })).toHaveLength(1);
+});
+
+it("times out a stalled page navigation and cancels the deadline on close", async () => {
+  vi.useFakeTimers();
+  const { guests, append } = setupGuest();
+  await mount(append);
+  const guest = guests[0]!;
+  await act(() => guest.dispatchEvent(new Event("dom-ready")));
+  expect(vi.getTimerCount()).toBe(0);
+  await act(() =>
+    guest.dispatchEvent(
+      Object.assign(new Event("did-start-navigation"), { isMainFrame: true, isInPlace: false }),
+    ),
+  );
+  await act(() => vi.advanceTimersByTime(20_000));
+  expect(renderer!.root.findAllByProps({ role: "alert" })).toHaveLength(1);
+  await act(() => renderer!.root.findByType("button").props.onClick());
+  expect(vi.getTimerCount()).toBe(1);
+  await act(() => renderer!.unmount());
+  renderer = undefined;
+  expect(vi.getTimerCount()).toBe(0);
 });

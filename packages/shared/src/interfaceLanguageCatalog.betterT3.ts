@@ -133,6 +133,16 @@ const betterT3SettingsCatalog = defineLocalizedInterfaceCatalog({
     "Hier ist die Live-Antwort",
     "Voici la réponse en direct",
   ],
+  "settings.betterT3.preview.chat.instant": [
+    "Without animation",
+    "Ohne Animation",
+    "Sans animation",
+  ],
+  "settings.betterT3.preview.chat.smooth": [
+    "Smooth character reveal",
+    "Sanftes Einblenden der Zeichen",
+    "Apparition fluide des caractères",
+  ],
   "settings.betterT3.preview.chat.mcp": ["MCP", "MCP", "MCP"],
   "settings.betterT3.preview.chat.git": ["Git", "Git", "Git"],
   "settings.betterT3.preview.chat.prompt": ["Type a prompt", "Prompt eingeben", "Saisir un prompt"],

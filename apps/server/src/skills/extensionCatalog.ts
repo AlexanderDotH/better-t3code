@@ -22,6 +22,45 @@ const decodeRegistrySource = Schema.decodeUnknownEffect(SkillRegistrySource);
 const isRegistrySource = Schema.is(SkillRegistrySource);
 const isSkillEngineError = Schema.is(SkillEngineError);
 
+const skillSuggestions = [
+  {
+    id: "vercel-labs/agent-skills/vercel-react-best-practices",
+    name: "React best practices",
+    description: "Improve React and Next.js performance and rendering patterns.",
+  },
+  {
+    id: "anthropics/skills/frontend-design",
+    name: "Frontend design",
+    description: "Build polished interfaces with a clear visual direction.",
+  },
+  {
+    id: "vercel-labs/agent-skills/web-design-guidelines",
+    name: "Web design guidelines",
+    description: "Review interfaces for accessibility, usability, and consistency.",
+  },
+  {
+    id: "anthropics/skills/webapp-testing",
+    name: "Web app testing",
+    description: "Test web applications and investigate UI behavior with Playwright.",
+  },
+  {
+    id: "vercel-labs/agent-skills/vercel-composition-patterns",
+    name: "React composition patterns",
+    description: "Design reusable React components with simpler, composable APIs.",
+  },
+  {
+    id: "anthropics/skills/skill-creator",
+    name: "Skill creator",
+    description: "Create, improve, and evaluate your own agent skills.",
+  },
+].map((skill) => ({
+  ...skill,
+  kind: "skill" as const,
+  source: skill.id.split("/").slice(0, 2).join("/"),
+  sourceUrl: `https://skills.sh/${skill.id}`,
+  connections: [],
+}));
+
 function catalogJson(url: string) {
   return Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
@@ -109,7 +148,7 @@ export const searchExtensionCatalog = Effect.fn("searchExtensionCatalog")(functi
       ...(data.metadata?.nextCursor ? { nextCursor: data.metadata.nextCursor } : {}),
     };
   }
-  if (input.query.trim().length < 2) return { entries: [] };
+  if (input.query.trim().length < 2) return { entries: skillSuggestions };
   const params = new URLSearchParams({ q: input.query.trim(), limit: "24" });
   // Use the same public search API as the skills CLI; its v1 API requires Vercel OIDC.
   const raw = yield* catalogJson(`https://skills.sh/api/search?${params}`);

@@ -1659,6 +1659,47 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('aria-label="Hidden work includes a failure"');
   });
 
+  it("keeps classic shell commands compact until expanded", async () => {
+    const command = "/bin/zsh -lc 'vp test run apps/web/src/session-logic.test.ts'";
+    visualPreference.mode = "classic";
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(() => {
+        renderer = create(
+          <MessagesTimeline
+            {...buildProps()}
+            timelineEntries={[
+              {
+                id: "entry-command",
+                kind: "work",
+                createdAt: MESSAGE_CREATED_AT,
+                entry: {
+                  id: "work-command",
+                  createdAt: MESSAGE_CREATED_AT,
+                  label: "Ran command",
+                  tone: "tool",
+                  itemType: "command_execution",
+                  command,
+                  toolLifecycleStatus: "completed",
+                },
+              },
+            ]}
+          />,
+        );
+      });
+
+      const row = renderer!.root.findByProps({ "aria-label": "Ran vp" });
+      expect(row.props["aria-expanded"]).toBe(false);
+      expect(row.findAllByType("pre")).toHaveLength(0);
+
+      await act(() => row.props.onClick());
+      expect(renderer!.root.findByType("pre").children.join("")).toBe(command);
+    } finally {
+      await act(() => renderer?.unmount());
+      visualPreference.mode = "current";
+    }
+  });
+
   it("shows the one-line label for a live tool group", () => {
     const turnId = TurnId.make("turn-live");
     const markup = renderToStaticMarkup(

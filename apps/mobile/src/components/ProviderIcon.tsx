@@ -4,6 +4,7 @@ import { View } from "react-native";
 import { providerInstanceInitials } from "@t3tools/client-runtime/state/provider-instance-display";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { AppText as Text } from "./AppText";
+import { SymbolView } from "./AppSymbol";
 import { providerIconKind } from "./provider-icon-kind";
 
 type ProviderIconProps = {
@@ -17,6 +18,10 @@ export function ProviderIcon(props: ProviderIconProps) {
   const size = props.size ?? 16;
   const mono = isDarkMode ? "#e5e5e5" : "#171717";
   const icon = providerIconKind(props.provider);
+
+  if (icon === "server") {
+    return <SymbolView name="server.rack" size={size} tintColor={mono} />;
+  }
 
   if (props.provider?.trim().toLowerCase() === "antigravity") {
     return (

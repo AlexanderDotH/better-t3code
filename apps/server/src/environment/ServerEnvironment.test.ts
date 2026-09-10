@@ -177,6 +177,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       expect(second.capabilities.mcpWorkspaceVersion).toBe(1);
       expect(second.capabilities.agentWorkflowVersion).toBe(1);
       expect(second.capabilities.environmentSettingsVersion).toBe(5);
+      expect(second.capabilities.aiEndpointDiscovery).toBe(true);
       expect(second.capabilities.projectSettingsVersion).toBe(1);
       expect(second.capabilities.harnessChatSyncVersion).toBe(1);
       expect(second.capabilities.knowledgeGraphVersion).toBe(1);

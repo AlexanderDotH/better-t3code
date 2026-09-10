@@ -12,10 +12,15 @@ import {
   type ServerSettings,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { McpConfigurationReconciler } from "./McpConfigurationReconciler.ts";
+
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 import {
   exportCursorMcpServersJson,
   getMcpProviderStatuses,
@@ -334,6 +339,55 @@ describe("MCP config helpers", () => {
 });
 
 effectIt.layer(NodeServices.layer)("McpConfigEngineLive", (it) => {
+  it.effect(
+    "discovers provider configuration on request without importing or starting a session",
+    () =>
+      Effect.gen(function* () {
+        const engine = yield* McpConfigEngine;
+        const settings = yield* ServerSettingsService;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const homePath = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mcp-status-" });
+        const instanceId = ProviderInstanceId.make("codex_work");
+        yield* fs.writeFileString(
+          path.join(homePath, "config.toml"),
+          '[mcp_servers.docs]\nurl = "https://example.com?token=secret"',
+        );
+        yield* settings.modifySettings((current) =>
+          Effect.succeed({
+            ...current,
+            providerInstances: {
+              [instanceId]: {
+                driver: ProviderDriverKind.make("codex"),
+                enabled: true,
+                config: { homePath },
+              },
+            },
+          }),
+        );
+        const providers = [{ ...provider("codex"), instanceId }];
+        expect(
+          (yield* engine.providerStatus(providers)).providers[0]?.nativeServers,
+        ).toBeUndefined();
+        const discovered = yield* engine.providerStatus(providers, { includeNative: true });
+        expect(discovered.providers[0]?.nativeServers).toEqual([
+          {
+            name: "docs",
+            transport: "http",
+            enabled: true,
+            scope: "global",
+            configPath: path.join(homePath, "config.toml"),
+          },
+        ]);
+        expect(encodeJson(discovered)).not.toContain("token=secret");
+        expect((yield* settings.getSettings).mcp.servers).toEqual([]);
+      }).pipe(
+        Effect.provide(
+          McpConfigEngineLive.pipe(Layer.provideMerge(ServerSettingsService.layerTest())),
+        ),
+      ),
+  );
+
   it.effect("routes every catalog mutation through one reconciler and returns live outcomes", () =>
     Effect.gen(function* () {
       const calls = yield* Ref.make(0);

@@ -376,9 +376,9 @@ export const settingsInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Aucun compte de fournisseur n’est configuré. Ajoutez-en un dans les réglages des fournisseurs.",
   ],
   "settings.mcp.provider.noneConfiguredPrefix": [
-    "No provider accounts are configured. Add one in",
-    "Es sind keine Provider-Konten konfiguriert. Füge eines hinzu unter",
-    "Aucun compte de fournisseur n’est configuré. Ajoutez-en un dans",
+    "No provider accounts are enabled. Enable one in",
+    "Es sind keine Provider-Konten aktiviert. Aktiviere eines unter",
+    "Aucun compte de fournisseur n’est activé. Activez-en un dans",
   ],
   "settings.mcp.provider.settings": [
     "Provider settings",
@@ -435,14 +435,14 @@ export const settingsInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Cette version du serveur ne signale pas l’état d’exécution MCP. La configuration reste disponible, mais l’état en direct et les actions sont désactivés.",
   ],
   "settings.mcp.provider.userMcpUnsupported": [
-    "{{provider}} does not support user-configured MCP servers. Its T3 system server is shown separately when a runtime reports it.",
-    "{{provider}} unterstützt keine benutzerkonfigurierten MCP-Server. Der T3-Systemserver wird separat angezeigt, wenn eine Laufzeit ihn meldet.",
-    "{{provider}} ne prend pas en charge les serveurs MCP configurés par l’utilisateur. Son serveur système T3 est affiché séparément lorsqu’une exécution le signale.",
+    "{{provider}} does not support T3-managed MCP servers. Provider-managed servers are shown when discovered or reported by a session.",
+    "{{provider}} unterstützt keine von T3 verwalteten MCP-Server. Vom Provider verwaltete Server werden angezeigt, sobald sie erkannt oder von einer Sitzung gemeldet werden.",
+    "{{provider}} ne prend pas en charge les serveurs MCP gérés par T3. Les serveurs gérés par le fournisseur sont affichés lorsqu’ils sont détectés ou signalés par une session.",
   ],
   "settings.mcp.provider.loadingStatus": [
-    "Loading session MCP status…",
-    "MCP-Sitzungsstatus wird geladen…",
-    "Chargement de l’état MCP de la session…",
+    "Loading MCP servers…",
+    "MCP-Server werden geladen…",
+    "Chargement des serveurs MCP…",
   ],
   "settings.mcp.provider.readOnly": [
     "You have read-only access. Runtime status and configuration remain visible, but MCP changes and runtime actions are disabled.",
@@ -455,9 +455,9 @@ export const settingsInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Le commutateur est propre à ce compte fournisseur. Modifier, dupliquer et supprimer changent la définition partagée du serveur.",
   ],
   "settings.mcp.provider.noServers": [
-    "No MCP servers in this scope.",
-    "Keine MCP-Server in diesem Geltungsbereich.",
-    "Aucun serveur MCP dans cette portée.",
+    "No T3-managed MCP servers in this scope.",
+    "Keine von T3 verwalteten MCP-Server in diesem Geltungsbereich.",
+    "Aucun serveur MCP géré par T3 dans cette portée.",
   ],
   "settings.providers.add.label": ["Label", "Bezeichnung", "Libellé"],
   "settings.providers.add.instanceId": ["Instance ID", "Instanz-ID", "ID de l’instance"],

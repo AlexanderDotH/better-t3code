@@ -17,6 +17,7 @@ import { McpConfigError, SkillEngineError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 
 import { expandHomePath } from "./pathExpansion.ts";
 import { isValidSkillName, parseSkillFile } from "./skills/skillFile.ts";
@@ -442,11 +443,13 @@ function parseCodexMcpToml(contents: string): Record<string, RawMcpServerInput> 
   } | null = null;
 
   for (const line of contents.replaceAll("\r\n", "\n").split("\n")) {
-    const section = /^\s*\[mcp_servers\.([^\].]+)(?:\.(env|http_headers|headers))?\]\s*$/.exec(
-      line,
-    );
+    if (line.trimStart().startsWith("[")) current = null;
+    const section =
+      /^\s*\[mcp_servers\.((?:"[^"]+"|'[^']+'|[^\].]+))(?:\.(env|http_headers|headers))?\]\s*(?:#.*)?$/.exec(
+        line,
+      );
     if (section) {
-      const name = section[1]!;
+      const name = String(parseTomlScalar(section[1]!));
       const nested = section[2] === "env" ? "env" : section[2] ? "headers" : "server";
       servers[name] ??= {};
       current = { name, nested };
@@ -548,17 +551,18 @@ function normalizeMcpServers(input: {
   readonly scope: "global" | "project";
   readonly projectId?: ProjectId | undefined;
   readonly projectCwd?: string | undefined;
+  readonly includeDisabled?: boolean;
 }): ReadonlyArray<McpServerDefinition> {
   const servers: McpServerDefinition[] = [];
   for (const [rawName, rawServer] of Object.entries(input.rawServers)) {
     if (!rawServer || typeof rawServer !== "object" || Array.isArray(rawServer)) continue;
-    if (rawServer.enabled === false) continue;
+    if (rawServer.enabled === false && !input.includeDisabled) continue;
     const id = uniqueMcpServerId(rawName, input.reservedIds);
     const name = rawName.trim() || id;
     const base = {
       id,
       name,
-      enabled: true,
+      enabled: rawServer.enabled !== false,
       providerRouting: input.providerRouting,
       scope: input.scope,
       ...(input.projectId ? { projectId: input.projectId } : {}),
@@ -654,24 +658,34 @@ function deduplicateImportedSkills(input: {
   return output;
 }
 
-function readMcpServersFromConfig(input: {
+export function readMcpServersFromConfig(input: {
   readonly filePath: string;
   readonly reservedIds: Set<string>;
   readonly providerRouting: McpProviderRouting;
   readonly scope: "global" | "project";
   readonly projectId?: ProjectId | undefined;
   readonly projectCwd?: string | undefined;
+  readonly includeDisabled?: boolean;
+  readonly claudeProjectCwd?: string;
+  readonly contents?: string;
 }): Effect.Effect<ReadonlyArray<McpServerDefinition>, never, FileSystem.FileSystem | Path.Path> {
   return Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const contents = yield* fileSystem
-      .readFileString(input.filePath)
-      .pipe(Effect.orElseSucceed(() => ""));
+    const contents =
+      input.contents ??
+      (yield* fileSystem.readFileString(input.filePath).pipe(Effect.orElseSucceed(() => "")));
     if (!contents.trim()) return [];
+    let parsed = parseJsonObject(contents) ?? {};
+    if (input.claudeProjectCwd !== undefined) {
+      const project = Predicate.isObject(parsed.projects)
+        ? parsed.projects[input.claudeProjectCwd]
+        : undefined;
+      parsed = Predicate.isObject(project) ? project : {};
+    }
     const rawServers = path.basename(input.filePath).endsWith(".toml")
       ? parseCodexMcpToml(contents)
-      : rawMcpServersFromJson(parseJsonObject(contents) ?? {});
+      : rawMcpServersFromJson(parsed);
     return normalizeMcpServers({
       rawServers,
       reservedIds: input.reservedIds,
@@ -679,6 +693,7 @@ function readMcpServersFromConfig(input: {
       scope: input.scope,
       ...(input.projectId ? { projectId: input.projectId } : {}),
       ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
+      ...(input.includeDisabled ? { includeDisabled: true } : {}),
     });
   });
 }

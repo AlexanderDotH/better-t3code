@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  McpNativeServer,
   McpRuntimeContext,
   McpRuntimeServer,
   McpRuntimeServerDetailsResult,
@@ -75,6 +76,7 @@ export interface McpRuntimeServerView {
   readonly resources?: ReadonlyArray<McpRuntimeResourceView>;
   readonly templates?: ReadonlyArray<McpRuntimeResourceTemplateView>;
   readonly detailsLoading?: boolean;
+  readonly configPath?: string;
   readonly capabilities: {
     readonly authorize?: boolean;
     readonly reconnect?: boolean;
@@ -89,6 +91,31 @@ export interface McpRuntimeDetailsTarget {
   readonly threadId: ThreadId;
   readonly runtimeSessionId: RuntimeSessionId;
   readonly providerKey: McpRuntimeServerKey;
+}
+
+export function mergeNativeMcpServers(
+  runtimeServers: ReadonlyArray<McpRuntimeServerView>,
+  nativeServers: ReadonlyArray<McpNativeServer>,
+): ReadonlyArray<McpRuntimeServerView> {
+  const reportedNames = new Set(
+    runtimeServers.flatMap((server) =>
+      server.source === "provider-native" ? [server.serverKey, server.name] : [server.serverKey],
+    ),
+  );
+  return [
+    ...runtimeServers,
+    ...nativeServers
+      .filter((server) => !reportedNames.has(server.name))
+      .map((server): McpRuntimeServerView => ({
+        serverKey: `config:${server.name}`,
+        name: server.name,
+        source: "provider-native",
+        state: server.enabled ? "not-started" : "disabled",
+        transport: server.transport,
+        configPath: server.configPath,
+        capabilities: {},
+      })),
+  ];
 }
 
 export interface McpRuntimeDetailsEntry {

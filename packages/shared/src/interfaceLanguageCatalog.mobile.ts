@@ -2,6 +2,58 @@ import { defineLocalizedInterfaceCatalog } from "./interfaceLanguageCatalog.type
 
 /** Mobile-only copy lives here. Shared settings and Knowledge Graph copy stay in their domain catalogs. */
 export const mobileInterfaceCatalog = defineLocalizedInterfaceCatalog({
+  "mobile.settings.endpoint.saveAndFetchModels": [
+    "Save and fetch models",
+    "Speichern und Modelle abrufen",
+    "Enregistrer et récupérer les modèles",
+  ],
+  "mobile.settings.endpoint.apiKeyOptional": [
+    "API key (optional)",
+    "API-Schlüssel (optional)",
+    "Clé API (facultative)",
+  ],
+  "mobile.settings.endpoint.customModels": [
+    "Additional model IDs (one per line)",
+    "Weitere Modell-IDs (eine pro Zeile)",
+    "Identifiants de modèles supplémentaires (un par ligne)",
+  ],
+  "mobile.settings.endpoint.urlChangeClearsKey": [
+    "Changing the address removes the saved key. Enter a key for the new address if needed.",
+    "Ein Adresswechsel entfernt den gespeicherten Schlüssel. Gib bei Bedarf einen Schlüssel für die neue Adresse ein.",
+    "Un changement d’adresse supprime la clé enregistrée. Saisissez une clé pour la nouvelle adresse si nécessaire.",
+  ],
+  "mobile.settings.endpoint.add": [
+    "Add {{provider}}",
+    "{{provider}} hinzufügen",
+    "Ajouter {{provider}}",
+  ],
+  "mobile.settings.endpoint.baseUrl": ["Base URL", "Basis-URL", "URL de base"],
+  "mobile.settings.endpoint.serverAddressHint": [
+    "Use an address reachable from this T3 environment. Localhost refers to the T3 server.",
+    "Verwende eine von dieser T3-Umgebung erreichbare Adresse. Localhost bezeichnet den T3-Server.",
+    "Utilisez une adresse accessible depuis cet environnement T3. Localhost désigne le serveur T3.",
+  ],
+  "mobile.settings.endpoint.manualModelHint": [
+    "Choose an available model or enter its exact model ID.",
+    "Wähle ein verfügbares Modell oder gib seine genaue Modell-ID ein.",
+    "Choisissez un modèle disponible ou saisissez son identifiant exact.",
+  ],
+  "mobile.settings.endpoint.removeTitle": [
+    "Remove {{provider}}?",
+    "{{provider}} entfernen?",
+    "Supprimer {{provider}} ?",
+  ],
+  "mobile.settings.endpoint.removeDescription": [
+    "This removes the endpoint configuration. Existing thread history is kept.",
+    "Die Endpunktkonfiguration wird entfernt. Der bisherige Chatverlauf bleibt erhalten.",
+    "La configuration sera supprimée. L’historique des discussions sera conservé.",
+  ],
+  "mobile.settings.endpoint.verified": ["Verified", "Bestätigt", "Vérifié"],
+  "mobile.settings.endpoint.optionalKeyRemovalDescription": [
+    "Remove the saved API key? This endpoint can still work without a key if it allows it.",
+    "Gespeicherten API-Schlüssel entfernen? Dieser Endpunkt bleibt nutzbar, wenn er Zugriff ohne Schlüssel erlaubt.",
+    "Supprimer la clé API enregistrée ? Ce point de terminaison reste utilisable s’il autorise l’accès sans clé.",
+  ],
   "mobile.agentActivity.failed": ["Failed", "Fehlgeschlagen", "Échec"],
   "mobile.agentActivity.done": ["Done", "Fertig", "Terminé"],
   "mobile.agentActivity.outcomeFailed": [

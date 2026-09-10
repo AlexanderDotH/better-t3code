@@ -3,6 +3,11 @@ import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
+  AiEndpointDiscoveryError,
+  AiEndpointDiscoveryEvent,
+  AiEndpointDiscoveryInput,
+} from "./aiEndpoints.ts";
+import {
   ProviderAuthCancelInput,
   ProviderAuthCompleteInput,
   ProviderAuthState,
@@ -527,6 +532,7 @@ export const WS_METHODS = {
   promptImprove: "prompt.improve",
   planReviewParallelism: "plan.reviewParallelism",
   serverDiscoverSourceControl: "server.discoverSourceControl",
+  serverDiscoverAiEndpoints: "server.discoverAiEndpoints",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetHostResources: "server.getHostResources",
@@ -926,6 +932,13 @@ const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourc
   payload: Schema.Struct({}),
   success: SourceControlDiscoveryResult,
   error: EnvironmentAuthorizationError,
+});
+
+const WsServerDiscoverAiEndpointsRpc = Rpc.make(WS_METHODS.serverDiscoverAiEndpoints, {
+  payload: AiEndpointDiscoveryInput,
+  success: AiEndpointDiscoveryEvent,
+  error: Schema.Union([AiEndpointDiscoveryError, EnvironmentAuthorizationError]),
+  stream: true,
 });
 
 const WsServerGetTraceDiagnosticsRpc = Rpc.make(WS_METHODS.serverGetTraceDiagnostics, {
@@ -1998,6 +2011,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPromptImproveRpc,
   WsPlanReviewParallelismRpc,
   WsServerDiscoverSourceControlRpc,
+  WsServerDiscoverAiEndpointsRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetHostResourcesRpc,

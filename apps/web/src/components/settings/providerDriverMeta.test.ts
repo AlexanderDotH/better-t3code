@@ -5,6 +5,7 @@ import { deriveProviderSettingsFields } from "./ProviderSettingsForm";
 import { DRIVER_OPTION_BY_VALUE, DRIVER_OPTIONS } from "./providerDriverMeta";
 import { PROVIDER_ICON_BY_PROVIDER } from "../chat/providerIconUtils";
 import { OpenAI, OpenRouterIcon } from "../Icons";
+import { ServerIcon } from "lucide-react";
 
 const NATIVE_PROVIDER_DRIVERS = [
   {
@@ -77,6 +78,12 @@ const NATIVE_PROVIDER_DRIVERS = [
     badgeMessageKey: "settings.providers.badge.earlyAccess",
     fields: [],
   },
+  {
+    kind: "openaiCompatible",
+    label: "OpenAI Compatible",
+    fields: ["baseUrl", "defaultModel", "customModels"],
+  },
+  { kind: "lmstudio", label: "LM Studio", fields: ["baseUrl", "defaultModel", "customModels"] },
 ] as const;
 
 describe("providerDriverMeta", () => {
@@ -109,6 +116,15 @@ describe("providerDriverMeta", () => {
     expect(DRIVER_OPTION_BY_VALUE[openAi]?.icon).toBe(OpenAI);
     expect(PROVIDER_ICON_BY_PROVIDER[openAi]).toBe(OpenAI);
   });
+
+  it.each(["openaiCompatible", "lmstudio"])(
+    "uses endpoint icons for %s in settings and model surfaces",
+    (driver) => {
+      const kind = ProviderDriverKind.make(driver);
+      expect(DRIVER_OPTION_BY_VALUE[kind]?.icon).toBe(ServerIcon);
+      expect(PROVIDER_ICON_BY_PROVIDER[kind]).toBe(ServerIcon);
+    },
+  );
 
   it("derives settings fields for every native provider driver", () => {
     for (const driver of NATIVE_PROVIDER_DRIVERS) {

@@ -3721,7 +3721,10 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
       : (workEntry.toolIcon ?? workEntry.toolSource?.icon);
   const previewText = workEntry.questionAnswer
     ? "Question answer submitted"
-    : (displayLabel ?? workEntryDisplayLabel(workEntry, workspaceRoot));
+    : (displayLabel ??
+      (chatVisualMode === "classic" && workEntry.command?.trim()
+        ? liveWorkEntryLabel(workEntry, workspaceRoot, false)
+        : workEntryDisplayLabel(workEntry, workspaceRoot)));
   const viewedImagePath = workEntryViewedImagePath(workEntry);
   const viewedImage =
     viewedImagePath && threadRef

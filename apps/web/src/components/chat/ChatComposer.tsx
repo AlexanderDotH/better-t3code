@@ -3193,6 +3193,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
       : {}),
   });
+  const showVoiceInputAction = voiceInputConfigured || voiceDictation.active;
 
   useEffect(() => {
     onVoiceRecordingActiveChange?.(voiceDictation.active);
@@ -4299,6 +4300,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               <>
                 <ComposerControlSeparator size={composerControlsInStrip ? "xs" : "sm"} />
                 {composerControlsInStrip ? restingProviderTraitsPicker : providerTraitsPicker}
+                {providerTraitsPicker && providerContextWindowPicker ? (
+                  <ComposerControlSeparator size={composerControlsInStrip ? "xs" : "sm"} />
+                ) : null}
                 {composerControlsInStrip
                   ? restingProviderContextWindowPicker
                   : providerContextWindowPicker}
@@ -5911,11 +5915,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   "relative",
                   isComposerResting && "flex min-w-0 items-center gap-1",
                   isComposerResting &&
-                    (settings.contextWindowMeterEnabled && activeContextWindow
-                      ? "pr-28"
-                      : showComposerAttachAction
-                        ? "pr-20"
-                        : "pr-12"),
+                    (showVoiceInputAction
+                      ? settings.contextWindowMeterEnabled && activeContextWindow
+                        ? "pr-36"
+                        : showComposerAttachAction
+                          ? "pr-28"
+                          : "pr-20"
+                      : settings.contextWindowMeterEnabled && activeContextWindow
+                        ? "pr-28"
+                        : showComposerAttachAction
+                          ? "pr-20"
+                          : "pr-12"),
                 )}
               >
                 <ComposerPromptEditor
@@ -6088,7 +6098,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       </Tooltip>
                     </>
                   ) : null}
-                  {voiceInputConfigured || voiceDictation.active ? (
+                  {showVoiceInputAction ? (
                     <VoiceDictationControl
                       state={voiceDictation.state}
                       audioWaveform={voiceDictation.audioWaveform}

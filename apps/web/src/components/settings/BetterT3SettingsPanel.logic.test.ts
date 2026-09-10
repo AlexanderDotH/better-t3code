@@ -270,20 +270,29 @@ describe("buildBetterT3SwitchSettingsPatch", () => {
 });
 
 describe("partitionBetterT3ProviderRows", () => {
-  it("preserves order and groups the four additional Better T3 drivers", () => {
-    const rows = ["codex", "chatgpt", "gemini", "claudeAgent", "openrouter", "openai"].map(
-      (driver, index) => ({ id: index, driver: ProviderDriverKind.make(driver) }),
-    );
+  it("preserves order and groups additional Better T3 drivers", () => {
+    const rows = [
+      "codex",
+      "chatgpt",
+      "gemini",
+      "claudeAgent",
+      "openrouter",
+      "openai",
+      "openaiCompatible",
+      "lmstudio",
+    ].map((driver, index) => ({ id: index, driver: ProviderDriverKind.make(driver) }));
 
     expect(ADDITIONAL_BETTER_T3_PROVIDER_DRIVERS).toEqual([
       ProviderDriverKind.make("chatgpt"),
       ProviderDriverKind.make("gemini"),
       ProviderDriverKind.make("openrouter"),
       ProviderDriverKind.make("openai"),
+      ProviderDriverKind.make("openaiCompatible"),
+      ProviderDriverKind.make("lmstudio"),
     ]);
     expect(partitionBetterT3ProviderRows(rows)).toEqual({
       core: [rows[0], rows[3]],
-      additional: [rows[1], rows[2], rows[4], rows[5]],
+      additional: [rows[1], rows[2], rows[4], rows[5], rows[6], rows[7]],
     });
   });
 });

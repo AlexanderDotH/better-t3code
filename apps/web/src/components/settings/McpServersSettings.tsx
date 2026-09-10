@@ -58,6 +58,7 @@ import {
   type McpConfiguredServerView,
   type McpRuntimeDetailsTarget,
   mcpRuntimeContextId,
+  mergeNativeMcpServers,
   toMcpRuntimeContextView,
   toMcpRuntimeServerView,
 } from "../mcp-management/mcpManagementView";
@@ -1192,7 +1193,13 @@ export function McpServersSettingsPanel(props: {
       ? null
       : agentSettingsEnvironment.mcp.providerStatusQuery({
           environmentId: filterEnvironmentId,
-          input: {},
+          input: {
+            includeNative: true,
+            scope: scopeFilter,
+            ...(scopeFilter === "project" && selectedFilterProject
+              ? { projectCwd: selectedFilterProject.cwd }
+              : {}),
+          },
         }),
   );
   const providerCapabilities = useMemo(
@@ -1215,8 +1222,9 @@ export function McpServersSettingsPanel(props: {
             ...(mcpCapability ? { mcpCapability } : {}),
           };
         }),
+        selectedServerConfig?.settings,
       ),
-    [providerCapabilities, providers],
+    [providerCapabilities, providers, selectedServerConfig?.settings],
   );
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(
     props.search?.provider ?? null,
@@ -1846,6 +1854,7 @@ export function McpServersSettingsPanel(props: {
     >
       <SettingsSection
         className={props.embedded ? "mcp-workspace-settings" : undefined}
+        variant={props.embedded ? "plain" : "grouped"}
         title={translate("settings.mcp.store.installedServers")}
         headerAction={
           <div className="flex items-center gap-1.5">
@@ -1887,15 +1896,21 @@ export function McpServersSettingsPanel(props: {
           contexts={displayedRuntimeContexts}
           selectedContextId={selectedContextView?.id ?? selectedRuntimeContextId}
           configuredServers={configuredServerViews}
-          runtimeServers={runtimeServerViews}
+          runtimeServers={mergeNativeMcpServers(
+            runtimeServerViews,
+            providerStatusQuery.data?.providers.find(
+              (provider) => provider.instanceId === selectedProviderInstanceId,
+            )?.nativeServers ?? [],
+          )}
           runtimeSummary={managementSummary}
           runtimeSupported={runtimeApiSupported}
           embedded={props.embedded === true}
-          {...(runtimeState.contextError || runtimeState.runtimeError
+          {...(runtimeState.contextError || runtimeState.runtimeError || providerStatusQuery.error
             ? {
                 runtimeError:
                   runtimeState.contextError ??
                   runtimeState.runtimeError ??
+                  providerStatusQuery.error ??
                   "MCP runtime status could not be loaded.",
               }
             : {})}
@@ -1903,7 +1918,10 @@ export function McpServersSettingsPanel(props: {
           showProviderTabs={!props.embedded}
           showRuntimeSelector={props.showRuntimeSelector ?? !props.embedded}
           readOnly={readOnly}
-          isLoadingRuntime={runtimeState.isLoading}
+          isLoadingRuntime={
+            runtimeState.isLoading ||
+            (providerStatusQuery.data === null && providerStatusQuery.isPending)
+          }
           {...(props.search?.server ? { focusedServerKey: props.search.server } : {})}
           pendingProviderServerIds={
             setProviderEnabledMutation.isPending

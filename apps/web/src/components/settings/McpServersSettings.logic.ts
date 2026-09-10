@@ -2,7 +2,9 @@ import type {
   McpMutationResult,
   McpProviderCapability,
   ProviderInstanceId,
+  ServerSettings,
 } from "@t3tools/contracts";
+import { isProviderInstanceEnabled } from "@t3tools/shared/serverSettings";
 
 const MAX_SEARCH_VALUE_LENGTH = 512;
 const SEARCH_KEYS = ["environment", "provider", "thread", "runtime", "server"] as const;
@@ -149,12 +151,16 @@ function providerStatus(
 
 export function deriveMcpProviderTabs(
   providers: ReadonlyArray<ProviderTabSource>,
+  settings?: ServerSettings,
 ): ReadonlyArray<McpProviderTab> {
-  const displayNames = providers.map(providerDisplayName);
+  const enabledProviders = providers.filter((provider) =>
+    settings ? isProviderInstanceEnabled(settings, provider.instanceId) : provider.enabled,
+  );
+  const displayNames = enabledProviders.map(providerDisplayName);
   const counts = new Map<string, number>();
   for (const name of displayNames) counts.set(name, (counts.get(name) ?? 0) + 1);
 
-  return providers.map((provider, index) => {
+  return enabledProviders.map((provider, index) => {
     const displayName = displayNames[index] ?? provider.driver;
     const instanceId = String(provider.instanceId);
     const driverLabel = DRIVER_LABELS[provider.driver] ?? provider.driver;
