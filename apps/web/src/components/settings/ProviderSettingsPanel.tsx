@@ -904,6 +904,7 @@ export function EnvironmentProviderSettings({
       <ProviderInstanceCard
         key={row.instanceId}
         environmentId={environmentId}
+        environmentLabel={environmentLabel}
         providerAuthFlow={authFlow}
         instanceId={row.instanceId}
         instance={row.instance}
@@ -1177,6 +1178,7 @@ export function EnvironmentProviderSettings({
           environmentId={environmentId}
           environmentLabel={environmentLabel}
           onOpenChange={setIsAddInstanceDialogOpen}
+          onAdded={setSelectedInstanceId}
         />
       ) : null}
     </>

@@ -623,6 +623,7 @@ export interface ProviderSettingsFormAnnotation {
   readonly hidden?: boolean | undefined;
   readonly clearWhenEmpty?: "omit" | "persist" | undefined;
   readonly options?: ProviderSettingsFormOptions | undefined;
+  readonly allowCustomValue?: boolean | undefined;
   readonly min?: number | undefined;
   readonly max?: number | undefined;
   readonly step?: number | undefined;
@@ -1617,6 +1618,7 @@ export const providerInstanceConfigEnabledFlag = (config: unknown): boolean | un
  * the single source of truth. Unknown (fork) drivers default to enabled.
  */
 export const defaultEnabledForDriver = (driver: ProviderDriverKind): boolean => {
+  if (driver === "openaiCompatible" || driver === "lmstudio") return false;
   const legacyDefaults = DEFAULT_SERVER_SETTINGS.providers as Record<
     string,
     { readonly enabled?: boolean } | undefined

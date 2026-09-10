@@ -159,6 +159,8 @@ import * as PlanParallelismReview from "./plan/PlanParallelismReview.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
+import { AiEndpointDiscovery } from "./provider/discovery/AiEndpointDiscovery.ts";
+import { ProviderInstanceSettingsSync } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
@@ -527,6 +529,8 @@ const buildAppUnderTest = (options?: {
     providerService?: Partial<ProviderService.ProviderService["Service"]>;
     providerAuth?: Partial<ProviderAuthService["Service"]>;
     providerInstanceRegistry?: Partial<ProviderInstanceRegistry["Service"]>;
+    providerInstanceSettingsSync?: Partial<ProviderInstanceSettingsSync["Service"]>;
+    aiEndpointDiscovery?: Partial<AiEndpointDiscovery["Service"]>;
     antigravityInstallation?: Partial<AntigravityInstallation["Service"]>;
     serverSettings?: Partial<ServerSettings.ServerSettingsService["Service"]>;
     externalLauncher?: Partial<ExternalLauncher.ExternalLauncher["Service"]>;
@@ -1010,6 +1014,14 @@ const buildAppUnderTest = (options?: {
               retain: Effect.void,
               registerTerminalProcesses: () => Effect.void,
               unregisterTerminal: () => Effect.void,
+            }),
+            Layer.mock(AiEndpointDiscovery)({
+              discover: () => Stream.empty,
+              ...options?.layers?.aiEndpointDiscovery,
+            }),
+            Layer.mock(ProviderInstanceSettingsSync)({
+              synchronize: Effect.void,
+              ...options?.layers?.providerInstanceSettingsSync,
             }),
           ),
         ),
@@ -4987,6 +4999,72 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.isUndefined(response.shellRevealInFileManager);
       assert.isUndefined(response.shellRevealInFileManagerKind);
       assert.equal(response.threadResumeCompletionMarker, true);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("waits for endpoint settings hydration before replying over RPC", () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const replied = yield* Deferred.make<void>();
+      yield* buildAppUnderTest({
+        layers: {
+          providerInstanceSettingsSync: {
+            synchronize: Deferred.succeed(entered, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+            ),
+          },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const request = yield* withWsRpcClient(wsUrl, (client) =>
+        client[WS_METHODS.serverUpdateSettings]({ patch: {} }).pipe(
+          Effect.tap(() => Deferred.succeed(replied, undefined)),
+        ),
+      ).pipe(Effect.forkScoped);
+      yield* Deferred.await(entered);
+      assert.isFalse(yield* Deferred.isDone(replied));
+      yield* Deferred.succeed(release, undefined);
+      const response = yield* Fiber.join(request);
+      assert.deepEqual(response.providerInstances, DEFAULT_SERVER_SETTINGS.providerInstances);
+      assert.isTrue(yield* Deferred.isDone(replied));
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("streams endpoint discovery over RPC and propagates client cancellation", () =>
+    Effect.gen(function* () {
+      const cancelled = yield* Deferred.make<void>();
+      const event = {
+        status: "scanning" as const,
+        endpoints: [
+          {
+            baseUrl: "http://127.0.0.1:1234/v1",
+            kind: "lmstudio" as const,
+            verified: true,
+            requiresApiKey: false,
+            models: [{ id: "local/model" }],
+          },
+        ],
+        scanned: 1,
+        total: 10,
+        limited: false,
+      };
+      yield* buildAppUnderTest({
+        layers: {
+          aiEndpointDiscovery: {
+            discover: () =>
+              Stream.concat(Stream.make(event), Stream.never).pipe(
+                Stream.ensuring(Deferred.succeed(cancelled, undefined)),
+              ),
+          },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const events = yield* withWsRpcClient(wsUrl, (client) =>
+        client[WS_METHODS.serverDiscoverAiEndpoints]({}).pipe(Stream.take(1), Stream.runCollect),
+      );
+      assert.deepEqual(Array.from(events), [event]);
+      yield* Deferred.await(cancelled);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

@@ -246,6 +246,7 @@ export const make = Effect.gen(function* () {
       extensionStoreVersion: 1,
       agentWorkflowVersion: 1,
       environmentSettingsVersion: 5,
+      aiEndpointDiscovery: true,
       projectSettingsVersion: 1,
       harnessChatSyncVersion: 1,
       knowledgeGraphVersion: 1,

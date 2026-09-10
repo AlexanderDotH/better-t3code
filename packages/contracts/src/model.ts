@@ -256,6 +256,8 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
 // ── Provider display names ────────────────────────────────────────────
 
 export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>> = {
+  [ProviderDriverKind.make("openaiCompatible")]: "OpenAI Compatible",
+  [ProviderDriverKind.make("lmstudio")]: "LM Studio",
   [ProviderDriverKind.make("antigravity")]: "Antigravity",
   [CODEX_DRIVER_KIND]: "Codex",
   [CLAUDE_DRIVER_KIND]: "Claude",

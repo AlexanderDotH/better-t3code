@@ -27,6 +27,7 @@ import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import * as ServerSettingsModule from "./serverSettings.ts";
 import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.ts";
 import { openRouterApiKeySecretName } from "./provider/openrouter/auth/OpenRouterCredentialStore.ts";
+import { openAiCompatibleApiKeySecretName } from "./provider/openaiCompatible/OpenAiCompatibleCredentialStore.ts";
 import { redactServerSettingsForClient, ServerSettingsService } from "./serverSettings.ts";
 
 const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
@@ -2114,6 +2115,182 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       );
       assert.equal(persisted.addProjectBaseDirectory, "~/Development");
     }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("removes endpoint credentials only when their instance is removed or replaced", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const secrets = yield* ServerSecretStore.ServerSecretStore;
+      const first = ProviderInstanceId.make("local_endpoint");
+      const second = ProviderInstanceId.make("studio_endpoint");
+      yield* serverSettings.updateSettings({
+        providerInstances: {
+          [first]: {
+            driver: ProviderDriverKind.make("openaiCompatible"),
+            enabled: true,
+            config: {},
+          },
+          [second]: { driver: ProviderDriverKind.make("lmstudio"), enabled: true, config: {} },
+        },
+      });
+      for (const instanceId of [first, second]) {
+        yield* secrets.set(
+          openAiCompatibleApiKeySecretName(instanceId),
+          new TextEncoder().encode("instance-secret"),
+        );
+      }
+      yield* serverSettings.updateSettings({
+        providerInstances: {
+          ...(yield* serverSettings.getSettings).providerInstances,
+          [first]: {
+            driver: ProviderDriverKind.make("openaiCompatible"),
+            enabled: false,
+            config: {},
+          },
+        },
+      });
+      assert.isTrue(Option.isSome(yield* secrets.get(openAiCompatibleApiKeySecretName(first))));
+
+      yield* serverSettings.modifySettings((settings) => {
+        const { [first]: _removed, ...providerInstances } = settings.providerInstances;
+        return Effect.succeed({ ...settings, providerInstances });
+      });
+      assert.isTrue(Option.isNone(yield* secrets.get(openAiCompatibleApiKeySecretName(first))));
+      assert.isTrue(Option.isSome(yield* secrets.get(openAiCompatibleApiKeySecretName(second))));
+
+      yield* serverSettings.updateSettings({
+        providerInstances: { [second]: { driver: ProviderDriverKind.make("openaiCompatible") } },
+      });
+      assert.isTrue(Option.isNone(yield* secrets.get(openAiCompatibleApiKeySecretName(second))));
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect(
+    "normalizes endpoint targets and clears keys across URL changes without reviving them",
+    () =>
+      Effect.gen(function* () {
+        const settings = yield* ServerSettingsModule.ServerSettingsService;
+        const secrets = yield* ServerSecretStore.ServerSecretStore;
+        const instanceId = ProviderInstanceId.make("local_endpoint");
+        const secretName = openAiCompatibleApiKeySecretName(instanceId);
+        const driver = ProviderDriverKind.make("lmstudio");
+        const initial = yield* settings.updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver,
+              enabled: true,
+              config: {},
+            },
+          },
+        });
+        assert.isTrue(initial.providerInstances[instanceId]?.enabled);
+        assert.deepEqual(initial.providerInstances[instanceId]?.config, {
+          baseUrl: "http://127.0.0.1:1234/v1",
+          defaultModel: "",
+          customModels: [],
+        });
+        yield* secrets.set(secretName, new TextEncoder().encode("bound-key"));
+        yield* settings.updateSettings({
+          providerInstances: {
+            [instanceId]: { driver, enabled: true, config: { baseUrl: "http://127.0.0.1:1234/" } },
+          },
+        });
+        assert.isTrue(Option.isSome(yield* secrets.get(secretName)));
+        yield* settings.updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver,
+              enabled: true,
+              config: { baseUrl: "https://example.test/proxy/v1/" },
+            },
+          },
+        });
+        assert.isTrue(Option.isNone(yield* secrets.get(secretName)));
+        assert.deepEqual((yield* settings.getSettings).providerInstances[instanceId]?.config, {
+          baseUrl: "https://example.test/proxy/v1",
+          defaultModel: "",
+          customModels: [],
+        });
+        yield* settings.updateSettings({
+          providerInstances: {
+            [instanceId]: { driver, enabled: true, config: { baseUrl: "http://127.0.0.1:1234" } },
+          },
+        });
+        assert.isTrue(Option.isNone(yield* secrets.get(secretName)));
+        yield* secrets.set(secretName, new TextEncoder().encode("replacement-key"));
+        for (const baseUrl of ["file:///tmp/models", "https://user:password@example.test/v1"]) {
+          const result = yield* settings
+            .updateSettings({
+              providerInstances: { [instanceId]: { driver, enabled: true, config: { baseUrl } } },
+            })
+            .pipe(Effect.result);
+          assert.strictEqual(result._tag, "Failure");
+          assert.isTrue(Option.isSome(yield* secrets.get(secretName)));
+        }
+        assert.deepEqual((yield* settings.getSettings).providerInstances[instanceId]?.config, {
+          baseUrl: "http://127.0.0.1:1234/v1",
+          defaultModel: "",
+          customModels: [],
+        });
+      }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("keeps endpoint credentials when the settings file cannot be replaced", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      let blockedPath = "";
+      const failingFs = FileSystem.FileSystem.of({
+        ...fs,
+        rename: (from, to) =>
+          to === blockedPath
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "rename",
+                  pathOrDescriptor: to,
+                  description: "Test settings write failure",
+                }),
+              )
+            : fs.rename(from, to),
+      });
+      yield* Effect.gen(function* () {
+        const settings = yield* ServerSettingsModule.ServerSettingsService;
+        const secrets = yield* ServerSecretStore.ServerSecretStore;
+        const config = yield* ServerConfig.ServerConfig;
+        const instanceId = ProviderInstanceId.make("endpoint");
+        const driver = ProviderDriverKind.make("openaiCompatible");
+        const initial = yield* settings.updateSettings({
+          providerInstances: {
+            [instanceId]: { driver, enabled: true, config: { baseUrl: "http://first.test/v1" } },
+          },
+        });
+        const key = openAiCompatibleApiKeySecretName(instanceId);
+        yield* secrets.set(key, new TextEncoder().encode("retained-key"));
+        const originalFile = yield* fs.readFileString(config.settingsPath);
+        blockedPath = config.settingsPath;
+        const result = yield* settings
+          .updateSettings({
+            providerInstances: {
+              [instanceId]: { driver, enabled: true, config: { baseUrl: "http://second.test/v1" } },
+            },
+          })
+          .pipe(Effect.result);
+        assert.strictEqual(result._tag, "Failure");
+        assert.isTrue(Option.isSome(yield* secrets.get(key)));
+        assert.deepEqual(
+          (yield* settings.getSettings).providerInstances,
+          initial.providerInstances,
+        );
+        assert.strictEqual(yield* fs.readFileString(config.settingsPath), originalFile);
+      }).pipe(
+        Effect.provide(
+          makeServerSettingsLayer().pipe(
+            Layer.provide(Layer.succeed(FileSystem.FileSystem, failingFs)),
+          ),
+        ),
+      );
+    }),
   );
 
   it.effect("stores sensitive provider instance environment values outside settings.json", () =>

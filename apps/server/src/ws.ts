@@ -131,6 +131,8 @@ import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDi
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import { ProviderAuthService } from "./provider/Services/ProviderAuthService.ts";
 import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRegistry.ts";
+import { AiEndpointDiscovery } from "./provider/discovery/AiEndpointDiscovery.ts";
+import { ProviderInstanceSettingsSync } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
 import { makeProviderInstallation } from "./provider/providerInstallation.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -571,6 +573,8 @@ const makeWsRpcLayer = (
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const providerAuth = yield* ProviderAuthService;
       const providerInstances = yield* ProviderInstanceRegistry;
+      const aiEndpointDiscovery = yield* AiEndpointDiscovery;
+      const providerInstanceSettingsSync = yield* ProviderInstanceSettingsSync;
       const providerInstallation = yield* makeProviderInstallation();
       const serverUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
@@ -2031,6 +2035,12 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.serverDiscoverAiEndpoints]: (input) =>
+          observeRpcStream(
+            WS_METHODS.serverDiscoverAiEndpoints,
+            aiEndpointDiscovery.discover(input),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.serverRefreshProviders]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverRefreshProviders,
@@ -2362,9 +2372,10 @@ const makeWsRpcLayer = (
         [WS_METHODS.serverUpdateSettings]: ({ patch }) =>
           observeRpcEffect(
             WS_METHODS.serverUpdateSettings,
-            serverSettings
-              .updateSettings(patch)
-              .pipe(Effect.map(ServerSettings.redactServerSettingsForClient)),
+            serverSettings.updateSettings(patch).pipe(
+              Effect.tap(() => providerInstanceSettingsSync.synchronize),
+              Effect.map(ServerSettings.redactServerSettingsForClient),
+            ),
             {
               "rpc.aggregate": "server",
             },
@@ -2829,14 +2840,14 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "mcp",
             },
           ),
-        [WS_METHODS.mcpProviderStatus]: (_input) =>
+        [WS_METHODS.mcpProviderStatus]: (input) =>
           observeRpcEffect(
             WS_METHODS.mcpProviderStatus,
             providerRegistry.getProviders.pipe(
               Effect.flatMap((providers) =>
                 mcpConfigEngine.providerStatus(
                   providers,
-                  {},
+                  input,
                   mcpRuntimeRegistry.providerCapability,
                 ),
               ),

@@ -59,6 +59,7 @@ export function providerStatusLabel(provider: ServerProvider): string {
   if (!provider.enabled) return "Disabled";
   if (!provider.installed) return "Not installed";
   if (provider.auth.status === "unauthenticated") {
+    if (provider.auth.type === "api-key-optional") return "API key required";
     return "Sign-in required";
   }
   return provider.status === "ready"
@@ -158,6 +159,24 @@ export function providerAuthenticationPresentation(
   if (method === null) return null;
 
   const providerLabel = provider.displayName ?? String(provider.instanceId);
+  if (provider.auth.type === "api-key-optional" && credential) {
+    const hasSavedKey = capabilities.canDisconnect;
+    const requiresKey = provider.auth.status === "unauthenticated";
+    const actionLabel = hasSavedKey ? "Remove API key" : "Save API key";
+    return {
+      action: hasSavedKey ? "disconnect" : requiresKey ? "connect" : "none",
+      actionLabel,
+      credentialActionLabel: hasSavedKey ? "Replace API key" : "Save API key",
+      credentialLabel: "API key (optional)",
+      ...(credential.placeholder ? { credentialPlaceholder: credential.placeholder } : {}),
+      detail:
+        provider.message ??
+        provider.auth.label ??
+        (requiresKey ? "This endpoint requires an API key." : "No API key required."),
+      providerLabel,
+      method,
+    };
+  }
   const authenticated = provider.auth.status === "authenticated";
   if (authenticated) {
     const accountDetail = [provider.auth.email, provider.auth.label, provider.auth.plan?.label]

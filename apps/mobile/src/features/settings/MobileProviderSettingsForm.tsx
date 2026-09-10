@@ -55,6 +55,8 @@ function MobileSelectField(props: {
     props.field.defaultStringValue,
   );
   const selectedOption = props.field.options?.find((option) => option.value === selected);
+  const [manualDraft, setManualDraft] = useState(selected);
+  useEffect(() => setManualDraft(selected), [selected]);
   const unavailable = props.field.disabled === true;
   const disabled = props.disabled || unavailable;
   const displayValue =
@@ -68,10 +70,23 @@ function MobileSelectField(props: {
   return (
     <View className="gap-2">
       <FieldLabel field={props.field} />
+      {props.field.allowCustomValue ? (
+        <TextInput
+          accessibilityLabel={props.field.label}
+          autoCapitalize="none"
+          autoCorrect={false}
+          editable={!props.disabled}
+          onChangeText={setManualDraft}
+          onBlur={() => props.onCommit(manualDraft)}
+          placeholder={props.field.placeholder ?? "Model ID"}
+          value={manualDraft}
+          className="rounded-2xl bg-subtle px-4 py-3 text-base text-foreground"
+        />
+      ) : null}
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={props.field.label}
-        disabled={disabled}
+        disabled={disabled || props.field.options?.length === 0}
         onPress={() => setOpen(true)}
         className="rounded-2xl bg-subtle px-4 py-3 disabled:opacity-40"
       >

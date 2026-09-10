@@ -1,5 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
+import { ExtensionCatalogSearchResult, SkillRegistrySource } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { FetchHttpClient } from "effect/unstable/http";
 import {
   searchExtensionCatalog,
@@ -7,6 +9,9 @@ import {
   previewRegistrySkill,
 } from "./extensionCatalog.ts";
 import { mcpCatalogEntry } from "./mcpCatalog.ts";
+
+const isCatalogSearchResult = Schema.is(ExtensionCatalogSearchResult);
+const isRegistrySource = Schema.is(SkillRegistrySource);
 
 const files = [
   {
@@ -17,6 +22,33 @@ const files = [
 ];
 
 describe("extension registry packages", () => {
+  it.effect("offers installable skill suggestions without a search or a registry connection", () =>
+    Effect.gen(function* () {
+      for (const query of ["", "  ", "r"]) {
+        const result = yield* searchExtensionCatalog({ kind: "skill", query });
+        expect(isCatalogSearchResult(result)).toBe(true);
+        expect(result.entries.length).toBeGreaterThan(0);
+        expect(result.entries.every((entry) => entry.kind === "skill")).toBe(true);
+        expect(new Set(result.entries.map((entry) => entry.id)).size).toBe(result.entries.length);
+        for (const entry of result.entries) {
+          expect(isRegistrySource(entry.id)).toBe(true);
+          expect(entry.sourceUrl).toBe(`https://skills.sh/${entry.id}`);
+        }
+      }
+    }).pipe(
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provideService(
+        FetchHttpClient.Fetch,
+        Object.assign(
+          async () => {
+            throw new Error("Registry is offline");
+          },
+          { preconnect: () => {} },
+        ),
+      ),
+    ),
+  );
+
   it.effect("preserves the registry rate-limit message", () =>
     Effect.gen(function* () {
       const error = yield* Effect.flip(

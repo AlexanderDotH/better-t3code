@@ -71,6 +71,7 @@ export function ExtensionInstallDialog(props: {
         (status) => status.instanceId === provider.instanceId,
       )?.capability,
     })),
+    config?.settings,
   );
   const providers = skill
     ? providerTabs.filter((provider) => !provider.disabled)

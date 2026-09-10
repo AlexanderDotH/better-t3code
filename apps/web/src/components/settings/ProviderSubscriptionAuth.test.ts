@@ -175,6 +175,29 @@ describe("deriveProviderSubscriptionPresentation", () => {
     });
   });
 
+  it.each([false, true])("offers optional endpoint key controls when stored=%s", (stored) => {
+    expect(
+      deriveProviderSubscriptionPresentation({
+        providerName: "LM Studio",
+        auth: {
+          status: "unknown",
+          type: "api-key-optional",
+          capabilities: {
+            flows: [],
+            canDisconnect: stored,
+            credential: { kind: "api-key", label: "API key" },
+          },
+        },
+      }),
+    ).toMatchObject({
+      action: "set-credential",
+      actionLabel: `${stored ? "Replace" : "Add"} API key`,
+      canDisconnect: stored,
+      environmentCredential: false,
+      tone: "neutral",
+    });
+  });
+
   it("renders no auth controls when the provider advertises no auth capability", () => {
     expect(
       deriveProviderSubscriptionPresentation({

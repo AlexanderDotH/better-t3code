@@ -34,6 +34,7 @@ export interface ProviderSettingsFieldModel {
   readonly defaultStringArrayValue?: ReadonlyArray<string> | undefined;
   readonly options?: ReadonlyArray<ProviderSettingsFormSelectOption> | undefined;
   readonly disabled?: boolean | undefined;
+  readonly allowCustomValue?: boolean | undefined;
   readonly min?: number | undefined;
   readonly max?: number | undefined;
   readonly step?: number | undefined;
@@ -136,7 +137,7 @@ function selectPresentation(
     return { options: [], disabled: false };
   }
   if (models === undefined) {
-    return { options: [], disabled: true };
+    return { options: [], disabled: annotation.allowCustomValue !== true };
   }
   return {
     options: dedupeModelOptions(models, readProviderConfigString(config, key)),
@@ -207,6 +208,7 @@ export function deriveProviderSettingsFields(
         ...(control === "select"
           ? selectPresentation(annotation, options.value, key, options.models)
           : {}),
+        ...(annotation.allowCustomValue === true ? { allowCustomValue: true } : {}),
         ...(control === "number" && annotation.min !== undefined ? { min: annotation.min } : {}),
         ...(control === "number" && annotation.max !== undefined ? { max: annotation.max } : {}),
         ...(control === "number" && annotation.step !== undefined ? { step: annotation.step } : {}),

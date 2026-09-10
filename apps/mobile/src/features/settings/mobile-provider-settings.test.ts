@@ -1,4 +1,5 @@
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import { deriveProviderSettingsFields } from "@t3tools/client-runtime/providerSettingsForm";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -24,9 +25,20 @@ function provider(models: ServerProvider["models"]): ServerProvider {
 }
 
 describe("mobile provider settings", () => {
-  it("maps only built-in OpenRouter to its annotated schema", () => {
+  it("maps supported native providers to their annotated schemas", () => {
     expect(mobileProviderSettingsDefinition(ProviderDriverKind.make("openrouter"))).not.toBeNull();
     expect(mobileProviderSettingsDefinition(ProviderDriverKind.make("custom"))).toBeNull();
+    for (const driver of ["openaiCompatible", "lmstudio"]) {
+      const definition = mobileProviderSettingsDefinition(ProviderDriverKind.make(driver));
+      expect(definition).not.toBeNull();
+      const fields = deriveProviderSettingsFields(definition!, { value: {}, models: [] });
+      expect(fields.find((field) => field.key === "defaultModel")).toMatchObject({
+        control: "select",
+        allowCustomValue: true,
+        disabled: false,
+      });
+      expect(fields.map((field) => field.key)).toEqual(["baseUrl", "defaultModel", "customModels"]);
+    }
   });
 
   it("keeps model-backed fields disabled until a catalog is present", () => {

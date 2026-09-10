@@ -1,6 +1,10 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { makeProviderSettingsSchema } from "@t3tools/contracts";
+import {
+  LmStudioSettings,
+  makeProviderSettingsSchema,
+  OpenAiCompatibleSettings,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -11,6 +15,8 @@ import {
   readProviderConfigString,
   readProviderConfigStringArray,
 } from "./providerSettingsForm.ts";
+
+const decodeLmStudioSettings = Schema.decodeUnknownSync(LmStudioSettings);
 
 const Settings = makeProviderSettingsSchema(
   {
@@ -82,6 +88,27 @@ const Settings = makeProviderSettingsSchema(
 const definition = { settingsSchema: Settings };
 
 describe("provider settings form derivation", () => {
+  it("permits manual endpoint model IDs before discovery returns a catalog", () => {
+    const endpointDefinition = { settingsSchema: OpenAiCompatibleSettings };
+    const fields = deriveProviderSettingsFields(endpointDefinition);
+    expect(fields.find((field) => field.key === "defaultModel")).toMatchObject({
+      control: "select",
+      allowCustomValue: true,
+      disabled: false,
+      options: [],
+      clearWhenEmpty: "persist",
+    });
+    expect(
+      deriveProviderSettingsFields(endpointDefinition, {
+        value: { defaultModel: "manual-model" },
+        models: [{ slug: "discovered-model", name: "Discovered model" }],
+      }).find((field) => field.key === "defaultModel")?.options,
+    ).toEqual([
+      { value: "manual-model", label: "manual-model" },
+      { value: "discovered-model", label: "Discovered model" },
+    ]);
+  });
+
   it("orders visible fields and resolves visibility from schema defaults", () => {
     expect(deriveProviderSettingsFields(definition).map((field) => field.key)).toEqual([
       "defaultModel",
@@ -143,6 +170,22 @@ describe("provider settings form derivation", () => {
 });
 
 describe("provider settings form values", () => {
+  it("persists a cleared LM Studio URL and a manual default model independently of the catalog", () => {
+    const fields = deriveProviderSettingsFields({ settingsSchema: LmStudioSettings });
+    const baseUrl = fields.find((field) => field.key === "baseUrl")!;
+    const model = fields.find((field) => field.key === "defaultModel")!;
+    const config = nextProviderConfigWithFieldValue({}, baseUrl, "");
+
+    expect(decodeLmStudioSettings(config).baseUrl).toBe("");
+    expect(nextProviderConfigWithFieldValue(config, model, "org/manual-model")).toEqual({
+      baseUrl: "",
+      defaultModel: "org/manual-model",
+    });
+    expect(nextProviderConfigWithFieldValue({ defaultModel: "old-model" }, model, "")).toEqual({
+      defaultModel: "",
+    });
+  });
+
   it("reads only values matching the requested control type", () => {
     const config = {
       text: "value",

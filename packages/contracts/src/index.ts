@@ -1,4 +1,5 @@
 export * from "./baseSchemas.ts";
+export * from "./aiEndpoints.ts";
 export * from "./assistantCitations.ts";
 export * from "./background.ts";
 export * from "./betterT3.ts";

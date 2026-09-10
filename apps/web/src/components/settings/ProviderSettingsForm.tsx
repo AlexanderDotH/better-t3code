@@ -102,6 +102,30 @@ function ProviderSettingsFieldControl({
     );
   if (field.control === "select") {
     const selected = readProviderConfigString(value, field.key, field.defaultStringValue);
+    if (field.allowCustomValue) {
+      const inputProps = {
+        id,
+        list: `${id}-options`,
+        value: selected,
+        placeholder: field.placeholder,
+        spellCheck: false,
+        "aria-label": field.label,
+      };
+      return (
+        <>
+          {variant === "dialog" ? (
+            <Input {...inputProps} onChange={(event) => commit(event.currentTarget.value)} />
+          ) : (
+            <DraftInput {...inputProps} onCommit={commit} />
+          )}
+          <datalist id={`${id}-options`}>
+            {field.options?.map((option) => (
+              <option key={option.value} value={option.value} label={option.label} />
+            ))}
+          </datalist>
+        </>
+      );
+    }
     const selectedOption = field.options?.find((option) => option.value === selected);
     const placeholder = field.disabled
       ? "Loading options…"

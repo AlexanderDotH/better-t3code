@@ -230,6 +230,48 @@ describe("environment agent settings", () => {
     });
   });
 
+  it("keeps keyless endpoints usable and offers removal for an unverified saved key", () => {
+    const endpoint = provider({
+      driver: ProviderDriverKind.make("lmstudio"),
+      displayName: "LM Studio",
+      version: null,
+      auth: {
+        type: "api-key-optional",
+        status: "unknown",
+        capabilities: {
+          flows: [],
+          canDisconnect: false,
+          credential: { kind: "api-key", label: "API key" },
+        },
+      },
+    });
+    expect(providerStatusLabel(endpoint)).toBe("Ready");
+    expect(providerAuthenticationPresentation(endpoint)).toMatchObject({
+      action: "none",
+      credentialActionLabel: "Save API key",
+      credentialLabel: "API key (optional)",
+      detail: "No API key required.",
+    });
+    for (const status of ["unknown", "unauthenticated", "expired"] as const) {
+      const withKey = {
+        ...endpoint,
+        auth: {
+          ...endpoint.auth,
+          status,
+          capabilities: { ...endpoint.auth.capabilities!, canDisconnect: true },
+        },
+      };
+      expect(providerAuthenticationPresentation(withKey)).toMatchObject({
+        action: "disconnect",
+        actionLabel: "Remove API key",
+        credentialActionLabel: "Replace API key",
+      });
+      if (status === "unauthenticated") {
+        expect(providerStatusLabel(withKey)).toBe("API key required");
+      }
+    }
+  });
+
   it("keeps device challenges and failures visible on mobile", () => {
     expect(
       mobileProviderAuthEventPresentation(

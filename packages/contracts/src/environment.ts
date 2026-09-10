@@ -80,6 +80,8 @@ export type ServerSelfUpdateCapability = typeof ServerSelfUpdateCapability.Type;
 export const ExecutionEnvironmentCapabilities = Schema.Struct({
   repositoryIdentity: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   connectionProbe: Schema.optionalKey(Schema.Boolean),
+  /** Missing on older servers; clients must not start endpoint discovery without it. */
+  aiEndpointDiscovery: Schema.optionalKey(Schema.Boolean),
   /** Missing on older servers, which still accept inline image attachments. */
   attachmentUploads: Schema.optionalKey(Schema.Boolean),
   /** Uploaded files may accompany question answers. */

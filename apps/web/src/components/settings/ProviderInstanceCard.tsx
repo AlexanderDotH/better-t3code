@@ -48,6 +48,8 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { DriverOption } from "./providerDriverMeta";
 import { ProviderSettingsForm } from "./ProviderSettingsForm";
+import { AiEndpointSettings } from "./AiEndpointSettings";
+import { aiEndpointBaseUrl, isAiEndpointDriver } from "./AiEndpointSettings.logic";
 import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon, providerInstanceInitials } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
@@ -349,6 +351,7 @@ function ProviderEnvironmentSection(props: {
 
 interface ProviderInstanceCardProps {
   readonly environmentId?: EnvironmentId;
+  readonly environmentLabel?: string;
   readonly providerAuthFlow?: "browser" | "device-code";
   readonly instanceId: ProviderInstanceId;
   readonly instance: ProviderInstanceConfig;
@@ -406,6 +409,7 @@ interface ProviderInstanceCardProps {
  */
 export function ProviderInstanceCard({
   environmentId,
+  environmentLabel,
   providerAuthFlow = "device-code",
   instanceId,
   instance,
@@ -856,6 +860,13 @@ export function ProviderInstanceCard({
       {environmentId && subscriptionPresentation && instance.driver !== "antigravity" ? (
         <SettingsSection title="Account">
           <ProviderSubscriptionAuthBridge
+            key={JSON.stringify([
+              environmentId,
+              instanceId,
+              isAiEndpointDriver(instance.driver)
+                ? aiEndpointBaseUrl(instance.driver, instance.config)
+                : null,
+            ])}
             environmentId={environmentId}
             instanceId={instanceId}
             flow={providerAuthFlow}
@@ -876,7 +887,18 @@ export function ProviderInstanceCard({
         aria-disabled={readOnly || undefined}
         className={readOnly ? "opacity-50 select-none" : undefined}
       >
-        {driverOption ? (
+        {driverOption && environmentId && isAiEndpointDriver(instance.driver) ? (
+          <AiEndpointSettings
+            environmentId={environmentId}
+            environmentLabel={environmentLabel ?? String(environmentId)}
+            definition={driverOption}
+            instanceId={instanceId}
+            instance={instance}
+            models={modelsForDisplay}
+            idPrefix={`provider-instance-${instanceId}`}
+            readOnly={readOnly}
+          />
+        ) : driverOption ? (
           <ProviderSettingsForm
             definition={driverOption}
             value={instance.config}
