@@ -3,11 +3,11 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import { build } from "esbuild";
 
 const root = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
 const runtime = NodePath.join(root, "packages/client-runtime");
-const require = NodeModule.createRequire(NodePath.join(runtime, "package.json"));
-const { build } = require("esbuild");
+const runtimeRequire = NodeModule.createRequire(NodePath.join(runtime, "package.json"));
 const destinations = ["apps/web/public/visualizations", "apps/mobile/assets/visualizations"];
 const formats = ["mermaid", "plantuml", "dot", "vega"];
 
@@ -63,7 +63,9 @@ for (const format of formats) {
   const scripts = [];
   if (format === "plantuml") {
     scripts.push(
-      inlineScript(await NodeFSP.readFile(require.resolve("@plantuml/core/viz-global.js"), "utf8")),
+      inlineScript(
+        await NodeFSP.readFile(runtimeRequire.resolve("@plantuml/core/viz-global.js"), "utf8"),
+      ),
     );
   }
   scripts.push(inlineScript(result.outputFiles[0].text));

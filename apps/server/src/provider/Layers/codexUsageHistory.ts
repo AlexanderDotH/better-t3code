@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import * as NodePath from "node:path";
 
 import { MAX_USAGE_PACE_SAMPLES, type ServerProviderUsageLimits } from "@t3tools/contracts";

@@ -16,10 +16,12 @@ import {
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import { planThreadFork } from "./ThreadForkPlanner.ts";
 import { createEmptyReadModel, projectEvent } from "./projector.ts";
 
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const now = "2026-08-24T10:00:00.000Z";
 const projectId = ProjectId.make("project-fork");
 const sourceThreadId = ThreadId.make("thread-source");
@@ -270,7 +272,7 @@ it.layer(NodeServices.layer)("thread fork planner", (it) => {
         expect(events.at(-1)?.type).toBe("thread.turn-start-requested");
         const request = events.find((event) => event.type === "thread.message-sent");
         expect(request?.payload.text).toContain("Correction");
-        expect(JSON.stringify(events)).not.toContain("Later secret");
+        expect(encodeJson(events)).not.toContain("Later secret");
         expect(sourceEvents[2]).toMatchObject({ payload: { text: "Original" } });
         const error = yield* planThreadFork({
           command: {

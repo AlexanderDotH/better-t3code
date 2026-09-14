@@ -40,6 +40,7 @@ import { it, assert, describe, vi } from "@effect/vitest";
 import { afterAll } from "vite-plus/test";
 
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -5271,8 +5272,14 @@ describe("workspace edit MCP credential policy", () => {
   });
 });
 
-const budgetNow = new Date(2026, 8, 14, 10).getTime();
+const budgetNow = DateTime.toEpochMillis(
+  DateTime.makeZonedUnsafe(
+    { year: 2026, month: 9, day: 14, hour: 10 },
+    { adjustForTimeZone: true },
+  ),
+);
 const budgetDay = 86_400_000;
+const budgetIso = (millis: number) => DateTime.formatIso(DateTime.makeUnsafe(millis));
 const budgetSnapshots = (codexUsed: number): ServerProvider[] =>
   [CODEX_DRIVER, CLAUDE_AGENT_DRIVER].map((driver) => ({
     instanceId: ProviderInstanceId.make(driver),
@@ -5281,25 +5288,25 @@ const budgetSnapshots = (codexUsed: number): ServerProvider[] =>
     enabled: true,
     installed: true,
     auth: { status: "authenticated" },
-    checkedAt: new Date(budgetNow).toISOString(),
+    checkedAt: budgetIso(budgetNow),
     version: "1.0.0",
     models: [],
     slashCommands: [],
     skills: [],
     usageLimits: {
-      checkedAt: new Date(budgetNow).toISOString(),
+      checkedAt: budgetIso(budgetNow),
       windows: [
         {
           id: "weekly",
           label: "Weekly",
           kind: "weekly",
           usedPercent: driver === CODEX_DRIVER ? codexUsed : 5,
-          resetsAt: new Date(budgetNow + 7 * budgetDay).toISOString(),
+          resetsAt: budgetIso(budgetNow + 7 * budgetDay),
           windowDurationMins: 7 * 24 * 60,
           usageHistory: [
-            { at: new Date(budgetNow - budgetDay).toISOString(), usedPercent: 0 },
+            { at: budgetIso(budgetNow - budgetDay), usedPercent: 0 },
             {
-              at: new Date(budgetNow).toISOString(),
+              at: budgetIso(budgetNow),
               usedPercent: driver === CODEX_DRIVER ? codexUsed : 5,
             },
           ],

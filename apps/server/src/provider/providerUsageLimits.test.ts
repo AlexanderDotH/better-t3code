@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { MAX_USAGE_PACE_SAMPLES } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
 import { applyUsageLimitsUpdate, resolveUsageLimitsAfterProbe } from "./providerUsageLimits.ts";
 
@@ -125,7 +126,7 @@ describe("resolveUsageLimitsAfterProbe", () => {
     for (let index = 1; index <= MAX_USAGE_PACE_SAMPLES + 2; index += 1) {
       limits = applyUsageLimitsUpdate({
         previous: limits,
-        checkedAt: new Date(Date.parse(checkedAt) + index * 60_000).toISOString(),
+        checkedAt: DateTime.formatIso(DateTime.makeUnsafe(Date.parse(checkedAt) + index * 60_000)),
         update: {
           windows: [{ ...weekly, usedPercent: (index / (MAX_USAGE_PACE_SAMPLES + 2)) * 75 }],
         },

@@ -1,15 +1,22 @@
 import { ProviderInstanceId, type ServerProviderUsageLimits } from "@t3tools/contracts";
 import { it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { describe, expect } from "vite-plus/test";
 
 import { ServerSettingsService } from "../serverSettings.ts";
 import { makeUsageHardBudgetCheck, usageHardBudgetBlockReason } from "./usageHardBudget.ts";
 
-const now = new Date(2026, 8, 14, 10).getTime();
+const now = DateTime.toEpochMillis(
+  DateTime.makeZonedUnsafe(
+    { year: 2026, month: 9, day: 14, hour: 10 },
+    { adjustForTimeZone: true },
+  ),
+);
 const day = 86_400_000;
+const iso = (millis: number) => DateTime.formatIso(DateTime.makeUnsafe(millis));
 const limits = (usedPercent: number): ServerProviderUsageLimits => ({
-  checkedAt: new Date(now).toISOString(),
+  checkedAt: iso(now),
   windows: [
     {
       id: "weekly",
@@ -17,10 +24,10 @@ const limits = (usedPercent: number): ServerProviderUsageLimits => ({
       kind: "weekly",
       usedPercent,
       windowDurationMins: 7 * 24 * 60,
-      resetsAt: new Date(now + 7 * day).toISOString(),
+      resetsAt: iso(now + 7 * day),
       usageHistory: [
-        { at: new Date(now - day).toISOString(), usedPercent: 0 },
-        { at: new Date(now).toISOString(), usedPercent },
+        { at: iso(now - day), usedPercent: 0 },
+        { at: iso(now), usedPercent },
       ],
     },
   ],
@@ -40,7 +47,7 @@ describe("hard daily budget", () => {
       ...limits(used),
       windows: limits(used).windows.map((window) => ({
         ...window,
-        resetsAt: new Date(now + 6 * day).toISOString(),
+        resetsAt: iso(now + 6 * day),
       })),
     });
     expect(usageHardBudgetBlockReason(withCatchUp(20), now)).toBeNull();
@@ -65,7 +72,7 @@ describe("hard daily budget", () => {
           ...limits(10),
           windows: limits(10).windows.map((window) => ({
             ...window,
-            usageHistory: [{ at: new Date(now).toISOString(), usedPercent: 10 }],
+            usageHistory: [{ at: iso(now), usedPercent: 10 }],
           })),
         },
         now,

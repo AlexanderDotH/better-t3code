@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -5,12 +6,19 @@ import * as NodePath from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 import { ServerProviderUsageLimits } from "@t3tools/contracts";
 import { dailyUsagePace } from "@t3tools/shared/usageLimits";
+import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 
 import { makeCodexUsageHistoryReader } from "./codexUsageHistory.ts";
 
+const iso = (millis: number) => DateTime.formatIso(DateTime.makeUnsafe(millis));
 const at = (day: number, hour: number, minute = 0) =>
-  new Date(2026, 8, day, hour, minute).toISOString();
+  DateTime.formatIso(
+    DateTime.makeZonedUnsafe(
+      { year: 2026, month: 9, day, hour, minute },
+      { adjustForTimeZone: true },
+    ),
+  );
 const resetsAt = at(20, 12);
 const isUsageLimits = Schema.is(ServerProviderUsageLimits);
 const limits: ServerProviderUsageLimits = {
@@ -165,11 +173,7 @@ describe("Codex native usage history", () => {
 
   it("retains the first usage across a local midnight when quota percentages stay flat", async () => {
     const rows = Array.from({ length: 1_500 }, (_, minute) =>
-      usage(
-        new Date(new Date(2026, 8, 12, 20).getTime() + minute * 60_000).toISOString(),
-        6,
-        minute + 1,
-      ),
+      usage(iso(Date.parse(at(12, 20)) + minute * 60_000), 6, minute + 1),
     );
     await NodeFSP.writeFile(transcript, metadata + rows.join(""));
     const snapshot = await makeCodexUsageHistoryReader(home)(limits);

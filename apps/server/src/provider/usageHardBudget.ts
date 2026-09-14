@@ -19,7 +19,10 @@ export function usageHardBudgetBlockReason(
     // A confirmed empty window needs no earlier observations to establish its allowance.
     const pace = dailyUsagePace(
       window.usedPercent === 0 && !window.usageHistory?.length
-        ? { ...window, usageHistory: [{ at: new Date(now).toISOString(), usedPercent: 0 }] }
+        ? {
+            ...window,
+            usageHistory: [{ at: DateTime.formatIso(DateTime.makeUnsafe(now)), usedPercent: 0 }],
+          }
         : window,
       now,
       24,
