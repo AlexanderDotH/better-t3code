@@ -19,7 +19,7 @@ export function nextVisualizationRequestId() {
   return `web-visualization-${++requestSequence}`;
 }
 
-export function visualizationEngine(format: VisualizationFormat) {
+function visualizationEngine(format: VisualizationFormat) {
   return format === "vega-lite" ? "vega" : format;
 }
 
