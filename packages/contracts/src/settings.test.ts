@@ -62,7 +62,7 @@ it("persists the pacing switch and accepts only eight- or twenty-four-hour workd
     usagePacingEnabled: false,
     usagePacingWorkdayHours: 24,
   });
-  expect(encodeClientSettings({ ...DEFAULT_CLIENT_SETTINGS, ...patch })).toMatchObject(patch);
+  expect(encodeClientSettings(decodeClientSettings(patch))).toMatchObject(patch);
   expect(() => decodeClientSettingsPatch({ usagePacingWorkdayHours: 12 })).toThrow();
 });
 
@@ -70,9 +70,7 @@ it("keeps the hard daily budget opt-in and supports turning it off", () => {
   expect(decodeServerSettings({}).usageHardBudgetEnabled).toBe(false);
   for (const enabled of [true, false]) {
     const patch = decodeServerSettingsPatch({ usageHardBudgetEnabled: enabled });
-    expect(
-      encodeServerSettings({ ...DEFAULT_SERVER_SETTINGS, ...patch }).usageHardBudgetEnabled,
-    ).toBe(enabled);
+    expect(encodeServerSettings(decodeServerSettings(patch)).usageHardBudgetEnabled).toBe(enabled);
   }
   expect(() => decodeServerSettingsPatch({ usageHardBudgetEnabled: "true" })).toThrow();
 });
