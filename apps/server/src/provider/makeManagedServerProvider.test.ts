@@ -578,6 +578,10 @@ describe("makeManagedServerProvider", () => {
               label: "Weekly",
               usedPercent: 25,
               resetsAt: "2026-04-17T00:00:00.000Z",
+              usageHistory: [
+                { at: "2026-04-10T00:00:01.000Z", usedPercent: 20 },
+                { at: "2026-04-10T00:05:00.000Z", usedPercent: 25 },
+              ],
             },
           ],
         });

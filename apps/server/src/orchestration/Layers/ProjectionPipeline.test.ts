@@ -4409,4 +4409,105 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
       );
     }),
   );
+  it.effect(
+    "stores message edits and their continuation together, preserving roles and later messages",
+    () =>
+      Effect.gen(function* () {
+        const engine = yield* OrchestrationEngineService;
+        const query = yield* ProjectionSnapshotQuery;
+        const sql = yield* SqlClient.SqlClient;
+        const createdAt = "2026-01-01T00:00:00.000Z";
+        const projectId = ProjectId.make("edit-project");
+        const threadId = ThreadId.make("edit-thread");
+        const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6" };
+        yield* engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("edit-project"),
+          projectId,
+          title: "Edit",
+          workspaceRoot: "/tmp/edit-test-project",
+          defaultModelSelection: modelSelection,
+          createdAt,
+        });
+        yield* engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("edit-thread"),
+          threadId,
+          projectId,
+          title: "Edit",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+          historyImport: true,
+        });
+        yield* engine.dispatch({
+          type: "thread.history.import",
+          commandId: CommandId.make("edit-history"),
+          threadId,
+          messages: [
+            {
+              messageId: MessageId.make("edit-user"),
+              role: "user",
+              text: "Original request",
+              createdAt,
+            },
+            {
+              messageId: MessageId.make("edit-assistant"),
+              role: "assistant",
+              text: "Original answer",
+              createdAt,
+            },
+            {
+              messageId: MessageId.make("edit-later"),
+              role: "user",
+              text: "Later message",
+              createdAt,
+            },
+          ],
+        });
+        for (const [role, expectedText] of [
+          ["user", "Original request"],
+          ["assistant", "Original answer"],
+        ] as const) {
+          const command = {
+            type: "thread.message.edit" as const,
+            commandId: CommandId.make(`edit-${role}-save`),
+            threadId,
+            messageId: MessageId.make(`edit-${role}`),
+            expectedText,
+            text: `Corrected ${role}`,
+            createdAt,
+          };
+          yield* engine.dispatch(command);
+          const detail = Option.getOrThrow(yield* query.getThreadDetailById(threadId));
+          assert.strictEqual(
+            detail.messages.find((message) => message.id === command.messageId)?.text,
+            `Corrected ${role}`,
+          );
+          assert.strictEqual(
+            detail.messages.find((message) => message.id === command.messageId)?.role,
+            role,
+          );
+          assert.strictEqual(
+            detail.messages.find((message) => message.id === "edit-later")?.text,
+            "Later message",
+          );
+          const [count] = yield* sql<{
+            count: number;
+          }>`SELECT COUNT(*) AS count FROM orchestration_events
+        WHERE command_id = ${command.commandId} AND event_type IN ('thread.message-edited', 'thread.message-sent', 'thread.turn-start-requested')`;
+          assert.strictEqual(count?.count, 3);
+          yield* engine.dispatch(command);
+          const stale = yield* engine
+            .dispatch({ ...command, commandId: CommandId.make(`edit-${role}-stale`) })
+            .pipe(Effect.flip);
+          assert.strictEqual(stale._tag, "OrchestrationCommandInvariantError");
+          const unchanged = Option.getOrThrow(yield* query.getThreadDetailById(threadId));
+          assert.strictEqual(unchanged.messages.length, detail.messages.length);
+        }
+      }),
+  );
 });

@@ -56,10 +56,40 @@ Filter with the environment dropdown to see what a single machine has.
 
 If a window looks stale, refresh Limits to re-check every provider and hub.
 
+Enable **Show usage pace** in **Settings → Better T3 → General → Usage limits and pacing**
+(on mobile, **Settings → Better T3**). Unused daily shares from earlier days in the current weekly
+window are available immediately as **catch-up**. Today's allowance includes that catch-up once;
+the rest of the remaining weekly quota is spread across the days until reset, including weekends.
+The default 8-hour workday starts at the first recorded usage each local day; switch it off to
+spread usage over a full 24-hour calendar day. Pace guidance flags spending that would exhaust
+today's allowance too early, showing how far above the catch-up-adjusted pace you are in percent.
+Hover or tap it for the hourly allowance, observed usage, and remaining catch-up. Catch-up is
+part of your existing weekly quota and expires at reset; it does not increase your provider's limit.
+These percentages are shares of subscription quota, not fixed token counts. Codex pacing uses
+the CLI's timestamped token usage and quota history, including activity outside T3 and before
+a restart. Missing history, including activity on another machine, is not inferred from T3
+messages. Other providers use quota observations from the running server.
+Five-hour limits appear alongside weekly limits whenever the provider reports them and keep
+their own reset clock.
+
+Turn on **Hard daily budget** in the same settings section to enforce today's allowance,
+including catch-up. It is off by default and applies to all clients connected to the selected
+environment, using that environment's calendar day. Reaching the allowance blocks new agent
+turns and background generation, and interrupts active agent turns when the next usage update
+arrives. The next day makes a new allowance available; switching the setting off removes the
+block immediately. It works independently of the pace display and the 8-hour pacing guide.
+When weekly usage or sufficient history cannot be verified, requests are blocked until the data
+is available or you disable the setting. This includes providers without weekly subscription
+limits. Usage reporting and cancellation can lag, so in-flight work may exceed the allowance.
+The setting only controls requests made through this environment; it cannot stop other apps
+using the same account.
+
 Pick `/usage-limits` from the composer's command menu, or send it as a message, to check the
 current model's limits without leaving the conversation. The result opens above the composer and
-closes when you dismiss it or send your next message. It uses the same snapshot as **Usage → Limits**, so it does not run the agent or refresh
-anything. The command is offered only for providers that appear under **Usage → Limits**.
+stays pinned across chats and new messages until you dismiss it. It follows the current chat's
+provider and updates with **Usage → Limits**, keeping the last known limits and matching usage
+history when a refresh cannot read them. Opening it does not run the agent or trigger a refresh.
+The command is offered only for providers that appear under **Usage → Limits**.
 
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.

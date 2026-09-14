@@ -1306,6 +1306,12 @@ export const ThreadForkCommand = Schema.Struct({
   threadId: ThreadId,
   sourceThreadId: ThreadId,
   boundary: ThreadForkBoundary,
+  messageEdit: Schema.optional(
+    Schema.Struct({
+      expectedText: Schema.String,
+      text: TrimmedNonEmptyString,
+    }),
+  ),
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
@@ -1506,6 +1512,16 @@ export const ThreadTurnRetryCommand = Schema.Struct({
 });
 export type ThreadTurnRetryCommand = typeof ThreadTurnRetryCommand.Type;
 
+const ThreadMessageEditCommand = Schema.Struct({
+  type: Schema.Literal("thread.message.edit"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  expectedText: Schema.String,
+  text: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+
 const ClientThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
   commandId: CommandId,
@@ -1586,6 +1602,7 @@ const ThreadSessionStopCommand = Schema.Struct({
 });
 
 const DispatchableClientOrchestrationCommand = Schema.Union([
+  ThreadMessageEditCommand,
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
@@ -1618,6 +1635,7 @@ export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
 
 export const ClientOrchestrationCommand = Schema.Union([
+  ThreadMessageEditCommand,
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
@@ -1966,6 +1984,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.runtime-mode-set",
   "thread.interaction-mode-set",
   "thread.message-sent",
+  "thread.message-edited",
   "thread.harness-sync-linked",
   "thread.harness-sync-message-imported",
   "thread.turn-start-requested",
@@ -2197,6 +2216,13 @@ export const ThreadInteractionModeSetPayload = Schema.Struct({
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
   ),
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadMessageEditedPayload = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  text: TrimmedNonEmptyString,
   updatedAt: IsoDateTime,
 });
 
@@ -2509,6 +2535,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.message-sent"),
     payload: ThreadMessageSentPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.message-edited"),
+    payload: ThreadMessageEditedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

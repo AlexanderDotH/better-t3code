@@ -10,6 +10,20 @@ import { Button } from "./ui/button";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
 
 const motionPreferences = vi.hoisted(() => ({ enabled: false }));
+const visualizationState = vi.hoisted(() => ({ enabled: false, render: vi.fn() }));
+vi.mock("../hooks/useVisualizationsEnabled", () => ({
+  useVisualizationsEnabled: () => visualizationState.enabled,
+}));
+vi.mock("./visualizations/VisualizationBlock", () => ({
+  VisualizationBlock: ({ source }: { source: string }) => {
+    visualizationState.render(source);
+    return (
+      <div role="img" aria-label="Diagram preview">
+        {source}
+      </div>
+    );
+  },
+}));
 vi.mock("../hooks/useBetterT3Feature", () => ({
   useBetterT3DeviceFeature: () => motionPreferences.enabled,
 }));
@@ -75,6 +89,81 @@ function codeButton(renderer: ReactTestRenderer, label: string) {
   if (!button) throw new Error(`Missing code button: ${label}`);
   return button.props as ComponentProps<typeof Button>;
 }
+
+describe("ChatMarkdown visualizations", () => {
+  it("renders only closed diagram fences and restores code without render work when disabled", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    const source = "graph TD\n  A --> B";
+    const openFence = `\`\`\`mermaid\n${source}`;
+    const closedFence = `${openFence}\n\`\`\``;
+    const markdown = (text: string, isStreaming = true) => (
+      <ChatMarkdown cwd="/tmp/project" text={text} isStreaming={isStreaming} />
+    );
+    const previews = () => renderer!.root.findAllByProps({ "aria-label": "Diagram preview" });
+    try {
+      await act(async () => {
+        renderer = create(markdown(closedFence));
+      });
+      expect(visualizationState.render).not.toHaveBeenCalled();
+      expect(previews()).toHaveLength(0);
+
+      visualizationState.enabled = true;
+      await act(async () => {
+        renderer!.update(markdown(openFence));
+      });
+      expect(visualizationState.render).not.toHaveBeenCalled();
+      await act(async () => {
+        renderer!.update(markdown(openFence, false));
+      });
+      expect(visualizationState.render).not.toHaveBeenCalled();
+
+      await act(async () => {
+        renderer!.update(markdown(closedFence));
+      });
+      await act(async () => {
+        await vi.dynamicImportSettled();
+      });
+      expect(previews()).toHaveLength(1);
+      expect(visualizationState.render).toHaveBeenCalledWith(`${source}\n`);
+
+      visualizationState.render.mockClear();
+      visualizationState.enabled = false;
+      await act(async () => {
+        renderer!.update(markdown(closedFence, false));
+      });
+      expect(previews()).toHaveLength(0);
+      expect(visualizationState.render).not.toHaveBeenCalled();
+      expect(renderer!.root.findAllByProps({ "data-language": "mermaid" })).toHaveLength(1);
+
+      visualizationState.enabled = true;
+      await act(async () => {
+        renderer!.update(markdown("~~~graphviz\ngraph { a -- b }\n~~~", false));
+      });
+      expect(previews()).toHaveLength(1);
+      for (const nestedFence of [
+        "> ```mermaid\n> graph TD\n> A --> B\n> ```",
+        "- Diagram\n\n  ```mermaid\n  graph TD\n  A --> B\n  ```",
+      ]) {
+        await act(async () => {
+          renderer!.update(markdown(nestedFence, false));
+        });
+        expect(previews()).toHaveLength(1);
+      }
+      await act(async () => {
+        renderer!.update(markdown("```text\ngraph TD\n```", false));
+      });
+      expect(previews()).toHaveLength(0);
+    } finally {
+      await act(async () => {
+        renderer?.unmount();
+      });
+      visualizationState.enabled = false;
+      visualizationState.render.mockClear();
+      vi.unstubAllGlobals();
+    }
+  });
+});
 
 describe("ChatMarkdown favicon privacy", () => {
   it("suppresses private link images while preserving public links across updates", async () => {

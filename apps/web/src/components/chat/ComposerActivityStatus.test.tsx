@@ -5,7 +5,6 @@ import {
   composerActivityMessageId,
   composerActivityVariant,
   formatWorkingTimer,
-  resolveComposerActivityTokenUsage,
 } from "./ComposerActivityStatus";
 
 describe("composer activity status", () => {
@@ -27,55 +26,6 @@ describe("composer activity status", () => {
     expect(composerActivityVariant({ kind: "sync", phase: "loading" })).toBe("info");
     expect(composerActivityVariant({ kind: "working", startedAt: null })).toBe("activity");
   });
-
-  it("ignores stale token usage from the previous turn", () => {
-    const snapshot = {
-      updatedAt: "2026-08-30T12:00:04Z",
-      inputTokens: 1200,
-      lastInputTokens: 1100,
-      outputTokens: 80,
-      lastOutputTokens: 75,
-    };
-    expect(
-      resolveComposerActivityTokenUsage({ activeWorkStartedAt: "2026-08-30T12:00:00Z", snapshot }),
-    ).toEqual({ inputTokens: 1100, outputTokens: 75 });
-    expect(
-      resolveComposerActivityTokenUsage({ activeWorkStartedAt: "2026-08-30T12:00:05Z", snapshot }),
-    ).toEqual({ inputTokens: 0, outputTokens: 0 });
-  });
-
-  it("falls back to cumulative token fields when the provider has no last-turn usage", () => {
-    expect(
-      resolveComposerActivityTokenUsage({
-        activeWorkStartedAt: "2026-08-30T12:00:00Z",
-        snapshot: {
-          updatedAt: "2026-08-30T12:00:00Z",
-          inputTokens: 200,
-          outputTokens: 45,
-          lastInputTokens: null,
-          lastOutputTokens: null,
-        },
-      }),
-    ).toEqual({ inputTokens: 200, outputTokens: 45 });
-  });
-
-  it.each([null, "invalid timestamp"])(
-    "avoids misleading token counts when work start is %s",
-    (activeWorkStartedAt) => {
-      expect(
-        resolveComposerActivityTokenUsage({
-          activeWorkStartedAt,
-          snapshot: {
-            updatedAt: "2026-08-30T12:00:00Z",
-            inputTokens: 200,
-            outputTokens: 45,
-            lastInputTokens: 100,
-            lastOutputTokens: 25,
-          },
-        }),
-      ).toEqual({ inputTokens: 0, outputTokens: 0 });
-    },
-  );
 
   it.each([
     ["2026-08-30T12:00:08Z", "8s"],

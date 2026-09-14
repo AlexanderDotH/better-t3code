@@ -468,7 +468,7 @@ function asRuntimeStatus(value: unknown): RuntimeSubagentStatus | undefined {
  */
 export function foldSubagentActivities(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
-  options?: { readonly sessionLive?: boolean },
+  options?: { readonly sessionLive?: boolean; readonly limit?: number | null },
 ): ReadonlyArray<RuntimeSubagent> {
   const agents = new Map<string, MutableAgent>();
 
@@ -673,14 +673,16 @@ export function foldSubagentActivities(
   }
 
   let roster = Array.from(agents.values());
-  if (roster.length > ROSTER_LIMIT) {
+  const limit =
+    options?.limit === null ? Number.POSITIVE_INFINITY : (options?.limit ?? ROSTER_LIMIT);
+  if (roster.length > limit) {
     // Prefer live, then waiting/idle, then newest settled.
     const rank = (agent: MutableAgent): number =>
       isActiveSubagentStatus(agent.status) ? 0 : agent.status === "idle" ? 1 : 2;
     roster = roster
       .slice()
       .sort((a, b) => rank(a) - rank(b) || b.updatedAt.localeCompare(a.updatedAt))
-      .slice(0, ROSTER_LIMIT);
+      .slice(0, limit);
   }
 
   return roster.map((agent) => ({ ...agent }));

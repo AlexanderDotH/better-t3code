@@ -797,13 +797,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
                   <WorkLogIcon
                     icon={icon}
                     color={props.iconSubtleColor}
-                    colorClassName={
-                      iconIsDestructive
-                        ? "accent-adaptive-rose-600-400"
-                        : failed
-                          ? "accent-danger-foreground/40"
-                          : undefined
-                    }
+                    colorClassName={iconIsDestructive ? "accent-adaptive-rose-600-400" : undefined}
                   />
                 )}
               </View>

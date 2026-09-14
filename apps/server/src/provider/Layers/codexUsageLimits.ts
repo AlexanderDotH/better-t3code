@@ -91,6 +91,7 @@ function codexRateLimitsToWindows(
       label: labelForKind(kind),
       usedPercent: clampPercent(window.usedPercent),
       windowDurationMins,
+      ...(kind === "weekly" ? { usageHistorySource: "codex" as const } : {}),
       ...(resetsAt ? { resetsAt } : {}),
     });
   }

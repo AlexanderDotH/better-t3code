@@ -1,10 +1,10 @@
-import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MAX_PROJECT_THREAD_PREVIEW_COUNT,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MIN_PROJECT_THREAD_PREVIEW_COUNT,
+  resolveBetterT3FeatureFlag,
   type BetterT3FeatureControlStateV1,
   type BetterT3FeatureId,
   type CavemanMode,
@@ -27,8 +27,6 @@ import {
 import { isFetchCapableProvider } from "@t3tools/shared/fetchMode";
 import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { createModelSelection, stripAutoReasoning } from "@t3tools/shared/model";
-import { AsyncResult } from "effect/unstable/reactivity";
-import * as Option from "effect/Option";
 import { Link } from "@tanstack/react-router";
 import { useMemo, useState, type ReactNode } from "react";
 
@@ -43,6 +41,7 @@ import {
 import { useProjectThreadPreviewCount } from "../../projectThreadPreviewSync";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { knowledgeGraphEnvironment } from "../../state/knowledgeGraph";
+import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useRightPanelStore } from "../../rightPanelStore";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
@@ -279,19 +278,13 @@ function BetterT3ModelSelectionControl(props: {
     entries,
     props.selection ?? props.fallbackSelection,
   );
-  if (!resolvedSelection) {
+  if (!resolvedSelection && props.featureId !== "knowledge.model") {
     return (
       <span className="text-xs text-muted-foreground">
         {props.translate("settings.betterT3.value.unavailable")}
       </span>
     );
   }
-  const modelOptionsByInstance = getCustomModelOptionsByInstance(
-    props.settings,
-    props.providers,
-    resolvedSelection.instanceId,
-    resolvedSelection.model,
-  );
   return (
     <fieldset
       disabled={props.disabled}
@@ -304,23 +297,41 @@ function BetterT3ModelSelectionControl(props: {
           variant={props.selection === null ? "secondary" : "outline"}
           onClick={() => props.onChange(null)}
         >
-          {props.translate("settings.betterT3.value.automatic")}
+          {props.translate(
+            props.featureId === "knowledge.model"
+              ? "knowledgeGraph.localIndexing"
+              : "settings.betterT3.value.automatic",
+          )}
         </Button>
       ) : null}
-      <ProviderModelPicker
-        activeInstanceId={resolvedSelection.instanceId}
-        model={resolvedSelection.model}
-        lockedProvider={null}
-        instanceEntries={entries}
-        modelOptionsByInstance={modelOptionsByInstance}
-        disabled={props.disabled}
-        triggerVariant="outline"
-        triggerClassName="min-w-0 max-w-56 shrink-0 text-foreground/90 hover:text-foreground"
-        triggerAriaLabel={props.translate(`betterT3.${props.featureId}.label`)}
-        onInstanceModelChange={(instanceId, model) =>
-          props.onChange(createModelSelection(instanceId, model))
-        }
-      />
+      {resolvedSelection ? (
+        <ProviderModelPicker
+          activeInstanceId={resolvedSelection.instanceId}
+          model={resolvedSelection.model}
+          lockedProvider={null}
+          instanceEntries={entries}
+          modelOptionsByInstance={getCustomModelOptionsByInstance(
+            props.settings,
+            props.providers,
+            resolvedSelection.instanceId,
+            resolvedSelection.model,
+          )}
+          disabled={props.disabled}
+          triggerVariant="outline"
+          triggerClassName="min-w-0 max-w-56 shrink-0 text-foreground/90 hover:text-foreground"
+          triggerAriaLabel={props.translate(`betterT3.${props.featureId}.label`)}
+          onInstanceModelChange={(instanceId, model) =>
+            props.onChange(createModelSelection(instanceId, model))
+          }
+        />
+      ) : (
+        <Link
+          to="/settings/providers"
+          className="text-xs text-muted-foreground underline underline-offset-2"
+        >
+          {props.translate("knowledgeGraph.configureProvider")}
+        </Link>
+      )}
     </fieldset>
   );
 }
@@ -516,17 +527,34 @@ function KnowledgeGraphProjectSelect(props: {
 function KnowledgeGraphStatusControl(props: {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
+  readonly disabled: boolean;
   readonly translate: Translate;
 }) {
-  const result = useAtomValue(
-    knowledgeGraphEnvironment.state({
-      environmentId: props.environmentId,
-      input: { scope: { projectId: props.projectId } },
-    }),
+  const result = useEnvironmentQuery(
+    props.disabled
+      ? null
+      : knowledgeGraphEnvironment.state({
+          environmentId: props.environmentId,
+          input: { scope: { projectId: props.projectId } },
+        }),
   );
-  const snapshot = Option.getOrNull(AsyncResult.value(result))?.snapshot ?? null;
-  if (result._tag === "Failure") {
-    return <span className="text-xs text-danger">{props.translate("knowledgeGraph.error")}</span>;
+  const snapshot = result.data?.snapshot ?? null;
+  if (props.disabled) {
+    return (
+      <span className="text-xs text-muted-foreground">
+        {props.translate("knowledgeGraph.status.disabled")}
+      </span>
+    );
+  }
+  if (result.error) {
+    return (
+      <>
+        <span className="text-xs text-danger">{props.translate("knowledgeGraph.error")}</span>
+        <Button size="xs" variant="outline" onClick={result.refresh} disabled={result.isPending}>
+          {props.translate("knowledgeGraph.retry")}
+        </Button>
+      </>
+    );
   }
   if (!snapshot) {
     return (
@@ -553,13 +581,15 @@ function KnowledgeGraphPauseControl(props: {
   readonly disabled: boolean;
   readonly translate: Translate;
 }) {
-  const result = useAtomValue(
-    knowledgeGraphEnvironment.state({
-      environmentId: props.environmentId,
-      input: { scope: { projectId: props.projectId } },
-    }),
+  const result = useEnvironmentQuery(
+    props.disabled
+      ? null
+      : knowledgeGraphEnvironment.state({
+          environmentId: props.environmentId,
+          input: { scope: { projectId: props.projectId } },
+        }),
   );
-  const snapshot = Option.getOrNull(AsyncResult.value(result))?.snapshot ?? null;
+  const snapshot = result.data?.snapshot ?? null;
   const pause = useAtomCommand(knowledgeGraphEnvironment.pause, "Knowledge Graph pause");
   const action = resolveKnowledgeGraphPauseAction(snapshot?.status.state ?? null);
   return (
@@ -878,6 +908,10 @@ export function useBetterT3PreparedControls(input: {
           <KnowledgeGraphStatusControl
             environmentId={input.environmentId}
             projectId={selectedProjectId}
+            disabled={
+              scalarControlDisabled("knowledge.progress") ||
+              !resolveBetterT3FeatureFlag(input.settings.betterT3Environment, "knowledge.graph")
+            }
             translate={input.translate}
           />
         ) : null}

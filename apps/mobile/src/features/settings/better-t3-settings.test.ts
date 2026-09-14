@@ -81,6 +81,33 @@ function feature(sections: ReturnType<typeof buildMobileBetterT3Sections>, id: B
 }
 
 describe("mobile Better T3 settings", () => {
+  it("gates visualizations on the selected environment on phone and tablet", () => {
+    for (const surface of ["phone", "tablet"] as const) {
+      for (const supported of [true, false]) {
+        for (const enabled of [true, false]) {
+          const sections = buildMobileBetterT3Sections({
+            registry: BETTER_T3_FEATURE_REGISTRY,
+            surface,
+            deviceAvailable: true,
+            environmentAvailable: true,
+            deviceSettings: {
+              ...DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
+              flags: { "chat.visualizations": !enabled },
+            },
+            environmentSettings: {
+              ...DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
+              flags: { "chat.visualizations": enabled },
+            },
+            capabilities: capabilities(supported ? { visualizationsVersion: 1 } : {}),
+          });
+          expect(feature(sections, "chat.visualizations")).toMatchObject({
+            value: enabled,
+            availability: { state: supported ? "available" : "unsupported" },
+          });
+        }
+      }
+    }
+  });
   it("requires a connected environment with current server settings before enabling mutations", () => {
     const environmentId = EnvironmentId.make("environment-connected");
 
@@ -427,6 +454,7 @@ describe("mobile Better T3 settings", () => {
 
   it("reports MCP, skills, and mixed-version compatibility explicitly", () => {
     const current = capabilities({
+      visualizationsVersion: 1,
       environmentSettingsVersion: 1,
       projectSettingsVersion: 1,
       harnessChatSyncVersion: 1,

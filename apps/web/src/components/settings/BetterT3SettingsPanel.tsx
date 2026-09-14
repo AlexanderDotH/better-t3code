@@ -24,7 +24,6 @@ import {
 } from "@t3tools/shared/interfaceLanguage";
 import { Link } from "@tanstack/react-router";
 import { agentSettingsEnvironment } from "../../state/agentSettings";
-import { ChevronRightIcon } from "lucide-react";
 import { useCallback, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 
 import { isElectron } from "../../env";
@@ -43,7 +42,6 @@ import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { Button } from "../ui/button";
-import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import {
@@ -51,7 +49,8 @@ import {
   SettingsPageContainer,
   SettingsRow,
   SettingsSection,
-  useSettingsSearchTargetId,
+  SettingsSearchTarget,
+  scrollToSettingsTarget,
 } from "./settingsLayout";
 import {
   buildBetterT3ControlStates,
@@ -67,6 +66,7 @@ import {
 } from "./BetterT3SettingsPreview";
 import { buildBetterT3SettingsPreviewModel } from "./BetterT3SettingsPreview.logic";
 import { InterfaceLanguageSettings } from "./InterfaceLanguageSettings";
+import { UsagePacingSettings } from "./UsagePacingSettings";
 import { searchableSetting } from "./settingsSearch";
 
 type Translate = InterfaceTranslator["message"];
@@ -81,93 +81,32 @@ const BETTER_T3_SECTIONS = [
   "integration-status",
 ] as const satisfies ReadonlyArray<BetterT3FeatureSection>;
 
-export type BetterT3SettingsTabId =
-  | "general"
-  | "agents"
-  | "visual"
-  | "workspace"
-  | "voice"
-  | "knowledge"
-  | "system"
-  | "integrations";
-
-const BETTER_T3_SETTINGS_TABS = [
-  { id: "general", section: null, labelMessageId: "settings.betterT3.tab.general" },
-  { id: "agents", section: "agent-workflows", labelMessageId: "settings.betterT3.tab.agents" },
-  { id: "visual", section: "chat-layout", labelMessageId: "settings.betterT3.tab.visual" },
+const BETTER_T3_SETTINGS_GROUPS = [
+  {
+    id: "general",
+    sections: ["chat-layout", "voice-synchronization"],
+    labelMessageId: "settings.betterT3.tab.general",
+  },
+  {
+    id: "agents",
+    sections: ["agent-workflows", "knowledge-automation"],
+    labelMessageId: "settings.betterT3.tab.agents",
+  },
   {
     id: "workspace",
-    section: "workspace-source-control",
+    sections: ["workspace-source-control"],
     labelMessageId: "settings.betterT3.tab.workspace",
   },
   {
-    id: "voice",
-    section: "voice-synchronization",
-    labelMessageId: "settings.betterT3.tab.voice",
-  },
-  {
-    id: "knowledge",
-    section: "knowledge-automation",
-    labelMessageId: "settings.betterT3.tab.knowledge",
-  },
-  {
     id: "system",
-    section: "resource-protection",
+    sections: ["resource-protection", "integration-status"],
     labelMessageId: "settings.betterT3.tab.system",
   },
-  {
-    id: "integrations",
-    section: "integration-status",
-    labelMessageId: "settings.betterT3.tab.integrations",
-  },
 ] as const satisfies ReadonlyArray<{
-  readonly id: BetterT3SettingsTabId;
-  readonly section: BetterT3FeatureSection | null;
+  readonly id: string;
+  readonly sections: ReadonlyArray<BetterT3FeatureSection>;
   readonly labelMessageId: InterfaceMessageKey;
 }>;
-
-const BETTER_T3_ADVANCED_FEATURE_IDS: ReadonlySet<BetterT3FeatureId> = new Set([
-  "agent.fetchModel",
-  "agent.parallelPlanReviewer",
-  "agent.cavemanMode",
-  "chat.cardMorphing",
-  "chat.previewCount",
-  "chat.sorting",
-  "chat.settling",
-  "chat.shiftClickShowLess",
-  "workspace.checkpoints",
-  "workspace.chatPortability",
-  "voice.outputLanguage",
-  "voice.transcriptPortability",
-  "voice.credentials",
-  "knowledge.model",
-  "knowledge.progress",
-  "knowledge.rebuild",
-  "knowledge.pause",
-  "knowledge.clear",
-  "resource.diagnostics",
-  "integration.mcp",
-  "integration.skills",
-]);
-
-function resolveBetterT3SettingsSearchTarget(
-  targetId: string | null,
-): { readonly tabId: BetterT3SettingsTabId; readonly advanced: boolean } | null {
-  if (targetId === "better-t3-interface" || targetId === "better-t3-interface-language") {
-    return { tabId: "general", advanced: false };
-  }
-  if (targetId === "setting-glass-opacity" || targetId === "macos-window-transparency") {
-    return { tabId: "visual", advanced: false };
-  }
-  const descriptor = BETTER_T3_FEATURE_REGISTRY.find((feature) => feature.id === targetId);
-  if (!descriptor) return null;
-  const tab = BETTER_T3_SETTINGS_TABS.find((candidate) => candidate.section === descriptor.section);
-  if (!tab) return null;
-  return {
-    tabId: tab.id,
-    advanced: BETTER_T3_ADVANCED_FEATURE_IDS.has(descriptor.id),
-  };
-}
 
 export interface BetterT3SettingsPanelViewProps {
   readonly features: ReadonlyArray<BetterT3FeatureControlStateV1>;
@@ -177,6 +116,7 @@ export interface BetterT3SettingsPanelViewProps {
   readonly onSwitchChange: (featureId: BetterT3SwitchFeatureId, enabled: boolean) => void;
   readonly introduction?: ReactNode;
   readonly languageControl?: ReactNode;
+  readonly usagePacingControl?: ReactNode;
   readonly visualSettings?: ReactNode;
   readonly featureVisuals?: Partial<Record<BetterT3FeatureId, ReactNode>>;
   readonly featureChoices?: Partial<Record<BetterT3FeatureId, ReactNode>>;
@@ -310,38 +250,8 @@ function BetterT3AppearanceSettings(props: {
   );
 }
 
-function BetterT3SettingsTabs(props: BetterT3SettingsPanelViewProps) {
-  const searchTargetId = useSettingsSearchTargetId();
-  const initialSearchTarget = resolveBetterT3SettingsSearchTarget(searchTargetId);
-  const [activeTab, setActiveTab] = useState<BetterT3SettingsTabId>(
-    initialSearchTarget?.tabId ?? "general",
-  );
-  const [advancedOpen, setAdvancedOpen] = useState(initialSearchTarget?.advanced ?? false);
-
-  const [previousSearchTargetId, setPreviousSearchTargetId] = useState(searchTargetId);
-  if (previousSearchTargetId !== searchTargetId) {
-    setPreviousSearchTargetId(searchTargetId);
-    const searchTarget = resolveBetterT3SettingsSearchTarget(searchTargetId);
-    if (searchTarget) {
-      setActiveTab(searchTarget.tabId);
-      if (searchTarget.advanced) setAdvancedOpen(true);
-    }
-  }
-
-  const activeTabDefinition =
-    BETTER_T3_SETTINGS_TABS.find((tab) => tab.id === activeTab) ?? BETTER_T3_SETTINGS_TABS[0];
-  const sectionFeatures =
-    activeTabDefinition.section === null
-      ? []
-      : props.features.filter(
-          (feature) => feature.descriptor.section === activeTabDefinition.section,
-        );
-  const basicFeatures = sectionFeatures.filter(
-    (feature) => !BETTER_T3_ADVANCED_FEATURE_IDS.has(feature.descriptor.id),
-  );
-  const advancedFeatures = sectionFeatures.filter((feature) =>
-    BETTER_T3_ADVANCED_FEATURE_IDS.has(feature.descriptor.id),
-  );
+export function BetterT3SettingsContent(props: BetterT3SettingsPanelViewProps) {
+  const [activeGroup, setActiveGroup] = useState("general");
   const renderFeatureRows = (visibleFeatures: ReadonlyArray<BetterT3FeatureControlStateV1>) =>
     visibleFeatures.map((feature) => {
       const messageIds = resolveBetterT3DescriptorMessageKeys(feature.descriptor);
@@ -372,68 +282,68 @@ function BetterT3SettingsTabs(props: BetterT3SettingsPanelViewProps) {
 
   return (
     <div className="min-w-0 space-y-8">
-      <div
+      <nav
         aria-label={props.translate("settings.betterT3.title")}
-        className="mx-3 flex min-w-0 gap-1 overflow-x-auto rounded-xl border border-border/60 bg-background/30 p-1 sm:mx-4"
-        role="tablist"
+        className="sticky top-0 z-10 mx-3 flex min-w-0 gap-1 overflow-x-auto rounded-xl border border-border/60 bg-background p-1 sm:mx-4"
       >
-        {BETTER_T3_SETTINGS_TABS.map((tab) => {
-          const selected = tab.id === activeTab;
-          return (
-            <button
-              role="tab"
-              aria-controls={`better-t3-tabpanel-${tab.id}`}
-              aria-selected={selected}
-              className={`inline-flex h-9 shrink-0 items-center rounded-lg px-3 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring ${
-                selected
-                  ? "bg-accent font-medium text-foreground"
-                  : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
-              }`}
-              id={`better-t3-tab-${tab.id}`}
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              type="button"
-            >
-              {props.translate(tab.labelMessageId)}
-            </button>
-          );
-        })}
-      </div>
+        {BETTER_T3_SETTINGS_GROUPS.map((group) => (
+          <a
+            aria-current={group.id === activeGroup ? "location" : undefined}
+            className={`inline-flex h-9 shrink-0 items-center rounded-lg px-3 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${
+              group.id === activeGroup
+                ? "bg-accent font-medium text-foreground"
+                : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+            }`}
+            href={`#better-t3-group-${group.id}`}
+            key={group.id}
+            onClick={(event) => {
+              if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+              event.preventDefault();
+              scrollToSettingsTarget(`better-t3-group-${group.id}`, { highlight: false });
+            }}
+          >
+            {props.translate(group.labelMessageId)}
+          </a>
+        ))}
+      </nav>
 
-      <div
-        aria-labelledby={`better-t3-tab-${activeTab}`}
-        id={`better-t3-tabpanel-${activeTab}`}
-        role="tabpanel"
-      >
-        {activeTabDefinition.section === null ? (
-          props.languageControl ? (
-            <BetterT3InterfaceSection control={props.languageControl} translate={props.translate} />
-          ) : null
-        ) : (
-          <SettingsSection title={props.sectionTitles[activeTabDefinition.section]}>
-            {activeTab === "visual" ? props.visualSettings : null}
-            {renderFeatureRows(basicFeatures)}
-            {advancedFeatures.length > 0 ? (
-              <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
-                <CollapsibleTrigger
-                  className="group flex min-h-10 w-full items-center gap-2 border-t border-border/60 px-3 pt-3 text-left text-sm font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring sm:px-4"
-                  data-better-t3-advanced-trigger
-                  type="button"
-                >
-                  <ChevronRightIcon
-                    aria-hidden
-                    className="size-4 shrink-0 transition-transform duration-200 group-data-panel-open:rotate-90"
-                  />
-                  {props.translate("settings.betterT3.advancedSettings")}
-                </CollapsibleTrigger>
-                <CollapsiblePanel data-better-t3-advanced-panel>
-                  <div className="space-y-1 pt-2">{renderFeatureRows(advancedFeatures)}</div>
-                </CollapsiblePanel>
-              </Collapsible>
-            ) : null}
-          </SettingsSection>
-        )}
-      </div>
+      {BETTER_T3_SETTINGS_GROUPS.map((group) => (
+        <SettingsSearchTarget
+          aria-labelledby={`better-t3-group-title-${group.id}`}
+          className="space-y-6 border-t border-border/70 pt-6 outline-none last:min-h-[calc(100dvh-var(--workspace-topbar-height)-4rem)] [&>section+section]:border-t [&>section+section]:border-border/60 [&>section+section]:pt-6"
+          id={`better-t3-group-${group.id}`}
+          key={group.id}
+          onFocusCapture={() => setActiveGroup(group.id)}
+          role="region"
+        >
+          <h2
+            className="scroll-mt-16 px-3 text-lg font-semibold tracking-tight text-foreground sm:px-4"
+            data-settings-scroll-target="start"
+            id={`better-t3-group-title-${group.id}`}
+          >
+            {props.translate(group.labelMessageId)}
+          </h2>
+          {group.id === "general" ? (
+            <>
+              {props.languageControl ? (
+                <BetterT3InterfaceSection
+                  control={props.languageControl}
+                  translate={props.translate}
+                />
+              ) : null}
+              {props.usagePacingControl}
+            </>
+          ) : null}
+          {group.sections.map((section) => (
+            <SettingsSection key={section} title={props.sectionTitles[section]}>
+              {section === "chat-layout" ? props.visualSettings : null}
+              {renderFeatureRows(
+                props.features.filter((feature) => feature.descriptor.section === section),
+              )}
+            </SettingsSection>
+          ))}
+        </SettingsSearchTarget>
+      ))}
     </div>
   );
 }
@@ -442,7 +352,7 @@ function BetterT3SettingsPanelView(props: BetterT3SettingsPanelViewProps) {
   return (
     <SettingsPageContainer>
       {props.introduction}
-      <BetterT3SettingsTabs {...props} />
+      <BetterT3SettingsContent {...props} />
     </SettingsPageContainer>
   );
 }
@@ -1001,6 +911,7 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
       translate={translate}
       controls={controls}
       featureChoices={featureChoices}
+      usagePacingControl={<UsagePacingSettings environmentId={props.environment.environmentId} />}
       languageControl={
         <div id="better-t3-interface-language">
           <InterfaceLanguageSettings />

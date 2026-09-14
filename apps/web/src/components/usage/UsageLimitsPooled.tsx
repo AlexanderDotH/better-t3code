@@ -13,7 +13,7 @@ import {
 import { TicketIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
-import { usePrimarySettings } from "../../hooks/useSettings";
+import { useClientSettings, usePrimarySettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
@@ -21,6 +21,7 @@ import { getDriverOption } from "../settings/providerDriverMeta";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { UsagePaceBar, UsagePaceDetails } from "./UsagePaceDetails";
 import {
   PaceIcon,
   ResetCreditDialog,
@@ -207,6 +208,7 @@ function SegmentPopover({
           </span>
         </div>
       ) : null}
+      <UsagePaceDetails window={window} now={now} />
     </div>
   );
 }
@@ -233,6 +235,8 @@ function PoolSegment({
   readonly index: number;
 }) {
   const [open, setOpen] = useState(false);
+  const pacingEnabled = useClientSettings((settings) => settings.usagePacingEnabled);
+  const showPaceBar = pacingEnabled && window.kind === "weekly";
   const remaining = remainingPercent(window);
   const resetsIn = formatResetsIn(window, now);
   const credits = account.limits.resetCredits?.availableCount ?? 0;
@@ -245,7 +249,10 @@ function PoolSegment({
             type="button"
             style={{ gridColumn: index, gridRow: 1 }}
             aria-label={`${account.displayName ?? (account.email ? accountInitials(account.email) : account.driver)}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
-            className="relative h-5 min-w-0 cursor-pointer overflow-hidden rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-border @2xl/pool:h-8"
+            className={cn(
+              "relative min-w-0 cursor-pointer overflow-hidden rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-border @2xl/pool:h-8",
+              showPaceBar ? "h-7" : "h-5",
+            )}
           />
         }
       >
@@ -254,7 +261,9 @@ function PoolSegment({
           aria-hidden
           className="absolute inset-y-0 left-0 rounded-md opacity-35"
           style={{ width: `${remaining}%`, backgroundColor: color }}
-        />
+        >
+          <div className="absolute inset-0 rounded-md border-r-2 border-background" />
+        </div>
         {/* The spent share is hatched, not blank: it is what the countdown restores. */}
         {remaining < 100 && reset ? (
           <div
@@ -266,6 +275,9 @@ function PoolSegment({
             }}
           />
         ) : null}
+        <div className="absolute inset-0 opacity-35">
+          <UsagePaceBar window={window} now={now} baseColor={color} />
+        </div>
         <span
           aria-hidden
           className="absolute inset-0 flex items-center justify-center text-[10px] leading-none font-semibold text-foreground/80 tabular-nums @2xl/pool:hidden"
@@ -484,6 +496,7 @@ function PoolWindowCard({
 }) {
   // The soonest reset that hands anything back; an untouched account resets to no effect.
   const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
+  const pacingEnabled = useClientSettings((settings) => settings.usagePacingEnabled);
   return (
     <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
       <div className="flex flex-col gap-1">
@@ -493,7 +506,9 @@ function PoolWindowCard({
             {pool.remainingPercent}%
           </span>
           <span className="text-sm text-muted-foreground">left</span>
-          {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
+          {pacingEnabled && pool.kind !== "weekly" && pool.pace ? (
+            <PaceIcon pace={pool.pace} />
+          ) : null}
         </span>
         {nextRefill ? (
           <span className="text-xs text-muted-foreground tabular-nums">
@@ -503,6 +518,18 @@ function PoolWindowCard({
         ) : null}
       </div>
       <PoolBar pool={pool} color={color} now={now} />
+      {pacingEnabled && pool.kind === "weekly" ? (
+        <div className="col-span-full flex min-w-0 flex-col gap-2">
+          {pool.members.map(({ account, window }) => (
+            <div key={account.key} className="flex min-w-0 flex-col items-center gap-1">
+              {pool.members.length > 1 ? (
+                <AccountName account={account} className="text-xs text-muted-foreground" />
+              ) : null}
+              <UsagePaceDetails window={window} now={now} />
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

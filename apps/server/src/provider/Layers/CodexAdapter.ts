@@ -18,7 +18,6 @@ import {
   ProviderInstanceId,
   type ProviderRuntimeEvent,
   type ProviderRequestKind,
-  type ThreadTokenUsageSnapshot,
   type ToolActivityIcon,
   type ToolActivityNativeAppReference,
   type ToolActivitySource,
@@ -103,7 +102,10 @@ import {
   sanitizeCodexMcpNativeEvent,
 } from "./CodexMcpRuntimeView.ts";
 import { makeCodexRuntimeEventMapper } from "./CodexRuntimeEventMapper.ts";
-import type { CodexSubagentRuntimeMetadata } from "./CodexRuntimeEventShared.ts";
+import {
+  normalizeCodexTokenUsage,
+  type CodexSubagentRuntimeMetadata,
+} from "./CodexRuntimeEventShared.ts";
 import { makeCodexMcpRuntime } from "./CodexMcpRuntime.ts";
 import { makeCodexAdapterSessionStore } from "./CodexAdapterSession.ts";
 
@@ -451,42 +453,6 @@ const FATAL_CODEX_STDERR_SNIPPETS = ["failed to connect to websocket"];
 function isFatalCodexProcessStderrMessage(message: string): boolean {
   const normalized = message.toLowerCase();
   return FATAL_CODEX_STDERR_SNIPPETS.some((snippet) => normalized.includes(snippet));
-}
-
-function normalizeCodexTokenUsage(
-  usage: EffectCodexSchema.V2ThreadTokenUsageUpdatedNotification["tokenUsage"],
-): ThreadTokenUsageSnapshot | undefined {
-  const totalProcessedTokens = usage.total.totalTokens;
-  const usedTokens = usage.last.totalTokens;
-  if (usedTokens === undefined || usedTokens <= 0) {
-    return undefined;
-  }
-
-  const maxTokens = usage.modelContextWindow ?? undefined;
-  const inputTokens = usage.last.inputTokens;
-  const cachedInputTokens = usage.last.cachedInputTokens;
-  const outputTokens = usage.last.outputTokens;
-  const reasoningOutputTokens = usage.last.reasoningOutputTokens;
-
-  return {
-    usedTokens,
-    ...(totalProcessedTokens !== undefined && totalProcessedTokens > usedTokens
-      ? { totalProcessedTokens }
-      : {}),
-    ...(maxTokens !== undefined ? { maxTokens } : {}),
-    ...(inputTokens !== undefined ? { inputTokens } : {}),
-    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
-    ...(outputTokens !== undefined ? { outputTokens } : {}),
-    ...(reasoningOutputTokens !== undefined ? { reasoningOutputTokens } : {}),
-    ...(usedTokens !== undefined ? { lastUsedTokens: usedTokens } : {}),
-    ...(inputTokens !== undefined ? { lastInputTokens: inputTokens } : {}),
-    ...(cachedInputTokens !== undefined ? { lastCachedInputTokens: cachedInputTokens } : {}),
-    ...(outputTokens !== undefined ? { lastOutputTokens: outputTokens } : {}),
-    ...(reasoningOutputTokens !== undefined
-      ? { lastReasoningOutputTokens: reasoningOutputTokens }
-      : {}),
-    compactsAutomatically: true,
-  };
 }
 
 function codexTokenUsageBreakdown(

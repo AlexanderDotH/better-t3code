@@ -197,6 +197,7 @@ export async function readTranscriptRecords(
   filePath: string,
   provider: UsageProviderKind,
   resumeFrom?: TranscriptParsePosition,
+  onCodexUsage?: (line: string, usage: UsageRecord | null) => void,
 ): Promise<TranscriptParseResult | null> {
   let handle: NodeFSP.FileHandle;
   try {
@@ -229,6 +230,7 @@ export async function readTranscriptRecords(
       state: CodexScanState,
       out: UsageRecord[],
       claude: ClaudeScanState,
+      complete = true,
     ): void => {
       if (provider === "codex") {
         if (
@@ -242,6 +244,9 @@ export async function readTranscriptRecords(
         }
         const record = parseCodexLine(line, state);
         if (record !== null) out.push(record);
+        if (complete && !state.suppressingForkCopies && mightCarryUsage(line, provider)) {
+          onCodexUsage?.(line, record);
+        }
         return;
       }
       if (provider === "grok") {
@@ -314,6 +319,7 @@ export async function readTranscriptRecords(
           structuredClone(codexState),
           tailRecords,
           structuredClone(claudeState),
+          false,
         );
     }
 

@@ -70,6 +70,12 @@ export function normalizeCodexTokenUsage(
 
   return {
     usedTokens,
+    cumulativeUsage: {
+      inputTokens: usage.total.inputTokens,
+      cachedInputTokens: usage.total.cachedInputTokens,
+      outputTokens: usage.total.outputTokens,
+      reasoningOutputTokens: usage.total.reasoningOutputTokens,
+    },
     ...(totalProcessedTokens !== undefined && totalProcessedTokens > usedTokens
       ? { totalProcessedTokens }
       : {}),

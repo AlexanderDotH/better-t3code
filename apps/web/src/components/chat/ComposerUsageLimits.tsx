@@ -5,6 +5,7 @@ import { GaugeIcon } from "lucide-react";
 import { getDriverOption } from "../settings/providerDriverMeta";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import { LimitWindows, ResetCredits } from "../usage/UsageLimits";
+import { UsagePaceDetails } from "../usage/UsagePaceDetails";
 import { ComposerBanner } from "./ComposerBanner";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 
@@ -118,6 +119,20 @@ function UsageLimitsBannerBody({
             {notice}
           </span>
         ))}
+        {report.accounts.map((account) =>
+          limitsNotice(account.limits)
+            ? null
+            : account.limits.windows.map((window) => (
+                <UsagePaceDetails
+                  key={`${account.id}:${window.id}`}
+                  window={window}
+                  now={now}
+                  accountLabel={
+                    report.accounts.length > 1 ? <AccountSummary account={account} /> : undefined
+                  }
+                />
+              )),
+        )}
       </ComposerBanner.Body>
     </ComposerBanner.Scroll>
   );

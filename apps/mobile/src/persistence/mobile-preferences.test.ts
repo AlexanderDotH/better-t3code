@@ -64,6 +64,13 @@ function makeMemoryPreferenceDependencies() {
 }
 
 describe("sanitizeMobilePreferences", () => {
+  it("preserves pacing preferences and drops invalid workday lengths", () => {
+    expect(
+      sanitizeMobilePreferences({ usagePacingEnabled: false, usagePacingWorkdayHours: 24 }),
+    ).toEqual({ usagePacingEnabled: false, usagePacingWorkdayHours: 24 });
+    expect(sanitizeMobilePreferences({ usagePacingWorkdayHours: 12 } as never)).toEqual({});
+  });
+
   it("uses disabled clean-install Better T3 defaults only when no preference store exists", () => {
     expect(finalizeMobilePreferencesMigration({}, "clean-install").betterT3Device).toEqual({
       version: 1,

@@ -23,7 +23,9 @@ import * as Effect from "effect/Effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import { measureProviderForkHandoff } from "./providerTranscriptHandoff.ts";
+import { decideOrchestrationCommand } from "./decider.ts";
 import {
+  projectEvent,
   retainThreadActivitiesAfterRevert,
   retainThreadMessagesAfterRevert,
   retainThreadProposedPlansAfterRevert,
@@ -975,7 +977,62 @@ export const planThreadFork = Effect.fn("planThreadFork")(function* (input: {
     );
   }
 
-  const sourceHistory = yield* reconstructPrefix(input.command, input.sourceEvents);
+  let sourceHistory = yield* reconstructPrefix(input.command, input.sourceEvents);
+  // Edits change retained messages, never the boundary's position in the transcript.
+  let hasEdits = false;
+  const savedEdits = new Map<
+    MessageId,
+    Extract<OrchestrationEvent, { type: "thread.message-edited" }>["payload"]
+  >();
+  for (const event of input.sourceEvents.toSorted((a, b) => a.sequence - b.sequence)) {
+    if (event.type === "thread.message-edited")
+      savedEdits.set(event.payload.messageId, event.payload);
+  }
+  sourceHistory = {
+    ...sourceHistory,
+    messages: sourceHistory.messages.map((message) => {
+      const saved = savedEdits.get(message.id);
+      if (!saved) return message;
+      hasEdits = true;
+      return { ...message, text: saved.text, updatedAt: saved.updatedAt };
+    }),
+  };
+  const edit = input.command.messageEdit;
+  const boundary = input.command.boundary;
+  const editedMessage =
+    edit && boundary.kind === "message"
+      ? sourceHistory.messages.find((message) => message.id === boundary.messageId)
+      : undefined;
+  if (edit) {
+    if (!editedMessage || editedMessage.role === "system" || editedMessage.streaming) {
+      return yield* invariant(
+        input.command,
+        "Choose a completed user or assistant message to edit.",
+      );
+    }
+    if (editedMessage.text !== edit.expectedText) {
+      return yield* invariant(
+        input.command,
+        "This message changed on another client. Reopen the editor before saving.",
+      );
+    }
+    hasEdits = true;
+    sourceHistory = {
+      ...sourceHistory,
+      messages: sourceHistory.messages.map((message) =>
+        message.id === editedMessage.id
+          ? { ...message, text: edit.text, updatedAt: input.command.createdAt }
+          : message,
+      ),
+    };
+  }
+  if (hasEdits) {
+    // Native provider forks would restore the unedited transcript.
+    sourceHistory = {
+      ...sourceHistory,
+      turns: sourceHistory.turns.map(({ providerForkCursor: _cursor, ...turn }) => turn),
+    };
+  }
   let providerForkCursor: ThreadForkHistoryTurn["providerForkCursor"];
   for (let index = sourceHistory.turns.length - 1; index >= 0; index -= 1) {
     const turn = sourceHistory.turns[index];
@@ -1046,5 +1103,37 @@ export const planThreadFork = Effect.fn("planThreadFork")(function* (input: {
       history,
     },
   };
-  return [createdEvent, forkedEvent] as const;
+  if (!edit || !editedMessage) return [createdEvent, forkedEvent] as const;
+  let nextReadModel = input.readModel;
+  for (const event of [createdEvent, forkedEvent]) {
+    nextReadModel = yield* projectEvent(nextReadModel, {
+      ...event,
+      sequence: nextReadModel.snapshotSequence + 1,
+    }).pipe(Effect.orDie);
+  }
+  const continuation = yield* decideOrchestrationCommand({
+    readModel: nextReadModel,
+    command: {
+      type: "thread.turn.start",
+      commandId: input.command.commandId,
+      threadId: input.command.threadId,
+      message: {
+        messageId: MessageId.make(yield* crypto.randomUUIDv4),
+        role: "user",
+        text:
+          editedMessage.role === "user"
+            ? `Respond to this edited user message. The conversation has been restarted at this point.\n\n${edit.text}`
+            : `Continue from this user-edited version of your assistant answer. The conversation has been restarted at this point; this replacement was written by the user.\n\n${edit.text}`,
+        attachments: editedMessage.attachments ?? [],
+      },
+      runtimeMode: input.command.runtimeMode,
+      interactionMode: input.command.interactionMode,
+      createdAt: input.command.createdAt,
+    },
+  });
+  return [
+    createdEvent,
+    forkedEvent,
+    ...("type" in continuation ? [continuation] : continuation),
+  ] as const;
 });

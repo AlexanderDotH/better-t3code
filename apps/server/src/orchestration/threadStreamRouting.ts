@@ -23,6 +23,7 @@ function isRootThreadDetailEvent(event: OrchestrationEvent): boolean {
     case "thread.harness-sync-linked":
     case "thread.harness-sync-message-imported":
     case "thread.forked":
+    case "thread.message-edited":
     case "thread.fork-workspace-updated":
     case "thread.fork-handoff-completed":
     case "thread.subagent-upserted":

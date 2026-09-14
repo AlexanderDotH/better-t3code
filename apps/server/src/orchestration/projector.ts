@@ -12,6 +12,7 @@ import {
   OrchestrationMessage,
   OrchestrationSession,
   OrchestrationThread,
+  ThreadMessageEditedPayload,
 } from "@t3tools/contracts";
 import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
 import * as Effect from "effect/Effect";
@@ -875,6 +876,29 @@ export function projectEvent(
           }),
         })),
       );
+
+    case "thread.message-edited":
+      return Effect.gen(function* () {
+        const payload = yield* decodeForEvent(
+          ThreadMessageEditedPayload,
+          event.payload,
+          event.type,
+          "payload",
+        );
+        const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+        if (!thread) return nextBase;
+        return {
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            messages: thread.messages.map((message) =>
+              message.id === payload.messageId
+                ? { ...message, text: payload.text, updatedAt: payload.updatedAt }
+                : message,
+            ),
+            updatedAt: event.occurredAt,
+          }),
+        };
+      });
 
     case "thread.message-sent":
     case "thread.harness-sync-message-imported":

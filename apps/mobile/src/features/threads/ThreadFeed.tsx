@@ -1,4 +1,5 @@
 import type { ChatVisualMode } from "@t3tools/contracts";
+import { useVisualizationCodeBlock } from "../../native/useVisualizationCodeBlock";
 import type {
   OrchestrationProposedPlan,
   ServerProvider,
@@ -278,6 +279,7 @@ export interface ThreadFeedProps {
   readonly onEndFollowEnabledChange?: (enabled: boolean) => void;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
+  readonly onVisualizationAction?: ((prompt: string) => void) | undefined;
   /** Non-null when older turns exist beyond the loaded window. */
   readonly loadEarlier?: {
     readonly loading: boolean;
@@ -937,10 +939,12 @@ interface MarkdownLinkHandlers {
 }
 
 const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
+  readonly environmentId: EnvironmentId;
   readonly markdown: string;
   readonly markdownStyles: MarkdownStyleSet;
   readonly linkHandlers: MarkdownLinkHandlers;
   readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
+  readonly onVisualizationAction?: ((prompt: string) => void) | undefined;
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
 }) {
@@ -961,29 +965,66 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
     }
     if (segment.markdown.trim().length === 0) return null;
 
-    const markdown = renderCodexFileCitationsAsMarkdown(segment.markdown);
-    return hasNativeSelectableMarkdownText() ? (
-      <SelectableMarkdownText
+    return (
+      <AssistantMarkdownSegment
         key={`markdown:${segment.sourceOffset}`}
-        markdown={markdown}
-        skills={props.skills}
-        textStyle={props.markdownStyles.nativeTextStyle}
-        {...props.linkHandlers}
-        renderImage={props.renderImage}
+        {...props}
+        markdown={renderCodexFileCitationsAsMarkdown(segment.markdown)}
       />
-    ) : (
-      <Markdown
-        key={`markdown:${segment.sourceOffset}`}
-        options={{ gfm: true }}
-        renderers={props.markdownStyles.renderers}
-        styles={props.markdownStyles.styles}
-        theme={props.markdownStyles.theme}
-      >
-        {markdown}
-      </Markdown>
     );
   });
 });
+
+function AssistantMarkdownSegment(props: {
+  readonly environmentId: EnvironmentId;
+  readonly markdown: string;
+  readonly markdownStyles: MarkdownStyleSet;
+  readonly linkHandlers: MarkdownLinkHandlers;
+  readonly renderImage: MarkdownImageRenderer;
+  readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
+  readonly onVisualizationAction?: ((prompt: string) => void) | undefined;
+}) {
+  const renderCodeBlock = useVisualizationCodeBlock(
+    props.environmentId,
+    props.markdown,
+    props.onVisualizationAction,
+  );
+  const renderers = useMemo<CustomRenderers>(
+    () =>
+      renderCodeBlock
+        ? {
+            ...props.markdownStyles.renderers,
+            code_block: (input) =>
+              renderCodeBlock({
+                code: input.content ?? "",
+                language: input.language,
+                beg: input.node.beg,
+                end: input.node.end,
+              }) ?? props.markdownStyles.renderers.code_block?.(input),
+          }
+        : props.markdownStyles.renderers,
+    [props.markdownStyles.renderers, renderCodeBlock],
+  );
+  return hasNativeSelectableMarkdownText() ? (
+    <SelectableMarkdownText
+      markdown={props.markdown}
+      skills={props.skills}
+      textStyle={props.markdownStyles.nativeTextStyle}
+      {...props.linkHandlers}
+      renderImage={props.renderImage}
+      renderCodeBlock={renderCodeBlock}
+    />
+  ) : (
+    <Markdown
+      options={{ gfm: true }}
+      renderers={renderers}
+      styles={props.markdownStyles.styles}
+      theme={props.markdownStyles.theme}
+    >
+      {props.markdown}
+    </Markdown>
+  );
+}
 
 function MarkdownCodeBlock(props: {
   readonly backgroundColor: string;
@@ -1520,6 +1561,7 @@ function renderFeedEntry(
     ThreadFeedProps,
     | "environmentId"
     | "onUseArtifactTemplate"
+    | "onVisualizationAction"
     | "skills"
     | "dispatchingMessageId"
     | "onEditPendingMessage"
@@ -1803,10 +1845,12 @@ function renderFeedEntry(
         {renderedText.trim().length > 0 ? (
           <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
             <AssistantMarkdownContent
+              environmentId={props.environmentId}
               markdown={renderedText}
               markdownStyles={styles}
               linkHandlers={props.markdownLinkHandlers}
               onUseArtifactTemplate={props.onUseArtifactTemplate}
+              onVisualizationAction={props.onVisualizationAction}
               renderImage={props.renderMarkdownImage}
               skills={props.skills}
             />
@@ -2976,6 +3020,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               markdownContentWidth,
               skills: props.skills,
               onUseArtifactTemplate: props.onUseArtifactTemplate,
+              onVisualizationAction: props.onVisualizationAction,
             })
           )}
           {(() => {
@@ -3045,6 +3090,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       onToggleWorkRow,
       props.environmentId,
       props.onUseArtifactTemplate,
+      props.onVisualizationAction,
       props.skills,
       renderMarkdownImage,
       renderViewedImage,

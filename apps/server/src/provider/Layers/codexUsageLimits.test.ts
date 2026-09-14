@@ -37,6 +37,7 @@ describe("codexRateLimitsToLimits", () => {
         {
           id: "secondary",
           kind: "weekly",
+          usageHistorySource: "codex",
           label: "Weekly",
           usedPercent: 47,
           windowDurationMins: 10080,
@@ -82,6 +83,7 @@ describe("codexRateLimitsToLimits", () => {
       {
         id: "secondary",
         kind: "weekly",
+        usageHistorySource: "codex",
         label: "Weekly",
         usedPercent: 42,
         windowDurationMins: 10080,
@@ -123,6 +125,7 @@ describe("codexRateLimitsToUpdate", () => {
         {
           id: "secondary",
           kind: "weekly",
+          usageHistorySource: "codex",
           label: "Weekly",
           usedPercent: 51,
           windowDurationMins: 10080,
@@ -149,6 +152,7 @@ describe("codexRateLimitsToUpdate", () => {
       {
         id: "secondary",
         kind: "weekly",
+        usageHistorySource: "codex",
         label: "Weekly",
         usedPercent: 42,
         windowDurationMins: 10080,

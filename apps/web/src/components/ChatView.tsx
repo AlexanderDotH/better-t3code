@@ -1,4 +1,5 @@
 import { useThreadFork } from "../hooks/useThreadFork";
+import { EditMessageDialog } from "./chat/EditMessageDialog";
 import { resolveInterruptedTurnRetryTarget } from "@t3tools/client-runtime/state/thread-retry";
 import { resolveFetchMode } from "@t3tools/shared/fetchMode";
 import { resolveThreadAbortPresentation } from "@t3tools/client-runtime/state/thread-abort";
@@ -91,7 +92,8 @@ import {
   resolveTerminalSessionLabel,
 } from "@t3tools/shared/terminalLabels";
 import { Debouncer } from "@tanstack/react-pacer";
-import { useAtomValue } from "@effect/atom-react";
+import { useAtom, useAtomValue } from "@effect/atom-react";
+import { usageLimitsOpenedAtAtom } from "@t3tools/client-runtime/state/usage";
 import {
   lazy,
   memo,
@@ -387,6 +389,7 @@ import {
   shouldOfferResumeCompaction,
 } from "./chat/ContextWindowMeter.logic";
 import { deriveLatestContextWindowSnapshot, formatContextWindowTokens } from "../lib/contextWindow";
+import { useThreadTokenUsage } from "../hooks/useThreadTokenUsage";
 import {
   DRAFT_HERO_TRANSITION_ANIMATION_ID,
   DRAFT_HERO_TRANSITION_DURATION_MS,
@@ -1469,6 +1472,11 @@ export default function ChatView(props: ChatViewProps) {
   });
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
   const retryThreadTurn = useAtomCommand(threadEnvironment.retryTurn, { reportFailure: false });
+  const editThreadMessage = useAtomCommand(threadEnvironment.editMessage, { reportFailure: false });
+  const [editingMessage, setEditingMessage] = useState<{
+    threadId: ThreadId;
+    message: ChatMessage;
+  } | null>(null);
   const retryDispatchInFlightRef = useRef(false);
   const [retryingMessageId, setRetryingMessageId] = useState<MessageId | null>(null);
   const createAttachmentAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
@@ -2736,6 +2744,7 @@ export default function ChatView(props: ChatViewProps) {
     () => deriveLatestContextWindowSnapshot(threadActivities),
     [threadActivities],
   );
+  const activeTokenUsage = useThreadTokenUsage(routeThreadKey, liveThreadActivities);
   const workLogEntries = useMemo(
     () =>
       selectAgentDisplayWorkLogEntries(
@@ -2918,71 +2927,38 @@ export default function ChatView(props: ChatViewProps) {
     hasComposerAttachments: composerHasAttachments,
   });
   const activePendingApproval = pendingApprovals[0] ?? null;
-  // The open /usage-limits panel for this thread, model and turn. Only the open
-  // moment is stored: the rows read live provider data, so a redeemed reset
-  // credit or refreshed probe shows through. Anything that spends quota closes
-  // it: a new turn from any source, or the agent resuming after an approval or
-  // answered question.
-  const [usageLimitsPanel, setUsageLimitsPanel] = useState<{
-    readonly key: string;
-    readonly threadKey: string;
-    readonly now: number;
-  } | null>(null);
-  // Null while the provider list or the thread itself is unavailable, such as
-  // during a reconnect; the panel then stays hidden rather than being dropped.
-  // A pending approval or question is part of the key: once it is answered,
-  // from this client or any other, the agent resumes and spends quota.
-  const usageLimitsKey =
-    activeProviderInstanceId === null || (isServerThread && activeThread === undefined)
-      ? null
-      : [
-          routeThreadKey,
-          activeProviderInstanceId,
-          activeThread?.latestTurn?.turnId ?? "",
-          activePendingApproval?.requestId ?? activePendingUserInput?.requestId ?? "",
-        ].join(":");
-  // Drop the snapshot as soon as the thread or model changes so it cannot resurface stale.
-  if (
-    usageLimitsPanel !== null &&
-    usageLimitsKey !== null &&
-    usageLimitsPanel.key !== usageLimitsKey
-  ) {
-    setUsageLimitsPanel(null);
-  }
+  const [usageLimitsOpenedAt, setUsageLimitsOpenedAt] = useAtom(usageLimitsOpenedAtAtom);
   const usageLimitSources = serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES;
   const usageLimitsReport = useMemo(
     () =>
-      usageLimitsPanel !== null &&
-      usageLimitsKey !== null &&
-      usageLimitsPanel.key === usageLimitsKey &&
-      activeProviderInstanceId !== null
+      usageLimitsOpenedAt !== null && activeProviderInstanceId !== null
         ? collectProviderUsageLimits(
             activeProviderInstanceId,
             providerStatuses,
             usageLimitSources,
-            usageLimitsPanel.now,
+            Date.now(),
+          )
+        : null,
+    [activeProviderInstanceId, providerStatuses, usageLimitSources, usageLimitsOpenedAt],
+  );
+  const usageLimitsBanner = useMemo(
+    () =>
+      usageLimitsReport !== null && usageLimitsOpenedAt !== null
+        ? // A fresh id per opening: the stack keeps the last dismissed id as "exiting".
+          usageLimitsBannerItem(
+            `usage-limits:${environmentId}:${activeProviderInstanceId}:${usageLimitsOpenedAt}`,
+            usageLimitsReport,
+            environmentId,
+            () => setUsageLimitsOpenedAt(null),
           )
         : null,
     [
       activeProviderInstanceId,
-      providerStatuses,
-      usageLimitSources,
-      usageLimitsKey,
-      usageLimitsPanel,
+      environmentId,
+      setUsageLimitsOpenedAt,
+      usageLimitsOpenedAt,
+      usageLimitsReport,
     ],
-  );
-  const usageLimitsBanner = useMemo(
-    () =>
-      usageLimitsReport !== null && usageLimitsPanel !== null
-        ? // A fresh id per opening: the stack keeps the last dismissed id as "exiting".
-          usageLimitsBannerItem(
-            `usage-limits:${usageLimitsPanel.key}:${usageLimitsPanel.now}`,
-            usageLimitsReport,
-            environmentId,
-            () => setUsageLimitsPanel(null),
-          )
-        : null,
-    [environmentId, usageLimitsPanel, usageLimitsReport],
   );
   // T3 owns /usage-limits only where Limits has data for the selected provider;
   // elsewhere the name stays the provider's own and is sent through untouched.
@@ -2993,7 +2969,7 @@ export default function ChatView(props: ChatViewProps) {
   const openUsageLimits = useCallback(() => {
     const now = Date.now();
     const report =
-      activeProviderInstanceId !== null && usageLimitsKey !== null
+      activeProviderInstanceId !== null
         ? collectProviderUsageLimits(
             activeProviderInstanceId,
             providerStatuses,
@@ -3001,28 +2977,13 @@ export default function ChatView(props: ChatViewProps) {
             now,
           )
         : null;
-    if (report && usageLimitsKey !== null) {
-      setUsageLimitsPanel({ key: usageLimitsKey, threadKey: routeThreadKey, now });
+    if (report) {
+      setUsageLimitsOpenedAt(now);
       return true;
     }
-    setUsageLimitsPanel(null);
     toastManager.add({ type: "info", title: "Usage limits are unavailable for this provider" });
     return false;
-  }, [
-    activeProviderInstanceId,
-    providerStatuses,
-    routeThreadKey,
-    usageLimitSources,
-    usageLimitsKey,
-  ]);
-  // Responses can resolve after navigating away; only the originating thread's panel clears.
-  const clearUsageLimitsFor = useCallback(
-    (threadKey: string) =>
-      setUsageLimitsPanel((current) =>
-        current !== null && current.threadKey === threadKey ? null : current,
-      ),
-    [],
-  );
+  }, [activeProviderInstanceId, providerStatuses, setUsageLimitsOpenedAt, usageLimitSources]);
   const {
     beginLocalDispatch,
     resetLocalDispatch,
@@ -3708,14 +3669,11 @@ export default function ChatView(props: ChatViewProps) {
       focusComposer();
     });
   }, [focusComposer]);
-  const useArtifactTemplate = useCallback(
-    (template: CodexArtifactTemplate) => {
+  const appendPromptToComposer = useCallback(
+    (prompt: string) => {
       const composer = composerRef.current;
       if (!composer) return;
-
-      const currentDraft = composer.getSendContext().prompt;
-      const prompt = codexArtifactTemplatePromptToAppend(currentDraft, template);
-      if (prompt !== null && !composer.insertTextAtEnd(prompt, { ensureLeadingBoundary: true })) {
+      if (!composer.insertTextAtEnd(prompt, { ensureLeadingBoundary: true })) {
         toastManager.add({
           type: "error",
           title: "Unable to add to chat",
@@ -3726,6 +3684,19 @@ export default function ChatView(props: ChatViewProps) {
       scheduleComposerFocus();
     },
     [composerRef, scheduleComposerFocus],
+  );
+  const useArtifactTemplate = useCallback(
+    (template: CodexArtifactTemplate) => {
+      const composer = composerRef.current;
+      if (!composer) return;
+      const prompt = codexArtifactTemplatePromptToAppend(
+        composer.getSendContext().prompt,
+        template,
+      );
+      if (prompt !== null) appendPromptToComposer(prompt);
+      else scheduleComposerFocus();
+    },
+    [appendPromptToComposer, composerRef, scheduleComposerFocus],
   );
   const addTerminalContextToDraft = useCallback(
     (selection: TerminalContextSelection) => {
@@ -6606,7 +6577,6 @@ export default function ChatView(props: ChatViewProps) {
     // mean the user is sending a prompt, so those go through as usual.
     if (
       usageLimitsOffered &&
-      usageLimitsKey !== null &&
       !directAnnotation &&
       !composerHasNonPromptContent &&
       isUsageLimitsCommand(promptRef.current)
@@ -7290,10 +7260,6 @@ export default function ChatView(props: ChatViewProps) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
-        // The turn is under way and will spend quota, so that thread's limits
-        // snapshot is stale. Uploads may have outlasted a navigation, so only
-        // the sending thread's panel clears.
-        clearUsageLimitsFor(routeThreadKey);
         if (turnUsesAttachmentUploads) {
           releaseDraftAttachments(composerAttachmentsSnapshot);
         }
@@ -7794,7 +7760,6 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       if (failure === null) {
-        clearUsageLimitsFor(routeThreadKey);
         acknowledgeActiveThreadWoke();
         sendInFlightRef.current = false;
         return;
@@ -7834,7 +7799,6 @@ export default function ChatView(props: ChatViewProps) {
       startThreadTurn,
       environmentId,
       composerRef,
-      clearUsageLimitsFor,
       routeThreadKey,
     ],
   );
@@ -8284,6 +8248,29 @@ export default function ChatView(props: ChatViewProps) {
     () => composerRef.current?.getSendContext().selectedModelSelection,
     [composerRef],
   );
+  const messageEditingEnabled =
+    resolveBetterT3FeatureFlag(settings.betterT3Device, "chat.messageEditing") &&
+    serverConfig?.environment.capabilities.messageEditing === true;
+  const messageEditingAvailable =
+    isServerThread &&
+    !activeEnvironmentUnavailable &&
+    !isConnecting &&
+    !isWorking &&
+    activeThread?.harnessSync === undefined &&
+    !activeThread?.session?.abortState;
+  const timelineEditAction = useMemo(
+    () =>
+      messageEditingEnabled
+        ? {
+            available: messageEditingAvailable,
+            onEdit: (message: ChatMessage) => {
+              if (activeThread && messageEditingAvailable)
+                setEditingMessage({ threadId: activeThread.id, message });
+            },
+          }
+        : null,
+    [messageEditingEnabled, messageEditingAvailable, activeThread],
+  );
   const forkControl = useThreadFork({
     thread: activeThread ?? null,
     project: activeProject,
@@ -8695,6 +8682,38 @@ export default function ChatView(props: ChatViewProps) {
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden window-surface bg-background">
+      {messageEditingEnabled && editingMessage && editingMessage.threadId === activeThread?.id && (
+        <EditMessageDialog
+          key={`${activeThread.environmentId}:${editingMessage.message.id}`}
+          text={editingMessage.message.text}
+          available={messageEditingAvailable}
+          canRestart={supportsThreadForking}
+          onClose={() => setEditingMessage(null)}
+          onSave={async (text, mode) => {
+            if (!messageEditingAvailable)
+              throw new Error("Wait until this chat is idle and connected.");
+            const message = editingMessage.message;
+            if (mode === "restart") {
+              await forkControl.onFork(
+                { kind: "message", messageId: message.id },
+                { expectedText: message.text, text },
+              );
+              return;
+            }
+            const result = await editThreadMessage({
+              environmentId: activeThread.environmentId,
+              input: {
+                threadId: activeThread.id,
+                messageId: message.id,
+                expectedText: message.text,
+                text,
+              },
+            });
+            if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+            acknowledgeActiveThreadWoke();
+          }}
+        />
+      )}
       {routeKind === "draft" && draftId && activeProject && !threadHasStarted(activeThread) ? (
         <ProjectSpeechSetup
           key={`${activeProject.environmentId}:${activeProject.id}:${draftId}`}
@@ -8824,6 +8843,7 @@ export default function ChatView(props: ChatViewProps) {
               <MessagesTimeline
                 composerPlanTurnId={composerPlanTurnId}
                 retryAction={timelineRetryAction}
+                editAction={timelineEditAction}
                 forkActions={timelineForkActions}
                 forkProvenance={timelineForkProvenance}
                 citationRequest={citationRequest}
@@ -8847,6 +8867,7 @@ export default function ChatView(props: ChatViewProps) {
                 supportsConversationRollback={supportsConversationRollback}
                 onRevertToTurnCount={onRevertTimelineTurn}
                 onUseArtifactTemplate={useArtifactTemplate}
+                onVisualizationAction={appendPromptToComposer}
                 isRevertingCheckpoint={isRevertingCheckpoint}
                 onImageExpand={onExpandTimelineImage}
                 onFileOpen={openFileAttachment}
@@ -9050,9 +9071,7 @@ export default function ChatView(props: ChatViewProps) {
                                 // With attachments or contexts aboard the pick just inserts the
                                 // text, so it sends as a prompt like the typed path would.
                                 onUsageLimitsCommand={
-                                  usageLimitsOffered &&
-                                  usageLimitsKey !== null &&
-                                  !composerHasNonPromptContent
+                                  usageLimitsOffered && !composerHasNonPromptContent
                                     ? openUsageLimits
                                     : undefined
                                 }
@@ -9087,6 +9106,7 @@ export default function ChatView(props: ChatViewProps) {
                                 activeThreadModelSelection={activeThread?.modelSelection}
                                 autoReasoningEffort={latestAutoReasoningEffort}
                                 activeContextWindow={activeContextWindow}
+                                activeTokenUsage={activeTokenUsage}
                                 compactThreadUnavailable={compactThreadUnavailable}
                                 compactDisabled={compactDisabled}
                                 compactDisabledReason={compactDisabledReason}

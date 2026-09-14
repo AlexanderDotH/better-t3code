@@ -1,6 +1,31 @@
 import { defineLocalizedInterfaceCatalog } from "./interfaceLanguageCatalog.types.ts";
 
 export const chatInterfaceCatalog = defineLocalizedInterfaceCatalog({
+  "chat.planEstimate.duration": [
+    "Approx. {{min}}–{{max}} min after starting",
+    "Ca. {{min}}–{{max}} Min. ab Start",
+    "Env. {{min}}–{{max}} min après le démarrage",
+  ],
+  "chat.planEstimate.scope": [
+    { one: "{{count}} estimated work package", other: "{{count}} estimated work packages" },
+    { one: "{{count}} geschätztes Arbeitspaket", other: "{{count}} geschätzte Arbeitspakete" },
+    { one: "{{count}} lot de travail estimé", other: "{{count}} lots de travail estimés" },
+  ],
+  "chat.planEstimate.model": ["Model", "Modell", "Modèle"],
+  "chat.planEstimate.reasoning": ["Reasoning", "Reasoning", "Raisonnement"],
+  "chat.planEstimate.speed": ["Inference", "Inferenztempo", "Inférence"],
+  "chat.planEstimate.providerDefault": [
+    "Provider default",
+    "Provider-Standard",
+    "Réglage du fournisseur",
+  ],
+  "chat.planEstimate.fast": ["Fast", "Schnell", "Rapide"],
+  "chat.planEstimate.normal": ["Normal", "Normal", "Normal"],
+  "chat.planEstimate.caveat": [
+    "Rough estimate from plan scope, reasoning and speed mode; not a model benchmark. Tests, tools and follow-up questions can take longer.",
+    "Grobe Schätzung aus Planumfang, Reasoning und Tempomodus; kein Modell-Benchmark. Tests, Tools und Rückfragen können länger dauern.",
+    "Estimation indicative selon le plan, le raisonnement et le mode de vitesse ; pas un benchmark du modèle. Tests, outils et questions peuvent prolonger le délai.",
+  ],
   "chat.agent.heading": ["Agents", "Agents", "Agents"],
   "chat.agent.history": ["History", "Verlauf", "Historique"],
   "chat.agent.count": [
@@ -1429,6 +1454,29 @@ export const chatInterfaceCatalog = defineLocalizedInterfaceCatalog({
   ],
   "chat.openIn.thisMachine": ["this machine", "diesem Gerät", "cette machine"],
   "chat.copy.failed": ["Failed to copy", "Kopieren fehlgeschlagen", "Échec de la copie"],
+  "chat.edit.title": ["Edit message", "Nachricht bearbeiten", "Modifier le message"],
+  "chat.edit.description": [
+    "Send a correction to keep the later conversation. Restart here to create a new chat branch with the edited message and no later messages. Attachments are preserved.",
+    "Eine Korrektur behält den späteren Verlauf. Ab hier neu fortsetzen erstellt einen neuen Chatzweig mit der bearbeiteten Nachricht ohne spätere Nachrichten. Anhänge bleiben erhalten.",
+    "Envoyez une correction pour conserver la suite, ou reprenez ici dans une nouvelle branche avec le message modifié sans les messages suivants. Les pièces jointes sont conservées.",
+  ],
+  "chat.edit.continue": ["Send correction", "Korrektur senden", "Envoyer la correction"],
+  "chat.edit.restart": [
+    "Restart here in new branch",
+    "Ab hier in neuem Zweig fortsetzen",
+    "Reprendre dans une nouvelle branche",
+  ],
+  "chat.edit.cancel": ["Cancel", "Abbrechen", "Annuler"],
+  "chat.edit.failed": [
+    "Could not send the edit.",
+    "Änderung konnte nicht gesendet werden.",
+    "Impossible d’envoyer la modification.",
+  ],
+  "chat.edit.unavailable": [
+    "Wait until this chat is idle and connected.",
+    "Warte, bis der Chat verbunden ist und der Agent fertig ist.",
+    "Attendez que la discussion soit connectée et que l’agent ait terminé.",
+  ],
   "chat.copy.copied": ["Copied!", "Kopiert!", "Copié !"],
   "chat.contextWindow.usedPercent": [
     "Context window {{percent}} used",
@@ -1655,6 +1703,47 @@ export const chatInterfaceCatalog = defineLocalizedInterfaceCatalog({
   "chat.timeline.inputTokens": ["Input", "Eingabe", "Entrée"],
   "chat.timeline.outputTokens": ["Output", "Ausgabe", "Sortie"],
   "chat.timeline.totalTokens": ["Total", "Gesamt", "Total"],
+  "chat.tokens.title": ["{{direction}} tokens", "{{direction}}-Tokens", "Jetons · {{direction}}"],
+  "chat.tokens.scope": [
+    "Reported chat usage",
+    "Gemeldete Chat-Nutzung",
+    "Utilisation signalée du chat",
+  ],
+  "chat.tokens.mainAgent": ["Main agent", "Hauptagent", "Agent principal"],
+  "chat.tokens.subagents": [
+    "Subagents ({{count}})",
+    "Subagents ({{count}})",
+    "Sous-agents ({{count}})",
+  ],
+  "chat.tokens.uncached": ["Uncached", "Ohne Cache", "Hors cache"],
+  "chat.tokens.cached": ["Cached", "Aus Cache", "En cache"],
+  "chat.tokens.response": ["Response", "Antwort", "Réponse"],
+  "chat.tokens.reasoning": ["Reasoning", "Reasoning", "Raisonnement"],
+  "chat.tokens.cacheIncluded": [
+    "Cache tokens are included in input. The lighter segment shows their share.",
+    "Cache-Tokens sind im Input enthalten. Das hellere Segment zeigt ihren Anteil.",
+    "Les jetons en cache sont inclus dans l’entrée. Le segment clair montre leur part.",
+  ],
+  "chat.tokens.reasoningIncluded": [
+    "Reasoning is included in output. The lighter segment shows its share.",
+    "Reasoning ist im Output enthalten. Das hellere Segment zeigt seinen Anteil.",
+    "Le raisonnement est inclus dans la sortie. Le segment clair montre sa part.",
+  ],
+  "chat.tokens.reporting": [
+    "Usage reported by {{reported}} of {{count}} subagents.",
+    "Nutzungsdaten von {{reported}} der {{count}} Subagents gemeldet.",
+    "Utilisation signalée par {{reported}} sous-agents sur {{count}}.",
+  ],
+  "chat.tokens.partial": [
+    "Partial total: the provider has not reported every counter. — means unavailable.",
+    "Teilsumme: Der Provider hat nicht alle Zähler gemeldet. — bedeutet nicht verfügbar.",
+    "Total partiel : le fournisseur n’a pas signalé tous les compteurs. — signifie indisponible.",
+  ],
+  "chat.tokens.unclassified": [
+    "{{count}} additional subagent tokens have no input/output breakdown.",
+    "{{count}} weitere Subagent-Tokens ohne Input-/Output-Aufschlüsselung.",
+    "{{count}} jetons de sous-agents supplémentaires sans répartition entrée/sortie.",
+  ],
   "chat.traits.default": ["Default", "Standard", "Par défaut"],
   "chat.traits.auto": ["Auto", "Auto", "Auto"],
   "chat.traits.autoDescription": [

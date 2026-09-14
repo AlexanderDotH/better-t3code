@@ -1,4 +1,9 @@
 import { useBetterT3DeviceFeature } from "../hooks/useBetterT3Feature";
+import { useVisualizationsEnabled } from "../hooks/useVisualizationsEnabled";
+import {
+  isClosedVisualizationFence,
+  normalizeVisualizationFormat,
+} from "@t3tools/client-runtime/visualizations/model";
 import { useStreamingTextMotion } from "./chat/useStreamingTextMotion";
 import type { StreamingTextMotionFrame } from "./chat/streamingTextMotion";
 import {
@@ -220,6 +225,7 @@ interface ChatMarkdownProps {
   parseRawHtml?: boolean;
   /** Append a prompt that invokes a newly created artifact-template skill. */
   onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
+  onVisualizationAction?: ((prompt: string) => void) | undefined;
   /** Directory that anchors relative links and images; defaults to `cwd`. Set
       to the file's own directory when rendering a markdown file. */
   imageBaseDir?: string | undefined;
@@ -263,6 +269,11 @@ export function shouldUseMarkdownFileBrowserPrimaryAction(input: {
 }
 
 const EMPTY_STREAMING_FRAMES: readonly StreamingTextMotionFrame[] = [];
+const VisualizationBlock = React.lazy(() =>
+  import("./visualizations/VisualizationBlock").then((module) => ({
+    default: module.VisualizationBlock,
+  })),
+);
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 const EMPTY_REMARK_PLUGINS: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = [];
@@ -2250,6 +2261,7 @@ function useChatMarkdownState({
   isStreaming = false,
   skills = EMPTY_MARKDOWN_SKILLS,
   onUseArtifactTemplate,
+  onVisualizationAction,
   imageBaseDir,
   onImageExpand,
 }: ChatMarkdownProps) {
@@ -2278,6 +2290,7 @@ function useChatMarkdownState({
     reportFailure: false,
   });
   const environmentId = threadRef?.environmentId ?? explicitEnvironmentId ?? null;
+  const visualizationsEnabled = useVisualizationsEnabled(environmentId);
   const remoteOpen = useRemoteOpenResolution(environmentId);
   const canUseShellActions = canUseMarkdownFileShellActions(
     environmentId,
@@ -2674,6 +2687,7 @@ function useChatMarkdownState({
       markdownFileLinkMetaByHref,
       onTaskListChange,
       onUseArtifactTemplate,
+      onVisualizationAction,
       openChangeRequestLink,
       openDeferredMarkdownLink,
       openExternalLinkInPreview,
@@ -2686,6 +2700,7 @@ function useChatMarkdownState({
       text,
       threadRef,
       updateThreadPullRequestLink,
+      visualizationsEnabled,
     }),
     [
       cwd,
@@ -2700,6 +2715,7 @@ function useChatMarkdownState({
       markdownFileLinkMetaByHref,
       onTaskListChange,
       onUseArtifactTemplate,
+      onVisualizationAction,
       openChangeRequestLink,
       openDeferredMarkdownLink,
       openExternalLinkInPreview,
@@ -2712,6 +2728,7 @@ function useChatMarkdownState({
       text,
       threadRef,
       updateThreadPullRequestLink,
+      visualizationsEnabled,
     ],
   );
   return {
@@ -3174,7 +3191,14 @@ const CHAT_MARKDOWN_COMPONENTS = {
     return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;
   },
   pre: function MarkdownPre({ node, children, ...props }) {
-    const { resolvedTheme, diffThemeName, isStreaming } = use(ChatMarkdownRendererContext);
+    const {
+      resolvedTheme,
+      diffThemeName,
+      isStreaming,
+      text,
+      visualizationsEnabled,
+      onVisualizationAction,
+    } = use(ChatMarkdownRendererContext);
     const motion = use(StreamingTextRenderContext);
     const codeBlock = extractCodeBlock(children);
     const codeSourceStart =
@@ -3205,6 +3229,31 @@ const CHAT_MARKDOWN_COMPONENTS = {
 
     const language = extractFenceLanguage(codeBlock.className);
     const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
+    const format = visualizationsEnabled ? normalizeVisualizationFormat(language) : null;
+    const fenceStart = node?.position?.start.offset;
+    const fenceEnd = node?.position?.end.offset;
+    if (
+      format &&
+      fenceStart !== undefined &&
+      fenceEnd !== undefined &&
+      isClosedVisualizationFence(text.slice(fenceStart, fenceEnd))
+    ) {
+      return (
+        <RenderErrorBoundary
+          resetKeys={[codeBlock.code, format, resolvedTheme]}
+          fallback={<pre {...props}>{children}</pre>}
+        >
+          <Suspense fallback={<pre {...props}>{children}</pre>}>
+            <VisualizationBlock
+              format={format}
+              source={codeBlock.code}
+              theme={resolvedTheme}
+              {...(onVisualizationAction ? { onAction: onVisualizationAction } : {})}
+            />
+          </Suspense>
+        </RenderErrorBoundary>
+      );
+    }
     return (
       <MarkdownCodeBlock
         code={codeBlock.code}

@@ -49,6 +49,7 @@ export type SetThreadRuntimeModeInput = CommandInput<"thread.runtime-mode.set">;
 export type SetThreadInteractionModeInput = CommandInput<"thread.interaction-mode.set">;
 export type StartThreadTurnInput = CommandInput<"thread.turn.start">;
 export type RetryThreadTurnInput = CommandInput<"thread.turn.retry">;
+export type EditThreadMessageInput = CommandInput<"thread.message.edit">;
 export type InterruptThreadTurnInput = CommandInput<"thread.turn.interrupt">;
 export type RespondToThreadApprovalInput = CommandInput<"thread.approval.respond">;
 export type RespondToThreadUserInputInput = CommandInput<"thread.user-input.respond">;
@@ -299,6 +300,13 @@ export const startThreadTurn: (input: StartThreadTurnInput) => CommandEffect = E
     commandId: metadata.commandId,
     createdAt: metadata.createdAt,
   });
+});
+
+export const editThreadMessage: (input: EditThreadMessageInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.editThreadMessage",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({ ...input, type: "thread.message.edit", ...metadata });
 });
 
 export const retryThreadTurn: (input: RetryThreadTurnInput) => CommandEffect = Effect.fn(

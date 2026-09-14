@@ -32,6 +32,8 @@ dist-electron/
 apps/mobile/.showcase/
 artifacts/app-store/screenshots/
 .github/pr-assets/
+apps/web/public/visualizations/
+apps/mobile/assets/visualizations/
 native/**/target/
 node_modules/
 .alchemy/

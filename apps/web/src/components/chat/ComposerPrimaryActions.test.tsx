@@ -106,7 +106,19 @@ describe("ComposerPrimaryActions", () => {
           createElement(
             Fragment,
             null,
-            createElement(ComposerPlanFollowUpBanner, { planTitle: "Keep this title" }),
+            createElement(ComposerPlanFollowUpBanner, {
+              planTitle: "Keep this title",
+              estimate: {
+                model: "Test model",
+                reasoning: "High",
+                speed: null,
+                fast: false,
+                hasSpeedOption: false,
+                workUnits: 1,
+                minMinutes: 2,
+                maxMinutes: 5,
+              },
+            }),
             createElement(ComposerPrimaryActions, {
               compact: false,
               pendingAction: {
@@ -138,10 +150,13 @@ describe("ComposerPrimaryActions", () => {
       );
       expect(submitButton.children).toEqual(["Submit answers"]);
       expect(JSON.stringify(renderer!.toJSON())).toContain("Plan ready");
+      expect(JSON.stringify(renderer!.toJSON())).toContain("Approx. 2–5 min after starting");
 
       await act(async () => {
         setInterfaceLocaleRuntime({ language: "de", locale: "de-DE" });
       });
+      expect(JSON.stringify(renderer!.toJSON())).toContain("Ca. 2–5 Min. ab Start");
+      expect(JSON.stringify(renderer!.toJSON())).toContain("1 geschätztes Arbeitspaket");
       expect(
         renderer!.root.find((node) => node.type === "button" && node.props.type === "submit"),
       ).toBe(submitButton);
