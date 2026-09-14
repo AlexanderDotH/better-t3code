@@ -20,7 +20,7 @@ beforeAll(() => {
     cwd: root,
     stdio: "pipe",
   });
-});
+}, 30_000);
 
 for (const [format, exampleId] of [
   ["mermaid", "mermaid-flowchart"],

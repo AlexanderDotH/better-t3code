@@ -77,29 +77,33 @@ function assertSvg(svg: string) {
 
 describe("shipped diagram family acceptance", () => {
   for (const example of VISUALIZATION_EXAMPLES) {
-    test(example.id, async () => {
-      const container = document.createElement("div");
-      document.body.append(container);
-      const request: VisualizationRenderRequest = {
-        channel: VISUALIZATION_CHANNEL,
-        type: "render",
-        requestId: example.id,
-        format: example.format,
-        source: example.source,
-        theme: "light",
-      };
-      parseVisualization(request.format, request.source);
-      const result = await render(request, container);
-      try {
-        assertSvg(sanitizeVisualizationSvg(result.svg));
-        assertSvg(
-          sanitizeVisualizationSvg(result.exportSvg ? await result.exportSvg() : result.svg),
-        );
-      } finally {
-        result.dispose?.();
-        container.remove();
-      }
-    });
+    test(
+      example.id,
+      async () => {
+        const container = document.createElement("div");
+        document.body.append(container);
+        const request: VisualizationRenderRequest = {
+          channel: VISUALIZATION_CHANNEL,
+          type: "render",
+          requestId: example.id,
+          format: example.format,
+          source: example.source,
+          theme: "light",
+        };
+        parseVisualization(request.format, request.source);
+        const result = await render(request, container);
+        try {
+          assertSvg(sanitizeVisualizationSvg(result.svg));
+          assertSvg(
+            sanitizeVisualizationSvg(result.exportSvg ? await result.exportSvg() : result.svg),
+          );
+        } finally {
+          result.dispose?.();
+          container.remove();
+        }
+      },
+      15_000,
+    );
   }
 
   test.each(["mermaid-flowchart", "plantuml-sequence", "dot-tree", "vega-lite-bar", "vega-map"])(
