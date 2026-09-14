@@ -175,5 +175,5 @@ for (const [format, exampleId] of [
     } finally {
       dom.window.close();
     }
-  });
+  }, 30_000);
 }
