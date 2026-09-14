@@ -107,6 +107,35 @@ layer("OrchestrationEventStore", (it) => {
     }),
   );
 
+  it.effect("replays retired force-abort events from existing databases", () =>
+    Effect.gen(function* () {
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-07-30T23:06:10.028Z";
+
+      yield* sql`
+        INSERT INTO orchestration_events (
+          event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,
+          command_id, actor_kind, payload_json, metadata_json
+        ) VALUES (
+          'legacy-force-abort', 'thread', 'legacy-thread', 0,
+          'thread.turn-force-abort-requested', ${now}, 'legacy-command', 'client',
+          '{"threadId":"legacy-thread","turnId":"legacy-turn","createdAt":"2026-07-30T23:06:10.028Z"}',
+          '{}'
+        )
+      `;
+
+      const replayed = yield* eventStore.readFromSequence(0, 10).pipe(
+        Stream.runCollect,
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      );
+      assert.equal(
+        replayed.find((event) => event.eventId === "legacy-force-abort")?.type,
+        "thread.turn-force-abort-requested",
+      );
+    }),
+  );
+
   it.effect("fails with PersistenceDecodeError when stored json is invalid", () =>
     Effect.gen(function* () {
       const eventStore = yield* OrchestrationEventStore;

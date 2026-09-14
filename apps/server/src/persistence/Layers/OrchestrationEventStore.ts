@@ -287,14 +287,13 @@ const makeEventStore = Effect.gen(function* () {
     if (normalizedLimit === 0) {
       return Stream.empty;
     }
-    const readPage = (
-      cursor: number,
-      remaining: number,
-    ): Stream.Stream<OrchestrationEvent, OrchestrationEventStoreError> =>
-      Stream.fromEffect(
-        readEventRowsFromSequence({
+    return Stream.paginate(
+      { cursor: sequenceExclusive, remaining: normalizedLimit },
+      ({ cursor, remaining }) => {
+        const pageSize = Math.min(remaining, READ_PAGE_SIZE);
+        return readEventRowsFromSequence({
           sequenceExclusive: cursor,
-          limit: Math.min(remaining, READ_PAGE_SIZE),
+          limit: pageSize,
         }).pipe(
           Effect.mapError(
             toPersistenceSqlOrDecodeError(
@@ -311,24 +310,18 @@ const makeEventStore = Effect.gen(function* () {
               ),
             ),
           ),
-        ),
-      ).pipe(
-        Stream.flatMap((events) => {
-          if (events.length === 0) {
-            return Stream.empty;
-          }
-          const nextRemaining = remaining - events.length;
-          if (nextRemaining <= 0) {
-            return Stream.fromIterable(events);
-          }
-          return Stream.concat(
-            Stream.fromIterable(events),
-            readPage(events[events.length - 1]!.sequence, nextRemaining),
-          );
-        }),
-      );
-
-    return readPage(sequenceExclusive, normalizedLimit);
+          Effect.map((events) => {
+            const last = events.at(-1);
+            const nextRemaining = remaining - events.length;
+            const next =
+              last !== undefined && events.length === pageSize && nextRemaining > 0
+                ? Option.some({ cursor: last.sequence, remaining: nextRemaining })
+                : Option.none();
+            return [events, next] as const;
+          }),
+        );
+      },
+    );
   };
 
   const findEventAfter = SqlSchema.findOneOption({
@@ -363,15 +356,14 @@ const makeEventStore = Effect.gen(function* () {
     if (limit === 0 || input.fromSequenceExclusive >= input.toSequenceInclusive) {
       return Stream.empty;
     }
-    const readPage = (
-      cursor: number,
-      remaining: number,
-    ): Stream.Stream<OrchestrationEvent, OrchestrationEventStoreError> =>
-      Stream.fromEffect(
-        readAggregateEventRows({
+    return Stream.paginate(
+      { cursor: input.fromSequenceExclusive, remaining: limit },
+      ({ cursor, remaining }) => {
+        const pageSize = Math.min(remaining, READ_PAGE_SIZE);
+        return readAggregateEventRows({
           ...input,
           fromSequenceExclusive: cursor,
-          limit: Math.min(remaining, READ_PAGE_SIZE),
+          limit: pageSize,
         }).pipe(
           Effect.mapError(
             toPersistenceSqlOrDecodeError(
@@ -388,25 +380,21 @@ const makeEventStore = Effect.gen(function* () {
               ),
             ),
           ),
-        ),
-      ).pipe(
-        Stream.flatMap((events) => {
-          const last = events.at(-1);
-          if (last === undefined) {
-            return Stream.empty;
-          }
-          const nextRemaining = remaining - events.length;
-          if (
-            events.length < READ_PAGE_SIZE ||
-            nextRemaining === 0 ||
-            last.sequence >= input.toSequenceInclusive
-          ) {
-            return Stream.fromIterable(events);
-          }
-          return Stream.concat(Stream.fromIterable(events), readPage(last.sequence, nextRemaining));
-        }),
-      );
-    return readPage(input.fromSequenceExclusive, limit);
+          Effect.map((events) => {
+            const last = events.at(-1);
+            const nextRemaining = remaining - events.length;
+            const next =
+              last !== undefined &&
+              events.length === pageSize &&
+              nextRemaining > 0 &&
+              last.sequence < input.toSequenceInclusive
+                ? Option.some({ cursor: last.sequence, remaining: nextRemaining })
+                : Option.none();
+            return [events, next] as const;
+          }),
+        );
+      },
+    );
   };
 
   const getAggregateReplayStats: OrchestrationEventStoreShape["getAggregateReplayStats"] = (
