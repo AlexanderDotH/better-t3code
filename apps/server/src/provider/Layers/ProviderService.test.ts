@@ -13,6 +13,7 @@ import type {
   ProviderTurnStartResult,
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
+  ServerProvider,
 } from "@t3tools/contracts";
 import {
   ASSISTANT_CITATION_MAX_TEXT_LENGTH,
@@ -78,6 +79,8 @@ import {
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { makeAdapterRegistryMock } from "../testUtils/providerAdapterRegistryMock.ts";
+import { makeProviderRegistryLayer } from "../testUtils/providerRegistryMock.ts";
+import { ProviderRegistry } from "../Services/ProviderRegistry.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -469,6 +472,8 @@ function makeProviderServiceLayer(
     readonly supportsConversationRollback?: boolean;
     readonly analyticsLayer?: Layer.Layer<AnalyticsService.AnalyticsService>;
     readonly registry?: ProviderAdapterRegistry.ProviderAdapterRegistry["Service"];
+    readonly usageProviders?: Layer.Layer<ProviderRegistry>;
+    readonly settingsLayer?: typeof defaultServerSettingsLayer;
   } = {},
 ) {
   const codex = makeFakeCodexAdapter(CODEX_DRIVER, input.supportsConversationRollback);
@@ -500,7 +505,8 @@ function makeProviderServiceLayer(
         Layer.provide(NodeServices.layer),
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
-        Layer.provide(defaultServerSettingsLayer),
+        Layer.provideMerge(input.settingsLayer ?? defaultServerSettingsLayer),
+        Layer.provide(input.usageProviders ?? makeProviderRegistryLayer()),
         Layer.provide(serverConfigTestLayer),
         Layer.provideMerge(input.analyticsLayer ?? AnalyticsService.layerTest),
         Layer.provide(
@@ -5263,4 +5269,136 @@ describe("workspace edit MCP credential policy", () => {
       false,
     );
   });
+});
+
+const budgetNow = new Date(2026, 8, 14, 10).getTime();
+const budgetDay = 86_400_000;
+const budgetSnapshots = (codexUsed: number): ServerProvider[] =>
+  [CODEX_DRIVER, CLAUDE_AGENT_DRIVER].map((driver) => ({
+    instanceId: ProviderInstanceId.make(driver),
+    driver,
+    status: "ready",
+    enabled: true,
+    installed: true,
+    auth: { status: "authenticated" },
+    checkedAt: new Date(budgetNow).toISOString(),
+    version: "1.0.0",
+    models: [],
+    slashCommands: [],
+    skills: [],
+    usageLimits: {
+      checkedAt: new Date(budgetNow).toISOString(),
+      windows: [
+        {
+          id: "weekly",
+          label: "Weekly",
+          kind: "weekly",
+          usedPercent: driver === CODEX_DRIVER ? codexUsed : 5,
+          resetsAt: new Date(budgetNow + 7 * budgetDay).toISOString(),
+          windowDurationMins: 7 * 24 * 60,
+          usageHistory: [
+            { at: new Date(budgetNow - budgetDay).toISOString(), usedPercent: 0 },
+            {
+              at: new Date(budgetNow).toISOString(),
+              usedPercent: driver === CODEX_DRIVER ? codexUsed : 5,
+            },
+          ],
+        },
+      ],
+    },
+  }));
+let currentBudgetSnapshots = budgetSnapshots(5);
+let budgetUpdates: PubSub.PubSub<ServerProvider[]>;
+let budgetSubscribed: Deferred.Deferred<void>;
+const hardBudget = makeProviderServiceLayer({
+  settingsLayer: ServerSettings.ServerSettingsService.layerTest(),
+  usageProviders: Layer.effect(
+    ProviderRegistry,
+    Effect.gen(function* () {
+      const base = yield* ProviderRegistry;
+      budgetUpdates = yield* PubSub.unbounded<ServerProvider[]>();
+      budgetSubscribed = yield* Deferred.make<void>();
+      return {
+        ...base,
+        getProviders: Effect.sync(() => currentBudgetSnapshots),
+        streamChanges: Stream.unwrap(
+          Effect.gen(function* () {
+            const subscription = yield* PubSub.subscribe(budgetUpdates);
+            yield* Deferred.succeed(budgetSubscribed, undefined);
+            return Stream.fromSubscription(subscription);
+          }),
+        ),
+      };
+    }),
+  ).pipe(Layer.provide(makeProviderRegistryLayer())),
+});
+
+hardBudget.layer("ProviderService hard daily budget", (it) => {
+  it.effect(
+    "interrupts only the exhausted account, blocks further work, and reopens after disabling or a new day",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(budgetNow);
+        yield* Deferred.await(budgetSubscribed);
+        const provider = yield* ProviderService.ProviderService;
+        const settings = yield* ServerSettings.ServerSettingsService;
+        yield* settings.updateSettings({ usageHardBudgetEnabled: true });
+        const codexThread = asThreadId("hard-budget-codex");
+        const claudeThread = asThreadId("hard-budget-claude");
+        const codexSession = yield* provider.startSession(codexThread, {
+          providerInstanceId: codexInstanceId,
+          threadId: codexThread,
+          runtimeMode: "full-access",
+        });
+        yield* provider.startSession(claudeThread, {
+          providerInstanceId: ProviderInstanceId.make(CLAUDE_AGENT_DRIVER),
+          threadId: claudeThread,
+          runtimeMode: "full-access",
+        });
+        const request = { threadId: codexThread, input: "Keep working" };
+        const codexTurn = yield* provider.sendTurn(request);
+        const claudeTurn = yield* provider.sendTurn({ ...request, threadId: claudeThread });
+        hardBudget.codex.updateSession(codexThread, (session) => ({
+          ...session,
+          activeTurnId: codexTurn.turnId,
+        }));
+        hardBudget.claude.updateSession(claudeThread, (session) => ({
+          ...session,
+          activeTurnId: claudeTurn.turnId,
+        }));
+        const interrupted = yield* Deferred.make<void>();
+        hardBudget.codex.interruptTurn.mockImplementationOnce(() =>
+          Effect.gen(function* () {
+            hardBudget.codex.updateSession(codexThread, (session) => {
+              const { activeTurnId: _activeTurnId, ...idle } = session;
+              return idle;
+            });
+            yield* Deferred.succeed(interrupted, undefined);
+          }),
+        );
+        currentBudgetSnapshots = budgetSnapshots(15);
+        yield* PubSub.publish(budgetUpdates, currentBudgetSnapshots);
+        yield* Deferred.await(interrupted);
+        assert.deepEqual(hardBudget.codex.interruptTurn.mock.calls, [
+          [codexThread, codexTurn.turnId, codexSession.runtimeSessionId],
+        ]);
+        assert.equal(hardBudget.claude.interruptTurn.mock.calls.length, 0);
+        const blocked = yield* provider.sendTurn(request).pipe(Effect.result);
+        assert.equal(blocked._tag, "Failure");
+        if (blocked._tag === "Failure")
+          assert.include(blocked.failure.message, "Hard daily budget reached");
+        assert.equal(hardBudget.codex.sendTurn.mock.calls.length, 1);
+        assert.equal(
+          (yield* provider.compactThread(codexThread).pipe(Effect.result))._tag,
+          "Failure",
+        );
+        assert.equal(hardBudget.codex.compactThread.mock.calls.length, 0);
+        yield* settings.updateSettings({ usageHardBudgetEnabled: false });
+        yield* provider.sendTurn(request);
+        yield* settings.updateSettings({ usageHardBudgetEnabled: true });
+        yield* TestClock.setTime(budgetNow + budgetDay);
+        yield* provider.sendTurn(request);
+        assert.equal(hardBudget.codex.sendTurn.mock.calls.length, 3);
+      }),
+  );
 });

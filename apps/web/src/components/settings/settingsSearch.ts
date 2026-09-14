@@ -76,6 +76,15 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
  */
 export const SETTINGS_SEARCH_ITEMS = [
   {
+    id: "chat-visualizations",
+    title: "Diagrams & data visualization",
+    to: "/settings/better-t3",
+    targetId: "chat.visualizations",
+    searchTerms: [
+      "Diagramme Datenvisualisierung Lernen Auswertung UML Mermaid PlantUML Graphviz Vega charts learning management",
+    ],
+  },
+  {
     id: "better-t3",
     title: "Better T3",
     to: "/settings/better-t3",
@@ -89,6 +98,24 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["vibrancy glass translucent background"],
     desktopOnly: true,
     macOnly: true,
+  },
+  {
+    id: "show-reasoning",
+    title: "Show thinking traces",
+    to: "/settings/better-t3",
+    targetId: "agent.reasoningVisibility",
+    searchTerms: [
+      "reasoning visibility summary show reasoning thinking traces Gedanken Denkprozess Begründung anzeigen classic chat",
+    ],
+  },
+  {
+    id: "message-editing",
+    title: "Edit chat messages",
+    to: "/settings/better-t3",
+    targetId: "chat.messageEditing",
+    searchTerms: [
+      "edit messages assistant user resend correction restart Nachrichten bearbeiten Agent Antwort Korrektur senden",
+    ],
   },
   {
     id: "harness-chat-sync",
@@ -445,6 +472,14 @@ export const SETTINGS_SEARCH_ITEMS = [
       "usage sources CLIProxyAPI CLI proxy hub quota subscription limits management key add remove",
     ],
     providerSettingsOnly: true,
+  },
+  {
+    id: "usage-pacing",
+    title: "Usage limits and pacing",
+    to: "/settings/better-t3",
+    searchTerms: [
+      "tokens burn daily allowance weekly quota 8-hour 24-hour workday first usage codex five hour 5h limits hard budget stop block catch-up",
+    ],
   },
   {
     id: "provider-health-check-interval",

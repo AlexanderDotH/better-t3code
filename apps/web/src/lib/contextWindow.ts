@@ -1,4 +1,9 @@
-import type { OrchestrationThreadActivity, ThreadTokenUsageSnapshot } from "@t3tools/contracts";
+import { type OrchestrationThreadActivity, ThreadTokenUsageSnapshot } from "@t3tools/contracts";
+import { Option, Schema } from "effect";
+
+const decodeCumulativeUsage = Schema.decodeUnknownOption(
+  ThreadTokenUsageSnapshot.fields.cumulativeUsage,
+);
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
@@ -50,6 +55,7 @@ export function deriveLatestContextWindowSnapshot(
     return {
       usedTokens,
       totalProcessedTokens: asFiniteNumber(payload?.totalProcessedTokens),
+      cumulativeUsage: Option.getOrNull(decodeCumulativeUsage(payload?.cumulativeUsage)) ?? null,
       maxTokens,
       remainingTokens,
       usedPercentage,

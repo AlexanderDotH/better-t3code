@@ -1,0 +1,39 @@
+.usage-pace-label {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.usage-pace-label > span {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  white-space: nowrap;
+}
+
+.usage-pace-label[data-overflow="true"] > span {
+  animation: usage-pace-scroll var(--pace-scroll-duration) linear;
+  animation-play-state: var(--visible-animation-state, paused);
+}
+
+.usage-pace-label:hover > span,
+:focus-within > .usage-pace-label > span {
+  animation-play-state: paused;
+}
+
+@keyframes usage-pace-scroll {
+  0%,
+  15%,
+  100% {
+    transform: translateX(0);
+  }
+  45%,
+  65% {
+    transform: translateX(var(--pace-scroll-distance));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .usage-pace-label[data-overflow="true"] > span {
+    animation: none;
+  }
+}

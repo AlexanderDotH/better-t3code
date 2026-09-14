@@ -68,6 +68,34 @@ describe("buildBetterT3SwitchStates", () => {
 });
 
 describe("buildBetterT3ControlStates", () => {
+  it("uses the selected environment's visualization flag and requires renderer capability", () => {
+    for (const supported of [true, false]) {
+      for (const enabled of [true, false]) {
+        const states = buildBetterT3ControlStates({
+          registry: BETTER_T3_FEATURE_REGISTRY,
+          device: {
+            ...DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
+            flags: { "chat.visualizations": !enabled },
+          },
+          environment: {
+            ...DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
+            flags: { "chat.visualizations": enabled },
+          },
+          surface: "web",
+          capabilities: supported ? { visualizationsVersion: 1 } : {},
+        });
+        expect(states.find((entry) => entry.descriptor.id === "chat.visualizations")).toMatchObject(
+          {
+            value: enabled,
+            availability: { state: supported ? "available" : "unsupported" },
+          },
+        );
+      }
+    }
+    expect(buildBetterT3SwitchSettingsPatch("chat.visualizations", true, "environment")).toEqual({
+      betterT3Environment: { version: 1, flags: { "chat.visualizations": true } },
+    });
+  });
   it("keeps non-switch controls visible while capability-gating their actions", () => {
     const legacy = buildBetterT3ControlStates({
       registry: BETTER_T3_FEATURE_REGISTRY,

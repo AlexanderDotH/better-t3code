@@ -1174,7 +1174,9 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
   it("applies current agent enhancement settings only to newly activated turns", async () => {
     const harness = await createHarness({
       serverSettings: {
-        betterT3Environment: { flags: { "agent.deepThinking": true } },
+        betterT3Environment: {
+          flags: { "agent.deepThinking": true, "chat.visualizations": true },
+        },
         agentEnhancement: {
           cavemanMode: "full",
           deepThinking: {
@@ -1205,10 +1207,12 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
       );
 
     await dispatchTurn({ command: "cmd-enhanced-turn", message: "first request" });
-    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await harness.drain();
+    expect(harness.sendTurn).toHaveBeenCalledTimes(1);
     const firstProviderInput = harness.sendTurn.mock.calls[0]?.[0]?.input;
     expect(firstProviderInput).toContain("### Deep thinking");
     expect(firstProviderInput).toContain("### Caveman mode");
+    expect(firstProviderInput).toContain("### Diagrams and data visualization");
     expect(firstProviderInput?.endsWith("first request")).toBe(true);
     expect(harness.sendTurn.mock.calls[0]?.[0]?.interactionMode).toBe(
       DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -1219,14 +1223,17 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
 
     await harness.runEffect(
       harness.serverSettings.updateSettings({
-        betterT3Environment: { flags: { "agent.deepThinking": false } },
+        betterT3Environment: {
+          flags: { "agent.deepThinking": false, "chat.visualizations": false },
+        },
         agentEnhancement: { cavemanMode: "off" },
       }),
     );
     expect(harness.sendTurn.mock.calls[0]?.[0]?.input).toBe(firstProviderInput);
 
     await dispatchTurn({ command: "cmd-unenhanced-turn", message: "second request" });
-    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    await harness.drain();
+    expect(harness.sendTurn).toHaveBeenCalledTimes(2);
     expect(harness.sendTurn.mock.calls[1]?.[0]?.input).toBe("second request");
 
     const readModel = await harness.readModel();
@@ -2503,90 +2510,112 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     );
   });
 
-  effectIt.effect("waits for independent Claude Fetch workers before sending a Codex turn", () =>
-    Effect.gen(function* () {
-      const fetchResult = yield* Deferred.make<FetchRunResult>();
-      const claudeFetchSelection: ModelSelection = {
-        instanceId: ProviderInstanceId.make("claude_fetch"),
-        model: "claude-opus-4-6",
-        options: [{ id: "effort", value: "high" }],
-      };
-      const harness = yield* Effect.promise(() =>
-        createHarness({
-          fetchModelSelection: claudeFetchSelection,
-          providerSnapshots: [
-            fetchProviderFixture({
-              instanceId: "codex",
-              driver: "codex",
-              models: ["gpt-5-codex", "gpt-5.3-codex-spark", "gpt-5.6-luna"],
-            }),
-            fetchProviderFixture({
-              instanceId: "claude_fetch",
-              driver: "claudeAgent",
-              models: ["claude-opus-4-6"],
-              maxRecommendedWorkers: 10,
-            }),
-          ],
-          runFetchEffect: () => Deferred.await(fetchResult),
-        }),
-      );
-      const now = "2026-01-01T00:00:00.000Z";
+  effectIt.effect.each([false, true])(
+    "waits for Claude Fetch workers and reads current visualization setting (%s) for the Codex main turn",
+    (visualizationsEnabled) =>
+      Effect.gen(function* () {
+        const fetchResult = yield* Deferred.make<FetchRunResult>();
+        const fetchStarted = yield* Deferred.make<void>();
+        const claudeFetchSelection: ModelSelection = {
+          instanceId: ProviderInstanceId.make("claude_fetch"),
+          model: "claude-opus-4-6",
+          options: [{ id: "effort", value: "high" }],
+        };
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            serverSettings: {
+              betterT3Environment: { flags: { "chat.visualizations": !visualizationsEnabled } },
+            },
+            fetchModelSelection: claudeFetchSelection,
+            providerSnapshots: [
+              fetchProviderFixture({
+                instanceId: "codex",
+                driver: "codex",
+                models: ["gpt-5-codex", "gpt-5.3-codex-spark", "gpt-5.6-luna"],
+              }),
+              fetchProviderFixture({
+                instanceId: "claude_fetch",
+                driver: "claudeAgent",
+                models: ["claude-opus-4-6"],
+                maxRecommendedWorkers: 10,
+              }),
+            ],
+            runFetchEffect: () =>
+              Deferred.succeed(fetchStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(fetchResult)),
+              ),
+          }),
+        );
+        const now = "2026-01-01T00:00:00.000Z";
 
-      yield* harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.make("cmd-turn-start-fetch-claude"),
-        threadId: ThreadId.make("thread-1"),
-        message: {
-          messageId: asMessageId("user-message-fetch-claude"),
-          role: "user",
-          text: "trace the provider boundary",
-          attachments: [],
-        },
-        fetchMode: "repository-exploration",
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        createdAt: now,
-      });
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-turn-start-fetch-claude"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("user-message-fetch-claude"),
+            role: "user",
+            text: "trace the provider boundary",
+            attachments: [],
+          },
+          fetchMode: "repository-exploration",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        });
 
-      yield* Effect.promise(() => waitFor(() => harness.runFetch.mock.calls.length === 1));
-      expect(harness.sendTurn).not.toHaveBeenCalled();
-      const duringFetch = yield* Effect.promise(() => harness.readModel());
-      expect(
-        duringFetch.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.session
-          ?.status,
-      ).toBe("starting");
-      expect(harness.runFetch.mock.calls[0]?.[0]).toMatchObject({
-        modelSelection: claudeFetchSelection,
-        providerDriver: ProviderDriverKind.make("claudeAgent"),
-        maxRecommendedWorkers: 10,
-        commandExecutionPolicy: "deny",
-      });
+        yield* Deferred.await(fetchStarted);
+        expect(harness.runFetch).toHaveBeenCalledTimes(1);
+        expect(harness.sendTurn).not.toHaveBeenCalled();
+        const duringFetch = yield* Effect.promise(() => harness.readModel());
+        expect(
+          duringFetch.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.session
+            ?.status,
+        ).toBe("starting");
+        expect(harness.runFetch.mock.calls[0]?.[0]).toMatchObject({
+          modelSelection: claudeFetchSelection,
+          providerDriver: ProviderDriverKind.make("claudeAgent"),
+          maxRecommendedWorkers: 10,
+          commandExecutionPolicy: "deny",
+          userRequest: "trace the provider boundary",
+        });
 
-      yield* Deferred.succeed(fetchResult, {
-        runId: "fetch-run-claude",
-        status: "completed",
-        context: "T3 FETCH CONTEXT\nClaude evidence",
-        warnings: [],
-        plannedWorkers: 2,
-        completedWorkers: 2,
-        successfulWorkers: 2,
-        providerInstanceId: claudeFetchSelection.instanceId,
-        providerDriver: ProviderDriverKind.make("claudeAgent"),
-        modelSelection: claudeFetchSelection,
-      });
-      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+        yield* harness.serverSettings.updateSettings({
+          betterT3Environment: { flags: { "chat.visualizations": visualizationsEnabled } },
+        });
 
-      expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
-        providerInstanceId: ProviderInstanceId.make("codex"),
-        modelSelection: { instanceId: ProviderInstanceId.make("codex") },
-      });
-      expect(harness.sendTurn.mock.calls[0]?.[0]?.input).toBe(
-        "trace the provider boundary\n\nT3 FETCH CONTEXT\nClaude evidence",
-      );
-      expect(harness.fetchHandoffInputs).toEqual([
-        { threadId: ThreadId.make("thread-1"), runId: "fetch-run-claude" },
-      ]);
-    }),
+        yield* Deferred.succeed(fetchResult, {
+          runId: "fetch-run-claude",
+          status: "completed",
+          context: "T3 FETCH CONTEXT\nClaude evidence",
+          warnings: [],
+          plannedWorkers: 2,
+          completedWorkers: 2,
+          successfulWorkers: 2,
+          providerInstanceId: claudeFetchSelection.instanceId,
+          providerDriver: ProviderDriverKind.make("claudeAgent"),
+          modelSelection: claudeFetchSelection,
+        });
+        yield* Effect.promise(() => harness.drain());
+        expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+
+        expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          modelSelection: { instanceId: ProviderInstanceId.make("codex") },
+        });
+        const providerInput = harness.sendTurn.mock.calls[0]?.[0]?.input;
+        const requestWithEvidence =
+          "trace the provider boundary\n\nT3 FETCH CONTEXT\nClaude evidence";
+        if (visualizationsEnabled) {
+          expect(providerInput).toContain("### Diagrams and data visualization");
+          expect(providerInput?.endsWith(requestWithEvidence)).toBe(true);
+        } else {
+          expect(providerInput).toBe(requestWithEvidence);
+        }
+        expect(harness.fetchHandoffInputs).toEqual([
+          { threadId: ThreadId.make("thread-1"), runId: "fetch-run-claude" },
+        ]);
+      }),
   );
 
   it.each([

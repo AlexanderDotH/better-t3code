@@ -1,29 +1,19 @@
 import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
-import { BotIcon, LoaderCircleIcon, MessageSquareIcon } from "lucide-react";
+import { LoaderCircleIcon } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { type ThreadSyncPhase } from "../../threadSync";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
-import { formatContextWindowTokens, type ContextWindowSnapshot } from "../../lib/contextWindow";
+import type { ThreadTokenUsage } from "../../lib/threadTokenUsage";
+import { ComposerTokenUsageMetrics } from "./ComposerTokenUsageMetrics";
 import { ComposerBanner, type ComposerBannerVariant } from "./ComposerBanner";
 
 export type ComposerActivityStatus =
   | {
       readonly kind: "working";
       readonly startedAt: string | null;
-      readonly inputTokens?: number;
-      readonly outputTokens?: number;
+      readonly tokenUsage?: ThreadTokenUsage | undefined;
     }
   | { readonly kind: "sync"; readonly phase: ThreadSyncPhase };
-
-type ComposerActivityTokenSnapshot = Pick<
-  ContextWindowSnapshot,
-  "updatedAt" | "inputTokens" | "lastInputTokens" | "outputTokens" | "lastOutputTokens"
->;
-
-export interface ComposerActivityTokenUsage {
-  readonly inputTokens: number;
-  readonly outputTokens: number;
-}
 
 const SYNC_MESSAGE_IDS = {
   loading: "chat.composer.sync.loadingMessages",
@@ -37,22 +27,6 @@ export function composerActivityMessageId(status: ComposerActivityStatus): Inter
 
 export function composerActivityVariant(status: ComposerActivityStatus): ComposerBannerVariant {
   return status.kind === "sync" ? "info" : "activity";
-}
-
-export function resolveComposerActivityTokenUsage(input: {
-  readonly activeWorkStartedAt: string | null;
-  readonly snapshot: ComposerActivityTokenSnapshot | null;
-}): ComposerActivityTokenUsage {
-  const startedAt = input.activeWorkStartedAt ? Date.parse(input.activeWorkStartedAt) : Number.NaN;
-  const updatedAt = input.snapshot ? Date.parse(input.snapshot.updatedAt) : Number.NaN;
-  if (!input.snapshot || !Number.isFinite(startedAt) || !Number.isFinite(updatedAt)) {
-    return { inputTokens: 0, outputTokens: 0 };
-  }
-  if (updatedAt < startedAt) return { inputTokens: 0, outputTokens: 0 };
-  return {
-    inputTokens: input.snapshot.lastInputTokens ?? input.snapshot.inputTokens ?? 0,
-    outputTokens: input.snapshot.lastOutputTokens ?? input.snapshot.outputTokens ?? 0,
-  };
 }
 
 export function ComposerActivityIcon({ status }: { readonly status: ComposerActivityStatus }) {
@@ -75,9 +49,7 @@ export function ComposerActivityRow(
 ) {
   const status: ComposerActivityStatus =
     "status" in props ? props.status : { kind: "sync", phase: props.phase };
-  const showTokenUsage =
-    status.kind === "working" &&
-    (status.inputTokens !== undefined || status.outputTokens !== undefined);
+  const showTokenUsage = status.kind === "working" && status.tokenUsage !== undefined;
   return (
     <ComposerBanner.Row>
       <ComposerActivityIcon status={status} />
@@ -96,39 +68,9 @@ export function ComposerActivityRow(
 export function ComposerActivityTokenMetrics(props: {
   readonly status: ComposerActivityStatus | undefined;
 }) {
-  const translate = useInterfaceTranslator().message;
-  if (props.status?.kind !== "working") return null;
-  if (props.status.inputTokens === undefined && props.status.outputTokens === undefined)
-    return null;
-  const metrics = [
-    {
-      direction: "input",
-      label: translate("chat.timeline.inputTokens"),
-      value: props.status.inputTokens ?? 0,
-      Icon: MessageSquareIcon,
-    },
-    {
-      direction: "output",
-      label: translate("chat.timeline.outputTokens"),
-      value: props.status.outputTokens ?? 0,
-      Icon: BotIcon,
-    },
-  ] as const;
-  return metrics.map(({ direction, label, value, Icon }) => {
-    const formatted = formatContextWindowTokens(value);
-    return (
-      <span
-        aria-label={`${label}: ${formatted}`}
-        className="inline-flex items-center gap-1 rounded-md bg-background/35 px-1.5 py-0.5 text-[10px] leading-4 text-muted-foreground tabular-nums"
-        data-composer-token-direction={direction}
-        key={direction}
-      >
-        <Icon aria-hidden="true" className="size-3" />
-        <span className="hidden sm:inline">{label}</span>
-        <span className="font-mono font-medium text-foreground/75">{formatted}</span>
-      </span>
-    );
-  });
+  return props.status?.kind === "working" && props.status.tokenUsage ? (
+    <ComposerTokenUsageMetrics usage={props.status.tokenUsage} />
+  ) : null;
 }
 
 export function ComposerActivityLabel({ status }: { readonly status: ComposerActivityStatus }) {

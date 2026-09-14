@@ -131,6 +131,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server can retry an interrupted turn from its existing user message
       without appending a duplicate message. */
   interruptedTurnRetry: Schema.optionalKey(Schema.Boolean),
+  messageEditing: Schema.optionalKey(Schema.Boolean),
   /** Server persists a pull request reference on thread.meta.update. */
   threadPullRequestLinking: Schema.optionalKey(Schema.Boolean),
   /** The update path clients should offer for this server. Absent on
@@ -158,6 +159,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Versioned provider, skill, speech, and import administration surface.
       Missing on older servers, so clients retain connection-only settings. */
   environmentSettingsVersion: Schema.optionalKey(PositiveInt),
+  visualizationsVersion: Schema.optionalKey(PositiveInt),
   /** Versioned project metadata and agent-coordination administration surface.
       Missing on older servers, so clients keep project settings read-only. */
   projectSettingsVersion: Schema.optionalKey(PositiveInt),

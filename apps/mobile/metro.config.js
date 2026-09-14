@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const { execFileSync } = require("node:child_process");
 const { getDefaultConfig } = require("expo/metro-config");
 const { withUniwindConfig } = require("uniwind/metro");
 const extraThemes = require("./generated-uniwind-theme-names.json");
@@ -7,6 +8,12 @@ const extraThemes = require("./generated-uniwind-theme-names.json");
 /** @type {import("expo/metro-config").MetroConfig} */
 const config = getDefaultConfig(__dirname);
 const workspaceRoot = path.resolve(__dirname, "../..");
+execFileSync(
+  process.execPath,
+  [path.join(workspaceRoot, "scripts/build-visualizations.mjs"), "--if-needed"],
+  { stdio: "inherit" },
+);
+config.resolver.assetExts = [...new Set([...config.resolver.assetExts, "html"])];
 const escapedWorkspaceRoot = workspaceRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const mobileShikiRoot = path.dirname(require.resolve("shiki/package.json", { paths: [__dirname] }));
 const resolveShikiDependencyRoot = (packageName) => {

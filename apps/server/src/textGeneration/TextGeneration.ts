@@ -12,6 +12,7 @@ import { TextGenerationError } from "@t3tools/contracts";
 
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
+import { makeUsageHardBudgetCheck } from "../provider/usageHardBudget.ts";
 import type { TextGenerationPolicy } from "./TextGenerationPolicy.ts";
 import type { AutoReasoningMessage } from "./AutoReasoning.ts";
 
@@ -287,62 +288,69 @@ const resolveInstance = (
 
 export const makeTextGenerationFromRegistry = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
-): TextGeneration["Service"] =>
-  TextGeneration.of({
+  checkBudget: (instanceId: ProviderInstanceId) => Effect.Effect<string | null>,
+): TextGeneration["Service"] => {
+  const resolve = (operation: TextGenerationOp, instanceId: ProviderInstanceId) =>
+    checkBudget(instanceId).pipe(
+      Effect.flatMap((reason) =>
+        reason
+          ? Effect.fail(new TextGenerationError({ operation, detail: reason }))
+          : resolveInstance(registry, operation, instanceId),
+      ),
+    );
+  return TextGeneration.of({
     decideAutoReasoning: (input) =>
-      resolveInstance(registry, "decideAutoReasoning", input.modelSelection.instanceId).pipe(
+      resolve("decideAutoReasoning", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.decideAutoReasoning(input)),
       ),
     generateCommitMessage: (input) =>
-      resolveInstance(registry, "generateCommitMessage", input.modelSelection.instanceId).pipe(
+      resolve("generateCommitMessage", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.generateCommitMessage(input)),
       ),
     generatePrContent: (input) =>
-      resolveInstance(registry, "generatePrContent", input.modelSelection.instanceId).pipe(
+      resolve("generatePrContent", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.generatePrContent(input)),
       ),
     generateBranchName: (input) =>
-      resolveInstance(registry, "generateBranchName", input.modelSelection.instanceId).pipe(
+      resolve("generateBranchName", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.generateBranchName(input)),
       ),
     generateThreadMetadata: (input) =>
-      resolveInstance(registry, "generateThreadMetadata", input.modelSelection.instanceId).pipe(
+      resolve("generateThreadMetadata", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.generateThreadMetadata(input)),
       ),
     generateThreadTitle: (input) =>
-      resolveInstance(registry, "generateThreadTitle", input.modelSelection.instanceId).pipe(
+      resolve("generateThreadTitle", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.generateThreadTitle(input)),
       ),
     translateTranscriptToEnglish: (input) =>
-      resolveInstance(
-        registry,
-        "translateTranscriptToEnglish",
-        input.modelSelection.instanceId,
-      ).pipe(
+      resolve("translateTranscriptToEnglish", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.translateTranscriptToEnglish(input)),
       ),
     improvePrompt: (input) =>
-      resolveInstance(registry, "improvePrompt", input.modelSelection.instanceId).pipe(
+      resolve("improvePrompt", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.improvePrompt(input)),
       ),
     reviewPlanParallelism: (input) =>
-      resolveInstance(registry, "reviewPlanParallelism", input.modelSelection.instanceId).pipe(
+      resolve("reviewPlanParallelism", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.reviewPlanParallelism(input)),
       ),
     planFetchExploration: (input) =>
-      resolveInstance(registry, "planFetchExploration", input.modelSelection.instanceId).pipe(
+      resolve("planFetchExploration", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.planFetchExploration(input)),
       ),
     enrichKnowledgeGraph: (input) =>
-      resolveInstance(registry, "enrichKnowledgeGraph", input.modelSelection.instanceId).pipe(
+      resolve("enrichKnowledgeGraph", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.enrichKnowledgeGraph(input)),
       ),
   });
+};
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
-  return makeTextGenerationFromRegistry(registry);
+  const checkBudget = yield* makeUsageHardBudgetCheck;
+  return makeTextGenerationFromRegistry(registry, checkBudget);
 });
 
 export const layer = Layer.effect(TextGeneration, make);

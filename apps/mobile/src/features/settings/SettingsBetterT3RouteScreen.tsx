@@ -601,6 +601,37 @@ export function SettingsBetterT3RouteScreen() {
           {translator.message("settings.betterT3.description")}
         </Text>
 
+        <SettingsSection card title="Usage limits and pacing">
+          <SettingsSwitchRow
+            icon="clock"
+            label="Show usage pace"
+            subtitle="Daily quota allowance and pace guidance, saved on this device."
+            disabled={!deviceAvailable}
+            value={devicePreferences?.usagePacingEnabled ?? true}
+            onValueChange={(usagePacingEnabled) => savePreferences({ usagePacingEnabled })}
+          />
+          <SettingsSwitchRow
+            icon="clock"
+            label="8-hour workday"
+            subtitle="Starts with first observed usage each day. Turn off for a full 24-hour calendar day. Weekends are included."
+            disabled={!deviceAvailable || devicePreferences?.usagePacingEnabled === false}
+            value={(devicePreferences?.usagePacingWorkdayHours ?? 8) === 8}
+            onValueChange={(enabled) =>
+              savePreferences({ usagePacingWorkdayHours: enabled ? 8 : 24 })
+            }
+          />
+          <SettingsSwitchRow
+            icon="lock"
+            label="Hard daily budget"
+            subtitle="Stop requests at the daily allowance, including catch-up. Uses the selected environment's calendar day and applies to all its clients. Blocks requests if weekly usage cannot be verified. Provider reporting can delay the stop."
+            disabled={!environmentAvailable}
+            value={serverConfig?.settings.usageHardBudgetEnabled ?? false}
+            onValueChange={(usageHardBudgetEnabled) => {
+              void updateEnvironmentSettings({ usageHardBudgetEnabled });
+            }}
+          />
+        </SettingsSection>
+
         <SettingsSection card title={translator.message("settings.betterT3.environmentScope")}>
           {environments.length === 0 ? (
             <Text className="p-4 text-sm text-foreground-muted">
@@ -947,7 +978,7 @@ export function SettingsBetterT3RouteScreen() {
                       !available || serverConfig === null
                         ? status
                         : knowledgeGraphModelSelection === null
-                          ? translator.message("settings.betterT3.value.automatic")
+                          ? translator.message("knowledgeGraph.localIndexing")
                           : modelSelectionLabel(serverConfig, knowledgeGraphModelSelection)
                     }
                   />
@@ -1071,7 +1102,7 @@ export function SettingsBetterT3RouteScreen() {
           <ModelSelectionModal
             config={serverConfig}
             current={knowledgeGraphModelSelection}
-            defaultLabel={translator.message("settings.betterT3.value.automatic")}
+            defaultLabel={translator.message("knowledgeGraph.localIndexing")}
             onClose={() => setKnowledgeModelPickerOpen(false)}
             onSelect={(selection: ModelSelection | null) =>
               void updateEnvironmentSettings(

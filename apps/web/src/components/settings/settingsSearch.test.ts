@@ -113,6 +113,20 @@ describe("searchSettings", () => {
     },
   );
 
+  it.each([
+    "thinking traces",
+    "show reasoning",
+    "reasoning visibility",
+    "Denkprozess",
+    "Begründung",
+  ])("finds the thinking visibility toggle by %s", (query) => {
+    expect(searchSettings(query)[0]).toMatchObject({
+      id: "show-reasoning",
+      to: "/settings/better-t3",
+      targetId: "agent.reasoningVisibility",
+    });
+  });
+
   it("returns no results for an empty query", () => {
     expect(searchSettings("   ", ITEMS)).toEqual([]);
   });

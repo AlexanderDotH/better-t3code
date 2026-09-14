@@ -2052,6 +2052,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           AND sequence <= ${maxSequence}
           AND event_type IN (
             'thread.message-sent',
+            'thread.message-edited',
             'thread.forked',
             'thread.fork-workspace-updated',
             'thread.fork-handoff-completed',
@@ -3735,6 +3736,7 @@ pending_approval_requests AS (
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
         ...(row.attachments !== null ? { attachments: row.attachments } : {}),
+        ...(row.historyOrigin !== null ? { historyOrigin: row.historyOrigin } : {}),
       },
       hasOtherUserMessages: row.hasOtherUserMessages === 1,
     }));

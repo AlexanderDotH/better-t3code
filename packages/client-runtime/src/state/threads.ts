@@ -465,13 +465,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       }
       return;
     }
-    if (item.event.type === "thread.reverted") {
-      // A revert rewrites loaded history (whole turns disappear), so an
-      // older-page fetch in flight may straddle the removed range; the epoch
-      // bump discards it. The stored page cursor stays valid: cursors are an
-      // (anchor, turnId) keyset derived from event content, which survives
-      // the revert projector's row rewrite, so no refresh is needed — the
-      // revert reducer's turn filtering fully handles loaded history.
+    if (item.event.type === "thread.reverted" || item.event.type === "thread.message-edited") {
+      // Drop in-flight pages that could restore removed turns or unedited text.
+      // The (anchor, turnId) page cursor remains valid after either operation.
       yield* Ref.update(historyEpoch, (epoch) => epoch + 1);
     }
     const result = applyThreadDetailEvent(current.data.value, item.event);

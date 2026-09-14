@@ -9,17 +9,17 @@ import {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import {
-  elapsedShare,
   formatDuration,
   formatResetsIn,
   type LimitPace,
   paceOf,
   remainingPercent,
+  usageWindowLabel,
 } from "@t3tools/shared/usageLimits";
 import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
 import { Fragment, useState } from "react";
 
-import { usePrimarySettings } from "../../hooks/useSettings";
+import { useClientSettings, usePrimarySettings } from "../../hooks/useSettings";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -37,6 +37,7 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { UsageLimitsPooled } from "./UsageLimitsPooled";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
+import { UsagePaceBar } from "./UsagePaceDetails";
 
 const PACE: Record<LimitPace, { readonly label: string; readonly icon: typeof GaugeIcon }> = {
   ahead: { label: "Ahead of pace: spending faster than the window elapses", icon: TrendingUpIcon },
@@ -73,10 +74,7 @@ export function PaceIcon({ pace }: { readonly pace: LimitPace }) {
 }
 
 /**
- * One window as a full-width bar from the moment it opened to its reset.
- * The fill is the share of quota spent; the hairline is how far into the
- * window the clock is, which is also where even spending would have put the
- * fill. Hover for the exact figures and reset time.
+ * Remaining quota, with the exact reset time available on hover or focus.
  */
 function WindowBar({
   color,
@@ -89,23 +87,18 @@ function WindowBar({
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const remaining = remainingPercent(window);
-  const elapsed = elapsedShare(window, now);
-  // The fill is quota left, so the even-spending mark is the time left.
-  const timeLeft = elapsed === null ? null : Math.round((1 - elapsed) * 100);
   const resetsIn = formatResetsIn(window, now);
   const resetsAt = window.resetsAt
     ? formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)
     : null;
-  const summary = `${window.label}: ${remaining}% left${
-    timeLeft === null ? "" : `, ${timeLeft}% of the window left`
-  }${resetsIn ? `, ${resetsIn}` : ""}`;
+  const summary = `${usageWindowLabel(window)}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}`;
 
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <div
-            role="img"
+            role="group"
             aria-label={summary}
             tabIndex={0}
             className="relative h-6 cursor-default rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
@@ -119,22 +112,13 @@ function WindowBar({
             style={{ width: `${remaining}%`, backgroundColor: color }}
           />
         ) : null}
-        {timeLeft !== null ? (
-          <span
-            aria-hidden
-            className="absolute inset-y-0.5 w-px -translate-x-1/2 bg-foreground/60"
-            style={{ left: `${timeLeft}%` }}
-          />
-        ) : null}
+        <div className="absolute inset-x-0 inset-y-1.5 overflow-hidden rounded-full">
+          <UsagePaceBar window={window} now={now} baseColor={color} />
+        </div>
       </TooltipTrigger>
       <TooltipPopup side="top" className="max-w-72 text-xs">
         <div className="flex flex-col gap-0.5">
-          <span className="text-foreground">
-            {remaining}% left{timeLeft !== null ? ` · ${timeLeft}% of the window left` : ""}
-          </span>
-          {timeLeft !== null ? (
-            <span className="text-muted-foreground">The line is where even spending would be.</span>
-          ) : null}
+          <span className="text-foreground">{remaining}% left</span>
           {resetsAt ? (
             <span className="text-muted-foreground">
               Resets {resetsAt}
@@ -163,6 +147,7 @@ export function LimitWindows({
   readonly compact?: boolean;
 }) {
   const color = barColor(driver);
+  const pacingEnabled = useClientSettings((settings) => settings.usagePacingEnabled);
   return (
     <div
       className={
@@ -172,12 +157,12 @@ export function LimitWindows({
       }
     >
       {windows.map((window) => {
-        const pace = paceOf(window, now);
+        const pace = pacingEnabled && window.kind !== "weekly" ? paceOf(window, now) : null;
         const resetsIn = formatResetsIn(window, now);
         return (
           <Fragment key={window.id}>
             <span className="flex min-w-0 items-center gap-2 text-xs">
-              <span className="truncate text-muted-foreground">{window.label}</span>
+              <span className="truncate text-muted-foreground">{usageWindowLabel(window)}</span>
               <span className="ms-auto shrink-0 font-medium text-foreground tabular-nums">
                 {remainingPercent(window)}% left
               </span>

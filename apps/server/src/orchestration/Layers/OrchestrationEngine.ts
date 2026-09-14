@@ -224,27 +224,50 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           envelope.command.type === "thread.user-input.dismiss"
             ? yield* projectionSnapshotQuery.getUserInputActivity(envelope.command)
             : Option.none();
+        let decisionReadModel = commandReadModel;
+        if (envelope.command.type === "thread.message.edit") {
+          const editCommand = envelope.command;
+          const target = yield* projectionSnapshotQuery.getTurnStartMessage(editCommand);
+          if (Option.isSome(target)) {
+            const message = target.value.message;
+            decisionReadModel = {
+              ...commandReadModel,
+              threads: commandReadModel.threads.map((thread) =>
+                thread.id === editCommand.threadId
+                  ? {
+                      ...thread,
+                      messages: [
+                        ...thread.messages.filter((entry) => entry.id !== message.id),
+                        message,
+                      ].toSorted((a, b) => a.createdAt.localeCompare(b.createdAt)),
+                    }
+                  : thread,
+              ),
+            };
+          }
+        }
         const sourceEvents =
           envelope.command.type === "thread.fork"
             ? yield* Stream.runCollect(
                 eventStore.readByThreadId(envelope.command.sourceThreadId),
               ).pipe(Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)))
             : null;
-        const eventBase = yield* (
-          envelope.command.type === "thread.fork"
-            ? planThreadFork({
-                command: envelope.command,
-                readModel: commandReadModel,
-                sourceEvents: sourceEvents ?? [],
-              })
-            : decideOrchestrationCommand({
-                command: envelope.command,
-                readModel: commandReadModel,
-                ...(Option.isSome(userInputActivity)
-                  ? { userInputActivity: userInputActivity.value }
-                  : {}),
-              })
-        ).pipe(
+        const eventBase = yield* Effect.gen(function* () {
+          if (envelope.command.type === "thread.fork") {
+            return yield* planThreadFork({
+              command: envelope.command,
+              readModel: commandReadModel,
+              sourceEvents: sourceEvents ?? [],
+            });
+          }
+          return yield* decideOrchestrationCommand({
+            command: envelope.command,
+            readModel: decisionReadModel,
+            ...(Option.isSome(userInputActivity)
+              ? { userInputActivity: userInputActivity.value }
+              : {}),
+          });
+        }).pipe(
           Effect.provideService(Crypto.Crypto, crypto),
           Effect.mapError((cause) =>
             isOrchestrationCommandRejection(cause)

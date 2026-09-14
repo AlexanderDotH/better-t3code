@@ -11,6 +11,7 @@ import { createStaticNavigation } from "@react-navigation/native";
 import { RegistryContext } from "@effect/atom-react";
 import { ConfirmDialogHost } from "./components/ConfirmDialogHost";
 import { CloudAuthProvider } from "./features/cloud/CloudAuthProvider";
+import { VisualizationProvider } from "./features/visualizations/VisualizationBlock";
 import { prepareNativeShowcaseCapture } from "./features/showcase/nativeShowcaseScene";
 import { IncomingShareProvider } from "./features/sharing/IncomingShareProvider";
 import {
@@ -62,7 +63,9 @@ export default function App() {
     <RegistryContext.Provider value={appAtomRegistry}>
       <CloudAuthProvider>
         <AppearancePreferencesProvider>
-          <AppContent />
+          <VisualizationProvider>
+            <AppContent />
+          </VisualizationProvider>
         </AppearancePreferencesProvider>
       </CloudAuthProvider>
     </RegistryContext.Provider>

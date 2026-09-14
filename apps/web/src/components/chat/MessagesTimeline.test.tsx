@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { act, createRef, useLayoutEffect, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef, MaintainScrollAtEndOptions } from "@legendapp/list/react";
 import { shouldUseRestingComposerLayout } from "../composerFooterLayout";
@@ -474,6 +474,73 @@ it("moves the active plan between the composer and native timeline", async () =>
     visualPreference.mode = "current";
   }
 });
+
+it.each(["classic", "current"] as const)(
+  "keeps one %s reasoning disclosure collapsed as traces arrive and update",
+  async (mode) => {
+    const { __setClientSettingsForTests, getClientSettings } =
+      await import("../../hooks/useSettings");
+    const originalSettings = getClientSettings();
+    __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, showReasoning: true });
+    visualPreference.mode = mode;
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const props = buildProps();
+    const traces = ["First trace", "Second trace", "Third trace"].map((detail, index) => ({
+      kind: "work" as const,
+      id: `reasoning-${index}`,
+      createdAt: MESSAGE_CREATED_AT,
+      entry: {
+        id: `reasoning-${index}`,
+        createdAt: MESSAGE_CREATED_AT,
+        turnId: TurnId.make("reasoning-turn"),
+        tone: "thinking" as const,
+        label: "Reasoning",
+        sourceActivityKind: "reasoning.summary",
+        detail,
+      },
+    }));
+    const renderedText = (node: ReactTestInstance | string): string =>
+      typeof node === "string" ? node : node.children.map(renderedText).join("");
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(() => {
+        renderer = create(<MessagesTimeline {...props} timelineEntries={traces.slice(0, 1)} />);
+      });
+      const reasoning = renderer!.root.findByProps({ "data-reasoning-output": "true" });
+      expect(reasoning.findAllByType("p").map(renderedText)).toEqual(["First trace"]);
+      await act(() => reasoning.findByType("button").props.onClick());
+      await act(() => {
+        renderer!.update(<MessagesTimeline {...props} timelineEntries={traces} />);
+      });
+      expect(renderer!.root.findByProps({ "data-reasoning-output": "true" })).toBe(reasoning);
+      expect(reasoning.findByType("button").props["aria-expanded"]).toBe(false);
+      expect(reasoning.findAllByType("p")).toHaveLength(0);
+      await act(() => reasoning.findByType("button").props.onClick());
+      expect(reasoning.findAllByType("p").map(renderedText)).toEqual(
+        traces.map((trace) => trace.entry.detail),
+      );
+      const updatedTraces = traces.map((trace, index) =>
+        index === 2
+          ? { ...trace, entry: { ...trace.entry, detail: "Third trace completed" } }
+          : trace,
+      );
+      await act(() => {
+        renderer!.update(<MessagesTimeline {...props} timelineEntries={updatedTraces} />);
+      });
+      expect(renderer!.root.findByProps({ "data-reasoning-output": "true" })).toBe(reasoning);
+      expect(reasoning.findByType("button").props["aria-expanded"]).toBe(true);
+      expect(reasoning.findAllByType("p").map(renderedText)).toEqual(
+        updatedTraces.map((trace) => trace.entry.detail),
+      );
+    } finally {
+      await act(() => renderer?.unmount());
+      __setClientSettingsForTests(originalSettings);
+      visualPreference.mode = "current";
+    }
+  },
+);
 
 describe("MessagesTimeline", () => {
   it("renders previous and next controls with the minimap", () => {

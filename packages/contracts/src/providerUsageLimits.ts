@@ -9,6 +9,8 @@ import {
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 
+export const MAX_USAGE_PACE_SAMPLES = 512;
+
 /**
  * One rolling quota window a subscription provider reports for the signed-in
  * account, e.g. Claude's five-hour session or Codex's weekly allowance.
@@ -24,6 +26,16 @@ export const ServerProviderUsageWindow = Schema.Struct({
   usedPercent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
   resetsAt: Schema.optional(IsoDateTime),
   windowDurationMins: Schema.optional(NonNegativeInt),
+  usageHistorySource: Schema.optional(Schema.Literal("codex")),
+  usageHistory: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        at: IsoDateTime,
+        usedPercent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
+        hasUsage: Schema.optional(Schema.Boolean),
+      }),
+    ).check(Schema.isMaxLength(MAX_USAGE_PACE_SAMPLES)),
+  ),
 });
 export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
 

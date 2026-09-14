@@ -131,7 +131,6 @@ import {
 import {
   ComposerActivityRow,
   composerActivityVariant,
-  resolveComposerActivityTokenUsage,
   type ComposerActivityStatus,
 } from "./ComposerActivityStatus";
 import type { ThreadSyncPhase } from "../../threadSync";
@@ -207,6 +206,7 @@ import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
+import { estimatePlanExecution } from "./planExecutionEstimate";
 import {
   ComposerControl,
   ComposerControlIcon,
@@ -903,6 +903,7 @@ import {
 import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
 import type { PendingApproval, PendingUserInput } from "../../session-logic";
 import type { ContextWindowSnapshot } from "../../lib/contextWindow";
+import type { ThreadTokenUsage } from "../../lib/threadTokenUsage";
 import {
   formatProviderSkillDisplayName,
   getProviderSlashCommandsForSlashMenu,
@@ -1356,6 +1357,7 @@ export interface ChatComposerProps {
   threadSyncPhase: ThreadSyncPhase | null;
   isWorking?: boolean;
   activeWorkStartedAt?: string | null;
+  activeTokenUsage?: ThreadTokenUsage | undefined;
   floatingBubbleHost?: HTMLElement | null;
 
   // Mode
@@ -1548,10 +1550,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ? {
           kind: "working",
           startedAt: activeWorkStartedAt,
-          ...resolveComposerActivityTokenUsage({
-            activeWorkStartedAt,
-            snapshot: activeContextWindow,
-          }),
+          tokenUsage: props.activeTokenUsage,
         }
       : undefined;
   const activeTasksProgress = props.threadSyncPhase === null ? props.activeTasksProgress : null;
@@ -1979,6 +1978,29 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [selectedInstanceId, selectedModel, selectedModelOptionsForDispatch],
   );
   const selectedModelForPicker = selectedModel;
+  const planExecutionEstimate = useMemo(
+    () =>
+      showPlanFollowUpPrompt && activeProposedPlan
+        ? estimatePlanExecution({
+            planMarkdown: activeProposedPlan.planMarkdown,
+            modelSelection: selectedModelSelection,
+            models: selectedProviderModels,
+            provider: selectedProvider,
+            autoReasoningEffort: props.autoReasoningEffort,
+            ultrathink:
+              selectedProvider === "claudeAgent" && composerPromptInjectionState === "ultrathink",
+          })
+        : undefined,
+    [
+      showPlanFollowUpPrompt,
+      activeProposedPlan,
+      selectedModelSelection,
+      selectedProviderModels,
+      selectedProvider,
+      props.autoReasoningEffort,
+      composerPromptInjectionState,
+    ],
+  );
   // Instance-keyed option list so the picker can show each configured
   // instance (built-in + custom) as a first-class sidebar entry. The
   // options are server-reported models plus that exact instance's
@@ -4299,6 +4321,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               <>
                 <ComposerControlSeparator size={composerControlsInStrip ? "xs" : "sm"} />
                 {composerControlsInStrip ? restingProviderTraitsPicker : providerTraitsPicker}
+                {providerTraitsPicker && providerContextWindowPicker ? (
+                  <ComposerControlSeparator size={composerControlsInStrip ? "xs" : "sm"} />
+                ) : null}
                 {composerControlsInStrip
                   ? restingProviderContextWindowPicker
                   : providerContextWindowPicker}
@@ -5293,6 +5318,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     <ComposerPlanFollowUpBanner
                       key={activeProposedPlan.id}
                       planTitle={proposedPlanTitle(activeProposedPlan.planMarkdown) ?? null}
+                      estimate={planExecutionEstimate}
                     />
                   ) : isComposerCollapsedMobile && pendingUserInputs.length > 0 ? (
                     <div data-chat-composer-collapsed-controls="true">

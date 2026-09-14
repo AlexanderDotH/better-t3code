@@ -434,6 +434,61 @@ describe("pools", () => {
     expect(account?.environments).toEqual([{ environmentId: "env-a", label: "Laptop" }]);
   });
 
+  it("retains Codex native history when a hub supplies fresher quota, without crossing a reset", () => {
+    const codex = ProviderDriverKind.make("codex");
+    const usageHistory = [{ at: checkedAt, usedPercent: 4, hasUsage: true }];
+    const weekly = {
+      ...window,
+      kind: "weekly" as const,
+      windowDurationMins: 10_080,
+      usageHistorySource: "codex" as const,
+      usedPercent: 4,
+    };
+    const native = provider({
+      driver: codex,
+      auth: { status: "authenticated", email: "same@example.com" },
+      usageLimits: { checkedAt, windows: [{ ...weekly, usageHistory }] },
+    });
+    const accounts = (resetsAt: string, usedPercent: number) =>
+      collectLimitAccounts(
+        new Map([
+          [
+            EnvironmentId.make("env-a"),
+            {
+              ...laptop,
+              serverConfig: {
+                providers: [native],
+                usageLimitSources: [
+                  {
+                    ...source,
+                    accounts: [
+                      {
+                        id: "same",
+                        driver: codex,
+                        email: "same@example.com",
+                        usageLimits: {
+                          checkedAt: "2026-09-03T11:30:00.000Z",
+                          windows: [{ ...weekly, resetsAt, usedPercent }],
+                        },
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        ]),
+      );
+    expect(accounts(window.resetsAt, 5)[0]?.limits.windows[0]).toMatchObject({
+      usedPercent: 5,
+      usageHistory,
+    });
+    expect(accounts(window.resetsAt, 0)[0]?.limits.windows[0]?.usageHistory).toBeUndefined();
+    expect(
+      accounts("2026-09-10T14:00:00.000Z", 5)[0]?.limits.windows[0]?.usageHistory,
+    ).toBeUndefined();
+  });
+
   it("redeems through the hub when it holds a credit, even with a fresher native read", () => {
     const native = provider({
       driver: claude,

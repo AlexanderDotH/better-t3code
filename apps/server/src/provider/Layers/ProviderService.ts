@@ -93,6 +93,8 @@ import type {
   ProviderNativeThreadForkInput,
 } from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
+import { ProviderRegistry } from "../Services/ProviderRegistry.ts";
+import { makeUsageHardBudgetCheck } from "../usageHardBudget.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
 import { type EventNdjsonLogger } from "./EventNdjsonLogger.ts";
@@ -540,6 +542,14 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const checkUsageBudget = yield* makeUsageHardBudgetCheck;
+  const usageProviders = yield* Effect.serviceOption(ProviderRegistry);
+  const requireUsageBudget = Effect.fn("ProviderService.requireUsageBudget")(function* (
+    instanceId: ProviderInstanceId,
+  ) {
+    const reason = yield* checkUsageBudget(instanceId);
+    if (reason) return yield* toValidationError("ProviderService.usageHardBudget", reason);
+  });
   const projectionQuery = yield* Effect.serviceOption(
     ProjectionSnapshotQuery.ProjectionSnapshotQuery,
   );
@@ -1320,6 +1330,54 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       Effect.asVoid,
     );
 
+  const budgetInterruptedTurns = new Map<ThreadId, string>();
+  const enforceRunningUsageBudgets = Effect.gen(function* () {
+    if (!(yield* serverSettings.getSettings).usageHardBudgetEnabled) return;
+    const leases = yield* Ref.get(runtimeLeases);
+    const adapters = new Map(
+      Array.from(leases.values(), (lease) => [lease.providerInstanceId, lease.adapter]),
+    );
+    for (const [instanceId, adapter] of adapters) {
+      const reason = yield* checkUsageBudget(instanceId);
+      if (!reason) continue;
+      for (const session of yield* adapter.listSessions()) {
+        const lease = (yield* Ref.get(runtimeLeases)).get(session.threadId);
+        if (
+          !lease ||
+          lease.forceStopping ||
+          lease.providerInstanceId !== instanceId ||
+          lease.runtimeSessionId !== session.runtimeSessionId ||
+          !session.activeTurnId
+        )
+          continue;
+        const key = `${lease.runtimeSessionId}:${session.activeTurnId}`;
+        if (budgetInterruptedTurns.get(session.threadId) === key) continue;
+        budgetInterruptedTurns.set(session.threadId, key);
+        yield* publishRuntimeEvent({
+          type: "runtime.error",
+          eventId: EventId.make(NodeCrypto.randomUUID()),
+          provider: adapter.provider,
+          providerInstanceId: instanceId,
+          threadId: session.threadId,
+          runtimeSessionId: lease.runtimeSessionId,
+          turnId: session.activeTurnId,
+          createdAt: yield* nowIso,
+          payload: { message: reason },
+        });
+        yield* adapter
+          .interruptTurn(session.threadId, session.activeTurnId, lease.runtimeSessionId)
+          .pipe(
+            Effect.catch((cause) => {
+              budgetInterruptedTurns.delete(session.threadId);
+              return Effect.logWarning("Could not interrupt a turn at its hard daily budget", {
+                cause,
+              });
+            }),
+          );
+      }
+    }
+  }).pipe(Effect.ignoreCause({ log: true }));
+
   const isCompactedEvent = (
     event: ProviderRuntimeEvent,
   ): event is Extract<ProviderRuntimeEvent, { readonly type: "thread.state.changed" }> =>
@@ -1453,11 +1511,14 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     }
     if (canonicalEvent.type === "turn.started") {
       yield* observeTurnStartedForAnalytics(source, canonicalEvent);
+      yield* enforceRunningUsageBudgets.pipe(Effect.forkIn(serviceScope));
     } else if (canonicalEvent.type === "model.rerouted") {
       yield* observeModelReroutedForAnalytics(source, canonicalEvent);
     } else if (canonicalEvent.type === "turn.completed" || canonicalEvent.type === "turn.aborted") {
+      budgetInterruptedTurns.delete(canonicalEvent.threadId);
       yield* recordTurnCompletedAnalytics(source, canonicalEvent);
     } else if (canonicalEvent.type === "session.exited") {
+      budgetInterruptedTurns.delete(canonicalEvent.threadId);
       yield* clearTurnAnalyticsSession(source.instanceId, canonicalEvent.threadId);
     }
     if (
@@ -2330,6 +2391,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         operation: "ProviderService.sendTurn",
         allowRecovery: false,
       });
+      yield* requireUsageBudget(routed.instanceId);
       if (
         input.continuation === true &&
         !input.input &&
@@ -2444,6 +2506,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         operation: "ProviderService.compactThread",
         allowRecovery: true,
       });
+      yield* requireUsageBudget(routed.instanceId);
       yield* Effect.annotateCurrentSpan({
         "provider.operation": "compact-thread",
         "provider.kind": routed.adapter.provider,
@@ -2718,6 +2781,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           operation: "ProviderService.respondToRequest",
           allowRecovery: true,
         });
+        yield* requireUsageBudget(routed.instanceId);
         metricProvider = routed.adapter.provider;
         yield* Effect.annotateCurrentSpan({
           "provider.operation": "respond-to-request",
@@ -2753,6 +2817,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         operation: "ProviderService.respondToUserInput",
         allowRecovery: true,
       });
+      yield* requireUsageBudget(routed.instanceId);
       metricProvider = routed.adapter.provider;
       yield* Effect.annotateCurrentSpan({
         "provider.operation": "respond-to-user-input",
@@ -3188,6 +3253,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     ),
   );
   yield* Effect.addFinalizer(() => runtimeEventBroadcast.shutdown);
+
+  const budgetSettingsChanges = yield* serverSettings.subscribeChanges;
+  const budgetChanges = Option.isSome(usageProviders)
+    ? Stream.merge(budgetSettingsChanges, usageProviders.value.streamChanges)
+    : budgetSettingsChanges;
+  yield* budgetChanges.pipe(
+    Stream.runForEach(() => enforceRunningUsageBudgets),
+    Effect.forkScoped,
+  );
 
   return {
     startSession,

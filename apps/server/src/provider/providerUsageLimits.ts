@@ -1,7 +1,8 @@
-import type {
-  ProviderUsageLimitsUpdate,
-  ServerProviderUsageLimits,
-  ServerProviderUsageWindow,
+import {
+  MAX_USAGE_PACE_SAMPLES,
+  type ProviderUsageLimitsUpdate,
+  type ServerProviderUsageLimits,
+  type ServerProviderUsageWindow,
 } from "@t3tools/contracts";
 
 const WINDOW_KIND_ORDER: Record<ServerProviderUsageWindow["kind"], number> = {
@@ -84,7 +85,7 @@ export function applyUsageLimitsUpdate(input: {
         : {}),
     };
     if (existing === undefined || !usageWindowEquals(existing, next)) {
-      merged.set(window.id, next);
+      merged.set(window.id, withUsageHistory(next, input.checkedAt, existing, previous?.checkedAt));
       changed = true;
     }
   }
@@ -108,13 +109,57 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
   );
 }
 
+function withUsageHistory(
+  window: ServerProviderUsageWindow,
+  checkedAt: string,
+  previous?: ServerProviderUsageWindow,
+  previousCheckedAt?: string,
+): ServerProviderUsageWindow {
+  if (window.kind !== "weekly") return window;
+  if (window.usageHistorySource === "codex" && window.usageHistory?.length) return window;
+  if (window.usageHistorySource === "codex" || previous?.usageHistorySource === "codex") {
+    return {
+      ...window,
+      usageHistorySource: "codex",
+      usageHistory:
+        previous?.usageHistorySource === "codex" &&
+        previous.resetsAt === window.resetsAt &&
+        previous.windowDurationMins === window.windowDurationMins &&
+        previous.usedPercent <= window.usedPercent
+          ? (previous.usageHistory ?? [])
+          : [],
+    };
+  }
+  const sameWindow =
+    previous?.kind === window.kind &&
+    previous.resetsAt === window.resetsAt &&
+    previous.usedPercent <= window.usedPercent;
+  const history = sameWindow
+    ? (previous.usageHistory ??
+      (previousCheckedAt ? [{ at: previousCheckedAt, usedPercent: previous.usedPercent }] : []))
+    : [];
+  const last = history.at(-1);
+  // A late probe must not invent a usage increase at an earlier time.
+  if (last && Date.parse(checkedAt) < Date.parse(last.at)) {
+    return { ...window, usageHistory: [] };
+  }
+  const usageHistory =
+    last?.usedPercent === window.usedPercent
+      ? history
+      : [...history, { at: checkedAt, usedPercent: window.usedPercent }].slice(
+          -MAX_USAGE_PACE_SAMPLES,
+        );
+  // ponytail: bounded in-memory observations; persist if pace must survive server restarts.
+  return { ...window, usageHistory };
+}
+
 /**
- * Choose what to publish after a status probe finishes. A probe that failed
+ * Choose what to publish after a status probe finishes. A failed or empty probe
  * this time must not wipe bars a previous probe or a turn already
  * established, so the last good snapshot stays; `unsupported` is
  * authoritative and replaces them.
  *
- * A successful probe replaces the published windows outright, including any
+ * A successful read of windows replaces the published windows outright, including any
  * runtime update that landed while it was running. That is a deliberate
  * trade-off: the Codex and Claude reads take a few seconds at most, the
  * probe is the fresher full read in every case except that window, and the
@@ -127,8 +172,24 @@ export function resolveUsageLimitsAfterProbe(input: {
   readonly probed: ServerProviderUsageLimits | undefined;
 }): ServerProviderUsageLimits | undefined {
   const { published, probed } = input;
-  if (probed?.unavailable?.reason === "probeFailed" && published && !published.unavailable) {
+  if (
+    published?.windows.length &&
+    !published.unavailable &&
+    probed?.unavailable?.reason !== "unsupported" &&
+    (!probed || probed.unavailable || probed.windows.length === 0)
+  ) {
     return published;
   }
-  return probed;
+  if (!probed || probed.unavailable) return probed;
+  return {
+    ...probed,
+    windows: probed.windows.map((window) =>
+      withUsageHistory(
+        window,
+        probed.checkedAt,
+        published?.windows.find((previous) => previous.id === window.id),
+        published?.checkedAt,
+      ),
+    ),
+  };
 }

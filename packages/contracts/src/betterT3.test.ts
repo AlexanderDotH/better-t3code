@@ -172,6 +172,25 @@ describe("Better T3 feature registry", () => {
 });
 
 describe("BetterT3SettingsV1", () => {
+  it("keeps visualizations opt-in and persists both toggle directions independently", () => {
+    for (const origin of ["clean-install", "existing-install-migration"] as const) {
+      expect(
+        resolveBetterT3FeatureFlag(makeBetterT3SettingsV1(origin), "chat.visualizations"),
+      ).toBe(false);
+      for (const enabled of [true, false]) {
+        const settings = makeBetterT3SettingsV1(origin, { "chat.visualizations": enabled });
+        expect(
+          resolveBetterT3FeatureFlag(
+            decodeSettings(encodeSettings(settings)),
+            "chat.visualizations",
+          ),
+        ).toBe(enabled);
+        expect(
+          resolveBetterT3FeatureFlag(makeBetterT3SettingsV1(origin), "chat.visualizations"),
+        ).toBe(false);
+      }
+    }
+  });
   it("persists the optional composer divider preference in both directions", () => {
     for (const origin of ["clean-install", "existing-install-migration"] as const) {
       expect(
@@ -185,7 +204,7 @@ describe("BetterT3SettingsV1", () => {
     }
   });
 
-  it("disables every switch on clean installs and preserves only formerly implicit switches", () => {
+  it("enables message editing on clean installs and preserves formerly implicit switches", () => {
     const switchFeatureIds = BETTER_T3_FEATURE_REGISTRY.filter(
       ({ controlKind }) => controlKind === "switch",
     ).map(({ id }) => id as BetterT3SwitchFeatureId);
@@ -194,7 +213,7 @@ describe("BetterT3SettingsV1", () => {
 
     expect(
       switchFeatureIds.filter((featureId) => resolveBetterT3FeatureFlag(clean, featureId)),
-    ).toEqual([]);
+    ).toEqual(["chat.messageEditing"]);
     expect(
       switchFeatureIds.filter((featureId) => resolveBetterT3FeatureFlag(existing, featureId)),
     ).toEqual([
@@ -202,6 +221,7 @@ describe("BetterT3SettingsV1", () => {
       "agent.projectCoordination",
       "chat.workspaceCardDeck",
       "chat.cardMorphing",
+      "chat.messageEditing",
       "chat.characterStreamingMotion",
       "chat.shiftClickShowLess",
       "chat.draftIndicators",

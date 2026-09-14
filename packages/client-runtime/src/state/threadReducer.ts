@@ -363,6 +363,19 @@ export function applyThreadDetailEvent(
       };
 
     // ── Messages ────────────────────────────────────────────────────
+    case "thread.message-edited":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          messages: thread.messages.map((message) =>
+            message.id === event.payload.messageId
+              ? { ...message, text: event.payload.text, updatedAt: event.payload.updatedAt }
+              : message,
+          ),
+          updatedAt: event.occurredAt,
+        },
+      };
     case "thread.harness-sync-message-imported":
     case "thread.message-sent": {
       if (event.payload.subagentId !== undefined) {

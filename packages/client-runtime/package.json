@@ -326,6 +326,10 @@
     "./thread-transcript": {
       "types": "./src/threadTranscript.ts",
       "default": "./src/threadTranscript.ts"
+    },
+    "./visualizations/*": {
+      "types": "./src/visualizations/*.ts",
+      "default": "./src/visualizations/*.ts"
     }
   },
   "scripts": {
@@ -344,7 +348,17 @@
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "@plantuml/core": "1.2026.8",
+    "@types/jsdom": "30.0.0",
+    "@viz-js/viz": "3.30.0",
+    "dompurify": "3.3.3",
+    "esbuild": "0.28.1",
+    "jsdom": "30.0.1",
+    "mermaid": "12.0.0",
     "micromark-util-types": "^2.0.2",
+    "vega": "6.4.0",
+    "vega-interpreter": "2.3.2",
+    "vega-lite": "6.4.3",
     "vite-plus": "catalog:"
   }
 }

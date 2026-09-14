@@ -239,6 +239,79 @@ const seedReadModel = Effect.gen(function* () {
 });
 
 it.layer(NodeServices.layer)("thread fork planner", (it) => {
+  for (const role of ["user", "assistant"] as const) {
+    it.effect(`restarts from an edited ${role} message without later history`, () =>
+      Effect.gen(function* () {
+        const sourceEvents = [
+          threadCreatedEvent(sourceThreadId),
+          messageEvent({ sequence: 2, messageId: "before", role: "user", text: "Before" }),
+          messageEvent({ sequence: 3, messageId: "edit", role, text: "Original" }),
+          messageEvent({
+            sequence: 4,
+            messageId: "later",
+            role: "assistant",
+            text: "Later secret",
+          }),
+        ];
+        const events = yield* planThreadFork({
+          command: {
+            ...forkCommand("edit"),
+            messageEdit: { expectedText: "Original", text: "Correction" },
+          },
+          readModel: yield* seedReadModel,
+          sourceEvents,
+        });
+        const forked = events[1];
+        expect(forked.payload.history.messages.map((message) => message.text)).toEqual([
+          "Before",
+          "Correction",
+        ]);
+        expect(forked.payload.fork.providerForkCursor).toBeUndefined();
+        expect(events.at(-1)?.type).toBe("thread.turn-start-requested");
+        const request = events.find((event) => event.type === "thread.message-sent");
+        expect(request?.payload.text).toContain("Correction");
+        expect(JSON.stringify(events)).not.toContain("Later secret");
+        expect(sourceEvents[2]).toMatchObject({ payload: { text: "Original" } });
+        const error = yield* planThreadFork({
+          command: {
+            ...forkCommand("edit"),
+            messageEdit: { expectedText: "Stale", text: "Correction" },
+          },
+          readModel: yield* seedReadModel,
+          sourceEvents,
+        }).pipe(Effect.flip);
+        expect(error._tag).toBe("OrchestrationCommandInvariantError");
+      }),
+    );
+  }
+  it.effect("includes saved edits in future forks without moving the original boundary", () =>
+    Effect.gen(function* () {
+      const sourceEvents: OrchestrationEvent[] = [
+        threadCreatedEvent(sourceThreadId),
+        messageEvent({ sequence: 2, messageId: "edit", role: "user", text: "Original" }),
+        messageEvent({ sequence: 3, messageId: "later", role: "assistant", text: "Later" }),
+        {
+          ...threadCreatedEvent(sourceThreadId, 4),
+          type: "thread.message-edited",
+          payload: {
+            threadId: sourceThreadId,
+            messageId: MessageId.make("edit"),
+            text: "Correction",
+            updatedAt: now,
+          },
+        },
+      ];
+      const events = yield* planThreadFork({
+        command: forkCommand("edit"),
+        readModel: yield* seedReadModel,
+        sourceEvents,
+      });
+      expect(events[1].payload.history.messages.map((message) => message.text)).toEqual([
+        "Correction",
+      ]);
+    }),
+  );
+
   it.effect("copies the exact completed message prefix and remaps inherited ids", () =>
     Effect.gen(function* () {
       const readModel = yield* seedReadModel;
@@ -491,6 +564,21 @@ it.layer(NodeServices.layer)("thread fork planner", (it) => {
         providerThreadId: "provider-thread-source",
         providerTurnId: "provider-turn-source",
       });
+      const editedEvents = yield* planThreadFork({
+        command: {
+          ...forkCommand(assistantMessageId),
+          messageEdit: { expectedText: "Done", text: "Changed answer" },
+        },
+        readModel,
+        sourceEvents,
+      });
+      expect(editedEvents[1].payload.fork.providerForkCursor).toBeUndefined();
+      expect(
+        editedEvents[1].payload.history.turns.every(
+          (turn) => turn.providerForkCursor === undefined,
+        ),
+      ).toBe(true);
+      expect(editedEvents[1].payload.history.messages[1]?.text).toBe("Changed answer");
 
       const switchedEvents = yield* planThreadFork({
         command: {

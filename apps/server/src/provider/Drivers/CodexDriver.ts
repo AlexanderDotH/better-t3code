@@ -49,6 +49,7 @@ import {
   withCodexAppServerClient,
 } from "../Layers/CodexProvider.ts";
 import { resolveCodexLaunchArgs } from "../Layers/codexLaunchArgs.ts";
+import { makeCodexUsageHistoryReader } from "../Layers/codexUsageHistory.ts";
 import { makeLiveCodexHistorySyncAdapter } from "../history/CodexHistorySync.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
@@ -235,10 +236,23 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       // Kick the TTL-gated manifest refresh in the background and classify
       // with the in-memory manifest, so a slow or hung fetch never delays the
       // provider check. A refresh that lands mid-probe applies on the next one.
+      const readUsageHistory = makeCodexUsageHistoryReader(
+        effectiveConfig.homePath || processEnv.CODEX_HOME || homeLayout.sharedHomePath,
+      );
       const checkProvider = modelManifest.refreshInBackground.pipe(
         Effect.andThen(
           Effect.zipWith(
-            checkCodexProviderStatus(effectiveConfig, undefined, processEnv),
+            checkCodexProviderStatus(effectiveConfig, undefined, processEnv).pipe(
+              Effect.flatMap((draft) => {
+                const usageLimits = draft.usageLimits;
+                return usageLimits
+                  ? Effect.promise(async () => ({
+                      ...draft,
+                      usageLimits: await readUsageHistory(usageLimits),
+                    }))
+                  : Effect.succeed(draft);
+              }),
+            ),
             modelManifest.current,
             (draft, manifest) =>
               stampIdentity(ModelManifest.applyModelManifest(draft, manifest, DRIVER_KIND)),

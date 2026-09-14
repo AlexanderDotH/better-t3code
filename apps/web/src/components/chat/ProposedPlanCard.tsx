@@ -3,7 +3,11 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import {
+  resolveBetterT3FeatureFlag,
+  type EnvironmentId,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import {
   buildCollapsedProposedPlanPreviewMarkdown,
   buildProposedPlanMarkdownFilename,
@@ -33,6 +37,7 @@ import { projectEnvironment } from "~/state/projects";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
+import { useClientSettings } from "~/hooks/useSettings";
 
 export const ProposedPlanCard = memo(function ProposedPlanCard({
   planMarkdown,
@@ -48,6 +53,9 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   workspaceRoot: string | undefined;
 }) {
   const translate = useInterfaceTranslator().message;
+  const bluePlanBubble = useClientSettings((settings) =>
+    resolveBetterT3FeatureFlag(settings.betterT3Device, "chat.classicBubbleOnly"),
+  );
   const [expanded, setExpanded] = useState(false);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
   const [savePath, setSavePath] = useState("");
@@ -148,11 +156,25 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   };
 
   return (
-    <div className="rounded-[24px] border border-border/80 bg-card/70 p-4 sm:p-5">
+    <div
+      className={cn(
+        "rounded-[24px] border p-4 sm:p-5",
+        bluePlanBubble ? "border-primary/35 bg-primary/10" : "border-border/80 bg-card/70",
+      )}
+    >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
-          <Badge variant="secondary">{translate("chat.plan.label")}</Badge>
-          <p className="truncate text-sm font-medium text-foreground">{title}</p>
+          <Badge variant="secondary" className={cn(bluePlanBubble && "bg-primary/10 text-primary")}>
+            {translate("chat.plan.label")}
+          </Badge>
+          <p
+            className={cn(
+              "truncate text-sm font-medium",
+              bluePlanBubble ? "text-primary" : "text-foreground",
+            )}
+          >
+            {title}
+          </p>
         </div>
         <Menu>
           <MenuTrigger
@@ -178,7 +200,14 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
         </Menu>
       </div>
       <div className="mt-4">
-        <div className={cn("relative", canCollapse && !expanded && "max-h-104 overflow-hidden")}>
+        <div
+          className={cn("relative", canCollapse && !expanded && "max-h-104 overflow-hidden")}
+          style={
+            canCollapse && !expanded
+              ? { maskImage: "linear-gradient(to bottom, black calc(100% - 6rem), transparent)" }
+              : undefined
+          }
+        >
           {canCollapse && !expanded ? (
             <ChatMarkdown
               text={collapsedPreview ?? ""}
@@ -194,9 +223,6 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               isStreaming={false}
             />
           )}
-          {canCollapse && !expanded ? (
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-card/95 via-card/80 to-transparent" />
-          ) : null}
         </div>
         {canCollapse ? (
           <div className="mt-4 flex justify-center">
