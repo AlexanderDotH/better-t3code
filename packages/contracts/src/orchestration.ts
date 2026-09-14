@@ -1989,6 +1989,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.harness-sync-message-imported",
   "thread.turn-start-requested",
   "thread.turn-interrupt-requested",
+  "thread.turn-force-abort-requested",
   "thread.turn-abort-settled",
   "thread.approval-response-requested",
   "thread.user-input-response-requested",
@@ -2285,6 +2286,14 @@ export const ThreadTurnInterruptRequestedPayload = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+// Persisted by older Better T3 Code builds. Current code never emits it, but
+// event history must remain replayable after the force-abort command's removal.
+const LegacyThreadTurnForceAbortRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  turnId: TurnId,
+  createdAt: IsoDateTime,
+});
+
 export const ThreadTurnAbortSettledPayload = Schema.Struct({
   threadId: ThreadId,
   runtimeSessionId: RuntimeSessionId,
@@ -2560,6 +2569,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.turn-interrupt-requested"),
     payload: ThreadTurnInterruptRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.turn-force-abort-requested"),
+    payload: LegacyThreadTurnForceAbortRequestedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,
