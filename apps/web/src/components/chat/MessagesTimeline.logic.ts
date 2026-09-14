@@ -591,6 +591,7 @@ function deriveTurnFolds(input: {
   terminalAssistantMessageIds: ReadonlySet<string>;
   latestTurn: TimelineLatestTurn | null;
   unfoldedTurnIds: ReadonlySet<TurnId>;
+  showReasoning: boolean;
 }): ReadonlyMap<string, TurnFold> {
   interface TurnGroup {
     entries: Array<TimelineEntry>;
@@ -660,6 +661,13 @@ function deriveTurnFolds(input: {
       : group.entries.length;
     for (const [index, entry] of group.entries.entries()) {
       if (entry.id === group.terminalEntry?.id) {
+        continue;
+      }
+      if (
+        input.showReasoning &&
+        entry.kind === "work" &&
+        workEntryIsProviderReasoning(entry.entry)
+      ) {
         continue;
       }
       const isCompaction =
@@ -905,6 +913,7 @@ export function deriveMessagesTimelineRows(input: {
     terminalAssistantMessageIds,
     latestTurn: input.latestTurn ?? null,
     unfoldedTurnIds: activeVisualResponseTurnIds,
+    showReasoning: input.showReasoning === true,
   });
   const collapsedEntryIds = new Set<string>();
   for (const fold of foldsByAnchorEntryId.values()) {
@@ -1068,13 +1077,25 @@ export function deriveMessagesTimelineRows(input: {
     if (timelineEntry.kind === "work") {
       if (workEntryIsProviderReasoning(timelineEntry.entry)) {
         if (input.showReasoning && timelineEntry.entry.detail?.trim()) {
-          nextRows.push({
-            kind: "work",
-            id: timelineEntry.id,
-            createdAt: timelineEntry.createdAt,
-            groupedEntries: [timelineEntry.entry],
-            isExpandedToolGroup: false,
-          });
+          const previousRow = nextRows.at(-1);
+          const firstEntry =
+            previousRow?.kind === "work" ? previousRow.groupedEntries[0] : undefined;
+          if (
+            previousRow?.kind === "work" &&
+            firstEntry &&
+            workEntryIsProviderReasoning(firstEntry) &&
+            (firstEntry.turnId ?? null) === (timelineEntry.entry.turnId ?? null)
+          ) {
+            previousRow.groupedEntries.push(timelineEntry.entry);
+          } else {
+            nextRows.push({
+              kind: "work",
+              id: timelineEntry.id,
+              createdAt: timelineEntry.createdAt,
+              groupedEntries: [timelineEntry.entry],
+              isExpandedToolGroup: false,
+            });
+          }
         }
         continue;
       }

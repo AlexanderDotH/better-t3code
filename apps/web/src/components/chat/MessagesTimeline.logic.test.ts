@@ -137,6 +137,130 @@ describe("classic timeline grouping", () => {
     }
   });
 
+  it.each(["classic", "current"] as const)(
+    "keeps enabled reasoning visible after a %s turn settles and can hide it again",
+    (chatVisualMode) => {
+      const turnId = TurnId.make("reasoning-turn");
+      const createdAt = "2026-09-14T00:00:00Z";
+      const messages: ChatMessage[] = [
+        {
+          id: MessageId.make("reasoning-answer"),
+          role: "assistant",
+          text: "Done",
+          turnId,
+          createdAt: "2026-09-14T00:00:02Z",
+          updatedAt: "2026-09-14T00:00:02Z",
+          streaming: false,
+        },
+      ];
+      const entries = deriveTimelineEntries(
+        messages,
+        [],
+        deriveWorkLogEntries([
+          {
+            id: EventId.make("reasoning-summary"),
+            createdAt,
+            turnId,
+            kind: "reasoning.summary",
+            tone: "info",
+            summary: "Thinking summary",
+            payload: { text: "Checking the implementation." },
+          },
+        ]),
+      );
+      const visible = deriveMessagesTimelineRowsWithState({
+        ...input,
+        timelineEntries: entries,
+        chatVisualMode,
+        showReasoning: true,
+      });
+      expect(
+        visible.rows.flatMap((row) => (row.kind === "work" ? row.groupedEntries : [])),
+      ).toMatchObject([{ detail: "Checking the implementation." }]);
+      const hidden = deriveMessagesTimelineRowsWithState(
+        {
+          ...input,
+          timelineEntries: entries,
+          chatVisualMode,
+          showReasoning: false,
+        },
+        visible,
+      );
+      expect(hidden.rows.some((row) => row.kind === "work")).toBe(false);
+      expect(
+        deriveMessagesTimelineRowsWithState(
+          {
+            ...input,
+            timelineEntries: entries,
+            chatVisualMode,
+            showReasoning: true,
+          },
+          hidden,
+        ).rows,
+      ).toEqual(visible.rows);
+    },
+  );
+
+  it.each(["classic", "current"] as const)(
+    "stacks adjacent %s reasoning without crossing turns or visible activity",
+    (chatVisualMode) => {
+      const traces = Array.from({ length: 6 }, (_, index) => ({
+        kind: "work" as const,
+        id: `reasoning-${index}`,
+        createdAt: `2026-09-14T00:00:0${index}Z`,
+        entry: {
+          id: `reasoning-${index}`,
+          createdAt: `2026-09-14T00:00:0${index}Z`,
+          turnId: TurnId.make(index < 3 ? "first-turn" : "second-turn"),
+          tone: "thinking" as const,
+          label: "Reasoning",
+          sourceActivityKind: "reasoning.summary",
+          detail: `Trace ${index}`,
+        },
+      }));
+      const rows = deriveMessagesTimelineRows({
+        ...input,
+        chatVisualMode,
+        showReasoning: true,
+        timelineEntries: [
+          ...traces.slice(0, 2),
+          timelineEntries[0]!,
+          ...traces.slice(2, 4),
+          {
+            kind: "message",
+            id: "commentary",
+            createdAt: "2026-09-14T00:00:03Z",
+            message: {
+              id: MessageId.make("commentary"),
+              role: "assistant",
+              text: "Progress update",
+              turnId: TurnId.make("second-turn"),
+              createdAt: "2026-09-14T00:00:03Z",
+              updatedAt: "2026-09-14T00:00:03Z",
+              streaming: true,
+            },
+          },
+          ...traces.slice(4),
+        ],
+      });
+      const groups = rows
+        .filter((row) => row.kind === "work")
+        .filter((row) => row.groupedEntries[0]?.tone === "thinking");
+      expect(groups.map((row) => row.id)).toEqual([
+        "reasoning-0",
+        "reasoning-2",
+        "reasoning-3",
+        "reasoning-4",
+      ]);
+      expect(groups.map((row) => row.groupedEntries.map((entry) => entry.detail))).toEqual([
+        ["Trace 0", "Trace 1"],
+        ["Trace 2"],
+        ["Trace 3"],
+        ["Trace 4", "Trace 5"],
+      ]);
+    },
+  );
+
   it("moves only the active plan into the composer bubble", () => {
     const activeTurnId = TurnId.make("active-plan");
     const historicalTurnId = TurnId.make("historical-plan");

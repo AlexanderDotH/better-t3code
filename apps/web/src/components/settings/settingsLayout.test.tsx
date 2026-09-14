@@ -49,7 +49,7 @@ describe("settings search targets", () => {
     const addEventListener = vi.fn();
     const target = {
       tagName: "SECTION",
-      firstElementChild: { scrollIntoView: headerScrollIntoView },
+      firstElementChild: { dataset: {}, scrollIntoView: headerScrollIntoView },
       scrollIntoView: sectionScrollIntoView,
       focus,
       classList: { remove, add },
@@ -82,6 +82,7 @@ describe("settings search targets", () => {
     const add = vi.fn();
     const target = {
       tagName: "DIV",
+      dataset: {},
       firstElementChild: null,
       scrollIntoView,
       focus,

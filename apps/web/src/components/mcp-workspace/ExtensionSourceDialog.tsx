@@ -16,6 +16,8 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 
+const SOURCE_PAGE_LOAD_TIMEOUT_MS = 20_000;
+
 export function ExtensionSourcePage(props: { environmentId: EnvironmentId; url: string }) {
   const t = useInterfaceTranslator().message;
   const containerRef = useRef<HTMLDivElement>(null);
@@ -27,54 +29,77 @@ export function ExtensionSourcePage(props: { environmentId: EnvironmentId; url: 
     const container = containerRef.current;
     if (!bridge || !container) return;
     let disposed = false;
+    let navigationFailed = false;
+    let navigation = 0;
+    let loadingTimeout: ReturnType<typeof setTimeout>;
     let removeGuest = () => {};
+    const fail = () => {
+      navigationFailed = true;
+      clearTimeout(loadingTimeout);
+      if (!disposed) setStatus("error");
+    };
+    const startLoading = () => {
+      navigation += 1;
+      navigationFailed = false;
+      clearTimeout(loadingTimeout);
+      setStatus("loading");
+      loadingTimeout = setTimeout(fail, SOURCE_PAGE_LOAD_TIMEOUT_MS);
+    };
     const tabId = `extension-source-${randomUUID()}-${attempt}`;
     const lease = acquireDesktopTab(tabId);
-    setStatus("loading");
+    startLoading();
     void Promise.all([lease.ready, bridge.getPreviewConfig(props.environmentId)])
       .then(([, config]) => {
-        if (disposed) return;
+        if (disposed || navigationFailed) return;
         const guest = document.createElement("webview");
         guest.setAttribute("partition", config.partition);
         guest.setAttribute("webpreferences", config.webPreferences);
         guest.className = "flex h-full w-full";
-        let navigationFailed = false;
         const started = (event: Event) => {
           if ("isMainFrame" in event && event.isMainFrame === false) return;
-          navigationFailed = false;
-          if (!disposed) setStatus("loading");
+          // History/hash changes do not load a new document or emit dom-ready.
+          if ("isInPlace" in event && event.isInPlace === true) return;
+          if (!disposed) startLoading();
         };
         const ready = async () => {
+          const readyNavigation = navigation;
           try {
             await bridge.registerWebview(tabId, guest.getWebContentsId());
-            if (!disposed && !navigationFailed) setStatus("ready");
+            if (!disposed && !navigationFailed && navigation === readyNavigation) {
+              clearTimeout(loadingTimeout);
+              setStatus("ready");
+            }
           } catch {
-            if (!disposed) setStatus("error");
+            if (!disposed && navigation === readyNavigation) fail();
           }
         };
         const failed = (event: Event) => {
           if ("isMainFrame" in event && event.isMainFrame === false) return;
           if ("errorCode" in event && event.errorCode === -3) return;
-          navigationFailed = true;
-          if (!disposed) setStatus("error");
+          fail();
         };
         guest.addEventListener("did-start-navigation", started);
         guest.addEventListener("dom-ready", ready);
+        guest.addEventListener("did-stop-loading", ready);
         guest.addEventListener("did-fail-load", failed);
+        guest.addEventListener("render-process-gone", fail);
         guest.setAttribute("src", props.url);
         container.append(guest);
         removeGuest = () => {
           guest.removeEventListener("did-start-navigation", started);
           guest.removeEventListener("dom-ready", ready);
+          guest.removeEventListener("did-stop-loading", ready);
           guest.removeEventListener("did-fail-load", failed);
+          guest.removeEventListener("render-process-gone", fail);
           guest.remove();
         };
       })
       .catch(() => {
-        if (!disposed) setStatus("error");
+        if (!disposed) fail();
       });
     return () => {
       disposed = true;
+      clearTimeout(loadingTimeout);
       removeGuest();
       lease.release();
     };
@@ -82,7 +107,7 @@ export function ExtensionSourcePage(props: { environmentId: EnvironmentId; url: 
 
   return (
     <div className="relative min-h-0 flex-1 overflow-hidden border-y">
-      <div ref={containerRef} className="h-full" />
+      <div ref={containerRef} className="absolute inset-0" />
       {status !== "ready" ? (
         <div
           role={status === "error" ? "alert" : "status"}

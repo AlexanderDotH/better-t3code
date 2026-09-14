@@ -1,7 +1,9 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { useVisualizationCodeBlock } from "../../native/useVisualizationCodeBlock";
 import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { getBrowseDirectoryPath } from "@t3tools/client-runtime/state/projects";
 import { useCallback, useMemo, useState } from "react";
+import { useNavigation } from "@react-navigation/native";
 import {
   Markdown,
   type CustomRenderers,
@@ -29,6 +31,9 @@ import {
   type NativeMarkdownTextStyle,
 } from "../../native/SelectableMarkdownText";
 import { resolveWorkspaceFilePath } from "./filePath";
+import { scopedThreadKey } from "../../lib/scopedEntities";
+import { appAtomRegistry } from "../../state/atom-registry";
+import { composerDraftsAtom, setComposerDraftText } from "../../state/use-composer-drafts";
 
 interface MarkdownPreviewStyles {
   readonly theme: PartialMarkdownTheme;
@@ -197,6 +202,7 @@ export function FileMarkdownPreview(props: {
   readonly threadId: ThreadId;
   readonly onRefresh?: () => Promise<void> | void;
 }) {
+  const navigation = useNavigation();
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
   const handlePullToRefresh = useCallback(async () => {
     if (!props.onRefresh) {
@@ -239,6 +245,42 @@ export function FileMarkdownPreview(props: {
     [markdownDirectory, props.environmentId, props.threadId],
   );
   const styles = useMarkdownPreviewStyles(renderImage);
+  const handleVisualizationAction = useCallback(
+    (prompt: string) => {
+      const threadKey = scopedThreadKey(props.environmentId, props.threadId);
+      const currentDraft = appAtomRegistry.get(composerDraftsAtom)[threadKey]?.text ?? "";
+      setComposerDraftText(
+        threadKey,
+        currentDraft.length > 0 ? `${currentDraft}\n\n${prompt}` : prompt,
+      );
+      navigation.navigate("Thread", {
+        environmentId: String(props.environmentId),
+        threadId: String(props.threadId),
+      });
+    },
+    [navigation, props.environmentId, props.threadId],
+  );
+  const renderCodeBlock = useVisualizationCodeBlock(
+    props.environmentId,
+    props.markdown,
+    handleVisualizationAction,
+  );
+  const renderers = useMemo<CustomRenderers>(
+    () =>
+      renderCodeBlock
+        ? {
+            ...styles.renderers,
+            code_block: (input) =>
+              renderCodeBlock({
+                code: input.content ?? "",
+                language: input.language,
+                beg: input.node.beg,
+                end: input.node.end,
+              }) ?? undefined,
+          }
+        : styles.renderers,
+    [renderCodeBlock, styles.renderers],
+  );
   const onLinkPress = useCallback((href: string) => {
     void tryOpenExternalUrl(href, "markdown-link");
   }, []);
@@ -262,12 +304,13 @@ export function FileMarkdownPreview(props: {
             markdown={props.markdown}
             onLinkPress={onLinkPress}
             renderImage={renderImage}
+            renderCodeBlock={renderCodeBlock}
             textStyle={styles.nativeTextStyle}
           />
         ) : (
           <Markdown
             options={{ gfm: true }}
-            renderers={styles.renderers}
+            renderers={renderers}
             styles={styles.styles}
             theme={styles.theme}
           >

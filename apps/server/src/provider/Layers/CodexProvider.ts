@@ -56,7 +56,7 @@ import { CODEX_DEFAULT_SERVICE_TIER, CODEX_FAST_SERVICE_TIER } from "../../codex
 import packageJson from "../../../package.json" with { type: "json" };
 import { collectUint8StreamText } from "../../stream/collectUint8StreamText.ts";
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
-const RATE_LIMITS_PROBE_TIMEOUT_MS = 3_000;
+const RATE_LIMITS_PROBE_TIMEOUT_MS = 8_000;
 
 type CodexRateLimitsProbe =
   | {
@@ -562,6 +562,32 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
   return { client, initialize };
 });
 
+/** Usage may wait on the network; leave time for the outer provider probe to finish. */
+export const readCodexRateLimits = (
+  request: Effect.Effect<
+    CodexSchema.V2GetAccountRateLimitsResponse,
+    CodexErrors.CodexAppServerError
+  >,
+) =>
+  request.pipe(
+    Effect.map((response): CodexRateLimitsProbe => ({
+      snapshot: response.rateLimits,
+      rateLimitsByLimitId: response.rateLimitsByLimitId,
+      resetCredits: response.rateLimitResetCredits,
+    })),
+    Effect.timeoutOption(Duration.millis(RATE_LIMITS_PROBE_TIMEOUT_MS)),
+    Effect.map(
+      Option.getOrElse((): CodexRateLimitsProbe => ({
+        failure: "Codex usage request timed out. Refresh Usage → Limits to try again.",
+      })),
+    ),
+    Effect.catch((error) =>
+      Effect.logDebug("Codex rate-limit read failed.", { cause: error }).pipe(
+        Effect.as<CodexRateLimitsProbe>({ failure: codexRateLimitsFailureMessage(error) }),
+      ),
+    ),
+  );
+
 const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(function* (input: {
   readonly binaryPath: string;
   readonly homePath?: string;
@@ -594,24 +620,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       requestAllCodexModels(client),
       // Usage is an enrichment: a failure or a slow answer degrades to "no
       // usage this probe" rather than costing the account and models.
-      client.request("account/rateLimits/read", undefined).pipe(
-        Effect.map((response): CodexRateLimitsProbe => ({
-          snapshot: response.rateLimits,
-          rateLimitsByLimitId: response.rateLimitsByLimitId,
-          resetCredits: response.rateLimitResetCredits,
-        })),
-        Effect.timeoutOption(Duration.millis(RATE_LIMITS_PROBE_TIMEOUT_MS)),
-        Effect.map(
-          Option.getOrElse((): CodexRateLimitsProbe => ({
-            failure: "Codex did not answer the usage request.",
-          })),
-        ),
-        Effect.catch((error) =>
-          Effect.logDebug("Codex rate-limit read failed.", { cause: error }).pipe(
-            Effect.as<CodexRateLimitsProbe>({ failure: codexRateLimitsFailureMessage(error) }),
-          ),
-        ),
-      ),
+      readCodexRateLimits(client.request("account/rateLimits/read", undefined)),
       loadCodexContextWindowCatalog({
         binaryPath: input.binaryPath,
         ...(input.launchArgs ? { launchArgs: input.launchArgs } : {}),

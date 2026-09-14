@@ -22,8 +22,11 @@ export function McpScopeFilterControls(props: McpScopeFilterControlsProps) {
     props.projects.find((project) => project.key === props.projectKey) ?? props.projects[0] ?? null;
 
   return (
-    <div className="grid gap-3 sm:grid-cols-2" data-mcp-scope-controls="true">
-      <div className="grid gap-1.5">
+    <div
+      className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,18rem),1fr))] gap-3"
+      data-mcp-scope-controls="true"
+    >
+      <div className="grid min-w-0 gap-1.5">
         <span className="font-medium text-muted-foreground text-xs">
           {translate("settings.mcp.scope.label")}
         </span>
@@ -33,7 +36,11 @@ export function McpScopeFilterControls(props: McpScopeFilterControlsProps) {
             if (value === "global" || value === "project") props.onScopeChange(value);
           }}
         >
-          <SelectTrigger aria-label={translate("settings.mcp.scope.label")}>
+          <SelectTrigger
+            className="min-w-0"
+            size="lg"
+            aria-label={translate("settings.mcp.scope.label")}
+          >
             <SelectValue>
               {translate(
                 props.scope === "global"
@@ -49,7 +56,7 @@ export function McpScopeFilterControls(props: McpScopeFilterControlsProps) {
         </Select>
       </div>
       {props.scope === "project" ? (
-        <div className="grid gap-1.5">
+        <div className="grid min-w-0 gap-1.5">
           <span className="font-medium text-muted-foreground text-xs">
             {translate("settings.mcp.scope.project")}
           </span>
@@ -58,7 +65,11 @@ export function McpScopeFilterControls(props: McpScopeFilterControlsProps) {
             disabled={props.projects.length === 0}
             onValueChange={(value) => props.onProjectKeyChange(value ?? "")}
           >
-            <SelectTrigger aria-label={translate("settings.mcp.scope.project")}>
+            <SelectTrigger
+              className="min-w-0"
+              size="lg"
+              aria-label={translate("settings.mcp.scope.project")}
+            >
               <SelectValue>
                 {selectedProject?.name ?? translate("settings.mcp.scope.noProject")}
               </SelectValue>

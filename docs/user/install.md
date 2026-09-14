@@ -101,7 +101,7 @@ their original values.
 For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 [Claude](./providers-claude.md), [OpenCode](./providers-opencode.md),
 [Antigravity](./providers-antigravity.md), and
-[ChatGPT, OpenAI, OpenRouter, and Gemini](./providers-native.md).
+[native providers, including LM Studio and OpenAI-compatible endpoints](./providers-native.md).
 
 ## Next steps
 

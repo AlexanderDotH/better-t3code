@@ -488,7 +488,7 @@ describe("Markdown source reconciliation", () => {
 
 describe("streaming motion commit lifecycle", () => {
   it("stops active work immediately when reduced motion is enabled", async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const { callbacks, document, setReducedMotion } = installStreamingMotionTestDom();
     const { createRoot } = await import("react-dom/client");
     const root = createRoot(document.createElement("div") as unknown as Element);
@@ -514,7 +514,7 @@ describe("streaming motion commit lifecycle", () => {
   });
 
   it("drains the hook cleanup timer and pending frame when streaming settles", async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const { callbacks, document } = installStreamingMotionTestDom();
     const { createRoot } = await import("react-dom/client");
     const root = createRoot(document.createElement("div") as unknown as Element);
@@ -542,7 +542,7 @@ describe("streaming motion commit lifecycle", () => {
   });
 
   it("drains the hook cleanup timer and pending frame when the renderer unmounts", async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const { callbacks, document } = installStreamingMotionTestDom();
     const { createRoot } = await import("react-dom/client");
     const root = createRoot(document.createElement("div") as unknown as Element);

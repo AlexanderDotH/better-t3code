@@ -1,4 +1,5 @@
 import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import { ServerIcon } from "lucide-react";
 import {
   AntigravityIcon,
   ClaudeAI,
@@ -22,6 +23,8 @@ export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>
   [ProviderDriverKind.make("chatgpt")]: OpenAI,
   [ProviderDriverKind.make("openai")]: OpenAI,
   [ProviderDriverKind.make("openrouter")]: OpenRouterIcon,
+  [ProviderDriverKind.make("openaiCompatible")]: ServerIcon,
+  [ProviderDriverKind.make("lmstudio")]: ServerIcon,
 };
 
 export type ModelEsque = {

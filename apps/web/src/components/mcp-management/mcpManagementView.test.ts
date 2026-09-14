@@ -13,9 +13,51 @@ import {
   createMcpRuntimeDetailsTarget,
   isMcpRuntimeDetailsTargetCurrent,
   mcpRuntimeContextId,
+  mergeNativeMcpServers,
   toMcpRuntimeContextView,
   toMcpRuntimeServerView,
 } from "./mcpManagementView";
+
+it("shows discovered servers before a session and prefers live reports without duplicates", () => {
+  const discovered = [
+    {
+      name: "docs",
+      enabled: true,
+      transport: "http" as const,
+      scope: "global" as const,
+      configPath: "/provider/config.toml",
+    },
+    {
+      name: "off",
+      enabled: false,
+      transport: "stdio" as const,
+      scope: "global" as const,
+      configPath: "/provider/config.toml",
+    },
+  ];
+  expect(mergeNativeMcpServers([], discovered)).toMatchObject([
+    { name: "docs", state: "not-started", source: "provider-native", capabilities: {} },
+    { name: "off", state: "disabled", source: "provider-native", capabilities: {} },
+  ]);
+  const live = {
+    serverKey: "docs",
+    name: "docs",
+    source: "provider-native" as const,
+    state: "connected" as const,
+    toolCount: 3,
+    capabilities: { reportsTools: true },
+  };
+  const merged = mergeNativeMcpServers([live], discovered);
+  expect(merged).toHaveLength(2);
+  expect(merged[0]).toBe(live);
+  expect(merged[1]?.name).toBe("off");
+  expect(
+    mergeNativeMcpServers(
+      [{ ...live, serverKey: "managed_docs", source: "t3-managed" }],
+      discovered,
+    ),
+  ).toHaveLength(3);
+});
 
 const context: McpRuntimeContext = {
   providerInstanceId: "codex" as ProviderInstanceId,

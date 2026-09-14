@@ -16,6 +16,88 @@ import {
 } from "./index.ts";
 
 describe("provider prompt enhancements", () => {
+  const visualizationsOnly = {
+    cavemanMode: "off" as const,
+    deepThinking: {
+      enabled: false,
+      stepCount: 4,
+      refinementPasses: 1,
+      parallelEnabled: false,
+      parallelBatchSize: 1,
+      forceParallelForDurableProviders: false,
+    },
+    visualizationsEnabled: true,
+  };
+
+  it("adds learning and analysis guidance without replacing the user's request", () => {
+    const original = "Explain an API request, then compare the supplied monthly totals.";
+    const out = applyAgentEnhancementsToProviderInput({
+      ...visualizationsOnly,
+      providerInput: original,
+    });
+
+    expect(out.outcome).toBe("included");
+    expect(out.providerInput?.endsWith(original)).toBe(true);
+    expect(out.providerInput).toContain("wait for the learner's answer");
+    expect(out.providerInput).toContain("Never invent real business data");
+    expect(out.providerInput).toContain("simple answers need no diagram");
+    expect(out.providerInput).toContain("Respect explicit text, code");
+    expect(out.providerInput).toContain("usermeta.t3");
+    expect(out.providerInput).toContain('kind ("measurement", "example", or "forecast")');
+    expect(out.providerInput).toContain("at most 5,000 inline data rows");
+  });
+
+  it.each([undefined, "", "  preserve these bytes\nincluding the final newline\n"])(
+    "preserves the next turn when visualization encouragement is disabled: %j",
+    (providerInput) => {
+      const enabled = applyAgentEnhancementsToProviderInput({
+        ...visualizationsOnly,
+        providerInput,
+      });
+      expect(enabled.outcome).toBe("included");
+
+      const disabled = applyAgentEnhancementsToProviderInput({
+        ...visualizationsOnly,
+        visualizationsEnabled: false,
+        providerInput,
+      });
+      expect(disabled).toEqual({
+        ...(providerInput !== undefined ? { providerInput } : {}),
+        outcome: "not-requested",
+      });
+    },
+  );
+
+  it("omits visualization guidance at the input limit without truncating any user bytes", () => {
+    const policy = applyAgentEnhancementsToProviderInput(visualizationsOnly).providerInput!;
+    const original = "u".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS - policy.length - 2);
+    const included = applyAgentEnhancementsToProviderInput({
+      ...visualizationsOnly,
+      providerInput: original,
+    });
+    expect(included.outcome).toBe("included");
+    expect(included.providerInput).toHaveLength(PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
+    expect(included.providerInput?.endsWith(original)).toBe(true);
+
+    expect(
+      applyAgentEnhancementsToProviderInput({
+        ...visualizationsOnly,
+        providerInput: `${original}x`,
+      }),
+    ).toEqual({ providerInput: `${original}x`, outcome: "omitted" });
+  });
+
+  it("does not change existing enhancement prompts when visualizations are disabled", () => {
+    const input = {
+      cavemanMode: "full" as const,
+      deepThinking: visualizationsOnly.deepThinking,
+      providerInput: "Keep my requested format.",
+    };
+    expect(
+      applyAgentEnhancementsToProviderInput({ ...input, visualizationsEnabled: false }),
+    ).toEqual(applyAgentEnhancementsToProviderInput(input));
+  });
+
   it("applies bounded Deep Thinking and Caveman policy without changing the original request", () => {
     const original = "Implement the lifecycle fix and keep approvals intact.";
     const out = applyAgentEnhancementsToProviderInput({
@@ -56,7 +138,7 @@ describe("provider prompt enhancements", () => {
     );
   });
 
-  it("returns byte-equivalent prompts when both agent enhancements are off", () => {
+  it("returns byte-equivalent prompts when agent enhancements are off", () => {
     const original = "  preserve these bytes\nincluding the final newline\n";
     const out = applyAgentEnhancementsToProviderInput({
       providerInput: original,

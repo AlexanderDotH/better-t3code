@@ -1,4 +1,7 @@
 import * as NodeZlib from "node:zlib";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Vite must finish generating local renderer assets before serving or copying them.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeURL from "node:url";
 
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import babel from "@rolldown/plugin-babel";
@@ -156,6 +159,21 @@ export default defineConfig(() => {
   return {
     assetsInclude: ["**/*.wasm"],
     plugins: [
+      {
+        name: "t3code:visualization-assets",
+        buildStart() {
+          NodeChildProcess.execFileSync(
+            process.execPath,
+            [
+              NodeURL.fileURLToPath(
+                new URL("../../scripts/build-visualizations.mjs", import.meta.url),
+              ),
+              "--if-needed",
+            ],
+            { stdio: "inherit" },
+          );
+        },
+      },
       devCompressionPlugin(),
       // Route components load as split chunks so settings, pull-request, and
       // usage code stay out of the cold-start payload; the router prefetches

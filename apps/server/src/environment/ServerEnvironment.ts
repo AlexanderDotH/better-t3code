@@ -246,6 +246,8 @@ export const make = Effect.gen(function* () {
       extensionStoreVersion: 1,
       agentWorkflowVersion: 1,
       environmentSettingsVersion: 5,
+      aiEndpointDiscovery: true,
+      visualizationsVersion: 1,
       projectSettingsVersion: 1,
       harnessChatSyncVersion: 1,
       knowledgeGraphVersion: 1,
@@ -254,6 +256,7 @@ export const make = Effect.gen(function* () {
       midChatProviderSwitching: true,
       threadForking: true,
       interruptedTurnRetry: true,
+      messageEditing: true,
     },
   };
 

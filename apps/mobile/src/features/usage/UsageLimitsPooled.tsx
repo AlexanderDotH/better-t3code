@@ -8,10 +8,12 @@ import {
   formatDuration,
   formatResetsIn,
   remainingPercent,
+  usageWindowLabel,
   type LimitAccount,
   type LimitPoolWindow,
 } from "@t3tools/shared/usageLimits";
 import { useId, useState } from "react";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { Defs, Path, Pattern, Rect, Svg } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -22,7 +24,8 @@ import { AppText as Text } from "../../components/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { environmentPresentations } from "../../state/presentation";
-import { ResetCredits } from "./UsageLimitsSection";
+import { ResetCredits, UsagePaceBar, UsagePaceDetails } from "./UsageLimitsSection";
+import { mobilePreferencesAtom } from "../../state/preferences";
 import { useProviderColors } from "./usageProviders";
 
 const DRIVER_LABEL: Partial<Record<string, string>> = { codex: "Codex", claudeAgent: "Claude" };
@@ -79,6 +82,9 @@ function PoolWindowCard({
 }) {
   const navigation = useNavigation();
   const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const pacingEnabled =
+    !AsyncResult.isSuccess(preferences) || preferences.value.usagePacingEnabled !== false;
   const openAccount = (account: LimitAccount) =>
     navigation.navigate("SettingsSheet", {
       screen: "SettingsContent",
@@ -105,7 +111,7 @@ function PoolWindowCard({
             <Text className="text-sm text-foreground-muted">left</Text>
           </View>
         </View>
-        {pool.pace ? (
+        {pacingEnabled && pool.kind !== "weekly" && pool.pace ? (
           <Text className="text-xs text-foreground-tertiary">{PACE_LABEL[pool.pace]}</Text>
         ) : null}
       </View>
@@ -132,6 +138,16 @@ function PoolWindowCard({
                 color={color}
                 pending={Boolean(window.resetsAt)}
               />
+              <View pointerEvents="none" className="absolute inset-0 opacity-35">
+                <UsagePaceBar window={window} now={now} baseColor={color} />
+              </View>
+              {remainingPercent(window) > 0 && remainingPercent(window) < 100 ? (
+                <View
+                  pointerEvents="none"
+                  className="absolute inset-y-0 w-0.5 bg-card"
+                  style={{ right: `${100 - remainingPercent(window)}%` }}
+                />
+              ) : null}
               <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
                 <Text className="text-xs font-t3-medium tabular-nums text-foreground">
                   {index + 1}
@@ -189,6 +205,18 @@ function PoolWindowCard({
           );
         })}
       </View>
+      {pacingEnabled && pool.kind === "weekly"
+        ? pool.members.map(({ account, window }) => (
+            <View key={account.key}>
+              {pool.members.length > 1 ? (
+                <Text className="text-center text-xs text-foreground-muted">
+                  {accountName(account)}
+                </Text>
+              ) : null}
+              <UsagePaceDetails window={window} now={now} />
+            </View>
+          ))
+        : null}
     </View>
   );
 }
@@ -325,7 +353,9 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
               ) : null}
             </View>
             <View className="gap-3 rounded-[24px] border-continuous bg-card p-4">
-              <Text className="text-sm font-t3-medium text-foreground">{window.label}</Text>
+              <Text className="text-sm font-t3-medium text-foreground">
+                {usageWindowLabel(window)}
+              </Text>
               <Text className="text-3xl font-t3-bold tabular-nums text-foreground">
                 {remainingPercent(window)}% left
               </Text>
@@ -343,6 +373,7 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
                   Restores {reset.restoresPercent}% of the pool
                 </Text>
               ) : null}
+              <UsagePaceDetails window={window} now={now} />
             </View>
             <View className="gap-2 rounded-[24px] border-continuous bg-card p-4">
               <Text className="text-sm font-t3-medium text-foreground">

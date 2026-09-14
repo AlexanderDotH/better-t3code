@@ -49,6 +49,8 @@ const MOBILE_BETTER_T3_BOOLEAN_MIRRORS = [
 ] as const satisfies ReadonlyArray<readonly [keyof Preferences, string]>;
 
 export interface Preferences {
+  readonly usagePacingEnabled?: boolean;
+  readonly usagePacingWorkdayHours?: 8 | 24;
   /** Device-local Better T3 registry values, including clean/existing migration provenance. */
   readonly betterT3Device?: BetterT3SettingsV1Type;
   readonly liveActivitiesEnabled?: boolean;
@@ -148,6 +150,8 @@ export class MobilePreferencesStore extends Context.Service<
 
 export function sanitizeMobilePreferences(parsed: Preferences): Preferences {
   const preferences: {
+    usagePacingEnabled?: boolean;
+    usagePacingWorkdayHours?: 8 | 24;
     betterT3Device?: BetterT3SettingsV1Type;
     liveActivitiesEnabled?: boolean;
     experimentalFetch?: boolean;
@@ -186,6 +190,13 @@ export function sanitizeMobilePreferences(parsed: Preferences): Preferences {
     threadListV2SettledShelfExpanded?: boolean;
     threadListV2SnoozedShelfExpanded?: boolean;
   } = {};
+
+  if (typeof parsed.usagePacingEnabled === "boolean") {
+    preferences.usagePacingEnabled = parsed.usagePacingEnabled;
+  }
+  if (parsed.usagePacingWorkdayHours === 8 || parsed.usagePacingWorkdayHours === 24) {
+    preferences.usagePacingWorkdayHours = parsed.usagePacingWorkdayHours;
+  }
 
   const betterT3Device = decodeBetterT3SettingsV1(parsed.betterT3Device);
   if (Option.isSome(betterT3Device)) {

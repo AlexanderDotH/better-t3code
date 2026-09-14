@@ -95,6 +95,52 @@ function makeAbortingThread(): OrchestrationThread {
 }
 
 describe("applyThreadDetailEvent", () => {
+  it("updates an edited message without changing its role, attachments, turn or later messages", () => {
+    const message = {
+      id: MessageId.make("edit"),
+      role: "assistant" as const,
+      text: "Before",
+      turnId: TurnId.make("old-turn"),
+      streaming: false,
+      createdAt: baseThread.createdAt,
+      updatedAt: baseThread.updatedAt,
+      attachments: [
+        {
+          type: "image" as const,
+          id: "image-1",
+          name: "image.png",
+          mimeType: "image/png",
+          sizeBytes: 10,
+        },
+      ],
+    };
+    const later = { ...message, id: MessageId.make("later"), text: "Later" };
+    const result = applyThreadDetailEvent(
+      { ...baseThread, messages: [message, later] },
+      {
+        ...baseEventFields,
+        sequence: 1,
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.message-edited",
+        occurredAt: "2026-09-14T10:00:00.000Z",
+        payload: {
+          threadId: baseThread.id,
+          messageId: message.id,
+          text: "After",
+          updatedAt: "2026-09-14T10:00:00.000Z",
+        },
+      },
+    );
+    expect(result.kind).toBe("updated");
+    if (result.kind !== "updated") return;
+    expect(result.thread.messages).toEqual([
+      { ...message, text: "After", updatedAt: "2026-09-14T10:00:00.000Z" },
+      later,
+    ]);
+    expect(result.thread.latestTurn).toBe(baseThread.latestTurn);
+  });
+
   describe("project events", () => {
     it("returns unchanged for project.created", () => {
       const result = applyThreadDetailEvent(baseThread, {

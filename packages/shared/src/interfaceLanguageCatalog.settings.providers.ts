@@ -1,6 +1,123 @@
 import { defineLocalizedInterfaceCatalog } from "./interfaceLanguageCatalog.types.ts";
 
 export const settingsProvidersInterfaceCatalog = defineLocalizedInterfaceCatalog({
+  "settings.providers.endpoint.apiKey": [
+    "API key (optional)",
+    "API-Schlüssel (optional)",
+    "Clé API (facultative)",
+  ],
+  "settings.providers.endpoint.apiKeyDescription": [
+    "Saved securely for this instance and address. Changing the address clears the entered key.",
+    "Wird sicher für diese Instanz und Adresse gespeichert. Ein Adresswechsel löscht den eingegebenen Schlüssel.",
+    "Enregistrée de manière sécurisée pour cette instance et cette adresse. Un changement d’adresse efface la clé saisie.",
+  ],
+  "settings.providers.endpoint.credentialSaveFailed": [
+    "Provider added, but its API key could not be saved. Add the key in Account.",
+    "Provider hinzugefügt, aber der API-Schlüssel konnte nicht gespeichert werden. Hinterlege ihn unter Konto.",
+    "Fournisseur ajouté, mais sa clé API n’a pas pu être enregistrée. Ajoutez-la dans Compte.",
+  ],
+  "settings.providers.endpoint.fetchModels": [
+    "Fetch models",
+    "Modelle abrufen",
+    "Récupérer les modèles",
+  ],
+  "settings.providers.endpoint.fetchModelsFailed": [
+    "Could not fetch endpoint models.",
+    "Die Modelle des Endpunkts konnten nicht abgerufen werden.",
+    "Impossible de récupérer les modèles du point de terminaison.",
+  ],
+  "settings.providers.endpoint.saveBeforeFetch": [
+    "Save the endpoint before fetching its models.",
+    "Speichere den Endpunkt, bevor du seine Modelle abrufst.",
+    "Enregistrez le point de terminaison avant de récupérer ses modèles.",
+  ],
+  "settings.providers.endpoint.saveFailed": [
+    "Could not save endpoint.",
+    "Der Endpunkt konnte nicht gespeichert werden.",
+    "Impossible d’enregistrer le point de terminaison.",
+  ],
+  "settings.providers.endpoint.discoveryTitle": [
+    "Discover endpoints",
+    "Endpunkte suchen",
+    "Rechercher des points de terminaison",
+  ],
+  "settings.providers.endpoint.discoveryEnvironment": [
+    "Scan loopback and local network addresses on {{environment}}.",
+    "Loopback und lokales Netzwerk von {{environment}} durchsuchen.",
+    "Rechercher sur les adresses de bouclage et du réseau local de {{environment}}.",
+  ],
+  "settings.providers.endpoint.discoveryUnsupported": [
+    "This server does not support endpoint discovery. Enter an address manually.",
+    "Dieser Server unterstützt die Endpunktsuche nicht. Gib eine Adresse manuell ein.",
+    "Ce serveur ne prend pas en charge la recherche. Saisissez une adresse manuellement.",
+  ],
+  "settings.providers.endpoint.discoveryReadOnly": [
+    "Endpoint discovery requires permission to change this environment.",
+    "Die Endpunktsuche benötigt die Berechtigung, diese Umgebung zu ändern.",
+    "La recherche nécessite l’autorisation de modifier cet environnement.",
+  ],
+  "settings.providers.endpoint.discoveryRescan": [
+    "Rescan",
+    "Erneut suchen",
+    "Relancer la recherche",
+  ],
+  "settings.providers.endpoint.discoveryScanning": [
+    "Scanning {{scanned}} of {{total}} addresses…",
+    "{{scanned}} von {{total}} Adressen geprüft…",
+    "{{scanned}} adresses sur {{total}} vérifiées…",
+  ],
+  "settings.providers.endpoint.discoveryLimited": [
+    "The scan was limited. Enter another address manually if your endpoint is missing.",
+    "Die Suche wurde begrenzt. Fehlende Endpunkte kannst du manuell eintragen.",
+    "La recherche a été limitée. Saisissez manuellement les adresses manquantes.",
+  ],
+  "settings.providers.endpoint.discoveryEmpty": [
+    "No endpoints found. You can enter an address manually.",
+    "Keine Endpunkte gefunden. Du kannst eine Adresse manuell eintragen.",
+    "Aucun point de terminaison trouvé. Vous pouvez saisir une adresse manuellement.",
+  ],
+  "settings.providers.endpoint.discoveryFailed": [
+    "Could not scan endpoints. Try again.",
+    "Die Endpunktsuche ist fehlgeschlagen. Versuche es erneut.",
+    "La recherche a échoué. Réessayez.",
+  ],
+  "settings.providers.endpoint.discoveryCancelled": [
+    "Scan cancelled.",
+    "Suche abgebrochen.",
+    "Recherche annulée.",
+  ],
+  "settings.providers.endpoint.discoveryExisting": [
+    "Already configured",
+    "Bereits eingerichtet",
+    "Déjà configuré",
+  ],
+  "settings.providers.endpoint.discoveryRequiresKey": [
+    "API key required",
+    "API-Schlüssel erforderlich",
+    "Clé API requise",
+  ],
+  "settings.providers.endpoint.discoveryUnverified": ["Unverified", "Unbestätigt", "Non vérifié"],
+  "settings.providers.endpoint.discoveryModels": [
+    { one: "{{count}} model", other: "{{count}} models" },
+    { one: "{{count}} Modell", other: "{{count}} Modelle" },
+    { one: "{{count}} modèle", other: "{{count}} modèles" },
+  ],
+  "settings.providers.endpoint.discoveryUse": ["Use endpoint", "Übernehmen", "Utiliser"],
+  "settings.providers.endpoint.baseUrlInvalid": [
+    "Enter an HTTP or HTTPS endpoint URL without credentials, query parameters, or a fragment.",
+    "Gib eine HTTP- oder HTTPS-Adresse ohne Zugangsdaten, Suchparameter oder Fragment ein.",
+    "Saisissez une URL HTTP ou HTTPS sans identifiants, paramètres de requête ni fragment.",
+  ],
+  "settings.providers.endpoint.baseUrlRequired": [
+    "Enter an endpoint base URL.",
+    "Gib die Basis-URL des Endpunkts ein.",
+    "Saisissez l’URL de base du point de terminaison.",
+  ],
+  "settings.providers.endpoint.saveChanges": [
+    "Save endpoint",
+    "Endpunkt speichern",
+    "Enregistrer le point de terminaison",
+  ],
   "settings.providers.status.checking": [
     "Checking provider status",
     "Providerstatus wird geprüft",

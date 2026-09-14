@@ -45,6 +45,8 @@ export const ADDITIONAL_BETTER_T3_PROVIDER_DRIVERS = [
   ProviderDriverKind.make("gemini"),
   ProviderDriverKind.make("openrouter"),
   ProviderDriverKind.make("openai"),
+  ProviderDriverKind.make("openaiCompatible"),
+  ProviderDriverKind.make("lmstudio"),
 ] as const satisfies ReadonlyArray<ProviderDriverKind>;
 
 const additionalProviderDrivers = new Set<ProviderDriverKind>(

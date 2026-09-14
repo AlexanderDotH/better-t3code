@@ -33,6 +33,7 @@ export const BetterT3FeatureControlKind = Schema.Literals([
 export type BetterT3FeatureControlKind = typeof BetterT3FeatureControlKind.Type;
 
 const featureIds = [
+  "chat.visualizations",
   "agent.fetch",
   "agent.fetchModel",
   "agent.parallelPlanImplementation",
@@ -50,6 +51,7 @@ const featureIds = [
   "chat.workspaceCardDeck",
   "chat.cardMorphing",
   "chat.hideComposerDivider",
+  "chat.messageEditing",
   "chat.characterStreamingMotion",
   "chat.presentation",
   "chat.contextWindowSelector",
@@ -89,6 +91,8 @@ export const BetterT3FeatureId = Schema.Literals(featureIds);
 export type BetterT3FeatureId = typeof BetterT3FeatureId.Type;
 
 const switchFeatureIds = [
+  "chat.visualizations",
+  "chat.messageEditing",
   "agent.fetch",
   "agent.parallelPlanImplementation",
   "agent.planMode",
@@ -172,6 +176,7 @@ type DescriptorInput = {
   readonly scope: BetterT3FeatureScope;
   readonly controlKind: BetterT3FeatureControlKind;
   readonly existing?: boolean;
+  readonly clean?: boolean;
   readonly dependencies?: ReadonlyArray<BetterT3FeatureDependency>;
   readonly surfaces?: ReadonlyArray<BetterT3Surface>;
   readonly capabilities?: ReadonlyArray<BetterT3CapabilityRequirement>;
@@ -185,7 +190,7 @@ const descriptor = (input: DescriptorInput): BetterT3FeatureDescriptor => ({
   controlKind: input.controlKind,
   labelMessageId: `betterT3.${input.id}.label`,
   descriptionMessageId: `betterT3.${input.id}.description`,
-  defaults: { clean: false, existing: input.existing ?? false },
+  defaults: { clean: input.clean ?? false, existing: input.existing ?? false },
   dependencies: input.dependencies ?? [],
   availability: {
     surfaces: input.surfaces ?? ["web", "desktop", "phone", "tablet"],
@@ -215,6 +220,13 @@ const capability = (name: string, minimumVersion?: number): BetterT3CapabilityRe
 });
 
 export const BETTER_T3_FEATURE_REGISTRY = [
+  descriptor({
+    id: "chat.visualizations",
+    section: "chat-layout",
+    scope: "environment",
+    controlKind: "switch",
+    capabilities: [capability("visualizationsVersion", 1)],
+  }),
   descriptor({
     id: "agent.fetch",
     section: "agent-workflows",
@@ -348,6 +360,15 @@ export const BETTER_T3_FEATURE_REGISTRY = [
     section: "chat-layout",
     scope: "device",
     controlKind: "switch",
+    surfaces: ["web", "desktop"],
+  }),
+  descriptor({
+    id: "chat.messageEditing",
+    section: "chat-layout",
+    scope: "device",
+    controlKind: "switch",
+    existing: true,
+    clean: true,
     surfaces: ["web", "desktop"],
   }),
   descriptor({

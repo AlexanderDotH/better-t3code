@@ -2487,6 +2487,10 @@ const make = Effect.gen(function* () {
           const enhancementApplication = applyAgentEnhancementsToProviderInput({
             ...(request.input !== undefined ? { providerInput: request.input } : {}),
             cavemanMode: settings.agentEnhancement.cavemanMode,
+            visualizationsEnabled: resolveBetterT3FeatureFlag(
+              settings.betterT3Environment,
+              "chat.visualizations",
+            ),
             deepThinking: {
               ...settings.agentEnhancement.deepThinking,
               enabled: resolveBetterT3FeatureFlag(

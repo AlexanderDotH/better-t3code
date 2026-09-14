@@ -46,9 +46,12 @@ import {
   type ProviderInstanceConfig,
   type ProviderInstanceConfigMap,
   ServerSettings,
+  type ServerSettingsError,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import { ServerSettingsService } from "../../serverSettings.ts";
@@ -114,23 +117,36 @@ export const deriveProviderInstanceConfigMap = (
  * configs, so the only way the watcher could fail is a settings stream
  * tear-down, which logs and exits cleanly.
  */
-const SettingsWatcherLive = Layer.effectDiscard(
+export class ProviderInstanceSettingsSync extends Context.Service<
+  ProviderInstanceSettingsSync,
+  { readonly synchronize: Effect.Effect<void, ServerSettingsError> }
+>()("t3/provider/Layers/ProviderInstanceRegistryHydration/ProviderInstanceSettingsSync") {}
+
+export const ProviderInstanceSettingsSyncLive = Layer.effect(
+  ProviderInstanceSettingsSync,
   Effect.gen(function* () {
     const mutator = yield* ProviderInstanceRegistryMutator;
     const serverSettings = yield* ServerSettingsService;
+    const semaphore = yield* Semaphore.make(1);
+    // Read under the same lock for RPCs and watcher ticks, so an older tick
+    // cannot rebuild an instance with a previous endpoint or credential target.
+    const synchronize = semaphore.withPermits(1)(
+      serverSettings.getSettings.pipe(
+        Effect.flatMap((settings) => mutator.reconcile(deriveProviderInstanceConfigMap(settings))),
+      ),
+    );
     const settingsChanges = yield* serverSettings.subscribeChanges;
     yield* settingsChanges.pipe(
-      Stream.runForEach((next) =>
-        mutator
-          .reconcile(deriveProviderInstanceConfigMap(next))
-          .pipe(
-            Effect.catchCause((cause) =>
-              Effect.logError("ProviderInstanceRegistry reconcile failed", cause),
-            ),
+      Stream.runForEach(() =>
+        synchronize.pipe(
+          Effect.catchCause((cause) =>
+            Effect.logError("ProviderInstanceRegistry reconcile failed", cause),
           ),
+        ),
       ),
       Effect.forkScoped,
     );
+    return { synchronize };
   }),
 );
 
@@ -142,8 +158,8 @@ const SettingsWatcherLive = Layer.effectDiscard(
  *   - `ProviderInstanceRegistryMutableLayer` produces the registry +
  *     mutator from the initial config map. Its scope owns every
  *     per-instance child scope created during reconcile.
- *   - `SettingsWatcherLive` consumes the mutator, acquires its settings
- *     subscription before forking, and runs a daemon fiber in the same scope.
+ *   - `ProviderInstanceSettingsSyncLive` serializes settings reconciliation
+ *     for watcher ticks and RPCs that must wait for the new instance.
  *
  * Composing via `Layer.provideMerge` makes the watcher's deps available
  * from the mutable layer while still surfacing the registry as an output.
@@ -151,7 +167,7 @@ const SettingsWatcherLive = Layer.effectDiscard(
  * it, so the visibility leak is harmless in practice.
  */
 export const ProviderInstanceRegistryHydrationLive: Layer.Layer<
-  ProviderInstanceRegistry,
+  ProviderInstanceRegistry | ProviderInstanceSettingsSync,
   never,
   BuiltInDriversEnv | ServerSettingsService
 > = Layer.unwrap(
@@ -170,6 +186,10 @@ export const ProviderInstanceRegistryHydrationLive: Layer.Layer<
       configMap: initialConfigMap,
     });
 
-    return SettingsWatcherLive.pipe(Layer.provideMerge(mutableLayer));
+    return ProviderInstanceSettingsSyncLive.pipe(Layer.provideMerge(mutableLayer));
   }),
-) as Layer.Layer<ProviderInstanceRegistry, never, BuiltInDriversEnv | ServerSettingsService>;
+) as Layer.Layer<
+  ProviderInstanceRegistry | ProviderInstanceSettingsSync,
+  never,
+  BuiltInDriversEnv | ServerSettingsService
+>;

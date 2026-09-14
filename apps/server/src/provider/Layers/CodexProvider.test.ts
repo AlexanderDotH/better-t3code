@@ -1,7 +1,40 @@
 import { assert, it } from "@effect/vitest";
 import { createCodexContextWindowDescriptor } from "@t3tools/shared/model";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
+import type * as CodexSchema from "effect-codex-app-server/schema";
 
-import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
+import {
+  applyPreferredCodexDefaultModel,
+  mapCodexModelCapabilities,
+  readCodexRateLimits,
+} from "./CodexProvider.ts";
+
+it.effect("accepts a slow usage response and bounds an unanswered request", () =>
+  Effect.gen(function* () {
+    const response = { rateLimits: { primary: { usedPercent: 4, windowDurationMins: 10_080 } } };
+    const pending = yield* Deferred.make<CodexSchema.V2GetAccountRateLimitsResponse>();
+    const started = yield* Deferred.make<void>();
+    const result = yield* readCodexRateLimits(
+      Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(pending))),
+    ).pipe(Effect.forkChild);
+    yield* Deferred.await(started);
+    yield* TestClock.adjust("4 seconds");
+    yield* Deferred.succeed(pending, response);
+    assert.deepStrictEqual(yield* Fiber.join(result), {
+      snapshot: response.rateLimits,
+      rateLimitsByLimitId: undefined,
+      resetCredits: undefined,
+    });
+    const hung = yield* readCodexRateLimits(Effect.never).pipe(Effect.forkChild);
+    yield* TestClock.adjust("9 seconds");
+    assert.deepStrictEqual(yield* Fiber.join(hung), {
+      failure: "Codex usage request timed out. Refresh Usage → Limits to try again.",
+    });
+  }),
+);
 
 const TEST_CONTEXT_WINDOW = {
   defaultTokens: 272_000,

@@ -1,4 +1,8 @@
-import type { McpMutationResult } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ProviderDriverKind,
+  type McpMutationResult,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -54,23 +58,47 @@ describe("deriveMcpProviderTabs", () => {
     });
   });
 
-  it("dims unavailable and disabled provider instances", () => {
+  it("keeps enabled unavailable instances visible and omits disabled instances", () => {
     const tabs = deriveMcpProviderTabs([
       {
         instanceId: "future",
         driver: "futureDriver",
-        enabled: false,
+        enabled: true,
         installed: false,
         availability: "unavailable",
       },
+      { instanceId: "codex", driver: "codex", enabled: false, installed: true },
     ]);
 
+    expect(tabs).toHaveLength(1);
     expect(tabs[0]).toMatchObject({
       label: "futureDriver",
       disabled: true,
       statusLabel: "Unavailable",
       statusTone: "neutral",
     });
+  });
+
+  it("follows current Settings when provider snapshots lag behind toggles or deletions", () => {
+    const providers = [
+      { instanceId: "codex", driver: "codex", enabled: true, installed: true },
+      { instanceId: "work", driver: "codex", enabled: false, installed: true },
+      { instanceId: "deleted", driver: "codex", enabled: true, installed: true },
+    ];
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providers: {
+        ...DEFAULT_SERVER_SETTINGS.providers,
+        codex: { ...DEFAULT_SERVER_SETTINGS.providers.codex, enabled: false },
+      },
+      providerInstances: {
+        work: { driver: ProviderDriverKind.make("codex"), enabled: true, config: {} },
+      },
+    };
+    expect(
+      deriveMcpProviderTabs(providers, settings).map((provider) => provider.instanceId),
+    ).toEqual(["work"]);
+    expect(deriveMcpProviderTabs(providers, { ...settings, providerInstances: {} })).toEqual([]);
   });
 
   it("uses server-reported MCP capability instead of inferring support from driver names", () => {

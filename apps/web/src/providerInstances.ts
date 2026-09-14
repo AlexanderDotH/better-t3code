@@ -79,11 +79,14 @@ export function isProviderInstancePickerReady(entry: ProviderInstanceEntry): boo
   return entry.enabled && entry.isAvailable && entry.status === "ready";
 }
 
-/** Authenticated catalogs remain browsable while a default-model choice is still required. */
+/** Usable catalogs remain browsable while a default-model choice is still required. */
 export function isProviderInstancePickerBrowsable(entry: ProviderInstanceEntry): boolean {
   if (!entry.enabled || !entry.isAvailable) return false;
   if (entry.status === "ready") return true;
-  if (entry.status !== "warning" || entry.snapshot.auth.status !== "authenticated") return false;
+  const auth = entry.snapshot.auth;
+  const acceptsOptionalKey = auth.type === "api-key-optional" && auth.status === "unknown";
+  if (entry.status !== "warning" || (auth.status !== "authenticated" && !acceptsOptionalKey))
+    return false;
   return entry.models.some((model) => model.isSelectable !== false);
 }
 

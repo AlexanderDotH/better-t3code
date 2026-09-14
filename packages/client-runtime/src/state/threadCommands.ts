@@ -18,6 +18,8 @@ import {
   type DismissThreadUserInputInput,
   type RevertThreadCheckpointInput,
   type RetryThreadTurnInput,
+  type EditThreadMessageInput,
+  editThreadMessage,
   type SetThreadInteractionModeInput,
   type SetThreadRuntimeModeInput,
   type PinThreadInput,
@@ -60,6 +62,7 @@ import {
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 
 export type {
+  EditThreadMessageInput,
   ArchiveThreadInput,
   CreateThreadInput,
   DeleteThreadInput,
@@ -201,6 +204,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     retryTurn: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:retry-turn",
       execute: (input: RetryThreadTurnInput) => retryThreadTurn(input),
+      scheduler,
+      concurrency,
+    }),
+    editMessage: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:edit-message",
+      execute: (input: EditThreadMessageInput) => editThreadMessage(input),
       scheduler,
       concurrency,
     }),

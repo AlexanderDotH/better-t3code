@@ -118,6 +118,12 @@ export const knowledgeGraphInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Den Wissensgraph in den Better-T3-Einstellungen aktivieren.",
     "Activez le graphe de connaissances dans les réglages Better T3.",
   ],
+  "knowledgeGraph.localIndexing": ["Local indexing", "Lokale Indexierung", "Indexation locale"],
+  "knowledgeGraph.configureProvider": [
+    "Configure OpenAI API provider",
+    "OpenAI-API-Provider einrichten",
+    "Configurer le fournisseur API OpenAI",
+  ],
   "knowledgeGraph.error": [
     "The Knowledge Graph could not be loaded.",
     "Der Wissensgraph konnte nicht geladen werden.",

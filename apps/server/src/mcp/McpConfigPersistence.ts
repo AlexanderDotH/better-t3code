@@ -13,6 +13,7 @@ import { exportCursorMcpServersJson, importCursorMcpServers } from "./McpCursorI
 import type { McpConfigEngineShape } from "./McpConfigService.ts";
 import { McpConfigurationReconciler } from "./McpConfigurationReconciler.ts";
 import { getMcpProviderStatuses } from "./McpProviderConfigProjection.ts";
+import { discoverNativeMcpServers } from "./McpNativeConfig.ts";
 import {
   configuredMcpProviderInstanceIds,
   isMcpConfigError,
@@ -195,17 +196,26 @@ export const makeMcpConfigEngine = Effect.gen(function* () {
         Effect.map((settings) => exportCursorMcpServersJson(settings.mcp.servers, input)),
       ),
     providerStatus: (providers, input = {}, providerCapability) =>
-      readSettings.pipe(
-        Effect.flatMap((settings) =>
-          Effect.forEach(providers, (provider) =>
-            (
-              providerCapability?.(provider.instanceId) ??
-              reconciler?.providerCapability(provider.instanceId) ??
-              Effect.succeed("unsupported" as const)
-            ).pipe(
-              Effect.map(
-                (capability) =>
-                  getMcpProviderStatuses({
+      provideCaptured(
+        readSettings.pipe(
+          Effect.flatMap((settings) =>
+            Effect.forEach(providers, (provider) =>
+              Effect.gen(function* () {
+                const capability = yield* (
+                  providerCapability?.(provider.instanceId) ??
+                    reconciler?.providerCapability(provider.instanceId) ??
+                    Effect.succeed("unsupported" as const)
+                );
+                const nativeServers = input.includeNative
+                  ? yield* discoverNativeMcpServers({
+                      provider,
+                      settings,
+                      ...(input.scope ? { scope: input.scope } : {}),
+                      ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
+                    })
+                  : undefined;
+                return {
+                  ...getMcpProviderStatuses({
                     providers: [provider],
                     activeServerCount: resolveActiveMcpServers(settings, {
                       ...input,
@@ -213,11 +223,13 @@ export const makeMcpConfigEngine = Effect.gen(function* () {
                     }).length,
                     capabilities: new Map([[provider.instanceId, capability]]),
                   })[0]!,
-              ),
+                  ...(nativeServers ? { nativeServers } : {}),
+                };
+              }),
             ),
           ),
+          Effect.map((providerStatuses) => ({ providers: providerStatuses })),
         ),
-        Effect.map((providerStatuses) => ({ providers: providerStatuses })),
       ),
     resolveActiveServers: (input) =>
       readSettings.pipe(Effect.map((settings) => resolveActiveMcpServers(settings, input))),

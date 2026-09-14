@@ -4,7 +4,7 @@ import { forkBoundaryKey } from "@t3tools/client-runtime/thread-fork";
 import { ForkChatButton } from "./ForkChatButton";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { useClientSettings } from "../../hooks/useSettings";
-import { RefreshCwIcon } from "lucide-react";
+import { PencilIcon, RefreshCwIcon } from "lucide-react";
 import {
   type AssistantCitation,
   type ChatVisualMode,
@@ -231,6 +231,11 @@ export interface TimelineRetryAction {
   readonly onRetry: (messageId: MessageId) => void;
 }
 
+export interface TimelineEditAction {
+  readonly available: boolean;
+  readonly onEdit: (message: ChatMessage) => void;
+}
+
 export interface TimelineForkProvenance {
   readonly sourceTitle: string;
   readonly boundary: ThreadForkBoundary;
@@ -244,6 +249,7 @@ interface TimelineRowSharedState {
   forkDividerAfterRowId: string | null;
   forkActions: TimelineForkActions | null;
   retryAction: TimelineRetryAction | null;
+  editAction: TimelineEditAction | null;
   citationRequest: AssistantCitationTarget | null;
   listRef: React.RefObject<LegendListRef | null>;
   timestampFormat: TimestampFormat;
@@ -256,6 +262,7 @@ interface TimelineRowSharedState {
   activeThreadEnvironmentId: EnvironmentId;
   onRevertToTurnCount: (targetTurnCount: number) => void;
   onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;
+  onVisualizationAction: ((prompt: string) => void) | undefined;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onFileOpen: (attachment: ChatFileAttachment) => void;
   onFileDownload: (attachment: ChatFileAttachment) => void;
@@ -372,6 +379,7 @@ interface MessagesTimelineProps {
   forkProvenance?: TimelineForkProvenance | null;
   forkActions?: TimelineForkActions | null;
   retryAction?: TimelineRetryAction | null;
+  editAction?: TimelineEditAction | null;
   citationRequest?: AssistantCitationRequest | null;
   citationHistoryLoading?: boolean;
   onCiteAssistantText?: (
@@ -394,6 +402,7 @@ interface MessagesTimelineProps {
   supportsConversationRollback: boolean;
   onRevertToTurnCount: (targetTurnCount: number) => void;
   onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
+  onVisualizationAction?: (prompt: string) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onFileOpen?: (attachment: ChatFileAttachment) => void;
@@ -438,6 +447,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   forkProvenance = null,
   forkActions = null,
   retryAction = null,
+  editAction = null,
   citationRequest = null,
   citationHistoryLoading = false,
   onCiteAssistantText,
@@ -457,6 +467,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   supportsConversationRollback,
   onRevertToTurnCount,
   onUseArtifactTemplate = NOOP_USE_ARTIFACT_TEMPLATE,
+  onVisualizationAction,
   isRevertingCheckpoint,
   onImageExpand,
   onFileOpen = NOOP_OPEN_ATTACHMENT,
@@ -844,6 +855,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeThreadEnvironmentId,
       onRevertToTurnCount,
       onUseArtifactTemplate,
+      onVisualizationAction,
       onImageExpand,
       onFileOpen,
       onFileDownload,
@@ -857,6 +869,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       forkActions,
       forkDividerAfterRowId,
       retryAction,
+      editAction,
     }),
     [
       chatVisualMode,
@@ -874,6 +887,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeThreadEnvironmentId,
       onRevertToTurnCount,
       onUseArtifactTemplate,
+      onVisualizationAction,
       onImageExpand,
       onFileOpen,
       onFileDownload,
@@ -887,6 +901,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       forkActions,
       forkDividerAfterRowId,
       retryAction,
+      editAction,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -1735,6 +1750,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               <RevertUserMessageButton turnCount={revertTurnCount} />
             )}
             <RetryUserMessageButton messageId={row.message.id} />
+            <EditMessageButton message={row.message} />
             {!row.message.streaming && ctx.forkActions?.forkableMessageIds.has(row.message.id) ? (
               <TimelineForkButton boundary={{ kind: "message", messageId: row.message.id }} />
             ) : null}
@@ -1745,6 +1761,32 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         </div>
       </div>
     </div>
+  );
+}
+
+function EditMessageButton({ message }: { message: ChatMessage }) {
+  const action = use(TimelineRowCtx).editAction;
+  const { message: translate } = useInterfaceTranslator();
+  if (!action || message.streaming || message.role === "system") return null;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            aria-label={translate("chat.edit.title")}
+            disabled={!action.available}
+            onClick={() => action.onEdit(message)}
+            className="text-muted-foreground hover:text-foreground"
+          />
+        }
+      >
+        <PencilIcon className="size-3" />
+      </TooltipTrigger>
+      <TooltipPopup>{translate("chat.edit.title")}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -1875,12 +1917,14 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             text={messageText}
             cwd={ctx.markdownCwd}
             threadRef={ctx.threadRef ?? undefined}
+            environmentId={ctx.activeThreadEnvironmentId}
             isStreaming={Boolean(row.message.streaming)}
             streamId={`${ctx.routeThreadKey}:${row.message.id}`}
             streamingMotionEnabled={ctx.streamingMotionEnabled}
             lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
             skills={ctx.skills}
             onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+            onVisualizationAction={ctx.onVisualizationAction}
             onImageExpand={ctx.onImageExpand}
           />
         </AssistantCitationSource>
@@ -1959,6 +2003,7 @@ function AssistantMessageMeta({
         showCopyButton={showCopyButton}
         streaming={copyStreaming}
       />
+      <EditMessageButton message={message} />
       {!message.streaming && (
         <Tooltip>
           <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
@@ -2244,6 +2289,14 @@ const WorkGroupSection = memo(function WorkGroupSection({
   );
 
   if (nonEmptyEntries.length === 0) return null;
+  if (workEntryIsProviderReasoning(nonEmptyEntries[0]!)) {
+    return (
+      <ReasoningWorkEntryRow
+        workEntries={nonEmptyEntries}
+        onToggleEntry={onToggleStandaloneEntry}
+      />
+    );
+  }
   if (isExpandedToolGroup) {
     return (
       <ExpandedWorkGroupEntries
@@ -2510,7 +2563,7 @@ function LiveActivityContent({
         <span
           className={cn(
             "flex size-6 shrink-0 items-center justify-center",
-            failed ? failedToolIconClassName : highlighted ? "text-foreground" : "text-icon-muted",
+            highlighted ? "text-foreground" : "text-icon-muted",
           )}
           role={announceFailure ? "img" : undefined}
           aria-label={announceFailure ? "Tool call failed" : undefined}
@@ -2916,6 +2969,8 @@ const UserMessageBody = memo(function UserMessageBody(props: {
             text={content}
             cwd={props.markdownCwd}
             threadRef={ctx.threadRef ?? undefined}
+            environmentId={ctx.activeThreadEnvironmentId}
+            onVisualizationAction={ctx.onVisualizationAction}
             skills={props.skills}
             className="text-message-foreground"
             lineBreaks
@@ -2939,6 +2994,8 @@ const UserMessageBody = memo(function UserMessageBody(props: {
                   text={segment.text.trim()}
                   cwd={props.markdownCwd}
                   threadRef={ctx.threadRef ?? undefined}
+                  environmentId={ctx.activeThreadEnvironmentId}
+                  onVisualizationAction={ctx.onVisualizationAction}
                   skills={props.skills}
                   className="text-message-foreground"
                   lineBreaks
@@ -3028,6 +3085,8 @@ const UserMessageBody = memo(function UserMessageBody(props: {
           text={props.text}
           cwd={props.markdownCwd}
           threadRef={ctx.threadRef ?? undefined}
+          environmentId={ctx.activeThreadEnvironmentId}
+          onVisualizationAction={ctx.onVisualizationAction}
           skills={props.skills}
           className="text-message-foreground"
           lineBreaks
@@ -3054,6 +3113,8 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       text={props.text}
       cwd={props.markdownCwd}
       threadRef={ctx.threadRef ?? undefined}
+      environmentId={ctx.activeThreadEnvironmentId}
+      onVisualizationAction={ctx.onVisualizationAction}
       skills={props.skills}
       className="text-message-foreground"
       lineBreaks
@@ -3090,6 +3151,8 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
           text={formatReviewCommentFence(fenceLanguage, comment.diff)}
           cwd={ctx.markdownCwd}
           threadRef={ctx.threadRef ?? undefined}
+          environmentId={ctx.activeThreadEnvironmentId}
+          onVisualizationAction={ctx.onVisualizationAction}
           skills={ctx.skills}
           className="text-message-foreground"
         />
@@ -3627,7 +3690,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
     return <AgentSpawnCtaRow workEntry={workEntry} />;
   }
   if (workEntryIsProviderReasoning(workEntry)) {
-    return <ReasoningWorkEntryRow workEntry={workEntry} onToggleEntry={props.onToggleEntry} />;
+    return <ReasoningWorkEntryRow workEntries={[workEntry]} onToggleEntry={props.onToggleEntry} />;
   }
   return (
     <PlainWorkEntryRow
@@ -3641,10 +3704,10 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
 });
 
 function ReasoningWorkEntryRow({
-  workEntry,
+  workEntries,
   onToggleEntry,
 }: {
-  workEntry: TimelineWorkEntry;
+  workEntries: ReadonlyArray<TimelineWorkEntry>;
   onToggleEntry?: ((collapsed: boolean) => void) | undefined;
 }) {
   const ctx = use(TimelineRowCtx);
@@ -3668,15 +3731,20 @@ function ReasoningWorkEntryRow({
         {translate("chat.timeline.modelReasoning")}
       </button>
       {expanded ? (
-        <div className="ms-4 mt-0.5 min-w-0 select-text text-secondary-label">
-          <ChatMarkdown
-            text={workEntry.detail ?? ""}
-            cwd={ctx.markdownCwd}
-            threadRef={ctx.threadRef ?? undefined}
-            skills={ctx.skills}
-            className="text-secondary-label"
-            lineBreaks
-          />
+        <div className="ms-4 mt-0.5 flex min-w-0 select-text flex-col gap-2 text-secondary-label">
+          {workEntries.map((entry) => (
+            <ChatMarkdown
+              key={entry.id}
+              text={entry.detail ?? ""}
+              cwd={ctx.markdownCwd}
+              threadRef={ctx.threadRef ?? undefined}
+              environmentId={ctx.activeThreadEnvironmentId}
+              onVisualizationAction={ctx.onVisualizationAction}
+              skills={ctx.skills}
+              className="text-secondary-label"
+              lineBreaks
+            />
+          ))}
         </div>
       ) : null}
     </div>
@@ -3721,7 +3789,10 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
       : (workEntry.toolIcon ?? workEntry.toolSource?.icon);
   const previewText = workEntry.questionAnswer
     ? "Question answer submitted"
-    : (displayLabel ?? workEntryDisplayLabel(workEntry, workspaceRoot));
+    : (displayLabel ??
+      (chatVisualMode === "classic" && workEntry.command?.trim()
+        ? liveWorkEntryLabel(workEntry, workspaceRoot, false)
+        : workEntryDisplayLabel(workEntry, workspaceRoot)));
   const viewedImagePath = workEntryViewedImagePath(workEntry);
   const viewedImage =
     viewedImagePath && threadRef
@@ -3758,11 +3829,9 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
       ? "text-warning"
       : showDestructiveRowStyle
         ? "text-destructive"
-        : showFailedIndicator
-          ? failedToolIconClassName
-          : workEntry.tone === "tool"
-            ? "text-icon-muted"
-            : iconConfig.className,
+        : showFailedIndicator || workEntry.tone === "tool"
+          ? "text-icon-muted"
+          : iconConfig.className,
   );
   const headingClass = showWarningIndicator
     ? "font-medium text-warning"

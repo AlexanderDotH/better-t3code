@@ -10,8 +10,10 @@ import {
   type ProviderInstanceConfig,
 } from "@t3tools/contracts";
 
-import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
+import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
+import { serverEnvironment } from "../../state/server";
+import type { ProviderSettingsModelOption } from "@t3tools/client-runtime/providerSettingsForm";
 import { cn } from "../../lib/utils";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { Button } from "../ui/button";
@@ -37,6 +39,15 @@ import {
   type WizardNavigation,
 } from "./AddProviderInstanceDialog.logic";
 import { AddProviderInstanceWizardSteps } from "./AddProviderInstanceWizardSteps";
+import { AiEndpointDiscovery } from "./AiEndpointDiscovery";
+import {
+  adoptAiEndpoint,
+  aiEndpointBaseUrl,
+  aiEndpointBaseUrlError,
+  isAiEndpointDriver,
+} from "./AiEndpointSettings.logic";
+import { ADDITIONAL_BETTER_T3_PROVIDER_DRIVERS } from "./BetterT3SettingsPanel.logic";
+import { useSettingsCommand, useSettingsMutation } from "./useSettingsMutation";
 
 const PROVIDER_ACCENT_SWATCHES = [
   "#2563eb",
@@ -71,6 +82,9 @@ function deriveInstanceId(driver: ProviderDriverKind, label: string): string {
 const INSTANCE_ID_PATTERN = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
 const DEFAULT_DRIVER_OPTION = DRIVER_OPTIONS[0]!;
+const FIRST_ADDITIONAL_DRIVER_OPTION = DRIVER_OPTIONS.find((option) =>
+  ADDITIONAL_BETTER_T3_PROVIDER_DRIVERS.includes(option.value),
+);
 const EMPTY_CONFIG_DRAFT: Record<string, unknown> = {};
 interface ComingSoonDriverOption {
   readonly value: ProviderDriverKind;
@@ -121,6 +135,7 @@ interface AddProviderInstanceDialogProps {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
   readonly onOpenChange: (open: boolean) => void;
+  readonly onAdded?: (instanceId: ProviderInstanceId) => void;
 }
 
 export function AddProviderInstanceDialog({
@@ -128,10 +143,12 @@ export function AddProviderInstanceDialog({
   environmentId,
   environmentLabel,
   onOpenChange,
+  onAdded,
 }: AddProviderInstanceDialogProps) {
   const translate = useInterfaceTranslator().message;
   const settings = useEnvironmentSettings(environmentId);
-  const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  const updateSettings = useSettingsCommand(serverEnvironment.updateSettings);
+  const setProviderAuthCredential = useSettingsCommand(serverEnvironment.setProviderAuthCredential);
 
   const [wizardStep, setWizardStep] = useState(0);
   const [driver, setDriver] = useState<ProviderDriverKind>(DEFAULT_DRIVER_KIND);
@@ -141,6 +158,16 @@ export function AddProviderInstanceDialog({
   // Driver-specific config drafts keyed by driver so toggling between drivers
   // during the same dialog session does not lose in-progress input.
   const [configByDriver, setConfigByDriver] = useState<Record<string, Record<string, unknown>>>({});
+  const [modelsByDriver, setModelsByDriver] = useState<
+    Record<
+      string,
+      {
+        baseUrl: string;
+        models: ReadonlyArray<ProviderSettingsModelOption>;
+      }
+    >
+  >({});
+  const [apiKey, setApiKey] = useState("");
   // Errors are suppressed until the user has tried to submit once. After that
   // they update live so fixing the problem clears the message in place.
   const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false);
@@ -162,7 +189,12 @@ export function AddProviderInstanceDialog({
   const wizardStepSummaries = [driverOption.label, previewLabel, null] as const;
 
   const configDraft = configByDriver[driver] ?? EMPTY_CONFIG_DRAFT;
+  const endpointDriver = isAiEndpointDriver(driver);
+  const endpointBaseUrl = endpointDriver ? aiEndpointBaseUrl(driver, configDraft) : null;
+  const discoveredModels = modelsByDriver[driver];
+  const configError = endpointDriver ? aiEndpointBaseUrlError(driver, configDraft) : null;
   const setConfigDraft = (config: Record<string, unknown> | undefined) => {
+    if (endpointDriver && aiEndpointBaseUrl(driver, config) !== endpointBaseUrl) setApiKey("");
     setConfigByDriver((existing) => {
       const next = { ...existing };
       if (config === undefined || Object.keys(config).length === 0) {
@@ -189,9 +221,62 @@ export function AddProviderInstanceDialog({
     );
   };
 
+  const saveInstance = useSettingsMutation({
+    mutationFn: async (input: {
+      instanceId: ProviderInstanceId;
+      instance: ProviderInstanceConfig;
+      credential: string;
+    }) => {
+      await updateSettings({
+        environmentId,
+        input: {
+          patch: {
+            providerInstances: {
+              ...settings.providerInstances,
+              [input.instanceId]: input.instance,
+            },
+          },
+        },
+      });
+      if (input.credential) {
+        try {
+          await setProviderAuthCredential({
+            environmentId,
+            input: { instanceId: input.instanceId, credential: input.credential },
+          });
+        } catch (error) {
+          return error instanceof Error
+            ? error.message
+            : translate("settings.providers.endpoint.credentialSaveFailed");
+        }
+      }
+      return null;
+    },
+    onMutate: () => setApiKey(""),
+    onSuccess: (credentialError, { instanceId: addedId }) => {
+      toastManager.add({
+        type: credentialError === null ? "success" : "error",
+        title:
+          credentialError === null
+            ? "Provider instance added"
+            : translate("settings.providers.endpoint.credentialSaveFailed"),
+        description: credentialError ?? `${driverOption.label} instance '${addedId}' was added.`,
+      });
+      onAdded?.(addedId);
+      onOpenChange(false);
+    },
+    onError: (error) => {
+      toastManager.add({
+        type: "error",
+        title: "Could not add provider instance",
+        description: error instanceof Error ? error.message : "Update failed.",
+      });
+    },
+  });
+
   const handleSave = () => {
     setHasAttemptedSubmit(true);
-    if (instanceIdError !== null) return;
+    if (instanceIdError !== null || configError !== null) return;
 
     const config = configByDriver[driver] ?? {};
     const hasConfig = Object.keys(config).length > 0;
@@ -209,29 +294,22 @@ export function AddProviderInstanceDialog({
     // keeps the type boundary honest and guards against any future drift in
     // the slug rules.
     const brandedId = ProviderInstanceId.make(instanceId);
-    const nextMap = {
-      ...settings.providerInstances,
-      [brandedId]: nextInstance,
-    };
-    try {
-      updateSettings({ providerInstances: nextMap });
-      toastManager.add({
-        type: "success",
-        title: "Provider instance added",
-        description: `${driverOption.label} instance '${instanceId}' was added.`,
-      });
-      onOpenChange(false);
-    } catch (error) {
-      toastManager.add({
-        type: "error",
-        title: "Could not add provider instance",
-        description: error instanceof Error ? error.message : "Update failed.",
-      });
-    }
+    saveInstance.mutate({
+      instanceId: brandedId,
+      instance: nextInstance,
+      credential: endpointDriver ? apiKey.trim() : "",
+    });
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (saveInstance.isPending) return;
+        if (!next) setApiKey("");
+        onOpenChange(next);
+      }}
+    >
       <DialogPopup className="max-w-xl overflow-hidden">
         <div className="flex min-h-0 flex-col overflow-hidden">
           <DialogHeader>
@@ -248,20 +326,23 @@ export function AddProviderInstanceDialog({
             />
           </DialogHeader>
 
-          <WizardPanel>
+          <WizardPanel inert={saveInstance.isPending}>
             <div className={cn("grid gap-2", wizardStep !== 0 && "hidden")}>
               <div id="add-instance-driver-label" className="text-sm font-medium text-foreground">
                 Driver
               </div>
               <RadioGroup
                 value={driver}
-                onValueChange={(value) => setDriver(ProviderDriverKind.make(value))}
+                onValueChange={(value) => {
+                  setDriver(ProviderDriverKind.make(value));
+                  setApiKey("");
+                }}
                 aria-labelledby="add-instance-driver-label"
                 className="grid grid-cols-1 gap-2 sm:grid-cols-2"
               >
-                {DRIVER_OPTIONS.map((option) => {
+                {DRIVER_OPTIONS.flatMap((option) => {
                   const IconComponent = option.icon;
-                  return (
+                  const row = (
                     <RadioPrimitive.Root
                       key={option.value}
                       value={option.value}
@@ -284,6 +365,17 @@ export function AddProviderInstanceDialog({
                       ) : null}
                     </RadioPrimitive.Root>
                   );
+                  return option === FIRST_ADDITIONAL_DRIVER_OPTION
+                    ? [
+                        <div
+                          key="additional-heading"
+                          className="pt-2 text-xs font-medium text-muted-foreground sm:col-span-2"
+                        >
+                          {translate("settings.betterT3.providers.additionalHeading")}
+                        </div>,
+                        row,
+                      ]
+                    : [row];
                 })}
                 {COMING_SOON_DRIVER_OPTIONS.map((option) => {
                   const IconComponent = option.icon;
@@ -397,10 +489,67 @@ export function AddProviderInstanceDialog({
                 <ProviderSettingsForm
                   definition={driverOption}
                   value={configDraft}
+                  models={
+                    discoveredModels?.baseUrl === endpointBaseUrl
+                      ? discoveredModels.models
+                      : undefined
+                  }
                   idPrefix={`add-provider-${driver}`}
                   variant="dialog"
                   onChange={setConfigDraft}
                 />
+                {endpointDriver ? (
+                  <>
+                    {hasAttemptedSubmit && configError ? (
+                      <p role="alert" className="text-xs text-destructive">
+                        {translate(configError)}
+                      </p>
+                    ) : null}
+                    <label className="grid gap-1.5">
+                      <span className="text-xs font-medium text-foreground">
+                        {translate("settings.providers.endpoint.apiKey")}
+                      </span>
+                      <Input
+                        type="password"
+                        autoComplete="off"
+                        value={apiKey}
+                        onChange={(event) => setApiKey(event.currentTarget.value)}
+                        spellCheck={false}
+                      />
+                      <span className="text-xs text-muted-foreground">
+                        {translate("settings.providers.endpoint.apiKeyDescription")}
+                      </span>
+                    </label>
+                    <AiEndpointDiscovery
+                      environmentId={environmentId}
+                      environmentLabel={environmentLabel}
+                      instances={settings.providerInstances ?? {}}
+                      active={open && wizardStep === 2}
+                      onAdopt={(endpoint) => {
+                        const nextDriver = ProviderDriverKind.make(endpoint.kind);
+                        setConfigByDriver((existing) => ({
+                          ...existing,
+                          [nextDriver]: adoptAiEndpoint(
+                            existing[nextDriver] ?? configDraft,
+                            endpoint,
+                          ),
+                        }));
+                        setModelsByDriver((existing) => ({
+                          ...existing,
+                          [nextDriver]: {
+                            baseUrl: aiEndpointBaseUrl(nextDriver, { baseUrl: endpoint.baseUrl })!,
+                            models: endpoint.models.map((model) => ({
+                              slug: model.id,
+                              name: model.name || model.id,
+                            })),
+                          },
+                        }));
+                        setApiKey("");
+                        setDriver(nextDriver);
+                      }}
+                    />
+                  </>
+                ) : null}
               </div>
             ) : wizardStep === 2 ? (
               <div className="grid gap-2">
@@ -414,8 +563,10 @@ export function AddProviderInstanceDialog({
           <DialogFooter variant="bare">
             <Button
               variant="outline"
+              disabled={saveInstance.isPending}
               onClick={() => {
                 if (wizardStep === 0) {
+                  setApiKey("");
                   onOpenChange(false);
                   return;
                 }
@@ -427,7 +578,9 @@ export function AddProviderInstanceDialog({
             {wizardStep < ADD_PROVIDER_WIZARD_STEPS.length - 1 ? (
               <Button onClick={() => navigateToStep(wizardStep + 1)}>Next</Button>
             ) : (
-              <Button onClick={handleSave}>Add instance</Button>
+              <Button disabled={saveInstance.isPending} onClick={handleSave}>
+                Add instance
+              </Button>
             )}
           </DialogFooter>
         </div>

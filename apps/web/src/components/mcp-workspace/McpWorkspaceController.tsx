@@ -28,6 +28,7 @@ import { useSettingsCommand } from "../settings/useSettingsMutation";
 import { ensureLocalApi } from "~/localApi";
 import { agentSettingsEnvironment } from "~/state/agentSettings";
 import { useEnvironmentQuery } from "~/state/query";
+import { useServerConfigs } from "~/state/entities";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 
@@ -111,6 +112,11 @@ const EMPTY_RUNTIME: McpRuntimeWorkspaceState = {
 const McpWorkspaceRuntimeContext = createContext<McpRuntimeWorkspaceState>(EMPTY_RUNTIME);
 
 export function McpWorkspaceRuntimeProvider(props: McpWorkspaceRuntimeProviderProps) {
+  const settings = useServerConfigs().get(props.environmentId)?.settings;
+  const enabledIds = new Set(
+    deriveMcpWorkspaceProviderOptions(props.providers, settings).map((provider) => provider.id),
+  );
+  const providers = props.providers.filter((provider) => enabledIds.has(provider.instanceId));
   const [selectedProviderId, setSelectedProviderId] = useState<ProviderInstanceId | null>(
     props.providerInstanceId,
   );
@@ -129,10 +135,11 @@ export function McpWorkspaceRuntimeProvider(props: McpWorkspaceRuntimeProviderPr
     setSelectedContextId(null);
   }
   const selectedProvider =
-    props.providers.find((provider) => provider.instanceId === selectedProviderId) ??
-    props.providers.find((provider) => provider.instanceId === props.providerInstanceId) ??
+    providers.find((provider) => provider.instanceId === selectedProviderId) ??
+    providers.find((provider) => provider.instanceId === props.providerInstanceId) ??
+    providers[0] ??
     null;
-  const providerInstanceId = selectedProvider?.instanceId ?? props.providerInstanceId;
+  const providerInstanceId = selectedProvider?.instanceId ?? null;
   const selectedChatProvider = providerInstanceId === props.providerInstanceId;
   const enabled =
     props.workspaceSupported &&
@@ -438,6 +445,7 @@ function RuntimeUnavailable({
 
 function McpWorkspaceControllerView(props: McpWorkspaceCardControllerProps) {
   const translate = useInterfaceTranslator().message;
+  const settings = useServerConfigs().get(props.environmentId)?.settings;
   const runtime = useContext(McpWorkspaceRuntimeContext);
   const [activeSection, setActiveSection] = useState<McpWorkspaceSection>("servers");
   const [storeKind, setStoreKind] = useState<"mcp" | "skill">("mcp");
@@ -454,7 +462,7 @@ function McpWorkspaceControllerView(props: McpWorkspaceCardControllerProps) {
     sessionAccessQuery.data?.scopes !== undefined &&
     !sessionAccessQuery.data.scopes.includes("orchestration:operate");
   const selectedProvider = runtime.selectedProvider;
-  const selectedProviderInstanceId = selectedProvider?.instanceId ?? props.providerInstanceId;
+  const selectedProviderInstanceId = selectedProvider?.instanceId ?? null;
   const selectedProviderDisplayName =
     selectedProvider?.displayName ?? selectedProvider?.instanceId ?? props.providerDisplayName;
   const summary = deriveMcpWorkspaceSummary({
@@ -563,7 +571,7 @@ function McpWorkspaceControllerView(props: McpWorkspaceCardControllerProps) {
                   : "settings.mcp.workspace.ended",
               )} · ${String(context.threadId).slice(0, 8)} · ${String(context.runtimeSessionId).slice(0, 8)}`,
             }))}
-            providers={deriveMcpWorkspaceProviderOptions(props.providers)}
+            providers={deriveMcpWorkspaceProviderOptions(props.providers, settings)}
             selectedContextId={
               runtime.selectedContextId ??
               (runtime.selectedContext ? mcpRuntimeContextId(runtime.selectedContext) : null)

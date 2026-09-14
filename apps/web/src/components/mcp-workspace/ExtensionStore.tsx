@@ -34,7 +34,7 @@ export function ExtensionStore(props: ExtensionStoreProps) {
   const config = useServerConfigs().get(props.environmentId);
   const supported = (config?.environment.capabilities.extensionStoreVersion ?? 0) >= 1;
   const search = useEnvironmentQuery(
-    supported && (kind === "mcp" || debouncedQuery.length >= 2)
+    supported
       ? agentSettingsEnvironment.catalogSearchQuery({
           environmentId: props.environmentId,
           input: { kind, query: debouncedQuery, ...(cursor ? { cursor } : {}) },
@@ -128,7 +128,9 @@ export function ExtensionStore(props: ExtensionStoreProps) {
             {t(
               kind === "mcp"
                 ? "settings.mcp.store.mcpDescription"
-                : "settings.mcp.store.skillDescription",
+                : debouncedQuery.length < 2
+                  ? "settings.mcp.store.suggestions"
+                  : "settings.mcp.store.skillDescription",
             )}
           </p>
           {notice ? (
@@ -154,13 +156,7 @@ export function ExtensionStore(props: ExtensionStoreProps) {
               {t("settings.mcp.store.searching")}
             </p>
           ) : entries.length === 0 ? (
-            <p className="extension-store__empty">
-              {t(
-                kind === "skill" && debouncedQuery.length < 2
-                  ? "settings.mcp.store.searchHint"
-                  : "settings.mcp.store.noResults",
-              )}
-            </p>
+            <p className="extension-store__empty">{t("settings.mcp.store.noResults")}</p>
           ) : (
             <div className="extension-store__results">
               {entries.map((entry) => {

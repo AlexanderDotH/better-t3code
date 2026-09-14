@@ -34,6 +34,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import { resolveUsageLimitsAfterProbe } from "../provider/providerUsageLimits.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { makeCliproxyApi } from "./cliproxyApi.ts";
 
@@ -85,7 +86,20 @@ export const make = Effect.gen(function* () {
       yield* Effect.logDebug("usage limit source read failed", { id, cause: accounts.failure });
       return { ...base, accounts: [], error: accounts.failure.detail };
     }
-    return { ...base, accounts: accounts.success };
+    const previous = (yield* Ref.get(stateRef)).find((source) => source.id === id);
+    return {
+      ...base,
+      accounts: accounts.success.map((account) => ({
+        ...account,
+        usageLimits:
+          resolveUsageLimitsAfterProbe({
+            published: previous?.accounts.find(
+              (old) => old.id === account.id && old.email === account.email,
+            )?.usageLimits,
+            probed: account.usageLimits,
+          }) ?? account.usageLimits,
+      })),
+    };
   });
 
   const publish = (next: ReadonlyArray<UsageLimitSourceSnapshot>) =>

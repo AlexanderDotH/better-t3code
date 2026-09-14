@@ -7,4 +7,9 @@ describe("providerIconKind", () => {
     expect(providerIconKind("openrouter")).toBe("openrouter");
     expect(providerIconKind("unknown-provider")).toBe("codex");
   });
+
+  it("uses the server symbol for both compatible endpoint types", () => {
+    expect(providerIconKind("openaiCompatible")).toBe("server");
+    expect(providerIconKind("lmstudio")).toBe("server");
+  });
 });

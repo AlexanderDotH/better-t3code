@@ -583,6 +583,33 @@ describe("resolveDefaultProviderModelSelection", () => {
 });
 
 describe("setup catalogs", () => {
+  it("lets a keyless endpoint choose a model but excludes rejected credentials", () => {
+    const [entry] = deriveProviderInstanceEntries([
+      provider({
+        provider: ProviderDriverKind.make("lmstudio"),
+        instanceId: "lmstudio_local",
+        status: "warning",
+        models: [model("local-model")],
+      }),
+    ]);
+    expect(entry).toBeDefined();
+    for (const status of [
+      "unknown",
+      "authenticated",
+      "unauthenticated",
+      "error",
+      "expired",
+    ] as const) {
+      const endpoint = {
+        ...entry!,
+        snapshot: { ...entry!.snapshot, auth: { status, type: "api-key-optional" } },
+      };
+      expect(isProviderInstancePickerBrowsable(endpoint)).toBe(
+        status === "unknown" || status === "authenticated",
+      );
+    }
+  });
+
   it("lets an authenticated account choose a model before becoming turn-ready", () => {
     const [entry] = deriveProviderInstanceEntries([
       provider({

@@ -5,6 +5,7 @@ import {
   type ModelSelection,
   type ProjectId,
   type ProviderDriverKind,
+  type ProviderInstanceId,
   type ServerProvider,
   ServerSettings,
   type ServerSettingsPatch,
@@ -53,19 +54,25 @@ const getLegacyProviderSettings = (
 ): LegacyProviderSettings | undefined =>
   (settings.providers as Record<string, LegacyProviderSettings | undefined>)[provider];
 
-export function isModelSelectionProviderEnabled(
-  settings: ServerSettings,
-  selection: ModelSelection,
-): boolean {
-  const instanceConfig = settings.providerInstances[selection.instanceId];
+export function isProviderInstanceEnabled(settings: ServerSettings, instanceId: string): boolean {
+  const instanceConfig = Object.hasOwn(settings.providerInstances, instanceId)
+    ? settings.providerInstances[instanceId as ProviderInstanceId]
+    : undefined;
   if (instanceConfig !== undefined) {
     return resolveProviderInstanceEnabled(instanceConfig);
   }
 
   return (
-    isProviderDriverKind(selection.instanceId) &&
-    getLegacyProviderSettings(settings, selection.instanceId)?.enabled === true
+    isProviderDriverKind(instanceId) &&
+    getLegacyProviderSettings(settings, instanceId)?.enabled === true
   );
+}
+
+export function isModelSelectionProviderEnabled(
+  settings: ServerSettings,
+  selection: ModelSelection,
+): boolean {
+  return isProviderInstanceEnabled(settings, selection.instanceId);
 }
 
 function resolveTextGenerationModelOverride(

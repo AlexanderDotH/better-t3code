@@ -122,7 +122,7 @@ async function advance(milliseconds: number) {
 }
 
 beforeEach(() => {
-  vi.useFakeTimers();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   page = Object.assign(new EventTarget(), { visibilityState: "visible" as const });
   browserWindow = new EventTarget();

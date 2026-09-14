@@ -72,10 +72,10 @@ export const settingsMcpInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Skills suchen, z. B. React oder Code-Review",
     "Rechercher des compétences, par ex. React ou revue de code",
   ],
-  "settings.mcp.store.searchHint": [
-    "Enter at least two characters or choose a topic below.",
-    "Gib mindestens zwei Zeichen ein oder wähle unten ein Thema.",
-    "Saisissez au moins deux caractères ou choisissez un sujet ci-dessous.",
+  "settings.mcp.store.suggestions": [
+    "Suggested skills to get started. Choose one to preview and install.",
+    "Skill-Vorschläge für den Einstieg. Wähle einen aus, um ihn anzusehen und zu installieren.",
+    "Suggestions pour commencer. Choisissez une compétence pour la découvrir et l’installer.",
   ],
   "settings.mcp.store.searching": [
     "Searching the registry…",
@@ -375,6 +375,11 @@ export const settingsMcpInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Provider-managed servers",
     "Vom Provider verwaltete Server",
     "Serveurs gérés par le fournisseur",
+  ],
+  "settings.mcp.provider.discoveredIn": [
+    "Discovered in {{path}}",
+    "Erkannt in {{path}}",
+    "Détecté dans {{path}}",
   ],
   "settings.mcp.workspace.systemServer": [
     "T3 Code System Server",

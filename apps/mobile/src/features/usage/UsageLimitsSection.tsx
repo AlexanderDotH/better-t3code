@@ -9,26 +9,73 @@ import type {
   UsageProviderKind,
 } from "@t3tools/contracts";
 import {
-  elapsedShare,
+  DAILY_USAGE_PACE_LABELS,
+  dailyUsagePace,
   formatDuration,
   formatResetsIn,
   limitsNotice,
   paceOf,
   remainingPercent,
+  usageWindowLabel,
 } from "@t3tools/shared/usageLimits";
-import { type ReactNode, useState } from "react";
-import { Alert, Pressable, View } from "react-native";
+import { type ReactNode, useEffect, useRef, useState } from "react";
+import { AccessibilityInfo, Alert, AppState, Pressable, ScrollView, View } from "react-native";
+import { AsyncResult } from "effect/unstable/reactivity";
 
 import { AppText as Text } from "../../components/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
+import { mobilePreferencesAtom } from "../../state/preferences";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useProviderColors } from "./usageProviders";
 
 const PACE_LABEL = { ahead: "ahead of pace", on: "on pace", under: "under pace" } as const;
 
 type Driver = ServerProvider["driver"];
+
+function ScrollingPaceLabel({ label, tone }: { label: string; tone: string }) {
+  const ref = useRef<ScrollView>(null);
+  const [width, setWidth] = useState(0);
+  const [contentWidth, setContentWidth] = useState(0);
+  useEffect(() => {
+    const overflow = contentWidth - width;
+    if (width === 0 || overflow <= 0) return;
+    let cancelled = false;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    void AccessibilityInfo.isReduceMotionEnabled().then((reducedMotion) => {
+      if (cancelled || reducedMotion) return;
+      for (const [delay, x] of [
+        [2000, overflow],
+        [6000, 0],
+      ] as const) {
+        timers.push(
+          setTimeout(() => {
+            if (AppState.currentState === "active") ref.current?.scrollTo({ x, animated: true });
+          }, delay),
+        );
+      }
+    });
+    return () => {
+      cancelled = true;
+      timers.forEach(clearTimeout);
+    };
+  }, [width, contentWidth]);
+  return (
+    <ScrollView
+      ref={ref}
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
+      onContentSizeChange={setContentWidth}
+      contentContainerStyle={{ flexGrow: 1, justifyContent: "center" }}
+    >
+      <Text numberOfLines={1} className={`text-center text-[11px] ${tone}`}>
+        {label}
+      </Text>
+    </ScrollView>
+  );
+}
 
 /** The series colour the usage chart uses for this driver, so the two views read as one. */
 function useBarColor(driver: Driver): string | null {
@@ -39,10 +86,7 @@ function useBarColor(driver: Driver): string | null {
 }
 
 /**
- * One window as a bar spanning its whole duration: the fill is quota left,
- * the hairline is how much of the window is left, so even spending keeps the
- * fill on the line. Pace sits under the left edge, the countdown under the
- * right, so a row reads in one glance.
+ * Quota remaining, with pace and reset information beneath the bar.
  */
 function WindowRow(props: {
   readonly window: ServerProviderUsageWindow;
@@ -50,21 +94,25 @@ function WindowRow(props: {
   readonly now: number;
 }) {
   const { window, now } = props;
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const pacingEnabled =
+    !AsyncResult.isSuccess(preferences) || preferences.value.usagePacingEnabled !== false;
+  const showPaceBar = pacingEnabled && window.kind === "weekly";
   const remaining = remainingPercent(window);
-  const elapsed = elapsedShare(window, now);
-  const timeLeft = elapsed === null ? null : Math.round((1 - elapsed) * 100);
-  const pace = paceOf(window, now);
+  const pace = pacingEnabled && window.kind !== "weekly" ? paceOf(window, now) : null;
   const resetsIn = formatResetsIn(window, now);
   return (
     <View className="gap-1">
       <View className="flex-row items-baseline justify-between gap-3">
-        <Text className="text-sm text-foreground">{window.label}</Text>
+        <Text className="text-sm text-foreground">{usageWindowLabel(window)}</Text>
         <Text className="text-sm font-t3-medium tabular-nums text-foreground">
           {remaining}% left
         </Text>
       </View>
       <View className="h-3 justify-center">
-        <View className="h-1.5 flex-row overflow-hidden rounded-full bg-subtle">
+        <View
+          className={`${showPaceBar ? "h-3" : "h-1.5"} flex-row overflow-hidden rounded-full bg-subtle`}
+        >
           <View
             className={
               remaining <= 10
@@ -77,15 +125,15 @@ function WindowRow(props: {
               { flex: remaining },
               remaining > 30 && props.color ? { backgroundColor: props.color } : null,
             ]}
-          />
+          >
+            <View
+              pointerEvents="none"
+              className="absolute inset-0 rounded-full border-r-2 border-screen"
+            />
+          </View>
           <View style={{ flex: 100 - remaining }} />
+          <UsagePaceBar window={window} now={now} baseColor={remaining > 30 ? props.color : null} />
         </View>
-        {timeLeft !== null ? (
-          <View
-            className="absolute top-0 bottom-0 w-px bg-foreground"
-            style={{ left: `${timeLeft}%`, opacity: 0.6 }}
-          />
-        ) : null}
       </View>
       {pace || resetsIn ? (
         <View className="flex-row justify-between gap-3">
@@ -94,6 +142,154 @@ function WindowRow(props: {
         </View>
       ) : null}
     </View>
+  );
+}
+
+export function UsagePaceBar({
+  window,
+  now,
+  baseColor = null,
+}: {
+  readonly window: ServerProviderUsageWindow;
+  readonly now: number;
+  readonly baseColor?: string | null;
+}) {
+  const result = useAtomValue(mobilePreferencesAtom);
+  const preferences = AsyncResult.isSuccess(result) ? result.value : {};
+  const pace =
+    preferences.usagePacingEnabled !== false
+      ? dailyUsagePace(window, now, preferences.usagePacingWorkdayHours ?? 8)
+      : null;
+  if (pace?.todayUsedPercent == null) return null;
+  const overdrawn = pace.todayBalancePercent < 0;
+  const remaining = remainingPercent(window);
+  const width = Math.min(
+    overdrawn ? 100 - remaining : remaining,
+    Math.abs(pace.todayBalancePercent),
+  );
+  const catchUpShare =
+    pace.todayRemainingPercent > 0
+      ? (pace.catchUpRemainingPercent / pace.todayRemainingPercent) * 100
+      : 0;
+  const color =
+    pace.status === "exceeded"
+      ? "bg-danger-foreground"
+      : pace.status === "fast"
+        ? "bg-warning-foreground"
+        : pace.status === "good"
+          ? "bg-adaptive-emerald-700-300"
+          : "bg-foreground-tertiary";
+  return (
+    <View
+      pointerEvents="none"
+      accessibilityRole="progressbar"
+      accessibilityLabel="Today's allowance remaining, including catch-up"
+      accessibilityValue={{
+        min: -100,
+        max: 100,
+        now: pace.todayBalancePercent,
+        text: `${pace.todayRemainingPercent.toFixed(1)}% left today, including ${pace.catchUpRemainingPercent.toFixed(1)}% catch-up.${pace.todayOverdrawPercent !== null && pace.todayOverdrawPercent > 0 ? ` ${pace.todayOverdrawPercent.toFixed(1)}% overdrawn today.` : ""} ${DAILY_USAGE_PACE_LABELS[pace.status]}`,
+      }}
+      className="absolute inset-y-0 flex-row rounded-full"
+      style={{
+        right: `${100 - remaining - (overdrawn ? width : 0)}%`,
+        width: `${width}%`,
+      }}
+    >
+      <View className={`min-w-0 rounded-r-full ${color}`} style={{ flex: 100 - catchUpShare }} />
+      {pace.catchUpRemainingPercent > 0 ? (
+        <View
+          className={`min-w-0 rounded-r-full opacity-50 ${color}`}
+          style={{ flex: catchUpShare }}
+        />
+      ) : null}
+      {overdrawn ? <View className="absolute inset-y-0 right-0 w-px bg-foreground/60" /> : null}
+      {remainingPercent(window) > pace.todayRemainingPercent && pace.todayRemainingPercent > 0 ? (
+        <View
+          className={`absolute inset-y-0 right-full w-3 max-w-[200%] translate-x-1/2 rounded-full ${remainingPercent(window) <= 10 ? "bg-red-500" : remainingPercent(window) <= 30 ? "bg-amber-500" : "bg-foreground"}`}
+          style={baseColor ? { backgroundColor: baseColor } : undefined}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+export function UsagePaceDetails({
+  window,
+  now,
+}: {
+  readonly window: ServerProviderUsageWindow;
+  readonly now: number;
+}) {
+  const result = useAtomValue(mobilePreferencesAtom);
+  const preferences = AsyncResult.isSuccess(result) ? result.value : {};
+  const pace = dailyUsagePace(window, now, preferences.usagePacingWorkdayHours ?? 8);
+  if (preferences.usagePacingEnabled === false || !pace) return null;
+  const balance =
+    pace.todayOverdrawPercent !== null && pace.todayOverdrawPercent > 0
+      ? `${pace.todayOverdrawPercent.toFixed(1)}% overdrawn today`
+      : `${pace.todayRemainingPercent.toFixed(1)}% left today`;
+  const warning = pace.status === "fast" || pace.status === "exceeded";
+  const label =
+    warning && pace.paceOverPercent !== null
+      ? `${DAILY_USAGE_PACE_LABELS[pace.status]} (${pace.paceOverPercent.toFixed(1)}% over pace)`
+      : DAILY_USAGE_PACE_LABELS[pace.status];
+  const details = [
+    "The filled bar shows the total quota left this week. Its colored right end is available today, including catch-up in the lighter section. The rest is reserved for later days. Green means within pace and amber means too fast. A red section beyond the remaining quota shows today's negative balance; its far edge marks zero daily allowance.",
+    ...(pace.todayBudgetUsedPercent !== null
+      ? [`${pace.todayBudgetUsedPercent.toFixed(1)}% of today's allowance used`]
+      : []),
+    ...((pace.todayOverdrawPercent ?? 0) > 0
+      ? [`${balance}. This reduces the quota available for later days.`]
+      : []),
+    `${pace.todayUsedPercent?.toFixed(1) ?? "—"}% observed today · ${pace.dailyBudgetPercent.toFixed(1)}% daily allowance`,
+    `${pace.hourlyBudgetPercent.toFixed(1)}% per hour · up to ${pace.workdayHours}-hour day (shortened by an earlier reset)`,
+    pace.workdayHours === 8
+      ? window.usageHistorySource === "codex"
+        ? "Your 8-hour day starts with the first token usage recorded by Codex each local day, including activity outside T3."
+        : "Your 8-hour day starts with the first observed quota increase each local day."
+      : "24-hour pacing uses the full local calendar day.",
+    ...(pace.catchUpPercent > 0
+      ? [
+          `${pace.catchUpPercent.toFixed(1)}% catch-up from earlier days is included in today's allowance and can be used immediately. ${pace.catchUpRemainingPercent.toFixed(1)}% remains.`,
+        ]
+      : []),
+    "Unused allowance from earlier days in this weekly window is available as catch-up; the rest is shared across days until reset, including weekends. Pace includes catch-up before comparing today's usage with the hourly target. Allowances refer to quota, not a fixed token count.",
+    ...(pace.partial
+      ? [
+          window.usageHistorySource === "codex"
+            ? "Codex history does not contain a complete baseline for today. Earlier usage on other machines may be missing."
+            : "Earlier usage today is unknown. This estimate covers observed changes only; tracking restarts with the server.",
+        ]
+      : []),
+  ].join("\n\n");
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${label}. ${balance}. ${pace.dailyBudgetPercent.toFixed(1)}% budget today. ${pace.catchUpRemainingPercent.toFixed(1)}% catch-up left. Show pace details`}
+      onPress={() => Alert.alert(label, details)}
+      className="min-h-[44px] justify-center gap-0.5 active:opacity-60"
+    >
+      <Text className="w-full text-center text-[11px] tabular-nums text-foreground-muted">
+        <Text className={pace.status === "exceeded" ? "text-danger-foreground" : undefined}>
+          {balance}
+        </Text>
+        {" · "}
+        {pace.dailyBudgetPercent.toFixed(1)}% budget today
+        {` · ${pace.catchUpRemainingPercent.toFixed(1)}% catch-up left`}
+      </Text>
+      <ScrollingPaceLabel
+        key={label}
+        label={label}
+        tone={
+          pace.status === "exceeded"
+            ? "text-danger-foreground"
+            : warning
+              ? "text-warning-foreground"
+              : "text-foreground-tertiary"
+        }
+      />
+    </Pressable>
   );
 }
 
@@ -171,6 +367,11 @@ export function AccountLimits(props: {
         </View>
       )}
       {props.footer}
+      {!notice
+        ? limits.windows.map((window) => (
+            <UsagePaceDetails key={window.id} window={window} now={now} />
+          ))
+        : null}
     </View>
   );
 }

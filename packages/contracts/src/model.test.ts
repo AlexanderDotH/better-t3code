@@ -31,9 +31,11 @@ describe("multi-provider model contracts", () => {
     });
   });
 
-  it("defines display names for exactly the native provider drivers", () => {
+  it("defines display names for supported provider drivers", () => {
     expect(PROVIDER_DISPLAY_NAMES).toEqual({
       antigravity: "Antigravity",
+      lmstudio: "LM Studio",
+      openaiCompatible: "OpenAI Compatible",
       [CODEX_DRIVER_KIND]: "Codex",
       [CLAUDE_DRIVER_KIND]: "Claude",
       [CURSOR_DRIVER_KIND]: "Cursor",

@@ -13,6 +13,10 @@ import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 
+const makeTextGeneration = (
+  registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
+) => TextGeneration.makeTextGenerationFromRegistry(registry, () => Effect.succeed(null));
+
 const decodeKnowledgeGraphSemanticModelRequest = Schema.decodeUnknownSync(
   KnowledgeGraphSemanticModelRequestV1,
 );
@@ -76,6 +80,26 @@ const makeStubRegistry = (
 };
 
 describe("makeTextGenerationFromRegistry", () => {
+  it.effect("blocks background generation before dispatch when the hard budget is reached", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("codex");
+      const instance = makeStubInstance(instanceId, makeStubTextGeneration({}));
+      const generation = TextGeneration.makeTextGenerationFromRegistry(
+        makeStubRegistry([instance]),
+        () => Effect.succeed("Hard daily budget reached"),
+      );
+      const result = yield* generation
+        .generateBranchName({
+          cwd: process.cwd(),
+          message: "Fix a bug",
+          modelSelection: createModelSelection(instanceId, "gpt-5"),
+        })
+        .pipe(Effect.result);
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure")
+        expect(result.failure.detail).toBe("Hard daily budget reached");
+    }),
+  );
   it.effect("delegates to the matching instance's textGeneration closure", () =>
     Effect.gen(function* () {
       const personalId = ProviderInstanceId.make("codex_personal");
@@ -98,7 +122,7 @@ describe("makeTextGenerationFromRegistry", () => {
         }),
       );
 
-      const tg = TextGeneration.makeTextGenerationFromRegistry(makeStubRegistry([personal, work]));
+      const tg = makeTextGeneration(makeStubRegistry([personal, work]));
 
       const result = yield* tg.generateBranchName({
         cwd: process.cwd(),
@@ -124,7 +148,7 @@ describe("makeTextGenerationFromRegistry", () => {
           },
         }),
       );
-      const tg = TextGeneration.makeTextGenerationFromRegistry(makeStubRegistry([instance]));
+      const tg = makeTextGeneration(makeStubRegistry([instance]));
       const modelSelection = createModelSelection(instanceId, "gpt-5.6-sol");
 
       const result = yield* tg.generateThreadMetadata({
@@ -164,9 +188,7 @@ describe("makeTextGenerationFromRegistry", () => {
           improvePrompt: () => Effect.succeed({ text: "wrong instance" }),
         }),
       );
-      const textGeneration = TextGeneration.makeTextGenerationFromRegistry(
-        makeStubRegistry([personal, work]),
-      );
+      const textGeneration = makeTextGeneration(makeStubRegistry([personal, work]));
       const modelSelection = createModelSelection(personalId, "claude-sonnet-4-6");
 
       const translated = yield* textGeneration.translateTranscriptToEnglish({
@@ -202,9 +224,7 @@ describe("makeTextGenerationFromRegistry", () => {
           },
         }),
       );
-      const textGeneration = TextGeneration.makeTextGenerationFromRegistry(
-        makeStubRegistry([reviewer]),
-      );
+      const textGeneration = makeTextGeneration(makeStubRegistry([reviewer]));
 
       const generated = yield* textGeneration.reviewPlanParallelism({
         cwd: "/repo/worktree",
@@ -235,9 +255,7 @@ describe("makeTextGenerationFromRegistry", () => {
           },
         }),
       );
-      const textGeneration = TextGeneration.makeTextGenerationFromRegistry(
-        makeStubRegistry([planner]),
-      );
+      const textGeneration = makeTextGeneration(makeStubRegistry([planner]));
       const modelSelection = createModelSelection(plannerId, "claude-opus-4-6", [
         { id: "effort", value: "high" },
       ]);
@@ -303,9 +321,7 @@ describe("makeTextGenerationFromRegistry", () => {
           },
         }),
       );
-      const textGeneration = TextGeneration.makeTextGenerationFromRegistry(
-        makeStubRegistry([provider]),
-      );
+      const textGeneration = makeTextGeneration(makeStubRegistry([provider]));
       const modelSelection = createModelSelection(providerId, "gpt-5.6-sol");
 
       const result = yield* textGeneration.enrichKnowledgeGraph({ request, modelSelection });
@@ -359,7 +375,7 @@ describe("makeTextGenerationFromRegistry", () => {
 
   it.effect("fails with TextGenerationError when the instance is unknown", () =>
     Effect.gen(function* () {
-      const tg = TextGeneration.makeTextGenerationFromRegistry(makeStubRegistry([]));
+      const tg = makeTextGeneration(makeStubRegistry([]));
 
       const result = yield* tg
         .generateBranchName({

@@ -76,6 +76,8 @@ export function deriveProviderSubscriptionPresentation(
   if (!credential && !hasInteractiveFlow && !capabilities?.canDisconnect) return null;
 
   const authenticated = snapshot.auth.status === "authenticated";
+  const optionalCredential = snapshot.auth.type === "api-key-optional";
+  const hasCredential = optionalCredential ? Boolean(capabilities?.canDisconnect) : authenticated;
   const reconnect =
     snapshot.auth.status === "expired" ||
     snapshot.auth.status === "error" ||
@@ -91,12 +93,13 @@ export function deriveProviderSubscriptionPresentation(
   const rateLimit = rateLimitLabel(snapshot);
   return {
     action,
-    actionLabel: subscriptionActionLabel(action, credential, authenticated),
+    actionLabel: subscriptionActionLabel(action, credential, hasCredential),
     providerName: snapshot.providerName,
     flows: capabilities?.flows ?? [],
     credential,
-    canDisconnect: authenticated && Boolean(capabilities?.canDisconnect),
-    environmentCredential: authenticated && credential !== null && !capabilities?.canDisconnect,
+    canDisconnect: hasCredential && Boolean(capabilities?.canDisconnect),
+    environmentCredential:
+      !optionalCredential && authenticated && credential !== null && !capabilities?.canDisconnect,
     account:
       snapshot.auth.email?.trim() ||
       snapshot.auth.label?.trim() ||

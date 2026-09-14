@@ -10,6 +10,7 @@ import type {
   RuntimeMode,
   ServerSettings,
   ThreadForkBoundary,
+  ThreadForkCommand,
 } from "@t3tools/contracts";
 import { resolveDefaultThreadEnvMode } from "@t3tools/shared/threadEnvMode";
 import { useNavigate } from "@tanstack/react-router";
@@ -45,10 +46,13 @@ export function useThreadFork(input: {
   const pendingRef = useRef(false);
   const [pendingBoundary, setPendingBoundary] = useState<ThreadForkBoundary | null>(null);
   const onFork = useCallback(
-    async (boundary: ThreadForkBoundary) => {
+    async (boundary: ThreadForkBoundary, messageEdit?: ThreadForkCommand["messageEdit"]) => {
       const input = inputRef.current;
       const { thread, project } = input;
-      if (!input.available || !thread || !project || pendingRef.current) return;
+      if (!input.available || !thread || !project || pendingRef.current) {
+        if (messageEdit) throw new Error("Chat branching is not available right now.");
+        return;
+      }
       pendingRef.current = true;
       setPendingBoundary(boundary);
       input.onError(thread.id, null);
@@ -85,6 +89,7 @@ export function useThreadFork(input: {
             threadId,
             sourceThreadId: thread.id,
             boundary,
+            ...(messageEdit ? { messageEdit } : {}),
             modelSelection: input.getModelSelection() ?? thread.modelSelection,
             runtimeMode: input.runtimeMode,
             interactionMode: input.interactionMode,
@@ -93,6 +98,7 @@ export function useThreadFork(input: {
           },
         });
         if (result._tag === "Failure") {
+          if (messageEdit) throw squashAtomCommandFailure(result);
           if (!isAtomCommandInterrupted(result)) throw squashAtomCommandFailure(result);
           return;
         }
@@ -107,6 +113,7 @@ export function useThreadFork(input: {
           thread.id,
           error instanceof Error ? error.message : "Could not fork this chat.",
         );
+        if (messageEdit) throw error;
       } finally {
         pendingRef.current = false;
         setPendingBoundary(null);

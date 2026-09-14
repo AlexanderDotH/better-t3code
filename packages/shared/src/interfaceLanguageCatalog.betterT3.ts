@@ -133,6 +133,16 @@ const betterT3SettingsCatalog = defineLocalizedInterfaceCatalog({
     "Hier ist die Live-Antwort",
     "Voici la réponse en direct",
   ],
+  "settings.betterT3.preview.chat.instant": [
+    "Without animation",
+    "Ohne Animation",
+    "Sans animation",
+  ],
+  "settings.betterT3.preview.chat.smooth": [
+    "Smooth character reveal",
+    "Sanftes Einblenden der Zeichen",
+    "Apparition fluide des caractères",
+  ],
   "settings.betterT3.preview.chat.mcp": ["MCP", "MCP", "MCP"],
   "settings.betterT3.preview.chat.git": ["Git", "Git", "Git"],
   "settings.betterT3.preview.chat.prompt": ["Type a prompt", "Prompt eingeben", "Saisir un prompt"],
@@ -488,6 +498,11 @@ const betterT3SettingsCatalog = defineLocalizedInterfaceCatalog({
 type FeatureLabel = readonly [en: string, de: string, fr: string];
 
 const featureLabels = {
+  "chat.visualizations": [
+    "Diagrams & data visualization",
+    "Diagramme & Datenvisualisierung",
+    "Diagrammes et visualisation des données",
+  ],
   "agent.fetch": ["Fetch", "Fetch", "Fetch"],
   "agent.fetchModel": ["Fetch model", "Fetch-Modell", "Modèle Fetch"],
   "agent.parallelPlanImplementation": [
@@ -519,9 +534,14 @@ const featureLabels = {
     "Commandes de saisie étendues",
   ],
   "agent.reasoningVisibility": [
-    "Reasoning visibility",
-    "Sichtbarkeit der Begründung",
-    "Visibilité du raisonnement",
+    "Show thinking traces",
+    "Thinking-Traces anzeigen",
+    "Afficher les traces de raisonnement",
+  ],
+  "chat.messageEditing": [
+    "Edit chat messages",
+    "Chatnachrichten bearbeiten",
+    "Modifier les messages",
   ],
   "agent.generalSubagents": ["General subagents", "Allgemeine Subagents", "Sous-agents généraux"],
   "agent.nativeSubagentDisplay": [
@@ -653,6 +673,16 @@ const featureLabels = {
 } as const satisfies Readonly<Record<BetterT3FeatureId, FeatureLabel>>;
 
 const featureDescriptionOverrides: Partial<Record<BetterT3FeatureId, FeatureLabel>> = {
+  "chat.visualizations": [
+    "Show diagrams and charts for learning and data analysis, and encourage agents to use them when helpful. Applies to all clients connected to this environment.",
+    "Diagramme und Charts zum Lernen und zur Datenauswertung anzeigen und Agenten zur passenden Nutzung ermutigen. Gilt für alle Clients dieser Umgebung.",
+    "Afficher des diagrammes pour apprendre et analyser les données, et encourager les agents à les utiliser lorsque cela aide. Pour tous les clients de cet environnement.",
+  ],
+  "knowledge.model": [
+    "Optional model enrichment requires an OpenAI API provider. Local indexing works without a model.",
+    "Optionale Modellanreicherung benötigt einen OpenAI-API-Provider. Die lokale Indexierung funktioniert ohne Modell.",
+    "L’enrichissement optionnel nécessite un fournisseur API OpenAI. L’indexation locale fonctionne sans modèle.",
+  ],
   "agent.autoReasoningModel": [
     "Used to select the reasoning level. Automatic uses the text-generation model.",
     "Wird zur Auswahl der Reasoning-Stufe verwendet. Automatisch verwendet das Textgenerierungsmodell.",
@@ -674,9 +704,14 @@ const featureDescriptionOverrides: Partial<Record<BetterT3FeatureId, FeatureLabe
     "Activé : panneau Agents et résumés natifs de T3 Code. Désactivé : pastilles flottantes et dialogues de transcription Better T3. Seul l’affichage change, pas la délégation.",
   ],
   "agent.reasoningVisibility": [
-    "Show the agent’s reasoning summary in chat while it works on the request.",
-    "Zeigt während der Bearbeitung eine Zusammenfassung der Begründung direkt im Chat an.",
-    "Affiche dans la discussion un résumé du raisonnement de l’agent pendant le traitement de la demande.",
+    "Show reasoning summaries supplied by the provider in classic and normal chat, including after the response finishes.",
+    "Zeigt vom Provider gelieferte Reasoning-Zusammenfassungen im klassischen und normalen Chat, auch nach Abschluss der Antwort.",
+    "Affiche les résumés de raisonnement fournis par le fournisseur dans les discussions classique et normale, même après la réponse.",
+  ],
+  "chat.messageEditing": [
+    "Edit user and assistant messages, then send a correction or restart from that point in a new chat branch.",
+    "Nutzer- und Agentennachrichten bearbeiten und als Korrektur senden oder ab dieser Stelle in einem neuen Chatzweig fortsetzen.",
+    "Modifiez les messages utilisateur et assistant, puis envoyez une correction ou reprenez dans une nouvelle branche.",
   ],
   "chat.sidebarPosition": [
     "Move project navigation and its controls to the left or right side.",

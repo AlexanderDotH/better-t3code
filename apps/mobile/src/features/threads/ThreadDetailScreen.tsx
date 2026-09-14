@@ -68,6 +68,8 @@ import { useMobileInterfaceTranslator } from "../../localization/useMobileInterf
 
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { collectProviderUsageLimits } from "@t3tools/shared/usageLimits";
+import { useAtom } from "@effect/atom-react";
+import { usageLimitsOpenedAtAtom } from "@t3tools/client-runtime/state/usage";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import type { StatusTone } from "../../components/StatusPill";
 import type { DraftComposerAttachment } from "../../lib/composerImages";
@@ -446,67 +448,28 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const [collapsedUserInputRequestId, setCollapsedUserInputRequestId] =
     useState<ApprovalRequestId | null>(null);
   const activeUserInputRequestId = props.activePendingUserInput?.requestId ?? null;
-  // The open /usage-limits panel for this thread, model and turn. Only the open
-  // moment is stored: the rows read live provider data, so a redeemed reset
-  // credit or refreshed probe shows through. Anything that spends quota closes
-  // it: a new turn from any source, or the agent resuming after an approval or
-  // answered question.
-  const [usageLimitsPanel, setUsageLimitsPanel] = useState<{
-    readonly key: string;
-    readonly threadKey: string;
-    readonly now: number;
-  } | null>(null);
-  // A pending approval or question is part of the key: once it is answered,
-  // from this client or any other, the agent resumes and spends quota.
-  const usageLimitsKey = [
-    selectedThreadKey,
-    props.selectedThread.modelSelection.instanceId,
-    props.selectedThread.latestTurn?.turnId ?? "",
-    props.activePendingApproval?.requestId ?? props.activePendingUserInput?.requestId ?? "",
-  ].join(":");
-  // Drop the snapshot as soon as the key changes so it cannot resurface stale.
-  if (usageLimitsPanel !== null && usageLimitsPanel.key !== usageLimitsKey) {
-    setUsageLimitsPanel(null);
-  }
+  const [usageLimitsOpenedAt, setUsageLimitsOpenedAt] = useAtom(usageLimitsOpenedAtAtom);
   const usageLimitsReport = useMemo(
     () =>
-      usageLimitsPanel !== null && usageLimitsPanel.key === usageLimitsKey
+      usageLimitsOpenedAt !== null
         ? collectProviderUsageLimits(
             props.selectedThread.modelSelection.instanceId,
             props.serverConfig?.providers ?? [],
             props.serverConfig?.usageLimitSources ?? [],
-            usageLimitsPanel.now,
+            Date.now(),
           )
         : null,
-    [
-      props.selectedThread.modelSelection.instanceId,
-      props.serverConfig,
-      usageLimitsKey,
-      usageLimitsPanel,
-    ],
+    [props.selectedThread.modelSelection.instanceId, props.serverConfig, usageLimitsOpenedAt],
   );
   const showUsageLimits = useCallback(
-    (report: UsageLimitsReport | null) =>
-      setUsageLimitsPanel(
-        report === null
-          ? null
-          : {
-              key: usageLimitsKey,
-              threadKey: selectedThreadKey,
-              now: Date.parse(report.createdAt),
-            },
-      ),
-    [selectedThreadKey, usageLimitsKey],
+    (report: UsageLimitsReport | null) => {
+      if (report) setUsageLimitsOpenedAt(Date.parse(report.createdAt));
+    },
+    [setUsageLimitsOpenedAt],
   );
-  const dismissUsageLimits = useCallback(() => setUsageLimitsPanel(null), []);
-  // A send may resolve after navigating away, so only the originating
-  // thread's panel is cleared; a panel opened elsewhere in the meantime stays.
-  const clearUsageLimitsFor = useCallback(
-    (threadKey: string) =>
-      setUsageLimitsPanel((current) =>
-        current !== null && current.threadKey === threadKey ? null : current,
-      ),
-    [],
+  const dismissUsageLimits = useCallback(
+    () => setUsageLimitsOpenedAt(null),
+    [setUsageLimitsOpenedAt],
   );
   const userInputCollapsed =
     activeUserInputRequestId !== null && collapsedUserInputRequestId === activeUserInputRequestId;
@@ -826,9 +789,6 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       return messageId;
     }
 
-    // A sent message makes the snapshot stale; a refused send leaves it in place.
-    clearUsageLimitsFor(targetThreadKey);
-
     setSubmittedMessageId(messageId);
     setAnchorMessageId(
       resolveThreadFeedSubmissionAnchor({
@@ -843,7 +803,6 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     return messageId;
   }, [
     anchorMessageId,
-    clearUsageLimitsFor,
     props.onSendMessage,
     props.selectedThread.latestTurn,
     props.selectedThreadQueueCount,
@@ -891,6 +850,20 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
         draftMessageRef.current = nextDraft;
         props.onChangeDraftMessage(nextDraft);
       }
+      requestAnimationFrame(() => {
+        composerEditorRef.current?.focus();
+        composerEditorRef.current?.setSelection({ start: nextDraft.length, end: nextDraft.length });
+      });
+    },
+    [props.onChangeDraftMessage],
+  );
+
+  const handleVisualizationAction = useCallback(
+    (prompt: string) => {
+      const currentDraft = draftMessageRef.current;
+      const nextDraft = currentDraft.length > 0 ? `${currentDraft}\n\n${prompt}` : prompt;
+      draftMessageRef.current = nextDraft;
+      props.onChangeDraftMessage(nextDraft);
       requestAnimationFrame(() => {
         composerEditorRef.current?.focus();
         composerEditorRef.current?.setSelection({ start: nextDraft.length, end: nextDraft.length });
@@ -979,6 +952,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             onEndFollowEnabledChange={setEndFollowEnabled}
             skills={selectedProviderSkills}
             onUseArtifactTemplate={handleUseArtifactTemplate}
+            onVisualizationAction={handleVisualizationAction}
             planImplementationProvider={selectedProvider}
             parallelPlanImplementationEnabled={props.parallelPlanImplementationEnabled}
             reviewedPlanSubagentCounts={reviewedPlanSubagentCounts}

@@ -50,6 +50,19 @@ export interface MarkdownImageRequest {
  */
 export type MarkdownImageRenderer = (image: MarkdownImageRequest) => import("react").ReactNode;
 
+export interface MarkdownCodeBlockRequest {
+  readonly code: string;
+  readonly language?: string | undefined;
+  /** UTF-8 byte offsets from the native Markdown parser. */
+  readonly beg?: number | undefined;
+  readonly end?: number | undefined;
+}
+
+/** Returning null preserves the selectable, highlighted code block. */
+export type MarkdownCodeBlockRenderer = (
+  block: MarkdownCodeBlockRequest,
+) => import("react").ReactNode;
+
 export interface MarkdownFileContextMenuAction {
   readonly id: string;
   readonly title: string;
@@ -71,6 +84,7 @@ export interface SelectableMarkdownTextProps {
   readonly fileContextMenu?: (href: string) => MarkdownFileContextMenu | undefined;
   readonly onFileContextMenuAction?: (href: string, actionId: string) => void;
   readonly renderImage?: MarkdownImageRenderer;
+  readonly renderCodeBlock?: MarkdownCodeBlockRenderer | undefined;
   readonly marginTop?: number;
   readonly marginBottom?: number;
 }

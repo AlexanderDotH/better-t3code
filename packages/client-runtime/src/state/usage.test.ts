@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import type { EnvironmentPresentation } from "../connection/presentation.ts";
 import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
-import { refreshUsage } from "./usage.ts";
+import { refreshUsage, usageLimitsOpenedAtAtom } from "./usage.ts";
 
 const input = {
   sinceDay: UsageDay.make("2026-09-05"),
@@ -81,6 +81,35 @@ function harness(ids = ["a"]) {
 }
 
 describe("manual usage refresh", () => {
+  it("keeps usage limits pinned between chat mounts until dismissed", () => {
+    const pendingTasks = new Set<() => void>();
+    const registry = AtomRegistry.make({
+      scheduleTask: (task) => {
+        pendingTasks.add(task);
+        return () => {
+          pendingTasks.delete(task);
+        };
+      },
+    });
+    registries.push(registry);
+    const leaveFirstChat = registry.mount(usageLimitsOpenedAtAtom);
+    const openedAt = Date.parse("2026-09-14T12:00:00Z");
+    registry.set(usageLimitsOpenedAtAtom, openedAt);
+    leaveFirstChat();
+    for (const task of pendingTasks) task();
+    pendingTasks.clear();
+
+    const leaveNextChat = registry.mount(usageLimitsOpenedAtAtom);
+    expect(registry.get(usageLimitsOpenedAtAtom)).toBe(openedAt);
+    registry.set(usageLimitsOpenedAtAtom, null);
+    leaveNextChat();
+    for (const task of pendingTasks) task();
+    pendingTasks.clear();
+    const leaveOriginalChat = registry.mount(usageLimitsOpenedAtAtom);
+    expect(registry.get(usageLimitsOpenedAtAtom)).toBeNull();
+    leaveOriginalChat();
+  });
+
   it.each(["success", "failure"])("waits for the rescan after a pricing %s", async (result) => {
     const {
       environments: [environment],

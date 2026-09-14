@@ -344,7 +344,14 @@ export const LoadBalancingWeights = Schema.Record(
 export const ContextWindowSelector = Schema.Literals(["native", "better-t3"]);
 export type ContextWindowSelector = typeof ContextWindowSelector.Type;
 
+export const UsagePacingWorkdayHours = Schema.Literals([8, 24]);
+export type UsagePacingWorkdayHours = typeof UsagePacingWorkdayHours.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
+  usagePacingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  usagePacingWorkdayHours: UsagePacingWorkdayHours.pipe(
+    Schema.withDecodingDefault(Effect.succeed(8)),
+  ),
   loadBalancingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   loadBalancingWeights: LoadBalancingWeights.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   appearanceContrast: AppearanceContrast.pipe(
@@ -623,6 +630,7 @@ export interface ProviderSettingsFormAnnotation {
   readonly hidden?: boolean | undefined;
   readonly clearWhenEmpty?: "omit" | "persist" | undefined;
   readonly options?: ProviderSettingsFormOptions | undefined;
+  readonly allowCustomValue?: boolean | undefined;
   readonly min?: number | undefined;
   readonly max?: number | undefined;
   readonly step?: number | undefined;
@@ -1577,6 +1585,7 @@ export const ServerSettings = Schema.Struct({
   ),
   agentEnhancement: AgentEnhancementSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  usageHardBudgetEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   // Keyed by a user-chosen id so a source keeps its rows across edits. Entries
   // this build cannot decode round-trip untouched, as provider instances do.
   usageLimitSources: Schema.Record(UsageLimitSourceId, UsageLimitSourceConfig).pipe(
@@ -1617,6 +1626,7 @@ export const providerInstanceConfigEnabledFlag = (config: unknown): boolean | un
  * the single source of truth. Unknown (fork) drivers default to enabled.
  */
 export const defaultEnabledForDriver = (driver: ProviderDriverKind): boolean => {
+  if (driver === "openaiCompatible" || driver === "lmstudio") return false;
   const legacyDefaults = DEFAULT_SERVER_SETTINGS.providers as Record<
     string,
     { readonly enabled?: boolean } | undefined
@@ -1900,6 +1910,7 @@ export const ServerSettingsPatch = Schema.Struct({
   // patches risk leaving driver-specific config in a half-merged state.
   // The web UI sends a fully-formed map every time it edits this field.
   providerInstances: Schema.optionalKey(Schema.Record(ProviderInstanceId, ProviderInstanceConfig)),
+  usageHardBudgetEnabled: Schema.optionalKey(Schema.Boolean),
   // Per-entry, unlike `providerInstances`: a client only ever adds or removes
   // one source, and sending the whole map races another edit that has not
   // echoed back yet. `null` removes; the server merges into its current map.
@@ -1914,6 +1925,8 @@ export const ServerSettingsPatch = Schema.Struct({
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
 export const ClientSettingsPatch = Schema.Struct({
+  usagePacingEnabled: Schema.optionalKey(Schema.Boolean),
+  usagePacingWorkdayHours: Schema.optionalKey(UsagePacingWorkdayHours),
   loadBalancingEnabled: Schema.optionalKey(Schema.Boolean),
   loadBalancingWeights: Schema.optionalKey(LoadBalancingWeights),
   appearanceContrast: Schema.optionalKey(AppearanceContrast),

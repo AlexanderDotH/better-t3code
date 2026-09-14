@@ -1,84 +1,77 @@
 @media (prefers-reduced-motion: no-preference) {
-  [data-better-t3-feature-choice] button:is(:hover, :focus-visible) .better-t3-preview-animate {
-    animation: better-t3-preview-enter 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
-  }
+  .better-t3-feature-option {
+    --preview-ease: cubic-bezier(0.22, 1, 0.36, 1);
+    transition:
+      border-color 180ms ease,
+      box-shadow 180ms ease;
 
-  [data-better-t3-feature-choice]
-    button:is(:hover, :focus-visible)
-    [data-card-morphing="true"]
-    .better-t3-preview-active-card {
-    animation: better-t3-preview-card-morph 560ms cubic-bezier(0.22, 1, 0.36, 1) both;
-  }
+    .better-t3-preview-selection {
+      transition:
+        background-color 180ms ease,
+        border-color 180ms ease;
+    }
 
-  [data-better-t3-feature-choice]
-    button:is(:hover, :focus-visible)
-    [data-streaming-motion="true"]
-    .better-t3-preview-stream-token {
-    opacity: 0;
-    animation: better-t3-preview-stream-token 360ms ease-out both;
-  }
+    /* Releasing a press replays the preview without timers or an idle animation loop. */
+    &:is(:hover, :focus):not(:active, :disabled) {
+      .better-t3-preview-reveal {
+        animation: better-t3-preview-reveal 480ms var(--preview-ease) both;
+      }
 
-  [data-streaming-motion="true"] .better-t3-preview-stream-token:nth-child(2) {
-    animation-delay: 70ms;
-  }
+      .better-t3-preview-reveal:nth-child(2) {
+        animation-delay: 80ms;
+      }
 
-  [data-streaming-motion="true"] .better-t3-preview-stream-token:nth-child(3) {
-    animation-delay: 140ms;
-  }
+      .better-t3-preview-reveal:nth-child(3) {
+        animation-delay: 160ms;
+      }
 
-  [data-streaming-motion="true"] .better-t3-preview-stream-token:nth-child(4) {
-    animation-delay: 210ms;
-  }
+      [data-workspace-card-deck="true"] {
+        .better-t3-preview-deck-top {
+          animation: better-t3-preview-deck-top 850ms var(--preview-ease) both;
+        }
 
-  [data-better-t3-feature-choice="chat.characterStreamingMotion"]
-    button:is(:hover, :focus-visible)
-    [data-streaming-motion="true"]
-    .better-t3-preview-stream-character {
-    animation: better-t3-preview-stream-token 360ms ease-out both;
-  }
+        .better-t3-preview-deck-bottom {
+          animation: better-t3-preview-deck-bottom 850ms 70ms var(--preview-ease) both;
+        }
 
-  [data-better-t3-feature-choice]
-    button:is(:hover, :focus-visible)
-    [data-deep-thinking="true"]
-    .better-t3-preview-thinking-line {
-    animation: better-t3-preview-thinking-line 460ms ease-out both;
-  }
+        .better-t3-preview-active-card {
+          animation: better-t3-preview-deck-front 650ms var(--preview-ease) both;
+        }
+      }
 
-  [data-deep-thinking="true"] .better-t3-preview-thinking-line:nth-child(2) {
-    animation-delay: 80ms;
+      [data-streaming-motion="true"] {
+        .better-t3-preview-stream-character {
+          animation: better-t3-preview-reveal 280ms var(--preview-ease) both;
+        }
+
+        .better-t3-preview-caret {
+          animation: better-t3-preview-caret 600ms 2 step-end;
+        }
+      }
+
+      [data-reasoning-visible="true"] .better-t3-preview-thinking-line {
+        animation: better-t3-preview-thinking-line 600ms var(--preview-ease) both;
+
+        &:nth-child(2) {
+          animation-delay: 120ms;
+        }
+      }
+
+      .better-t3-preview-slider-fill {
+        animation: better-t3-preview-slider-fill 1200ms var(--preview-ease) both;
+      }
+
+      .better-t3-preview-slider-thumb {
+        animation: better-t3-preview-slider-thumb 1200ms var(--preview-ease) both;
+      }
+    }
   }
 }
 
-@keyframes better-t3-preview-enter {
+@keyframes better-t3-preview-reveal {
   from {
     opacity: 0;
-    transform: translateY(0.25rem) scale(0.99);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-@keyframes better-t3-preview-card-morph {
-  0% {
-    transform: translateY(0.35rem) scale(0.985);
-  }
-
-  62% {
-    transform: translateY(-0.125rem) scale(1.004);
-  }
-
-  100% {
-    transform: translateY(0) scale(1);
-  }
-}
-
-@keyframes better-t3-preview-stream-token {
-  from {
-    opacity: 0;
-    transform: translateY(0.2rem);
+    transform: translateY(0.3rem);
   }
 
   to {
@@ -87,14 +80,97 @@
   }
 }
 
+@keyframes better-t3-preview-deck-top {
+  0%,
+  12% {
+    opacity: 0.3;
+    transform: translateY(1.5rem) scale(0.96);
+  }
+
+  65% {
+    transform: translateY(-0.125rem);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes better-t3-preview-deck-bottom {
+  0%,
+  12% {
+    opacity: 0.3;
+    transform: translateY(-1.5rem) scale(0.96);
+  }
+
+  65% {
+    transform: translateY(0.125rem);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes better-t3-preview-deck-front {
+  from {
+    transform: scale(0.96);
+  }
+
+  to {
+    transform: scale(1);
+  }
+}
+
+@keyframes better-t3-preview-caret {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0;
+  }
+}
+
 @keyframes better-t3-preview-thinking-line {
   from {
     opacity: 0;
-    transform: scaleX(0.82);
+    transform: scaleX(0.6);
   }
 
   to {
     opacity: 1;
     transform: scaleX(1);
+  }
+}
+
+@keyframes better-t3-preview-slider-fill {
+  0% {
+    transform: scaleX(0.36);
+  }
+
+  65% {
+    transform: scaleX(1.24);
+  }
+
+  100% {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes better-t3-preview-slider-thumb {
+  0% {
+    transform: translateX(-16%);
+  }
+
+  65% {
+    transform: translateX(6%);
+  }
+
+  100% {
+    transform: translateX(0);
   }
 }

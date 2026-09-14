@@ -9,6 +9,7 @@ import type {
   McpMutationResult,
   McpProviderCapability,
   McpProviderStatusResult,
+  McpProviderStatusInput,
   McpServerDefinition,
   McpServerId,
   McpServerUpdateDefinition,
@@ -54,7 +55,7 @@ export interface McpConfigEngineShape {
   ) => Effect.Effect<McpCursorJsonResult, McpConfigError>;
   readonly providerStatus: (
     providers: ReadonlyArray<ServerProvider>,
-    input?: ResolveActiveMcpServersInput,
+    input?: ResolveActiveMcpServersInput & McpProviderStatusInput,
     providerCapability?: (
       providerInstanceId: ProviderInstanceId,
     ) => Effect.Effect<McpProviderCapability>,

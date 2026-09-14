@@ -18,6 +18,10 @@ import {
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_SERVER_SETTINGS,
+  LmStudioSettings,
+  LM_STUDIO_BASE_URL,
+  OpenAiCompatibleSettings,
+  normalizeAiEndpointBaseUrl,
   type McpEnvironment,
   type McpHeaders,
   type McpSecretValue,
@@ -63,12 +67,58 @@ import {
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import { prepareLegacyOpenRouterSettingsMigration } from "./openRouterLegacySettingsMigration.ts";
 import { openRouterApiKeySecretName } from "./provider/openrouter/auth/OpenRouterCredentialStore.ts";
+import { openAiCompatibleApiKeySecretName } from "./provider/openaiCompatible/OpenAiCompatibleCredentialStore.ts";
 
 export { resolveSourceControlWriterModelSelection } from "@t3tools/shared/serverSettings";
 
 const encodeServerSettings = Schema.encodeEffect(ServerSettings);
 const encodeServerSettingsJson = Schema.encodeUnknownEffect(fromJsonStringPretty(ServerSettings));
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
+const decodeOpenAiCompatibleSettings = Schema.decodeUnknownEffect(OpenAiCompatibleSettings);
+const decodeLmStudioSettings = Schema.decodeUnknownEffect(LmStudioSettings);
+const decodeEndpointBaseUrl = Schema.decodeUnknownOption(
+  Schema.Struct({ baseUrl: Schema.optionalKey(Schema.String) }),
+);
+
+function endpointBaseUrl(instance: ProviderInstanceConfig): string | undefined {
+  const config = decodeEndpointBaseUrl(instance.config ?? {});
+  if (Option.isNone(config)) return undefined;
+  try {
+    return normalizeAiEndpointBaseUrl(
+      config.value.baseUrl ?? (instance.driver === "lmstudio" ? LM_STUDIO_BASE_URL : ""),
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+const normalizeAiEndpointInstances = Effect.fn("ServerSettings.normalizeAiEndpointInstances")(
+  function* (settings: ServerSettings) {
+    const providerInstances = { ...settings.providerInstances };
+    for (const [rawId, instance] of Object.entries(providerInstances)) {
+      if (instance.driver !== "openaiCompatible" && instance.driver !== "lmstudio") continue;
+      const { enabled: _enabled, ...config } = yield* (
+        instance.driver === "lmstudio" ? decodeLmStudioSettings : decodeOpenAiCompatibleSettings
+      )(instance.config ?? {}).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ServerSettingsError({
+              settingsPath: "<memory>",
+              operation: "normalize",
+              providerInstanceId: rawId,
+              cause,
+            }),
+        ),
+      );
+      providerInstances[ProviderInstanceId.make(rawId)] = {
+        ...instance,
+        enabled: resolveProviderInstanceEnabled(instance),
+        config: { ...config, baseUrl: normalizeAiEndpointBaseUrl(config.baseUrl) },
+      };
+    }
+    return { ...settings, providerInstances };
+  },
+);
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -1438,12 +1488,39 @@ const make = Effect.gen(function* () {
     yield* Deferred.succeed(startedDeferred, undefined).pipe(Effect.orDie);
   });
 
+  const removeStaleEndpointCredentials = Effect.fn("ServerSettings.removeStaleEndpointCredentials")(
+    function* (current: ServerSettings, next: ServerSettings) {
+      for (const [instanceId, instance] of Object.entries(current.providerInstances)) {
+        if (instance.driver !== "openaiCompatible" && instance.driver !== "lmstudio") continue;
+        const nextInstance = next.providerInstances[ProviderInstanceId.make(instanceId)];
+        if (
+          nextInstance?.driver === instance.driver &&
+          endpointBaseUrl(instance) === endpointBaseUrl(nextInstance)
+        )
+          continue;
+        yield* secretStore.remove(openAiCompatibleApiKeySecretName(instanceId)).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ServerSettingsError({
+                settingsPath,
+                operation: "remove-stale-secret",
+                providerInstanceId: instanceId,
+                cause,
+              }),
+          ),
+        );
+      }
+    },
+  );
+
   const modifySettings: ServerSettingsService["Service"]["modifySettings"] = (modify) =>
     writeSemaphore.withPermits(1)(
       Effect.gen(function* () {
         const current = yield* getSettingsFromCache;
         const requested = yield* modify(current);
-        const sanitizedRequested = yield* sanitizeOpenRouterProviderInstances(requested);
+        const sanitizedRequested = yield* normalizeAiEndpointInstances(requested).pipe(
+          Effect.flatMap(sanitizeOpenRouterProviderInstances),
+        );
         const nextWithProviderSecrets = yield* persistProviderEnvironmentSecrets(
           current,
           sanitizedRequested,
@@ -1454,6 +1531,7 @@ const make = Effect.gen(function* () {
         yield* writeSettingsAtomically(next);
         yield* Cache.set(settingsCache, cacheKey, next);
         yield* emitChange(next);
+        yield* removeStaleEndpointCredentials(current, next);
         const materialized = yield* materializeProviderEnvironmentSecrets(next).pipe(
           Effect.flatMap(materializeMcpSecretValues),
           Effect.flatMap(materializeSpeechTranscriptionSecrets),

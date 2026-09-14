@@ -3,6 +3,7 @@ import type {
   McpServerDefinition,
   ProviderInstanceId,
   ServerProvider,
+  ServerSettings,
 } from "@t3tools/contracts";
 
 import { deriveMcpManagementSummary } from "../mcp-management/mcpManagementSummary";
@@ -34,8 +35,9 @@ export interface McpWorkspaceProviderOption {
 
 export function deriveMcpWorkspaceProviderOptions(
   providers: readonly ServerProvider[],
+  settings?: ServerSettings,
 ): readonly McpWorkspaceProviderOption[] {
-  return deriveMcpProviderTabs(providers).map((provider) => ({
+  return deriveMcpProviderTabs(providers, settings).map((provider) => ({
     id: provider.instanceId,
     label: provider.label,
     ...(provider.accentColor ? { accentColor: provider.accentColor } : {}),

@@ -145,6 +145,15 @@ export type McpProviderCapability = typeof McpProviderCapability.Type;
 export const McpProviderStatusState = Schema.Literals(["ready", "limited", "unsupported"]);
 export type McpProviderStatusState = typeof McpProviderStatusState.Type;
 
+export const McpNativeServer = Schema.Struct({
+  name: McpServerName,
+  transport: McpServerTransport,
+  enabled: Schema.Boolean,
+  scope: McpServerScope,
+  configPath: TrimmedNonEmptyString,
+});
+export type McpNativeServer = typeof McpNativeServer.Type;
+
 export const McpProviderStatus = Schema.Struct({
   provider: ProviderDriverKind,
   instanceId: ProviderInstanceId,
@@ -152,6 +161,7 @@ export const McpProviderStatus = Schema.Struct({
   state: McpProviderStatusState,
   activeServerCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   message: Schema.optionalKey(TrimmedNonEmptyString),
+  nativeServers: Schema.optionalKey(Schema.Array(McpNativeServer)),
 });
 export type McpProviderStatus = typeof McpProviderStatus.Type;
 
@@ -281,7 +291,11 @@ export const McpCursorJsonResult = Schema.Struct({
 });
 export type McpCursorJsonResult = typeof McpCursorJsonResult.Type;
 
-export const McpProviderStatusInput = Schema.Struct({});
+export const McpProviderStatusInput = Schema.Struct({
+  includeNative: Schema.optionalKey(Schema.Boolean),
+  scope: Schema.optionalKey(McpServerScope),
+  projectCwd: Schema.optionalKey(TrimmedNonEmptyString),
+});
 export type McpProviderStatusInput = typeof McpProviderStatusInput.Type;
 
 export const McpProviderStatusResult = Schema.Struct({

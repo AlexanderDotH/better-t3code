@@ -1305,6 +1305,19 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       "applyThreadMessagesProjection",
     )(function* (event, attachmentSideEffects) {
       switch (event.type) {
+        case "thread.message-edited": {
+          const existing = yield* projectionThreadMessageRepository.getByMessageId({
+            messageId: event.payload.messageId,
+          });
+          if (Option.isSome(existing) && existing.value.threadId === event.payload.threadId) {
+            yield* projectionThreadMessageRepository.upsert({
+              ...existing.value,
+              text: event.payload.text,
+              updatedAt: event.payload.updatedAt,
+            });
+          }
+          return;
+        }
         // A draft retry re-creates a soft-deleted thread id. Every projector
         // drops its own rows for the old incarnation here so replay from any
         // per-projector cursor rebuilds the new thread without stale history.

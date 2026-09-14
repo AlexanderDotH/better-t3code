@@ -53,6 +53,28 @@ const encodeClientSettings = Schema.encodeSync(ClientSettingsSchema);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+it("persists the pacing switch and accepts only eight- or twenty-four-hour workdays", () => {
+  expect(decodeClientSettings({})).toMatchObject({
+    usagePacingEnabled: true,
+    usagePacingWorkdayHours: 8,
+  });
+  const patch = decodeClientSettingsPatch({
+    usagePacingEnabled: false,
+    usagePacingWorkdayHours: 24,
+  });
+  expect(encodeClientSettings(decodeClientSettings(patch))).toMatchObject(patch);
+  expect(() => decodeClientSettingsPatch({ usagePacingWorkdayHours: 12 })).toThrow();
+});
+
+it("keeps the hard daily budget opt-in and supports turning it off", () => {
+  expect(decodeServerSettings({}).usageHardBudgetEnabled).toBe(false);
+  for (const enabled of [true, false]) {
+    const patch = decodeServerSettingsPatch({ usageHardBudgetEnabled: enabled });
+    expect(encodeServerSettings(decodeServerSettings(patch)).usageHardBudgetEnabled).toBe(enabled);
+  }
+  expect(() => decodeServerSettingsPatch({ usageHardBudgetEnabled: "true" })).toThrow();
+});
+
 describe("ServerSettings usage price overrides", () => {
   const prices = { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 };
 

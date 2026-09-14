@@ -1586,6 +1586,69 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       return [...lifecycleResetEvents, userMessageEvent, turnStartRequestedEvent];
     }
 
+    case "thread.message.edit": {
+      const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
+      const message = thread.messages.find((entry) => entry.id === command.messageId);
+      if (
+        !message ||
+        message.streaming ||
+        message.role === "system" ||
+        thread.deletedAt !== null ||
+        thread.archivedAt !== null ||
+        thread.harnessSync !== undefined ||
+        thread.session?.status === "starting" ||
+        thread.session?.status === "running" ||
+        thread.session?.abortState != null ||
+        thread.latestTurn?.state === "running" ||
+        hasQueuedTurnStartForThread(thread, yield* nowIso)
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Only completed messages in an idle, local chat can be edited.",
+        });
+      }
+      if (message.text !== command.expectedText) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "This message changed on another client. Reopen the editor before saving.",
+        });
+      }
+      const edited: PlannedOrchestrationEvent = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.message-edited",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.messageId,
+          text: command.text,
+          updatedAt: command.createdAt,
+        },
+      };
+      const crypto = yield* Crypto.Crypto;
+      const continuation = yield* decideOrchestrationCommand({
+        readModel,
+        command: {
+          type: "thread.turn.start",
+          commandId: command.commandId,
+          threadId: command.threadId,
+          message: {
+            messageId: MessageId.make(yield* crypto.randomUUIDv4),
+            role: "user",
+            text: `I edited the earlier ${message.role} message from ${message.createdAt} (message ID: ${message.id}). The replacement below is a user-authored correction${message.role === "assistant" ? " to your earlier answer" : ""}. Treat it as the current version, keep the later conversation, and continue from this correction.\n\n${command.text}`,
+            attachments: message.attachments ?? [],
+          },
+          runtimeMode: thread.runtimeMode,
+          interactionMode: thread.interactionMode,
+          createdAt: command.createdAt,
+        },
+      });
+      return [edited, ...("type" in continuation ? [continuation] : continuation)];
+    }
+
     case "thread.turn.retry": {
       const targetThread = yield* requireThread({
         readModel,

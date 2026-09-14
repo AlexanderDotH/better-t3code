@@ -50,6 +50,7 @@ import {
 } from "../rpc/client.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
+import { createAiEndpointDiscoveryAtoms } from "./aiEndpoints.ts";
 import {
   applyServerConfigProjection,
   type ServerConfigProjection,
@@ -722,6 +723,16 @@ export function createServerEnvironmentAtoms<R, E>(
       ),
     ).pipe(Atom.withLabel(`environment-data:server:update-state-value:${environmentId}`)),
   );
+  const aiEndpointDiscovery = createAiEndpointDiscoveryAtoms(
+    runtime,
+    Atom.family((environmentId: EnvironmentId) =>
+      Atom.make(
+        (get) =>
+          get(configValueAtom(environmentId))?.environment.capabilities.aiEndpointDiscovery ===
+          true,
+      ),
+    ),
+  );
   const updateStateAtom = (environmentId: EnvironmentId | null) =>
     environmentId === null ? EMPTY_SERVER_UPDATE_STATE_ATOM : updateStateValueAtom(environmentId);
   const updateServer = createRuntimeCommand<
@@ -1116,6 +1127,7 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.providerInstallRemove,
     }),
     providerAuthConnectEventAtom,
+    ...aiEndpointDiscovery,
     traceDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:trace-diagnostics",
       tag: WS_METHODS.serverGetTraceDiagnostics,

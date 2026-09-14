@@ -1,0 +1,57 @@
+const labels = {
+  pan: ["Pan", "Verschieben"],
+  previous: ["Previous", "Zurück"],
+  next: ["Next", "Weiter"],
+  title: ["Diagram", "Diagramm"],
+  loading: ["Rendering diagram…", "Diagramm wird gerendert…"],
+  fullscreen: ["Fullscreen", "Vollbild"],
+  close: ["Close", "Schließen"],
+  zoomIn: ["Zoom in", "Vergrößern"],
+  zoomOut: ["Zoom out", "Verkleinern"],
+  fit: ["Fit", "Einpassen"],
+  panHint: [
+    "Drag to pan; use arrow keys to move.",
+    "Zum Verschieben ziehen oder Pfeiltasten verwenden.",
+  ],
+  source: ["Source", "Quelltext"],
+  preview: ["Preview", "Vorschau"],
+  copySource: ["Copy source", "Quelltext kopieren"],
+  copied: ["Copied", "Kopiert"],
+  copyFailed: ["Could not copy.", "Kopieren fehlgeschlagen."],
+  exportSvg: ["Export SVG", "SVG exportieren"],
+  exportPng: ["Export PNG", "PNG exportieren"],
+  exportCsv: ["Export CSV", "CSV exportieren"],
+  sourceData: ["Source data", "Quelldaten"],
+  noSource: ["Data provenance not provided.", "Datenherkunft nicht angegeben."],
+  missingSources: ["Data provenance not provided.", "Datenherkunft nicht angegeben."],
+  sources: ["Sources", "Quellen"],
+  asOf: ["As of", "Datenstand"],
+  limitations: ["Limitations", "Einschränkungen"],
+  measurement: ["Measured data", "Messdaten"],
+  example: ["Example data", "Beispieldaten"],
+  forecast: ["Forecast", "Prognose"],
+  learning: ["Learn and understand", "Lernen und verstehen"],
+  analysis: ["Analyze data", "Daten auswerten"],
+  simpler: ["Explain more simply", "Einfacher erklären"],
+  stepByStep: ["Step by step", "Schritt für Schritt"],
+  checkUnderstanding: ["Check my understanding", "Mein Verständnis prüfen"],
+  breakDown: ["Break down", "Aufschlüsseln"],
+  comparePeriods: ["Compare periods", "Zeiträume vergleichen"],
+  explainAssumptions: ["Explain assumptions", "Annahmen erklären"],
+  fix: ["Fix with agent", "Mit Agent beheben"],
+  renderFailed: [
+    "Could not render this diagram. The source is available below.",
+    "Das Diagramm konnte nicht gerendert werden. Der Quelltext steht unten.",
+  ],
+  renderError: ["Could not render this diagram.", "Das Diagramm konnte nicht gerendert werden."],
+  exportFailed: ["Could not export this diagram.", "Diagrammexport fehlgeschlagen."],
+  interactive: ["Interactive view", "Interaktive Ansicht"],
+  experimental: ["Experimental diagram type", "Experimenteller Diagrammtyp"],
+} as const;
+
+export function visualizationLabels(locale: string) {
+  const index = locale.startsWith("de") ? 1 : 0;
+  return Object.fromEntries(
+    Object.entries(labels).map(([key, translations]) => [key, translations[index]]),
+  ) as { [Key in keyof typeof labels]: string };
+}

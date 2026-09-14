@@ -27,6 +27,11 @@ import { CursorDriver, type CursorDriverEnv } from "./Drivers/CursorDriver.ts";
 import { GrokDriver, type GrokDriverEnv } from "./Drivers/GrokDriver.ts";
 import { GeminiDriver, type GeminiDriverEnv } from "./Drivers/GeminiDriver.ts";
 import { OpenAiDriver, type OpenAiDriverEnv } from "./Drivers/OpenAiDriver.ts";
+import {
+  OpenAiCompatibleDriver,
+  LmStudioDriver,
+  type OpenAiCompatibleDriverEnv,
+} from "./Drivers/OpenAiCompatibleDriver.ts";
 import { OpenCodeDriver, type OpenCodeDriverEnv } from "./Drivers/OpenCodeDriver.ts";
 import { AntigravityDriver, type AntigravityDriverEnv } from "./Drivers/AntigravityDriver.ts";
 import { OpenRouterDriver, type OpenRouterDriverEnv } from "./Drivers/OpenRouterDriver.ts";
@@ -45,6 +50,7 @@ export type BuiltInDriversEnv =
   | GeminiDriverEnv
   | GrokDriverEnv
   | OpenAiDriverEnv
+  | OpenAiCompatibleDriverEnv
   | OpenCodeDriverEnv
   | OpenRouterDriverEnv
   | AntigravityDriverEnv;
@@ -59,6 +65,8 @@ export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv
   ChatGptDriver,
   OpenRouterDriver,
   OpenAiDriver,
+  OpenAiCompatibleDriver,
+  LmStudioDriver,
   ClaudeDriver,
   CursorDriver,
   GrokDriver,

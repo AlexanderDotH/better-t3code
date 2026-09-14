@@ -1,6 +1,8 @@
 import type { SelectableMarkdownTextProps } from "./SelectableMarkdownText.types";
 
 export type {
+  MarkdownCodeBlockRenderer,
+  MarkdownCodeBlockRequest,
   MarkdownCodeHighlighter,
   MarkdownHighlightedToken,
   MarkdownImageRenderer,

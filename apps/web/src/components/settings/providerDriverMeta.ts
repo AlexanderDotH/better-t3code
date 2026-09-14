@@ -7,11 +7,14 @@ import {
   GeminiSettings,
   GrokSettings,
   OpenAiSettings,
+  OpenAiCompatibleSettings,
+  LmStudioSettings,
   OpenCodeSettings,
   OpenRouterSettings,
   ProviderDriverKind,
 } from "@t3tools/contracts";
 import type * as Schema from "effect/Schema";
+import { ServerIcon } from "lucide-react";
 import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
 import {
   AntigravityIcon,
@@ -118,6 +121,18 @@ export const DRIVER_OPTIONS: readonly ProviderClientDefinition[] = [
     icon: OpenAI,
     badgeMessageKey: EARLY_ACCESS_BADGE,
     settingsSchema: OpenAiSettings,
+  },
+  {
+    value: ProviderDriverKind.make("openaiCompatible"),
+    label: "OpenAI Compatible",
+    icon: ServerIcon,
+    settingsSchema: OpenAiCompatibleSettings,
+  },
+  {
+    value: ProviderDriverKind.make("lmstudio"),
+    label: "LM Studio",
+    icon: ServerIcon,
+    settingsSchema: LmStudioSettings,
   },
 ];
 

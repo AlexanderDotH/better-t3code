@@ -12,11 +12,13 @@ import {
   type ProviderConsumeResetCreditInput,
   type ServerProviderSlashCommand,
   isProviderAvailable,
+  MAX_USAGE_PACE_SAMPLES,
   type ServerProvider,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
   type UsageLimitSourceSnapshot,
   type UsageLimitSourceSnapshots,
+  type UsagePacingWorkdayHours,
 } from "@t3tools/contracts";
 
 import * as DateTime from "effect/DateTime";
@@ -243,6 +245,29 @@ export function collectLimitAccounts(
         (creditSource ? creditSource.redeem : (winner.redeem ?? previous.redeem ?? next.redeem)),
       limits: {
         ...winner.limits,
+        windows: winner.limits.windows.map((window) => {
+          const other = (fresher ? previous : next).limits.windows.find(
+            (candidate) =>
+              candidate.usageHistorySource === "codex" &&
+              candidate.resetsAt === window.resetsAt &&
+              candidate.windowDurationMins === window.windowDurationMins &&
+              candidate.usedPercent <= window.usedPercent,
+          );
+          if (!other?.usageHistory?.length) return window;
+          const samples = new Map(
+            [...other.usageHistory, ...(window.usageHistory ?? [])].map((sample) => [
+              `${sample.at}:${sample.usedPercent}:${sample.hasUsage ?? false}`,
+              sample,
+            ]),
+          );
+          return {
+            ...window,
+            usageHistorySource: "codex" as const,
+            usageHistory: [...samples.values()]
+              .toSorted((a, b) => Date.parse(a.at) - Date.parse(b.at))
+              .slice(-MAX_USAGE_PACE_SAMPLES),
+          };
+        }),
         ...(creditSource?.limits.resetCredits
           ? { resetCredits: creditSource.limits.resetCredits }
           : { resetCredits: undefined }),
@@ -474,7 +499,7 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
     return {
       id: first.id,
       kind: first.kind,
-      label: first.label,
+      label: usageWindowLabel(first),
       members,
       columns: accounts.map(
         (account) => memberByAccount.get(account.key) ?? { account, window: null },
@@ -502,6 +527,132 @@ export function limitsNotice(limits: ServerProviderUsageLimits): string | null {
 /** Quota left in the window, 0..100. Bars and labels show what remains, as Codex does. */
 export function remainingPercent(window: ServerProviderUsageWindow): number {
   return Math.round(100 - Math.max(0, Math.min(100, window.usedPercent)));
+}
+
+export function usageWindowLabel(window: ServerProviderUsageWindow): string {
+  return window.kind === "session" &&
+    window.windowDurationMins === 300 &&
+    window.label === "Session"
+    ? "5-hour"
+    : window.label;
+}
+
+export type DailyUsagePaceStatus =
+  | "unknown"
+  | "waiting"
+  | "estimating"
+  | "good"
+  | "fast"
+  | "exceeded";
+
+export const DAILY_USAGE_PACE_LABELS: Record<DailyUsagePaceStatus, string> = {
+  unknown: "Usage history unavailable",
+  waiting: "Waiting for first usage",
+  estimating: "Measuring pace",
+  good: "Good pace",
+  fast: "Spending too fast today",
+  exceeded: "Daily allowance exceeded",
+};
+
+/** A daily share of the weekly quota; native usage timestamps take precedence over quota ticks. */
+export function dailyUsagePace(
+  window: ServerProviderUsageWindow,
+  now: number,
+  workdayHours: UsagePacingWorkdayHours,
+) {
+  const resetsAt = resetMillis(window);
+  const observedAt = window.usageHistory?.at(-1)?.at;
+  // Limits views freeze their opening clock; a newer observation advances it without a timer.
+  const measuredAt = observedAt ? Math.max(now, Date.parse(observedAt)) : now;
+  if (
+    window.kind !== "weekly" ||
+    resetsAt === null ||
+    resetsAt <= measuredAt ||
+    !Number.isFinite(measuredAt)
+  ) {
+    return null;
+  }
+  const dayStart = DateTime.startOf(DateTime.makeZonedUnsafe(measuredAt), "day");
+  const dayStartMillis = DateTime.toEpochMillis(dayStart);
+  const dayEndMillis = DateTime.toEpochMillis(DateTime.add(dayStart, { days: 1 }));
+  const samples = window.usageHistory ?? [];
+  const baseline =
+    samples.findLast((sample) => Date.parse(sample.at) <= dayStartMillis) ?? samples[0];
+  const firstUsage = baseline
+    ? samples.find(
+        (sample) =>
+          Date.parse(sample.at) >= dayStartMillis &&
+          (window.usageHistorySource === "codex"
+            ? sample.hasUsage === true
+            : sample.usedPercent > baseline.usedPercent),
+      )
+    : undefined;
+  const startedAt = firstUsage ? Date.parse(firstUsage.at) : null;
+  const allocationAt = startedAt ?? measuredAt;
+  const daysLeft = Math.max(1, Math.ceil((resetsAt - allocationAt) / DAY));
+  const remainingAtDayStart = 100 - (baseline?.usedPercent ?? window.usedPercent);
+  const windowDays = ((window.windowDurationMins ?? 0) * MINUTE) / DAY;
+  // Bank earlier days' unused shares, then reserve an even share for each remaining day.
+  const catchUpPercent =
+    baseline && windowDays > 0
+      ? Math.max(0, (100 * (windowDays - daysLeft)) / windowDays - baseline.usedPercent)
+      : 0;
+  const regularDailyBudgetPercent = (remainingAtDayStart - catchUpPercent) / daysLeft;
+  const dailyBudgetPercent = regularDailyBudgetPercent + catchUpPercent;
+  const todayUsedPercent = baseline ? Math.max(0, window.usedPercent - baseline.usedPercent) : null;
+  const workdayStart = workdayHours === 8 ? (startedAt ?? measuredAt) : dayStartMillis;
+  const pacingHours = Math.min(
+    workdayHours,
+    (Math.min(resetsAt, dayEndMillis) - workdayStart) / HOUR,
+  );
+  const elapsed =
+    startedAt === null
+      ? 0
+      : Math.max(0, measuredAt - (workdayHours === 8 ? startedAt : dayStartMillis));
+  const expectedUsedPercent =
+    catchUpPercent + regularDailyBudgetPercent * Math.min(1, elapsed / (pacingHours * HOUR));
+  const paceOverPercent =
+    todayUsedPercent !== null && elapsed >= 15 * MINUTE && expectedUsedPercent > 0
+      ? Math.max(0, (todayUsedPercent / expectedUsedPercent - 1) * 100)
+      : null;
+  // Provider percentages are rounded; one point of noise must not become a warning.
+  const tolerance = Math.max(1, regularDailyBudgetPercent * 0.1);
+  const status: DailyUsagePaceStatus =
+    todayUsedPercent !== null && todayUsedPercent > dailyBudgetPercent
+      ? "exceeded"
+      : window.usageHistorySource === "codex" && samples.length === 0
+        ? "unknown"
+        : startedAt === null
+          ? "waiting"
+          : elapsed < 15 * MINUTE
+            ? "estimating"
+            : todayUsedPercent !== null && todayUsedPercent > expectedUsedPercent + tolerance
+              ? "fast"
+              : "good";
+  return {
+    status,
+    dailyBudgetPercent,
+    hourlyBudgetPercent: regularDailyBudgetPercent / pacingHours,
+    catchUpPercent,
+    catchUpRemainingPercent: Math.max(0, catchUpPercent - (todayUsedPercent ?? 0)),
+    paceOverPercent,
+    todayUsedPercent,
+    todayBudgetUsedPercent:
+      todayUsedPercent === null
+        ? null
+        : dailyBudgetPercent > 0
+          ? (todayUsedPercent / dailyBudgetPercent) * 100
+          : todayUsedPercent > 0
+            ? 100
+            : 0,
+    todayRemainingPercent: Math.max(0, dailyBudgetPercent - (todayUsedPercent ?? 0)),
+    todayBalancePercent: dailyBudgetPercent - (todayUsedPercent ?? 0),
+    todayOverdrawPercent:
+      todayUsedPercent === null ? null : Math.max(0, todayUsedPercent - dailyBudgetPercent),
+    startedAt,
+    workdayHours,
+    partial: !baseline || (Date.parse(baseline.at) > dayStartMillis && baseline.usedPercent > 0),
+  };
 }
 
 function resetMillis(window: ServerProviderUsageWindow): number | null {

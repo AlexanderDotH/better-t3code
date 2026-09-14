@@ -343,6 +343,11 @@ function RuntimeServerRow(props: {
           {props.server.authLabel ? (
             <p className="text-warning-foreground text-xs">{props.server.authLabel}</p>
           ) : null}
+          {props.server.configPath ? (
+            <p className="text-xs text-muted-foreground wrap-anywhere">
+              {translate("settings.mcp.provider.discoveredIn", { path: props.server.configPath })}
+            </p>
+          ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           {!props.locked ? (
@@ -715,7 +720,7 @@ export function McpProviderWorkspace(props: McpProviderWorkspaceProps) {
           : undefined
       }
     >
-      {props.showProviderTabs !== false ? (
+      {props.showProviderTabs !== false || props.providers.length === 0 ? (
         <ProviderTabs
           providers={props.providers}
           selectedProviderId={props.selectedProviderId}
@@ -777,7 +782,10 @@ export function McpProviderWorkspace(props: McpProviderWorkspaceProps) {
               })}
             </div>
           ) : props.runtimeError ? (
-            <div className="border-b border-border/60 bg-destructive/6 px-4 py-3 text-destructive text-xs sm:px-5">
+            <div
+              role="alert"
+              className="mcp-runtime-error border-b border-border/60 bg-destructive/6 px-4 py-3 text-xs leading-relaxed text-destructive wrap-anywhere sm:px-5"
+            >
               {props.runtimeError}
             </div>
           ) : props.isLoadingRuntime ? (

@@ -36,7 +36,8 @@ export function createKnowledgeGraphEnvironmentAtoms<R, E>(
   return {
     state: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:knowledge-graph:state",
-      idleTtlMs: KNOWLEDGE_GRAPH_IDLE_TTL_MS,
+      // Release disabled subscriptions so re-enabling cannot reuse a cached failure.
+      idleTtlMs: 0,
       subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.knowledgeGraphSubscribe>) =>
         subscribe(WS_METHODS.knowledgeGraphSubscribe, input).pipe(
           Stream.scan(EMPTY_KNOWLEDGE_GRAPH_CLIENT_STATE, applyKnowledgeGraphStreamEvent),
