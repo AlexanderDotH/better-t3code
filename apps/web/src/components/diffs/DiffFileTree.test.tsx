@@ -99,7 +99,7 @@ describe("diff tree file activation", () => {
 
   beforeEach(() => {
     targets.length = 0;
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("HTMLElement", TreeRow);
   });

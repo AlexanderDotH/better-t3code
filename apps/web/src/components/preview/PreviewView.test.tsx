@@ -354,7 +354,7 @@ describe("PreviewView navigation", () => {
   });
 
   it("does not rerender while loading time passes", async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     mocks.loading = true;
     const document = installTestDom();
     const { createRoot } = await import("react-dom/client");

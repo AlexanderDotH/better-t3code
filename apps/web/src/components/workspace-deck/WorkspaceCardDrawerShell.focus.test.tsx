@@ -36,7 +36,7 @@ it("preserves input focus across callback changes and restores the original trig
   const collapse = new FocusTarget();
   const branchInput = new FocusTarget();
   const document = Object.assign(new EventTarget(), { activeElement: trigger });
-  vi.useFakeTimers();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("HTMLElement", FocusTarget);
   vi.stubGlobal("document", document);
