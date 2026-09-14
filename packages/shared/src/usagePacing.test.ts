@@ -1,12 +1,19 @@
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import * as DateTime from "effect/DateTime";
 
 import { dailyUsagePace, paceOf, usageWindowLabel } from "./usageLimits.ts";
 
 const time = (day: number, hour: number, minute = 0) =>
-  new Date(2026, 8, day, hour, minute).getTime();
+  DateTime.toEpochMillis(
+    DateTime.makeZonedUnsafe(
+      { year: 2026, month: 9, day, hour, minute },
+      { adjustForTimeZone: true },
+    ),
+  );
+const iso = (millis: number) => DateTime.formatIso(DateTime.makeUnsafe(millis));
 const sample = (day: number, hour: number, usedPercent: number) => ({
-  at: new Date(time(day, hour)).toISOString(),
+  at: iso(time(day, hour)),
   usedPercent,
 });
 const weekly: ServerProviderUsageWindow = {
@@ -15,7 +22,7 @@ const weekly: ServerProviderUsageWindow = {
   label: "Weekly",
   usedPercent: 6,
   windowDurationMins: 10_080,
-  resetsAt: new Date(time(20, 0)).toISOString(),
+  resetsAt: iso(time(20, 0)),
   usageHistory: [sample(13, 8, 0), sample(13, 9, 1), sample(13, 13, 6)],
 };
 
@@ -99,7 +106,7 @@ describe("daily usage pacing", () => {
       usageHistory: [
         sample(13, 8, 0),
         sample(13, 23, 1),
-        { at: new Date(time(13, 23, 30)).toISOString(), usedPercent: 5 },
+        { at: iso(time(13, 23, 30)), usedPercent: 5 },
       ],
     };
     const pace = dailyUsagePace(late, time(13, 23, 30), 8)!;
@@ -111,7 +118,7 @@ describe("daily usage pacing", () => {
     const ending = {
       ...weekly,
       usedPercent: 40,
-      resetsAt: new Date(time(13, 11)).toISOString(),
+      resetsAt: iso(time(13, 11)),
       usageHistory: [sample(13, 8, 0), sample(13, 9, 1), sample(13, 10, 40)],
     };
     const pace = dailyUsagePace(ending, time(13, 10), 8)!;
@@ -238,7 +245,7 @@ describe("daily usage pacing", () => {
     const reset = dailyUsagePace(
       {
         ...weekly,
-        resetsAt: new Date(time(27, 0)).toISOString(),
+        resetsAt: iso(time(27, 0)),
         usedPercent: 1,
         usageHistory: [sample(20, 8, 0), sample(20, 9, 1)],
       },
@@ -281,7 +288,7 @@ describe("daily usage pacing", () => {
       kind: "session",
       label: "Session",
       windowDurationMins: 300,
-      resetsAt: new Date(time(13, 14)).toISOString(),
+      resetsAt: iso(time(13, 14)),
       usedPercent: 90,
     };
     expect(usageWindowLabel(session)).toBe("5-hour");

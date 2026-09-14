@@ -572,17 +572,16 @@ export function dailyUsagePace(
   ) {
     return null;
   }
-  const dayStart = new Date(measuredAt);
-  dayStart.setHours(0, 0, 0, 0);
-  const dayEnd = new Date(dayStart);
-  dayEnd.setDate(dayEnd.getDate() + 1);
+  const dayStart = DateTime.startOf(DateTime.makeZonedUnsafe(measuredAt), "day");
+  const dayStartMillis = DateTime.toEpochMillis(dayStart);
+  const dayEndMillis = DateTime.toEpochMillis(DateTime.add(dayStart, { days: 1 }));
   const samples = window.usageHistory ?? [];
   const baseline =
-    samples.findLast((sample) => Date.parse(sample.at) <= dayStart.getTime()) ?? samples[0];
+    samples.findLast((sample) => Date.parse(sample.at) <= dayStartMillis) ?? samples[0];
   const firstUsage = baseline
     ? samples.find(
         (sample) =>
-          Date.parse(sample.at) >= dayStart.getTime() &&
+          Date.parse(sample.at) >= dayStartMillis &&
           (window.usageHistorySource === "codex"
             ? sample.hasUsage === true
             : sample.usedPercent > baseline.usedPercent),
@@ -601,15 +600,15 @@ export function dailyUsagePace(
   const regularDailyBudgetPercent = (remainingAtDayStart - catchUpPercent) / daysLeft;
   const dailyBudgetPercent = regularDailyBudgetPercent + catchUpPercent;
   const todayUsedPercent = baseline ? Math.max(0, window.usedPercent - baseline.usedPercent) : null;
-  const workdayStart = workdayHours === 8 ? (startedAt ?? measuredAt) : dayStart.getTime();
+  const workdayStart = workdayHours === 8 ? (startedAt ?? measuredAt) : dayStartMillis;
   const pacingHours = Math.min(
     workdayHours,
-    (Math.min(resetsAt, dayEnd.getTime()) - workdayStart) / HOUR,
+    (Math.min(resetsAt, dayEndMillis) - workdayStart) / HOUR,
   );
   const elapsed =
     startedAt === null
       ? 0
-      : Math.max(0, measuredAt - (workdayHours === 8 ? startedAt : dayStart.getTime()));
+      : Math.max(0, measuredAt - (workdayHours === 8 ? startedAt : dayStartMillis));
   const expectedUsedPercent =
     catchUpPercent + regularDailyBudgetPercent * Math.min(1, elapsed / (pacingHours * HOUR));
   const paceOverPercent =
@@ -652,8 +651,7 @@ export function dailyUsagePace(
       todayUsedPercent === null ? null : Math.max(0, todayUsedPercent - dailyBudgetPercent),
     startedAt,
     workdayHours,
-    partial:
-      !baseline || (Date.parse(baseline.at) > dayStart.getTime() && baseline.usedPercent > 0),
+    partial: !baseline || (Date.parse(baseline.at) > dayStartMillis && baseline.usedPercent > 0),
   };
 }
 
