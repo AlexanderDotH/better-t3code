@@ -14,7 +14,7 @@ Turning a feature off does not remove its saved conversations or project data.
 
 ## Diagrams and data visualization
 
-Enable **Settings → Better T3 → General → Chat → Diagrams & data visualization** for the
+Enable **Settings → Better T3 → Chat → Diagrams & data visualization** for the
 selected environment. It is off by default; older environments show it as unavailable.
 The setting applies to connected web, desktop, and mobile clients and encourages the agent
 to use diagrams when they help explain a concept or interpret data.
@@ -36,17 +36,25 @@ examples and forecasts should be identified before using a chart to make a decis
 Turning the feature off restores ordinary code blocks without deleting their content. Agent
 guidance changes on the next turn. Turning it back on also renders diagrams in older messages.
 
+## Thinking traces
+
+On web and desktop, go to **Settings → Better T3 → Chat → Thinking trace display**.
+Choose **No thinking traces**, **In chat** to read full traces including completed turns,
+or **In Working dialog** to follow the latest live thoughts automatically.
+Both visible modes use your character streaming setting.
+
 ## Edit chat messages
 
 In web and desktop chats, use **Edit message** beside a completed user or assistant message.
-**Send correction** saves the replacement and asks the agent to continue with it, preserving later
-messages. **Restart here in new branch** starts a new chat with the edited history through that
-message; the original chat stays available. Attachments are preserved. Wait for the agent to finish
-before editing. Edited assistant answers are sent to the provider as user-authored corrections.
+Edit the text directly in the conversation and choose **Save correction**. This replaces the
+message in place, preserving its role, attachments, and later messages. Saving does not start the
+agent or add a correction message. Your next message uses the corrected conversation. Wait for
+the agent to finish before editing. The separate fork action remains available to branch a chat.
 
-This is enabled by default. Turn it off under **Settings → Better T3 → General → Edit chat messages**.
+This is enabled by default. Turn it off under **Settings → Better T3 → Chat → Edit chat messages**.
 
 Use [appearance and language](./appearance.md#language-and-chat-layout) for visual preferences,
 [resource protection](./resource-protection.md) when work waits for memory, and
-[delegated work](./general-subagents.md) to follow subagent tasks. Speech setup is under
-[Connections](./composer.md#dictate-and-refine-a-prompt); the Voice and synchronization section links to it.
+[delegated work](./general-subagents.md) to follow subagent tasks. Set up
+[dictation](./composer.md#dictate-and-refine-a-prompt) under **Better T3 → Voice**, including the
+AssemblyAI key, translation model, and project speech context for the selected environment.

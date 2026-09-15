@@ -149,6 +149,8 @@ const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 const MAX_REGENERATION_ATTACHMENTS = 4;
+// Leave room for project memory, attachment paths, and provider guidance.
+const TRANSCRIPT_HANDOFF_RESERVED_CHARS = 20_000;
 const MAX_THREAD_TITLE_CONTEXT_CHARS = 8_000;
 const MAX_FIRST_USER_TITLE_CONTEXT_CHARS = 2_000;
 const THREAD_TITLE_CONTEXT_TRUNCATION_MARKER = "[Earlier content truncated]\n\n";
@@ -1340,6 +1342,8 @@ const make = Effect.gen(function* () {
   const buildSendTurnRequestForThread = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
     readonly messageText: string;
+    readonly editedMessageIds: ReadonlyArray<OrchestrationMessage["id"]>;
+    readonly hasPendingMessageEdits: boolean;
     readonly boundaryMessageId: OrchestrationMessage["id"];
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly modelSelection?: ModelSelection;
@@ -1444,11 +1448,14 @@ const make = Effect.gen(function* () {
         ? { modelSelection: effectiveInputModelSelection }
         : {}),
       pendingTurnStart: true,
-      forceFreshSession: forkHandoffRequired || failedTurnHandoffRequired,
+      forceFreshSession:
+        forkHandoffRequired || failedTurnHandoffRequired || input.hasPendingMessageEdits,
       ...(Option.isSome(projectMemoryRead)
         ? { projectMemoryMode: projectMemoryRead.value.mode }
         : {}),
-      ...(forkHandoffRequired && thread.fork?.providerForkCursor !== undefined
+      ...(forkHandoffRequired &&
+      input.editedMessageIds.length === 0 &&
+      thread.fork?.providerForkCursor !== undefined
         ? {
             nativeFork: {
               sourceThreadId: thread.fork.provenance.sourceThreadId,
@@ -1484,6 +1491,13 @@ const make = Effect.gen(function* () {
         ? buildProviderTranscriptHandoff({
             messages: transcriptHistory?.messages ?? [],
             boundaryMessageId: input.boundaryMessageId,
+            editedMessageIds: input.editedMessageIds,
+            maxChars: Math.max(
+              0,
+              PROVIDER_SEND_TURN_MAX_INPUT_CHARS -
+                providerMessageText.length -
+                TRANSCRIPT_HANDOFF_RESERVED_CHARS,
+            ),
             ...(thread.latestTurn?.state !== undefined
               ? { latestTurnState: thread.latestTurn.state }
               : {}),
@@ -2433,6 +2447,8 @@ const make = Effect.gen(function* () {
         threadId: event.payload.threadId,
         messageText: message.text,
         boundaryMessageId: message.id,
+        editedMessageIds: turnStart.value.editedMessageIds,
+        hasPendingMessageEdits: turnStart.value.hasPendingMessageEdits,
         ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
         ...(event.payload.modelSelection !== undefined
           ? { modelSelection: event.payload.modelSelection }

@@ -63,7 +63,7 @@ describe("resolveHostedBrowserWebviewWrapperStyle", () => {
     });
   });
 
-  it("keeps an active background task paintable behind the app", () => {
+  it("clips an active background task to a single onscreen pixel", () => {
     const style = resolveHostedBrowserWebviewWrapperStyle({
       active: false,
       renderingActive: true,
@@ -74,8 +74,8 @@ describe("resolveHostedBrowserWebviewWrapperStyle", () => {
     expect(style).toEqual({
       left: 0,
       top: 0,
-      width: 1280,
-      height: 800,
+      width: 1,
+      height: 1,
       zIndex: -1,
       pointerEvents: "none",
       visibility: "visible",

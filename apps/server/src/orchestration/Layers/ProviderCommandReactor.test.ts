@@ -3144,6 +3144,135 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  it.each(["codex", "claudeAgent", "cursor", "grok", "opencode", "antigravity"])(
+    "uses corrected user and assistant history on the next %s turn without adding correction messages",
+    async (provider) => {
+      const instanceId = ProviderInstanceId.make(provider);
+      const harness = await createHarness({
+        threadModelSelection: { instanceId, model: "test-model" },
+      });
+      const threadId = ThreadId.make("thread-1");
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      const dispatch = (command: Parameters<typeof harness.engine.dispatch>[0]) =>
+        Effect.runPromise(harness.engine.dispatch(command));
+      await dispatch({
+        type: "thread.history.import",
+        commandId: CommandId.make("import-edit-history"),
+        threadId,
+        messages: [
+          { messageId: asMessageId("goal"), role: "user", text: "Original goal", createdAt },
+          { messageId: asMessageId("edit-user"), role: "user", text: "Old user text", createdAt },
+          {
+            messageId: asMessageId("edit-assistant"),
+            role: "assistant",
+            text: "Old assistant text",
+            createdAt,
+          },
+          { messageId: asMessageId("later"), role: "user", text: "Later discussion", createdAt },
+        ],
+      });
+      const setSession = (status: "ready" | "running", suffix: string) =>
+        dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make(`edit-session-${suffix}`),
+          threadId,
+          session: {
+            threadId,
+            status,
+            providerName: provider,
+            providerInstanceId: instanceId,
+            runtimeSessionId: null,
+            abortState: null,
+            runtimeMode: "approval-required",
+            activeTurnId: status === "running" ? asTurnId("edit-next-turn") : null,
+            lastError: null,
+            updatedAt: createdAt,
+          },
+          createdAt,
+        });
+      await setSession("ready", "initial");
+      harness.runtimeSessions.push({
+        threadId,
+        provider: ProviderDriverKind.make(provider),
+        providerInstanceId: instanceId,
+        status: "ready",
+        runtimeMode: "approval-required",
+        cwd: "/tmp/provider-project",
+        model: "test-model",
+        resumeCursor: { opaque: "old-provider-history" },
+        createdAt,
+        updatedAt: createdAt,
+      });
+      for (const role of ["user", "assistant"] as const) {
+        await dispatch({
+          type: "thread.message.edit",
+          commandId: CommandId.make(`edit-${role}`),
+          threadId,
+          messageId: asMessageId(`edit-${role}`),
+          expectedText: `Old ${role} text`,
+          text: `Corrected ${role} text`,
+          createdAt,
+        });
+      }
+      await harness.drain();
+      expect(harness.sendTurn).not.toHaveBeenCalled();
+      expect(harness.startSession).not.toHaveBeenCalled();
+      expect((await harness.readModel()).threads[0]?.messages).toHaveLength(4);
+      const context = () =>
+        Effect.runPromise(
+          harness.snapshotQuery.getTurnStartMessage({
+            threadId,
+            messageId: asMessageId("edit-user"),
+          }),
+        );
+      expect(Option.getOrThrow(await context()).hasPendingMessageEdits).toBe(true);
+      const send = (suffix: string) =>
+        dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`edit-next-${suffix}`),
+          threadId,
+          message: {
+            messageId: asMessageId(`next-${suffix}`),
+            role: "user",
+            text: "Continue with this",
+            attachments: [],
+          },
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          createdAt,
+        });
+      await send("first");
+      await harness.drain();
+      expect(harness.startSession).toHaveBeenCalledOnce();
+      expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({ freshSession: true });
+      expect(harness.startSession.mock.calls[0]?.[1]).not.toHaveProperty("resumeCursor");
+      expect(harness.sendTurn).toHaveBeenCalledOnce();
+      const request = harness.sendTurn.mock.calls[0]?.[0] as {
+        input: string;
+        transcriptHandoff: { text: string };
+      };
+      expect(request.input).toContain("Continue with this");
+      expect(request.transcriptHandoff.text).toContain("[user]\nCorrected user text\n[/user]");
+      expect(request.transcriptHandoff.text).toContain(
+        "[assistant]\nCorrected assistant text\n[/assistant]",
+      );
+      expect(request.transcriptHandoff.text).toContain("Later discussion");
+      expect(request.transcriptHandoff.text).not.toContain("Old user text");
+      expect(request.transcriptHandoff.text).not.toContain("Old assistant text");
+      expect((await harness.readModel()).threads[0]?.messages).toHaveLength(5);
+      // Session preparation alone must not acknowledge context; only an accepted turn does.
+      expect(Option.getOrThrow(await context()).hasPendingMessageEdits).toBe(true);
+      await setSession("running", "accepted");
+      await setSession("ready", "completed");
+      expect(Option.getOrThrow(await context()).hasPendingMessageEdits).toBe(false);
+      await send("second");
+      await harness.drain();
+      expect(harness.startSession).toHaveBeenCalledOnce();
+      expect(harness.sendTurn).toHaveBeenCalledTimes(2);
+      expect(harness.sendTurn.mock.calls[1]?.[0]).not.toHaveProperty("transcriptHandoff");
+    },
+  );
+
   it("starts a fresh session when only projected session state exists", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

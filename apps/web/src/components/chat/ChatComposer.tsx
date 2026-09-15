@@ -901,7 +901,8 @@ import {
   type ComposerPromptHistoryPosition,
 } from "./composerPromptHistory";
 import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
-import type { PendingApproval, PendingUserInput } from "../../session-logic";
+import type { PendingApproval, PendingUserInput, WorkLogEntry } from "../../session-logic";
+import { ComposerReasoningScroller } from "./ComposerReasoningScroller";
 import type { ContextWindowSnapshot } from "../../lib/contextWindow";
 import type { ThreadTokenUsage } from "../../lib/threadTokenUsage";
 import {
@@ -1359,6 +1360,7 @@ export interface ChatComposerProps {
   activeWorkStartedAt?: string | null;
   activeTokenUsage?: ThreadTokenUsage | undefined;
   floatingBubbleHost?: HTMLElement | null;
+  reasoningEntries?: readonly WorkLogEntry[];
 
   // Mode
   runtimeMode: RuntimeMode;
@@ -1551,6 +1553,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           kind: "working",
           startedAt: activeWorkStartedAt,
           tokenUsage: props.activeTokenUsage,
+          reasoning:
+            settings.showReasoning &&
+            resolveBetterT3FeatureFlag(settings.betterT3Device, "agent.reasoningWorkingOverlay") &&
+            props.reasoningEntries &&
+            routeThreadRef ? (
+              <ComposerReasoningScroller
+                entries={props.reasoningEntries}
+                turnId={activeThread?.latestTurn?.turnId ?? null}
+                threadRef={routeThreadRef}
+                environmentId={environmentId}
+                cwd={gitCwd ?? undefined}
+                streamingMotionEnabled={settings.enableLegacyTokenStreaming}
+              />
+            ) : null,
         }
       : undefined;
   const activeTasksProgress = props.threadSyncPhase === null ? props.activeTasksProgress : null;

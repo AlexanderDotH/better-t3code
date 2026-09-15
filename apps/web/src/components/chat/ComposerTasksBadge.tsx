@@ -69,11 +69,13 @@ function TaskSummary({
   progress,
   steps,
   activityStatus,
+  onToggle,
 }: {
   readonly expanded: boolean;
   readonly progress: ComposerTasksProgress;
   readonly steps: readonly ComposerTaskStep[];
   readonly activityStatus: ComposerActivityStatus | undefined;
+  readonly onToggle: () => void;
 }) {
   const translate = useInterfaceTranslator().message;
   return (
@@ -85,7 +87,7 @@ function TaskSummary({
           <ListTodoIcon />
         </ComposerBanner.Icon>
       )}
-      <ComposerBanner.Content>
+      <ComposerBanner.Content render={<div />}>
         {activityStatus !== undefined ? (
           <ComposerActivityLabel status={activityStatus} />
         ) : (
@@ -100,17 +102,32 @@ function TaskSummary({
         >
           {progress.step}
         </span>
+        {activityStatus?.kind === "working" ? activityStatus.reasoning : null}
       </ComposerBanner.Content>
       <ComposerBanner.Actions>
         <ComposerActivityTokenMetrics status={activityStatus} />
-        <ComposerBanner.Count
-          className={progress.completedSteps >= progress.totalSteps ? "text-success" : undefined}
-          data-composer-task-progress="true"
+        <button
+          type="button"
+          className="flex shrink-0 cursor-pointer items-center gap-1 rounded-lg hover:bg-muted/50 focus-visible:outline-2 focus-visible:outline-ring"
+          aria-expanded={expanded}
+          aria-label={translate("chat.composer.tasks.label", {
+            completed: progress.completedSteps,
+            total: progress.totalSteps,
+            step: progress.step,
+          })}
+          data-composer-tasks-badge="true"
+          onClick={onToggle}
+          onPointerDown={(event) => event.preventDefault()}
         >
-          {progress.completedSteps}/{progress.totalSteps}
-        </ComposerBanner.Count>
-        <TaskSegments className="hidden w-20 sm:flex" steps={steps} />
-        <ComposerBanner.ToggleIcon expanded={expanded} />
+          <ComposerBanner.Count
+            className={progress.completedSteps >= progress.totalSteps ? "text-success" : undefined}
+            data-composer-task-progress="true"
+          >
+            {progress.completedSteps}/{progress.totalSteps}
+          </ComposerBanner.Count>
+          <TaskSegments className="hidden w-20 sm:flex" steps={steps} />
+          <ComposerBanner.ToggleIcon expanded={expanded} />
+        </button>
       </ComposerBanner.Actions>
     </>
   );
@@ -131,38 +148,27 @@ export const ComposerTasksBadge = memo(function ComposerTasksBadge({
   readonly steps: readonly ComposerTaskStep[];
   readonly activityStatus?: ComposerActivityStatus | undefined;
 }) {
-  const translate = useInterfaceTranslator().message;
   if (progress.totalSteps <= 0) return null;
 
-  const row = (
-    <ComposerBanner.Row
-      render={<button type="button" />}
-      aria-expanded={expanded}
-      aria-label={translate("chat.composer.tasks.label", {
-        completed: progress.completedSteps,
-        total: progress.totalSteps,
-        step: progress.step,
-      })}
-      data-composer-tasks-badge="true"
-      onClick={onToggle}
-      onPointerDown={(event) => event.preventDefault()}
-    >
+  const content = (
+    <ComposerBanner.Row>
       <TaskSummary
         expanded={expanded}
         progress={progress}
         steps={steps}
         activityStatus={activityStatus}
+        onToggle={onToggle}
       />
     </ComposerBanner.Row>
   );
   return placement === "inline" ? (
-    row
+    content
   ) : (
     <ComposerBanner.Root
       data-composer-shoulder-tab
       variant={activityStatus ? composerActivityVariant(activityStatus) : "activity"}
     >
-      {row}
+      {content}
     </ComposerBanner.Root>
   );
 });

@@ -1,3 +1,14 @@
+.usage-pace-notch {
+  box-shadow: 0 0 0 2px var(--muted);
+  clip-path: inset(-2px -2px -2px 50%);
+}
+
+/* The real weekly fill masks overdraw, so its cap is painted only once at any size. */
+.usage-window-track:has(> .usage-pace-bar[data-overdrawn="true"]) > .usage-window-fill {
+  z-index: 1;
+  box-shadow: 2px 0 0 var(--muted);
+}
+
 .usage-pace-label {
   overflow-x: auto;
   scrollbar-width: none;

@@ -355,6 +355,13 @@ export function HostedBrowserWebview(props: {
           </>
         ) : null}
       </div>
+      {!active && renderingActive ? (
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 z-10"
+          style={{ backgroundColor: "rgb(from var(--background) r g b / 1)" }}
+        />
+      ) : null}
     </div>
   );
 }

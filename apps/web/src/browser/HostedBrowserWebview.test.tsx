@@ -46,8 +46,13 @@ import {
   __resetClientSettingsPersistenceForTests,
   ensureClientSettingsHydrated,
 } from "~/hooks/useSettings";
-import { useBrowserSurfaceStore } from "./browserSurfaceStore";
+import {
+  acquireBrowserSurface,
+  acquireBrowserSurfaceActivity,
+  useBrowserSurfaceStore,
+} from "./browserSurfaceStore";
 import * as desktopTabLifetime from "./desktopTabLifetime";
+import { HIDDEN_BROWSER_WEBVIEW_OFFSET } from "./hostedBrowserWebviewStyle";
 import { HostedBrowserWebview } from "./HostedBrowserWebview";
 
 let renderer: ReactTestRenderer | undefined;
@@ -197,4 +202,82 @@ describe("HostedBrowserWebview settings hydration", () => {
     expect(mocks.closeTab).not.toHaveBeenCalled();
     expect(mocks.setClientSettings).not.toHaveBeenCalled();
   });
+});
+
+it("retains the full-size macOS guest when its chat closes during capture and reopens", async () => {
+  vi.stubGlobal("navigator", { platform: "MacIntel" });
+  mocks.getClientSettings.mockResolvedValue(DEFAULT_CLIENT_SETTINGS);
+  await ensureClientSettingsHydrated();
+  const runtimeTabId = "background-capture-tab";
+  const rect = { x: 200, y: 80, width: 800, height: 600 };
+  let surface = acquireBrowserSurface(runtimeTabId);
+  surface.present(rect, true);
+  const releaseActivity = acquireBrowserSurfaceActivity(runtimeTabId);
+  const createGuest = vi.fn(() => Object.assign(new EventTarget(), { getWebContentsId: () => 42 }));
+
+  await act(() => {
+    renderer = create(
+      <HostedBrowserWebview
+        threadRef={{
+          environmentId: EnvironmentId.make("background-capture"),
+          threadId: ThreadId.make("thread-background-capture"),
+        }}
+        tabId="server-tab"
+        runtimeTabId={runtimeTabId}
+        initialUrl="https://example.com"
+        viewport={FILL_PREVIEW_VIEWPORT}
+        pictureInPicture={false}
+        profileId={undefined}
+        zoomFactor={1}
+      />,
+      {
+        createNodeMock: (element) =>
+          element.type === "webview"
+            ? createGuest()
+            : { scrollLeft: 0, scrollTop: 0, scrollTo: () => undefined },
+      },
+    );
+  });
+  const guest = renderer!.root.findByType("webview");
+  const wrapper = renderer!.root.findByProps({ "data-preview-viewport": runtimeTabId });
+
+  await act(() => surface.release());
+  expect(wrapper.props.style).toMatchObject({
+    left: 0,
+    top: 0,
+    width: 1,
+    height: 1,
+    visibility: "visible",
+    pointerEvents: "none",
+  });
+  expect(guest.props.style).toMatchObject({ width: 800, height: 600 });
+  expect(wrapper.findByProps({ className: "absolute inset-0 z-10" }).props.style).toEqual({
+    backgroundColor: "rgb(from var(--background) r g b / 1)",
+  });
+
+  await act(releaseActivity);
+  expect(wrapper.props.style).toMatchObject({
+    left: HIDDEN_BROWSER_WEBVIEW_OFFSET,
+    top: HIDDEN_BROWSER_WEBVIEW_OFFSET,
+    visibility: "visible",
+  });
+
+  await act(() => {
+    surface = acquireBrowserSurface(runtimeTabId);
+    surface.present(rect, true);
+  });
+  expect(wrapper.props.style).toMatchObject({
+    left: rect.x,
+    top: rect.y,
+    width: rect.width,
+    height: rect.height,
+    pointerEvents: "auto",
+  });
+  expect(wrapper.findAllByProps({ className: "absolute inset-0 z-10" })).toHaveLength(0);
+  expect(renderer!.root.findByType("webview")).toBe(guest);
+  expect(guest.props.style).toMatchObject({ width: 800, height: 600 });
+  expect(createGuest).toHaveBeenCalledOnce();
+  expect(mocks.createTab).toHaveBeenCalledOnce();
+  expect(mocks.closeTab).not.toHaveBeenCalled();
+  await act(() => surface.release());
 });

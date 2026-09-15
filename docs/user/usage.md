@@ -56,7 +56,7 @@ Filter with the environment dropdown to see what a single machine has.
 
 If a window looks stale, refresh Limits to re-check every provider and hub.
 
-Enable **Show usage pace** in **Settings → Better T3 → General → Usage limits and pacing**
+Enable **Show usage pace** in **Settings → Better T3 → Usage → Usage limits and pacing**
 (on mobile, **Settings → Better T3**). Unused daily shares from earlier days in the current weekly
 window are available immediately as **catch-up**. Today's allowance includes that catch-up once;
 the rest of the remaining weekly quota is spread across the days until reset, including weekends.

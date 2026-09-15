@@ -4,6 +4,7 @@ import { forkBoundaryKey } from "@t3tools/client-runtime/thread-fork";
 import { ForkChatButton } from "./ForkChatButton";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { useClientSettings } from "../../hooks/useSettings";
+import { resolveBetterT3FeatureFlag } from "@t3tools/contracts";
 import { PencilIcon, RefreshCwIcon } from "lucide-react";
 import {
   type AssistantCitation,
@@ -233,6 +234,7 @@ export interface TimelineRetryAction {
 
 export interface TimelineEditAction {
   readonly available: boolean;
+  readonly editor?: { readonly messageId: MessageId; readonly content: ReactNode } | null;
   readonly onEdit: (message: ChatMessage) => void;
 }
 
@@ -492,7 +494,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 }: MessagesTimelineProps) {
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
   const chatVisualMode = useChatVisualMode();
-  const showReasoning = useClientSettings((settings) => settings.showReasoning);
+  const showReasoning = useClientSettings(
+    (settings) =>
+      settings.showReasoning &&
+      !resolveBetterT3FeatureFlag(settings.betterT3Device, "agent.reasoningWorkingOverlay"),
+  );
   const citationThreadRef = useMemo(() => parseScopedThreadKey(routeThreadKey), [routeThreadKey]);
   const expandCitedTurn = useCallback((turnId: TurnId) => {
     setExpandedTurnIds((current) =>
@@ -1569,10 +1575,17 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
   const revertTurnCount = row.revertTurnCount;
+  const editor =
+    ctx.editAction?.editor?.messageId === row.message.id ? ctx.editAction.editor.content : null;
 
   return (
     <div className="group flex flex-col items-end gap-1">
-      <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
+      <div
+        className={cn(
+          "relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground",
+          editor && "w-full",
+        )}
+      >
         <MessageAudioAttachments
           environmentId={ctx.activeThreadEnvironmentId}
           attachments={userAudio}
@@ -1725,12 +1738,14 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             ))}
           </div>
         ) : null}
-        <CollapsibleUserMessageBody
-          text={elementContextState.promptText}
-          terminalContexts={terminalContexts}
-          skills={ctx.skills}
-          markdownCwd={ctx.markdownCwd}
-        />
+        {editor ?? (
+          <CollapsibleUserMessageBody
+            text={elementContextState.promptText}
+            terminalContexts={terminalContexts}
+            skills={ctx.skills}
+            markdownCwd={ctx.markdownCwd}
+          />
+        )}
       </div>
       <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
         <div className="flex shrink-0 items-center gap-2">
@@ -1767,7 +1782,13 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
 function EditMessageButton({ message }: { message: ChatMessage }) {
   const action = use(TimelineRowCtx).editAction;
   const { message: translate } = useInterfaceTranslator();
-  if (!action || message.streaming || message.role === "system") return null;
+  if (
+    !action ||
+    message.streaming ||
+    message.role === "system" ||
+    action.editor?.messageId === message.id
+  )
+    return null;
   return (
     <Tooltip>
       <TooltipTrigger
@@ -1906,28 +1927,32 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   return (
     <>
       <div className="relative min-w-0 px-1 py-0.5">
-        <AssistantCitationSource
-          messageId={row.message.id}
-          {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
-          itemKey={row.id}
-          request={ctx.citationRequest}
-          listRef={ctx.listRef}
-        >
-          <ChatMarkdown
-            text={messageText}
-            cwd={ctx.markdownCwd}
-            threadRef={ctx.threadRef ?? undefined}
-            environmentId={ctx.activeThreadEnvironmentId}
-            isStreaming={Boolean(row.message.streaming)}
-            streamId={`${ctx.routeThreadKey}:${row.message.id}`}
-            streamingMotionEnabled={ctx.streamingMotionEnabled}
-            lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
-            skills={ctx.skills}
-            onUseArtifactTemplate={ctx.onUseArtifactTemplate}
-            onVisualizationAction={ctx.onVisualizationAction}
-            onImageExpand={ctx.onImageExpand}
-          />
-        </AssistantCitationSource>
+        {ctx.editAction?.editor?.messageId === row.message.id ? (
+          ctx.editAction.editor.content
+        ) : (
+          <AssistantCitationSource
+            messageId={row.message.id}
+            {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
+            itemKey={row.id}
+            request={ctx.citationRequest}
+            listRef={ctx.listRef}
+          >
+            <ChatMarkdown
+              text={messageText}
+              cwd={ctx.markdownCwd}
+              threadRef={ctx.threadRef ?? undefined}
+              environmentId={ctx.activeThreadEnvironmentId}
+              isStreaming={Boolean(row.message.streaming)}
+              streamId={`${ctx.routeThreadKey}:${row.message.id}`}
+              streamingMotionEnabled={ctx.streamingMotionEnabled}
+              lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
+              skills={ctx.skills}
+              onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+              onVisualizationAction={ctx.onVisualizationAction}
+              onImageExpand={ctx.onImageExpand}
+            />
+          </AssistantCitationSource>
+        )}
         <MessageAudioAttachments
           environmentId={ctx.activeThreadEnvironmentId}
           attachments={audioAttachments}
@@ -2290,12 +2315,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
 
   if (nonEmptyEntries.length === 0) return null;
   if (workEntryIsProviderReasoning(nonEmptyEntries[0]!)) {
-    return (
-      <ReasoningWorkEntryRow
-        workEntries={nonEmptyEntries}
-        onToggleEntry={onToggleStandaloneEntry}
-      />
-    );
+    return <ReasoningWorkEntryRow workEntries={nonEmptyEntries} />;
   }
   if (isExpandedToolGroup) {
     return (
@@ -3690,7 +3710,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
     return <AgentSpawnCtaRow workEntry={workEntry} />;
   }
   if (workEntryIsProviderReasoning(workEntry)) {
-    return <ReasoningWorkEntryRow workEntries={[workEntry]} onToggleEntry={props.onToggleEntry} />;
+    return <ReasoningWorkEntryRow workEntries={[workEntry]} />;
   }
   return (
     <PlainWorkEntryRow
@@ -3703,50 +3723,34 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   );
 });
 
-function ReasoningWorkEntryRow({
-  workEntries,
-  onToggleEntry,
-}: {
-  workEntries: ReadonlyArray<TimelineWorkEntry>;
-  onToggleEntry?: ((collapsed: boolean) => void) | undefined;
-}) {
+function ReasoningWorkEntryRow({ workEntries }: { workEntries: ReadonlyArray<TimelineWorkEntry> }) {
   const ctx = use(TimelineRowCtx);
-  const translate = useInterfaceTranslator().message;
-  const [expanded, setExpanded] = useState(true);
+  const { isWorking, latestTurnId } = use(TimelineRowActivityCtx);
   return (
-    <div className="px-0.5 py-0.5" data-reasoning-output="true">
-      <button
-        type="button"
-        aria-expanded={expanded}
-        className="flex cursor-pointer select-none items-center gap-1 text-left font-medium text-secondary-label text-xs leading-5 hover:text-foreground focus-visible:underline focus-visible:outline-none"
-        onClick={() => {
-          onToggleEntry?.(expanded);
-          setExpanded(!expanded);
-        }}
-      >
-        <ChevronDownIcon
-          aria-hidden
-          className={cn("size-3 shrink-0 opacity-70", !expanded && "-rotate-90")}
-        />
-        {translate("chat.timeline.modelReasoning")}
-      </button>
-      {expanded ? (
-        <div className="ms-4 mt-0.5 flex min-w-0 select-text flex-col gap-2 text-secondary-label">
-          {workEntries.map((entry) => (
-            <ChatMarkdown
-              key={entry.id}
-              text={entry.detail ?? ""}
-              cwd={ctx.markdownCwd}
-              threadRef={ctx.threadRef ?? undefined}
-              environmentId={ctx.activeThreadEnvironmentId}
-              onVisualizationAction={ctx.onVisualizationAction}
-              skills={ctx.skills}
-              className="text-secondary-label"
-              lineBreaks
-            />
-          ))}
-        </div>
-      ) : null}
+    <div
+      className="flex min-w-0 select-text flex-col gap-2 px-1 py-0.5 text-secondary-label"
+      data-reasoning-output="true"
+    >
+      {workEntries.map((entry) => {
+        const isStreaming = isWorking && latestTurnId !== null && entry.turnId === latestTurnId;
+        return (
+          <ChatMarkdown
+            key={entry.id}
+            text={entry.detail ?? ""}
+            cwd={ctx.markdownCwd}
+            threadRef={ctx.threadRef ?? undefined}
+            environmentId={ctx.activeThreadEnvironmentId}
+            isStreaming={isStreaming}
+            streamId={`${ctx.routeThreadKey}:${entry.id}`}
+            animateInitialStreamChunk={isStreaming}
+            streamingMotionEnabled={ctx.streamingMotionEnabled}
+            onVisualizationAction={ctx.onVisualizationAction}
+            skills={ctx.skills}
+            className="text-xs text-secondary-label"
+            lineBreaks
+          />
+        );
+      })}
     </div>
   );
 }

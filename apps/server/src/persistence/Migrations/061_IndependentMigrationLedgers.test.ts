@@ -62,7 +62,16 @@ const assertCurrent = Effect.gen(function* () {
   );
   assert.deepStrictEqual(yield* sql`SELECT migration_id, name FROM ${sql(forkMigrationTable)}`, [
     { migration_id: 61, name: "IndependentMigrationLedgers" },
+    { migration_id: 62, name: "MessageEditContextIndex" },
   ]);
+  const editPlan = yield* sql<{ detail: string }>`
+    EXPLAIN QUERY PLAN SELECT MAX(sequence) FROM orchestration_events
+    WHERE aggregate_kind = 'thread' AND stream_id = 'thread'
+      AND event_type IN ('thread.message-edited', 'thread.session-set')
+  `;
+  assert.isTrue(
+    editPlan.some((row) => row.detail.includes("idx_orch_events_message_edit_context")),
+  );
   for (const table of ["knowledge_graph_node_evidence", "knowledge_graph_edge_evidence"]) {
     const plan = yield* sql.unsafe<{ readonly detail: string }>(
       `EXPLAIN QUERY PLAN SELECT 1 FROM ${table} WHERE scope_id = ? AND evidence_id = ?`,
@@ -245,7 +254,7 @@ it.effect(
         );
         assert.deepStrictEqual(
           yield* sql`SELECT MAX(migration_id) AS id FROM ${sql(forkMigrationTable)}`,
-          [{ id: 61 }],
+          [{ id: 62 }],
         );
       }).pipe(
         Effect.provide(

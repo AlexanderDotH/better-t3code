@@ -95,18 +95,14 @@ function model(value: OrchestrationThread): OrchestrationReadModel {
 it.layer(NodeServices.layer)("message editing", (it) => {
   for (const role of ["user", "assistant"] as const) {
     it.effect(
-      `persists the ${role} edit, preserves later messages and requests a real provider turn`,
+      `persists the ${role} edit, preserves later messages without starting a provider turn`,
       () =>
         Effect.gen(function* () {
           const original = thread(role);
           let state = model(original);
           const result = yield* decideOrchestrationCommand({ command, readModel: state });
           const events = Array.isArray(result) ? result : [result];
-          expect(events.map((event) => event.type)).toEqual([
-            "thread.message-edited",
-            "thread.message-sent",
-            "thread.turn-start-requested",
-          ]);
+          expect(events.map((event) => event.type)).toEqual(["thread.message-edited"]);
           for (const event of events) {
             const committed = { ...event, sequence: state.snapshotSequence + 1 };
             state = yield* projectEvent(state, committed);
@@ -116,11 +112,7 @@ it.layer(NodeServices.layer)("message editing", (it) => {
           const messages = state.threads[0]!.messages;
           expect(messages[0]).toEqual({ ...original.messages[0], text: "Corrected" });
           expect(messages[1]).toEqual(original.messages[1]);
-          expect(messages[2]?.text).toContain("user-authored correction");
-          expect(messages[2]?.text).toContain("Corrected");
-          expect(messages[2]?.role).toBe("user");
-          expect(messages[2]?.attachments).toEqual(original.messages[0]?.attachments);
-          expect(events.at(-1)).toMatchObject({ payload: { messageId: messages[2]?.id } });
+          expect(messages).toHaveLength(original.messages.length);
           expect(state.threads[0]?.latestTurn).toEqual(original.latestTurn);
         }),
     );

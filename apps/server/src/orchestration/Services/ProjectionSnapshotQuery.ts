@@ -240,6 +240,8 @@ export interface ProjectionSnapshotQueryShape {
     Option.Option<{
       readonly message: OrchestrationMessage;
       readonly hasOtherUserMessages: boolean;
+      readonly editedMessageIds: ReadonlyArray<MessageId>;
+      readonly hasPendingMessageEdits: boolean;
     }>,
     ProjectionRepositoryError
   >;

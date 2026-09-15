@@ -106,13 +106,13 @@ function WindowBar({
         }
       >
         <div className="absolute inset-x-0 inset-y-1.5 rounded-full bg-muted" />
-        {remaining > 0 ? (
-          <div
-            className="absolute inset-y-1.5 left-0 rounded-full"
-            style={{ width: `${remaining}%`, backgroundColor: color }}
-          />
-        ) : null}
-        <div className="absolute inset-x-0 inset-y-1.5 overflow-hidden rounded-full">
+        <div className="usage-window-track absolute inset-x-0 inset-y-1.5 overflow-hidden rounded-full">
+          {remaining > 0 ? (
+            <div
+              className="usage-window-fill absolute inset-y-0 left-0 rounded-full"
+              style={{ width: `${remaining}%`, backgroundColor: color }}
+            />
+          ) : null}
           <UsagePaceBar window={window} now={now} baseColor={color} />
         </div>
       </TooltipTrigger>

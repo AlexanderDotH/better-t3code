@@ -14,6 +14,7 @@ export interface BetterT3AgentPreviewModel {
   readonly projectCoordination: boolean;
   readonly promptImprovement: boolean;
   readonly reasoningVisibility: boolean;
+  readonly reasoningWorkingOverlay: boolean;
 }
 
 export interface BetterT3ChatPreviewModel {
@@ -57,6 +58,10 @@ export function buildBetterT3SettingsPreviewModel(input: {
     deepThinking: effectiveFeatureEnabled(input.features, "agent.deepThinking"),
     promptImprovement: effectiveFeatureEnabled(input.features, "agent.promptImprovement"),
     reasoningVisibility: effectiveFeatureEnabled(input.features, "agent.reasoningVisibility"),
+    reasoningWorkingOverlay: effectiveFeatureEnabled(
+      input.features,
+      "agent.reasoningWorkingOverlay",
+    ),
     generalSubagents: effectiveFeatureEnabled(input.features, "agent.generalSubagents"),
     projectCoordination: effectiveFeatureEnabled(input.features, "agent.projectCoordination"),
   };

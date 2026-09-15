@@ -157,7 +157,12 @@ const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan.map
   }),
 );
 const ProjectionTurnStartMessageDbRowSchema = ProjectionThreadMessageDbRowSchema.mapFields(
-  Struct.assign({ hasOtherUserMessages: Schema.Number }),
+  Struct.assign({
+    hasOtherUserMessages: Schema.Number,
+    editedMessageIds: Schema.fromJsonString(Schema.Array(MessageId)),
+    messageEditSequence: Schema.Number,
+    providerContextSequence: Schema.Number,
+  }),
 );
 const ProjectionThreadSubagentDbRowSchema = ProjectionThreadSubagent.mapFields(
   Struct.assign({
@@ -1603,7 +1608,23 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     Request: TurnStartMessageLookupInput,
     Result: ProjectionTurnStartMessageDbRowSchema,
     execute: ({ threadId, messageId }) => sql`
+      WITH context AS (
+        SELECT
+          json_group_array(DISTINCT json_extract(payload_json, '$.messageId'))
+            FILTER (WHERE event_type = 'thread.message-edited') AS edited_message_ids,
+          COALESCE(MAX(CASE WHEN event_type = 'thread.message-edited' THEN sequence END), 0) AS edit_sequence,
+          COALESCE(MAX(CASE WHEN event_type = 'thread.session-set'
+            AND json_extract(payload_json, '$.session.status') = 'running'
+            AND json_extract(payload_json, '$.session.activeTurnId') IS NOT NULL
+            THEN sequence END), 0) AS provider_sequence
+        FROM orchestration_events
+        WHERE aggregate_kind = 'thread' AND stream_id = ${threadId}
+          AND event_type IN ('thread.message-edited', 'thread.session-set')
+      )
       SELECT
+        (SELECT edited_message_ids FROM context) AS "editedMessageIds",
+        (SELECT edit_sequence FROM context) AS "messageEditSequence",
+        (SELECT provider_sequence FROM context) AS "providerContextSequence",
         message_id AS "messageId",
         thread_id AS "threadId",
         turn_id AS "turnId",
@@ -3739,6 +3760,8 @@ pending_approval_requests AS (
         ...(row.historyOrigin !== null ? { historyOrigin: row.historyOrigin } : {}),
       },
       hasOtherUserMessages: row.hasOtherUserMessages === 1,
+      editedMessageIds: row.editedMessageIds,
+      hasPendingMessageEdits: row.messageEditSequence > row.providerContextSequence,
     }));
   });
 

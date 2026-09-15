@@ -280,3 +280,20 @@ export function buildBetterT3SwitchSettingsPatch(
     ...environmentCompatibilityPatch(featureId, enabled),
   };
 }
+
+export type ReasoningDisplayMode = "none" | "chat" | "working";
+
+export function buildReasoningDisplaySettingsPatch(
+  mode: ReasoningDisplayMode,
+): ClientSettingsPatch {
+  return {
+    showReasoning: mode !== "none",
+    betterT3Device: {
+      version: 1,
+      flags: {
+        "agent.reasoningVisibility": mode !== "none",
+        "agent.reasoningWorkingOverlay": mode === "working",
+      },
+    },
+  };
+}

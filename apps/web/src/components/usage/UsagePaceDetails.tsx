@@ -62,6 +62,7 @@ export function UsagePaceBar({
     overdrawn ? 100 - remaining : remaining,
     Math.abs(pace.todayBalancePercent),
   );
+  const hasNotch = !overdrawn && width > 0 && remaining > width;
   const catchUpShare =
     pace.todayRemainingPercent > 0
       ? (pace.catchUpRemainingPercent / pace.todayRemainingPercent) * 100
@@ -82,14 +83,15 @@ export function UsagePaceBar({
       aria-valuemax={100}
       aria-valuenow={pace.todayBalancePercent}
       aria-valuetext={`${number(pace.todayRemainingPercent, { maximumFractionDigits: 1 })}% left today, including ${number(pace.catchUpRemainingPercent, { maximumFractionDigits: 1 })}% catch-up.${pace.todayOverdrawPercent !== null && pace.todayOverdrawPercent > 0 ? ` ${number(pace.todayOverdrawPercent, { maximumFractionDigits: 1 })}% overdrawn today.` : ""} ${DAILY_USAGE_PACE_LABELS[pace.status]}`}
-      className="pointer-events-none absolute inset-y-0 flex rounded-r-full"
+      className="usage-pace-bar pointer-events-none absolute inset-y-0 flex rounded-r-full"
+      data-overdrawn={overdrawn}
       style={{
         right: `${100 - remaining - (overdrawn ? width : 0)}%`,
-        width: `${width}%`,
+        width: `${overdrawn ? remaining + width : width}%`,
       }}
     >
       <div
-        className={`min-w-0 ${catchUpShare === 0 ? "rounded-r-full" : ""} ${color}`}
+        className={`min-w-0 ${hasNotch ? "" : "rounded-l-full"} ${catchUpShare === 0 ? "rounded-r-full" : ""} ${color}`}
         style={{ flex: 100 - catchUpShare }}
       />
       {pace.catchUpRemainingPercent > 0 ? (
@@ -98,13 +100,10 @@ export function UsagePaceBar({
           style={{ flex: catchUpShare }}
         />
       ) : null}
-      {overdrawn ? (
-        <div aria-hidden className="absolute inset-y-0 right-0 w-px bg-foreground/60" />
-      ) : null}
-      {remainingPercent(window) > pace.todayRemainingPercent && pace.todayRemainingPercent > 0 ? (
+      {hasNotch ? (
         <div
           aria-hidden
-          className="absolute inset-y-0 left-0 -translate-x-1/2 rounded-full"
+          className="usage-pace-notch absolute inset-y-0 left-0 -translate-x-1/2 rounded-full"
           style={{ width: "min(12px, 200%)", backgroundColor: baseColor }}
         />
       ) : null}

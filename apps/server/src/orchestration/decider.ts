@@ -1628,25 +1628,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: command.createdAt,
         },
       };
-      const crypto = yield* Crypto.Crypto;
-      const continuation = yield* decideOrchestrationCommand({
-        readModel,
-        command: {
-          type: "thread.turn.start",
-          commandId: command.commandId,
-          threadId: command.threadId,
-          message: {
-            messageId: MessageId.make(yield* crypto.randomUUIDv4),
-            role: "user",
-            text: `I edited the earlier ${message.role} message from ${message.createdAt} (message ID: ${message.id}). The replacement below is a user-authored correction${message.role === "assistant" ? " to your earlier answer" : ""}. Treat it as the current version, keep the later conversation, and continue from this correction.\n\n${command.text}`,
-            attachments: message.attachments ?? [],
-          },
-          runtimeMode: thread.runtimeMode,
-          interactionMode: thread.interactionMode,
-          createdAt: command.createdAt,
-        },
-      });
-      return [edited, ...("type" in continuation ? [continuation] : continuation)];
+      return edited;
     }
 
     case "thread.turn.retry": {
