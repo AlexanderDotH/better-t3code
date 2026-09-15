@@ -109,7 +109,7 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
             );
             assert.deepStrictEqual(
               yield* sql`SELECT MAX(migration_id) AS id FROM ${sql(forkMigrationTable)}`,
-              [{ id: 61 }],
+              [{ id: 62 }],
             );
             if (sourceKind !== "independent") {
               assert.deepStrictEqual(

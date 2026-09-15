@@ -101,11 +101,11 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "show-reasoning",
-    title: "Show thinking traces",
+    title: "Thinking trace display",
     to: "/settings/better-t3",
     targetId: "agent.reasoningVisibility",
     searchTerms: [
-      "reasoning visibility summary show reasoning thinking traces Gedanken Denkprozess Begründung anzeigen classic chat",
+      "reasoning visibility summary show reasoning thinking traces Gedanken Denkprozess Begründung anzeigen ausblenden none no thinking traces classic chat working dialog overlay lyrics scroller",
     ],
   },
   {
@@ -114,7 +114,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/better-t3",
     targetId: "chat.messageEditing",
     searchTerms: [
-      "edit messages assistant user resend correction restart Nachrichten bearbeiten Agent Antwort Korrektur senden",
+      "edit messages assistant user inline save correction Nachrichten bearbeiten Agent Antwort Korrektur speichern",
     ],
   },
   {
@@ -147,9 +147,35 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "voice-input",
     title: "Voice input",
-    to: "/settings/connections",
-    searchTerms: ["AssemblyAI microphone dictation transcript speech translation API key"],
-    primaryOnly: true,
+    to: "/settings/better-t3",
+    targetId: "better-t3-group-voice",
+    searchTerms: ["AssemblyAI microphone dictation transcript speech translation Spracheingabe"],
+  },
+  {
+    id: "voice-credentials",
+    title: "AssemblyAI API key",
+    to: "/settings/better-t3",
+    targetId: "voice.credentials",
+    searchTerms: ["voice speech credentials token Sprachzugangsdaten"],
+  },
+  {
+    id: "voice-translation-model",
+    title: "Voice post-processing model",
+    to: "/settings/better-t3",
+    searchTerms: ["dictation translation English Sprache Nachbearbeitung"],
+  },
+  {
+    id: "project-speech-context",
+    title: "Project speech context",
+    to: "/settings/better-t3",
+    searchTerms: ["voice profile indexing keyterms terminology Sprachkontext"],
+  },
+  {
+    id: "prompt-improvement",
+    title: "Prompt improvement",
+    to: "/settings/better-t3",
+    targetId: "agent.promptImprovement",
+    searchTerms: ["improve prompts before sending refine Prompt-Verbesserung"],
   },
   {
     id: "interface-language",

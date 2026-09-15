@@ -4410,7 +4410,7 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
     }),
   );
   it.effect(
-    "stores message edits and their continuation together, preserving roles and later messages",
+    "stores user and assistant edits without requesting a turn, preserving roles and later messages",
     () =>
       Effect.gen(function* () {
         const engine = yield* OrchestrationEngineService;
@@ -4483,6 +4483,7 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
           };
           yield* engine.dispatch(command);
           const detail = Option.getOrThrow(yield* query.getThreadDetailById(threadId));
+          assert.strictEqual(detail.messages.length, 3);
           assert.strictEqual(
             detail.messages.find((message) => message.id === command.messageId)?.text,
             `Corrected ${role}`,
@@ -4499,7 +4500,7 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
             count: number;
           }>`SELECT COUNT(*) AS count FROM orchestration_events
         WHERE command_id = ${command.commandId} AND event_type IN ('thread.message-edited', 'thread.message-sent', 'thread.turn-start-requested')`;
-          assert.strictEqual(count?.count, 3);
+          assert.strictEqual(count?.count, 1);
           yield* engine.dispatch(command);
           const stale = yield* engine
             .dispatch({ ...command, commandId: CommandId.make(`edit-${role}-stale`) })

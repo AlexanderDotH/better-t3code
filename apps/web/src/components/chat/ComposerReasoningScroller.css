@@ -1,0 +1,38 @@
+.composer-reasoning-lyrics {
+  --lyrics-height: 1.5rem;
+  --lyrics-line-height: 1rem;
+  min-width: 0;
+  flex: 1;
+  height: var(--lyrics-height);
+  overflow-anchor: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  text-align: center;
+  mask-image: linear-gradient(transparent, black 15%, black 85%, transparent);
+}
+
+.composer-reasoning-lyrics:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+  mask-image: none;
+}
+
+.composer-reasoning-lyrics-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: calc((var(--lyrics-height) - var(--lyrics-line-height)) / 2) 0.5rem;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+
+.composer-reasoning-lyrics-content .chat-markdown :is(p, h1, h2, h3, h4, h5, h6) {
+  font-size: inherit;
+  line-height: var(--lyrics-line-height);
+}
+
+[data-slot="composer-banner-content"]:has([data-composer-reasoning])
+  > [data-composer-task-current] {
+  display: none;
+}

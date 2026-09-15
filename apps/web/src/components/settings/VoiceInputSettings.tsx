@@ -13,12 +13,9 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { resolveBetterT3FeatureFlag } from "@t3tools/contracts";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { Switch } from "../ui/switch";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
-import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
+import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { cn } from "../../lib/utils";
 import {
@@ -32,7 +29,6 @@ import {
 } from "../../providerInstances";
 import { useEnvironments } from "../../state/environments";
 import { useProjects } from "../../state/entities";
-import { primaryServerProvidersAtom } from "../../state/server";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -174,6 +170,7 @@ function ProjectSpeechProfileRow({
   open,
   busyAction,
   actionError,
+  disabled,
   onOpenChange,
   onIndex,
   onUseBasicContext,
@@ -183,6 +180,7 @@ function ProjectSpeechProfileRow({
   readonly open: boolean;
   readonly busyAction: ProjectAction | undefined;
   readonly actionError: string | undefined;
+  readonly disabled: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly onIndex: () => void;
   readonly onUseBasicContext: () => void;
@@ -251,7 +249,7 @@ function ProjectSpeechProfileRow({
             <div className="flex flex-wrap gap-2">
               <Button
                 size="sm"
-                disabled={isBusy}
+                disabled={disabled || isBusy}
                 aria-busy={busyAction === "index"}
                 aria-label={translate("settings.voice.profile.indexAria", {
                   action: indexLabel,
@@ -271,7 +269,7 @@ function ProjectSpeechProfileRow({
               <Button
                 size="sm"
                 variant="outline"
-                disabled={isBusy || profile?.source === "basic"}
+                disabled={disabled || isBusy || profile?.source === "basic"}
                 aria-busy={busyAction === "basic"}
                 aria-label={translate("settings.voice.profile.basicAria", {
                   project: project.title,
@@ -291,11 +289,17 @@ function ProjectSpeechProfileRow({
   );
 }
 
-export function VoiceInputSettings() {
+export function VoiceInputSettings({
+  environmentId,
+  disabled,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly disabled: boolean;
+}) {
   const translator = useInterfaceTranslator();
   const translate = translator.message;
-  const settings = usePrimarySettings();
-  const updateSettings = useUpdatePrimarySettings();
+  const settings = useEnvironmentSettings(environmentId);
+  const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const listProfiles = useAtomCommand(serverEnvironment.listProjectSpeechProfiles, {
     reportFailure: false,
   });
@@ -305,9 +309,13 @@ export function VoiceInputSettings() {
   const createBasicProfile = useAtomCommand(serverEnvironment.createBasicProjectSpeechProfile, {
     reportFailure: false,
   });
-  const projects = useProjects();
+  const allProjects = useProjects();
+  const projects = useMemo(
+    () => allProjects.filter((project) => project.environmentId === environmentId),
+    [allProjects, environmentId],
+  );
   const { environments } = useEnvironments();
-  const serverProviders = useAtomValue(primaryServerProvidersAtom);
+  const serverProviders = useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? [];
   const assemblyAiApiKey = settings.speechTranscription.assemblyAi.apiKey;
   const assemblyAiApiKeyConfigured =
     assemblyAiApiKey.value.trim().length > 0 || Boolean(assemblyAiApiKey.valueRedacted);
@@ -421,8 +429,8 @@ export function VoiceInputSettings() {
   }, [projectEnvironmentIds, refreshEnvironmentProfiles]);
 
   useEffect(() => {
-    void refreshProfiles();
-  }, [refreshProfiles]);
+    if (!disabled) void refreshProfiles();
+  }, [disabled, refreshProfiles]);
 
   const setProjectExpanded = useCallback((key: string, open: boolean) => {
     setExpandedProjectKeys((current) => {
@@ -468,61 +476,13 @@ export function VoiceInputSettings() {
   return (
     <>
       <SettingsSection
+        id="voice-input"
         title={translate("settings.voice.title")}
         icon={<MicIcon className="size-3.5" />}
       >
         <SettingsRow
-          id="voice-input"
-          title="Voice input"
-          description="Dictate into the composer using AssemblyAI."
-          control={
-            <Switch
-              checked={resolveBetterT3FeatureFlag(settings.betterT3Environment, "voice.assemblyAi")}
-              onCheckedChange={(enabled) =>
-                updateSettings({
-                  betterT3Environment: {
-                    ...settings.betterT3Environment,
-                    flags: { ...settings.betterT3Environment.flags, "voice.assemblyAi": enabled },
-                  },
-                })
-              }
-              aria-label="Voice input"
-            />
-          }
-        />
-        <SettingsRow
-          title="Improve prompts before sending"
-          description="Use the text generation model to clarify your prompt before starting a turn."
-          control={
-            <Switch
-              checked={settings.improvePromptBeforeSend}
-              onCheckedChange={(enabled) => updateSettings({ improvePromptBeforeSend: enabled })}
-              aria-label="Improve prompts before sending"
-            />
-          }
-        />
-        <SettingsRow
-          title="Dictation output"
-          description="Keep the spoken language or translate the finished transcript into English."
-          control={
-            <Select
-              value={settings.voiceInputOutputLanguage}
-              onValueChange={(value) => {
-                if (value === "native" || value === "english")
-                  updateSettings({ voiceInputOutputLanguage: value });
-              }}
-            >
-              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Dictation output">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectPopup>
-                <SelectItem value="native">Spoken language</SelectItem>
-                <SelectItem value="english">English</SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        />
-        <SettingsRow
+          id="voice.credentials"
+          data-better-t3-feature="voice.credentials"
           title={translate("settings.voice.apiKey.title")}
           description={translate("settings.voice.apiKey.description")}
           status={translate(
@@ -534,6 +494,7 @@ export function VoiceInputSettings() {
             assemblyAiApiKeyConfigured ? (
               <SettingResetButton
                 label={translate("settings.voice.apiKey.title")}
+                disabled={disabled}
                 onClick={() =>
                   updateSettings({
                     speechTranscription: {
@@ -548,6 +509,7 @@ export function VoiceInputSettings() {
           }
           control={
             <DraftInput
+              disabled={disabled}
               className="w-full sm:w-72"
               nativeInput
               type="password"
@@ -573,18 +535,21 @@ export function VoiceInputSettings() {
           }
         />
         <SettingsRow
+          id="voice-translation-model"
           title={translate("settings.voice.model.title")}
           description={translate("settings.voice.model.description")}
           resetAction={
             settings.voiceTranslationModelSelection !== null ? (
               <SettingResetButton
                 label={translate("settings.voice.model.resetLabel")}
+                disabled={disabled}
                 onClick={() => updateSettings({ voiceTranslationModelSelection: null })}
               />
             ) : null
           }
           control={
             <ProviderModelPicker
+              disabled={disabled}
               activeInstanceId={voiceTranslationModelSelection.instanceId}
               model={voiceTranslationModelSelection.model}
               lockedProvider={null}
@@ -604,6 +569,7 @@ export function VoiceInputSettings() {
       </SettingsSection>
 
       <SettingsSection
+        id="project-speech-context"
         title={translate("settings.voice.context.title")}
         icon={<FolderSearchIcon className="size-3.5" />}
         headerAction={
@@ -611,7 +577,7 @@ export function VoiceInputSettings() {
             size="icon-xs"
             variant="ghost"
             aria-label={translate("settings.voice.context.refresh")}
-            disabled={projectEnvironmentIds.length === 0}
+            disabled={disabled || projectEnvironmentIds.length === 0}
             onClick={() => void refreshProfiles()}
           >
             <RefreshCwIcon className={cn("size-3.5", isRefreshing && "animate-spin")} />
@@ -651,6 +617,7 @@ export function VoiceInputSettings() {
                     return (
                       <ProjectSpeechProfileRow
                         key={key}
+                        disabled={disabled}
                         project={project}
                         environmentState={environmentState}
                         open={expandedProjectKeys.has(key)}

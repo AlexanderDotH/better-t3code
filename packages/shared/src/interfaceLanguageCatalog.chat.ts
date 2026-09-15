@@ -1455,17 +1455,7 @@ export const chatInterfaceCatalog = defineLocalizedInterfaceCatalog({
   "chat.openIn.thisMachine": ["this machine", "diesem Gerät", "cette machine"],
   "chat.copy.failed": ["Failed to copy", "Kopieren fehlgeschlagen", "Échec de la copie"],
   "chat.edit.title": ["Edit message", "Nachricht bearbeiten", "Modifier le message"],
-  "chat.edit.description": [
-    "Send a correction to keep the later conversation. Restart here to create a new chat branch with the edited message and no later messages. Attachments are preserved.",
-    "Eine Korrektur behält den späteren Verlauf. Ab hier neu fortsetzen erstellt einen neuen Chatzweig mit der bearbeiteten Nachricht ohne spätere Nachrichten. Anhänge bleiben erhalten.",
-    "Envoyez une correction pour conserver la suite, ou reprenez ici dans une nouvelle branche avec le message modifié sans les messages suivants. Les pièces jointes sont conservées.",
-  ],
-  "chat.edit.continue": ["Send correction", "Korrektur senden", "Envoyer la correction"],
-  "chat.edit.restart": [
-    "Restart here in new branch",
-    "Ab hier in neuem Zweig fortsetzen",
-    "Reprendre dans une nouvelle branche",
-  ],
+  "chat.edit.continue": ["Save correction", "Korrektur speichern", "Enregistrer la correction"],
   "chat.edit.cancel": ["Cancel", "Abbrechen", "Annuler"],
   "chat.edit.failed": [
     "Could not send the edit.",

@@ -256,14 +256,6 @@ function PoolSegment({
           />
         }
       >
-        {/* Translucent so the label reads over the fill for any provider colour and theme. */}
-        <div
-          aria-hidden
-          className="absolute inset-y-0 left-0 rounded-md opacity-35"
-          style={{ width: `${remaining}%`, backgroundColor: color }}
-        >
-          <div className="absolute inset-0 rounded-md border-r-2 border-background" />
-        </div>
         {/* The spent share is hatched, not blank: it is what the countdown restores. */}
         {remaining < 100 && reset ? (
           <div
@@ -275,7 +267,17 @@ function PoolSegment({
             }}
           />
         ) : null}
-        <div className="absolute inset-0 opacity-35">
+        {/* One translucent layer keeps the notch and its gap consistent with the weekly fill. */}
+        <div className="usage-window-track absolute inset-0 opacity-35">
+          {remaining > 0 ? (
+            <div
+              aria-hidden
+              className="usage-window-fill absolute inset-y-0 left-0 rounded-md"
+              style={{ width: `${remaining}%`, backgroundColor: color }}
+            >
+              <div className="absolute inset-0 rounded-md border-r-2 border-background" />
+            </div>
+          ) : null}
           <UsagePaceBar window={window} now={now} baseColor={color} />
         </div>
         <span

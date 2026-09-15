@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import Migration0061 from "./Migrations/061_IndependentMigrationLedgers.ts";
+import Migration0062 from "./Migrations/062_MessageEditContextIndex.ts";
 import { migrationManifest as legacyForkManifest } from "./Migrations/LegacyForkMigrations.ts";
 
 // Import all migrations statically
@@ -148,7 +149,10 @@ const run = Migrator.make({});
 export const upstreamMigrationTable = "effect_sql_upstream_migrations";
 export const forkMigrationTable = "effect_sql_fork_migrations";
 const upstreamBaseline = 49;
-const forkMigrationEntries = [[61, "IndependentMigrationLedgers", Migration0061]] as const;
+const forkMigrationEntries = [
+  [61, "IndependentMigrationLedgers", Migration0061],
+  [62, "MessageEditContextIndex", Migration0062],
+] as const;
 export const forkMigrationManifest = forkMigrationEntries.map(([id, name]) => [id, name] as const);
 
 const convergeLegacyDatabase = Effect.gen(function* () {

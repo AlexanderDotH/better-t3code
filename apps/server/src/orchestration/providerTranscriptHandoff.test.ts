@@ -89,6 +89,44 @@ describe("buildProviderTranscriptHandoff", () => {
     expect(built.handoff).not.toContain("LATER_CONTENT_MUST_NOT_LEAK");
   });
 
+  it("retains corrected middle exchanges in chronological order within the context budget", () => {
+    const editedUser = message("edited-user", "user", "Use the corrected API");
+    const editedAssistant = message("edited-assistant", "assistant", "The corrected answer", {
+      attachments: [
+        {
+          type: "image",
+          id: "edited-image",
+          name: "edit.png",
+          mimeType: "image/png",
+          sizeBytes: 42,
+        },
+      ],
+    });
+    const messages = [
+      message("goal", "user", "Build an integration"),
+      editedUser,
+      editedAssistant,
+      ...Array.from({ length: 40 }, (_, i) =>
+        message(`later-${i}`, i % 2 === 0 ? "user" : "assistant", "Later discussion ".repeat(400)),
+      ),
+      message("boundary", "user", "Continue now"),
+    ];
+    const built = buildProviderTranscriptHandoff({
+      messages,
+      boundaryMessageId: MessageId.make("boundary"),
+      editedMessageIds: [editedUser.id, editedAssistant.id],
+      maxChars: 30_000,
+    });
+    expect(built.handoff).toContain("[user]\nUse the corrected API\n[/user]");
+    expect(built.handoff).toContain("[assistant]\nThe corrected answer");
+    expect(built.handoff.indexOf("Use the corrected API")).toBeLessThan(
+      built.handoff.indexOf("The corrected answer"),
+    );
+    expect(built.handoff).not.toContain("Continue now");
+    expect(built.handoff.length).toBeLessThanOrEqual(30_000);
+    expect(built.attachments.map((attachment) => attachment.id)).toContain("edited-image");
+  });
+
   it("bounds selected message text and is deterministic when the boundary is unknown", () => {
     const input = {
       messages: [message("user-1", "user", `goal ${"x".repeat(50_000)}`)],

@@ -1,5 +1,5 @@
 import { useThreadFork } from "../hooks/useThreadFork";
-import { EditMessageDialog } from "./chat/EditMessageDialog";
+import { InlineMessageEditor } from "./chat/InlineMessageEditor";
 import { resolveInterruptedTurnRetryTarget } from "@t3tools/client-runtime/state/thread-retry";
 import { resolveFetchMode } from "@t3tools/shared/fetchMode";
 import { resolveThreadAbortPresentation } from "@t3tools/client-runtime/state/thread-abort";
@@ -1474,8 +1474,10 @@ export default function ChatView(props: ChatViewProps) {
   const retryThreadTurn = useAtomCommand(threadEnvironment.retryTurn, { reportFailure: false });
   const editThreadMessage = useAtomCommand(threadEnvironment.editMessage, { reportFailure: false });
   const [editingMessage, setEditingMessage] = useState<{
+    environmentId: EnvironmentId;
     threadId: ThreadId;
     message: ChatMessage;
+    draftRef: { current: string };
   } | null>(null);
   const retryDispatchInFlightRef = useRef(false);
   const [retryingMessageId, setRetryingMessageId] = useState<MessageId | null>(null);
@@ -8263,13 +8265,58 @@ export default function ChatView(props: ChatViewProps) {
       messageEditingEnabled
         ? {
             available: messageEditingAvailable,
+            editor:
+              editingMessage &&
+              editingMessage.threadId === activeThread?.id &&
+              editingMessage.environmentId === activeThread.environmentId
+                ? {
+                    messageId: editingMessage.message.id,
+                    content: (
+                      <InlineMessageEditor
+                        key={`${activeThread.environmentId}:${editingMessage.message.id}`}
+                        draftRef={editingMessage.draftRef}
+                        available={messageEditingAvailable}
+                        onClose={() =>
+                          setEditingMessage((current) =>
+                            current === editingMessage ? null : current,
+                          )
+                        }
+                        onSave={async (text) => {
+                          if (!messageEditingAvailable)
+                            throw new Error("Wait until this chat is idle and connected.");
+                          const result = await editThreadMessage({
+                            environmentId: activeThread.environmentId,
+                            input: {
+                              threadId: activeThread.id,
+                              messageId: editingMessage.message.id,
+                              expectedText: editingMessage.message.text,
+                              text,
+                            },
+                          });
+                          if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+                        }}
+                      />
+                    ),
+                  }
+                : null,
             onEdit: (message: ChatMessage) => {
               if (activeThread && messageEditingAvailable)
-                setEditingMessage({ threadId: activeThread.id, message });
+                setEditingMessage({
+                  environmentId: activeThread.environmentId,
+                  threadId: activeThread.id,
+                  message,
+                  draftRef: { current: message.text },
+                });
             },
           }
         : null,
-    [messageEditingEnabled, messageEditingAvailable, activeThread],
+    [
+      messageEditingEnabled,
+      messageEditingAvailable,
+      activeThread,
+      editingMessage,
+      editThreadMessage,
+    ],
   );
   const forkControl = useThreadFork({
     thread: activeThread ?? null,
@@ -8682,38 +8729,6 @@ export default function ChatView(props: ChatViewProps) {
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden window-surface bg-background">
-      {messageEditingEnabled && editingMessage && editingMessage.threadId === activeThread?.id && (
-        <EditMessageDialog
-          key={`${activeThread.environmentId}:${editingMessage.message.id}`}
-          text={editingMessage.message.text}
-          available={messageEditingAvailable}
-          canRestart={supportsThreadForking}
-          onClose={() => setEditingMessage(null)}
-          onSave={async (text, mode) => {
-            if (!messageEditingAvailable)
-              throw new Error("Wait until this chat is idle and connected.");
-            const message = editingMessage.message;
-            if (mode === "restart") {
-              await forkControl.onFork(
-                { kind: "message", messageId: message.id },
-                { expectedText: message.text, text },
-              );
-              return;
-            }
-            const result = await editThreadMessage({
-              environmentId: activeThread.environmentId,
-              input: {
-                threadId: activeThread.id,
-                messageId: message.id,
-                expectedText: message.text,
-                text,
-              },
-            });
-            if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-            acknowledgeActiveThreadWoke();
-          }}
-        />
-      )}
       {routeKind === "draft" && draftId && activeProject && !threadHasStarted(activeThread) ? (
         <ProjectSpeechSetup
           key={`${activeProject.environmentId}:${activeProject.id}:${draftId}`}
@@ -9067,6 +9082,7 @@ export default function ChatView(props: ChatViewProps) {
                                 bannerItems={composerBannerItems}
                                 isWorking={isWorking}
                                 activeWorkStartedAt={activeWorkStartedAt}
+                                reasoningEntries={workLogEntries}
                                 floatingBubbleHost={activeComposerFloatingBubbleHost}
                                 // With attachments or contexts aboard the pick just inserts the
                                 // text, so it sends as a prompt like the typed path would.

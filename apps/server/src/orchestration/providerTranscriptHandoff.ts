@@ -11,6 +11,7 @@ const HANDOFF_HEADER = [
 ].join("\n");
 const HANDOFF_FOOTER = "</t3code_context_handoff>";
 const MESSAGE_TEXT_MAX_CHARS = 6_000;
+const CONVERSATION_MAX_CHARS = 80_000;
 
 type HandoffCheckpoint = Pick<
   OrchestrationCheckpointSummary,
@@ -150,15 +151,63 @@ export function buildProviderTranscriptHandoff(input: {
   readonly boundaryMessageId: OrchestrationMessage["id"];
   readonly latestTurnState?: string | null;
   readonly checkpoints?: ReadonlyArray<HandoffCheckpoint>;
+  readonly editedMessageIds?: ReadonlyArray<OrchestrationMessage["id"]>;
+  readonly maxChars?: number;
 }): ProviderTranscriptHandoff {
   const boundaryIndex = input.messages.findIndex(
     (message) => message.id === input.boundaryMessageId,
   );
-  return buildCompactHandoff({
-    messages: boundaryIndex < 0 ? [] : input.messages.slice(0, boundaryIndex),
+  const messages = boundaryIndex < 0 ? [] : input.messages.slice(0, boundaryIndex);
+  const compact = buildCompactHandoff({
+    messages,
     ...(input.latestTurnState !== undefined ? { latestTurnState: input.latestTurnState } : {}),
     ...(input.checkpoints !== undefined ? { checkpoints: input.checkpoints } : {}),
   });
+  if (!input.editedMessageIds?.length) return compact;
+
+  // Rebuild from canonical messages so an edited middle exchange is not lost
+  // when the provider's old session is discarded. Older text stays in thread_context.
+  const editedIds = new Set(input.editedMessageIds);
+  const retained = new Set<OrchestrationMessage>();
+  const conversationHeader =
+    "<t3code_conversation>\nCanonical conversation in chronological order. Continue from these messages with their original roles.";
+  let remaining =
+    Math.min(CONVERSATION_MAX_CHARS, input.maxChars ?? CONVERSATION_MAX_CHARS) -
+    compact.handoff.length -
+    conversationHeader.length -
+    200;
+  // Include corrected history before filling the remaining budget with recent exchanges.
+  const candidates = [
+    ...messages.filter((message) => editedIds.has(message.id)),
+    ...messages.toReversed(),
+  ];
+  for (const message of candidates) {
+    if (message.streaming || message.role === "system" || retained.has(message)) continue;
+    const text = renderMessage(message);
+    if (text.length + 2 > remaining) continue;
+    remaining -= text.length + 2;
+    retained.add(message);
+  }
+  const conversation = messages.filter((message) => retained.has(message));
+  return {
+    handoff: [
+      compact.handoff,
+      conversationHeader,
+      ...(conversation.length < messages.length
+        ? ["[Some messages omitted; exact canonical history is available through thread_context.]"]
+        : []),
+      ...conversation.map(renderMessage),
+      "</t3code_conversation>",
+    ].join("\n\n"),
+    attachments: Array.from(
+      new Map(
+        [...compact.attachments, ...collectAttachments(conversation)].map((attachment) => [
+          attachment.id,
+          attachment,
+        ]),
+      ).values(),
+    ),
+  };
 }
 
 export function buildProviderForkTranscriptHandoff(

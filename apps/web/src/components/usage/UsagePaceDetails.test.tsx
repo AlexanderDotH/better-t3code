@@ -37,7 +37,9 @@ it("keeps today's allowance at the right edge of the weekly remainder while spen
       [6, 100 / 7 - 6, "bg-success"],
       [10, 100 / 7 - 10, "bg-warning"],
       [100 / 7 - 0.25, 0.25, "bg-warning"],
+      [100 / 7 + 0.25, -0.25, "bg-destructive"],
       [20, 100 / 7 - 20, "bg-destructive"],
+      [99.75, 100 / 7 - 99.75, "bg-destructive"],
       [100, 100 / 7 - 100, "bg-destructive"],
     ] as const) {
       await act(() =>
@@ -48,7 +50,13 @@ it("keeps today's allowance at the right edge of the weekly remainder while spen
       if (usedPercent === 20) {
         expect(meter.props["aria-valuetext"]).toContain("5.7% overdrawn today");
       }
-      expect(Number.parseFloat(meter.props.style.width)).toBeCloseTo(Math.abs(remaining));
+      const weeklyRemaining = Math.round(100 - usedPercent);
+      const drawnWidth = Number.parseFloat(meter.props.style.width);
+      expect(drawnWidth - (remaining < 0 ? weeklyRemaining : 0)).toBeCloseTo(Math.abs(remaining));
+      const notches = meter.findAll((element) =>
+        element.props.className?.includes("usage-pace-notch"),
+      );
+      expect(notches).toHaveLength(remaining > 0 && weeklyRemaining > remaining ? 1 : 0);
       expect(Number.parseFloat(meter.props.style.right)).toBeCloseTo(
         Math.round(usedPercent) + Math.min(0, remaining),
       );

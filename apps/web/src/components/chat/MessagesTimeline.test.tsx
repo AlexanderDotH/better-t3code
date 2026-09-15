@@ -4,15 +4,18 @@ import {
   CheckpointRef,
   EnvironmentId,
   MessageId,
+  makeBetterT3SettingsV1,
   TurnId,
 } from "@t3tools/contracts";
-import { act, createRef, useLayoutEffect, type ReactNode, type Ref } from "react";
+import { act, createRef, useLayoutEffect, useState, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef, MaintainScrollAtEndOptions } from "@legendapp/list/react";
 import { shouldUseRestingComposerLayout } from "../composerFooterLayout";
 import { useComposerFocusState } from "./useComposerFocusState";
+import type { TimelineEntry } from "../../session-logic";
+let InlineMessageEditor: typeof import("./InlineMessageEditor").InlineMessageEditor;
 
 const visualPreference = vi.hoisted(() => ({ mode: "current" as "current" | "classic" }));
 vi.mock("../../chatVisualModeSync", () => ({ useChatVisualMode: () => visualPreference.mode }));
@@ -181,6 +184,7 @@ beforeAll(async () => {
   });
 
   ({ MessagesTimeline } = await import("./MessagesTimeline"));
+  ({ InlineMessageEditor } = await import("./InlineMessageEditor"));
 }, 30_000);
 
 const ACTIVE_THREAD_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
@@ -445,9 +449,7 @@ it("moves the active plan between the composer and native timeline", async () =>
       "reply.wav",
     ]);
     const reasoning = renderer!.root.findByProps({ "data-reasoning-output": "true" });
-    expect(reasoning.findByType("button").props["aria-expanded"]).toBe(true);
-    await act(() => reasoning.findByType("button").props.onClick());
-    expect(reasoning.findByType("button").props["aria-expanded"]).toBe(false);
+    expect(reasoning.findAllByType("button")).toHaveLength(0);
     expect(renderer!.root.findAllByProps({ "data-turn-plan": "true" })).toHaveLength(0);
     await act(() => {
       __setClientSettingsForTests({
@@ -476,17 +478,42 @@ it("moves the active plan between the composer and native timeline", async () =>
 });
 
 it.each(["classic", "current"] as const)(
-  "keeps one %s reasoning disclosure collapsed as traces arrive and update",
+  "keeps %s reasoning directly visible as traces arrive and update",
   async (mode) => {
     const { __setClientSettingsForTests, getClientSettings } =
       await import("../../hooks/useSettings");
     const originalSettings = getClientSettings();
-    __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, showReasoning: true });
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      showReasoning: true,
+      betterT3Device: makeBetterT3SettingsV1("existing-install-migration"),
+    });
     visualPreference.mode = mode;
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("requestAnimationFrame", () => 0);
     vi.stubGlobal("cancelAnimationFrame", () => {});
-    const props = buildProps();
+    const frames: FrameRequestCallback[] = [];
+    const requestFrame = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback) => {
+        frames.push(callback);
+        return frames.length;
+      });
+    const flushFrames = () =>
+      act(() => {
+        for (const frame of frames.splice(0)) frame(performance.now());
+      });
+    const props = {
+      ...buildProps(),
+      isWorking: true,
+      streamingMotionEnabled: true,
+      latestTurn: {
+        turnId: TurnId.make("reasoning-turn"),
+        state: "running" as const,
+        startedAt: MESSAGE_CREATED_AT,
+        completedAt: null,
+      },
+    };
     const traces = ["First trace", "Second trace", "Third trace"].map((detail, index) => ({
       kind: "work" as const,
       id: `reasoning-${index}`,
@@ -509,15 +536,15 @@ it.each(["classic", "current"] as const)(
         renderer = create(<MessagesTimeline {...props} timelineEntries={traces.slice(0, 1)} />);
       });
       const reasoning = renderer!.root.findByProps({ "data-reasoning-output": "true" });
+      await flushFrames();
+      expect(reasoning.findAllByProps({ "data-stream-character": "" }).length).toBeGreaterThan(0);
       expect(reasoning.findAllByType("p").map(renderedText)).toEqual(["First trace"]);
-      await act(() => reasoning.findByType("button").props.onClick());
       await act(() => {
         renderer!.update(<MessagesTimeline {...props} timelineEntries={traces} />);
       });
+      await flushFrames();
       expect(renderer!.root.findByProps({ "data-reasoning-output": "true" })).toBe(reasoning);
-      expect(reasoning.findByType("button").props["aria-expanded"]).toBe(false);
-      expect(reasoning.findAllByType("p")).toHaveLength(0);
-      await act(() => reasoning.findByType("button").props.onClick());
+      expect(reasoning.findAllByType("button")).toHaveLength(0);
       expect(reasoning.findAllByType("p").map(renderedText)).toEqual(
         traces.map((trace) => trace.entry.detail),
       );
@@ -529,13 +556,62 @@ it.each(["classic", "current"] as const)(
       await act(() => {
         renderer!.update(<MessagesTimeline {...props} timelineEntries={updatedTraces} />);
       });
+      await flushFrames();
       expect(renderer!.root.findByProps({ "data-reasoning-output": "true" })).toBe(reasoning);
-      expect(reasoning.findByType("button").props["aria-expanded"]).toBe(true);
+      expect(reasoning.findAllByType("button")).toHaveLength(0);
       expect(reasoning.findAllByType("p").map(renderedText)).toEqual(
         updatedTraces.map((trace) => trace.entry.detail),
       );
+      expect(
+        reasoning.findAllByProps({ "data-stream-character": "" }).map(renderedText).join(""),
+      ).toContain("completed");
+      await act(() => {
+        renderer!.update(
+          <MessagesTimeline {...props} isWorking={false} timelineEntries={updatedTraces} />,
+        );
+      });
+      expect(reasoning.findAllByProps({ "data-stream-character": "" })).toHaveLength(0);
+
+      await act(() => {
+        __setClientSettingsForTests({
+          ...getClientSettings(),
+          betterT3Device: {
+            ...getClientSettings().betterT3Device,
+            flags: {
+              ...getClientSettings().betterT3Device.flags,
+              "agent.reasoningWorkingOverlay": true,
+            },
+          },
+        });
+        renderer!.update(<MessagesTimeline {...props} timelineEntries={updatedTraces} />);
+      });
+      expect(renderer!.root.findAllByProps({ "data-reasoning-output": "true" })).toHaveLength(0);
+      const { ComposerReasoningScroller } = await import("./ComposerReasoningScroller");
+      const { ThreadId } = await import("@t3tools/contracts");
+      await act(() =>
+        renderer!.update(
+          <ComposerReasoningScroller
+            entries={updatedTraces.map(({ entry }) => entry)}
+            turnId={TurnId.make("reasoning-turn")}
+            threadRef={{
+              environmentId: EnvironmentId.make("environment-1"),
+              threadId: ThreadId.make("thread-1"),
+            }}
+            environmentId={EnvironmentId.make("environment-1")}
+            cwd={undefined}
+            streamingMotionEnabled
+          />,
+        ),
+      );
+      await flushFrames();
+      const lyrics = renderer!.root.findByProps({ "data-composer-reasoning": "true" });
+      expect(lyrics.findAllByType("p").map(renderedText)).toEqual(
+        updatedTraces.map(({ entry }) => entry.detail),
+      );
+      expect(lyrics.findAllByProps({ "data-stream-character": "" }).length).toBeGreaterThan(0);
     } finally {
       await act(() => renderer?.unmount());
+      requestFrame.mockRestore();
       __setClientSettingsForTests(originalSettings);
       visualPreference.mode = "current";
     }
@@ -2077,3 +2153,101 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("text-destructive");
   });
 });
+
+it.each(["current", "classic"] as const)(
+  "edits both message roles in place in the %s layout",
+  async (mode) => {
+    visualPreference.mode = mode;
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const user = buildUserTimelineEntry("Original user text");
+    const assistant = buildAssistantTimelineEntry("Original assistant text");
+    const initial = [
+      user,
+      {
+        ...assistant,
+        id: "assistant-entry",
+        message: { ...assistant.message, id: MessageId.make("assistant-message") },
+      },
+    ];
+    function Harness() {
+      const [entries, setEntries] =
+        useState<Extract<TimelineEntry, { kind: "message" }>[]>(initial);
+      const [editing, setEditing] = useState<{
+        id: MessageId;
+        draftRef: { current: string };
+      } | null>(null);
+      return (
+        <MessagesTimeline
+          {...buildProps()}
+          timelineEntries={entries}
+          editAction={{
+            available: true,
+            onEdit: (message) =>
+              setEditing({ id: message.id, draftRef: { current: message.text } }),
+            editor: editing
+              ? {
+                  messageId: editing.id,
+                  content: (
+                    <InlineMessageEditor
+                      draftRef={editing.draftRef}
+                      available
+                      onClose={() => setEditing(null)}
+                      onSave={async (text) => {
+                        setEntries((current) =>
+                          current.map((entry) =>
+                            entry.message.id === editing.id
+                              ? { ...entry, message: { ...entry.message, text } }
+                              : entry,
+                          ),
+                        );
+                      }}
+                    />
+                  ),
+                }
+              : null,
+          }}
+        />
+      );
+    }
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        renderer = create(<Harness />);
+      });
+      for (const role of ["user", "assistant"] as const) {
+        const row = () =>
+          renderer.root.findByProps({
+            "data-message-id": role === "user" ? user.message.id : "assistant-message",
+          });
+        await act(async () =>
+          row()
+            .findAllByType("button")
+            .find((button) => button.props["aria-label"] === "Edit message")!
+            .props.onClick({ nativeEvent: {}, preventDefault: vi.fn(), stopPropagation: vi.fn() }),
+        );
+        expect(row().findAllByType("textarea")).toHaveLength(1);
+        expect(renderer.root.findAllByProps({ role: "dialog" })).toHaveLength(0);
+        await act(async () =>
+          row()
+            .findByType("textarea")
+            .props.onChange({
+              target: { value: `Corrected ${role} text` },
+              currentTarget: { value: `Corrected ${role} text` },
+              nativeEvent: {},
+            }),
+        );
+        await act(async () => row().findByType("form").props.onSubmit({ preventDefault: vi.fn() }));
+        expect(row().findAllByType("textarea")).toHaveLength(0);
+        expect(JSON.stringify(renderer.toJSON())).toContain(`Corrected ${role} text`);
+        expect(
+          renderer.root.findAll(
+            (node) => node.type === "div" && node.props["data-message-role"] !== undefined,
+          ),
+        ).toHaveLength(2);
+      }
+    } finally {
+      await act(async () => renderer?.unmount());
+      visualPreference.mode = "current";
+    }
+  },
+);

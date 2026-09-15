@@ -131,6 +131,29 @@ describe("searchSettings", () => {
     expect(searchSettings("   ", ITEMS)).toEqual([]);
   });
 
+  it("finds the moved voice controls in Better T3, including on remote-only clients", () => {
+    const available = filterAvailableSettingsSearchItems({
+      hasCloudPublicConfig: false,
+      hasPrimaryEnvironment: false,
+      hasProviderSettingsEnvironment: true,
+      canManageLocalBackend: false,
+      isWslSettingsRowVisible: false,
+      hasThreadAutoSettlement: false,
+    });
+    for (const [query, id] of [
+      ["Voice input", "voice-input"],
+      ["AssemblyAI API key", "voice-credentials"],
+      ["Voice post-processing model", "voice-translation-model"],
+      ["Project speech context", "project-speech-context"],
+      ["Improve prompts before sending", "prompt-improvement"],
+    ]) {
+      expect(searchSettings(query!, available)[0]).toMatchObject({
+        id,
+        to: "/settings/better-t3",
+      });
+    }
+  });
+
   it("hides desktop-only settings from browser search", () => {
     expect(SETTINGS_SEARCH_ITEMS.some((item) => item.id === "quit-confirmation")).toBe(true);
     expect(searchSettings("hold to quit")).toEqual([]);

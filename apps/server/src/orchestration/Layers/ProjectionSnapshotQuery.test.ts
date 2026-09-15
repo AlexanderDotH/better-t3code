@@ -700,6 +700,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             attachments,
           },
           hasOtherUserMessages: false,
+          editedMessageIds: [],
+          hasPendingMessageEdits: false,
         }),
       );
       assert.equal(

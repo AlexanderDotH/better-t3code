@@ -1,6 +1,6 @@
 import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
 import { LoaderCircleIcon } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { type ThreadSyncPhase } from "../../threadSync";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import type { ThreadTokenUsage } from "../../lib/threadTokenUsage";
@@ -12,6 +12,7 @@ export type ComposerActivityStatus =
       readonly kind: "working";
       readonly startedAt: string | null;
       readonly tokenUsage?: ThreadTokenUsage | undefined;
+      readonly reasoning?: ReactNode;
     }
   | { readonly kind: "sync"; readonly phase: ThreadSyncPhase };
 
@@ -53,8 +54,9 @@ export function ComposerActivityRow(
   return (
     <ComposerBanner.Row>
       <ComposerActivityIcon status={status} />
-      <ComposerBanner.Content>
+      <ComposerBanner.Content render={<div />}>
         <ComposerActivityLabel status={status} />
+        {status.kind === "working" ? status.reasoning : null}
       </ComposerBanner.Content>
       {showTokenUsage ? (
         <ComposerBanner.Actions>

@@ -55,6 +55,7 @@ import {
 import {
   buildBetterT3ControlStates,
   buildBetterT3SwitchSettingsPatch,
+  buildReasoningDisplaySettingsPatch,
   resolveBetterT3DescriptorMessageKeys,
   resolveSelectedBetterT3EnvironmentId,
 } from "./BetterT3SettingsPanel.logic";
@@ -67,29 +68,41 @@ import {
 import { buildBetterT3SettingsPreviewModel } from "./BetterT3SettingsPreview.logic";
 import { InterfaceLanguageSettings } from "./InterfaceLanguageSettings";
 import { UsagePacingSettings } from "./UsagePacingSettings";
+import { VoiceInputSettings } from "./VoiceInputSettings";
 import { searchableSetting } from "./settingsSearch";
+import { BetterT3SettingsSearch } from "./BetterT3SettingsSearch";
 
 type Translate = InterfaceTranslator["message"];
-
-const BETTER_T3_SECTIONS = [
-  "agent-workflows",
-  "chat-layout",
-  "workspace-source-control",
-  "voice-synchronization",
-  "knowledge-automation",
-  "resource-protection",
-  "integration-status",
-] as const satisfies ReadonlyArray<BetterT3FeatureSection>;
 
 const BETTER_T3_SETTINGS_GROUPS = [
   {
     id: "general",
-    sections: ["chat-layout", "voice-synchronization"],
+    sections: [],
     labelMessageId: "settings.betterT3.tab.general",
   },
   {
+    id: "appearance",
+    sections: [],
+    labelMessageId: "settings.betterT3.tab.appearance",
+  },
+  {
+    id: "chat",
+    sections: ["chat-layout"],
+    labelMessageId: "settings.betterT3.tab.chat",
+  },
+  {
+    id: "sidebar",
+    sections: [],
+    labelMessageId: "settings.betterT3.tab.sidebar",
+  },
+  {
+    id: "usage",
+    sections: [],
+    labelMessageId: "settings.betterT3.tab.usage",
+  },
+  {
     id: "agents",
-    sections: ["agent-workflows", "knowledge-automation"],
+    sections: ["agent-workflows"],
     labelMessageId: "settings.betterT3.tab.agents",
   },
   {
@@ -98,9 +111,24 @@ const BETTER_T3_SETTINGS_GROUPS = [
     labelMessageId: "settings.betterT3.tab.workspace",
   },
   {
+    id: "voice",
+    sections: ["voice-synchronization"],
+    labelMessageId: "settings.betterT3.tab.voice",
+  },
+  {
+    id: "knowledge",
+    sections: ["knowledge-automation"],
+    labelMessageId: "settings.betterT3.tab.knowledge",
+  },
+  {
     id: "system",
-    sections: ["resource-protection", "integration-status"],
+    sections: ["resource-protection"],
     labelMessageId: "settings.betterT3.tab.system",
+  },
+  {
+    id: "integrations",
+    sections: ["integration-status"],
+    labelMessageId: "settings.betterT3.tab.integrations",
   },
 ] as const satisfies ReadonlyArray<{
   readonly id: string;
@@ -108,15 +136,33 @@ const BETTER_T3_SETTINGS_GROUPS = [
   readonly labelMessageId: InterfaceMessageKey;
 }>;
 
+const BETTER_T3_FEATURE_GROUP_OVERRIDES: Partial<
+  Record<BetterT3FeatureId, (typeof BETTER_T3_SETTINGS_GROUPS)[number]["id"]>
+> = {
+  "chat.presentation": "appearance",
+  "chat.cardMorphing": "appearance",
+  "agent.expandedComposerControls": "chat",
+  "agent.reasoningVisibility": "chat",
+  "agent.reasoningWorkingOverlay": "chat",
+  "agent.promptImprovement": "voice",
+  "chat.classicSidebar": "sidebar",
+  "chat.previewCount": "sidebar",
+  "chat.sorting": "sidebar",
+  "chat.settling": "sidebar",
+  "chat.shiftClickShowLess": "sidebar",
+  "chat.draftIndicators": "sidebar",
+  "chat.sidebarPosition": "sidebar",
+};
+
 export interface BetterT3SettingsPanelViewProps {
   readonly features: ReadonlyArray<BetterT3FeatureControlStateV1>;
-  readonly sectionTitles: Readonly<Record<BetterT3FeatureSection, string>>;
   readonly translate: Translate;
   readonly controls: Partial<Record<BetterT3FeatureId, ReactNode>>;
   readonly onSwitchChange: (featureId: BetterT3SwitchFeatureId, enabled: boolean) => void;
   readonly introduction?: ReactNode;
   readonly languageControl?: ReactNode;
   readonly usagePacingControl?: ReactNode;
+  readonly voiceSettings?: ReactNode;
   readonly visualSettings?: ReactNode;
   readonly featureVisuals?: Partial<Record<BetterT3FeatureId, ReactNode>>;
   readonly featureChoices?: Partial<Record<BetterT3FeatureId, ReactNode>>;
@@ -250,10 +296,26 @@ function BetterT3AppearanceSettings(props: {
   );
 }
 
+function measureBetterT3Navigation(navigation: HTMLDivElement | null) {
+  const content = navigation?.parentElement;
+  if (!navigation || !content) return;
+  const measure = () =>
+    content.style.setProperty("--better-t3-navigation-height", `${navigation.offsetHeight}px`);
+  measure();
+  const observer = new ResizeObserver(measure);
+  observer.observe(navigation);
+  return () => {
+    observer.disconnect();
+    content.style.removeProperty("--better-t3-navigation-height");
+  };
+}
+
 export function BetterT3SettingsContent(props: BetterT3SettingsPanelViewProps) {
   const [activeGroup, setActiveGroup] = useState("general");
   const renderFeatureRows = (visibleFeatures: ReadonlyArray<BetterT3FeatureControlStateV1>) =>
     visibleFeatures.map((feature) => {
+      if (props.voiceSettings && feature.descriptor.id === "voice.credentials") return null;
+      if (feature.descriptor.id === "agent.reasoningWorkingOverlay") return null;
       const messageIds = resolveBetterT3DescriptorMessageKeys(feature.descriptor);
       const featureChoice = props.featureChoices?.[feature.descriptor.id];
       return (
@@ -281,31 +343,36 @@ export function BetterT3SettingsContent(props: BetterT3SettingsPanelViewProps) {
     });
 
   return (
-    <div className="min-w-0 space-y-8">
-      <nav
-        aria-label={props.translate("settings.betterT3.title")}
-        className="sticky top-0 z-10 mx-3 flex min-w-0 gap-1 overflow-x-auto rounded-xl border border-border/60 bg-background p-1 sm:mx-4"
+    <div className="min-w-0 space-y-8 [--better-t3-scroll-offset:calc(var(--better-t3-navigation-height,0px)+1rem)] [&_[data-settings-scroll-target]]:scroll-mt-(--better-t3-scroll-offset) [&_[tabindex='-1']]:scroll-mt-(--better-t3-scroll-offset)">
+      <div
+        ref={measureBetterT3Navigation}
+        className="sticky top-0 z-10 pt-[var(--workspace-titlebar-scroll-fade-height)] pb-3"
       >
-        {BETTER_T3_SETTINGS_GROUPS.map((group) => (
-          <a
-            aria-current={group.id === activeGroup ? "location" : undefined}
-            className={`inline-flex h-9 shrink-0 items-center rounded-lg px-3 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${
-              group.id === activeGroup
-                ? "bg-accent font-medium text-foreground"
-                : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
-            }`}
-            href={`#better-t3-group-${group.id}`}
-            key={group.id}
-            onClick={(event) => {
-              if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-              event.preventDefault();
-              scrollToSettingsTarget(`better-t3-group-${group.id}`, { highlight: false });
-            }}
-          >
-            {props.translate(group.labelMessageId)}
-          </a>
-        ))}
-      </nav>
+        <nav
+          aria-label={props.translate("settings.betterT3.title")}
+          className="surface-glass grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,8rem),1fr))] gap-1 rounded-xl border border-border/60 p-1 shadow-xs/5"
+        >
+          {BETTER_T3_SETTINGS_GROUPS.map((group) => (
+            <a
+              aria-current={group.id === activeGroup ? "location" : undefined}
+              className={`inline-flex min-h-9 min-w-0 items-center justify-center rounded-lg px-3 py-1.5 text-center text-sm wrap-anywhere outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:min-h-11 ${
+                group.id === activeGroup
+                  ? "bg-background font-medium text-foreground shadow-xs/10 dark:bg-input/72"
+                  : "text-muted-foreground hover:bg-background/55 hover:text-foreground dark:hover:bg-input/32"
+              }`}
+              href={`#better-t3-group-${group.id}`}
+              key={group.id}
+              onClick={(event) => {
+                if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                event.preventDefault();
+                scrollToSettingsTarget(`better-t3-group-${group.id}`, { highlight: false });
+              }}
+            >
+              {props.translate(group.labelMessageId)}
+            </a>
+          ))}
+        </nav>
+      </div>
 
       {BETTER_T3_SETTINGS_GROUPS.map((group) => (
         <SettingsSearchTarget
@@ -317,31 +384,30 @@ export function BetterT3SettingsContent(props: BetterT3SettingsPanelViewProps) {
           role="region"
         >
           <h2
-            className="scroll-mt-16 px-3 text-lg font-semibold tracking-tight text-foreground sm:px-4"
+            className="px-3 text-lg font-semibold tracking-tight text-foreground sm:px-4"
             data-settings-scroll-target="start"
             id={`better-t3-group-title-${group.id}`}
           >
             {props.translate(group.labelMessageId)}
           </h2>
-          {group.id === "general" ? (
-            <>
-              {props.languageControl ? (
-                <BetterT3InterfaceSection
-                  control={props.languageControl}
-                  translate={props.translate}
-                />
-              ) : null}
-              {props.usagePacingControl}
-            </>
+          {group.id === "general" && props.languageControl ? (
+            <BetterT3InterfaceSection control={props.languageControl} translate={props.translate} />
           ) : null}
-          {group.sections.map((section) => (
-            <SettingsSection key={section} title={props.sectionTitles[section]}>
-              {section === "chat-layout" ? props.visualSettings : null}
+          {group.id === "usage" ? props.usagePacingControl : null}
+          {group.id !== "general" && group.id !== "usage" ? (
+            <SettingsSection title={props.translate(group.labelMessageId)} hideTitle>
+              {group.id === "appearance" ? props.visualSettings : null}
               {renderFeatureRows(
-                props.features.filter((feature) => feature.descriptor.section === section),
+                props.features.filter(({ descriptor }) => {
+                  const override = BETTER_T3_FEATURE_GROUP_OVERRIDES[descriptor.id];
+                  return override
+                    ? override === group.id
+                    : group.sections.some((section) => descriptor.section === section);
+                }),
               )}
             </SettingsSection>
-          ))}
+          ) : null}
+          {group.id === "voice" ? props.voiceSettings : null}
         </SettingsSearchTarget>
       ))}
     </div>
@@ -358,6 +424,7 @@ function BetterT3SettingsPanelView(props: BetterT3SettingsPanelViewProps) {
 }
 
 type BetterT3Destination =
+  | "/settings/better-t3"
   | "/settings/general"
   | "/settings/projects"
   | "/settings/appearance"
@@ -375,7 +442,7 @@ function resolveBetterT3ControlDestination(
   if (featureId === "workspace.checkpoints") return "/settings/projects";
   if (featureId === "workspace.chatPortability") return "/settings/projects";
   if (featureId === "voice.transcriptPortability") return "/settings/projects";
-  if (featureId === "voice.credentials") return "/settings/connections";
+  if (featureId === "voice.credentials") return "/settings/better-t3";
   if (featureId === "workspace.gitWorkbench") return "/settings/source-control";
   if (featureId === "integration.mcp") return "/settings/mcp";
   if (featureId === "integration.skills") return "/settings/skills";
@@ -586,12 +653,15 @@ function BetterT3SettingsIntroduction(props: {
   return (
     <div
       data-better-t3-introduction
-      className="mx-3 overflow-hidden rounded-2xl border border-border/60 bg-card/45 shadow-[0_18px_60px_-46px_rgb(0_0_0/75%)] sm:mx-4"
+      className="overflow-hidden rounded-2xl border border-border/60 bg-card/45 shadow-[0_18px_60px_-46px_rgb(0_0_0/75%)]"
     >
       <div className="space-y-1.5 bg-[radial-gradient(circle_at_top_right,color-mix(in_srgb,var(--primary)_10%,transparent),transparent_58%)] p-4 sm:p-5">
-        <h1 className="text-xl font-semibold tracking-[-0.025em]">
-          {props.translate("settings.betterT3.title")}
-        </h1>
+        <div className="flex items-center justify-between gap-4">
+          <h1 className="text-xl font-semibold tracking-[-0.025em]">
+            {props.translate("settings.betterT3.title")}
+          </h1>
+          <BetterT3SettingsSearch />
+        </div>
         <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
           {props.translate("settings.betterT3.description")}
         </p>
@@ -717,16 +787,6 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
       }),
     [chatVisualMode, features, settings.contextWindowSelector, settings.sidebarPosition],
   );
-  const sectionTitles = useMemo(
-    () =>
-      Object.fromEntries(
-        BETTER_T3_SECTIONS.map((section) => [
-          section,
-          translate(`settings.betterT3.section.${section}`),
-        ]),
-      ) as Readonly<Record<BetterT3FeatureSection, string>>,
-    [translate],
-  );
   const onSwitchChange = useCallback(
     (featureId: BetterT3SwitchFeatureId, enabled: boolean) => {
       const descriptor = BETTER_T3_FEATURE_REGISTRY.find((entry) => entry.id === featureId);
@@ -740,6 +800,12 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
       featureId: (typeof BETTER_T3_VISUAL_FEATURE_IDS)[number],
       value: BetterT3VisualChoiceValue,
     ) => {
+      if (featureId === "agent.reasoningVisibility") {
+        if (value === "none" || value === "chat" || value === "working") {
+          updateSettings(buildReasoningDisplaySettingsPatch(value));
+        }
+        return;
+      }
       if (featureId === "chat.sidebarPosition") {
         if (value === "left" || value === "right") updateSettings({ sidebarPosition: value });
         return;
@@ -764,15 +830,22 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
       const feature = features.find((entry) => entry.descriptor.id === featureId);
       if (!feature) continue;
       const value =
-        featureId === "chat.sidebarPosition"
-          ? settings.sidebarPosition
-          : featureId === "chat.presentation"
-            ? chatVisualMode
-            : featureId === "chat.contextWindowSelector"
-              ? settings.contextWindowSelector
-              : featureId === "chat.classicBubbleOnly" && feature.availability.state !== "available"
-                ? false
-                : feature.value === true;
+        featureId === "agent.reasoningVisibility"
+          ? !previewModel.agent.reasoningVisibility
+            ? "none"
+            : previewModel.agent.reasoningWorkingOverlay
+              ? "working"
+              : "chat"
+          : featureId === "chat.sidebarPosition"
+            ? settings.sidebarPosition
+            : featureId === "chat.presentation"
+              ? chatVisualMode
+              : featureId === "chat.contextWindowSelector"
+                ? settings.contextWindowSelector
+                : featureId === "chat.classicBubbleOnly" &&
+                    feature.availability.state !== "available"
+                  ? false
+                  : feature.value === true;
       choices[featureId] = (
         <BetterT3FeatureChoice
           disabled={feature.availability.state !== "available"}
@@ -907,11 +980,17 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
   return (
     <BetterT3SettingsPanelView
       features={features}
-      sectionTitles={sectionTitles}
       translate={translate}
       controls={controls}
       featureChoices={featureChoices}
       usagePacingControl={<UsagePacingSettings environmentId={props.environment.environmentId} />}
+      voiceSettings={
+        <VoiceInputSettings
+          key={props.environment.environmentId}
+          environmentId={props.environment.environmentId}
+          disabled={!environmentAvailable}
+        />
+      }
       languageControl={
         <div id="better-t3-interface-language">
           <InterfaceLanguageSettings />

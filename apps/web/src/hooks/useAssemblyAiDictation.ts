@@ -128,7 +128,7 @@ export function useAssemblyAiDictation(input: {
     if (!input.configured) {
       onNoticeRef.current({
         title: "Voice input is not configured",
-        error: new Error("Add an AssemblyAI API key in Settings → Connections → Voice input."),
+        error: new Error("Add an AssemblyAI API key in Settings → Better T3 → Voice."),
       });
       return;
     }

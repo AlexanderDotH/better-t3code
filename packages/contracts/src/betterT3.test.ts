@@ -47,6 +47,7 @@ describe("Better T3 feature registry", () => {
     for (const featureId of [
       "agent.expandedComposerControls",
       "agent.reasoningVisibility",
+      "agent.reasoningWorkingOverlay",
       "agent.nativeSubagentDisplay",
       "chat.workspaceCardDeck",
       "chat.cardMorphing",
