@@ -35,51 +35,8 @@ export interface StreamingTextMotionSnapshot {
   readonly animationTimeMs: number;
 }
 
-interface StreamingTextMotionFramePublisherOptions {
-  readonly cancelFrame: (frameId: number) => void;
-  readonly publish: (snapshot: StreamingTextMotionSnapshot) => void;
-  readonly requestFrame: (callback: FrameRequestCallback) => number;
-}
-
-export interface StreamingTextMotionFramePublisher {
-  readonly enqueue: (snapshot: StreamingTextMotionSnapshot) => void;
-  readonly flush: (snapshot: StreamingTextMotionSnapshot) => void;
-  readonly dispose: () => void;
-}
-
 const useCommitEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 const EMPTY_STREAMING_TEXT_MOTION_FRAMES: readonly StreamingTextMotionFrame[] = [];
-
-export function createStreamingTextMotionFramePublisher(
-  options: StreamingTextMotionFramePublisherOptions,
-): StreamingTextMotionFramePublisher {
-  let frameId: number | null = null;
-  let pendingSnapshot: StreamingTextMotionSnapshot | null = null;
-
-  const cancelPendingFrame = () => {
-    if (frameId !== null) options.cancelFrame(frameId);
-    frameId = null;
-    pendingSnapshot = null;
-  };
-
-  return {
-    enqueue: (snapshot) => {
-      pendingSnapshot = snapshot;
-      if (frameId !== null) return;
-      frameId = options.requestFrame(() => {
-        frameId = null;
-        const pending = pendingSnapshot;
-        pendingSnapshot = null;
-        if (pending !== null) options.publish(pending);
-      });
-    },
-    flush: (snapshot) => {
-      cancelPendingFrame();
-      options.publish(snapshot);
-    },
-    dispose: cancelPendingFrame,
-  };
-}
 
 export function advanceStreamingTextMotionCommit(
   previous: StreamingTextMotionCommitState | null,
@@ -157,19 +114,6 @@ export function useStreamingTextMotion({
   });
   const committedRef = useRef<StreamingTextMotionCommitState | null>(null);
   const cleanupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [publisher] = useState(() =>
-    typeof window === "undefined"
-      ? null
-      : createStreamingTextMotionFramePublisher({
-          cancelFrame: window.cancelAnimationFrame.bind(window),
-          publish: (nextSnapshot) =>
-            setSnapshot((current) =>
-              current.frames === nextSnapshot.frames ? current : nextSnapshot,
-            ),
-          requestFrame: window.requestAnimationFrame.bind(window),
-        }),
-  );
-
   const clearCleanupTimer = useCallback(() => {
     if (cleanupTimerRef.current === null) return;
     clearTimeout(cleanupTimerRef.current);
@@ -179,17 +123,11 @@ export function useStreamingTextMotion({
   const publishFrames = useCallback(
     (state: StreamingTextMotionCommitState, animationTimeMs: number) => {
       const nextSnapshot = { frames: state.frames, animationTimeMs };
-      if (publisher !== null && state.isStreaming && state.frames.length > 0) {
-        publisher.enqueue(nextSnapshot);
-        return;
-      }
-      if (publisher !== null) {
-        publisher.flush(nextSnapshot);
-        return;
-      }
+      // Publish in the text commit's layout effect so appended text cannot paint
+      // fully visible before its reveal animation is attached.
       setSnapshot((current) => (current.frames === state.frames ? current : nextSnapshot));
     },
-    [publisher],
+    [],
   );
 
   const scheduleCleanup = useCallback(
@@ -268,13 +206,7 @@ export function useStreamingTextMotion({
     };
   }, [clearCleanupTimer, publishFrames]);
 
-  useEffect(
-    () => () => {
-      clearCleanupTimer();
-      publisher?.dispose();
-    },
-    [clearCleanupTimer, publisher],
-  );
+  useEffect(() => clearCleanupTimer, [clearCleanupTimer]);
 
   return snapshot;
 }
