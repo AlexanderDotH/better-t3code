@@ -1,4 +1,4 @@
-import { act, createElement } from "react";
+import { act, createElement, useLayoutEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -15,7 +15,6 @@ import {
 import {
   advanceStreamingTextMotionCommit,
   clearCompletedStreamingTextMotionSequence,
-  createStreamingTextMotionFramePublisher,
   type StreamingTextMotionSnapshot,
   useStreamingTextMotion,
 } from "./useStreamingTextMotion";
@@ -117,16 +116,24 @@ function installStreamingMotionTestDom() {
   };
 }
 
-function StreamingTextMotionHarness(props: {
+function StreamingTextMotionHarness({
+  text,
+  isStreaming,
+  onSnapshot,
+}: {
   readonly text: string;
   readonly isStreaming: boolean;
+  readonly onSnapshot?: (snapshot: StreamingTextMotionSnapshot) => void;
 }) {
-  useStreamingTextMotion({
-    text: props.text,
+  const snapshot = useStreamingTextMotion({
+    text,
     streamId: "message-1",
-    isStreaming: props.isStreaming,
+    isStreaming,
     animateInitialStreamChunk: false,
   });
+  useLayoutEffect(() => {
+    onSnapshot?.(snapshot);
+  }, [onSnapshot, snapshot]);
   return null;
 }
 
@@ -487,6 +494,33 @@ describe("Markdown source reconciliation", () => {
 });
 
 describe("streaming motion commit lifecycle", () => {
+  it("publishes motion with each text commit without waiting for another animation frame", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    const { callbacks, document } = installStreamingMotionTestDom();
+    const { createRoot } = await import("react-dom/client");
+    const root = createRoot(document.createElement("div") as unknown as Element);
+    const snapshots: StreamingTextMotionSnapshot[] = [];
+    const onSnapshot = (snapshot: StreamingTextMotionSnapshot) => snapshots.push(snapshot);
+
+    try {
+      for (const text of ["", "A", "AB", "ABC"]) {
+        await act(() =>
+          root.render(
+            createElement(StreamingTextMotionHarness, { text, isStreaming: true, onSnapshot }),
+          ),
+        );
+        expect(snapshots.at(-1)?.frames.at(-1)?.sourceEnd ?? 0).toBe(text.length);
+        expect(callbacks.size).toBe(0);
+      }
+      expect(snapshots.at(-1)?.frames.map((frame) => frame.sourceStart)).toEqual([0, 1, 2]);
+      await act(() => vi.advanceTimersByTime(200));
+      expect(snapshots.at(-1)?.frames).toHaveLength(0);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      await act(() => root.unmount());
+    }
+  });
+
   it("stops active work immediately when reduced motion is enabled", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const { callbacks, document, setReducedMotion } = installStreamingMotionTestDom();
@@ -499,7 +533,7 @@ describe("streaming motion commit lifecycle", () => {
       await act(() =>
         root.render(createElement(StreamingTextMotionHarness, { text: "A", isStreaming: true })),
       );
-      expect(callbacks.size).toBe(1);
+      expect(callbacks.size).toBe(0);
       await act(() => setReducedMotion(true));
       expect(callbacks.size).toBe(0);
       expect(vi.getTimerCount()).toBe(0);
@@ -513,7 +547,7 @@ describe("streaming motion commit lifecycle", () => {
     }
   });
 
-  it("drains the hook cleanup timer and pending frame when streaming settles", async () => {
+  it("drains the hook cleanup timer when streaming settles", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const { callbacks, document } = installStreamingMotionTestDom();
     const { createRoot } = await import("react-dom/client");
@@ -527,7 +561,7 @@ describe("streaming motion commit lifecycle", () => {
         root.render(createElement(StreamingTextMotionHarness, { text: "A", isStreaming: true }));
       });
 
-      expect(callbacks.size).toBe(1);
+      expect(callbacks.size).toBe(0);
       expect(vi.getTimerCount()).toBeGreaterThan(0);
 
       await act(() => {
@@ -541,7 +575,7 @@ describe("streaming motion commit lifecycle", () => {
     }
   });
 
-  it("drains the hook cleanup timer and pending frame when the renderer unmounts", async () => {
+  it("drains the hook cleanup timer when the renderer unmounts", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const { callbacks, document } = installStreamingMotionTestDom();
     const { createRoot } = await import("react-dom/client");
@@ -554,88 +588,13 @@ describe("streaming motion commit lifecycle", () => {
       root.render(createElement(StreamingTextMotionHarness, { text: "A", isStreaming: true }));
     });
 
-    expect(callbacks.size).toBe(1);
+    expect(callbacks.size).toBe(0);
     expect(vi.getTimerCount()).toBeGreaterThan(0);
 
     await act(() => root.unmount());
 
     expect(callbacks.size).toBe(0);
     expect(vi.getTimerCount()).toBe(0);
-  });
-
-  it("publishes rapid streaming commits once per animation frame", () => {
-    const callbacks = new Map<number, FrameRequestCallback>();
-    const published: StreamingTextMotionSnapshot[] = [];
-    let nextFrameId = 0;
-    const publisher = createStreamingTextMotionFramePublisher({
-      cancelFrame: (frameId) => callbacks.delete(frameId),
-      publish: (snapshot) => published.push(snapshot),
-      requestFrame: (callback) => {
-        nextFrameId += 1;
-        callbacks.set(nextFrameId, callback);
-        return nextFrameId;
-      },
-    });
-    const first = { animationTimeMs: 10, frames: [] } satisfies StreamingTextMotionSnapshot;
-    const latest = { animationTimeMs: 11, frames: [] } satisfies StreamingTextMotionSnapshot;
-
-    publisher.enqueue(first);
-    publisher.enqueue(latest);
-
-    expect(callbacks).toHaveLength(1);
-    expect(published).toHaveLength(0);
-    callbacks.values().next().value?.(12);
-    expect(published).toEqual([latest]);
-  });
-
-  it("cancels pending frame publication when streaming settles", () => {
-    const callbacks = new Map<number, FrameRequestCallback>();
-    const cancelled: number[] = [];
-    const published: StreamingTextMotionSnapshot[] = [];
-    const publisher = createStreamingTextMotionFramePublisher({
-      cancelFrame: (frameId) => {
-        cancelled.push(frameId);
-        callbacks.delete(frameId);
-      },
-      publish: (snapshot) => published.push(snapshot),
-      requestFrame: (callback) => {
-        callbacks.set(7, callback);
-        return 7;
-      },
-    });
-    const active = { animationTimeMs: 10, frames: [] } satisfies StreamingTextMotionSnapshot;
-    const settled = { animationTimeMs: 11, frames: [] } satisfies StreamingTextMotionSnapshot;
-
-    publisher.enqueue(active);
-    publisher.flush(settled);
-
-    expect(cancelled).toEqual([7]);
-    expect(callbacks).toHaveLength(0);
-    expect(published).toEqual([settled]);
-  });
-
-  it("leaves no scheduled frame behind when the renderer unmounts", () => {
-    const callbacks = new Map<number, FrameRequestCallback>();
-    const cancelled: number[] = [];
-    const published: StreamingTextMotionSnapshot[] = [];
-    const publisher = createStreamingTextMotionFramePublisher({
-      cancelFrame: (frameId) => {
-        cancelled.push(frameId);
-        callbacks.delete(frameId);
-      },
-      publish: (snapshot) => published.push(snapshot),
-      requestFrame: (callback) => {
-        callbacks.set(11, callback);
-        return 11;
-      },
-    });
-
-    publisher.enqueue({ animationTimeMs: 10, frames: [] });
-    publisher.dispose();
-
-    expect(cancelled).toEqual([11]);
-    expect(callbacks).toHaveLength(0);
-    expect(published).toHaveLength(0);
   });
 
   it("keeps a reveal sequence mounted until its final provider delta finishes", () => {
