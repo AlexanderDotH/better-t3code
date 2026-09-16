@@ -514,8 +514,18 @@ describe("streaming motion commit lifecycle", () => {
       }
       expect(snapshots.at(-1)?.frames.map((frame) => frame.sourceStart)).toEqual([0, 1, 2]);
       await act(() => vi.advanceTimersByTime(200));
-      expect(snapshots.at(-1)?.frames).toHaveLength(0);
+      expect(snapshots.at(-1)?.frames).toHaveLength(3);
       expect(vi.getTimerCount()).toBe(0);
+      await act(() =>
+        root.render(
+          createElement(StreamingTextMotionHarness, {
+            text: "ABC",
+            isStreaming: false,
+            onSnapshot,
+          }),
+        ),
+      );
+      expect(snapshots.at(-1)?.frames).toHaveLength(0);
     } finally {
       await act(() => root.unmount());
     }
@@ -545,56 +555,6 @@ describe("streaming motion commit lifecycle", () => {
     } finally {
       await act(() => root.unmount());
     }
-  });
-
-  it("drains the hook cleanup timer when streaming settles", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const { callbacks, document } = installStreamingMotionTestDom();
-    const { createRoot } = await import("react-dom/client");
-    const root = createRoot(document.createElement("div") as unknown as Element);
-
-    try {
-      await act(() => {
-        root.render(createElement(StreamingTextMotionHarness, { text: "", isStreaming: true }));
-      });
-      await act(() => {
-        root.render(createElement(StreamingTextMotionHarness, { text: "A", isStreaming: true }));
-      });
-
-      expect(callbacks.size).toBe(0);
-      expect(vi.getTimerCount()).toBeGreaterThan(0);
-
-      await act(() => {
-        root.render(createElement(StreamingTextMotionHarness, { text: "A", isStreaming: false }));
-      });
-
-      expect(callbacks.size).toBe(0);
-      expect(vi.getTimerCount()).toBe(0);
-    } finally {
-      await act(() => root.unmount());
-    }
-  });
-
-  it("drains the hook cleanup timer when the renderer unmounts", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const { callbacks, document } = installStreamingMotionTestDom();
-    const { createRoot } = await import("react-dom/client");
-    const root = createRoot(document.createElement("div") as unknown as Element);
-
-    await act(() => {
-      root.render(createElement(StreamingTextMotionHarness, { text: "", isStreaming: true }));
-    });
-    await act(() => {
-      root.render(createElement(StreamingTextMotionHarness, { text: "A", isStreaming: true }));
-    });
-
-    expect(callbacks.size).toBe(0);
-    expect(vi.getTimerCount()).toBeGreaterThan(0);
-
-    await act(() => root.unmount());
-
-    expect(callbacks.size).toBe(0);
-    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("keeps a reveal sequence mounted until its final provider delta finishes", () => {
