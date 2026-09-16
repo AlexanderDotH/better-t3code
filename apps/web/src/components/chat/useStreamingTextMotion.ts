@@ -113,12 +113,6 @@ export function useStreamingTextMotion({
     animationTimeMs: 0,
   });
   const committedRef = useRef<StreamingTextMotionCommitState | null>(null);
-  const cleanupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const clearCleanupTimer = useCallback(() => {
-    if (cleanupTimerRef.current === null) return;
-    clearTimeout(cleanupTimerRef.current);
-    cleanupTimerRef.current = null;
-  }, []);
 
   const publishFrames = useCallback(
     (state: StreamingTextMotionCommitState, animationTimeMs: number) => {
@@ -128,28 +122,6 @@ export function useStreamingTextMotion({
       setSnapshot((current) => (current.frames === state.frames ? current : nextSnapshot));
     },
     [],
-  );
-
-  const scheduleCleanup = useCallback(
-    function scheduleCleanup(state: StreamingTextMotionCommitState) {
-      clearCleanupTimer();
-      const atMs = streamingTextMotionSequenceDeadline(state.frames);
-      if (atMs === null) return;
-      cleanupTimerRef.current = setTimeout(
-        () => {
-          const committed = committedRef.current;
-          if (committed === null) return;
-          const nowMs = readNowMs();
-          const next = clearCompletedStreamingTextMotionSequence(committed, nowMs);
-          committedRef.current = next;
-          cleanupTimerRef.current = null;
-          publishFrames(next, nowMs);
-          scheduleCleanup(next);
-        },
-        Math.max(1, atMs - readNowMs()),
-      );
-    },
-    [clearCleanupTimer, publishFrames],
   );
 
   useCommitEffect(() => {
@@ -164,18 +136,7 @@ export function useStreamingTextMotion({
     });
     committedRef.current = next;
     publishFrames(next, nowMs);
-    scheduleCleanup(next);
-
-    return clearCleanupTimer;
-  }, [
-    animateInitialStreamChunk,
-    isStreaming,
-    streamId,
-    text,
-    publishFrames,
-    scheduleCleanup,
-    clearCleanupTimer,
-  ]);
+  }, [animateInitialStreamChunk, isStreaming, streamId, text, publishFrames]);
 
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -193,7 +154,6 @@ export function useStreamingTextMotion({
         nowMs: readNowMs(),
       });
       committedRef.current = next;
-      clearCleanupTimer();
       publishFrames(next, readNowMs());
     };
 
@@ -204,9 +164,7 @@ export function useStreamingTextMotion({
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       reducedMotion?.removeEventListener?.("change", handleVisibilityChange);
     };
-  }, [clearCleanupTimer, publishFrames]);
-
-  useEffect(() => clearCleanupTimer, [clearCleanupTimer]);
+  }, [publishFrames]);
 
   return snapshot;
 }
@@ -270,17 +228,6 @@ function appendStreamingTextMotionFrame(
     return [nextFrame];
   }
   return [...frames, nextFrame];
-}
-
-function streamingTextMotionSequenceDeadline(
-  frames: readonly StreamingTextMotionFrame[],
-): number | null {
-  let deadline: number | null = null;
-  for (const frame of frames) {
-    const frameDeadline = frame.startedAtMs + frame.revealDeadlineMs;
-    deadline = deadline === null ? frameDeadline : Math.max(deadline, frameDeadline);
-  }
-  return deadline;
 }
 
 function isRepeatedCommit(
