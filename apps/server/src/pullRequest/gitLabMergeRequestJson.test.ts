@@ -145,6 +145,8 @@ describe("decodeMergeRequestDetailJson", () => {
           changes_count: "3",
           reviewers: [{ username: "julius", name: "Julius" }],
           head_pipeline: {
+            id: 9,
+            project_id: 51,
             status: "success",
             web_url: "https://gitlab.com/acme/web/-/pipelines/9",
             source: "merge_request_event",
@@ -154,6 +156,7 @@ describe("decodeMergeRequestDetailJson", () => {
     );
 
     expect(detail.body).toBe("Ships the page.");
+    expect(detail.headPipeline).toEqual({ id: 9, projectId: 51 });
     expect(detail.changedFiles).toBe(3);
     expect(detail.reviewers).toEqual([{ login: "julius", name: "Julius", avatarUrl: null }]);
     expect(detail.checks).toEqual([

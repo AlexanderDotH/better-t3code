@@ -24,6 +24,8 @@ import {
   type PullRequestCommentInput,
   type PullRequestCommentUpdateInput,
   type PullRequestDetail,
+  type PullRequestCheckLog,
+  type PullRequestCheckLogInput,
   type PullRequestDiffFileContentsInput,
   type PullRequestDiffFileContentsResult,
   type PullRequestDiffStat,
@@ -152,6 +154,9 @@ export class PullRequestService extends Context.Service<
     readonly subscribeRefreshes: Stream.Stream<number>;
     readonly refreshAfterTurn: Effect.Effect<void>;
     readonly detail: (input: PullRequestRef) => Effect.Effect<PullRequestDetail, PullRequestError>;
+    readonly checkLog: (
+      input: PullRequestCheckLogInput,
+    ) => Effect.Effect<PullRequestCheckLog, PullRequestError>;
     readonly activity: (
       input: PullRequestRef,
     ) => Effect.Effect<PullRequestActivity, PullRequestError>;
@@ -469,6 +474,7 @@ function withRateLimitBackoff(
           listChangeRequestStats: wrap("listChangeRequestStats", api.listChangeRequestStats),
         }),
     getChangeRequest: wrap("getChangeRequest", api.getChangeRequest),
+    ...(api.getCheckLog === undefined ? {} : { getCheckLog: wrap("getCheckLog", api.getCheckLog) }),
     ...(api.getChangeRequestSummary === undefined
       ? {}
       : {
@@ -1332,6 +1338,27 @@ export const make = Effect.gen(function* () {
         ),
       ),
     );
+
+  const checkLog = Effect.fn("PullRequestService.checkLog")(function* (
+    input: PullRequestCheckLogInput,
+  ) {
+    const project = yield* requireProject(input);
+    if (!project.api.getCheckLog) {
+      return yield* new PullRequestOperationError({
+        operation: "checkLog",
+        detail: "This host cannot show job logs inside the app.",
+      });
+    }
+    return yield* project.api
+      .getCheckLog({
+        cwd: project.project.workspaceRoot,
+        repository: project.repository,
+        host: project.host,
+        number: input.number,
+        checkId: input.checkId,
+      })
+      .pipe(Effect.mapError(toPullRequestError("checkLog")));
+  });
 
   const activityUncached: PullRequestService["Service"]["activity"] = (input) =>
     requireProject(input).pipe(
@@ -2531,6 +2558,7 @@ export const make = Effect.gen(function* () {
     ),
     refreshAfterTurn,
     detail,
+    checkLog,
     activity,
     threadComments,
     diff,

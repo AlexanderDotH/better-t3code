@@ -203,6 +203,59 @@ function makeService(input: {
   );
 }
 
+it.effect("validates the project before reading job logs and does not cache snapshots", () =>
+  Effect.gen(function* () {
+    let reads = 0;
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p",
+          title: "Web",
+          workspaceRoot: "/w",
+          repository: "acme/web",
+          provider: "gitlab",
+        }),
+      ],
+      providers: [
+        fakeProvider("gitlab", {
+          getCheckLog: (input) =>
+            Effect.sync(() => {
+              assert.strictEqual(input.cwd, "/w");
+              reads++;
+              return {
+                check: { name: "test", status: "pending", url: null, description: null },
+                text: `output ${reads}`,
+                complete: false,
+                truncated: false,
+              };
+            }),
+        }),
+      ],
+    });
+    const input = { projectId: "p" as ProjectId, repository: "acme/web", number: 7, checkId: 42 };
+    const error = yield* service
+      .checkLog({ ...input, repository: "other/private" })
+      .pipe(Effect.flip);
+    assert.strictEqual(error._tag, "PullRequestOperationError");
+    assert.strictEqual(reads, 0);
+    assert.strictEqual((yield* service.checkLog(input)).text, "output 1");
+    assert.strictEqual((yield* service.checkLog(input)).text, "output 2");
+  }),
+);
+
+it.effect("reports unsupported in-app job logs without calling another provider operation", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [project({ id: "p", title: "Web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [fakeProvider("github")],
+    });
+    const error = yield* service
+      .checkLog({ projectId: "p" as ProjectId, repository: "acme/web", number: 7, checkId: 42 })
+      .pipe(Effect.flip);
+    assert.strictEqual(error._tag, "PullRequestOperationError");
+  }),
+);
+
 it.effect("refines unknown self-hosted GitLab projects before listing merge requests", () =>
   Effect.gen(function* () {
     let refinementCalls = 0;

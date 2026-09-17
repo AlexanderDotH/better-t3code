@@ -1,12 +1,15 @@
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as GitLabCli from "../sourceControl/GitLabCli.ts";
 import * as GitLabPullRequestCli from "./GitLabPullRequestCli.ts";
+import { VcsProcessExitError } from "@t3tools/contracts";
 
 const mockedExecute = vi.fn<GitLabCli.GitLabCli["Service"]["execute"]>();
+const encodeJob = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const layer = it.layer(
   GitLabPullRequestCli.layer.pipe(
@@ -102,6 +105,186 @@ afterEach(() => {
 });
 
 layer("GitLabPullRequestCli.layer", (it) => {
+  for (const failureKind of ["not-found", "authentication", "rate-limited"] as const) {
+    it.effect(`handles a ${failureKind} trace response without hiding other failures`, () =>
+      Effect.gen(function* () {
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(
+            output(encodeJob({ id: 7, name: "test", status: "running", pipeline: { id: 42 } })),
+          ),
+        );
+        const failure = GitLabCli.GitLabCliCommandError.fromVcsError(
+          { operation: "execute", command: "glab", cwd: "/repo" },
+          new VcsProcessExitError({
+            operation: "run",
+            command: "glab",
+            cwd: "/repo",
+            exitCode: 1,
+            detail: "request failed",
+            failureKind,
+          }),
+        );
+        mockedExecute.mockReturnValueOnce(Effect.fail(failure));
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+        const read = cli.getJobLog({
+          cwd: "/repo",
+          repository: "group/project",
+          pipelineId: 42,
+          jobId: 7,
+        });
+        if (failureKind === "not-found")
+          expect(yield* read).toMatchObject({ text: "", complete: false });
+        else expect(yield* read.pipe(Effect.flip)).toBe(failure);
+      }),
+    );
+  }
+  it.effect("reads the latest job output only after checking pipeline membership", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(encodeJob({ id: 7, name: "test", status: "running", pipeline: { id: 42 } })),
+        ),
+      );
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("\u001b[32mPASS\u001b[0m\n", true)));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      const result = yield* cli.getJobLog({
+        cwd: "/repo",
+        repository: "group/project",
+        pipelineId: 42,
+        jobId: 7,
+      });
+      expect(result).toMatchObject({
+        text: "PASS\n",
+        truncated: true,
+        complete: false,
+        check: { logId: 7, pendingState: "running" },
+      });
+      expect(callAt(1)).toMatchObject({
+        args: ["api", "projects/group%2Fproject/jobs/7/trace"],
+        outputMode: "tail",
+        maxOutputBytes: 256 * 1024,
+      });
+    }),
+  );
+  it.effect("does not read a trace from a different pipeline", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(encodeJob({ id: 7, name: "test", status: "running", pipeline: { id: 43 } })),
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      const error = yield* cli
+        .getJobLog({ cwd: "/repo", repository: "group/project", pipelineId: 42, jobId: 7 })
+        .pipe(Effect.flip);
+      expect(error._tag).toBe("GitLabMergeRequestReadError");
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
+    }),
+  );
+  it.effect("returns erased jobs without repeatedly reading their missing trace", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            encodeJob({
+              id: 7,
+              name: "test",
+              status: "success",
+              pipeline: { id: 42 },
+              erased_at: "2026-09-17T12:00:00Z",
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      expect(
+        yield* cli.getJobLog({
+          cwd: "/repo",
+          repository: "group/project",
+          pipelineId: 42,
+          jobId: 7,
+        }),
+      ).toMatchObject({ text: "", complete: true });
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
+    }),
+  );
+  for (const status of ["success", "failed", "canceled", "skipped"]) {
+    it.effect(`reads the final trace for a ${status} job`, () =>
+      Effect.gen(function* () {
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(output(encodeJob({ id: 7, name: "test", status, pipeline: { id: 42 } }))),
+        );
+        mockedExecute.mockReturnValueOnce(Effect.succeed(output("final output")));
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+        expect(
+          yield* cli.getJobLog({
+            cwd: "/repo",
+            repository: "group/project",
+            pipelineId: 42,
+            jobId: 7,
+          }),
+        ).toMatchObject({ text: "final output", complete: true });
+      }),
+    );
+  }
+  it.effect("reads every page of pipeline jobs and includes trigger jobs", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation(({ args }) => {
+        const path = args[1] ?? "";
+        const jobs = path.includes("/bridges?")
+          ? [{ id: 104, name: "deploy-child", stage: "deploy", status: "manual" }]
+          : Array.from({ length: path.includes("page=2") ? 3 : 100 }, (_, index) => ({
+              id: (path.includes("page=2") ? 101 : 1) + index,
+              name: `job-${(path.includes("page=2") ? 101 : 1) + index}`,
+              stage: "test",
+              status: index === 0 ? "running" : "created",
+            }));
+        return Effect.succeed(output(JSON.stringify(jobs)));
+      });
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      const checks = yield* cli.listPipelineChecks({
+        cwd: "/w",
+        repository: "acme/platform/web",
+        pipelineId: 10642,
+      });
+      expect(checks).toHaveLength(104);
+      expect(checks.at(-1)).toMatchObject({
+        name: "deploy-child",
+        stage: "deploy",
+        status: "action-required",
+      });
+      expect(checks.find((check) => check.name === "job-103")?.statusLabel).toBe("Not started");
+      const paths = mockedExecute.mock.calls.map(([call]) => call.args[1]);
+      expect(paths).toContain(
+        "projects/acme%2Fplatform%2Fweb/pipelines/10642/jobs?per_page=100&page=2&include_retried=false",
+      );
+      expect(paths).toHaveLength(3);
+      expect(paths.every((path) => !path?.includes("scope"))).toBe(true);
+    }),
+  );
+
+  it.effect("reports an unreadable job response", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output('{"message":"Forbidden"}')));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      const error = yield* cli
+        .listPipelineChecks({ cwd: "/w", repository: "51", pipelineId: 10642 })
+        .pipe(Effect.flip);
+      expect(error._tag).toBe("GitLabMergeRequestReadError");
+    }),
+  );
+
+  it.effect("rejects truncated job output even if it still contains valid JSON", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output("[]", true)));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      const error = yield* cli
+        .listPipelineChecks({ cwd: "/w", repository: "51", pipelineId: 10642 })
+        .pipe(Effect.flip);
+      expect(error._tag).toBe("GitLabMergeRequestReadError");
+    }),
+  );
+
   it.effect("asks GitLab for one row more than the page, to probe for a next page", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output(mergeRequests(3, 1))));

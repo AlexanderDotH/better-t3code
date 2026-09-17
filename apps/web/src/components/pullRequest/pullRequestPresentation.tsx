@@ -148,15 +148,33 @@ function isWorkflowApprovalCheck(check: Pick<PullRequestCheck, "status" | "url">
 }
 
 export function pullRequestCheckStatusLabel(
-  check: Pick<PullRequestCheck, "status" | "url">,
+  check: Pick<PullRequestCheck, "status" | "url" | "statusLabel">,
 ): string {
+  if (check.statusLabel) return check.statusLabel;
   return isWorkflowApprovalCheck(check)
     ? "Awaiting approval"
     : CHECK_STATUS_PRESENTATION[check.status].label;
 }
 
-export function PullRequestCheckStatusIcon({ status }: { status: PullRequestCheckStatus }) {
-  const presentation = CHECK_STATUS_PRESENTATION[status];
+export function groupPullRequestChecksByStage(checks: ReadonlyArray<PullRequestCheck>) {
+  const stages = new Map<string | null, PullRequestCheck[]>();
+  for (const check of checks) {
+    const stage = check.stage ?? null;
+    const jobs = stages.get(stage);
+    if (jobs) jobs.push(check);
+    else stages.set(stage, [check]);
+  }
+  return [...stages].map(([stage, jobs]) => ({ stage, jobs }));
+}
+
+export function PullRequestCheckStatusIcon({
+  status,
+  pendingState,
+}: Pick<PullRequestCheck, "status" | "pendingState">) {
+  const presentation =
+    status === "pending" && pendingState === "queued"
+      ? { Icon: CircleDotIcon, toneClassName: "text-muted-foreground/70" }
+      : CHECK_STATUS_PRESENTATION[status];
   return (
     <presentation.Icon
       aria-hidden
@@ -478,6 +496,9 @@ export function summarizePullRequestChecks(checks: ReadonlyArray<PullRequestChec
     (check) => check.status === "failure" || check.status === "cancelled",
   ).length;
   const pending = checks.filter((check) => check.status === "pending").length;
+  const queued = checks.filter(
+    (check) => check.status === "pending" && check.pendingState === "queued",
+  ).length;
   const passed = checks.filter((check) => check.status === "success").length;
   if (failed > 0) return `${failed} of ${checks.length} failing`;
   if (workflowApprovalRequired > 0 && otherActionRequired > 0) {
@@ -488,6 +509,12 @@ export function summarizePullRequestChecks(checks: ReadonlyArray<PullRequestChec
   }
   if (otherActionRequired > 0) {
     return `${otherActionRequired} ${otherActionRequired === 1 ? "check" : "checks"} awaiting action`;
+  }
+  if (queued > 0) {
+    const running = pending - queued;
+    return running > 0
+      ? `${running} running, ${queued} queued`
+      : `${queued} of ${checks.length} queued`;
   }
   if (pending > 0) return `${pending} of ${checks.length} running`;
   return passed === checks.length ? "All checks passed" : `${passed} of ${checks.length} passing`;

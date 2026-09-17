@@ -37,6 +37,8 @@ const RawUserSchema = Schema.Struct({
 });
 
 const RawPipelineSchema = Schema.Struct({
+  id: Schema.optional(Schema.NullOr(Schema.Int)),
+  project_id: Schema.optional(Schema.NullOr(Schema.Int)),
   status: Schema.optional(Schema.NullOr(Schema.String)),
   web_url: Schema.optional(Schema.NullOr(Schema.String)),
   source: Schema.optional(Schema.NullOr(Schema.String)),
@@ -220,6 +222,7 @@ export interface GitLabMergeRequestListItem {
 }
 
 export interface GitLabMergeRequestDetail extends GitLabMergeRequestListItem {
+  readonly headPipeline?: { readonly id: number; readonly projectId: number | null };
   readonly body: string;
   readonly changedFiles: number;
   readonly mergedAt: string | null;
@@ -318,10 +321,7 @@ function toPipelineStatus(value: string | null | undefined): PullRequestCheckSta
   }
 }
 
-/**
- * GitLab has no per-job check list on a merge request, so its pipeline is reported as the one
- * check. The jobs behind it stay one click away through the pipeline URL.
- */
+/** The pipeline rollup remains available when its separate job list cannot be read. */
 function toChecks(
   raw: Schema.Schema.Type<typeof RawMergeRequestSchema>,
 ): ReadonlyArray<PullRequestCheck> {
@@ -380,6 +380,14 @@ function toDetail(raw: Schema.Schema.Type<typeof RawMergeRequestSchema>): GitLab
       return actor === null ? [] : [actor];
     }),
     checks: toChecks(raw),
+    ...(raw.head_pipeline?.id == null
+      ? {}
+      : {
+          headPipeline: {
+            id: raw.head_pipeline.id,
+            projectId: raw.head_pipeline.project_id ?? null,
+          },
+        }),
     viewerCanMerge: raw.user?.can_merge !== false,
     reviewerIds: (raw.reviewers ?? []).flatMap((reviewer) =>
       reviewer.id === undefined ? [] : [reviewer.id],

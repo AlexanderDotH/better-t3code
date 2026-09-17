@@ -1,6 +1,7 @@
 import type {
   EnvironmentId,
   PullRequestActor,
+  PullRequestCheck,
   PullRequestComment,
   PullRequestDetailView,
   PullRequestRef,
@@ -38,10 +39,12 @@ import {
   PullRequestCheckStatusIcon,
   PullRequestReviewOutcomeBadge,
   pullRequestCheckStatusLabel,
+  groupPullRequestChecksByStage,
   pullRequestReviewOutcomeLabel,
   pullRequestReviewOutcomeRingClassName,
   pullRequestReviewOutcomeStaleLabel,
 } from "./pullRequestPresentation";
+import { PullRequestJobLogDialog } from "./PullRequestJobLogDialog";
 import { PullRequestLabelPicker } from "./PullRequestLabelPicker";
 import { PullRequestReviewerPicker } from "./PullRequestReviewerPicker";
 import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
@@ -461,6 +464,9 @@ export function PullRequestSummaryTab({
   // Keyed by the pull request, so opening another one starts at the end of its conversation
   // rather than wherever the last one had been read back to.
   const [shown, setShown] = useState({ url: detail.url, count: COMMENT_PAGE });
+  const [logSelection, setLogSelection] = useState<{ url: string; check: PullRequestCheck } | null>(
+    null,
+  );
   const shownComments = shown.url === detail.url ? shown.count : COMMENT_PAGE;
   // Windowed by recency regardless of display order: expanding always reaches further back in
   // time, whether the newest comment currently reads first or last.
@@ -533,6 +539,59 @@ export function PullRequestSummaryTab({
       toastManager.add({ type: "error", title: "Unable to open check details" });
     });
   };
+  const checkStages = groupPullRequestChecksByStage(detail.checks);
+  const renderCheck = (check: PullRequestCheck, index: number) => {
+    const finding = { kind: "check", check } as const;
+    const failing = check.status === "failure" || check.status === "cancelled";
+    return (
+      <div
+        key={`${index}:${check.name}:${check.url ?? ""}`}
+        className="group flex items-center gap-1 rounded-md pr-1 hover:bg-accent/60"
+      >
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                disabled={!check.url && check.logId === undefined}
+                onClick={() =>
+                  check.logId !== undefined
+                    ? setLogSelection({ url: detail.url, check })
+                    : check.url && openCheck(check.url)
+                }
+                className={cn(
+                  "flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs",
+                  check.url ? undefined : "cursor-default",
+                )}
+              >
+                <PullRequestCheckStatusIcon
+                  status={check.status}
+                  pendingState={check.pendingState}
+                />
+                <span className="min-w-0 flex-1 truncate">{check.name}</span>
+                <span className="max-w-[45%] shrink-0 text-right text-muted-foreground">
+                  {pullRequestCheckStatusLabel(check)}
+                </span>
+              </button>
+            }
+          />
+          <TooltipPopup>{check.description ?? check.name}</TooltipPopup>
+        </Tooltip>
+        {onFixFinding && failing ? (
+          <Button
+            size="xs"
+            variant="ghost"
+            className="shrink-0"
+            disabled={pendingFinding !== null && pendingFinding !== undefined}
+            onClick={() => onFixFinding(finding)}
+          >
+            <HammerIcon className="size-3" />
+            {pendingFinding === pullRequestFindingKey(finding) ? "Preparing..." : fixCheckLabel}
+          </Button>
+        ) : null}
+      </div>
+    );
+  };
 
   const update = useAtomCommand(pullRequestEnvironment.update, { reportFailure: false });
   const updateComment = useAtomCommand(pullRequestEnvironment.updateComment, {
@@ -596,6 +655,16 @@ export function PullRequestSummaryTab({
 
   return (
     <div className="h-full overflow-y-auto" data-pull-request-summary-scroll>
+      {logSelection?.url === detail.url ? (
+        <PullRequestJobLogDialog
+          key={`${environmentId}:${detail.url}:${logSelection.check.logId}`}
+          environmentId={environmentId}
+          reference={reference}
+          check={logSelection.check}
+          threadRef={threadRef}
+          onClose={() => setLogSelection(null)}
+        />
+      ) : null}
       <section className="px-4 py-3">
         <div>
           <MetaRow icon={<UsersIcon className="size-3.5" />} label="Reviewers">
@@ -789,51 +858,32 @@ export function PullRequestSummaryTab({
         {detail.checks.length === 0 ? (
           <p className="text-xs text-muted-foreground">No checks reported.</p>
         ) : (
-          <div className="space-y-0.5">
-            {detail.checks.map((check, index) => {
-              const finding = { kind: "check", check } as const;
-              const failing = check.status === "failure" || check.status === "cancelled";
-              return (
-                <div
-                  // Position too: the host decides how many runs share a name, and a repeated
-                  // key would be a rendering fault on top of whatever the list already says.
-                  key={`${index}:${check.name}:${check.url ?? ""}`}
-                  className="group flex items-center gap-1 rounded-md pr-1 hover:bg-accent/60"
-                >
-                  <button
-                    type="button"
-                    disabled={!check.url}
-                    onClick={() => check.url && openCheck(check.url)}
-                    className={cn(
-                      "flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs",
-                      check.url ? undefined : "cursor-default",
-                    )}
-                  >
-                    <PullRequestCheckStatusIcon status={check.status} />
-                    <span className="min-w-0 flex-1 truncate">{check.name}</span>
-                    <span className="shrink-0 text-muted-foreground">
-                      {pullRequestCheckStatusLabel(check)}
-                    </span>
-                  </button>
-                  {/* Only where there is something to fix. A passing check has no failure to
-                      reproduce, and the button would be an invitation to waste a thread. */}
-                  {onFixFinding && failing ? (
-                    <Button
-                      size="xs"
-                      variant="ghost"
-                      className="shrink-0"
-                      disabled={pendingFinding !== null && pendingFinding !== undefined}
-                      onClick={() => onFixFinding(finding)}
-                    >
-                      <HammerIcon className="size-3" />
-                      {pendingFinding === pullRequestFindingKey(finding)
-                        ? "Preparing..."
-                        : fixCheckLabel}
-                    </Button>
-                  ) : null}
+          <div
+            className={cn(
+              checkStages.some(({ stage }) => stage !== null)
+                ? "grid grid-cols-[repeat(auto-fit,minmax(min(100%,15rem),1fr))] items-start gap-3"
+                : "space-y-0.5",
+            )}
+          >
+            {checkStages.map(({ stage, jobs }) =>
+              stage === null ? (
+                <div key="ungrouped" className="space-y-0.5">
+                  {jobs.map(renderCheck)}
                 </div>
-              );
-            })}
+              ) : (
+                <section
+                  key={`stage:${stage}`}
+                  aria-label={`Stage: ${stage}`}
+                  className="min-w-0 rounded-lg border border-border/60 bg-muted/20 p-1.5"
+                >
+                  <h4 className="flex items-center gap-2 px-2 pt-1 pb-2 text-xs font-medium">
+                    <span className="min-w-0 flex-1 truncate">{stage}</span>
+                    <span className="text-muted-foreground font-normal">{jobs.length}</span>
+                  </h4>
+                  <div className="space-y-0.5">{jobs.map(renderCheck)}</div>
+                </section>
+              ),
+            )}
           </div>
         )}
       </Section>

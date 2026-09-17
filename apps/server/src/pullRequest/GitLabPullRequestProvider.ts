@@ -138,6 +138,29 @@ export const make = Effect.gen(function* () {
           Effect.map((batch) => ({ ...batch, continues: true })),
         ),
 
+    getCheckLog: Effect.fn("GitLabPullRequestProvider.getCheckLog")(function* (input) {
+      const mergeRequest = yield* cli
+        .getMergeRequestDetail(input)
+        .pipe(Effect.mapError(fail("getCheckLog")));
+      const pipeline = mergeRequest.headPipeline;
+      if (!pipeline) {
+        return yield* new PullRequestProviderError({
+          provider: "gitlab",
+          operation: "getCheckLog",
+          reason: "failed",
+          detail: "This merge request no longer has a pipeline.",
+        });
+      }
+      return yield* cli
+        .getJobLog({
+          cwd: input.cwd,
+          repository: pipeline.projectId === null ? input.repository : String(pipeline.projectId),
+          pipelineId: pipeline.id,
+          jobId: input.checkId,
+        })
+        .pipe(Effect.mapError(fail("getCheckLog")));
+    }),
+
     getChangeRequest: (input) =>
       Effect.all(
         [
@@ -146,6 +169,33 @@ export const make = Effect.gen(function* () {
         ],
         { concurrency: 2 },
       ).pipe(
+        Effect.flatMap(([mergeRequest, mergeCapabilities]) =>
+          (mergeRequest.headPipeline
+            ? cli
+                .listPipelineChecks({
+                  cwd: input.cwd,
+                  repository:
+                    mergeRequest.headPipeline.projectId === null
+                      ? input.repository
+                      : String(mergeRequest.headPipeline.projectId),
+                  pipelineId: mergeRequest.headPipeline.id,
+                })
+                .pipe(
+                  Effect.map((checks) => (checks.length > 0 ? checks : mergeRequest.checks)),
+                  Effect.catchIf(
+                    (error) => error._tag !== "GitLabCliRateLimitError",
+                    () =>
+                      Effect.succeed(
+                        mergeRequest.checks.map((check) => ({
+                          ...check,
+                          name: "Pipeline — job details unavailable",
+                        })),
+                      ),
+                  ),
+                )
+            : Effect.succeed(mergeRequest.checks)
+          ).pipe(Effect.map((checks) => [{ ...mergeRequest, checks }, mergeCapabilities] as const)),
+        ),
         Effect.mapError(fail("getChangeRequest")),
         Effect.map(([mergeRequest, mergeCapabilities]): ProviderChangeRequestDetail => ({
           ...mergeRequest,
