@@ -5247,7 +5247,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         if (isInsideRestingComposerControlScope(event.target)) return;
         composerMentionDragHandlers.onDrop(event);
       }}
-      className="mx-auto w-full min-w-0 max-w-3xl"
+      className="mx-auto w-full min-w-0 max-w-[var(--chat-content-inner-max-width,48rem)]"
       data-chat-composer-form="true"
     >
       {composerControlsInStrip && restingControlsHost

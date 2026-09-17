@@ -41,6 +41,41 @@ const betterT3SettingsCatalog = defineLocalizedInterfaceCatalog({
   ],
   "settings.betterT3.tab.general": ["General", "Allgemein", "Général"],
   "settings.betterT3.tab.appearance": ["Appearance", "Darstellung", "Apparence"],
+  "settings.betterT3.chatWidth.label": [
+    "Adjust chat width",
+    "Chatbreite anpassen",
+    "Ajuster la largeur du chat",
+  ],
+  "settings.betterT3.chatWidth.description": [
+    "At 0%, the chat uses T3 Code’s default width. −100% halves it; +100% uses the full available chat area.",
+    "Bei 0 % nutzt der Chat die Standardbreite von T3 Code. −100 % halbiert sie; +100 % nutzt die gesamte verfügbare Chatfläche.",
+    "À 0 %, le chat utilise la largeur par défaut de T3 Code. −100 % la réduit de moitié ; +100 % utilise tout l’espace disponible.",
+  ],
+  "settings.betterT3.chatWidth.adjustment": [
+    "Width adjustment",
+    "Breitenanpassung",
+    "Ajustement de la largeur",
+  ],
+  "settings.betterT3.chatWidth.preview.example": [
+    "Example conversation",
+    "Beispiel-Unterhaltung",
+    "Exemple de conversation",
+  ],
+  "settings.betterT3.chatWidth.preview.default": [
+    "T3 Code default",
+    "T3-Code-Standard",
+    "Largeur par défaut",
+  ],
+  "settings.betterT3.chatWidth.preview.request": [
+    "Show me how this looks.",
+    "Zeig mir, wie das aussieht.",
+    "Montre-moi le résultat.",
+  ],
+  "settings.betterT3.chatWidth.preview.response": [
+    "Your conversation stays centered. Adjust the slider to see how messages wrap and the space for your next prompt changes.",
+    "Deine Unterhaltung bleibt zentriert. Bewege den Regler und sieh, wie sich die Zeilenumbrüche und der Platz für deinen nächsten Prompt verändern.",
+    "Votre conversation reste centrée. Déplacez le curseur pour voir les retours à la ligne et l’espace de saisie s’adapter.",
+  ],
   "settings.betterT3.tab.chat": ["Chat", "Chat", "Discussion"],
   "settings.betterT3.tab.sidebar": ["Sidebar", "Seitenleiste", "Barre latérale"],
   "settings.betterT3.tab.usage": ["Usage", "Nutzung", "Utilisation"],

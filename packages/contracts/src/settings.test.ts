@@ -9,6 +9,8 @@ import {
   ClientSettingsSchema,
   ClientSettingsPatch,
   DEFAULT_AGENT_ENHANCEMENT_SETTINGS,
+  DEFAULT_CHAT_WIDTH_ADJUSTMENT_PERCENT,
+  DEFAULT_CHAT_WIDTH_CUSTOMIZATION_ENABLED,
   DEFAULT_CHAT_VISUAL_MODE,
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_INTERFACE_LANGUAGE_PREFERENCE,
@@ -20,6 +22,8 @@ import {
   InterfaceLanguageSyncRecord,
   InterfaceLocalePreferenceV1,
   InterfaceLocaleSyncRecordV1,
+  MAX_CHAT_WIDTH_ADJUSTMENT_PERCENT,
+  MIN_CHAT_WIDTH_ADJUSTMENT_PERCENT,
   DEFAULT_INTERFACE_LOCALE_PREFERENCE_V1,
   OpenAiSettings,
   OpenRouterSettings,
@@ -223,6 +227,36 @@ describe("ClientSettings word wrap", () => {
     expect(decoded.wordWrap).toBe(true);
     expect(decoded).not.toHaveProperty("chatWordWrap");
     expect(decoded).not.toHaveProperty("diffWordWrap");
+  });
+});
+
+describe("ClientSettings chat width customization", () => {
+  it("defaults to the original width and accepts the configured adjustment range", () => {
+    const settings = decodeClientSettings({});
+    expect(settings.chatWidthCustomizationEnabled).toBe(DEFAULT_CHAT_WIDTH_CUSTOMIZATION_ENABLED);
+    expect(settings.chatWidthAdjustmentPercent).toBe(DEFAULT_CHAT_WIDTH_ADJUSTMENT_PERCENT);
+    for (const chatWidthAdjustmentPercent of [
+      MIN_CHAT_WIDTH_ADJUSTMENT_PERCENT,
+      MAX_CHAT_WIDTH_ADJUSTMENT_PERCENT,
+    ]) {
+      expect(
+        decodeClientSettingsPatch({ chatWidthAdjustmentPercent }).chatWidthAdjustmentPercent,
+      ).toBe(chatWidthAdjustmentPercent);
+    }
+    expect(
+      decodeClientSettingsPatch({ chatWidthCustomizationEnabled: true })
+        .chatWidthCustomizationEnabled,
+    ).toBe(true);
+  });
+
+  it("rejects percentages outside the range and non-integers", () => {
+    for (const chatWidthAdjustmentPercent of [
+      MIN_CHAT_WIDTH_ADJUSTMENT_PERCENT - 1,
+      MAX_CHAT_WIDTH_ADJUSTMENT_PERCENT + 1,
+      DEFAULT_CHAT_WIDTH_ADJUSTMENT_PERCENT + 0.5,
+    ]) {
+      expect(() => decodeClientSettingsPatch({ chatWidthAdjustmentPercent })).toThrow();
+    }
   });
 });
 

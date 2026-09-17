@@ -505,6 +505,11 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Contrast"]
         : []),
       ...(settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? ["Glass opacity"] : []),
+      ...(settings.chatWidthCustomizationEnabled !==
+        DEFAULT_UNIFIED_SETTINGS.chatWidthCustomizationEnabled ||
+      settings.chatWidthAdjustmentPercent !== DEFAULT_UNIFIED_SETTINGS.chatWidthAdjustmentPercent
+        ? ["Chat width"]
+        : []),
       ...(settings.panelAnimationDurationMs !== DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs
         ? ["Panel animations"]
         : []),
@@ -618,6 +623,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.fontSizeInterface,
       settings.fontSizePrompt,
       settings.fontSizeTerminal,
+      settings.chatWidthAdjustmentPercent,
+      settings.chatWidthCustomizationEnabled,
       settings.glassOpacity,
       settings.panelAnimationDurationMs,
       settings.enableLegacyTokenStreaming,
@@ -709,6 +716,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       composerCollapseOnScroll: DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll,
       contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
+      chatWidthAdjustmentPercent: DEFAULT_UNIFIED_SETTINGS.chatWidthAdjustmentPercent,
+      chatWidthCustomizationEnabled: DEFAULT_UNIFIED_SETTINGS.chatWidthCustomizationEnabled,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,

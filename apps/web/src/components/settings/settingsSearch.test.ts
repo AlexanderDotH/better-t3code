@@ -53,6 +53,10 @@ describe("searchSettings", () => {
     expect(searchSettings("glass")).toMatchObject([
       { id: "setting-glass-opacity", to: "/settings/better-t3" },
     ]);
+    expect(searchSettings("Chatbreite")).toMatchObject([
+      { id: "setting-chat-content-width", to: "/settings/better-t3" },
+    ]);
+    expect(searchSettings("Breitenanpassung")[0]?.id).toBe("setting-chat-content-width");
     expect(searchSettings("panel animations").map((item) => item.id)).toEqual(["panel-animations"]);
     expect(searchSettings("thè\u{1ab0}mes")[0]?.id).toBe("theme");
     const localeLowerCase = vi.spyOn(String.prototype, "toLocaleLowerCase").mockReturnValue("gıt");
