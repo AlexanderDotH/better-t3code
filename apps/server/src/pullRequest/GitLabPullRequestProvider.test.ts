@@ -4,6 +4,8 @@ import * as Layer from "effect/Layer";
 
 import * as GitLabPullRequestCli from "./GitLabPullRequestCli.ts";
 import { gitLabViewerPermissions, make } from "./GitLabPullRequestProvider.ts";
+import type { GitLabMergeRequestDetail } from "./gitLabMergeRequestJson.ts";
+import { GitLabCliRateLimitError } from "../sourceControl/GitLabCli.ts";
 
 describe("gitLabViewerPermissions", () => {
   it("offers everything to a viewer GitLab says can merge", () => {
@@ -61,7 +63,7 @@ describe("gitLabViewerPermissions", () => {
   });
 });
 
-describe("getChangeRequest base freshness", () => {
+describe("getChangeRequest", () => {
   const detail = {
     number: 7,
     title: "Merge request 7",
@@ -88,7 +90,69 @@ describe("getChangeRequest base freshness", () => {
     reviewerIds: [],
   };
 
-  const readWith = (divergence: { readonly divergedCommits?: number }) =>
+  it.effect("reads job logs from the verified head pipeline's source project", () =>
+    Effect.gen(function* () {
+      const log = {
+        check: { name: "test", status: "pending" as const, url: null, description: null, logId: 7 },
+        text: "output",
+        complete: false,
+        truncated: false,
+      };
+      const getJobLog = vi.fn(() => Effect.succeed(log));
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            getMergeRequestDetail: () =>
+              Effect.succeed({ ...detail, headPipeline: { id: 42, projectId: 51 } }),
+            getJobLog,
+          }),
+        ),
+      );
+      expect(
+        yield* provider.getCheckLog!({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "gitlab.com",
+          number: 7,
+          checkId: 7,
+        }),
+      ).toEqual(log);
+      expect(getJobLog).toHaveBeenCalledWith({
+        cwd: "/w",
+        repository: "51",
+        pipelineId: 42,
+        jobId: 7,
+      });
+    }),
+  );
+  it.effect("rejects log reads when the MR no longer has a pipeline", () =>
+    Effect.gen(function* () {
+      const getJobLog = vi.fn();
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            getMergeRequestDetail: () => Effect.succeed(detail),
+            getJobLog,
+          }),
+        ),
+      );
+      const error = yield* provider.getCheckLog!({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "gitlab.com",
+        number: 7,
+        checkId: 7,
+      }).pipe(Effect.flip);
+      expect(error.detail).toContain("no longer has a pipeline");
+      expect(getJobLog).not.toHaveBeenCalled();
+    }),
+  );
+
+  const readWith = (
+    overrides: Partial<GitLabMergeRequestDetail>,
+    listPipelineChecks: GitLabPullRequestCli.GitLabPullRequestCli["Service"]["listPipelineChecks"] = () =>
+      Effect.succeed([]),
+  ) =>
     Effect.gen(function* () {
       const provider = yield* make;
       return yield* provider.getChangeRequest({
@@ -100,12 +164,82 @@ describe("getChangeRequest base freshness", () => {
     }).pipe(
       Effect.provide(
         Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
-          getMergeRequestDetail: () => Effect.succeed({ ...detail, ...divergence }),
+          getMergeRequestDetail: () => Effect.succeed({ ...detail, ...overrides }),
+          listPipelineChecks,
           getProjectMergeCapabilities: () =>
             Effect.succeed({ merge: true, squash: true, rebase: true }),
         }),
       ),
     );
+
+  it.effect("shows jobs from the head pipeline's project, including fork pipelines", () =>
+    Effect.gen(function* () {
+      const checks = [
+        {
+          name: "unit-coverage",
+          stage: "test",
+          status: "pending" as const,
+          description: null,
+          url: null,
+        },
+      ];
+      const listPipelineChecks = vi.fn(() => Effect.succeed(checks));
+      const result = yield* readWith(
+        { headPipeline: { id: 10642, projectId: 51 } },
+        listPipelineChecks,
+      );
+      expect(result.checks).toEqual(checks);
+      expect(listPipelineChecks).toHaveBeenCalledWith({
+        cwd: "/w",
+        repository: "51",
+        pipelineId: 10642,
+      });
+    }),
+  );
+
+  it.effect("preserves the pipeline status and link when individual jobs cannot be loaded", () =>
+    Effect.gen(function* () {
+      const pipeline = {
+        name: "Pipeline",
+        status: "pending" as const,
+        description: null,
+        url: "https://gitlab.com/acme/web/-/pipelines/10642",
+      };
+      const listPipelineChecks = () =>
+        Effect.fail(
+          new GitLabPullRequestCli.GitLabMergeRequestReadError({
+            command: "glab",
+            cwd: "/w",
+            operation: "listPipelineChecks",
+            cause: new Error("Unavailable"),
+          }),
+        );
+      const result = yield* readWith(
+        { headPipeline: { id: 10642, projectId: null }, checks: [pipeline] },
+        listPipelineChecks,
+      );
+      expect(result.checks).toEqual([{ ...pipeline, name: "Pipeline — job details unavailable" }]);
+    }),
+  );
+
+  it.effect("keeps rate limits visible to the server's provider backoff", () =>
+    Effect.gen(function* () {
+      const listPipelineChecks = () =>
+        Effect.fail(
+          new GitLabCliRateLimitError({
+            command: "glab",
+            cwd: "/w",
+            operation: "execute",
+            cause: new Error("Rate limited"),
+          }),
+        );
+      const error = yield* readWith(
+        { headPipeline: { id: 10642, projectId: 51 } },
+        listPipelineChecks,
+      ).pipe(Effect.flip);
+      expect(error).toMatchObject({ reason: "rate-limited" });
+    }),
+  );
 
   it.effect("reads a counted divergence as a branch that has fallen behind", () =>
     Effect.gen(function* () {

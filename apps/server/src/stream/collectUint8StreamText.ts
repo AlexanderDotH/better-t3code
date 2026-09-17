@@ -16,6 +16,48 @@ export const decodeUtf8 = (
   invalidUtf8: !NodeBuffer.isUtf8(bytes),
 });
 
+/** Drain the whole stream while retaining only its newest bytes. */
+export const collectUint8StreamTail = <E>(input: {
+  readonly stream: Stream.Stream<Uint8Array, E>;
+  readonly maxBytes: number;
+}): Effect.Effect<CollectedUint8StreamText, E> =>
+  Effect.suspend(() => {
+    const tail = Buffer.alloc(input.maxBytes);
+    let offset = 0;
+    let bytes = 0;
+    let truncated = false;
+    return input.stream.pipe(
+      Stream.runForEach((chunk) =>
+        Effect.sync(() => {
+          truncated ||= bytes + chunk.byteLength > tail.length;
+          bytes = Math.min(tail.length, bytes + chunk.byteLength);
+          if (tail.length === 0) return;
+          if (chunk.byteLength >= tail.length) {
+            tail.set(chunk.subarray(chunk.byteLength - tail.length));
+            offset = 0;
+            return;
+          }
+          const firstPart = Math.min(chunk.byteLength, tail.length - offset);
+          tail.set(chunk.subarray(0, firstPart), offset);
+          tail.set(chunk.subarray(firstPart), 0);
+          offset = (offset + chunk.byteLength) % tail.length;
+        }),
+      ),
+      Effect.map(() => {
+        const ordered =
+          bytes < tail.length
+            ? tail.subarray(0, bytes)
+            : Buffer.concat([tail.subarray(offset), tail.subarray(0, offset)]);
+        let start = 0;
+        // A byte cap may split the first UTF-8 character; omit that fragment only.
+        if (truncated) {
+          while (start < ordered.length && (ordered[start]! & 0xc0) === 0x80) start += 1;
+        }
+        return { ...decodeUtf8(ordered.subarray(start)), bytes: bytes - start, truncated };
+      }),
+    );
+  });
+
 interface CollectState {
   chunks: Uint8Array[];
   readonly bytes: number;

@@ -13,6 +13,7 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
   collectUint8StreamText,
+  collectUint8StreamTail,
   decodeUtf8,
   type CollectedUint8StreamText,
 } from "./stream/collectUint8StreamText.ts";
@@ -26,7 +27,7 @@ export interface ProcessRunInput {
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly stdin?: string | undefined;
   readonly maxOutputBytes?: number | undefined;
-  readonly outputMode?: "error" | "truncate" | undefined;
+  readonly outputMode?: "error" | "truncate" | "tail" | undefined;
   readonly truncatedMarker?: string | undefined;
   /**
    * On timeout, return a synthetic timedOut result.
@@ -177,7 +178,7 @@ const collectText = Effect.fn("processRunner.collectText")(function* (input: {
   readonly streamName: "stdout" | "stderr";
   readonly stream: Stream.Stream<Uint8Array, PlatformError.PlatformError>;
   readonly maxOutputBytes: number;
-  readonly outputMode: "error" | "truncate";
+  readonly outputMode: "error" | "truncate" | "tail";
   readonly truncatedMarker: string;
 }) {
   const stream = input.stream.pipe(
@@ -193,6 +194,10 @@ const collectText = Effect.fn("processRunner.collectText")(function* (input: {
         }),
     ),
   );
+
+  if (input.outputMode === "tail") {
+    return yield* collectUint8StreamTail({ stream, maxBytes: input.maxOutputBytes });
+  }
 
   if (input.outputMode === "truncate") {
     return yield* collectUint8StreamText({

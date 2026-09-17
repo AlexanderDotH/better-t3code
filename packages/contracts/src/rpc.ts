@@ -180,6 +180,8 @@ import {
   PullRequestCommentInput,
   PullRequestCommentUpdateInput,
   PullRequestDetail,
+  PullRequestCheckLog,
+  PullRequestCheckLogInput,
   PullRequestDiffFileContentsInput,
   PullRequestDiffFileContentsResult,
   PullRequestInvalidateInput,
@@ -597,6 +599,7 @@ export const WS_METHODS = {
   pullRequestsListStats: "pullRequests.listStats",
   pullRequestsSummary: "pullRequests.summary",
   pullRequestsDetail: "pullRequests.detail",
+  pullRequestsCheckLog: "pullRequests.checkLog",
   pullRequestsActivity: "pullRequests.activity",
   pullRequestsThreadComments: "pullRequests.threadComments",
   pullRequestsDiffFileContents: "pullRequests.diffFileContents",
@@ -1267,6 +1270,12 @@ const WsPullRequestsSummaryRpc = Rpc.make(WS_METHODS.pullRequestsSummary, {
 const WsPullRequestsDetailRpc = Rpc.make(WS_METHODS.pullRequestsDetail, {
   payload: PullRequestRef,
   success: PullRequestDetail,
+  error: PullRequestRpcError,
+});
+
+const WsPullRequestsCheckLogRpc = Rpc.make(WS_METHODS.pullRequestsCheckLog, {
+  payload: PullRequestCheckLogInput,
+  success: PullRequestCheckLog,
   error: PullRequestRpcError,
 });
 
@@ -2064,6 +2073,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPullRequestsListStatsRpc,
   WsPullRequestsSummaryRpc,
   WsPullRequestsDetailRpc,
+  WsPullRequestsCheckLogRpc,
   WsPullRequestsActivityRpc,
   WsPullRequestsThreadCommentsRpc,
   WsPullRequestsDiffFileContentsRpc,

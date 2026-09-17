@@ -1,10 +1,13 @@
 import * as Context from "effect/Context";
+import { readableGitLabJobTrace } from "./gitLabJobTrace.ts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
   PullRequestAction,
+  PullRequestCheck,
+  PullRequestCheckLog,
   PullRequestComment,
   PullRequestCommit,
   PullRequestInvolvement,
@@ -19,6 +22,7 @@ import type {
   PullRequestReviewVerdict,
   PullRequestReviewerCandidateList,
 } from "@t3tools/contracts";
+import { PULL_REQUEST_CHECK_LOG_MAX_BYTES, VcsProcessExitError } from "@t3tools/contracts";
 
 import * as GitLabCli from "../sourceControl/GitLabCli.ts";
 import {
@@ -43,6 +47,12 @@ import {
   type GitLabProjectUsers,
 } from "./gitLabMergeRequestJson.ts";
 import type { ProviderListCursor } from "./PullRequestProvider.ts";
+import {
+  decodePipelineJobsJson,
+  decodePipelineJobDetailJson,
+  pipelineJobChecks,
+  type GitLabPipelineJob,
+} from "./gitLabPipelineJobs.ts";
 
 /**
  * Names the read that produced unusable output, so a failure reports the call it came from
@@ -187,6 +197,8 @@ export type GitLabPullRequestCliError =
 
 /** GitLab's own ceiling on `per_page`, so a larger page has to be walked. */
 const MAX_PAGE_SIZE = 100;
+const isVcsProcessExitError = Schema.is(VcsProcessExitError);
+const MAX_PIPELINE_JOB_PAGES = 100;
 /** Commit history is read one page deep; the rest of a long history stays on GitLab. */
 const COMMIT_PAGE_SIZE = 100;
 /**
@@ -239,6 +251,19 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly repository: string;
       readonly number: number;
     }) => Effect.Effect<GitLabMergeRequestDetail, GitLabPullRequestCliError>;
+
+    readonly listPipelineChecks: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly pipelineId: number;
+    }) => Effect.Effect<ReadonlyArray<PullRequestCheck>, GitLabPullRequestCliError>;
+
+    readonly getJobLog: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly pipelineId: number;
+      readonly jobId: number;
+    }) => Effect.Effect<PullRequestCheckLog, GitLabPullRequestCliError>;
 
     readonly listNotes: (input: {
       readonly cwd: string;
@@ -540,6 +565,50 @@ export const make = Effect.gen(function* () {
       ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
       ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
     });
+
+  const pipelineJobs = Effect.fn("GitLabPullRequestCli.pipelineJobs")(function* (
+    input: { readonly cwd: string; readonly repository: string; readonly pipelineId: number },
+    kind: "jobs" | "bridges",
+  ) {
+    const jobs: GitLabPipelineJob[] = [];
+    for (let page = 1; page <= MAX_PIPELINE_JOB_PAGES; page += 1) {
+      const result = yield* api({
+        cwd: input.cwd,
+        path: `projects/${projectPath(input.repository)}/pipelines/${input.pipelineId}/${kind}?${query(
+          [
+            ["per_page", String(MAX_PAGE_SIZE)],
+            ["page", String(page)],
+            ...(kind === "jobs" ? [["include_retried", "false"] as const] : []),
+          ],
+        )}`,
+      });
+      if (result.stdoutTruncated || result.stdoutInvalidUtf8) {
+        return yield* new GitLabMergeRequestReadError({
+          command: "glab",
+          cwd: input.cwd,
+          operation: "listPipelineChecks",
+          cause: new Error("The pipeline job response was incomplete."),
+        });
+      }
+      const decoded = decodePipelineJobsJson(result.stdout);
+      if (Result.isFailure(decoded)) {
+        return yield* new GitLabMergeRequestReadError({
+          command: "glab",
+          cwd: input.cwd,
+          operation: "listPipelineChecks",
+          cause: decoded.failure,
+        });
+      }
+      jobs.push(...decoded.success);
+      if (decoded.success.length < MAX_PAGE_SIZE) return jobs;
+    }
+    return yield* new GitLabMergeRequestReadError({
+      command: "glab",
+      cwd: input.cwd,
+      operation: "listPipelineChecks",
+      cause: new Error("The pipeline job list exceeded its pagination limit."),
+    });
+  });
 
   /**
    * `per_page` stops at 100, so a larger page is walked one request at a time. The walk is
@@ -1052,6 +1121,64 @@ export const make = Effect.gen(function* () {
     );
 
   return GitLabPullRequestCli.of({
+    getJobLog: Effect.fn("GitLabPullRequestCli.getJobLog")(function* (input) {
+      const path = `projects/${projectPath(input.repository)}/jobs/${input.jobId}`;
+      const result = yield* api({ cwd: input.cwd, path });
+      const decoded = decodePipelineJobDetailJson(result.stdout);
+      if (result.stdoutTruncated || result.stdoutInvalidUtf8 || Result.isFailure(decoded)) {
+        return yield* new GitLabMergeRequestReadError({
+          command: "glab",
+          cwd: input.cwd,
+          operation: "getJobLog",
+          cause: new Error("The job metadata was incomplete."),
+        });
+      }
+      const job = decoded.success;
+      if (job.id !== input.jobId || job.pipeline.id !== input.pipelineId) {
+        return yield* new GitLabMergeRequestReadError({
+          command: "glab",
+          cwd: input.cwd,
+          operation: "getJobLog",
+          cause: new Error("The job does not belong to this merge request's current pipeline."),
+        });
+      }
+      const check = pipelineJobChecks([job], new Set([job.id]))[0]!;
+      const complete =
+        Boolean(job.erased_at) ||
+        ["success", "failed", "canceled", "skipped"].includes(job.status.toLowerCase());
+      if (job.erased_at) return { check, text: "", truncated: false, complete };
+      const trace = yield* gitlab
+        .execute({
+          cwd: input.cwd,
+          args: ["api", `${path}/trace`],
+          maxOutputBytes: PULL_REQUEST_CHECK_LOG_MAX_BYTES,
+          outputMode: "tail",
+          timeoutMs: 15_000,
+        })
+        .pipe(
+          Effect.catchIf(
+            (error) =>
+              error._tag === "GitLabCliCommandError" &&
+              isVcsProcessExitError(error.cause) &&
+              error.cause.failureKind === "not-found",
+            () => Effect.succeed(null),
+          ),
+        );
+      return {
+        check,
+        text: readableGitLabJobTrace(trace?.stdout ?? ""),
+        truncated: trace?.stdoutTruncated ?? false,
+        complete,
+      };
+    }),
+    listPipelineChecks: (input) =>
+      Effect.all([pipelineJobs(input, "jobs"), pipelineJobs(input, "bridges")], {
+        concurrency: 2,
+      }).pipe(
+        Effect.map(([jobs, bridges]) =>
+          pipelineJobChecks([...jobs, ...bridges], new Set(jobs.map((job) => job.id))),
+        ),
+      ),
     getViewerUsername: viewerUsername,
 
     listMergeRequests: (input) => {

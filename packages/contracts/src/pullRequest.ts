@@ -149,6 +149,12 @@ export const PullRequestCheck = Schema.Struct({
   status: PullRequestCheckStatus,
   description: Schema.NullOr(Schema.String),
   url: Schema.NullOr(Schema.String),
+  stage: Schema.optional(TrimmedNonEmptyString),
+  statusLabel: Schema.optional(TrimmedNonEmptyString),
+  /** Refines pending without changing the rollup or breaking older clients. */
+  pendingState: Schema.optional(Schema.Literals(["queued", "running"])),
+  /** Present only for jobs whose output can be read inside the client. */
+  logId: Schema.optional(PositiveInt),
 });
 export type PullRequestCheck = typeof PullRequestCheck.Type;
 
@@ -621,6 +627,23 @@ export const PullRequestRef = Schema.Struct({
   number: PositiveInt,
 });
 export type PullRequestRef = typeof PullRequestRef.Type;
+
+export const PULL_REQUEST_CHECK_LOG_MAX_BYTES = 256 * 1024;
+
+export const PullRequestCheckLogInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  checkId: PositiveInt,
+});
+export type PullRequestCheckLogInput = typeof PullRequestCheckLogInput.Type;
+
+export const PullRequestCheckLog = Schema.Struct({
+  check: PullRequestCheck,
+  text: Schema.String,
+  /** The response contains the newest output, not the beginning of a large log. */
+  truncated: Schema.Boolean,
+  complete: Schema.Boolean,
+});
+export type PullRequestCheckLog = typeof PullRequestCheckLog.Type;
 
 /**
  * The small live shape a linked thread needs. Keeping it separate from detail means a sidebar

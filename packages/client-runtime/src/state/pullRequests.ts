@@ -120,9 +120,17 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       label: "environment-data:pull-requests:detail",
       tag: WS_METHODS.pullRequestsDetail,
       staleTimeMs: 60_000,
+      refreshIntervalMs: 30_000,
+      idleTtlMs: LINKED_PULL_REQUEST_IDLE_TTL_MS,
       refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
     }),
     activity,
+    checkLog: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:check-log",
+      tag: WS_METHODS.pullRequestsCheckLog,
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+    }),
     threadComments: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:thread-comments",
       tag: WS_METHODS.pullRequestsThreadComments,

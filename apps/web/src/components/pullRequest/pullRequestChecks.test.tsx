@@ -8,6 +8,7 @@ import { PullRequestRow } from "./PullRequestRow";
 import {
   pullRequestChecksState,
   pullRequestCheckStatusLabel,
+  groupPullRequestChecksByStage,
   summarizePullRequestChecks,
 } from "./pullRequestPresentation";
 
@@ -19,6 +20,32 @@ function check(
 }
 
 describe("pullRequestChecksState", () => {
+  it("groups every job by its supplied stage without dropping ungrouped checks", () => {
+    const quality = check("success", { name: "quality", stage: "quality" });
+    const typecheck = check("pending", { name: "typecheck", stage: "test" });
+    const build = check("pending", { name: "build", stage: "build", pendingState: "queued" });
+    const coverage = check("pending", { name: "coverage", stage: "test" });
+    const external = check("neutral", { name: "External gate" });
+    expect(groupPullRequestChecksByStage([quality, typecheck, build, coverage, external])).toEqual([
+      { stage: "quality", jobs: [quality] },
+      { stage: "test", jobs: [typecheck, coverage] },
+      { stage: "build", jobs: [build] },
+      { stage: null, jobs: [external] },
+    ]);
+  });
+
+  it("distinguishes running jobs from those waiting for an earlier stage", () => {
+    const queued = check("pending", { pendingState: "queued", statusLabel: "Not started" });
+    const running = check("pending", { pendingState: "running", statusLabel: "Running" });
+    expect(pullRequestCheckStatusLabel(queued)).toBe("Not started");
+    expect(pullRequestCheckStatusLabel(running)).toBe("Running");
+    expect(pullRequestChecksState([check("success"), queued])).toBe("pending");
+    expect(summarizePullRequestChecks([check("success"), running, running, queued])).toBe(
+      "2 running, 1 queued",
+    );
+    expect(summarizePullRequestChecks([check("success"), queued])).toBe("1 of 2 queued");
+  });
+
   it("lets a failure outrank a run still going, and reports nothing without checks", () => {
     expect(pullRequestChecksState([check("success"), check("pending"), check("failure")])).toBe(
       "failing",

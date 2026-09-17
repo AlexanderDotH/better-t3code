@@ -4,6 +4,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   PullRequestActionInput,
   PullRequestCapabilities,
+  PullRequestCheck,
+  PullRequestCheckLogInput,
   PullRequestListInput,
   PullRequestListResult,
   PullRequestReviewerRequestInput,
@@ -14,6 +16,30 @@ const decodeListResult = Schema.decodeUnknownSync(PullRequestListResult);
 const decodeListInput = Schema.decodeUnknownSync(PullRequestListInput);
 const decodeReviewerRequest = Schema.decodeUnknownSync(PullRequestReviewerRequestInput);
 const decodeAction = Schema.decodeUnknownSync(PullRequestActionInput);
+
+it("round-trips pipeline job details while accepting checks from older servers", () => {
+  const codec = Schema.toCodecJson(PullRequestCheck);
+  const legacy = { name: "build", status: "pending", description: null, url: null } as const;
+  for (const check of [
+    legacy,
+    { ...legacy, logId: 42 },
+    { ...legacy, stage: "build", statusLabel: "Not started", pendingState: "queued" as const },
+  ]) {
+    expect(Schema.decodeSync(codec)(Schema.encodeSync(codec)(check))).toEqual(check);
+  }
+});
+
+it("only accepts positive integral job IDs", () => {
+  const decode = Schema.decodeUnknownSync(PullRequestCheckLogInput);
+  for (const checkId of [0, -1, 1.5, "42", Infinity]) {
+    expect(() =>
+      decode({ projectId: "p", repository: "group/repo", number: 1, checkId }),
+    ).toThrow();
+  }
+  expect(decode({ projectId: "p", repository: "group/repo", number: 1, checkId: 42 }).checkId).toBe(
+    42,
+  );
+});
 
 const LIST_RESULT: PullRequestListResult = {
   viewers: { "github.com": "bilal", "gitlab.com": "bilal.hassan" },

@@ -7,6 +7,7 @@ import type {
   PullRequestCapabilities,
   PullRequestChecksState,
   PullRequestCheck,
+  PullRequestCheckLog,
   PullRequestComment,
   PullRequestCommit,
   PullRequestInvolvement,
@@ -322,6 +323,10 @@ export interface PullRequestProviderApi {
   readonly getChangeRequest: (
     input: ProviderRepositoryRef & { readonly number: number },
   ) => Effect.Effect<ProviderChangeRequestDetail, PullRequestProviderError>;
+
+  readonly getCheckLog?: (
+    input: ProviderRepositoryRef & { readonly number: number; readonly checkId: number },
+  ) => Effect.Effect<PullRequestCheckLog, PullRequestProviderError>;
 
   /**
    * The cheap live fields used by linked threads. Optional because a provider without a narrow

@@ -80,6 +80,17 @@ const runWith =
     );
 
 describe("runProcess", () => {
+  it.effect("retains the newest stdout in tail mode while draining both streams", () =>
+    Effect.gen(function* () {
+      const result = yield* runWith(
+        makeSpawner(() =>
+          Effect.succeed(makeHandle({ stdout: "old output\nlatest", stderr: "diagnostic" })),
+        ),
+      )({ command: "glab", args: [], outputMode: "tail", maxOutputBytes: 6 });
+      expect(result.stdout).toBe("latest");
+      expect(result.stdoutTruncated).toBe(true);
+    }),
+  );
   it.effect("collects stdout through an injected ChildProcessSpawner", () =>
     Effect.gen(function* () {
       const spawner = makeSpawner((command) =>

@@ -76,6 +76,10 @@ Open **Pull requests** to review changes and comments, request reviewers, check 
 or merge. You can edit review titles and descriptions and your own comments where the host allows it.
 GitLab calls these merge requests.
 
+Click a GitLab pipeline job to read its logs inside the review. Running jobs update automatically
+while the log dialog is visible. Scrolling up pauses following the output; use **Follow output** to
+return to the newest lines. Large logs show their latest 256 KiB; **Open GitLab** opens the full log.
+
 GitHub, GitLab, and Azure DevOps support auto-merge while checks are outstanding. GitHub also
 supports approving waiting fork workflows and opening a revert pull request for a merged change.
 
