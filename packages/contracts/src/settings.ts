@@ -154,6 +154,18 @@ export const GlassOpacity = Schema.Int.check(
 export type GlassOpacity = typeof GlassOpacity.Type;
 const DEFAULT_GLASS_OPACITY: GlassOpacity = 80;
 
+export const MIN_CHAT_WIDTH_ADJUSTMENT_PERCENT = -100;
+export const MAX_CHAT_WIDTH_ADJUSTMENT_PERCENT = 100;
+export const ChatWidthAdjustmentPercent = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_CHAT_WIDTH_ADJUSTMENT_PERCENT,
+    maximum: MAX_CHAT_WIDTH_ADJUSTMENT_PERCENT,
+  }),
+);
+export type ChatWidthAdjustmentPercent = typeof ChatWidthAdjustmentPercent.Type;
+export const DEFAULT_CHAT_WIDTH_ADJUSTMENT_PERCENT: ChatWidthAdjustmentPercent = 0;
+export const DEFAULT_CHAT_WIDTH_CUSTOMIZATION_ENABLED = false;
+
 export const MIN_APPEARANCE_CONTRAST = 50;
 export const MAX_APPEARANCE_CONTRAST = 200;
 export const AppearanceContrast = Schema.Int.check(
@@ -435,6 +447,12 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   glassOpacity: GlassOpacity.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_GLASS_OPACITY)),
+  ),
+  chatWidthCustomizationEnabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_CHAT_WIDTH_CUSTOMIZATION_ENABLED)),
+  ),
+  chatWidthAdjustmentPercent: ChatWidthAdjustmentPercent.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_CHAT_WIDTH_ADJUSTMENT_PERCENT)),
   ),
   fontSizeInterface: InterfaceFontSize.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_INTERFACE_FONT_SIZE)),
@@ -1953,6 +1971,8 @@ export const ClientSettingsPatch = Schema.Struct({
   interfaceLanguageLocalRecord: Schema.optionalKey(Schema.NullOr(InterfaceLanguageSyncRecord)),
   interfaceLocaleLocalRecordV1: Schema.optionalKey(Schema.NullOr(InterfaceLocaleSyncRecordV1)),
   glassOpacity: Schema.optionalKey(GlassOpacity),
+  chatWidthCustomizationEnabled: Schema.optionalKey(Schema.Boolean),
+  chatWidthAdjustmentPercent: Schema.optionalKey(ChatWidthAdjustmentPercent),
   onboardingCompletedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
   fontSizeInterface: Schema.optionalKey(InterfaceFontSize),
   fontSizePrompt: Schema.optionalKey(PromptFontSize),

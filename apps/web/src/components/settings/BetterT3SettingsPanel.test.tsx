@@ -23,6 +23,8 @@ vi.mock("../../hooks/useSettings", async (importOriginal) => ({
   usePrimarySettingsAvailable: () => true,
 }));
 
+vi.mock("./BetterT3SettingsSearch", () => ({ BetterT3SettingsSearch: () => null }));
+
 const translate = createInterfaceTranslator({ language: "de", locale: "de-DE" }).message;
 const features = buildBetterT3ControlStates({
   registry: BETTER_T3_FEATURE_REGISTRY,
@@ -198,8 +200,9 @@ it("keeps every setting mounted across category jumps and search jumps to former
             id?: string;
             children?: ReactNode;
             onFocusCapture?: () => void;
+            "data-better-t3-navigation"?: boolean;
           };
-          if (isValidElement(props.children) && props.children.type === "nav") return navigation;
+          if (props["data-better-t3-navigation"] !== undefined) return navigation;
           if (!props.id) return null;
           const id = props.id;
           const header = Children.toArray(props.children).find(
@@ -281,7 +284,9 @@ it("keeps every setting mounted across category jumps and search jumps to former
     }
 
     await act(() =>
-      root.findByType("input").props.onChange({ currentTarget: { value: "Unsaved draft" } }),
+      root
+        .findByProps({ "aria-label": "Draft setting" })
+        .props.onChange({ currentTarget: { value: "Unsaved draft" } }),
     );
     for (const group of [
       "general",
@@ -307,7 +312,7 @@ it("keeps every setting mounted across category jumps and search jumps to former
         block: "start",
       });
       expect(settingIds()).toEqual(expectedIds);
-      expect(root.findByType("input").props.value).toBe("Unsaved draft");
+      expect(root.findByProps({ "aria-label": "Draft setting" }).props.value).toBe("Unsaved draft");
     }
 
     navigation.offsetHeight = 326;
@@ -321,7 +326,7 @@ it("keeps every setting mounted across category jumps and search jumps to former
       block: "center",
     });
     expect(onTargetHandled).toHaveBeenCalledOnce();
-    expect(root.findByType("input").props.value).toBe("Unsaved draft");
+    expect(root.findByProps({ "aria-label": "Draft setting" }).props.value).toBe("Unsaved draft");
 
     await act(() => renderer!.update(renderContent("better-t3-group-sidebar")));
     expect(focus).toHaveBeenLastCalledWith("better-t3-group-sidebar");

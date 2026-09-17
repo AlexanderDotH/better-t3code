@@ -2,7 +2,7 @@
   position: relative;
   z-index: 30;
   width: 100%;
-  max-width: 48rem;
+  max-width: var(--chat-content-inner-max-width, 48rem);
   margin-inline: auto;
   padding-block-end: 0.75rem;
   pointer-events: auto;

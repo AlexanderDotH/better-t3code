@@ -8,8 +8,12 @@ import type {
 } from "@t3tools/contracts";
 import { BETTER_T3_FEATURE_REGISTRY, type SidebarPosition } from "@t3tools/contracts";
 import {
+  DEFAULT_CHAT_WIDTH_ADJUSTMENT_PERCENT,
+  DEFAULT_CHAT_WIDTH_CUSTOMIZATION_ENABLED,
   DEFAULT_UNIFIED_SETTINGS,
+  MAX_CHAT_WIDTH_ADJUSTMENT_PERCENT,
   MAX_GLASS_OPACITY,
+  MIN_CHAT_WIDTH_ADJUSTMENT_PERCENT,
   MIN_GLASS_OPACITY,
 } from "@t3tools/contracts/settings";
 import {
@@ -71,6 +75,7 @@ import { UsagePacingSettings } from "./UsagePacingSettings";
 import { VoiceInputSettings } from "./VoiceInputSettings";
 import { searchableSetting } from "./settingsSearch";
 import { BetterT3SettingsSearch } from "./BetterT3SettingsSearch";
+import { ChatWidthPreview } from "./ChatWidthPreview";
 
 type Translate = InterfaceTranslator["message"];
 
@@ -219,21 +224,119 @@ function BetterT3InterfaceSection(props: {
 }
 
 function BetterT3AppearanceSettings(props: {
+  readonly chatWidthAdjustmentPercent: number;
+  readonly chatWidthCustomizationEnabled: boolean;
   readonly glassOpacity: number;
   readonly macosWindowTransparency: boolean;
   readonly translate: Translate;
+  readonly onChatWidthAdjustmentPercentChange: (adjustmentPercent: number) => void;
+  readonly onChatWidthCustomizationEnabledChange: (enabled: boolean) => void;
+  readonly onChatWidthReset: () => void;
   readonly onGlassOpacityChange: (glassOpacity: number) => void;
   readonly onMacosWindowTransparencyChange: (enabled: boolean) => void;
 }) {
   const glassOpacityRatio =
     (props.glassOpacity - MIN_GLASS_OPACITY) / (MAX_GLASS_OPACITY - MIN_GLASS_OPACITY);
-  const sliderStyle = {
+  const glassOpacitySliderStyle = {
     "--settings-slider-progress": `${glassOpacityRatio * 100}%`,
     "--settings-slider-fill-offset": `${0.5 - glassOpacityRatio}rem`,
   } as CSSProperties;
+  const chatWidthAdjustmentRatio =
+    (props.chatWidthAdjustmentPercent - MIN_CHAT_WIDTH_ADJUSTMENT_PERCENT) /
+    (MAX_CHAT_WIDTH_ADJUSTMENT_PERCENT - MIN_CHAT_WIDTH_ADJUSTMENT_PERCENT);
+  const chatWidthAdjustmentPosition = chatWidthAdjustmentRatio * 100;
+  const chatContentWidthSliderStyle = {
+    "--settings-slider-range-start": `${Math.min(50, chatWidthAdjustmentPosition)}%`,
+    "--settings-slider-range-end": `${Math.max(50, chatWidthAdjustmentPosition)}%`,
+  } as CSSProperties;
+  const chatWidthIsCustomized =
+    props.chatWidthCustomizationEnabled !== DEFAULT_CHAT_WIDTH_CUSTOMIZATION_ENABLED ||
+    props.chatWidthAdjustmentPercent !== DEFAULT_CHAT_WIDTH_ADJUSTMENT_PERCENT;
+  const formattedChatWidthAdjustment = `${
+    props.chatWidthAdjustmentPercent > 0 ? "+" : props.chatWidthAdjustmentPercent < 0 ? "−" : ""
+  }${Math.abs(props.chatWidthAdjustmentPercent)}%`;
 
   return (
     <>
+      <SettingsRow
+        {...searchableSetting("setting-chat-content-width")}
+        title={props.translate("settings.betterT3.chatWidth.label")}
+        description={props.translate("settings.betterT3.chatWidth.description")}
+        resetAction={
+          chatWidthIsCustomized ? (
+            <SettingResetButton
+              label={props.translate("settings.betterT3.chatWidth.label")}
+              onClick={props.onChatWidthReset}
+            />
+          ) : null
+        }
+        control={
+          <Switch
+            aria-controls="chat-width-adjustment-controls"
+            aria-expanded={props.chatWidthCustomizationEnabled}
+            aria-label={props.translate("settings.betterT3.chatWidth.label")}
+            checked={props.chatWidthCustomizationEnabled}
+            onCheckedChange={(checked) =>
+              props.onChatWidthCustomizationEnabledChange(Boolean(checked))
+            }
+          />
+        }
+      >
+        {props.chatWidthCustomizationEnabled ? (
+          <div className="mt-3 border-t border-border/50 py-3" id="chat-width-adjustment-controls">
+            <div className="flex items-center justify-between gap-3">
+              <label
+                className="text-xs font-medium text-muted-foreground"
+                htmlFor="chat-width-adjustment"
+              >
+                {props.translate("settings.betterT3.chatWidth.adjustment")}
+              </label>
+              <output
+                className="min-w-14 rounded-md bg-muted px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
+                htmlFor="chat-width-adjustment"
+              >
+                {formattedChatWidthAdjustment}
+              </output>
+            </div>
+            <input
+              aria-label={props.translate("settings.betterT3.chatWidth.adjustment")}
+              className="settings-slider settings-slider-bipolar mt-2 w-full"
+              id="chat-width-adjustment"
+              max={MAX_CHAT_WIDTH_ADJUSTMENT_PERCENT}
+              min={MIN_CHAT_WIDTH_ADJUSTMENT_PERCENT}
+              onChange={(event) => {
+                const adjustmentPercent = Number(event.currentTarget.value);
+                if (
+                  Number.isInteger(adjustmentPercent) &&
+                  adjustmentPercent >= MIN_CHAT_WIDTH_ADJUSTMENT_PERCENT &&
+                  adjustmentPercent <= MAX_CHAT_WIDTH_ADJUSTMENT_PERCENT
+                ) {
+                  props.onChatWidthAdjustmentPercentChange(adjustmentPercent);
+                }
+              }}
+              step={10}
+              style={chatContentWidthSliderStyle}
+              type="range"
+              value={props.chatWidthAdjustmentPercent}
+            />
+            <div
+              aria-hidden="true"
+              className="flex justify-between px-0.5 font-mono text-[10px] tabular-nums text-muted-foreground/70"
+            >
+              <span>−100%</span>
+              <span>0%</span>
+              <span>+100%</span>
+            </div>
+            <ChatWidthPreview
+              adjustmentPercent={props.chatWidthAdjustmentPercent}
+              customizationEnabled={props.chatWidthCustomizationEnabled}
+              translate={props.translate}
+              valueLabel={formattedChatWidthAdjustment}
+            />
+          </div>
+        ) : null}
+      </SettingsRow>
+
       <SettingsRow
         {...searchableSetting("setting-glass-opacity")}
         description={props.translate("settings.appearance.glassDescription")}
@@ -270,7 +373,7 @@ function BetterT3AppearanceSettings(props: {
                 }
               }}
               step={5}
-              style={sliderStyle}
+              style={glassOpacitySliderStyle}
               type="range"
               value={props.glassOpacity}
             />
@@ -347,31 +450,37 @@ export function BetterT3SettingsContent(props: BetterT3SettingsPanelViewProps) {
       <div
         ref={measureBetterT3Navigation}
         className="sticky top-0 z-10 pt-[var(--workspace-titlebar-scroll-fade-height)] pb-3"
+        data-better-t3-navigation
       >
-        <nav
-          aria-label={props.translate("settings.betterT3.title")}
-          className="surface-glass grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,8rem),1fr))] gap-1 rounded-xl border border-border/60 p-1 shadow-xs/5"
-        >
-          {BETTER_T3_SETTINGS_GROUPS.map((group) => (
-            <a
-              aria-current={group.id === activeGroup ? "location" : undefined}
-              className={`inline-flex min-h-9 min-w-0 items-center justify-center rounded-lg px-3 py-1.5 text-center text-sm wrap-anywhere outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:min-h-11 ${
-                group.id === activeGroup
-                  ? "bg-background font-medium text-foreground shadow-xs/10 dark:bg-input/72"
-                  : "text-muted-foreground hover:bg-background/55 hover:text-foreground dark:hover:bg-input/32"
-              }`}
-              href={`#better-t3-group-${group.id}`}
-              key={group.id}
-              onClick={(event) => {
-                if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-                event.preventDefault();
-                scrollToSettingsTarget(`better-t3-group-${group.id}`, { highlight: false });
-              }}
-            >
-              {props.translate(group.labelMessageId)}
-            </a>
-          ))}
-        </nav>
+        <div className="better-t3-settings-navigation min-w-0 rounded-xl border border-border/40 p-1">
+          <div className="p-1 pb-2">
+            <BetterT3SettingsSearch />
+          </div>
+          <nav
+            aria-label={props.translate("settings.betterT3.title")}
+            className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,8rem),1fr))] gap-1 border-t border-border/40 pt-1"
+          >
+            {BETTER_T3_SETTINGS_GROUPS.map((group) => (
+              <a
+                aria-current={group.id === activeGroup ? "location" : undefined}
+                className={`inline-flex min-h-9 min-w-0 items-center justify-center rounded-lg px-3 py-1.5 text-center text-sm wrap-anywhere outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:min-h-11 ${
+                  group.id === activeGroup
+                    ? "bg-background font-medium text-foreground shadow-xs/10 dark:bg-input/72"
+                    : "text-muted-foreground hover:bg-background/55 hover:text-foreground dark:hover:bg-input/32"
+                }`}
+                href={`#better-t3-group-${group.id}`}
+                key={group.id}
+                onClick={(event) => {
+                  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                  event.preventDefault();
+                  scrollToSettingsTarget(`better-t3-group-${group.id}`, { highlight: false });
+                }}
+              >
+                {props.translate(group.labelMessageId)}
+              </a>
+            ))}
+          </nav>
+        </div>
       </div>
 
       {BETTER_T3_SETTINGS_GROUPS.map((group) => (
@@ -656,12 +765,9 @@ function BetterT3SettingsIntroduction(props: {
       className="overflow-hidden rounded-2xl border border-border/60 bg-card/45 shadow-[0_18px_60px_-46px_rgb(0_0_0/75%)]"
     >
       <div className="space-y-1.5 bg-[radial-gradient(circle_at_top_right,color-mix(in_srgb,var(--primary)_10%,transparent),transparent_58%)] p-4 sm:p-5">
-        <div className="flex items-center justify-between gap-4">
-          <h1 className="text-xl font-semibold tracking-[-0.025em]">
-            {props.translate("settings.betterT3.title")}
-          </h1>
-          <BetterT3SettingsSearch />
-        </div>
+        <h1 className="text-xl font-semibold tracking-[-0.025em]">
+          {props.translate("settings.betterT3.title")}
+        </h1>
         <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
           {props.translate("settings.betterT3.description")}
         </p>
@@ -998,9 +1104,23 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
       }
       visualSettings={
         <BetterT3AppearanceSettings
+          chatWidthAdjustmentPercent={settings.chatWidthAdjustmentPercent}
+          chatWidthCustomizationEnabled={settings.chatWidthCustomizationEnabled}
           glassOpacity={settings.glassOpacity}
           macosWindowTransparency={settings.macosWindowTransparency}
           translate={translate}
+          onChatWidthAdjustmentPercentChange={(chatWidthAdjustmentPercent) =>
+            updateSettings({ chatWidthAdjustmentPercent })
+          }
+          onChatWidthCustomizationEnabledChange={(chatWidthCustomizationEnabled) =>
+            updateSettings({ chatWidthCustomizationEnabled })
+          }
+          onChatWidthReset={() =>
+            updateSettings({
+              chatWidthCustomizationEnabled: DEFAULT_CHAT_WIDTH_CUSTOMIZATION_ENABLED,
+              chatWidthAdjustmentPercent: DEFAULT_CHAT_WIDTH_ADJUSTMENT_PERCENT,
+            })
+          }
           onGlassOpacityChange={(glassOpacity) => updateSettings({ glassOpacity })}
           onMacosWindowTransparencyChange={(macosWindowTransparency) =>
             updateSettings({ macosWindowTransparency })

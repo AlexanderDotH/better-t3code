@@ -1,19 +1,15 @@
-import { SearchIcon, XIcon } from "lucide-react";
+import { SearchIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
-import { Button } from "../ui/button";
 import {
-  Command,
-  CommandDialog,
-  CommandDialogPopup,
-  CommandDialogTrigger,
-  CommandInput,
-  CommandItem,
-  CommandList,
-  CommandPanel,
-} from "../ui/command";
-import { DialogClose } from "../ui/dialog";
+  Autocomplete,
+  AutocompleteEmpty,
+  AutocompleteInput,
+  AutocompleteItem,
+  AutocompleteList,
+  AutocompletePopup,
+} from "../ui/autocomplete";
 import { scrollToSettingsTarget } from "./settingsLayout";
 import { searchSettings, SETTINGS_SEARCH_ITEMS, type SettingsSearchItem } from "./settingsSearch";
 
@@ -34,10 +30,11 @@ export function readBetterT3SettingsSearchItems(page: ParentNode): SettingsSearc
       element.closest('[hidden], [aria-hidden="true"]')
     )
       return [];
-    const category = element.closest('[role="region"]')?.querySelector("h2")?.textContent ?? "";
+    const category =
+      element.closest('[role="region"]')?.querySelector("h2")?.textContent?.trim() ?? "";
     const description =
       element.dataset.slot === "settings-row"
-        ? (element.querySelector(":scope > div > div > p")?.textContent ?? "")
+        ? (element.querySelector(":scope > div > div > p")?.textContent?.trim() ?? "")
         : "";
     const aliases = SETTINGS_SEARCH_ITEMS.filter(
       (item) => ("targetId" in item ? item.targetId : item.id) === target.id,
@@ -48,14 +45,12 @@ export function readBetterT3SettingsSearchItems(page: ParentNode): SettingsSearc
         title,
         to: "/settings/better-t3" as const,
         targetId: target.id,
-        searchTerms: [
-          category,
-          description,
-          ...aliases.flatMap((item) => [
-            item.title,
-            ...("searchTerms" in item ? item.searchTerms : []),
-          ]),
-        ],
+        category,
+        description,
+        searchTerms: aliases.flatMap((item) => [
+          item.title,
+          ...("searchTerms" in item ? item.searchTerms : []),
+        ]),
       },
     ];
   });
@@ -63,84 +58,87 @@ export function readBetterT3SettingsSearchItems(page: ParentNode): SettingsSearc
 
 export function BetterT3SettingsSearch() {
   const translate = useInterfaceTranslator().message;
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const selectedTargetRef = useRef<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const highlightedItemRef = useRef<SettingsSearchItem | null>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [items, setItems] = useState<SettingsSearchItem[]>([]);
-  const results = query.trim() ? searchSettings(query, items) : items;
+  const results = query.trim() ? searchSettings(query, items) : [];
   const label = translate("settings.application.search.aria");
+  const refreshItems = () => {
+    const page = inputRef.current?.closest("[data-settings-page-scroll]");
+    setItems(page ? readBetterT3SettingsSearchItems(page) : []);
+  };
+  const selectSearchResult = (item: SettingsSearchItem) => {
+    highlightedItemRef.current = null;
+    setOpen(false);
+    setQuery("");
+    window.requestAnimationFrame(() => scrollToSettingsTarget(item.targetId ?? item.id));
+  };
 
   return (
-    <CommandDialog
-      open={open}
-      onOpenChange={(nextOpen, details) => {
-        if (nextOpen) {
-          const page = triggerRef.current?.closest("[data-settings-page-scroll]");
-          setItems(page ? readBetterT3SettingsSearchItems(page) : []);
-          setQuery("");
-          selectedTargetRef.current = null;
-        }
-        if (details.reason === "escape-key") details.event.preventDefault();
-        setOpen(nextOpen);
+    <Autocomplete
+      itemToStringValue={(item) => item.title}
+      items={results}
+      mode="none"
+      onItemHighlighted={(item) => {
+        highlightedItemRef.current = item ?? null;
       }}
+      onOpenChange={setOpen}
+      onValueChange={(value, details) => {
+        if (details.reason === "item-press") {
+          const selectedItem =
+            highlightedItemRef.current ?? results.find((item) => item.title === value);
+          if (selectedItem) selectSearchResult(selectedItem);
+          return;
+        }
+        setQuery(value);
+        setOpen(value.trim().length > 0);
+      }}
+      open={open && query.trim().length > 0}
+      openOnInputClick
+      value={query}
     >
-      <CommandDialogTrigger
-        ref={triggerRef}
-        render={<Button size="sm" variant="outline" className="shrink-0" />}
+      <AutocompleteInput
+        ref={inputRef}
         aria-label={label}
-      >
-        <SearchIcon className="size-3.5" />
-        {translate("settings.application.search.placeholder")}
-      </CommandDialogTrigger>
-      <CommandDialogPopup
-        aria-label={label}
-        className="overflow-hidden p-0"
-        finalFocus={() => {
-          const targetId = selectedTargetRef.current;
-          selectedTargetRef.current = null;
-          return !(targetId && scrollToSettingsTarget(targetId));
+        className="h-10 items-center rounded-lg border-border/60 bg-background/50 shadow-none hover:bg-background/70 focus-within:bg-background [&_input]:h-full [&_input]:ps-9 [&_input]:pe-9 [&_input]:py-0 [&_input]:leading-normal"
+        onFocus={() => {
+          refreshItems();
+          if (query.trim()) setOpen(true);
         }}
-      >
-        <Command items={results} mode="none" value={query} onValueChange={setQuery}>
-          <div className="flex items-center pe-2">
-            <CommandInput
-              aria-label={label}
-              placeholder={label}
-              wrapperClassName="min-w-0 flex-1"
-            />
-            <DialogClose
-              render={<Button size="icon-sm" variant="ghost" />}
-              aria-label={translate("ui.close")}
+        placeholder={label}
+        showClear={query.length > 0}
+        spellCheck={false}
+        startAddon={<SearchIcon className="size-4 text-icon-muted" />}
+      />
+      {query.trim() ? (
+        <AutocompletePopup aria-label={label} className="w-(--anchor-width) overflow-hidden">
+          {results.length > 0 ? (
+            <AutocompleteList
+              aria-label={translate("settings.application.search.resultsAria")}
+              className="max-h-72"
             >
-              <XIcon className="size-4" />
-            </DialogClose>
-          </div>
-          <CommandPanel>
-            {results.length > 0 ? (
-              <CommandList aria-label={translate("settings.application.search.resultsAria")}>
-                {results.map((item) => (
-                  <CommandItem
-                    key={item.id}
-                    value={item}
-                    onClick={() => {
-                      selectedTargetRef.current = item.targetId ?? item.id;
-                      setOpen(false);
-                    }}
-                    className="cursor-pointer py-2"
-                  >
-                    {item.title}
-                  </CommandItem>
-                ))}
-              </CommandList>
-            ) : (
-              <p role="status" className="p-8 text-center text-sm text-muted-foreground">
-                {translate("settings.application.search.empty")}
-              </p>
-            )}
-          </CommandPanel>
-        </Command>
-      </CommandDialogPopup>
-    </CommandDialog>
+              {results.map((item) => (
+                <AutocompleteItem key={item.id} value={item} className="items-start py-2">
+                  <span className="min-w-0">
+                    <span className="block truncate font-medium">{item.title}</span>
+                    {item.category ? (
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {item.category}
+                      </span>
+                    ) : null}
+                  </span>
+                </AutocompleteItem>
+              ))}
+            </AutocompleteList>
+          ) : (
+            <AutocompleteEmpty className="p-6">
+              {translate("settings.application.search.empty")}
+            </AutocompleteEmpty>
+          )}
+        </AutocompletePopup>
+      ) : null}
+    </Autocomplete>
   );
 }

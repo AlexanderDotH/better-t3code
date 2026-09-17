@@ -105,6 +105,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
 } from "react";
 import { flushSync } from "react-dom";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -339,6 +340,7 @@ import {
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import { resolveChatContentMaxWidth } from "./chat/chatContentWidth";
 import { createPageScrollController, type PageScrollKey } from "./chat/pageScrollController";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
@@ -8806,7 +8808,17 @@ export default function ChatView(props: ChatViewProps) {
           {/* Chat column */}
           <div
             className="@container/chat-column relative flex min-h-0 min-w-0 flex-1 flex-col"
+            data-chat-column
             data-chat-workspace-drop-target="true"
+            style={
+              {
+                "--chat-content-width": resolveChatContentMaxWidth(
+                  settings.chatWidthCustomizationEnabled,
+                  settings.chatWidthAdjustmentPercent,
+                ),
+                "--chat-content-inner-max-width": "100%",
+              } as CSSProperties
+            }
             onDragEnter={workspaceFileDropHandlers.onDragEnter}
             onDragOver={workspaceFileDropHandlers.onDragOver}
             onDragLeave={workspaceFileDropHandlers.onDragLeave}
@@ -8951,7 +8963,7 @@ export default function ChatView(props: ChatViewProps) {
                 className="w-full ps-[calc(env(safe-area-inset-left)+0.75rem)] pe-[calc(env(safe-area-inset-right)+0.75rem)] sm:ps-[calc(env(safe-area-inset-left)+1.25rem)] sm:pe-[calc(env(safe-area-inset-right)+1.25rem)]"
               >
                 <div
-                  className="group/composer-stack pointer-events-auto relative z-10 mx-auto w-full max-w-3xl"
+                  className="group/composer-stack pointer-events-auto relative z-10 mx-auto w-full max-w-full sm:max-w-[var(--chat-content-width,48rem)]"
                   data-workspace-expanded={workspaceCardExpanded || undefined}
                   data-workspace-non-chat={nonChatWorkspaceCardActive || undefined}
                 >

@@ -25,6 +25,11 @@ it("finds mounted translated settings by label, category and aliases, and refres
     </div>
   `;
   const items = readBetterT3SettingsSearchItems(page);
+  expect(items.find((item) => item.targetId === "agent.reasoningVisibility")).toMatchObject({
+    category: "Chat",
+    description: "Live-Gedanken verfolgen",
+    title: "Darstellung der Thinking-Traces",
+  });
   for (const query of [
     "Thinking-Traces",
     "Chat Gedanken",

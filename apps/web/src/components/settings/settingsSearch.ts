@@ -22,7 +22,9 @@ export interface SettingsSearchItem {
   readonly title: string;
   readonly to: SettingsPath;
   readonly targetId?: string;
-  /** Descriptions, option labels, and aliases people may remember instead of the title. */
+  readonly category?: string;
+  readonly description?: string;
+  /** Option labels and aliases people may remember instead of the title. */
   readonly searchTerms?: ReadonlyArray<string>;
   // Its row only renders in the desktop app, so a browser result would land on
   // an anchor that isn't there.
@@ -221,6 +223,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Glass opacity",
     to: "/settings/better-t3",
     searchTerms: ["transparent transparency solid menus dialogs composer"],
+  },
+  {
+    id: "setting-chat-content-width",
+    title: "Adjust chat width",
+    to: "/settings/better-t3",
+    searchTerms: [
+      "layout visual conversation messages wide narrow default percentage Chatbreite Breitenanpassung",
+    ],
   },
   {
     id: "panel-animations",
@@ -744,6 +754,8 @@ export function searchSettings(
       const fields = [
         title,
         normalizeSearchText(SETTINGS_SECTION_LABELS[item.to]),
+        normalizeSearchText(item.category ?? ""),
+        normalizeSearchText(item.description ?? ""),
         ...(item.searchTerms ?? []).map(normalizeSearchText),
       ];
       if (!queryTokens.every((token) => fields.some((field) => field.includes(token)))) return [];
