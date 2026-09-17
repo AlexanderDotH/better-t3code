@@ -43,6 +43,10 @@ export class LRUCache<T> {
     this.totalSize = 0;
   }
 
+  entries(): Array<[string, T]> {
+    return Array.from(this.cache, ([key, entry]) => [key, entry.value]);
+  }
+
   private promote(key: string, entry: CacheEntry<T>): void {
     this.cache.delete(key);
     this.cache.set(key, entry);

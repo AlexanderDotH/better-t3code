@@ -1743,6 +1743,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         ) : null}
         {editor ?? (
           <CollapsibleUserMessageBody
+            messageId={row.message.id}
             text={elementContextState.promptText}
             terminalContexts={terminalContexts}
             skills={ctx.skills}
@@ -2901,6 +2902,7 @@ function shouldCollapseUserMessage(text: string): boolean {
 }
 
 const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(props: {
+  messageId: MessageId;
   text: string;
   terminalContexts: ParsedTerminalContextEntry[];
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
@@ -2931,6 +2933,7 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
           }
         >
           <UserMessageBody
+            messageId={props.messageId}
             text={props.text}
             terminalContexts={props.terminalContexts}
             skills={props.skills}
@@ -2969,6 +2972,7 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
 });
 
 const UserMessageBody = memo(function UserMessageBody(props: {
+  messageId: MessageId;
   text: string;
   terminalContexts: ParsedTerminalContextEntry[];
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
@@ -2990,6 +2994,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
         {content ? (
           <ChatMarkdown
             text={content}
+            streamId={`${ctx.routeThreadKey}:${props.messageId}:${key}`}
             cwd={props.markdownCwd}
             threadRef={ctx.threadRef ?? undefined}
             environmentId={ctx.activeThreadEnvironmentId}
@@ -3015,6 +3020,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
               <div key={segment.id} className="wrap-break-word">
                 <ChatMarkdown
                   text={segment.text.trim()}
+                  streamId={`${ctx.routeThreadKey}:${props.messageId}:${segment.id}`}
                   cwd={props.markdownCwd}
                   threadRef={ctx.threadRef ?? undefined}
                   environmentId={ctx.activeThreadEnvironmentId}
@@ -3106,6 +3112,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
         <ChatMarkdown
           key="user-message-terminal-context-inline-text"
           text={props.text}
+          streamId={`${ctx.routeThreadKey}:${props.messageId}`}
           cwd={props.markdownCwd}
           threadRef={ctx.threadRef ?? undefined}
           environmentId={ctx.activeThreadEnvironmentId}
@@ -3134,6 +3141,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
   return (
     <ChatMarkdown
       text={props.text}
+      streamId={`${ctx.routeThreadKey}:${props.messageId}`}
       cwd={props.markdownCwd}
       threadRef={ctx.threadRef ?? undefined}
       environmentId={ctx.activeThreadEnvironmentId}

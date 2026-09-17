@@ -78,11 +78,13 @@ import React, {
   type ClipboardEvent as ReactClipboardEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   isValidElement,
   use,
   useCallback,
   memo,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -177,6 +179,17 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { projectEnvironment } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
+import {
+  MARKDOWN_TABLE_DEFAULT_EXPANSION_RATIO,
+  MARKDOWN_TABLE_RESIZE_EDGE_STEP_PX,
+  MARKDOWN_TABLE_VIEWPORT_GUTTER_PX,
+  type MarkdownTableResizeEdge,
+  type MarkdownTableWidthBounds,
+  resolveDefaultExpandedMarkdownTableWidth,
+  resolveDraggedMarkdownTableWidth,
+  resolveMarkdownTableWidthBounds,
+} from "./chat/markdownTableWidth";
+import { markdownTableStateStore } from "./chat/markdownTableState";
 import {
   claimWorkspaceBasenameLookup,
   needsWorkspaceBasenameLookup,
@@ -688,14 +701,180 @@ function readInitialWordWrapSetting(): boolean {
   return getClientSettings().wordWrap;
 }
 
-function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
+interface MarkdownTableSizing extends MarkdownTableWidthBounds {
+  readonly contentWidth: number;
+  readonly width: number;
+}
+
+interface MarkdownTableResizeGesture {
+  readonly bounds: MarkdownTableWidthBounds;
+  readonly edge: MarkdownTableResizeEdge;
+  readonly pointerId: number;
+  readonly startPointerX: number;
+  readonly startWidth: number;
+}
+
+const MARKDOWN_TABLE_RESIZE_EDGES = ["left", "right"] as const;
+
+function MarkdownTable({
+  children,
+  stateKey,
+  ...props
+}: React.ComponentProps<"table"> & { readonly stateKey: string }) {
+  const [rememberedState] = useState(() => markdownTableStateStore.get(stateKey));
   const containerRef = useRef<HTMLDivElement | null>(null);
   const tableRef = useRef<HTMLTableElement | null>(null);
-  const [expanded, setExpanded] = useState(readInitialWordWrapSetting);
+  const resizeGestureRef = useRef<MarkdownTableResizeGesture | null>(null);
+  const sizingRef = useRef<MarkdownTableSizing | null>(null);
+  const preferredWidthRef = useRef(rememberedState?.width ?? null);
+  const [expanded, setExpanded] = useState(() => rememberedState?.expanded ?? false);
+  const [sizing, setSizing] = useState<MarkdownTableSizing | null>(null);
   const [copied, setCopied] = useState(false);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const expandLabel = expanded ? "Collapse table cells" : "Expand table cells";
+  const expandLabel = expanded ? "Collapse table" : "Expand table";
   const copyLabel = copied ? "Copied" : "Copy table";
+  const resizable = expanded && sizing != null && Math.round(sizing.maxWidth - sizing.minWidth) > 0;
+
+  const rememberState = useCallback(
+    (nextExpanded: boolean) => {
+      markdownTableStateStore.set(stateKey, {
+        expanded: nextExpanded,
+        width: preferredWidthRef.current,
+      });
+    },
+    [stateKey],
+  );
+
+  const updateSizing = useCallback(
+    (resolve: (current: MarkdownTableSizing | null) => MarkdownTableSizing | null) => {
+      setSizing((current) => {
+        const next = resolve(current);
+        sizingRef.current = next;
+        return next;
+      });
+    },
+    [],
+  );
+
+  useLayoutEffect(() => {
+    if (!expanded) return;
+    const tableContainer = containerRef.current;
+    const content = tableContainer?.closest<HTMLElement>(".chat-markdown");
+    const chatColumn = tableContainer?.closest<HTMLElement>("[data-chat-column]");
+    if (!content || !chatColumn) return;
+
+    const measure = () => {
+      const contentWidth = content.getBoundingClientRect().width;
+      const bounds = resolveMarkdownTableWidthBounds(
+        contentWidth,
+        chatColumn.getBoundingClientRect().width,
+      );
+      updateSizing((current) => {
+        const width =
+          preferredWidthRef.current !== null
+            ? resolveDraggedMarkdownTableWidth({
+                bounds,
+                deltaX: 0,
+                edge: "right",
+                startWidth: preferredWidthRef.current,
+              })
+            : resolveDefaultExpandedMarkdownTableWidth(contentWidth, bounds);
+        if (
+          current?.contentWidth === contentWidth &&
+          current.minWidth === bounds.minWidth &&
+          current.maxWidth === bounds.maxWidth &&
+          current.width === width
+        ) {
+          return current;
+        }
+        return { ...bounds, contentWidth, width };
+      });
+    };
+
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(content);
+    observer.observe(chatColumn);
+    return () => observer.disconnect();
+  }, [expanded, updateSizing]);
+
+  const setTableWidth = useCallback(
+    (width: number) => {
+      preferredWidthRef.current = width;
+      updateSizing((current) => (current ? { ...current, width } : current));
+    },
+    [updateSizing],
+  );
+
+  const beginResize = (edge: MarkdownTableResizeEdge, event: ReactPointerEvent<HTMLDivElement>) => {
+    const current = sizingRef.current;
+    if (event.button !== 0 || !current) return;
+    resizeGestureRef.current = {
+      bounds: current,
+      edge,
+      pointerId: event.pointerId,
+      startPointerX: event.clientX,
+      startWidth: current.width,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  };
+
+  const continueResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const gesture = resizeGestureRef.current;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    setTableWidth(
+      resolveDraggedMarkdownTableWidth({
+        bounds: gesture.bounds,
+        deltaX: event.clientX - gesture.startPointerX,
+        edge: gesture.edge,
+        startWidth: gesture.startWidth,
+      }),
+    );
+  };
+
+  const endResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (resizeGestureRef.current?.pointerId !== event.pointerId) return;
+    resizeGestureRef.current = null;
+    rememberState(true);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  useEffect(
+    () => () => {
+      if (resizeGestureRef.current) rememberState(true);
+    },
+    [rememberState, resizeGestureRef],
+  );
+
+  const resizeWithKeyboard = (
+    edge: MarkdownTableResizeEdge,
+    event: ReactKeyboardEvent<HTMLDivElement>,
+  ) => {
+    const current = sizingRef.current;
+    if (!current) return;
+    if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      setTableWidth(event.key === "Home" ? current.minWidth : current.maxWidth);
+      rememberState(true);
+      return;
+    }
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const edgeStep = MARKDOWN_TABLE_RESIZE_EDGE_STEP_PX * (event.shiftKey ? 4 : 1);
+    setTableWidth(
+      resolveDraggedMarkdownTableWidth({
+        bounds: current,
+        deltaX: event.key === "ArrowRight" ? edgeStep : -edgeStep,
+        edge,
+        startWidth: current.width,
+      }),
+    );
+    rememberState(true);
+  };
 
   function toggleExpanded() {
     const table = tableRef.current;
@@ -718,6 +897,9 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
       });
     }
 
+    rememberState(!expanded);
+    resizeGestureRef.current = null;
+    if (expanded) updateSizing(() => null);
     setExpanded((value) => !value);
   }
 
@@ -762,7 +944,41 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
       ref={containerRef}
       className="chat-markdown-table-container"
       data-expanded={expanded ? "true" : "false"}
+      data-resizable={resizable ? "true" : "false"}
+      style={
+        {
+          "--chat-markdown-table-expanded-width": sizing
+            ? `${sizing.width}px`
+            : `${MARKDOWN_TABLE_DEFAULT_EXPANSION_RATIO * 100}%`,
+          "--chat-markdown-table-viewport-gutter": `${MARKDOWN_TABLE_VIEWPORT_GUTTER_PX}px`,
+        } as CSSProperties
+      }
     >
+      {resizable && sizing
+        ? MARKDOWN_TABLE_RESIZE_EDGES.map((edge) => (
+            <div
+              aria-label={`Resize table from ${edge} edge`}
+              aria-orientation="vertical"
+              aria-valuemax={Math.round(sizing.maxWidth)}
+              aria-valuemin={Math.round(sizing.minWidth)}
+              aria-valuenow={Math.round(sizing.width)}
+              aria-valuetext={`${Math.round((sizing.width / sizing.contentWidth) * 100)}% of normal width`}
+              className="chat-markdown-table-resize-handle"
+              data-edge={edge}
+              key={edge}
+              onKeyDown={(event) => resizeWithKeyboard(edge, event)}
+              onLostPointerCapture={endResize}
+              onPointerCancel={endResize}
+              onPointerDown={(event) => beginResize(edge, event)}
+              onPointerMove={continueResize}
+              onPointerUp={endResize}
+              role="separator"
+              tabIndex={0}
+            >
+              <span aria-hidden="true" />
+            </div>
+          ))
+        : null}
       <ScrollArea chainVerticalScroll scrollFade className="w-full max-w-full rounded-none">
         <table ref={tableRef} {...props}>
           {children}
@@ -2253,6 +2469,7 @@ function areMarkdownFileLinkPropsEqual(
 
 function useChatMarkdownState({
   text,
+  streamId,
   cwd,
   threadRef,
   pullRequestPanelRef,
@@ -2697,6 +2914,7 @@ function useChatMarkdownState({
       resolvedTheme,
       serverConfig,
       skills,
+      streamId,
       text,
       threadRef,
       updateThreadPullRequestLink,
@@ -2725,6 +2943,7 @@ function useChatMarkdownState({
       resolvedTheme,
       serverConfig,
       skills,
+      streamId,
       text,
       threadRef,
       updateThreadPullRequestLink,
@@ -3184,8 +3403,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
     }
     return <ChatMarkdownImageFallback alt={altText} copyMarkdown={copyMarkdown} kind={kind} />;
   },
-  table: function MarkdownTableRenderer({ node: _node, ...props }) {
-    return <MarkdownTable {...props} />;
+  table: function MarkdownTableRenderer({ node, ...props }) {
+    const { cwd, environmentId, streamId, text, threadRef } = use(ChatMarkdownRendererContext);
+    const stateKey = JSON.stringify([
+      environmentId,
+      threadRef?.threadId ?? cwd,
+      streamId ?? `${fnv1a32(text).toString(36)}:${text.length}`,
+      node?.position?.start.offset ?? node?.position?.start.line,
+    ]);
+    return <MarkdownTable key={stateKey} stateKey={stateKey} {...props} />;
   },
   details: function MarkdownDetailsRenderer({ node: _node, children, open: detailsOpen }) {
     return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;
@@ -3303,7 +3529,7 @@ function ChatMarkdown({
     markdownUrlTransform,
     localMediaPreview,
     setLocalMediaPreview,
-  } = useChatMarkdownState({ text, isStreaming, ...props });
+  } = useChatMarkdownState({ text, streamId, isStreaming, ...props });
   const characterMotionEnabled = useBetterT3DeviceFeature("chat.characterStreamingMotion");
   const motionEnabled = streamingMotionEnabled && characterMotionEnabled;
   const motion = useStreamingTextMotion({
