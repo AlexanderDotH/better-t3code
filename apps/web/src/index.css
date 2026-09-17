@@ -1981,7 +1981,7 @@ code {
 }
 
 /* Collapsed (default): single-line cells truncate so arbitrary chat content
-   cannot blow the column out; the footer toggle expands cells to wrap. */
+   cannot blow the column out; the footer toggle widens the table and wraps cells. */
 .chat-markdown .chat-markdown-table-container[data-expanded="false"] th,
 .chat-markdown .chat-markdown-table-container[data-expanded="false"] td {
   overflow: hidden;
@@ -1993,6 +1993,64 @@ code {
 .chat-markdown .chat-markdown-table-container[data-expanded="true"] td {
   max-width: 24rem;
   overflow-wrap: anywhere;
+}
+
+@container chat-column (min-width: 40rem) {
+  .chat-markdown .chat-markdown-table-container[data-expanded="true"] {
+    position: relative;
+    left: 50%;
+    width: min(
+      var(--chat-markdown-table-expanded-width),
+      calc(100cqw - var(--chat-markdown-table-viewport-gutter))
+    );
+    max-width: calc(100cqw - var(--chat-markdown-table-viewport-gutter));
+    transform: translateX(-50%);
+  }
+
+  .chat-markdown
+    .chat-markdown-table-container[data-expanded="true"][data-resizable="true"]
+    .chat-markdown-table-resize-handle {
+    display: block;
+  }
+}
+
+.chat-markdown .chat-markdown-table-resize-handle {
+  position: absolute;
+  z-index: 10;
+  inset-block: 0 1.75rem;
+  display: none;
+  width: 1rem;
+  cursor: ew-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.chat-markdown .chat-markdown-table-resize-handle[data-edge="left"] {
+  left: -1.125rem;
+}
+
+.chat-markdown .chat-markdown-table-resize-handle[data-edge="right"] {
+  right: -1.125rem;
+}
+
+.chat-markdown .chat-markdown-table-resize-handle > span {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 3px;
+  height: min(1.75rem, 50%);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--contrast-foreground) 30%, transparent);
+  transform: translate(-50%, -50%);
+}
+
+.chat-markdown .chat-markdown-table-resize-handle:is(:hover, :active, :focus-visible) > span {
+  background: color-mix(in srgb, var(--primary) 72%, transparent);
+}
+
+.chat-markdown .chat-markdown-table-resize-handle:focus-visible > span {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
 }
 
 /* Prompt-stash save acknowledgement: the new count fades up from just below

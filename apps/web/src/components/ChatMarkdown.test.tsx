@@ -1,13 +1,19 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { act, type ComponentProps, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestRenderer, type ReactTestInstance } from "react-test-renderer";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
+import * as clientSettings from "../hooks/useSettings";
 import { GitHubIcon } from "./Icons";
 import { Button } from "./ui/button";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
+import {
+  createMarkdownTableStateStore,
+  markdownTableStateStore,
+  MARKDOWN_TABLE_STATE_STORAGE_KEY,
+} from "./chat/markdownTableState";
 
 const motionPreferences = vi.hoisted(() => ({ enabled: false }));
 const visualizationState = vi.hoisted(() => ({ enabled: false, render: vi.fn() }));
@@ -447,6 +453,284 @@ describe("ChatMarkdown streaming", () => {
       vi.unstubAllGlobals();
     }
   });
+});
+
+describe("ChatMarkdown table state", () => {
+  const table = "| Name | Value |\n| --- | --- |\n| Example | 1 |";
+  const message = (
+    threadId: string,
+    streamId: string,
+    text = table,
+    environmentId = "table-state-environment",
+  ) => (
+    <ChatMarkdown
+      cwd="/tmp/project"
+      text={text}
+      streamId={streamId}
+      threadRef={{
+        environmentId: EnvironmentId.make(environmentId),
+        threadId: ThreadId.make(threadId),
+      }}
+    />
+  );
+  const createNodeMock = (element: { type: unknown; props: unknown }) => {
+    if (element.type === "table") return { rows: [], tHead: null };
+    if (
+      element.props !== null &&
+      typeof element.props === "object" &&
+      "className" in element.props &&
+      element.props.className === "chat-markdown-table-container"
+    ) {
+      return {
+        closest: (selector: string) => ({
+          getBoundingClientRect: () => ({ width: selector === ".chat-markdown" ? 768 : 1600 }),
+        }),
+      };
+    }
+    return null;
+  };
+
+  it.each([false, true])(
+    "starts tables at normal width with code word wrap set to %s",
+    async (wordWrap) => {
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      const settings = clientSettings.getClientSettings();
+      const readSettings = vi
+        .spyOn(clientSettings, "getClientSettings")
+        .mockReturnValue({ ...settings, wordWrap });
+      let renderer: ReactTestRenderer | undefined;
+      try {
+        await act(async () => {
+          renderer = create(message("thread-a", `default-width-${wordWrap}`), { createNodeMock });
+        });
+        expect(renderer!.root.findAllByProps({ "data-edge": "right" })).toHaveLength(0);
+        const expand = codeButton(renderer!, "Expand table");
+        await act(async () => {
+          expand.onClick?.({} as Parameters<NonNullable<typeof expand.onClick>>[0]);
+        });
+        expect(renderer!.root.findByProps({ "data-edge": "right" }).props["aria-valuenow"]).toBe(
+          1152,
+        );
+        const toggle = codeButton(renderer!, "Collapse table");
+        await act(async () => {
+          toggle.onClick?.({} as Parameters<NonNullable<typeof toggle.onClick>>[0]);
+        });
+        expect(renderer!.root.findAllByProps({ "data-edge": "right" })).toHaveLength(0);
+        expect(codeButton(renderer!, "Expand table")).toBeDefined();
+      } finally {
+        await act(async () => renderer?.unmount());
+        readSettings.mockRestore();
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+
+  it("remembers manual expansion through streaming, chat changes and remounts without expanding other tables", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    const text = `${table}\n\nAnother table:\n\n${table}`;
+    const currentMessage = () => message("thread-a", "collapse-state", text);
+    const expandedStates = () =>
+      renderer!.root
+        .findAllByProps({ className: "chat-markdown-table-container" })
+        .map((container) => container.props["data-expanded"]);
+
+    try {
+      await act(async () => {
+        renderer = create(currentMessage(), { createNodeMock });
+      });
+      expect(expandedStates()).toEqual(["false", "false"]);
+      const toggle = codeButton(renderer!, "Expand table");
+      await act(async () => {
+        toggle.onClick?.({} as Parameters<NonNullable<typeof toggle.onClick>>[0]);
+      });
+      expect(expandedStates()).toEqual(["true", "false"]);
+
+      await act(async () => {
+        renderer!.update(message("thread-a", "collapse-state", `${text}\n\nMore text.`));
+      });
+      expect(expandedStates()).toEqual(["true", "false"]);
+
+      for (const otherMessage of [
+        message("thread-b", "collapse-state", text),
+        message("thread-a", "another-message", text),
+        message("thread-a", "collapse-state", text, "another-environment"),
+      ]) {
+        await act(async () => renderer!.update(otherMessage));
+        expect(expandedStates()).toEqual(["false", "false"]);
+      }
+
+      await act(async () => renderer!.unmount());
+      await act(async () => {
+        renderer = create(currentMessage(), { createNodeMock });
+      });
+      expect(expandedStates()).toEqual(["true", "false"]);
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("restores the resized width after leaving the chat or collapsing the table", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    const currentMessage = () => message("thread-a", "resize-state");
+    const resizeHandle = () => renderer!.root.findByProps({ "data-edge": "right" });
+    const toggleTable = async (label: string) => {
+      const toggle = codeButton(renderer!, label);
+      await act(async () => {
+        toggle.onClick?.({} as Parameters<NonNullable<typeof toggle.onClick>>[0]);
+      });
+    };
+
+    try {
+      await act(async () => {
+        renderer = create(currentMessage(), { createNodeMock });
+      });
+      await toggleTable("Expand table");
+      expect(resizeHandle().props["aria-valuenow"]).toBe(1152);
+      await act(async () => {
+        resizeHandle().props.onKeyDown({
+          key: "ArrowRight",
+          shiftKey: false,
+          preventDefault: vi.fn(),
+        });
+      });
+      expect(resizeHandle().props["aria-valuenow"]).toBe(1176);
+
+      await act(async () => renderer!.update(message("thread-b", "resize-state")));
+      expect(renderer!.root.findAllByProps({ "data-edge": "right" })).toHaveLength(0);
+      await toggleTable("Expand table");
+      expect(resizeHandle().props["aria-valuenow"]).toBe(1152);
+      await act(async () => renderer!.unmount());
+      await act(async () => {
+        renderer = create(currentMessage(), { createNodeMock });
+      });
+      expect(resizeHandle().props["aria-valuenow"]).toBe(1176);
+
+      await toggleTable("Collapse table");
+      await toggleTable("Expand table");
+      expect(resizeHandle().props["aria-valuenow"]).toBe(1176);
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it.each(["onPointerUp", "onPointerCancel", "onLostPointerCapture", "unmount"])(
+    "restores width and collapse after a restart when resizing ends with %s",
+    async (endResize) => {
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      const values = new Map<string, string>();
+      const storage = {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: vi.fn((key: string, value: string) => {
+          values.set(key, value);
+        }),
+      };
+      let store = createMarkdownTableStateStore(() => storage);
+      const getState = vi
+        .spyOn(markdownTableStateStore, "get")
+        .mockImplementation((key) => store.get(key));
+      const setState = vi
+        .spyOn(markdownTableStateStore, "set")
+        .mockImplementation((key, state) => store.set(key, state));
+      let renderer: ReactTestRenderer | undefined;
+      let chatWidth = 1600;
+      const currentMessage = () => message("restart-thread", "restart-message");
+      const resizeHandle = () => renderer!.root.findByProps({ "data-edge": "right" });
+      const mount = async () => {
+        await act(async () => {
+          renderer = create(currentMessage(), {
+            createNodeMock: (element) => {
+              const node = createNodeMock(element);
+              if (node && "closest" in node) {
+                return {
+                  closest: (selector: string) => ({
+                    getBoundingClientRect: () => ({
+                      width: selector === ".chat-markdown" ? 768 : chatWidth,
+                    }),
+                  }),
+                };
+              }
+              return node;
+            },
+          });
+        });
+      };
+      const restart = async () => {
+        await act(async () => renderer?.unmount());
+        store = createMarkdownTableStateStore(() => storage);
+        await mount();
+      };
+      const toggle = async (label: string) => {
+        const button = codeButton(renderer!, label);
+        await act(async () =>
+          button.onClick?.({} as Parameters<NonNullable<typeof button.onClick>>[0]),
+        );
+      };
+
+      try {
+        await mount();
+        expect(renderer!.root.findAllByProps({ "data-edge": "right" })).toHaveLength(0);
+        expect(storage.setItem).not.toHaveBeenCalled();
+        await restart();
+        expect(renderer!.root.findAllByProps({ "data-edge": "right" })).toHaveLength(0);
+        await toggle("Expand table");
+        storage.setItem.mockClear();
+        const target = {
+          setPointerCapture: vi.fn(),
+          hasPointerCapture: () => true,
+          releasePointerCapture: vi.fn(),
+        };
+        const pointer = {
+          button: 0,
+          pointerId: 1,
+          clientX: 100,
+          currentTarget: target,
+          preventDefault: vi.fn(),
+        };
+        await act(async () => resizeHandle().props.onPointerDown(pointer));
+        await act(async () => resizeHandle().props.onPointerMove({ ...pointer, clientX: 150 }));
+        await act(async () => resizeHandle().props.onPointerMove({ ...pointer, clientX: 200 }));
+        expect(resizeHandle().props["aria-valuenow"]).toBe(1352);
+        expect(storage.setItem).not.toHaveBeenCalled();
+        await act(async () => {
+          if (endResize === "unmount") {
+            renderer?.unmount();
+            renderer = undefined;
+          } else {
+            resizeHandle().props[endResize]({ ...pointer, clientX: 200 });
+          }
+        });
+        expect(storage.setItem).toHaveBeenCalledTimes(1);
+        expect(JSON.parse(values.get(MARKDOWN_TABLE_STATE_STORAGE_KEY)!)).toEqual([
+          [expect.any(String), { expanded: true, width: 1352 }],
+        ]);
+
+        await restart();
+        expect(resizeHandle().props["aria-valuenow"]).toBe(1352);
+        await toggle("Collapse table");
+        await restart();
+        expect(renderer!.root.findAllByProps({ "data-edge": "right" })).toHaveLength(0);
+        expect(codeButton(renderer!, "Expand table")).toBeDefined();
+
+        chatWidth = 1000;
+        await toggle("Expand table");
+        expect(resizeHandle().props["aria-valuenow"]).toBe(960);
+        await restart();
+        expect(resizeHandle().props["aria-valuenow"]).toBe(960);
+        chatWidth = 1600;
+        await restart();
+        expect(resizeHandle().props["aria-valuenow"]).toBe(1352);
+      } finally {
+        await act(async () => renderer?.unmount());
+        getState.mockRestore();
+        setState.mockRestore();
+        vi.unstubAllGlobals();
+      }
+    },
+  );
 });
 
 describe("canUseMarkdownFileShellActions", () => {

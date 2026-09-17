@@ -57,4 +57,22 @@ describe("LRUCache", () => {
 
     expect(cache.get("a")).toBe("A");
   });
+
+  it("snapshots entries in eviction order without exposing the internal map", () => {
+    const cache = new LRUCache<string>(2, 100);
+    cache.set("a", "A", 10);
+    cache.set("b", "B", 10);
+    cache.get("a");
+    const entries = cache.entries();
+    expect(entries).toEqual([
+      ["b", "B"],
+      ["a", "A"],
+    ]);
+    entries.pop();
+    cache.set("c", "C", 10);
+    expect(cache.entries()).toEqual([
+      ["a", "A"],
+      ["c", "C"],
+    ]);
+  });
 });
