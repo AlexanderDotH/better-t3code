@@ -26,6 +26,7 @@ import type {
 
 import {
   ApprovalRequestId,
+  EnvironmentId,
   OpenCodeSettings,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -34,6 +35,7 @@ import {
 import { createModelSelection } from "@t3tools/shared/model";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import type { OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
@@ -612,6 +614,88 @@ const questionRequest = (id: string, sessionID: string): QuestionRequest => ({
 });
 
 it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
+  it.effect("isolates Fetch workers with a deny-default native tool policy", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("fetch:opencode:analysis-read-only");
+      const resolveMcpServers = vi.fn(() =>
+        Effect.succeed({
+          unapproved: { type: "remote" as const, url: "https://synthetic.invalid/mcp" },
+        }),
+      );
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("synthetic-environment"),
+        threadId,
+        providerSessionId: "synthetic-session",
+        providerInstanceId: ProviderInstanceId.make("opencode"),
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer synthetic-token",
+      });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
+      );
+      const adapter = yield* makeOpenCodeAdapter(openCodeAdapterTestSettings, {
+        resolveMcpServers,
+      });
+      const session = yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        purpose: "fetch-worker",
+        runtimeMode: "full-access",
+        resumeCursor: { schemaVersion: 1, sessionId: "ses_privileged_parent" },
+      });
+      NodeAssert.equal(session.runtimeMode, "approval-required");
+      NodeAssert.deepEqual(runtimeMock.state.sessionGetIds, []);
+      NodeAssert.equal(resolveMcpServers.mock.calls.length, 0);
+      NodeAssert.equal(runtimeMock.state.sessionCreateInputs.length, 1);
+      NodeAssert.deepEqual(runtimeMock.state.sessionCreateInputs[0]?.permission, [
+        { permission: "*", pattern: "*", action: "deny" },
+        { permission: "read", pattern: "*", action: "allow" },
+        { permission: "glob", pattern: "*", action: "allow" },
+        { permission: "grep", pattern: "*", action: "allow" },
+        { permission: "list", pattern: "*", action: "allow" },
+      ]);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect.each(["bash", "edit", "task", "mcp__unapproved__write"] as const)(
+    "returns a native rejection for Fetch worker %s permission requests",
+    (permission) =>
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const threadId = asThreadId(`fetch:opencode:${permission}`);
+        const request = {
+          ...permissionRequest(`per_fetch_${permission}`, "http://127.0.0.1:9999/session"),
+          permission,
+        };
+        runtimeMock.state.subscribedEvents = [
+          {
+            id: "evt-fetch-permission",
+            type: "permission.asked",
+            properties: request,
+          } satisfies OpenCodeEvent,
+        ];
+        const openedFiber = yield* adapter.streamEvents.pipe(
+          Stream.filter((event) => event.threadId === threadId && event.type === "request.opened"),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId,
+          purpose: "fetch-worker",
+          runtimeMode: "full-access",
+        });
+        const opened = Option.getOrThrow(yield* Fiber.join(openedFiber));
+        NodeAssert.equal(opened.type, "request.opened");
+        yield* adapter.respondToRequest(threadId, ApprovalRequestId.make(request.id), "decline");
+        NodeAssert.deepEqual(runtimeMock.state.permissionReplyCalls, [
+          { requestID: request.id, reply: "reject" },
+        ]);
+        yield* adapter.stopSession(threadId);
+      }),
+  );
+
   it.effect("reuses a configured OpenCode server URL instead of spawning a local server", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;

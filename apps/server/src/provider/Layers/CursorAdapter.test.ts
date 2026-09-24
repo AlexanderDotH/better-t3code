@@ -1728,6 +1728,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         runtimeMode: "full-access",
       });
 
+      assert.deepEqual(yield* Effect.promise(() => readArgvLog(argvLogPath)), [["acp"]]);
       const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
       const sessionNew = requests.find((entry) => entry.method === "session/new");
       assert.equal(session.runtimeMode, "approval-required");

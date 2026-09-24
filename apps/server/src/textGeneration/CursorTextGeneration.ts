@@ -348,7 +348,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
   const improvePrompt: TextGeneration.TextGeneration["Service"]["improvePrompt"] = Effect.fn(
     "CursorTextGeneration.improvePrompt",
   )(function* (input) {
-    const { prompt, outputSchema } = buildPromptImprovementPrompt({ text: input.text });
+    const { prompt, outputSchema } = buildPromptImprovementPrompt(input);
     const generated = yield* runCursorJson({
       operation: "improvePrompt",
       cwd: input.cwd,
@@ -397,6 +397,5 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
     improvePrompt,
     reviewPlanParallelism,
     planFetchExploration,
-    enrichKnowledgeGraph: TextGeneration.unsupportedKnowledgeGraphEnrichment("Cursor"),
   } satisfies TextGeneration.TextGeneration["Service"];
 });

@@ -5,12 +5,26 @@ import type {
   KnowledgeGraphNodeV1,
   KnowledgeGraphProvenance,
   KnowledgeGraphScopeInput,
+  KnowledgeGraphSnapshotV1,
   KnowledgeGraphState,
   KnowledgeGraphStatusV1,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
 import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
+import { projectIndexingSupported } from "@t3tools/client-runtime/project-indexing";
+
+export function resolveMobileKnowledgeGraphIndexRoute(input: {
+  readonly projectIndexingVersion?: number;
+  readonly canRead: boolean;
+  readonly indexEnabled: boolean | null;
+  readonly loadFailed: boolean;
+}): "index" | "legacy" | "loading" {
+  if (!projectIndexingSupported(input) || !input.canRead) return "legacy";
+  if (input.indexEnabled === true) return "index";
+  if (input.indexEnabled === false || input.loadFailed) return "legacy";
+  return "loading";
+}
 
 const KNOWLEDGE_GRAPH_NODE_KIND_MESSAGE_KEYS = {
   repository: "knowledgeGraph.nodeKind.repository",
@@ -100,6 +114,27 @@ export function resolveMobileKnowledgeGraphAccess(input: {
   return input.enabled ? "available" : "disabled";
 }
 
+export function supportsMobileStaticKnowledgeGraph(version: number | undefined): boolean {
+  return (version ?? 0) >= 2;
+}
+
+export function mobileStaticKnowledgeGraphSnapshot(
+  snapshot: KnowledgeGraphSnapshotV1,
+): KnowledgeGraphSnapshotV1 {
+  const nodes = snapshot.nodes.filter((node) => node.provenance === "deterministic");
+  const nodeIds = new Set(nodes.map((node) => node.nodeId));
+  return {
+    ...snapshot,
+    nodes,
+    edges: snapshot.edges.filter(
+      (edge) =>
+        edge.provenance === "deterministic" &&
+        nodeIds.has(edge.sourceNodeId) &&
+        nodeIds.has(edge.targetNodeId),
+    ),
+  };
+}
+
 export interface MobileKnowledgeGraphRoutePolicy {
   readonly canOpenOwnerRoute: boolean;
   readonly canSubscribe: boolean;
@@ -113,6 +148,7 @@ export interface MobileKnowledgeGraphRoutePolicy {
 
 export function resolveMobileKnowledgeGraphRoutePolicy(
   access: MobileKnowledgeGraphAccess,
+  canMutate = false,
 ): MobileKnowledgeGraphRoutePolicy {
   const supported = access !== "unsupported";
   const active = access === "available";
@@ -121,10 +157,10 @@ export function resolveMobileKnowledgeGraphRoutePolicy(
     canSubscribe: active,
     canQuery: active,
     canReadNodeContent: active,
-    canRebuild: active,
-    canPause: active,
-    canCancel: active,
-    canClearRetainedData: supported,
+    canRebuild: active && canMutate,
+    canPause: active && canMutate,
+    canCancel: active && canMutate,
+    canClearRetainedData: supported && canMutate,
   };
 }
 
@@ -169,18 +205,20 @@ export interface MobileKnowledgeGraphActions {
 
 export function resolveMobileKnowledgeGraphActions(
   status: KnowledgeGraphStatusV1,
+  canMutate = false,
 ): MobileKnowledgeGraphActions {
   const busy =
     status.state === "indexing" || status.state === "semantic" || status.state === "cancelling";
   return {
-    canCancel: status.state === "indexing" || status.state === "semantic",
-    canClear: status.state !== "cancelling",
+    canCancel: canMutate && (status.state === "indexing" || status.state === "semantic"),
+    canClear: canMutate && status.state !== "cancelling",
     canPause:
-      status.state === "indexing" ||
-      status.state === "semantic" ||
-      status.state === "paused" ||
-      status.state === "rate-limited",
-    canRebuild: !busy,
+      canMutate &&
+      (status.state === "indexing" ||
+        status.state === "semantic" ||
+        status.state === "paused" ||
+        status.state === "rate-limited"),
+    canRebuild: canMutate && !busy,
     pauseAction: status.state === "paused" ? "resume" : "pause",
   };
 }
@@ -264,12 +302,17 @@ export interface MobileKnowledgeGraphThreadEntryTarget {
 
 export function mobileKnowledgeGraphThreadEntryTarget(input: {
   readonly knowledgeGraphVersion: number | undefined;
+  readonly projectIndexingVersion?: number | undefined;
   readonly enabled: boolean;
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
   readonly threadId: ThreadId;
 }): MobileKnowledgeGraphThreadEntryTarget | null {
-  if (resolveMobileKnowledgeGraphAccess(input) !== "available") return null;
+  if (
+    (input.projectIndexingVersion ?? 0) < 1 &&
+    resolveMobileKnowledgeGraphAccess(input) !== "available"
+  )
+    return null;
   return {
     screen: "KnowledgeGraph",
     params: {

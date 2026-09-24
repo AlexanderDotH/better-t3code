@@ -37,6 +37,7 @@ import {
   type ProviderAuthState,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProjectIndexOperationError,
   type ProviderInstallState,
   ProviderSetupError,
   ResolvedKeybindingRule,
@@ -153,6 +154,8 @@ import * as ServerSettings from "./serverSettings.ts";
 import { AssemblyAiStreamingToken } from "./speech/Layers/AssemblyAiStreamingToken.ts";
 import * as ProjectSpeechProfileStore from "./speech/ProjectSpeechProfileStore.ts";
 import * as ProjectSpeechWorkspaceScanner from "./speech/ProjectSpeechWorkspaceScanner.ts";
+import { ProjectSpeechVocabulary } from "./speech/ProjectSpeechVocabulary.ts";
+import { AssemblyAiDictation } from "./speech/AssemblyAiDictation.ts";
 import { NoOpSkillEngineLayer } from "./skills/testUtils/NoOpSkillEngine.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as PlanParallelismReview from "./plan/PlanParallelismReview.ts";
@@ -196,6 +199,12 @@ import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as SubagentResourceGovernor from "./resourceProtection/SubagentResourceGovernor.ts";
 import * as KnowledgeGraphRuntime from "./knowledge-graph/runtime/KnowledgeGraphRuntime.ts";
+import { ProjectIndexingRuntime } from "./projectIndexing/runtime/ProjectIndexingRuntimeService.ts";
+import { makeProjectIndexingRuntime } from "./projectIndexing/runtime/ProjectIndexingRuntime.ts";
+import type { ProjectIndexingBridgeShape } from "./projectIndexing/runtime/ProjectIndexingBridge.ts";
+import { resolveKnowledgeWorkspace } from "./projectIndexing/privacy/WorkspacePrivacy.ts";
+import { projectIndexDefaultsFromSettings } from "./projectIndexing/integration/ProjectIndexDefaults.ts";
+import { ProjectContextQuery } from "./projectIndexing/query/ProjectContextQuery.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as Data from "effect/Data";
 
@@ -574,6 +583,8 @@ const buildAppUnderTest = (options?: {
       DesktopTelemetryReceiver.DesktopTelemetryReceiver["Service"]
     >;
     knowledgeGraphRuntime?: Partial<KnowledgeGraphRuntime.KnowledgeGraphRuntime["Service"]>;
+    projectIndexingRuntime?: Partial<ProjectIndexingRuntime["Service"]>;
+    projectContextQuery?: Partial<ProjectContextQuery["Service"]>;
   };
 }) =>
   Effect.gen(function* () {
@@ -800,6 +811,21 @@ const buildAppUnderTest = (options?: {
         Layer.provide(
           Layer.mock(AssemblyAiStreamingToken)({
             create: () => Effect.die("AssemblyAiStreamingToken not stubbed in this test"),
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(AssemblyAiDictation)({
+            process: () => Effect.die("AssemblyAiDictation not stubbed in this test"),
+            listModels: () => Effect.succeed([]),
+            resolveWorkspace: () =>
+              Effect.die("AssemblyAiDictation workspace not stubbed in this test"),
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(ProjectSpeechVocabulary)({
+            snapshot: () => Effect.succeed({ version: 1, entries: [], truncated: false }),
+            refreshInBackground: () => Effect.void,
+            refresh: () => Effect.die("ProjectSpeechVocabulary not stubbed in this test"),
           }),
         ),
         Layer.provide(
@@ -1120,6 +1146,22 @@ const buildAppUnderTest = (options?: {
       .pipe(
         Layer.provide(resourceTelemetryLayer),
         Layer.provide(SubagentResourceGovernor.layer),
+        Layer.provide(
+          Layer.mock(ProjectIndexingRuntime)(options?.layers?.projectIndexingRuntime ?? {}),
+        ),
+        Layer.provide(
+          Layer.mock(ProjectContextQuery)({
+            query: () =>
+              Effect.fail(
+                new ProjectIndexOperationError({
+                  code: "disabled",
+                  message: "Indexing is not enabled in this fixture.",
+                  retryable: false,
+                }),
+              ),
+            ...options?.layers?.projectContextQuery,
+          }),
+        ),
         Layer.provide(
           Layer.mock(KnowledgeGraphRuntime.KnowledgeGraphRuntime)({
             subscribe: () => Effect.die("KnowledgeGraphRuntime.subscribe not stubbed in this test"),
@@ -7202,6 +7244,156 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(error.normalizedCwd, workspaceRoot);
       assert.equal(error.detail, "validate-existing");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
+    "preserves environment defaults and project overrides across websocket indexing controls",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-index-" });
+        yield* fs.writeFileString(path.join(root, "source.ts"), "export const fixture = 1;\n");
+        const workspace = yield* resolveKnowledgeWorkspace(root);
+        const environmentSettings = yield* ServerSettings.ServerSettingsService;
+        const defaultModel = {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "index-default",
+        };
+        const overrideModel = {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "index-project",
+        };
+        const resolved = {
+          workspaceRoot: workspace.workspaceRoot,
+          scope: {
+            projectId: defaultProjectId,
+            scopeId: `scope:${workspace.workspaceId}`,
+            workspaceFingerprint: workspace.workspaceId,
+          },
+        };
+        const bridge: ProjectIndexingBridgeShape = {
+          resolveScope: (input) =>
+            input.projectId === defaultProjectId &&
+            (input.threadId === undefined || input.threadId === defaultThreadId)
+              ? Effect.succeed(resolved)
+              : Effect.fail(
+                  new ProjectIndexOperationError({
+                    code: "scope-mismatch",
+                    message: "The thread does not belong to this project.",
+                    retryable: false,
+                  }),
+                ),
+          listScopes: () => Effect.succeed([resolved]),
+          capabilities: () =>
+            Effect.succeed({ contextWindowTokens: 65_536, maxOutputTokens: 8_192 }),
+          generate: () => Effect.die("Settings must not implicitly start analysis"),
+          admit: () => Effect.die("Settings must not admit an analysis worker"),
+          readDiff: () => Effect.die("Settings must not start a diff review"),
+          reconcileWatchers: () => Effect.void,
+        };
+        const runtime = yield* makeProjectIndexingRuntime({
+          bridge,
+          defaults: {
+            get: environmentSettings.getSettings.pipe(Effect.map(projectIndexDefaultsFromSettings)),
+            subscribe: environmentSettings.subscribeChanges.pipe(
+              Effect.map(Stream.map(projectIndexDefaultsFromSettings)),
+            ),
+          },
+        });
+        yield* buildAppUnderTest({
+          layers: { projectIndexingRuntime: runtime, serverSettings: environmentSettings },
+        });
+        const wsUrl = yield* getWsServerUrl("/ws?clientSurface=mobile&connectionMethod=relay");
+        yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            Effect.gen(function* () {
+              const input = { projectId: defaultProjectId, threadId: defaultThreadId };
+              const initial = yield* client[WS_METHODS.projectIndexGetStatus](input);
+              assert.equal(initial.state, "disabled");
+              assert.deepEqual(initial.defaults, { enabled: false, modelSelection: null });
+              assert.equal(initial.scope.threadId, defaultThreadId);
+              assert.isFalse(yield* fs.exists(path.join(root, ".t3")));
+              const settings = yield* client[WS_METHODS.projectIndexGetSettings](input);
+              assert.deepEqual(settings, {
+                enabled: false,
+                autoRefresh: true,
+                reviewEnabled: false,
+                modelSelection: null,
+              });
+              const enabled = yield* client[WS_METHODS.projectIndexUpdateSettings]({
+                ...input,
+                patch: { enabled: true, autoRefresh: false },
+              });
+              assert.equal(enabled.state, "disabled");
+              assert.isTrue(enabled.settings.enabled);
+              assert.equal(enabled.job, null);
+              assert.isFalse(enabled.settings.autoRefresh);
+              yield* client[WS_METHODS.serverUpdateSettings]({
+                patch: {
+                  projectIndexingEnabled: true,
+                  projectIndexingDefaultModelSelection: defaultModel,
+                },
+              });
+              const inherited = yield* client[WS_METHODS.projectIndexGetStatus](input);
+              assert.equal(inherited.state, "idle");
+              assert.isNull(inherited.settings.modelSelection);
+              assert.deepEqual(inherited.defaults?.modelSelection, defaultModel);
+              const modelCheck = yield* client[WS_METHODS.projectIndexCheckModel]({
+                modelSelection: defaultModel,
+              });
+              assert.isTrue(modelCheck.supported);
+              yield* client[WS_METHODS.projectIndexUpdateSettings]({
+                ...input,
+                patch: { modelSelection: overrideModel },
+              });
+              yield* client[WS_METHODS.serverUpdateSettings]({
+                patch: { projectIndexingDefaultModelSelection: null },
+              });
+              const overridden = yield* client[WS_METHODS.projectIndexGetStatus](input);
+              assert.deepEqual(overridden.settings.modelSelection, overrideModel);
+              assert.isNull(overridden.defaults?.modelSelection);
+              const subscription = yield* client[WS_METHODS.projectIndexSubscribe](input).pipe(
+                Stream.take(1),
+                Stream.runCollect,
+              );
+              assert.equal(subscription[0]?.type, "status");
+              if (subscription[0]?.type === "status") {
+                assert.equal(subscription[0].status.scope.threadId, defaultThreadId);
+                assert.isFalse(subscription[0].status.settings.autoRefresh);
+              }
+              const wrongScope = yield* client[WS_METHODS.projectIndexGetStatus]({
+                ...input,
+                threadId: ThreadId.make("thread-outside-project"),
+              }).pipe(Effect.result);
+              assert.equal(wrongScope._tag, "Failure");
+              if (wrongScope._tag === "Failure") {
+                assert.equal(wrongScope.failure._tag, "ProjectIndexOperationError");
+                if (wrongScope.failure._tag === "ProjectIndexOperationError") {
+                  assert.equal(wrongScope.failure.code, "scope-mismatch");
+                }
+              }
+              yield* client[WS_METHODS.serverUpdateSettings]({
+                patch: { projectIndexingEnabled: false },
+              });
+              const globallyDisabled = yield* client[WS_METHODS.projectIndexGetStatus](input);
+              assert.equal(globallyDisabled.state, "disabled");
+              assert.isTrue(globallyDisabled.settings.enabled);
+              assert.deepEqual(globallyDisabled.settings.modelSelection, overrideModel);
+              const cleared = yield* client[WS_METHODS.projectIndexControl]({
+                ...input,
+                action: "clear",
+              });
+              assert.equal(cleared.state, "disabled");
+              assert.equal(cleared.coverage.indexedFiles, 0);
+              assert.equal(
+                yield* fs.readFileString(path.join(root, "source.ts")),
+                "export const fixture = 1;\n",
+              );
+            }),
+          ),
+        );
+      }).pipe(Effect.provide(Layer.mergeAll(ServerSettings.layerTest(), NodeHttpServer.layerTest))),
   );
 
   it.effect("routes websocket rpc projects.writeFile", () =>

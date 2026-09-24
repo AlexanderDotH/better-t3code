@@ -2,11 +2,10 @@ import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as PubSub from "effect/PubSub";
 import * as Result from "effect/Result";
-import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
 
-import { KnowledgeGraphSemanticModelRequestV1, ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderInstanceId } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
@@ -16,10 +15,6 @@ import * as TextGeneration from "./TextGeneration.ts";
 const makeTextGeneration = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
 ) => TextGeneration.makeTextGenerationFromRegistry(registry, () => Effect.succeed(null));
-
-const decodeKnowledgeGraphSemanticModelRequest = Schema.decodeUnknownSync(
-  KnowledgeGraphSemanticModelRequestV1,
-);
 
 const makeStubTextGeneration = (
   overrides: Partial<TextGeneration.TextGeneration["Service"]>,
@@ -40,7 +35,6 @@ const makeStubTextGeneration = (
       Effect.die("reviewPlanParallelism stub not configured for this test"),
     planFetchExploration: () =>
       Effect.die("planFetchExploration stub not configured for this test"),
-    enrichKnowledgeGraph: () => Effect.die("enrichKnowledgeGraph stub not configured"),
     ...overrides,
   });
 
@@ -281,95 +275,6 @@ describe("makeTextGenerationFromRegistry", () => {
           modelSelection,
         },
       ]);
-    }),
-  );
-
-  it.effect("routes Knowledge Graph enrichment to the selected provider instance", () =>
-    Effect.gen(function* () {
-      const providerId = ProviderInstanceId.make("openai_graph");
-      const request = decodeKnowledgeGraphSemanticModelRequest({
-        version: 1,
-        environmentId: "environment-graph",
-        scopeId: "scope-graph",
-        baseRevision: 1,
-        modelGeneration: 1,
-        items: [
-          {
-            sourceNode: {
-              version: 1,
-              nodeId: "node-graph",
-              scopeId: "scope-graph",
-              kind: "file",
-              label: "src/index.ts",
-              provenance: "deterministic",
-              confidence: 1,
-              evidenceIds: [],
-              nodeRevision: 1,
-            },
-            candidates: [],
-          },
-        ],
-        evidence: [],
-      });
-      const calls: TextGeneration.KnowledgeGraphEnrichmentGenerationInput[] = [];
-      const provider = makeStubInstance(
-        providerId,
-        makeStubTextGeneration({
-          enrichKnowledgeGraph: (input) => {
-            calls.push(input);
-            return Effect.succeed({ version: 1, edges: [] });
-          },
-        }),
-      );
-      const textGeneration = makeTextGeneration(makeStubRegistry([provider]));
-      const modelSelection = createModelSelection(providerId, "gpt-5.6-sol");
-
-      const result = yield* textGeneration.enrichKnowledgeGraph({ request, modelSelection });
-
-      expect(result).toEqual({ version: 1, edges: [] });
-      expect(calls).toEqual([{ request, modelSelection }]);
-    }),
-  );
-
-  it.effect("fails closed for providers without Knowledge Graph conformance", () =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        TextGeneration.unsupportedKnowledgeGraphEnrichment("Unverified Provider")({
-          request: decodeKnowledgeGraphSemanticModelRequest({
-            version: 1,
-            environmentId: "environment-unsupported",
-            scopeId: "scope-unsupported",
-            baseRevision: 0,
-            modelGeneration: 1,
-            items: [
-              {
-                sourceNode: {
-                  version: 1,
-                  nodeId: "node-unsupported",
-                  scopeId: "scope-unsupported",
-                  kind: "file",
-                  label: "src/index.ts",
-                  provenance: "deterministic",
-                  confidence: 1,
-                  evidenceIds: [],
-                  nodeRevision: 1,
-                },
-                candidates: [],
-              },
-            ],
-            evidence: [],
-          }),
-          modelSelection: createModelSelection(
-            ProviderInstanceId.make("unverified"),
-            "unverified-model",
-          ),
-        }),
-      );
-
-      expect(error).toMatchObject({
-        operation: "enrichKnowledgeGraph",
-        reason: "model-unavailable",
-      });
     }),
   );
 

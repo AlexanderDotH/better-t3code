@@ -9,7 +9,7 @@ import {
   type KnowledgeGraphDeterministicPatchV1,
   type KnowledgeGraphEdgeV1,
   type KnowledgeGraphEdgeKind,
-  KnowledgeGraphEdgeId,
+  type KnowledgeGraphEdgeId,
   KnowledgeGraphEdgeV1 as KnowledgeGraphEdgeSchema,
   type KnowledgeGraphEvidenceV1,
   KnowledgeGraphEvidenceV1 as KnowledgeGraphEvidenceSchema,
@@ -17,7 +17,6 @@ import {
   KnowledgeGraphFileFingerprintV1 as KnowledgeGraphFileFingerprintSchema,
   type KnowledgeGraphNodeV1,
   type KnowledgeGraphNodeId,
-  type KnowledgeGraphModelGeneration,
   KnowledgeGraphNodeV1 as KnowledgeGraphNodeSchema,
   type KnowledgeGraphPatchV1,
   KnowledgeGraphPatchV1 as KnowledgeGraphPatchSchema,
@@ -27,7 +26,6 @@ import {
   type KnowledgeGraphQueryResultV1,
   type KnowledgeGraphScopeId,
   type KnowledgeGraphScopeV1,
-  type KnowledgeGraphSemanticPatchV1,
   type KnowledgeGraphSnapshotV1,
   type KnowledgeGraphStatusV1,
   KnowledgeGraphStatusV1 as KnowledgeGraphStatusSchema,
@@ -36,7 +34,6 @@ import {
   type KnowledgeGraphEvidenceId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -78,22 +75,15 @@ export interface KnowledgeGraphRepositoryShape {
   readonly getFileFingerprints: (
     scopeId: KnowledgeGraphScopeId,
   ) => Effect.Effect<ReadonlyArray<KnowledgeGraphFileFingerprintV1>, KnowledgeGraphRepositoryError>;
+  readonly hasLegacySemanticData: (
+    scopeId: KnowledgeGraphScopeId,
+  ) => Effect.Effect<boolean, KnowledgeGraphRepositoryError>;
   readonly listScopes: (
     environmentId: KnowledgeGraphScopeV1["environmentId"],
   ) => Effect.Effect<ReadonlyArray<KnowledgeGraphScopeV1>, KnowledgeGraphRepositoryError>;
   readonly updateStatus: (
     status: KnowledgeGraphStatusV1,
   ) => Effect.Effect<void, KnowledgeGraphRepositoryError>;
-  readonly reconcileSemanticModel: (input: {
-    readonly environmentId: KnowledgeGraphScopeV1["environmentId"];
-    readonly modelKey: string | null;
-  }) => Effect.Effect<
-    {
-      readonly modelGeneration: KnowledgeGraphModelGeneration;
-      readonly changed: boolean;
-    },
-    KnowledgeGraphRepositoryError
-  >;
   readonly getNodeBundle: (input: {
     readonly scopeId: KnowledgeGraphScopeId;
     readonly nodeId: KnowledgeGraphNodeId;
@@ -113,14 +103,12 @@ export interface KnowledgeGraphRepositoryShape {
       readonly evidence: ReadonlyArray<KnowledgeGraphEvidenceV1>;
       readonly fileFingerprints: ReadonlyArray<KnowledgeGraphFileFingerprintV1>;
       readonly truncation: KnowledgeGraphTruncationV1;
+      readonly hasLegacySemanticData: boolean;
     }>,
     KnowledgeGraphRepositoryError
   >;
   readonly applyDeterministicPatch: (
     patch: KnowledgeGraphDeterministicPatchV1,
-  ) => Effect.Effect<KnowledgeGraphRepositoryCommit, KnowledgeGraphRepositoryError>;
-  readonly applySemanticPatch: (
-    patch: KnowledgeGraphSemanticPatchV1,
   ) => Effect.Effect<KnowledgeGraphRepositoryCommit, KnowledgeGraphRepositoryError>;
   readonly listPatchesAfter: (input: {
     readonly scopeId: KnowledgeGraphScopeId;
@@ -165,11 +153,6 @@ interface JsonRow {
 
 interface NodeIdRow {
   readonly nodeId: string;
-}
-
-interface SemanticEnvironmentRow {
-  readonly semanticModelKey: string | null;
-  readonly modelGeneration: number;
 }
 
 const decodeStatusJson = Schema.decodeUnknownEffect(
@@ -261,6 +244,21 @@ const defaultStatus = (scopeId: KnowledgeGraphScopeId): KnowledgeGraphStatusV1 =
   truncated: defaultTruncation(),
 });
 
+const staticStatus = (status: KnowledgeGraphStatusV1): KnowledgeGraphStatusV1 => {
+  const { progress, errorMessage, retryAt, ...rest } = status;
+  const previousModelState = status.state === "semantic" || status.state === "rate-limited";
+  return {
+    ...rest,
+    state: previousModelState ? "ready" : status.state,
+    semanticQueueDepth: 0,
+    ...(!previousModelState && errorMessage !== undefined ? { errorMessage } : {}),
+    ...(!previousModelState && retryAt !== undefined ? { retryAt } : {}),
+    ...(!previousModelState && progress !== undefined && progress.phase !== "semantic"
+      ? { progress: { ...progress, queuedSemanticNodeCount: 0 } }
+      : {}),
+  };
+};
+
 const scopeFromRow = (row: ScopeRow): KnowledgeGraphScopeV1 =>
   ({
     version: 1,
@@ -337,7 +335,15 @@ const make = Effect.gen(function* () {
       const rows = yield* readScope(scopeId);
       const row = rows[0];
       if (row === undefined) return Option.none<KnowledgeGraphStatusV1>();
-      return Option.some(yield* decodeJson(decodeStatusJson, row.statusJson, "get-status"));
+      const stored = yield* decodeJson(decodeStatusJson, row.statusJson, "get-status");
+      const hasLegacyData = yield* hasLegacySemanticData(scopeId);
+      const needsCounts =
+        hasLegacyData ||
+        stored.state === "semantic" ||
+        stored.state === "rate-limited" ||
+        stored.semanticQueueDepth > 0;
+      const counts = needsCounts ? yield* readCounts(scopeId) : {};
+      return Option.some({ ...staticStatus(stored), ...counts });
     }).pipe(mapError("get-status"));
 
   const readEntities = (scopeId: KnowledgeGraphScopeId) =>
@@ -345,7 +351,7 @@ const make = Effect.gen(function* () {
       const nodeRows = yield* sql<JsonRow>`
         SELECT node_json AS json
         FROM knowledge_graph_nodes
-        WHERE scope_id = ${scopeId}
+        WHERE scope_id = ${scopeId} AND provenance = 'deterministic'
         ORDER BY kind, label, node_id
         LIMIT ${KNOWLEDGE_GRAPH_MAX_VISIBLE_NODES}
       `;
@@ -359,6 +365,7 @@ const make = Effect.gen(function* () {
         `SELECT edge_json AS json
          FROM knowledge_graph_edges
          WHERE scope_id = ?
+           AND provenance = 'deterministic'
            AND source_node_id IN (${placeholders})
            AND target_node_id IN (${placeholders})
          ORDER BY kind, source_node_id, target_node_id, edge_id
@@ -380,7 +387,8 @@ const make = Effect.gen(function* () {
       const evidenceRows = yield* sql.unsafe<JsonRow>(
         `SELECT evidence_json AS json
          FROM knowledge_graph_evidence
-         WHERE scope_id = ? AND evidence_id IN (${evidenceIds.map(() => "?").join(", ")})
+         WHERE scope_id = ? AND kind <> 'semantic'
+           AND evidence_id IN (${evidenceIds.map(() => "?").join(", ")})
          ORDER BY evidence_id`,
         [scopeId, ...evidenceIds],
       );
@@ -405,7 +413,8 @@ const make = Effect.gen(function* () {
       .unsafe<JsonRow>(
         `SELECT evidence_json AS json
          FROM knowledge_graph_evidence
-         WHERE scope_id = ? AND evidence_id IN (${boundedIds.map(() => "?").join(", ")})
+         WHERE scope_id = ? AND kind <> 'semantic'
+           AND evidence_id IN (${boundedIds.map(() => "?").join(", ")})
          ORDER BY evidence_id`,
         [scopeId, ...boundedIds],
       )
@@ -439,6 +448,7 @@ const make = Effect.gen(function* () {
         `SELECT node_json AS json
          FROM knowledge_graph_nodes
          WHERE scope_id = ?
+           AND provenance = 'deterministic'
            AND lower(label || char(10) || coalesce(summary, '')) LIKE ? ESCAPE '\\'
            ${kindFilter}
          ORDER BY kind, label, node_id
@@ -469,7 +479,8 @@ const make = Effect.gen(function* () {
       .unsafe<JsonRow>(
         `SELECT node_json AS json
          FROM knowledge_graph_nodes
-         WHERE scope_id = ? AND node_id IN (${boundedIds.map(() => "?").join(", ")})`,
+         WHERE scope_id = ? AND provenance = 'deterministic'
+           AND node_id IN (${boundedIds.map(() => "?").join(", ")})`,
         [scopeId, ...boundedIds],
       )
       .pipe(
@@ -520,7 +531,20 @@ const make = Effect.gen(function* () {
       .unsafe<JsonRow>(
         `SELECT edge_json AS json
          FROM knowledge_graph_edges
-         WHERE scope_id = ? AND ${endpointFilter}${kindFilter}${excludedFilter}
+         WHERE scope_id = ? AND provenance = 'deterministic'
+           AND EXISTS (
+             SELECT 1 FROM knowledge_graph_nodes AS source
+             WHERE source.scope_id = knowledge_graph_edges.scope_id
+               AND source.node_id = knowledge_graph_edges.source_node_id
+               AND source.provenance = 'deterministic'
+           )
+           AND EXISTS (
+             SELECT 1 FROM knowledge_graph_nodes AS target
+             WHERE target.scope_id = knowledge_graph_edges.scope_id
+               AND target.node_id = knowledge_graph_edges.target_node_id
+               AND target.provenance = 'deterministic'
+           )
+           AND ${endpointFilter}${kindFilter}${excludedFilter}
          ORDER BY kind, source_node_id, target_node_id, edge_id
          LIMIT ?`,
         [
@@ -570,11 +594,13 @@ const make = Effect.gen(function* () {
           FROM (
             SELECT source_node_id AS node_id
             FROM knowledge_graph_edges
-            WHERE scope_id = ${scopeId} AND kind <> 'declares'
+            WHERE scope_id = ${scopeId} AND provenance = 'deterministic'
+              AND kind <> 'declares'
             UNION ALL
             SELECT target_node_id AS node_id
             FROM knowledge_graph_edges
-            WHERE scope_id = ${scopeId} AND kind <> 'declares'
+            WHERE scope_id = ${scopeId} AND provenance = 'deterministic'
+              AND kind <> 'declares'
           )
           GROUP BY node_id
         ), ranked AS (
@@ -589,7 +615,7 @@ const make = Effect.gen(function* () {
             ) AS kind_rank
           FROM knowledge_graph_nodes AS node
           LEFT JOIN meaningful_degree ON meaningful_degree.node_id = node.node_id
-          WHERE node.scope_id = ${scopeId}
+          WHERE node.scope_id = ${scopeId} AND node.provenance = 'deterministic'
         )
         SELECT "nodeId"
         FROM ranked
@@ -632,6 +658,7 @@ const make = Effect.gen(function* () {
         `SELECT edge_json AS json
          FROM knowledge_graph_edges
          WHERE scope_id = ?
+           AND provenance = 'deterministic'
            AND source_node_id IN (${placeholders})
            AND target_node_id IN (${placeholders})
          ORDER BY
@@ -837,7 +864,7 @@ const make = Effect.gen(function* () {
       const rows = yield* readScope(scopeId);
       const row = rows[0];
       if (row === undefined) return Option.none<KnowledgeGraphSnapshotV1>();
-      const status = yield* decodeJson(decodeStatusJson, row.statusJson, "get-snapshot");
+      const status = Option.getOrThrow(yield* getStatus(scopeId));
       const entities = yield* readEntities(scopeId);
       return Option.some({
         version: 1 as const,
@@ -870,6 +897,19 @@ const make = Effect.gen(function* () {
       );
     }).pipe(mapError("get-file-fingerprints"));
 
+  const hasLegacySemanticData = (scopeId: KnowledgeGraphScopeId) =>
+    sql<{ readonly exists: number }>`
+      SELECT (
+        EXISTS(SELECT 1 FROM knowledge_graph_nodes WHERE scope_id = ${scopeId} AND provenance = 'semantic')
+        OR EXISTS(SELECT 1 FROM knowledge_graph_edges WHERE scope_id = ${scopeId} AND provenance = 'semantic')
+        OR EXISTS(SELECT 1 FROM knowledge_graph_evidence WHERE scope_id = ${scopeId} AND kind = 'semantic')
+        OR EXISTS(SELECT 1 FROM knowledge_graph_semantic_queue WHERE scope_id = ${scopeId})
+      ) AS "exists"
+    `.pipe(
+      Effect.map((rows) => rows[0]?.exists === 1),
+      mapError("has-legacy-semantic-data"),
+    );
+
   const listScopes = (environmentId: KnowledgeGraphScopeV1["environmentId"]) =>
     sql<ScopeRow>`
       SELECT
@@ -900,73 +940,17 @@ const make = Effect.gen(function* () {
           reason: "scope-not-found",
         });
       }
+      const persistedStatus = staticStatus(status);
       yield* sql`
         UPDATE knowledge_graph_scopes SET
-          state = ${status.state},
-          status_json = ${encodeStatusJson(status)},
-          progress_json = ${status.progress === undefined ? null : encodeProgressJson(status.progress)},
-          truncation_json = ${encodeTruncationJson(status.truncated)},
+          state = ${persistedStatus.state},
+          status_json = ${encodeStatusJson(persistedStatus)},
+          progress_json = ${persistedStatus.progress === undefined ? null : encodeProgressJson(persistedStatus.progress)},
+          truncation_json = ${encodeTruncationJson(persistedStatus.truncated)},
           updated_at = ${now}
         WHERE scope_id = ${status.scopeId}
       `;
     }).pipe(mapError("update-status"));
-
-  const reconcileSemanticModel = (input: {
-    readonly environmentId: KnowledgeGraphScopeV1["environmentId"];
-    readonly modelKey: string | null;
-  }) =>
-    sql
-      .withTransaction(
-        Effect.gen(function* () {
-          const rows = yield* sql<SemanticEnvironmentRow>`
-          SELECT
-            semantic_model_key AS "semanticModelKey",
-            model_generation AS "modelGeneration"
-          FROM knowledge_graph_semantic_environments
-          WHERE environment_id = ${input.environmentId}
-        `;
-          const current = rows[0];
-          if (current === undefined && input.modelKey === null) {
-            return { modelGeneration: 0 as KnowledgeGraphModelGeneration, changed: false };
-          }
-          if (current?.semanticModelKey === input.modelKey) {
-            return {
-              modelGeneration: current.modelGeneration as KnowledgeGraphModelGeneration,
-              changed: false,
-            };
-          }
-
-          const modelGeneration = (current?.modelGeneration ?? 0) + 1;
-          const now = yield* Clock.currentTimeMillis;
-          yield* sql`
-          INSERT INTO knowledge_graph_semantic_environments (
-            environment_id,
-            paused,
-            rate_limited_until,
-            semantic_model_key,
-            model_generation,
-            updated_at
-          ) VALUES (
-            ${input.environmentId},
-            0,
-            NULL,
-            ${input.modelKey},
-            ${modelGeneration},
-            ${now}
-          ) ON CONFLICT (environment_id) DO UPDATE SET
-            paused = 0,
-            rate_limited_until = NULL,
-            semantic_model_key = excluded.semantic_model_key,
-            model_generation = excluded.model_generation,
-            updated_at = excluded.updated_at
-        `;
-          return {
-            modelGeneration: modelGeneration as KnowledgeGraphModelGeneration,
-            changed: true,
-          };
-        }),
-      )
-      .pipe(mapError("reconcile-semantic-model"));
 
   const getNodeBundle = (input: {
     readonly scopeId: KnowledgeGraphScopeId;
@@ -977,6 +961,7 @@ const make = Effect.gen(function* () {
         SELECT node_json AS json
         FROM knowledge_graph_nodes
         WHERE scope_id = ${input.scopeId} AND node_id = ${input.nodeId}
+          AND provenance = 'deterministic'
       `;
       const nodeRow = nodeRows[0];
       if (nodeRow === undefined) {
@@ -992,6 +977,7 @@ const make = Effect.gen(function* () {
         JOIN knowledge_graph_evidence AS evidence
           ON evidence.scope_id = link.scope_id AND evidence.evidence_id = link.evidence_id
         WHERE link.scope_id = ${input.scopeId} AND link.node_id = ${input.nodeId}
+          AND evidence.kind <> 'semantic'
         ORDER BY evidence.evidence_id
       `;
       const evidence = yield* Effect.forEach(evidenceRows, ({ json }) =>
@@ -1013,27 +999,30 @@ const make = Effect.gen(function* () {
           readonly evidence: ReadonlyArray<KnowledgeGraphEvidenceV1>;
           readonly fileFingerprints: ReadonlyArray<KnowledgeGraphFileFingerprintV1>;
           readonly truncation: KnowledgeGraphTruncationV1;
+          readonly hasLegacySemanticData: boolean;
         }>();
       }
-      const [nodeRows, edgeRows, evidenceRows, fileFingerprints, truncation] = yield* Effect.all([
-        sql<JsonRow>`
+      const [nodeRows, edgeRows, evidenceRows, fileFingerprints, truncation, hasLegacyData] =
+        yield* Effect.all([
+          sql<JsonRow>`
           SELECT node_json AS json FROM knowledge_graph_nodes
           WHERE scope_id = ${scopeId} AND provenance = 'deterministic'
           ORDER BY node_id
         `,
-        sql<JsonRow>`
+          sql<JsonRow>`
           SELECT edge_json AS json FROM knowledge_graph_edges
           WHERE scope_id = ${scopeId} AND provenance = 'deterministic'
           ORDER BY edge_id
         `,
-        sql<JsonRow>`
+          sql<JsonRow>`
           SELECT evidence_json AS json FROM knowledge_graph_evidence
           WHERE scope_id = ${scopeId} AND kind <> 'semantic'
           ORDER BY evidence_id
         `,
-        getFileFingerprints(scopeId),
-        decodeJson(decodeTruncationJson, row.truncationJson, "get-deterministic-state"),
-      ]);
+          getFileFingerprints(scopeId),
+          decodeJson(decodeTruncationJson, row.truncationJson, "get-deterministic-state"),
+          hasLegacySemanticData(scopeId),
+        ]);
       const [nodes, edges, evidence] = yield* Effect.all([
         Effect.forEach(nodeRows, ({ json }) =>
           decodeJson(decodeNodeJson, json, "get-deterministic-state-node"),
@@ -1053,6 +1042,7 @@ const make = Effect.gen(function* () {
         evidence,
         fileFingerprints,
         truncation,
+        hasLegacySemanticData: hasLegacyData,
       });
     }).pipe(mapError("get-deterministic-state"));
 
@@ -1273,13 +1263,13 @@ const make = Effect.gen(function* () {
       const [nodes, edges, evidence, files] = yield* Effect.all([
         sql<{
           readonly count: number;
-        }>`SELECT count(*) AS count FROM knowledge_graph_nodes WHERE scope_id = ${scopeId}`,
+        }>`SELECT count(*) AS count FROM knowledge_graph_nodes WHERE scope_id = ${scopeId} AND provenance = 'deterministic'`,
         sql<{
           readonly count: number;
-        }>`SELECT count(*) AS count FROM knowledge_graph_edges WHERE scope_id = ${scopeId}`,
+        }>`SELECT count(*) AS count FROM knowledge_graph_edges WHERE scope_id = ${scopeId} AND provenance = 'deterministic'`,
         sql<{
           readonly count: number;
-        }>`SELECT count(*) AS count FROM knowledge_graph_evidence WHERE scope_id = ${scopeId}`,
+        }>`SELECT count(*) AS count FROM knowledge_graph_evidence WHERE scope_id = ${scopeId} AND kind <> 'semantic'`,
         sql<{
           readonly count: number;
         }>`SELECT count(*) AS count FROM knowledge_graph_file_fingerprints WHERE scope_id = ${scopeId}`,
@@ -1328,6 +1318,15 @@ const make = Effect.gen(function* () {
               });
             }
             const revision = scopeRow.revision + 1;
+            const legacyRows = yield* sql<{ readonly count: number }>`
+              SELECT (
+                (SELECT count(*) FROM knowledge_graph_nodes WHERE scope_id = ${input.scope.scopeId} AND provenance = 'semantic') +
+                (SELECT count(*) FROM knowledge_graph_edges WHERE scope_id = ${input.scope.scopeId} AND provenance = 'semantic') +
+                (SELECT count(*) FROM knowledge_graph_evidence WHERE scope_id = ${input.scope.scopeId} AND kind = 'semantic') +
+                (SELECT count(*) FROM knowledge_graph_semantic_queue WHERE scope_id = ${input.scope.scopeId})
+              ) AS count
+            `;
+            const hadLegacySemanticData = (legacyRows[0]?.count ?? 0) > 0;
 
             yield* deleteByIds(
               "knowledge_graph_edges",
@@ -1355,23 +1354,49 @@ const make = Effect.gen(function* () {
             yield* replaceEntityEvidence("edge", input.scope.scopeId, input.edges);
             yield* upsertFingerprints(input.scope.scopeId, input.fingerprints);
 
+            yield* sql`DELETE FROM knowledge_graph_edges WHERE scope_id = ${input.scope.scopeId} AND provenance = 'semantic'`;
+            yield* sql`DELETE FROM knowledge_graph_nodes WHERE scope_id = ${input.scope.scopeId} AND provenance = 'semantic'`;
+            yield* sql`DELETE FROM knowledge_graph_evidence WHERE scope_id = ${input.scope.scopeId} AND kind = 'semantic'`;
+            yield* sql`DELETE FROM knowledge_graph_semantic_queue WHERE scope_id = ${input.scope.scopeId}`;
+            if (hadLegacySemanticData) {
+              yield* sql`
+                DELETE FROM knowledge_graph_semantic_environments
+                WHERE environment_id = ${input.scope.environmentId}
+                  AND NOT EXISTS (
+                    SELECT 1 FROM knowledge_graph_scopes AS remaining
+                    WHERE remaining.environment_id = ${input.scope.environmentId}
+                      AND (
+                        EXISTS (
+                          SELECT 1 FROM knowledge_graph_nodes AS node
+                          WHERE node.scope_id = remaining.scope_id AND node.provenance = 'semantic'
+                        ) OR EXISTS (
+                          SELECT 1 FROM knowledge_graph_edges AS edge
+                          WHERE edge.scope_id = remaining.scope_id AND edge.provenance = 'semantic'
+                        ) OR EXISTS (
+                          SELECT 1 FROM knowledge_graph_evidence AS evidence
+                          WHERE evidence.scope_id = remaining.scope_id AND evidence.kind = 'semantic'
+                        ) OR EXISTS (
+                          SELECT 1 FROM knowledge_graph_semantic_queue AS job
+                          WHERE job.scope_id = remaining.scope_id
+                        )
+                      )
+                  )
+              `;
+            }
+
             const counts = yield* readCounts(input.scope.scopeId);
-            const queueRows = yield* sql<{ readonly count: number }>`
-          SELECT count(*) AS count
-          FROM knowledge_graph_semantic_queue
-          WHERE scope_id = ${input.scope.scopeId}
-        `;
             const status: KnowledgeGraphStatusV1 = {
               version: 1,
               scopeId: input.scope.scopeId,
               state: "ready",
               revision,
               ...counts,
-              semanticQueueDepth: queueRows[0]?.count ?? 0,
+              semanticQueueDepth: 0,
               lastIndexedAt: input.committedAt,
               truncated: input.truncation,
             };
             const requiresSnapshot =
+              hadLegacySemanticData ||
               input.nodes.length > KNOWLEDGE_GRAPH_MAX_VISIBLE_NODES ||
               input.removedNodeIds.length > KNOWLEDGE_GRAPH_MAX_VISIBLE_NODES ||
               input.changedNodeIds.length > KNOWLEDGE_GRAPH_MAX_VISIBLE_NODES ||
@@ -1418,6 +1443,9 @@ const make = Effect.gen(function* () {
             )
           `;
             }
+            if (hadLegacySemanticData) {
+              yield* sql`DELETE FROM knowledge_graph_patch_log WHERE scope_id = ${input.scope.scopeId}`;
+            }
             yield* sql`
           DELETE FROM knowledge_graph_patch_log
           WHERE scope_id = ${input.scope.scopeId}
@@ -1462,56 +1490,6 @@ const make = Effect.gen(function* () {
       operation: "apply-deterministic-patch",
     });
 
-  const applySemanticPatch = (patch: KnowledgeGraphSemanticPatchV1) =>
-    Effect.gen(function* () {
-      const scopeRows = yield* readScope(patch.scopeId);
-      const row = scopeRows[0];
-      if (row === undefined) {
-        return yield* new KnowledgeGraphRepositoryError({
-          operation: "apply-semantic-patch",
-          reason: "scope-not-found",
-        });
-      }
-      const truncation = yield* decodeJson(
-        decodeTruncationJson,
-        row.truncationJson,
-        "apply-semantic-patch",
-      );
-      const edges: ReadonlyArray<KnowledgeGraphEdgeV1> = patch.edges.map((edge) => ({
-        version: 1,
-        edgeId: KnowledgeGraphEdgeId.make(
-          `semantic:${edge.sourceNodeId}:${edge.kind}:${edge.targetNodeId}`,
-        ),
-        scopeId: patch.scopeId,
-        ...edge,
-        provenance: "semantic",
-        edgeRevision: patch.baseRevision + 1,
-      }));
-      return yield* commit({
-        scope: {
-          version: 1,
-          scopeId: row.scopeId,
-          environmentId: row.environmentId,
-          projectId: row.projectId,
-          effectiveWorkspaceRoot: row.effectiveWorkspaceRoot,
-          isWorktree: row.isWorktree === 1,
-        } as KnowledgeGraphScopeV1,
-        baseRevision: patch.baseRevision,
-        nodes: patch.nodes,
-        edges,
-        evidence: patch.evidence,
-        removedNodeIds: [],
-        removedEdgeIds: [],
-        removedEvidenceIds: [],
-        fingerprints: [],
-        removedFingerprintPaths: [],
-        changedNodeIds: patch.changedNodeIds,
-        truncation,
-        committedAt: patch.committedAt,
-        operation: "apply-semantic-patch",
-      });
-    }).pipe(mapError("apply-semantic-patch"));
-
   const listPatchesAfter = (input: {
     readonly scopeId: KnowledgeGraphScopeId;
     readonly afterRevision: number;
@@ -1524,9 +1502,21 @@ const make = Effect.gen(function* () {
         ORDER BY revision
         LIMIT ${KNOWLEDGE_GRAPH_MAX_REPLAY_PATCHES}
       `;
-      return yield* Effect.forEach(rows, ({ json }) =>
+      const patches = yield* Effect.forEach(rows, ({ json }) =>
         decodeJson(decodePatchJson, json, "list-patches-after"),
       );
+      return patches
+        .filter(
+          (patch) =>
+            patch.upsertedNodes.every((node) => node.provenance === "deterministic") &&
+            patch.upsertedEdges.every((edge) => edge.provenance === "deterministic") &&
+            patch.upsertedEvidence.every((evidence) => evidence.kind !== "semantic") &&
+            patch.removedEdgeIds.every((edgeId) => !String(edgeId).startsWith("semantic:")),
+        )
+        .map((patch) => ({
+          ...patch,
+          status: staticStatus(patch.status),
+        }));
     }).pipe(mapError("list-patches-after"));
 
   const query = (input: {
@@ -1653,29 +1643,44 @@ const make = Effect.gen(function* () {
     }).pipe(mapError("query"));
 
   const clearScope = (scopeId: KnowledgeGraphScopeId) =>
-    sql`DELETE FROM knowledge_graph_scopes WHERE scope_id = ${scopeId}`.pipe(
-      Effect.asVoid,
-      mapError("clear-scope"),
-    );
+    sql
+      .withTransaction(
+        Effect.gen(function* () {
+          const row = (yield* readScope(scopeId))[0];
+          yield* sql`DELETE FROM knowledge_graph_scopes WHERE scope_id = ${scopeId}`;
+          if (row === undefined) return;
+          yield* sql`
+            DELETE FROM knowledge_graph_semantic_environments
+            WHERE environment_id = ${row.environmentId}
+              AND NOT EXISTS (
+                SELECT 1 FROM knowledge_graph_scopes WHERE environment_id = ${row.environmentId}
+              )
+          `;
+        }),
+      )
+      .pipe(mapError("clear-scope"));
 
   const clearEnvironment = (environmentId: KnowledgeGraphScopeV1["environmentId"]) =>
-    sql`DELETE FROM knowledge_graph_scopes WHERE environment_id = ${environmentId}`.pipe(
-      Effect.asVoid,
-      mapError("clear-environment"),
-    );
+    sql
+      .withTransaction(
+        Effect.gen(function* () {
+          yield* sql`DELETE FROM knowledge_graph_scopes WHERE environment_id = ${environmentId}`;
+          yield* sql`DELETE FROM knowledge_graph_semantic_environments WHERE environment_id = ${environmentId}`;
+        }),
+      )
+      .pipe(mapError("clear-environment"));
 
   return {
     ensureScope,
     getSnapshot,
     getStatus,
     getFileFingerprints,
+    hasLegacySemanticData,
     listScopes,
     updateStatus,
-    reconcileSemanticModel,
     getNodeBundle,
     getDeterministicState,
     applyDeterministicPatch,
-    applySemanticPatch,
     listPatchesAfter,
     query,
     clearScope,

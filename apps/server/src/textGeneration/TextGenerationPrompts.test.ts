@@ -285,6 +285,20 @@ describe("buildTranscriptTranslationPrompt", () => {
 });
 
 describe("buildPromptImprovementPrompt", () => {
+  it("uses the complete voice cleanup instruction when requested", () => {
+    const result = buildPromptImprovementPrompt({
+      text: "Ändere index.ts. Nein, entferne keine Tests.",
+      voiceCleanup: {
+        instructions: "Preserve corrections across pauses and all negations.",
+        context: '{"vocabulary":[{"name":"index.ts"}]}',
+      },
+    });
+    expect(result.prompt).toContain("Preserve corrections across pauses and all negations.");
+    expect(result.prompt).toContain("Ändere index.ts. Nein, entferne keine Tests.");
+    expect(result.prompt).toContain('"vocabulary"');
+    expect(result.prompt).toContain("Return a JSON object with key: text.");
+  });
+
   it("preserves language, requirements, identifiers, and scope", () => {
     const result = buildPromptImprovementPrompt({
       text: "Corrige reconnectSession, no cambies el contrato RPC.",

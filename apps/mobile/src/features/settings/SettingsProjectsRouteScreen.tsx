@@ -40,6 +40,7 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import {
   resolveMobileKnowledgeGraphAccess,
   resolveMobileKnowledgeGraphRoutePolicy,
+  supportsMobileStaticKnowledgeGraph,
 } from "../knowledge-graph/mobile-knowledge-graph";
 
 function workspaceModeMessageKey(mode: ThreadEnvMode | null) {
@@ -120,11 +121,15 @@ function ProjectMemorySettingsController({ project }: { project: EnvironmentProj
   );
 }
 
-function ProjectSettingsCard(props: { readonly project: EnvironmentProject }) {
+function ProjectSettingsCard(props: {
+  readonly project: EnvironmentProject;
+  readonly environmentLabel?: string;
+}) {
   const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation<
     NativeStackNavigationProp<{
       KnowledgeGraph: { readonly environmentId: string; readonly projectId: string };
+      SettingsProjectIndexing: { readonly environmentId: string; readonly projectId: string };
     }>
   >();
   const config = useEnvironmentServerConfig(props.project.environmentId);
@@ -132,6 +137,7 @@ function ProjectSettingsCard(props: { readonly project: EnvironmentProject }) {
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const supported = supportsProjectSettings(config);
+  const indexingSupported = (config?.environment.capabilities.projectIndexingVersion ?? 0) >= 3;
   const graphEnabled =
     config !== null &&
     resolveBetterT3FeatureFlag(config.settings.betterT3Environment, "knowledge.graph");
@@ -139,7 +145,10 @@ function ProjectSettingsCard(props: { readonly project: EnvironmentProject }) {
     knowledgeGraphVersion: config?.environment.capabilities.knowledgeGraphVersion,
     enabled: graphEnabled,
   });
-  const graphRoutePolicy = resolveMobileKnowledgeGraphRoutePolicy(graphAccess);
+  const graphRoutePolicy = resolveMobileKnowledgeGraphRoutePolicy(
+    graphAccess,
+    supportsMobileStaticKnowledgeGraph(config?.environment.capabilities.knowledgeGraphVersion),
+  );
 
   const update = useCallback(
     async (patch: {
@@ -196,6 +205,9 @@ function ProjectSettingsCard(props: { readonly project: EnvironmentProject }) {
     <View className="gap-2">
       <View className="gap-0.5 px-2">
         <Text className="text-lg font-t3-semibold text-foreground">{props.project.title}</Text>
+        {props.environmentLabel ? (
+          <Text className="text-sm text-foreground-muted">{props.environmentLabel}</Text>
+        ) : null}
         <Text className="text-sm text-foreground-muted" numberOfLines={1}>
           {props.project.workspaceRoot}
         </Text>
@@ -320,6 +332,44 @@ function ProjectSettingsCard(props: { readonly project: EnvironmentProject }) {
           </>
         )}
       </View>
+      <Pressable
+        accessibilityRole="button"
+        disabled={!indexingSupported}
+        className="flex-row items-center gap-3 rounded-[24px] bg-card p-4 disabled:opacity-45"
+        onPress={() =>
+          navigation.navigate("SettingsProjectIndexing", {
+            environmentId: String(props.project.environmentId),
+            projectId: String(props.project.id),
+          })
+        }
+      >
+        <SymbolView
+          name="point.3.connected.trianglepath.dotted"
+          size={21}
+          tintColorClassName="accent-icon"
+          type="monochrome"
+          weight="regular"
+        />
+        <View className="min-w-0 flex-1 gap-1">
+          <Text className="text-lg text-foreground">
+            {translator.message("projectIndexing.projectSettings")}
+          </Text>
+          <Text className="text-sm text-foreground-muted">
+            {translator.message(
+              indexingSupported
+                ? "projectIndexing.enabledDescription"
+                : "projectIndexing.updateServer",
+            )}
+          </Text>
+        </View>
+        <SymbolView
+          name="chevron.right"
+          size={15}
+          tintColorClassName="accent-icon"
+          type="monochrome"
+          weight="semibold"
+        />
+      </Pressable>
       <ProjectMemorySettingsController project={props.project} />
       {config ? (
         <ModelSelectionModal
@@ -370,7 +420,15 @@ export function SettingsProjectsRouteScreen() {
           </SettingsSection>
         ) : (
           sortedProjects.map((project) => (
-            <ProjectSettingsCard key={`${project.environmentId}:${project.id}`} project={project} />
+            <ProjectSettingsCard
+              key={`${project.environmentId}:${project.id}`}
+              project={project}
+              environmentLabel={
+                environments.find(
+                  (environment) => environment.environmentId === project.environmentId,
+                )?.environmentLabel
+              }
+            />
           ))
         )}
       </ScreenScaffoldScrollView>

@@ -1,5 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  DEFAULT_ASSEMBLY_AI_VOICE_SETTINGS,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -24,6 +25,70 @@ import {
 } from "./serverSettings.ts";
 
 describe("serverSettings helpers", () => {
+  it("replaces project indexing default models atomically and preserves explicit resets", () => {
+    const original = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      projectIndexingEnabled: true,
+      projectIndexingDefaultModelSelection: createModelSelection(
+        ProviderInstanceId.make("first-provider"),
+        "first-model",
+        [{ id: "reasoningEffort", value: "high" }],
+      ),
+    });
+    const selection = createModelSelection(
+      ProviderInstanceId.make("second-provider"),
+      "second-model",
+    );
+    const replaced = applyServerSettingsPatch(original, {
+      projectIndexingDefaultModelSelection: selection,
+    });
+    expect(replaced.projectIndexingEnabled).toBe(true);
+    expect(replaced.projectIndexingDefaultModelSelection).toEqual(selection);
+    expect(replaced.projectIndexingDefaultModelSelection?.options).toBeUndefined();
+    const disabled = applyServerSettingsPatch(replaced, { projectIndexingEnabled: false });
+    expect(disabled.projectIndexingDefaultModelSelection).toEqual(selection);
+    expect(disabled.projectIndexingEnabled).toBe(false);
+    const reset = applyServerSettingsPatch(disabled, {
+      projectIndexingDefaultModelSelection: null,
+    });
+    expect(reset.projectIndexingDefaultModelSelection).toBeNull();
+    expect(
+      applyServerSettingsPatch(reset, { defaultAutoPull: true })
+        .projectIndexingDefaultModelSelection,
+    ).toBeNull();
+    expect(DEFAULT_SERVER_SETTINGS.projectIndexingEnabled).toBe(false);
+    expect(DEFAULT_SERVER_SETTINGS.projectIndexingDefaultModelSelection).toBeNull();
+  });
+
+  it("updates voice defaults without losing the key and resets only the selected project", () => {
+    const first = ProjectId.make("voice-one");
+    const second = ProjectId.make("voice-two");
+    const voice = DEFAULT_ASSEMBLY_AI_VOICE_SETTINGS;
+    const configured = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      speechTranscription: {
+        assemblyAi: {
+          apiKey: { value: "secret" },
+          projectOverrides: {
+            [first]: { ...voice, cleanupMode: "off" },
+            [second]: { ...voice, cleanupMode: "compact" },
+          },
+        },
+      },
+    });
+    const reset = applyServerSettingsPatch(configured, {
+      speechTranscription: {
+        assemblyAi: {
+          voice: { ...voice, voiceFocus: "far-field" },
+          projectOverrides: { [first]: null },
+        },
+      },
+    });
+    expect(reset.speechTranscription.assemblyAi.apiKey.value).toBe("secret");
+    expect(reset.speechTranscription.assemblyAi.voice.voiceFocus).toBe("far-field");
+    expect(reset.speechTranscription.assemblyAi.projectOverrides[first]).toBeUndefined();
+    expect(reset.speechTranscription.assemblyAi.projectOverrides[second]?.cleanupMode).toBe(
+      "compact",
+    );
+  });
   it("inherits actions, preserves existing actions, and supports empty overrides and reset", () => {
     const project = { id: ProjectId.make("project-actions"), scripts: [] };
     const action = {

@@ -6,6 +6,7 @@ import * as Path from "effect/Path";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import {
+  forkMigrationManifest,
   forkMigrationTable,
   runMigrations,
   upstreamMigrationTable,
@@ -109,7 +110,7 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
             );
             assert.deepStrictEqual(
               yield* sql`SELECT MAX(migration_id) AS id FROM ${sql(forkMigrationTable)}`,
-              [{ id: 62 }],
+              [{ id: forkMigrationManifest.at(-1)?.[0] }],
             );
             if (sourceKind !== "independent") {
               assert.deepStrictEqual(

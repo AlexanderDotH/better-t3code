@@ -6,12 +6,18 @@ import {
   ProjectId as ProjectIdSchema,
   ProviderInteractionMode as ProviderInteractionModeSchema,
   RuntimeMode as RuntimeModeSchema,
+  VoiceFileReference as VoiceFileReferenceSchema,
   type EnvironmentId,
   type ModelSelection,
   type ProjectId,
   type ProviderInteractionMode,
   type RuntimeMode,
+  type VoiceFileReference,
 } from "@t3tools/contracts";
+import {
+  extractVoiceFileContext,
+  reconcileVoiceFileReferences,
+} from "@t3tools/shared/voiceFileContext";
 import * as Schema from "effect/Schema";
 import { useEffect } from "react";
 import { Atom } from "effect/unstable/reactivity";
@@ -61,6 +67,7 @@ export class ComposerDraftPersistenceError extends Schema.TaggedError<ComposerDr
 
 export interface ComposerDraft {
   readonly text: string;
+  readonly voiceFileReferences?: ReadonlyArray<VoiceFileReference>;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly importedShareIds?: ReadonlyArray<string>;
   readonly modelSelection?: ModelSelection;
@@ -84,6 +91,7 @@ export interface ComposerDraftProject {
 
 export interface ComposerDraftContent {
   readonly text: string;
+  readonly voiceFileReferences?: ReadonlyArray<VoiceFileReference>;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly sourceShareId?: string;
 }
@@ -120,6 +128,7 @@ const ComposerDraftProjectSchema = Schema.Struct({
 
 const ComposerDraftSchema = Schema.Struct({
   text: Schema.String,
+  voiceFileReferences: Schema.optional(Schema.Array(VoiceFileReferenceSchema)),
   attachments: Schema.Array(DraftComposerAttachmentSchema),
   importedShareIds: Schema.optional(Schema.Array(Schema.String)),
   modelSelection: Schema.optional(ModelSelectionSchema),
@@ -910,27 +919,30 @@ export function setStickyComposerModelSelection(modelSelection: ModelSelection):
   schedulePersistComposerState();
 }
 
-export function setComposerDraftText(draftKey: string, value: string): void {
+export function setComposerDraftText(
+  draftKey: string,
+  value: string,
+  voiceFileReferences?: ReadonlyArray<VoiceFileReference>,
+): void {
   updateComposerDrafts((current) => {
+    const existing = normalizeDraft(current[draftKey]);
+    const parsed = extractVoiceFileContext(value);
+    const references = reconcileVoiceFileReferences(parsed.text, [
+      ...(voiceFileReferences ?? existing.voiceFileReferences ?? []),
+      ...parsed.references,
+    ]);
     const draft = {
-      ...normalizeDraft(current[draftKey]),
-      text: value,
+      ...existing,
+      text: parsed.text,
+      voiceFileReferences: references.length > 0 ? references : undefined,
     };
     return withComposerDraft(current, draftKey, draft);
   });
 }
 
 export function appendComposerDraftText(draftKey: string, value: string): void {
-  updateComposerDrafts((current) => {
-    const existing = normalizeDraft(current[draftKey]);
-    return {
-      ...current,
-      [draftKey]: {
-        ...existing,
-        text: `${existing.text}${value}`,
-      },
-    };
-  });
+  const existing = getComposerDraftSnapshot(draftKey);
+  setComposerDraftText(draftKey, `${existing.text}${value}`);
 }
 
 /**
@@ -1075,6 +1087,7 @@ export function clearComposerDraftContentState(
   // draft leaves the store rather than lingering as a blank row.
   const {
     importedShareIds: _importedShareIds,
+    voiceFileReferences: _voiceFileReferences,
     modelSelection,
     workspaceSelection,
     project: _project,
@@ -1157,12 +1170,20 @@ export function mergeComposerDraftContentState(
     0,
     PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   );
-  const text = mergeComposerDraftText(existing.text, content.text);
+  const parsed = extractVoiceFileContext(content.text);
+  const text = mergeComposerDraftText(existing.text, parsed.text);
+  const voiceFileReferences = reconcileVoiceFileReferences(text, [
+    ...(existing.voiceFileReferences ?? []),
+    ...(content.voiceFileReferences ?? []),
+    ...parsed.references,
+  ]);
   const importedShareIds = content.sourceShareId
     ? [...(existing.importedShareIds ?? []), content.sourceShareId]
     : existing.importedShareIds;
   if (
     text === existing.text &&
+    voiceFileReferences.length === 0 &&
+    (existing.voiceFileReferences?.length ?? 0) === 0 &&
     attachments.length === existing.attachments.length &&
     importedShareIds === existing.importedShareIds
   ) {
@@ -1173,6 +1194,7 @@ export function mergeComposerDraftContentState(
     [draftKey]: {
       ...existing,
       text,
+      voiceFileReferences: voiceFileReferences.length > 0 ? voiceFileReferences : undefined,
       attachments,
       ...(importedShareIds ? { importedShareIds } : {}),
     },
@@ -1246,6 +1268,7 @@ export async function restoreComposerDraftSnapshot(
 export function sameComposerDraftState(a: ComposerDraft, b: ComposerDraft): boolean {
   return (
     a.text === b.text &&
+    a.voiceFileReferences === b.voiceFileReferences &&
     a.attachments === b.attachments &&
     a.importedShareIds === b.importedShareIds &&
     a.modelSelection === b.modelSelection &&
@@ -1300,9 +1323,14 @@ export function undoComposerDraftMergeState(
       : insertedText.length > 0 && existing.text.endsWith(insertedText)
         ? existing.text.slice(0, existing.text.length - insertedText.length)
         : existing.text;
+  const voiceFileReferences = reconcileVoiceFileReferences(
+    text,
+    existing.voiceFileReferences ?? [],
+  );
   const draft = {
     ...existing,
     text,
+    voiceFileReferences: voiceFileReferences.length > 0 ? voiceFileReferences : undefined,
     attachments: existing.attachments.filter(
       (attachment) => !insertedAttachmentIds.has(attachment.id),
     ),
@@ -1434,7 +1462,11 @@ export function retargetNewTaskDraft(
     ) {
       return current;
     }
-    const { workspaceSelection: _workspaceSelection, ...retained } = normalizeDraft(existing);
+    const {
+      workspaceSelection: _workspaceSelection,
+      voiceFileReferences: _voiceFileReferences,
+      ...retained
+    } = normalizeDraft(existing);
     // Pending uploads live on one server. Crossing environments keeps the
     // local bytes (the upload worker re-sends them to the new environment)
     // but drops the old stamp, so it cannot pin the source environment's

@@ -32,6 +32,7 @@ import type {
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
+import type * as Scope from "effect/Scope";
 
 import type { ProviderServiceError } from "../Errors.ts";
 import type { ProviderAdapterCapabilities, ProviderForceStopResult } from "./ProviderAdapter.ts";
@@ -71,6 +72,8 @@ export interface ProviderTransientSessionOptions {
  * ProviderServiceShape - Service API for provider session and turn orchestration.
  */
 export interface ProviderServiceShape {
+  /** Register before starting a transient session so synchronous early events cannot be lost. */
+  readonly subscribeEvents?: Effect.Effect<Stream.Stream<ProviderRuntimeEvent>, never, Scope.Scope>;
   /**
    * Start a provider session.
    */

@@ -115,6 +115,22 @@ describe("ExecutionEnvironmentCapabilities", () => {
     ).toThrow();
   });
 
+  it("distinguishes project indexing from optional environment defaults support", () => {
+    const legacy = decodeCapabilities({ repositoryIdentity: true, projectIndexingVersion: 1 });
+    expect(legacy.projectIndexingVersion).toBe(1);
+    expect(legacy.projectIndexingDefaultsVersion).toBeUndefined();
+    expect(
+      decodeCapabilities({
+        repositoryIdentity: true,
+        projectIndexingVersion: 1,
+        projectIndexingDefaultsVersion: 1,
+      }).projectIndexingDefaultsVersion,
+    ).toBe(1);
+    expect(() =>
+      decodeCapabilities({ repositoryIdentity: true, projectIndexingDefaultsVersion: 0 }),
+    ).toThrow();
+  });
+
   it("keeps resource diagnostics optional and versioned under mixed clients", () => {
     const legacy = decodeCapabilities({ repositoryIdentity: true });
     const current = decodeCapabilities({

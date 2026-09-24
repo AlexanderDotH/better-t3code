@@ -22,6 +22,7 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import { toSafeThreadAttachmentSegment } from "../../attachmentStore.ts";
 import type { ResourceAttribution } from "../../resourceTelemetry/ResourceAttribution.ts";
+import { isProjectIndexAnalysisThread } from "../../projectIndexing/privacy/ProjectIndexDiagnostics.ts";
 
 const MEBIBYTE = 1024 * 1024;
 const DAY_MS = 24 * 60 * 60 * 1_000;
@@ -636,6 +637,9 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
     if (existing) return existing;
 
     const write = Effect.fnUntraced(function* (event: unknown, threadId: ThreadId | null) {
+      // Analysis responses may contain private source excerpts. Keep them out of
+      // diagnostic copies; the workspace index owns the durable analysis record.
+      if (isProjectIndexAnalysisThread(threadId)) return;
       if (!shouldPersist(stream, event)) return;
       const payload = yield* serializeEvent(event);
       if (payload === undefined) return;

@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import type { AssemblyAiStreamingTokenResult } from "@t3tools/contracts";
+import {
+  DEFAULT_ASSEMBLY_AI_VOICE_SETTINGS,
+  type AssemblyAiStreamingTokenResult,
+} from "@t3tools/contracts";
 
 import { createAssemblyAiStreamingProxy } from "./AssemblyAiStreamingProxy.ts";
 
@@ -37,6 +40,32 @@ class FakeSocket {
 }
 
 describe("AssemblyAI server streaming proxy", () => {
+  it("passes the selected model and supported parameters through the mobile proxy", async () => {
+    const socket = new FakeSocket();
+    const createSocket = vi.fn<(url: string) => FakeSocket>(() => socket);
+    const proxy = createAssemblyAiStreamingProxy({
+      createSocket,
+      createSessionId: () => "configured",
+    });
+    const started = proxy.start({
+      ...CONFIG,
+      speechModel: "universal-streaming-multilingual",
+      options: {
+        ...DEFAULT_ASSEMBLY_AI_VOICE_SETTINGS,
+        speechModel: "universal-streaming-multilingual",
+        minTurnSilence: 800,
+      },
+    });
+    socket.open();
+    await started;
+    const params = new URL(createSocket.mock.calls[0]![0]).searchParams;
+    expect(params.get("speech_model")).toBe("universal-streaming-multilingual");
+    expect(params.get("min_turn_silence")).toBe("800");
+    expect(params.get("format_turns")).toBe("true");
+    expect(params.has("prompt")).toBe(false);
+    expect(params.has("mode")).toBe(false);
+    proxy.dispose();
+  });
   it("forwards client PCM and returns AssemblyAI transcript updates", async () => {
     const socket = new FakeSocket();
     const proxy = createAssemblyAiStreamingProxy({

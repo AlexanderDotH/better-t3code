@@ -89,6 +89,68 @@ const gitAdd = Effect.fn("WorkspaceContextTest.gitAdd")(function* (
 });
 
 it.layer(TestLayer, { excludeTestServices: true })("WorkspaceContextLive", (it) => {
+  it.effect("reads explicit paths without starting repository discovery", () =>
+    Effect.gen(function* () {
+      const context = yield* WorkspaceContext.WorkspaceContext;
+      const cwd = yield* makeTempDir;
+      yield* writeTextFile(cwd, "src/read.ts", "export const answer = 42;\n");
+      const result = yield* context.execute({
+        workspaceRoot: cwd,
+        input: { reads: [{ path: "src/read.ts", startLine: 1, endLine: 1 }] },
+      });
+      expect(result.reads[0]).toMatchObject({ status: "ok", text: "export const answer = 42;" });
+      expect(result.warnings).toEqual([]);
+    }),
+  );
+
+  for (const backend of ["git", "filesystem"] as const) {
+    it.effect(`bounds each ${backend} search to its own literal directory or file scopes`, () =>
+      Effect.gen(function* () {
+        const context = yield* WorkspaceContext.WorkspaceContext;
+        const cwd = yield* makeTempDir;
+        if (backend === "git") yield* initializeGit(cwd);
+        yield* writeTextFile(cwd, "selected/target.ts", "scopeMarker");
+        yield* writeTextFile(cwd, "selected-other/target.ts", "scopeMarker");
+        yield* writeTextFile(cwd, "outside/target.ts", "scopeMarker");
+        yield* writeTextFile(cwd, "literal[scope]/target.ts", "scopeMarker");
+        const result = yield* context.execute({
+          workspaceRoot: cwd,
+          input: {
+            queries: [
+              { text: "scopeMarker", mode: "content", scopes: ["selected/"] },
+              { text: "target", mode: "path", scopes: ["outside/target.ts"] },
+              { text: "scopeMarker", mode: "content", scopes: ["literal[scope]"] },
+            ],
+          },
+        });
+        expect(result.queries.map((query) => query.matches.map((match) => match.path))).toEqual([
+          ["selected/target.ts"],
+          ["outside/target.ts"],
+          ["literal[scope]/target.ts"],
+        ]);
+      }),
+    );
+  }
+
+  it.effect("rejects escaped search scopes before repository discovery", () =>
+    Effect.gen(function* () {
+      const context = yield* WorkspaceContext.WorkspaceContext;
+      const cwd = yield* makeTempDir;
+      for (const scope of ["../outside", "src/../../outside", "/etc", "C:\\private"]) {
+        const failure = yield* context
+          .execute({
+            workspaceRoot: cwd,
+            input: { queries: [{ text: "needle", scopes: [scope] }] },
+          })
+          .pipe(Effect.flip);
+        expect(failure).toMatchObject({
+          _tag: "WorkspaceContextPathError",
+          reason: "path_outside_root",
+        });
+      }
+    }),
+  );
+
   it.effect("rejects absolute MCP reads while host file reads remain available", () =>
     Effect.gen(function* () {
       const context = yield* WorkspaceContext.WorkspaceContext;

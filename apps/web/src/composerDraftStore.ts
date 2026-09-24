@@ -18,6 +18,7 @@ import {
   type ScopedThreadRef,
   ThreadId,
   SnapShotSource,
+  VoiceFileReference,
 } from "@t3tools/contracts";
 import {
   parseScopedProjectKey,
@@ -32,6 +33,7 @@ import * as Equal from "effect/Equal";
 import * as Effect from "effect/Effect";
 import { DeepMutable } from "effect/Types";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
+import { reconcileVoiceFileReferences } from "@t3tools/shared/voiceFileContext";
 import { useMemo } from "react";
 import { getLocalStorageItem } from "./hooks/useLocalStorage";
 import { resolveAppModelSelection, resolveAppModelSelectionForInstance } from "./modelSelection";
@@ -64,6 +66,17 @@ const isRuntimeMode = Schema.is(RuntimeMode);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 const isReviewCommentContext = Schema.is(ReviewCommentContextSchema);
 const isSnapShotSource = Schema.is(SnapShotSource);
+const isVoiceFileReference = Schema.is(VoiceFileReference);
+
+function cloneVoiceFileReferences(references: ReadonlyArray<VoiceFileReference>) {
+  return references.map((reference) => ({
+    ...reference,
+    candidates: reference.candidates.map((candidate) => ({
+      ...candidate,
+      symbols: candidate.symbols.map((symbol) => ({ ...symbol })),
+    })),
+  }));
+}
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
 const COMPOSER_DRAFT_STORAGE_VERSION = 9;
@@ -237,6 +250,7 @@ const PersistedComposerThreadDraftState = Schema.Struct({
   elementContexts: Schema.optionalKey(Schema.Array(PersistedElementContextDraft)),
   previewAnnotations: Schema.optionalKey(Schema.Array(PreviewAnnotationPayloadSchema)),
   reviewComments: Schema.optionalKey(Schema.Array(ReviewCommentContextSchema)),
+  voiceFileReferences: Schema.optionalKey(Schema.Array(VoiceFileReference)),
   // Keyed by `ProviderInstanceId` (open branded slug) so custom provider
   // instances (e.g. `codex_personal`) round-trip alongside the built-in
   // `codex` / `claudeAgent` / ... entries. Every prior `ProviderDriverKind`
@@ -374,6 +388,7 @@ export interface ComposerThreadDraftState {
   elementContexts: ElementContextDraft[];
   previewAnnotations: PreviewAnnotationPayload[];
   reviewComments: ReviewCommentContext[];
+  voiceFileReferences: ReadonlyArray<VoiceFileReference>;
   /**
    * Per-instance model selection. Keyed by `ProviderInstanceId` (open
    * branded slug) so a default `codex` instance and a user-authored
@@ -559,6 +574,10 @@ interface ComposerDraftStoreState {
   clearDraftThread: (threadRef: ComposerThreadTarget) => void;
   setStickyModelSelection: (modelSelection: ModelSelection | null | undefined) => void;
   setPrompt: (threadRef: ComposerThreadTarget, prompt: string) => void;
+  setVoiceFileReferences: (
+    threadRef: ComposerThreadTarget,
+    references: ReadonlyArray<VoiceFileReference>,
+  ) => void;
   setTerminalContexts: (threadRef: ComposerThreadTarget, contexts: TerminalContextDraft[]) => void;
   setModelSelection: (
     threadRef: ComposerThreadTarget,
@@ -770,6 +789,7 @@ const EMPTY_THREAD_DRAFT = Object.freeze<ComposerThreadDraftState>({
   elementContexts: EMPTY_ELEMENT_CONTEXTS,
   previewAnnotations: EMPTY_PREVIEW_ANNOTATIONS,
   reviewComments: EMPTY_REVIEW_COMMENTS,
+  voiceFileReferences: [],
   modelSelectionByProvider: EMPTY_MODEL_SELECTION_BY_PROVIDER,
   activeProvider: null,
   runtimeMode: null,
@@ -793,6 +813,7 @@ export function createEmptyThreadDraft(): ComposerThreadDraftState {
     elementContexts: [],
     previewAnnotations: [],
     reviewComments: [],
+    voiceFileReferences: [],
     modelSelectionByProvider: {},
     activeProvider: null,
     runtimeMode: null,
@@ -1923,6 +1944,12 @@ function normalizePersistedDraftsByThreadId(
     const reviewComments = Array.isArray(draftCandidate.reviewComments)
       ? draftCandidate.reviewComments.filter(isReviewCommentContext)
       : [];
+    const voiceFileReferences = reconcileVoiceFileReferences(
+      promptCandidate,
+      Array.isArray(draftCandidate.voiceFileReferences)
+        ? draftCandidate.voiceFileReferences.filter(isVoiceFileReference)
+        : [],
+    );
     const runtimeMode = isRuntimeMode(draftCandidate.runtimeMode)
       ? draftCandidate.runtimeMode
       : null;
@@ -2016,6 +2043,9 @@ function normalizePersistedDraftsByThreadId(
       ...(terminalContexts.length > 0 ? { terminalContexts } : {}),
       ...(elementContexts.length > 0 ? { elementContexts } : {}),
       ...(reviewComments.length > 0 ? { reviewComments } : {}),
+      ...(voiceFileReferences.length > 0
+        ? { voiceFileReferences: cloneVoiceFileReferences(voiceFileReferences) }
+        : {}),
       ...(hasModelData
         ? {
             modelSelectionByProvider: compactModelSelectionByProvider(modelSelectionByProvider),
@@ -2193,6 +2223,11 @@ export function partializeComposerDraftStoreState(
       ...(draft.reviewComments.length > 0
         ? {
             reviewComments: draft.reviewComments.map((comment) => ({ ...comment })),
+          }
+        : {}),
+      ...(draft.voiceFileReferences.length > 0
+        ? {
+            voiceFileReferences: cloneVoiceFileReferences(draft.voiceFileReferences),
           }
         : {}),
       ...(hasModelData
@@ -2464,6 +2499,10 @@ function toHydratedThreadDraft(
     previewAnnotations:
       persistedDraft.previewAnnotations?.map((annotation) => ({ ...annotation })) ?? [],
     reviewComments: persistedDraft.reviewComments?.map((comment) => ({ ...comment })) ?? [],
+    voiceFileReferences: reconcileVoiceFileReferences(
+      persistedDraft.prompt,
+      persistedDraft.voiceFileReferences ?? [],
+    ),
     modelSelectionByProvider,
     activeProvider,
     ...(persistedDraft.modelSelectionExplicit ? { modelSelectionExplicit: true } : {}),
@@ -2985,6 +3024,10 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             const nextDraft: ComposerThreadDraftState = {
               ...existing,
               prompt,
+              voiceFileReferences:
+                existing.voiceFileReferences.length > 0
+                  ? reconcileVoiceFileReferences(prompt, existing.voiceFileReferences)
+                  : existing.voiceFileReferences,
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {
@@ -2993,6 +3036,23 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftsByThreadKey[threadKey] = nextDraft;
             }
             return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        setVoiceFileReferences: (threadRef, references) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef);
+          if (!threadKey) return;
+          set((state) => {
+            const existing = state.draftsByThreadKey[threadKey];
+            if (!existing) return state;
+            return {
+              draftsByThreadKey: {
+                ...state.draftsByThreadKey,
+                [threadKey]: {
+                  ...existing,
+                  voiceFileReferences: reconcileVoiceFileReferences(existing.prompt, references),
+                },
+              },
+            };
           });
         },
         setTerminalContexts: (threadRef, contexts) => {
@@ -3937,6 +3997,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               elementContexts: [],
               previewAnnotations: [],
               reviewComments: [],
+              voiceFileReferences: [],
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {
@@ -3963,6 +4024,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             const nextDraft: ComposerThreadDraftState = {
               ...current,
               prompt: ensureInlineTerminalContextPlaceholders("", current.terminalContexts.length),
+              voiceFileReferences: [],
               images: [],
               files: [],
               nonPersistedImageIds: [],

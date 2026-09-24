@@ -98,14 +98,12 @@
   display: none;
 }
 
-@container chat-column (min-width: 77rem) {
-  .subagent-stack-compact-trigger {
-    display: none;
-  }
+[data-chat-agent-stack][data-agent-layout="expanded"] .subagent-stack-compact-trigger {
+  display: none;
+}
 
-  .subagent-stack-content {
-    display: block;
-  }
+[data-chat-agent-stack][data-agent-layout="expanded"] .subagent-stack-content {
+  display: block;
 }
 
 .subagent-stack-slot[data-subagent-presence="entering"] {

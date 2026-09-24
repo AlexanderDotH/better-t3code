@@ -18,6 +18,8 @@ import {
   type ProviderOptionSelection,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
+import { appendVoiceFileContext, extractVoiceFileContext } from "@t3tools/shared/voiceFileContext";
+import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import {
   collectAssistantCitations,
   serializeAssistantCitation,
@@ -189,6 +191,67 @@ function draftFor(threadId: ThreadId, environmentId: EnvironmentId = LEGACY_TEST
 function draftByKey(key: string) {
   return useComposerDraftStore.getState().draftsByThreadKey[key] ?? undefined;
 }
+
+describe("composerDraftStore voice file references", () => {
+  beforeEach(resetComposerDraftStore);
+  afterEach(resetComposerDraftStore);
+
+  it("persists all candidates, restores failed-send snapshots, and removes context with its chip", async () => {
+    await useComposerDraftStore.persist.clearStorage();
+    vi.useFakeTimers();
+    try {
+      const threadId = ThreadId.make("voice-draft");
+      const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+      const references = [
+        {
+          label: "index.ts",
+          previewPath: "apps/web/index.ts",
+          candidates: [
+            {
+              path: "apps/web/index.ts",
+              symbols: [{ name: "startWeb", kind: "function" as const, line: 8 }],
+            },
+            {
+              path: "apps/server/index.ts",
+              symbols: [{ name: "startServer", kind: "function" as const, line: 4 }],
+            },
+          ],
+          truncated: false,
+        },
+      ];
+      const prompt = `Fix ${serializeComposerFileLink(references[0]!.previewPath)} please.`;
+      const store = useComposerDraftStore.getState();
+      store.setPrompt(threadRef, prompt);
+      store.setVoiceFileReferences(threadRef, references);
+      await vi.advanceTimersByTimeAsync(300);
+      resetComposerDraftStore();
+      await useComposerDraftStore.persist.rehydrate();
+      const hydrated = useComposerDraftStore.getState().getComposerDraft(threadRef)!;
+      expect(hydrated.voiceFileReferences).toEqual(references);
+      const sent = appendVoiceFileContext(hydrated.prompt, hydrated.voiceFileReferences);
+      expect(extractVoiceFileContext(sent).references[0]?.candidates).toHaveLength(2);
+
+      store.clearComposerContent(threadRef);
+      store.setPrompt(threadRef, hydrated.prompt);
+      store.setVoiceFileReferences(threadRef, hydrated.voiceFileReferences);
+      expect(
+        useComposerDraftStore.getState().getComposerDraft(threadRef)?.voiceFileReferences,
+      ).toEqual(references);
+
+      store.setPrompt(threadRef, "Fix this please.");
+      expect(
+        useComposerDraftStore.getState().getComposerDraft(threadRef)?.voiceFileReferences,
+      ).toEqual([]);
+      store.setVoiceFileReferences(threadRef, references);
+      expect(
+        useComposerDraftStore.getState().getComposerDraft(threadRef)?.voiceFileReferences,
+      ).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+      await useComposerDraftStore.persist.clearStorage();
+    }
+  });
+});
 
 describe("composerDraftStore assistant citations", () => {
   beforeEach(resetComposerDraftStore);

@@ -9,19 +9,24 @@ const IGNORED_DIRECTORY_NAMES = stringSet(`
 `);
 
 export function isIgnoredProjectSpeechDirectoryName(name: string): boolean {
-  return name.startsWith(".") || IGNORED_DIRECTORY_NAMES.has(name.toLowerCase());
+  return (
+    name.startsWith(".") ||
+    IGNORED_DIRECTORY_NAMES.has(name.toLowerCase()) ||
+    isSecretKnowledgeGraphPath(name)
+  );
 }
 
 export function isIgnoredProjectSpeechPath(path: string): boolean {
+  if (isSecretKnowledgeGraphPath(path)) return true;
   const segments = path.replace(/\\/g, "/").split("/").filter(Boolean);
   if (segments.some((segment) => IGNORED_DIRECTORY_NAMES.has(segment.toLowerCase()))) return true;
   if (segments.slice(0, -1).some((segment) => segment.startsWith("."))) return true;
 
   const filename = segments.at(-1)?.toLowerCase() ?? "";
   return (
-    filename === ".env" ||
-    filename.startsWith(".env.") ||
+    filename.startsWith(".") ||
     /(?:^|\.)(?:gen|generated|min)\.[^.]+$/.test(filename) ||
     filename.endsWith(".map")
   );
 }
+import { isSecretKnowledgeGraphPath } from "../knowledge-graph/extraction/KnowledgeGraphPathPolicy.ts";

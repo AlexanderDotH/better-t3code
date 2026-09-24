@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Fatal layer construction can fail before the Effect filesystem and tracer exist.
 for (const stream of [process.stdout, process.stderr]) {
   stream.on("error", (err: NodeJS.ErrnoException) => {
     if (err.code !== "EPIPE") throw err;
@@ -8,6 +9,10 @@ import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -240,4 +245,32 @@ const desktopRuntimeLayer = desktopClerkLayer.pipe(
   Layer.provideMerge(DesktopPreReadyPlatform.layer),
 );
 
-DesktopApp.program.pipe(Effect.provide(desktopRuntimeLayer), NodeRuntime.runMain);
+const reportEarlyStartupFailure = (cause: Cause.Cause<unknown>) =>
+  Effect.gen(function* () {
+    const timestamp = DateTime.formatIso(yield* DateTime.now);
+    const configuredHome = process.env.T3CODE_HOME?.trim();
+    const baseDir = configuredHome || NodePath.join(NodeOS.homedir(), ".t3");
+    const stateDir =
+      process.env.VITE_DEV_SERVER_URL && !configuredHome
+        ? NodePath.join(baseDir, "dev")
+        : NodePath.join(baseDir, "userdata");
+    const logDir = NodePath.join(stateDir, "logs");
+    yield* Effect.sync(() => {
+      try {
+        NodeFS.mkdirSync(logDir, { recursive: true, mode: 0o700 });
+        NodeFS.writeFileSync(
+          NodePath.join(logDir, "desktop.startup-failure.log"),
+          `[${timestamp}] ${Cause.pretty(cause)}\n`,
+          { mode: 0o600 },
+        );
+      } catch {
+        // NodeRuntime still reports the original cause to stderr.
+      }
+    });
+  });
+
+DesktopApp.program.pipe(
+  Effect.provide(desktopRuntimeLayer),
+  Effect.tapCause(reportEarlyStartupFailure),
+  NodeRuntime.runMain,
+);

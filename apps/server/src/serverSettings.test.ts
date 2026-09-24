@@ -1,7 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
+  DEFAULT_ASSEMBLY_AI_VOICE_SETTINGS,
   McpServerId,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   resolveBetterT3FeatureFlag,
@@ -32,6 +34,9 @@ import { redactServerSettingsForClient, ServerSettingsService } from "./serverSe
 
 const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
+const decodePersistedServerSettings = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(ServerSettings),
+);
 
 const makeServerSettingsLayer = () =>
   ServerSettingsModule.layer.pipe(
@@ -157,9 +162,10 @@ it.layer(NodeServices.layer)("server settings", (it) => {
   it.effect("decodes nested settings patches", () =>
     Effect.gen(function* () {
       const legacySettings = yield* decodeServerSettings({});
-      assert.deepEqual(legacySettings.speechTranscription, {
-        assemblyAi: { apiKey: { value: "" } },
-      });
+      assert.deepEqual(
+        legacySettings.speechTranscription,
+        DEFAULT_SERVER_SETTINGS.speechTranscription,
+      );
       assert.equal(legacySettings.voiceTranslationModelSelection, null);
 
       assert.deepEqual(
@@ -2502,6 +2508,60 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.equal(roundTrippedGithub.env.GITHUB_TOKEN?.value, "ghp-secret");
       assert.equal(roundTrippedRemoteDocs.headers.Authorization?.value, "Bearer secret");
     }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect(
+    "persists voice options with coupled defaults and keeps project overrides independent",
+    () =>
+      Effect.gen(function* () {
+        const settings = yield* ServerSettingsService;
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const projectId = ProjectId.make("voice-project");
+        const voice = {
+          ...DEFAULT_ASSEMBLY_AI_VOICE_SETTINGS,
+          cleanupModelSelection: createModelSelection(
+            ProviderInstanceId.make("codex"),
+            "gpt-6-luna",
+          ),
+          languageCodes: ["de", "en"],
+        };
+        const saved = yield* settings.updateSettings({
+          speechTranscription: { assemblyAi: { voice } },
+        });
+        assert.deepEqual(saved.speechTranscription.assemblyAi.voice, voice);
+        const persisted = yield* decodePersistedServerSettings(
+          yield* fs.readFileString(config.settingsPath),
+        );
+        assert.deepEqual(persisted.speechTranscription.assemblyAi.voice, voice);
+
+        const override = { ...voice, minTurnSilence: 600, automaticFileReferences: false };
+        yield* settings.updateSettings({
+          speechTranscription: { assemblyAi: { projectOverrides: { [projectId]: override } } },
+        });
+        const reset = yield* settings.updateSettings({
+          speechTranscription: { assemblyAi: { voice: DEFAULT_ASSEMBLY_AI_VOICE_SETTINGS } },
+        });
+        assert.deepEqual(
+          reset.speechTranscription.assemblyAi.voice,
+          DEFAULT_ASSEMBLY_AI_VOICE_SETTINGS,
+        );
+        assert.deepEqual(
+          reset.speechTranscription.assemblyAi.projectOverrides[projectId],
+          override,
+        );
+        const cleared = yield* settings.updateSettings({
+          speechTranscription: { assemblyAi: { projectOverrides: { [projectId]: null } } },
+        });
+        assert.deepEqual(cleared.speechTranscription.assemblyAi.projectOverrides, {});
+        const beforeInvalidSave = yield* fs.readFileString(config.settingsPath);
+        yield* Effect.flip(
+          settings.updateSettings({
+            speechTranscription: { assemblyAi: { voice: { ...voice, minTurnSilence: 2_000 } } },
+          }),
+        );
+        assert.equal(yield* fs.readFileString(config.settingsPath), beforeInvalidSave);
+      }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
   it.effect("stores, preserves, replaces, redacts, and removes the AssemblyAI API key", () =>

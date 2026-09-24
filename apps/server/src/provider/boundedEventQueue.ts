@@ -3,6 +3,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import type * as Scope from "effect/Scope";
 
 const MEBIBYTE = 1024 * 1024;
 
@@ -38,6 +39,7 @@ export interface BoundedProviderEventQueueOptions<A> {
 
 export interface BoundedProviderEventBroadcast<A> {
   readonly subscribe: Effect.Effect<BoundedProviderEventQueue<A>>;
+  readonly subscribeScoped: Effect.Effect<Stream.Stream<A>, never, Scope.Scope>;
   readonly stream: Stream.Stream<A>;
   readonly publish: (value: A) => Effect.Effect<boolean>;
   readonly shutdown: Effect.Effect<void>;
@@ -146,13 +148,10 @@ export const makeBoundedProviderEventBroadcast = Effect.fnUntraced(function* <A>
       ),
     );
 
-  const stream = Stream.unwrap(
-    Effect.gen(function* () {
-      const subscriber = yield* subscribe;
-      yield* Effect.acquireRelease(Effect.void, () => unsubscribe(subscriber).pipe(Effect.ignore));
-      return subscriber.stream;
-    }),
+  const subscribeScoped = Effect.acquireRelease(subscribe, unsubscribe).pipe(
+    Effect.map((subscriber) => subscriber.stream),
   );
+  const stream = Stream.unwrap(subscribeScoped);
 
   const shutdown = Ref.getAndUpdate(state, () => ({
     closed: true,
@@ -163,5 +162,11 @@ export const makeBoundedProviderEventBroadcast = Effect.fnUntraced(function* <A>
     ),
   );
 
-  return { subscribe, stream, publish, shutdown } satisfies BoundedProviderEventBroadcast<A>;
+  return {
+    subscribe,
+    subscribeScoped,
+    stream,
+    publish,
+    shutdown,
+  } satisfies BoundedProviderEventBroadcast<A>;
 });

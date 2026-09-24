@@ -17,6 +17,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import {
   ApprovalRequestId,
+  EnvironmentId,
   GrokSettings,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -26,6 +27,7 @@ import {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   grokPromptSettlementBelongsToContext,
   isGrokEnterPlanModeToolCall,
@@ -36,6 +38,7 @@ import {
 import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
+const encodePermissionInput = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
@@ -43,13 +46,16 @@ const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.
 // process instead, so the mock never sees a signal to log.
 const windowsHost = HostProcessPlatform.defaultValue() === "win32";
 
-async function makeMockGrokWrapper(extraEnv?: Record<string, string>) {
+async function makeMockGrokWrapper(extraEnv?: Record<string, string>, argvLogPath?: string) {
   const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-mock-"));
   return writeFakeCli({
     directory: dir,
     name: "fake-grok",
     env: extraEnv ?? {},
-    source: execScriptSource({ scriptPath: mockAgentPath }),
+    source: execScriptSource({
+      scriptPath: mockAgentPath,
+      ...(argvLogPath ? { argvLogPath } : {}),
+    }),
   });
 }
 
@@ -212,6 +218,115 @@ it("requires a settlement to match the live Grok turn", () => {
 });
 
 it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
+  it.effect.each([
+    { title: "Bash", kind: "execute", rawInput: { variant: "Bash", command: "synthetic command" } },
+    {
+      title: "Write",
+      kind: "edit",
+      rawInput: { variant: "Write", file_path: "/synthetic/example.ts" },
+    },
+    { title: "Task", kind: "other", rawInput: { variant: "Task", prompt: "Synthetic delegation" } },
+    {
+      title: "mcp__unapproved__write",
+      kind: "other",
+      rawInput: { server: "unapproved", tool: "write" },
+    },
+  ] as const)(
+    "denies Fetch worker $title requests without inherited full-access or MCP sessions",
+    ({ title, kind, rawInput }) =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make(`fetch:grok:${title}`);
+        const tempDir = yield* Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-fetch-policy-")),
+        );
+        const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+        const argvLogPath = NodePath.join(tempDir, "argv.txt");
+        const wrapperPath = yield* Effect.promise(() =>
+          makeMockGrokWrapper(
+            {
+              T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+              T3_ACP_EMIT_TOOL_CALLS: "1",
+              T3_ACP_PERMISSION_TOOL_KIND: kind,
+              T3_ACP_PERMISSION_TITLE: title,
+              T3_ACP_PERMISSION_RAW_INPUT: encodePermissionInput(rawInput),
+            },
+            argvLogPath,
+          ),
+        );
+        yield* Effect.addFinalizer(() =>
+          Effect.promise(() =>
+            NodeFSP.rm(NodePath.dirname(wrapperPath), { recursive: true, force: true }),
+          ),
+        );
+        yield* Effect.addFinalizer(() =>
+          Effect.promise(() => NodeFSP.rm(tempDir, { recursive: true, force: true })),
+        );
+        McpProviderSession.setMcpProviderSession({
+          environmentId: EnvironmentId.make("synthetic-environment"),
+          threadId,
+          providerSessionId: "synthetic-session",
+          providerInstanceId: ProviderInstanceId.make("grok"),
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer synthetic-token",
+        });
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
+        );
+        const adapter = yield* makeTestAdapter(wrapperPath);
+        const denied = yield* Ref.make(0);
+        const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+          event.type === "request.opened" && event.threadId === threadId
+            ? Ref.update(denied, (count) => count + 1).pipe(
+                Effect.andThen(
+                  adapter.respondToRequest(
+                    threadId,
+                    ApprovalRequestId.make(String(event.requestId)),
+                    "decline",
+                  ),
+                ),
+              )
+            : Effect.void,
+        ).pipe(Effect.forkChild);
+        const session = yield* adapter.startSession({
+          threadId,
+          provider: ProviderDriverKind.make("grok"),
+          cwd: tempDir,
+          purpose: "fetch-worker",
+          runtimeMode: "full-access",
+          resumeCursor: { schemaVersion: 1, sessionId: "must-not-resume" },
+        });
+        yield* adapter.sendTurn({
+          threadId,
+          input: "Synthetic read-only analysis",
+          attachments: [],
+        });
+        assert.equal(session.runtimeMode, "approval-required");
+        assert.equal(yield* Ref.get(denied), 1);
+        const args = yield* Effect.promise(() => NodeFSP.readFile(argvLogPath, "utf8"));
+        assert.deepEqual(args.trim().split("\t"), [
+          "--permission-mode",
+          "default",
+          "agent",
+          "stdio",
+        ]);
+        const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+        assert.isFalse(requests.some((entry) => entry.method === "session/load"));
+        const sessionNew = requests.find((entry) => entry.method === "session/new");
+        assert.deepEqual(
+          (sessionNew?.params as { mcpServers?: unknown } | undefined)?.mcpServers,
+          [],
+        );
+        const permissionResults = requests
+          .filter((entry) => !("method" in entry))
+          .map((entry) => entry.result);
+        assert.deepEqual(permissionResults, [
+          { outcome: { outcome: "selected", optionId: "reject-once" } },
+        ]);
+        yield* Fiber.interrupt(eventsFiber);
+        yield* adapter.stopSession(threadId);
+      }),
+  );
+
   it.effect("sends runtime context with the current model without changing saved prompts", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-runtime-context");

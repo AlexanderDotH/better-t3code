@@ -188,7 +188,7 @@ const make = Effect.gen(function* () {
           phase: "discovering",
           discoveredFileCount: 0,
           processedFileCount: 0,
-          queuedSemanticNodeCount: currentStatus.semanticQueueDepth,
+          queuedSemanticNodeCount: 0,
         },
       })
       .pipe(
@@ -298,6 +298,7 @@ const make = Effect.gen(function* () {
       changedNodeIds.add(edge.targetNodeId);
     }
     const graphChanged =
+      current.hasLegacySemanticData ||
       upsertedNodes.length > 0 ||
       upsertedEdges.length > 0 ||
       upsertedEvidence.length > 0 ||
@@ -345,7 +346,7 @@ const make = Effect.gen(function* () {
           discoveredFileCount,
           processedFileCount,
           totalFileCount: discoveredFileCount,
-          queuedSemanticNodeCount: currentStatus.semanticQueueDepth,
+          queuedSemanticNodeCount: 0,
         },
       })
       .pipe(

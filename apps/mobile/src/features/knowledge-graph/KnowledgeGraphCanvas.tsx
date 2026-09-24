@@ -3,9 +3,11 @@ import {
   deriveKnowledgeGraphView,
   type KnowledgeGraphPosition,
   type KnowledgeGraphViewport,
+  type KnowledgeGraphViewModel,
 } from "@t3tools/client-runtime/knowledge-graph";
 import type {
   KnowledgeGraphNodeId,
+  KnowledgeGraphEdgeId,
   KnowledgeGraphNodeKind,
   KnowledgeGraphSnapshotV1,
 } from "@t3tools/contracts";
@@ -189,12 +191,23 @@ function ZoomButton(props: {
   );
 }
 
-export function KnowledgeGraphCanvas(props: {
-  readonly snapshot: KnowledgeGraphSnapshotV1;
+export type MobileKnowledgeGraphView = Pick<
+  KnowledgeGraphViewModel,
+  "nodes" | "edges" | "matchingNodeCount"
+> & {
+  readonly edgePatterns?: ReadonlyMap<KnowledgeGraphEdgeId, string>;
+};
+
+type KnowledgeGraphCanvasProps = {
   readonly query: string;
   readonly selectedNodeId: KnowledgeGraphNodeId | null;
   readonly onSelectNode: (nodeId: KnowledgeGraphNodeId | null) => void;
-}) {
+} & (
+  | { readonly snapshot: KnowledgeGraphSnapshotV1; readonly view?: never }
+  | { readonly view: MobileKnowledgeGraphView; readonly snapshot?: never }
+);
+
+export function KnowledgeGraphCanvas(props: KnowledgeGraphCanvasProps) {
   const translator = useMobileInterfaceTranslator();
   const reduceMotion = useReduceMotion();
   const [dimensions, setDimensions] = useState({ width: MIN_CANVAS_SIZE, height: MIN_CANVAS_SIZE });
@@ -209,16 +222,15 @@ export function KnowledgeGraphCanvas(props: {
   const panStartY = useSharedValue(0);
   const pinchStartScale = useSharedValue(1);
 
-  const view = useMemo(
-    () =>
-      deriveKnowledgeGraphView({
-        snapshot: props.snapshot,
-        query: props.query,
-        kinds,
-        expandedNodeId: props.selectedNodeId,
-      }),
-    [kinds, props.query, props.selectedNodeId, props.snapshot],
-  );
+  const view = useMemo(() => {
+    if (props.view !== undefined) return props.view;
+    return deriveKnowledgeGraphView({
+      snapshot: props.snapshot,
+      query: props.query,
+      kinds,
+      expandedNodeId: props.selectedNodeId,
+    });
+  }, [kinds, props.query, props.selectedNodeId, props.snapshot, props.view]);
   const layout = useMemo(
     () =>
       computeKnowledgeGraphLayout({
@@ -340,59 +352,61 @@ export function KnowledgeGraphCanvas(props: {
 
   return (
     <View className="flex-1 gap-2">
-      <ScrollView
-        horizontal
-        accessibilityLabel={translator.message("knowledgeGraph.filters.label")}
-        contentContainerClassName="gap-2 px-3"
-        showsHorizontalScrollIndicator={false}
-      >
-        <Pressable
-          accessibilityRole="checkbox"
-          accessibilityState={{ checked: kinds.size === 0 }}
-          className={
-            kinds.size === 0
-              ? "rounded-full bg-primary px-3 py-2"
-              : "rounded-full border border-border bg-card px-3 py-2"
-          }
-          onPress={() => setKinds(new Set())}
+      {props.view === undefined ? (
+        <ScrollView
+          horizontal
+          accessibilityLabel={translator.message("knowledgeGraph.filters.label")}
+          contentContainerClassName="gap-2 px-3"
+          showsHorizontalScrollIndicator={false}
         >
-          <Text
+          <Pressable
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: kinds.size === 0 }}
             className={
               kinds.size === 0
-                ? "text-xs font-t3-semibold text-primary-foreground"
-                : "text-xs font-t3-semibold text-foreground"
+                ? "rounded-full bg-primary px-3 py-2"
+                : "rounded-full border border-border bg-card px-3 py-2"
             }
+            onPress={() => setKinds(new Set())}
           >
-            {translator.message("knowledgeGraph.filter.all")}
-          </Text>
-        </Pressable>
-        {NODE_KINDS.map((kind) => {
-          const selected = kinds.has(kind);
-          return (
-            <Pressable
-              key={kind}
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: selected }}
+            <Text
               className={
-                selected
-                  ? "rounded-full bg-primary px-3 py-2"
-                  : "rounded-full border border-border bg-card px-3 py-2"
+                kinds.size === 0
+                  ? "text-xs font-t3-semibold text-primary-foreground"
+                  : "text-xs font-t3-semibold text-foreground"
               }
-              onPress={() => setKinds((current) => toggleKnowledgeGraphKind(current, kind))}
             >
-              <Text
+              {translator.message("knowledgeGraph.filter.all")}
+            </Text>
+          </Pressable>
+          {NODE_KINDS.map((kind) => {
+            const selected = kinds.has(kind);
+            return (
+              <Pressable
+                key={kind}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: selected }}
                 className={
                   selected
-                    ? "text-xs font-t3-semibold text-primary-foreground"
-                    : "text-xs font-t3-semibold text-foreground"
+                    ? "rounded-full bg-primary px-3 py-2"
+                    : "rounded-full border border-border bg-card px-3 py-2"
                 }
+                onPress={() => setKinds((current) => toggleKnowledgeGraphKind(current, kind))}
               >
-                {translator.message(knowledgeGraphNodeKindMessageKey(kind))}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </ScrollView>
+                <Text
+                  className={
+                    selected
+                      ? "text-xs font-t3-semibold text-primary-foreground"
+                      : "text-xs font-t3-semibold text-foreground"
+                  }
+                >
+                  {translator.message(knowledgeGraphNodeKindMessageKey(kind))}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      ) : null}
 
       <GestureDetector gesture={canvasGesture}>
         <View
@@ -424,6 +438,7 @@ export function KnowledgeGraphCanvas(props: {
                     stroke="currentColor"
                     strokeOpacity={Math.max(0.35, edge.confidence)}
                     strokeWidth={1.5}
+                    strokeDasharray={props.view?.edgePatterns?.get(edge.edgeId)}
                   />
                 );
               })}

@@ -6,6 +6,7 @@ import { WorkspaceRevision } from "./workspaceEdit.ts";
 export const WORKSPACE_CONTEXT_MAX_QUERIES = 16;
 export const WORKSPACE_CONTEXT_MAX_READS = 16;
 export const WORKSPACE_CONTEXT_MAX_QUERY_LENGTH = 256;
+const WORKSPACE_CONTEXT_MAX_QUERY_SCOPES = 16;
 export const WORKSPACE_CONTEXT_MAX_PATH_LENGTH = 512;
 export const WORKSPACE_CONTEXT_MAX_CONTEXT_LINES = 8;
 export const WORKSPACE_CONTEXT_MAX_RESULTS_PER_QUERY = 20;
@@ -19,6 +20,11 @@ export type WorkspaceContextQueryMode = typeof WorkspaceContextQueryMode.Type;
 export const WorkspaceContextQuery = Schema.Struct({
   text: TrimmedNonEmptyString.check(Schema.isMaxLength(WORKSPACE_CONTEXT_MAX_QUERY_LENGTH)),
   mode: Schema.optional(WorkspaceContextQueryMode),
+  scopes: Schema.optionalKey(
+    Schema.Array(
+      TrimmedNonEmptyString.check(Schema.isMaxLength(WORKSPACE_CONTEXT_MAX_PATH_LENGTH)),
+    ).check(Schema.isMaxLength(WORKSPACE_CONTEXT_MAX_QUERY_SCOPES)),
+  ),
 });
 export type WorkspaceContextQuery = typeof WorkspaceContextQuery.Type;
 

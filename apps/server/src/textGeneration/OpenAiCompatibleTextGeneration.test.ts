@@ -62,6 +62,35 @@ function makeTransport(
 }
 
 describe("OpenAiCompatibleTextGeneration", () => {
+  it.effect("sends the selected voice cleanup instructions to the text model", () =>
+    Effect.gen(function* () {
+      const requests: Array<OpenAiCompatibleRoundRequest> = [];
+      const service = makeOpenAiCompatibleTextGeneration(SETTINGS, {
+        driverKind: "openaiCompatible",
+        instanceId: INSTANCE,
+        transport: makeTransport(
+          ['{"text":"Ändere index.ts, aber entferne keine Tests."}'],
+          requests,
+        ),
+      });
+      const result = yield* service.improvePrompt({
+        cwd: "/workspace",
+        text: "Ändere index.ts. Nein, entferne keine Tests.",
+        modelSelection: INPUT.modelSelection,
+        voiceCleanup: {
+          instructions: "Preserve explicit corrections and negations.",
+          context: '{"vocabulary":[{"name":"index.ts"}]}',
+        },
+      });
+      expect(result.text).toBe("Ändere index.ts, aber entferne keine Tests.");
+      expect(requests[0]?.model).toBe("selected-coder");
+      expect(requests[0]?.history[0]?.content).toContain(
+        "Preserve explicit corrections and negations.",
+      );
+      expect(requests[0]?.history[0]?.content).toContain('"vocabulary"');
+    }),
+  );
+
   for (const driverKind of ["openaiCompatible", "lmstudio"] as const) {
     it.effect(
       `${driverKind} uses selected manual models and configured defaults without model discovery`,

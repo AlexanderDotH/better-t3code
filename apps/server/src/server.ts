@@ -155,9 +155,17 @@ import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as SubagentResourceGovernor from "./resourceProtection/SubagentResourceGovernor.ts";
 import * as KnowledgeGraphLive from "./knowledge-graph/KnowledgeGraphLive.ts";
+import * as KnowledgeGraphScopeCatalog from "./knowledge-graph/runtime/KnowledgeGraphScopeCatalog.ts";
+import * as KnowledgeGraphWatcherMultiplexer from "./knowledge-graph/runtime/KnowledgeGraphWatcherMultiplexer.ts";
+import * as ProjectIndexingBridgeLive from "./projectIndexing/integration/ProjectIndexingBridgeLive.ts";
+import * as ProjectContextQuery from "./projectIndexing/query/ProjectContextQuery.ts";
+import * as ProjectIndexingRecovery from "./projectIndexing/runtime/ProjectIndexingRecovery.ts";
+import * as ProjectIndexingRuntime from "./projectIndexing/runtime/ProjectIndexingRuntime.ts";
 import { AssemblyAiStreamingTokenLive } from "./speech/Layers/AssemblyAiStreamingToken.ts";
 import * as ProjectSpeechProfileStore from "./speech/ProjectSpeechProfileStore.ts";
 import * as ProjectSpeechWorkspaceScanner from "./speech/ProjectSpeechWorkspaceScanner.ts";
+import * as ProjectSpeechVocabulary from "./speech/ProjectSpeechVocabulary.ts";
+import * as AssemblyAiDictation from "./speech/AssemblyAiDictation.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
 import { ProjectAgentCoordinatorLive } from "./projectAgent/ProjectAgentCoordinator.ts";
@@ -606,7 +614,17 @@ const AntigravityInstallationRefreshLive = Layer.effectDiscard(
   }),
 );
 
+const ProjectContextLayerLive = ProjectContextQuery.layer.pipe(
+  Layer.provideMerge(ProjectIndexingBridgeLive.layer),
+  Layer.provideMerge(KnowledgeGraphScopeCatalog.layer),
+  Layer.provideMerge(KnowledgeGraphWatcherMultiplexer.layer),
+  Layer.provideMerge(ProviderRuntimeLayerLive),
+  Layer.provideMerge(WorkspaceLayerLive),
+  Layer.provideMerge(GitVcsDriver.layer),
+);
+
 const RuntimeCoreServicesLive = ReactorLayerLive.pipe(
+  Layer.provideMerge(ProjectContextLayerLive),
   Layer.provideMerge(AntigravityInstallationRefreshLive),
   Layer.provideMerge(ProviderAuthServiceLive),
   // Core Services
@@ -679,9 +697,20 @@ const RuntimeCoreDependenciesLive = RuntimeCoreServicesLive.pipe(
   ),
 );
 
-const RuntimeCoreWithKnowledgeGraphLive = KnowledgeGraphLive.layer.pipe(
+const RuntimeSpeechDependenciesLive = AssemblyAiDictation.layer.pipe(
+  Layer.provideMerge(ProjectSpeechVocabulary.layer),
+  Layer.provideMerge(TextGeneration.layer),
   Layer.provideMerge(RuntimeCoreDependenciesLive),
 );
+
+const ProjectIndexingRecoveryLive = ProjectIndexingRecovery.layer.pipe(
+  Layer.provideMerge(ProjectIndexingRuntime.layer),
+);
+
+const RuntimeCoreWithKnowledgeGraphLive = Layer.mergeAll(
+  KnowledgeGraphLive.layer,
+  ProjectIndexingRecoveryLive,
+).pipe(Layer.provideMerge(RuntimeSpeechDependenciesLive));
 
 const RuntimeDependenciesLive = RuntimeCoreWithKnowledgeGraphLive.pipe(
   // Misc.

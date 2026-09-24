@@ -1723,6 +1723,46 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("commit context", () => {
+    it.effect("excludes private data when staging all changes or a containing directory", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* writeTextFile(cwd, "nested/code.ts", "export const value = 1;\n");
+        yield* writeTextFile(cwd, "nested/.t3/knowledge/private.txt", "private fixture\n");
+        yield* writeTextFile(cwd, ".t3/knowledge/private.txt", "private fixture\n");
+        yield* driver.prepareCommitContext(cwd, undefined, { mode: "paths", paths: ["nested"] });
+        assert.equal(yield* git(cwd, ["diff", "--cached", "--name-only"]), "nested/code.ts");
+        yield* driver.prepareCommitContext(cwd, undefined, { mode: "all" });
+        assert.equal(yield* git(cwd, ["diff", "--cached", "--name-only"]), "nested/code.ts");
+      }),
+    );
+
+    it.effect(
+      "rejects explicit or already-staged private paths before commit or prompt construction",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          yield* initRepoWithCommit(cwd);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* writeTextFile(cwd, ".t3/knowledge/private.txt", "private fixture\n");
+          const selected = yield* driver
+            .prepareCommitContext(cwd, [".t3/knowledge/private.txt"])
+            .pipe(Effect.flip);
+          assert.include(selected.message, "Private .t3");
+          assert.equal(yield* git(cwd, ["diff", "--cached", "--name-only"]), "");
+          yield* git(cwd, ["add", "-f", ".t3/knowledge/private.txt"]);
+          const before = yield* git(cwd, ["rev-parse", "HEAD"]);
+          const context = yield* driver
+            .prepareCommitContext(cwd, undefined, { mode: "staged" })
+            .pipe(Effect.flip);
+          assert.include(context.message, "Private .t3");
+          const commit = yield* driver.commit(cwd, "Must not commit", "").pipe(Effect.flip);
+          assert.include(commit.message, "Private .t3");
+          assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), before);
+        }),
+    );
+
     it.effect("stages selected files and commits only those files", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

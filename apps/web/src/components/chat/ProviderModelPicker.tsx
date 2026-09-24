@@ -5,6 +5,7 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { memo, useEffect, useMemo, useState } from "react";
+import { MicIcon } from "lucide-react";
 import type { VariantProps } from "class-variance-authority";
 import { Badge } from "../ui/badge";
 import { buttonVariants } from "../ui/button";
@@ -50,6 +51,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
   triggerClassName?: string;
   triggerAriaLabel?: string;
+  placeholder?: string;
+  fallbackToFirstModel?: boolean;
+  auxiliaryModels?: ReadonlyArray<{ readonly id: string; readonly name: string }>;
+  selectedAuxiliaryModel?: string | null;
+  onAuxiliaryModelChange?: (model: string) => void;
   onOpenChange?: (open: boolean) => void;
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
@@ -70,26 +76,42 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
 
   const activeInstanceId = props.activeInstanceId;
   const selectedInstanceOptions = props.modelOptionsByInstance.get(activeInstanceId) ?? [];
+  const isEmptySelection = props.model === "" && props.placeholder !== undefined;
   // Account-specific catalogs must keep the selected model label while unavailable.
-  const selectedModel =
-    resolveModelPickerSelectedModel({
-      driverKind: activeEntry?.driverKind,
-      model: props.model,
-      options: selectedInstanceOptions,
-    }) ??
-    (activeEntry?.driverKind === "opencode" || activeEntry?.driverKind === "antigravity"
-      ? undefined
-      : selectedInstanceOptions[0]);
-  const triggerTitle = selectedModel
-    ? getTriggerDisplayModelName(selectedModel)
-    : props.model === ANTIGRAVITY_DEFAULT_MODEL
-      ? "Choose model"
-      : props.model || "Choose model";
-  const triggerLabel = selectedModel
-    ? `${getTriggerDisplayModelLabel(selectedModel)}${selectedModel.isUnavailable ? " (Unavailable)" : ""}`
-    : triggerTitle;
+  const selectedModel = isEmptySelection
+    ? undefined
+    : (resolveModelPickerSelectedModel({
+        driverKind: activeEntry?.driverKind,
+        model: props.model,
+        options: selectedInstanceOptions,
+      }) ??
+      (props.fallbackToFirstModel === false ||
+      activeEntry?.driverKind === "opencode" ||
+      activeEntry?.driverKind === "antigravity"
+        ? undefined
+        : selectedInstanceOptions[0]));
+  const auxiliaryModel = props.selectedAuxiliaryModel
+    ? props.auxiliaryModels?.find((model) => model.id === props.selectedAuxiliaryModel)
+    : undefined;
+  const triggerTitle = props.selectedAuxiliaryModel
+    ? (auxiliaryModel?.name ?? props.selectedAuxiliaryModel)
+    : isEmptySelection
+      ? props.placeholder
+      : selectedModel
+        ? getTriggerDisplayModelName(selectedModel)
+        : props.model === ANTIGRAVITY_DEFAULT_MODEL
+          ? "Choose model"
+          : props.model || "Choose model";
+  const triggerLabel = props.selectedAuxiliaryModel
+    ? `AssemblyAI Gateway · ${triggerTitle}`
+    : selectedModel
+      ? `${getTriggerDisplayModelLabel(selectedModel)}${selectedModel.isUnavailable ? " (Unavailable)" : ""}`
+      : triggerTitle;
   const showInstanceBadge =
-    activeEntry !== null && shouldShowInstanceBadge(activeEntry, props.instanceEntries);
+    !isEmptySelection &&
+    !props.selectedAuxiliaryModel &&
+    activeEntry !== null &&
+    shouldShowInstanceBadge(activeEntry, props.instanceEntries);
 
   const setIsMenuOpen = (open: boolean) => {
     props.onOpenChange?.(open);
@@ -182,7 +204,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         <span
           className={cn("flex min-w-0 flex-1 items-center", size === "xs" ? "gap-1" : "gap-1.5")}
         >
-          {activeEntry ? (
+          {props.selectedAuxiliaryModel ? (
+            <MicIcon className="size-4 shrink-0" aria-hidden="true" />
+          ) : activeEntry && !isEmptySelection ? (
             <ProviderInstanceIcon
               driverKind={activeEntry.driverKind}
               displayName={activeEntry.displayName}
@@ -210,7 +234,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             </TooltipTrigger>
             <TooltipPopup side="top">{triggerLabel}</TooltipPopup>
           </Tooltip>
-          {selectedModel?.isUnavailable ? (
+          {!props.selectedAuxiliaryModel && selectedModel?.isUnavailable ? (
             <Badge variant="outline" size="sm">
               Unavailable
             </Badge>
@@ -234,6 +258,18 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           instanceEntries={props.instanceEntries}
           {...(props.keybindings ? { keybindings: props.keybindings } : {})}
           modelOptionsByInstance={props.modelOptionsByInstance}
+          {...(props.auxiliaryModels ? { auxiliaryModels: props.auxiliaryModels } : {})}
+          {...(props.selectedAuxiliaryModel
+            ? { selectedAuxiliaryModel: props.selectedAuxiliaryModel }
+            : {})}
+          {...(props.onAuxiliaryModelChange
+            ? {
+                onAuxiliaryModelChange: (model: string) => {
+                  props.onAuxiliaryModelChange?.(model);
+                  setIsMenuOpen(false);
+                },
+              }
+            : {})}
           terminalOpen={props.terminalOpen ?? false}
           onRequestClose={() => setIsMenuOpen(false)}
           {...(props.onOpenProviderSetup ? { onOpenProviderSetup: props.onOpenProviderSetup } : {})}

@@ -84,7 +84,7 @@ Language choices synchronize with supported connected environments. The setting 
 server is read-only, offline, or too old to accept a change. Reconnect or update that environment
 before expecting the same choice there.
 
-Choose chat visuals in **Settings → Better T3 → Visual** on web and desktop, or
+Choose chat presentation and width in **Settings → Better T3 → Chat** on web and desktop, or
 **Settings → Appearance → Chat visuals** on mobile. The same mobile page controls font sizes,
 code and terminal appearance, thread-list style, and how many chats each project previews.
 Chat visuals and the project preview count synchronize with supported environments; mobile theme

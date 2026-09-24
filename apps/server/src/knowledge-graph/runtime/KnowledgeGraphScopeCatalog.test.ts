@@ -229,7 +229,8 @@ describe("KnowledgeGraphScopeCatalog", () => {
 
       for (const projectId of [rootProject, homeProject, aliasProject]) {
         const error = yield* Effect.flip(broadRootCatalog.resolveScope({ projectId }));
-        assert.strictEqual(error.reason, "workspace-root-unavailable");
+        assert.strictEqual(error.reason, "workspace-root-protected");
+        assert.include(error.message, "Choose a project folder");
       }
 
       const projectScope = yield* broadRootCatalog.resolveScope({ projectId: projectTwo });

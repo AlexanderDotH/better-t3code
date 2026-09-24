@@ -109,9 +109,9 @@ export const knowledgeGraphInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Chargement du graphe de connaissances…",
   ],
   "knowledgeGraph.unsupported": [
-    "This environment does not support the Knowledge Graph.",
-    "Diese Umgebung unterstützt den Wissensgraph nicht.",
-    "Cet environnement ne prend pas en charge le graphe de connaissances.",
+    "Update this environment's server to use the model-free Knowledge Graph.",
+    "Aktualisiere den Server dieser Umgebung für den modellfreien Wissensgraphen.",
+    "Mettez à jour le serveur de cet environnement pour utiliser le graphe de connaissances sans modèle.",
   ],
   "knowledgeGraph.disabled": [
     "Enable the Knowledge Graph in Better T3 settings.",

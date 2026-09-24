@@ -3,6 +3,7 @@ import { HostProcessWorkingDirectory } from "@t3tools/shared/hostProcess";
 import * as NodeCrypto from "node:crypto";
 
 import * as Context from "effect/Context";
+import { isPrivateProjectPath } from "../projectIndexing/privacy/WorkspacePrivacy.ts";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -1021,6 +1022,12 @@ export const make = Effect.gen(function* () {
   ) {
     const paths = input.file.oldPath ? [input.file.oldPath, input.path] : [input.path];
     if (input.action === "stage") {
+      if (paths.some(isPrivateProjectPath)) {
+        return yield* new GitWorkbenchInvalidPathError({
+          path: input.path,
+          reason: "Private .t3 data cannot be staged.",
+        });
+      }
       yield* runGit(input.workspace, "GitWorkbenchDriver.stageFile", ["add", "-A", "--", ...paths]);
       return;
     }
@@ -1102,6 +1109,12 @@ export const make = Effect.gen(function* () {
   const applyChangeSelectionUnlocked = Effect.fn("GitWorkbenchDriver.applyChangeSelectionUnlocked")(
     function* (input: GitApplyChangeSelectionInput) {
       const path = yield* validateGitPath(input.path);
+      if (input.action === "stage" && isPrivateProjectPath(path)) {
+        return yield* new GitWorkbenchInvalidPathError({
+          path,
+          reason: "Private .t3 data cannot be staged.",
+        });
+      }
       const sourceMatchesAction =
         (input.action === "stage" && input.source === "unstaged") ||
         (input.action === "unstage" && input.source === "staged") ||

@@ -1,5 +1,6 @@
 import {
   type AssemblyAiSpeechContext,
+  AssemblyAiVoiceSettings,
   AssemblyAiStreamingTokenError,
   type AssemblyAiStreamingTokenResult,
   resolveBetterT3FeatureFlag,
@@ -18,14 +19,15 @@ const TOKEN_EXPIRES_SECONDS = 60;
 const MAX_SESSION_SECONDS = 600;
 const SAMPLE_RATE = 16_000;
 const ENCODING = "pcm_s16le";
-const SPEECH_MODEL = "universal-3-5-pro";
 
 const TokenResponse = Schema.Struct({ token: Schema.String });
 const decodeTokenResponse = Schema.decodeUnknownEffect(TokenResponse);
+const decodeVoiceSettings = Schema.decodeEffect(AssemblyAiVoiceSettings);
 
 export interface AssemblyAiStreamingTokenShape {
   readonly create: (
     context: AssemblyAiSpeechContext,
+    options?: AssemblyAiVoiceSettings,
   ) => Effect.Effect<AssemblyAiStreamingTokenResult, AssemblyAiStreamingTokenError>;
 }
 
@@ -50,7 +52,17 @@ const make = Effect.gen(function* () {
 
   const create = Effect.fn("AssemblyAiStreamingToken.create")(function* (
     context: AssemblyAiSpeechContext,
+    options?: AssemblyAiVoiceSettings,
   ) {
+    const validatedOptions = options
+      ? yield* decodeVoiceSettings(options).pipe(
+          Effect.mapError(
+            () =>
+              new AssemblyAiStreamingTokenError({ reason: "Invalid AssemblyAI voice settings." }),
+          ),
+        )
+      : undefined;
+
     const currentSettings = yield* settings.getSettings.pipe(
       Effect.mapError(
         () =>
@@ -117,8 +129,28 @@ const make = Effect.gen(function* () {
       expiresInSeconds: TOKEN_EXPIRES_SECONDS,
       sampleRate: SAMPLE_RATE,
       encoding: ENCODING,
-      speechModel: SPEECH_MODEL,
-      context,
+      speechModel: validatedOptions?.speechModel ?? "universal-3-5-pro",
+      context: validatedOptions
+        ? {
+            source: context.source,
+            prompt: [
+              validatedOptions.contextPrompt,
+              validatedOptions.projectVocabulary
+                ? context.prompt
+                : "Software-development dictation.",
+            ]
+              .filter(Boolean)
+              .join(" ")
+              .slice(0, 1_750),
+            keyterms: [
+              ...new Set([
+                ...validatedOptions.customKeyterms,
+                ...(validatedOptions.projectVocabulary ? context.keyterms : []),
+              ]),
+            ].slice(0, 100),
+          }
+        : context,
+      ...(validatedOptions ? { options: validatedOptions } : {}),
     } satisfies AssemblyAiStreamingTokenResult;
   });
 

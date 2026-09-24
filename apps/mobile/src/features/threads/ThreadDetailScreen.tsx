@@ -28,6 +28,7 @@ import type {
   ThreadId,
   UsageLimitsReport,
   UserInputQuestion,
+  VoiceFileReference,
 } from "@t3tools/contracts";
 import * as Haptics from "expo-haptics";
 import {
@@ -141,6 +142,8 @@ export interface ThreadDetailScreenProps {
   readonly activePendingUserInputAnswers: Record<string, string | ReadonlyArray<string>> | null;
   readonly respondingUserInputId: ApprovalRequestId | null;
   readonly draftMessage: string;
+  readonly readDraftText?: () => string;
+  readonly draftVoiceFileReferences?: ReadonlyArray<VoiceFileReference>;
   readonly draftAttachments: ReadonlyArray<DraftComposerAttachment>;
   readonly connectionStateLabel: EnvironmentConnectionPhase;
   /** Message sync status for the selected thread (drives the composer status pill). */
@@ -160,7 +163,10 @@ export interface ThreadDetailScreenProps {
   readonly usesAutomaticContentInsets?: boolean;
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
   readonly onOpenConnectionEditor: () => void;
-  readonly onChangeDraftMessage: (value: string) => void;
+  readonly onChangeDraftMessage: (
+    value: string,
+    references?: ReadonlyArray<VoiceFileReference>,
+  ) => void;
   readonly onPickDraftMedia: () => Promise<void>;
   readonly onPickDraftFiles: () => Promise<void>;
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
@@ -1116,6 +1122,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   transcriptExportBusy={props.transcriptExportBusy}
                   forkComposerBudget={forkComposerBudget}
                   draftMessage={props.draftMessage}
+                  draftVoiceFileReferences={props.draftVoiceFileReferences}
+                  readDraftText={props.readDraftText}
                   draftAttachments={props.draftAttachments}
                   placeholder={translator.message("mobile.thread.repoPrompt")}
                   contentMaxWidth={contentMaxWidth}

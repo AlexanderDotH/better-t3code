@@ -54,6 +54,9 @@ jobs:
       - name: Install desktop dependencies
         run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
 
+      - name: Setup project indexer toolchains
+        uses: ./.github/actions/setup-project-indexers
+
       - name: Cache resource monitor
         id: resource_monitor_cache
         uses: actions/cache@v6

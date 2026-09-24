@@ -26,11 +26,13 @@
       "entry": [
         "src/bin.ts!",
         "src/service-launcher.ts!",
+        "src/projectIndexing/extraction/typescriptCompatibleWorker.ts!",
         "scripts/cli.ts",
+        "scripts/verify-service-launcher-bundle.mjs",
         "src/provider/testFixtures/*.mjs",
       ],
-      // Native msgpack acceleration and the Vite+ web build prerequisite.
-      "ignoreDependencies": ["msgpackr-extract", "@t3tools/web"],
+      // Bundled Effect imports msgpackr externally; its native acceleration and WASM grammars load dynamically.
+      "ignoreDependencies": ["msgpackr", "msgpackr-extract", "@t3tools/web", "tree-sitter-wasms"],
     },
     "apps/desktop": {
       // Electron loads these bundles by filename rather than importing them.

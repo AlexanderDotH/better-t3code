@@ -1,6 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId, ProjectId, ProjectSpeechProfile } from "@t3tools/contracts";
+import {
+  resolveAssemblyAiVoiceSettings,
+  type AssemblyAiVoiceSettings,
+  type EnvironmentId,
+  type ProjectId,
+  type ProjectSpeechProfile,
+} from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { resolveVoiceTranslationModelSelection } from "@t3tools/shared/serverSettings";
 import {
@@ -10,7 +16,7 @@ import {
   RefreshCwIcon,
   TriangleAlertIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { serverEnvironment } from "../../state/server";
@@ -36,6 +42,7 @@ import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collaps
 import { DraftInput } from "../ui/draft-input";
 import { Spinner } from "../ui/spinner";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
+import { AssemblyAiVoiceSettingsForm } from "./AssemblyAiVoiceSettingsForm";
 
 const EMPTY_SECRET_VALUE = { value: "", valueRedacted: false };
 const EMPTY_PROFILES: ReadonlyMap<ProjectId, ProjectSpeechProfile> = new Map();
@@ -174,6 +181,7 @@ function ProjectSpeechProfileRow({
   onOpenChange,
   onIndex,
   onUseBasicContext,
+  voiceSettings,
 }: {
   readonly project: EnvironmentProject;
   readonly environmentState: EnvironmentProfileState | undefined;
@@ -184,6 +192,7 @@ function ProjectSpeechProfileRow({
   readonly onOpenChange: (open: boolean) => void;
   readonly onIndex: () => void;
   readonly onUseBasicContext: () => void;
+  readonly voiceSettings?: ReactNode;
 }) {
   const translate = useInterfaceTranslator().message;
   const profile =
@@ -282,6 +291,7 @@ function ProjectSpeechProfileRow({
                   : translate("settings.voice.profile.basic")}
               </Button>
             </div>
+            {voiceSettings}
           </div>
         </CollapsiblePanel>
       </div>
@@ -309,6 +319,86 @@ export function VoiceInputSettings({
   const createBasicProfile = useAtomCommand(serverEnvironment.createBasicProjectSpeechProfile, {
     reportFailure: false,
   });
+  const listModels = useAtomCommand(serverEnvironment.listAssemblyAiModels, {
+    reportFailure: false,
+  });
+  const saveSettings = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
+  const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const supportsOptions =
+    config?.environment.capabilities.supportsSpeechDictationProcessing === true;
+  const assemblyAi = settings.speechTranscription.assemblyAi;
+  const [modelsRefresh, setModelsRefresh] = useState(0);
+  const [modelCatalog, setModelCatalog] = useState<{
+    readonly environmentId: EnvironmentId;
+    readonly request: number;
+    readonly models: readonly { readonly id: string; readonly name: string }[];
+    readonly status: "ready" | "error";
+  } | null>(null);
+  const currentCatalog =
+    modelCatalog?.environmentId === environmentId && modelCatalog.request === modelsRefresh
+      ? modelCatalog
+      : null;
+  const models = currentCatalog?.models ?? [];
+  const modelsState = currentCatalog?.status ?? "loading";
+  const [projectSettingsBusy, setProjectSettingsBusy] = useState<ProjectId | null>(null);
+  const [projectSettingsError, setProjectSettingsError] = useState<ProjectId | null>(null);
+
+  useEffect(() => {
+    if (!supportsOptions || disabled) return;
+    let cancelled = false;
+    void listModels({ environmentId, input: {} })
+      .then((result) => {
+        if (cancelled) return;
+        setModelCatalog({
+          environmentId,
+          request: modelsRefresh,
+          models: result._tag === "Success" ? result.value.models : [],
+          status: result._tag === "Success" ? "ready" : "error",
+        });
+      })
+      .catch(() => {
+        if (!cancelled)
+          setModelCatalog({ environmentId, request: modelsRefresh, models: [], status: "error" });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [disabled, environmentId, listModels, modelsRefresh, supportsOptions]);
+
+  const persistVoiceOptions = useCallback(
+    async (voice: AssemblyAiVoiceSettings | null, projectId?: ProjectId): Promise<boolean> => {
+      if (disabled || !supportsOptions) return false;
+      const result = await saveSettings({
+        environmentId,
+        input: {
+          patch: {
+            speechTranscription: {
+              assemblyAi: projectId
+                ? { projectOverrides: { [projectId]: voice } }
+                : { voice: voice ?? assemblyAi.voice },
+            },
+          },
+        },
+      });
+      return result._tag === "Success";
+    },
+    [assemblyAi.voice, disabled, environmentId, saveSettings, supportsOptions],
+  );
+
+  const changeProjectOverride = async (
+    projectId: ProjectId,
+    voice: AssemblyAiVoiceSettings | null,
+  ) => {
+    setProjectSettingsBusy(projectId);
+    setProjectSettingsError(null);
+    try {
+      if (!(await persistVoiceOptions(voice, projectId))) setProjectSettingsError(projectId);
+    } catch {
+      setProjectSettingsError(projectId);
+    } finally {
+      setProjectSettingsBusy(null);
+    }
+  };
   const allProjects = useProjects();
   const projects = useMemo(
     () => allProjects.filter((project) => project.environmentId === environmentId),
@@ -337,6 +427,11 @@ export function VoiceInputSettings({
     voiceTranslationModelSelection.instanceId,
     voiceTranslationModelSelection.model,
   );
+  const cleanupModelPicker = {
+    fallbackSelection: defaultModelSelection,
+    instanceEntries: modelInstanceEntries,
+    optionsByInstance: getCustomModelOptionsByInstance(settings, serverProviders),
+  };
   const [profileStateByEnvironment, setProfileStateByEnvironment] = useState<
     ReadonlyMap<EnvironmentId, EnvironmentProfileState>
   >(() => new Map());
@@ -569,6 +664,50 @@ export function VoiceInputSettings({
       </SettingsSection>
 
       <SettingsSection
+        id="voice-recording-options"
+        title={translate("settings.voice.options.defaults")}
+        icon={<MicIcon className="size-3.5" />}
+      >
+        {supportsOptions ? (
+          <>
+            <AssemblyAiVoiceSettingsForm
+              key={`${environmentId}:${JSON.stringify(assemblyAi.voice)}`}
+              value={assemblyAi.voice}
+              models={models}
+              t3Models={cleanupModelPicker}
+              disabled={disabled}
+              onSave={(voice) => persistVoiceOptions(voice)}
+            />
+            {modelsState !== "ready" ? (
+              <div className="space-y-2 px-4 pb-4 text-xs text-muted-foreground" role="status">
+                <p>
+                  {translate(
+                    modelsState === "loading"
+                      ? "settings.voice.options.modelsLoading"
+                      : "settings.voice.options.modelsFailed",
+                  )}
+                </p>
+                {modelsState === "error" ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={disabled}
+                    onClick={() => setModelsRefresh((current) => current + 1)}
+                  >
+                    {translate("settings.voice.options.modelsRetry")}
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <p className="px-4 py-4 text-xs text-muted-foreground">
+            {translate("settings.voice.options.unsupported")}
+          </p>
+        )}
+      </SettingsSection>
+
+      <SettingsSection
         id="project-speech-context"
         title={translate("settings.voice.context.title")}
         icon={<FolderSearchIcon className="size-3.5" />}
@@ -626,6 +765,56 @@ export function VoiceInputSettings({
                         onOpenChange={(open) => setProjectExpanded(key, open)}
                         onIndex={() => void runProjectAction(project, "index")}
                         onUseBasicContext={() => void runProjectAction(project, "basic")}
+                        voiceSettings={
+                          supportsOptions ? (
+                            <div className="space-y-3 border-t border-border/60 pt-4">
+                              <h4 className="text-sm font-medium">
+                                {translate("settings.voice.options.project")}
+                              </h4>
+                              {assemblyAi.projectOverrides[project.id] ? (
+                                <>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={disabled || projectSettingsBusy !== null}
+                                    onClick={() => void changeProjectOverride(project.id, null)}
+                                  >
+                                    {translate("settings.voice.options.inherit")}
+                                  </Button>
+                                  <AssemblyAiVoiceSettingsForm
+                                    key={JSON.stringify(assemblyAi.projectOverrides[project.id])}
+                                    value={resolveAssemblyAiVoiceSettings(assemblyAi, project.id)}
+                                    models={models}
+                                    t3Models={cleanupModelPicker}
+                                    disabled={disabled || projectSettingsBusy !== null}
+                                    onSave={(voice) => persistVoiceOptions(voice, project.id)}
+                                  />
+                                </>
+                              ) : (
+                                <>
+                                  <p className="text-xs text-muted-foreground">
+                                    {translate("settings.voice.options.inherited")}
+                                  </p>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={disabled || projectSettingsBusy !== null}
+                                    onClick={() =>
+                                      void changeProjectOverride(project.id, assemblyAi.voice)
+                                    }
+                                  >
+                                    {translate("settings.voice.options.override")}
+                                  </Button>
+                                </>
+                              )}
+                              {projectSettingsError === project.id ? (
+                                <p role="alert" className="text-xs text-destructive">
+                                  {translate("settings.voice.options.saveFailed")}
+                                </p>
+                              ) : null}
+                            </div>
+                          ) : null
+                        }
                       />
                     );
                   })}

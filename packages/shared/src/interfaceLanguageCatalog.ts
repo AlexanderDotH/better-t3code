@@ -35,6 +35,10 @@ import {
   type KnowledgeGraphInterfaceMessageKey,
 } from "./interfaceLanguageCatalog.knowledgeGraph.ts";
 import {
+  projectIndexingInterfaceCatalog,
+  type ProjectIndexingInterfaceMessageKey,
+} from "./interfaceLanguageCatalog.projectIndexing.ts";
+import {
   mobileInterfaceCatalog,
   type MobileInterfaceMessageKey,
 } from "./interfaceLanguageCatalog.mobile.ts";
@@ -89,6 +93,10 @@ import {
 } from "./interfaceLanguageCatalog.types.ts";
 import { uiInterfaceCatalog, type UiInterfaceMessageKey } from "./interfaceLanguageCatalog.ui.ts";
 import {
+  voiceInterfaceCatalog,
+  type VoiceInterfaceMessageKey,
+} from "./interfaceLanguageCatalog.voice.ts";
+import {
   webInterfaceCatalog,
   type WebInterfaceMessageKey,
 } from "./interfaceLanguageCatalog.web.ts";
@@ -125,7 +133,9 @@ export type InterfaceMessageKey =
   | SettingsThemeVoiceInterfaceMessageKey
   | SidebarInterfaceMessageKey
   | UiInterfaceMessageKey
+  | VoiceInterfaceMessageKey
   | BetterT3InterfaceMessageKey
+  | ProjectIndexingInterfaceMessageKey
   | KnowledgeGraphInterfaceMessageKey;
 
 const catalogs = [
@@ -151,8 +161,10 @@ const catalogs = [
   settingsThemeVoiceInterfaceCatalog,
   sidebarInterfaceCatalog,
   uiInterfaceCatalog,
+  voiceInterfaceCatalog,
   betterT3InterfaceCatalog,
   knowledgeGraphInterfaceCatalog,
+  projectIndexingInterfaceCatalog,
 ] as const satisfies readonly LocalizedInterfaceCatalog<string>[];
 
 export const INTERFACE_MESSAGE_KEYS = Object.freeze(

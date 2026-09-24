@@ -34,6 +34,7 @@ import * as WorkspaceContext from "../workspace/WorkspaceContext.ts";
 import * as WorkspaceFileSystem from "../workspace/WorkspaceFileSystem.ts";
 import * as ProjectMemoryPolicy from "../projectMemory/ProjectMemoryPolicy.ts";
 import * as ProjectMemoryStore from "../projectMemory/ProjectMemoryStore.ts";
+import { ProjectContextQuery } from "../projectIndexing/query/ProjectContextQuery.ts";
 import {
   WorkspaceContextTool,
   WorkspaceEditTool,
@@ -879,6 +880,7 @@ it.effect(
           Layer.provide(workspaceFileSystemLayer),
           Layer.provide(generalSubagentLayer),
           Layer.provide(projectMemoryLayer),
+          Layer.provide(Layer.mock(ProjectContextQuery)({})),
           Layer.provide(ProjectMemoryPolicy.layer),
           Layer.provide(PreviewAutomationBroker.layer),
           Layer.provide(
@@ -1064,6 +1066,7 @@ it.effect(
           workspaceOnly.headers["mcp-session-id"]!,
         );
         expect(workspaceOnlyTools.map(({ name }) => name).toSorted()).toEqual([
+          "project_context",
           "project_memory",
           "thread_context",
           "workspace_context",
@@ -1081,6 +1084,7 @@ it.effect(
           workspaceOnlyNoMemory.headers["mcp-session-id"]!,
         );
         expect(workspaceOnlyNoMemoryTools.map(({ name }) => name).toSorted()).toEqual([
+          "project_context",
           "thread_context",
           "workspace_context",
           "workspace_find",

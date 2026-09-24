@@ -87,15 +87,34 @@ and use **Attach again** or remove the missing file before sending.
 ## Dictate and refine a prompt
 
 On web and desktop, open **Settings → Better T3 → Voice**, select the environment, enable dictation,
-and add an AssemblyAI key. Start the microphone in the composer, then stop to finish the transcript. Review
-and edit the text before sending. Canceling restores the draft you had before recording.
+and add an AssemblyAI key. On mobile, configure AssemblyAI under **Settings → Agents & Servers**.
+Start the microphone in the composer to see the live transcript. After you stop, AssemblyAI cleans
+up the whole dictation, including corrections you made after a pause. It removes filler, repetition,
+retracted statements, and unrelated digressions while preserving requirements, details, and negations.
+Review and edit the result before sending. **Restore original** returns the dictated section to its
+uncleaned transcript; canceling restores the draft you had before recording. Errors retain the original.
+
+Voice settings let you choose separate speech-recognition and cleanup models, tune language hints
+and pauses, add vocabulary, or turn cleanup off. Environment defaults apply to each project until you
+customize it. **Use environment defaults** removes a project's override. Options unavailable for the
+selected recognition model are hidden or disabled.
+Choose a configured T3 model for cleanup, or an AssemblyAI Gateway model if your AssemblyAI
+account has Gateway access. Speech recognition still uses AssemblyAI. If cleanup is unavailable,
+turn it off to keep dictation without post-processing.
+
+When automatic file references are enabled, recognized files become chips showing only the filename
+and extension. If several files share that name, the first match supplies the preview. The agent receives
+all matching candidates to choose the right one for your task. Removing a chip also removes its extra
+context. The project index stays local; selected names and relative paths accompany the transcript
+to the chosen cleanup model. The index updates in the background when recording starts, and you can
+re-index it manually in voice settings.
 
 Choose **Spoken language** to preserve the transcript's language or **English** to translate the
 finished transcript with the configured translation model. Project speech profiles in the same
-settings section improve recognition of repository names and terminology; re-index a profile after
-substantial project changes, or return it to its basic profile.
+settings section improve recognition of repository names and terminology. English translation runs
+after cleanup with your separately selected translation model.
 
-**Prompt improvement** in the same section uses the selected text-generation model to refine a prompt.
+**Prompt improvement** under **Settings → Better T3 → Composer** uses the selected text-generation model to refine a prompt.
 It is separate from transcription and can be turned off independently. Server dictation sends audio
 through the connected environment to AssemblyAI; translation and prompt improvement use the
 configured provider. Mobile uses server dictation when it is configured and otherwise retains its

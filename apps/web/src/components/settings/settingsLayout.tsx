@@ -57,7 +57,11 @@ export function SettingsSearchTargetProvider({
   return <SettingsSearchTargetContext value={value}>{children}</SettingsSearchTargetContext>;
 }
 
-function scrollAndFocusSettingsTarget(target: HTMLElement, highlight = true): void {
+function scrollAndFocusSettingsTarget(
+  target: HTMLElement,
+  highlight = true,
+  behavior: ScrollBehavior = "smooth",
+): void {
   const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const markedScrollTarget =
     typeof target.querySelector === "function"
@@ -70,7 +74,7 @@ function scrollAndFocusSettingsTarget(target: HTMLElement, highlight = true): vo
       : target);
 
   scrollTarget.scrollIntoView({
-    behavior: prefersReducedMotion ? "auto" : "smooth",
+    behavior: prefersReducedMotion ? "auto" : behavior,
     block: scrollTarget.dataset.settingsScrollTarget === "start" ? "start" : "center",
   });
   target.focus({ preventScroll: true });
@@ -186,6 +190,7 @@ export function SettingsSection({
         <h2 className="sr-only">{title}</h2>
       ) : (
         <div
+          data-slot="settings-section-heading"
           data-settings-scroll-target
           className="flex min-h-7 items-start justify-between gap-4 px-3 sm:px-4"
         >
@@ -199,6 +204,7 @@ export function SettingsSection({
         </div>
       )}
       <div
+        data-slot="settings-section-body"
         data-settings-scroll-target={hideTitle ? "" : undefined}
         className={cn(
           "relative overflow-visible text-foreground",
@@ -418,10 +424,16 @@ export function SettingsPageContainer({
 
 export function scrollToSettingsTarget(
   targetId: string,
-  { highlight = true }: { readonly highlight?: boolean } = {},
+  {
+    highlight = true,
+    behavior = "smooth",
+  }: {
+    readonly highlight?: boolean;
+    readonly behavior?: ScrollBehavior;
+  } = {},
 ): boolean {
   const target = document.getElementById(targetId);
   if (!target) return false;
-  scrollAndFocusSettingsTarget(target, highlight);
+  scrollAndFocusSettingsTarget(target, highlight, behavior);
   return true;
 }

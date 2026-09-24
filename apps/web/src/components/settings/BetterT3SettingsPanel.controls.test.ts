@@ -1,26 +1,12 @@
-import {
-  EnvironmentId,
-  ProjectId,
-  ProviderDriverKind,
-  ProviderInstanceId,
-  ThreadId,
-  type ServerProvider,
-} from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import {
   buildAutoReasoningModelSelectionPatch,
-  buildKnowledgeGraphOwnerThreadOptions,
   buildBetterT3ScalarControlPatch,
-  knowledgeGraphOwnerThreadKey,
-  openKnowledgeGraphOwnerThread,
   resolveBetterT3ModelSelection,
-  resolveKnowledgeGraphPauseAction,
-  resolveSelectedKnowledgeGraphOwnerThread,
-  resolveSelectedKnowledgeGraphProjectId,
   supportsAutoReasoningEvaluationProvider,
-  supportsKnowledgeGraphEnrichment,
 } from "./BetterT3SettingsPanel.controls";
 
 const codexId = ProviderInstanceId.make("codex");
@@ -126,104 +112,6 @@ describe("Auto Reasoning evaluation model settings", () => {
     expect(buildAutoReasoningModelSelectionPatch(null)).toEqual({
       autoReasoningModelSelection: null,
     });
-  });
-});
-
-describe("supportsKnowledgeGraphEnrichment", () => {
-  it("offers only the provider with positive semantic-enrichment conformance", () => {
-    expect(supportsKnowledgeGraphEnrichment({ driver: ProviderDriverKind.make("openai") })).toBe(
-      true,
-    );
-    for (const driver of ["codex", "claudeAgent", "chatgpt", "openrouter", "gemini"]) {
-      expect(supportsKnowledgeGraphEnrichment({ driver: ProviderDriverKind.make(driver) })).toBe(
-        false,
-      );
-    }
-  });
-});
-
-describe("resolveSelectedKnowledgeGraphProjectId", () => {
-  const first = ProjectId.make("project-1");
-  const second = ProjectId.make("project-2");
-  const projects = [
-    { projectId: first, label: "First" },
-    { projectId: second, label: "Second" },
-  ];
-
-  it("preserves a selected project and falls back when it disappears", () => {
-    expect(resolveSelectedKnowledgeGraphProjectId(projects, second)).toBe(second);
-    expect(resolveSelectedKnowledgeGraphProjectId(projects, ProjectId.make("missing"))).toBe(first);
-    expect(resolveSelectedKnowledgeGraphProjectId([], first)).toBeNull();
-  });
-});
-
-describe("resolveKnowledgeGraphPauseAction", () => {
-  it("provides the reverse action for a paused graph", () => {
-    expect(resolveKnowledgeGraphPauseAction("paused")).toEqual({
-      paused: false,
-      messageId: "knowledgeGraph.resume",
-    });
-    expect(resolveKnowledgeGraphPauseAction("indexing")).toEqual({
-      paused: true,
-      messageId: "knowledgeGraph.pause",
-    });
-  });
-});
-
-describe("Knowledge Graph owner routing", () => {
-  const localEnvironmentId = EnvironmentId.make("environment-local");
-  const remoteEnvironmentId = EnvironmentId.make("environment-remote");
-  const localThread = {
-    environmentId: localEnvironmentId,
-    id: ThreadId.make("thread-local"),
-    title: "Local thread",
-    updatedAt: "2026-08-30T02:00:00.000Z",
-    archivedAt: null,
-  };
-  const remoteThread = {
-    environmentId: remoteEnvironmentId,
-    id: ThreadId.make("thread-remote"),
-    title: "Remote thread",
-    updatedAt: "2026-08-30T03:00:00.000Z",
-    archivedAt: null,
-  };
-
-  it("requires an explicit live thread in the selected environment", () => {
-    const options = buildKnowledgeGraphOwnerThreadOptions(
-      [
-        localThread,
-        remoteThread,
-        {
-          ...remoteThread,
-          id: ThreadId.make("thread-archived"),
-          title: "Archived",
-          archivedAt: "2026-08-30T04:00:00.000Z",
-        },
-      ],
-      remoteEnvironmentId,
-    );
-
-    expect(options).toEqual([remoteThread]);
-    expect(resolveSelectedKnowledgeGraphOwnerThread(options, null)).toBeNull();
-    expect(
-      resolveSelectedKnowledgeGraphOwnerThread(options, knowledgeGraphOwnerThreadKey(remoteThread)),
-    ).toEqual(remoteThread);
-  });
-
-  it("opens only the selected thread's real Knowledge Graph surface and route", () => {
-    const opened: unknown[] = [];
-
-    expect(
-      openKnowledgeGraphOwnerThread(remoteThread, (threadRef, kind) => {
-        opened.push({ threadRef, kind });
-      }),
-    ).toEqual({ environmentId: remoteEnvironmentId, threadId: remoteThread.id });
-    expect(opened).toEqual([
-      {
-        threadRef: { environmentId: remoteEnvironmentId, threadId: remoteThread.id },
-        kind: "knowledge-graph",
-      },
-    ]);
   });
 });
 

@@ -176,6 +176,7 @@ it("keeps every setting mounted across category jumps and search jumps to former
         controls={{}}
         languageControl={<span>Interface language</span>}
         usagePacingControl={<span>Usage pacing</span>}
+        chatWidthSettings={<span>Adjust chat width</span>}
         visualSettings={<span>Glass opacity</span>}
         featureChoices={Object.fromEntries(
           features.map(({ descriptor }) => [
@@ -247,6 +248,7 @@ it("keeps every setting mounted across category jumps and search jumps to former
       "Allgemein",
       "Darstellung",
       "Chat",
+      "Eingabe",
       "Seitenleiste",
       "Nutzung",
       "Agenten",
@@ -257,14 +259,18 @@ it("keeps every setting mounted across category jumps and search jumps to former
       "Integrationen",
     ]);
     for (const [group, featureId] of [
-      ["appearance", "chat.presentation"],
+      ["chat", "chat.presentation"],
       ["chat", "chat.characterStreamingMotion"],
       ["chat", "agent.reasoningVisibility"],
+      ["composer", "agent.expandedComposerControls"],
+      ["composer", "agent.promptImprovement"],
+      ["composer", "chat.workspaceCardDeck"],
+      ["composer", "chat.contextWindowSelector"],
       ["sidebar", "chat.sorting"],
+      ["sidebar", "chat.classicSidebar"],
       ["agents", "agent.deepThinking"],
       ["workspace", "workspace.checkpoints"],
       ["voice", "voice.outputLanguage"],
-      ["voice", "agent.promptImprovement"],
       ["knowledge", "knowledge.graph"],
       ["system", "resource.diagnostics"],
       ["integrations", "integration.mcp"],
@@ -277,6 +283,7 @@ it("keeps every setting mounted across category jumps and search jumps to former
     for (const [group, label] of [
       ["general", "Interface language"],
       ["appearance", "Glass opacity"],
+      ["chat", "Adjust chat width"],
       ["usage", "Usage pacing"],
     ]) {
       const region = root.findByProps({ id: `better-t3-group-${group}`, role: "region" });
@@ -292,6 +299,7 @@ it("keeps every setting mounted across category jumps and search jumps to former
       "general",
       "appearance",
       "chat",
+      "composer",
       "sidebar",
       "usage",
       "agents",
@@ -319,9 +327,9 @@ it("keeps every setting mounted across category jumps and search jumps to former
     resizeNavigation();
     expect(navigationStyles.get("--better-t3-navigation-height")).toBe("326px");
 
-    await act(() => renderer!.update(renderContent("knowledge.rebuild")));
-    expect(focus).toHaveBeenLastCalledWith("knowledge.rebuild");
-    expect(scrollIntoView).toHaveBeenLastCalledWith("knowledge.rebuild", {
+    await act(() => renderer!.update(renderContent("knowledge.graph")));
+    expect(focus).toHaveBeenLastCalledWith("knowledge.graph");
+    expect(scrollIntoView).toHaveBeenLastCalledWith("knowledge.graph", {
       behavior: "auto",
       block: "center",
     });

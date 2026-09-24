@@ -25,8 +25,10 @@ import {
 import { ProjectSpeechProfileStore } from "./ProjectSpeechProfileStore.ts";
 import { isIgnoredProjectSpeechPath } from "./ProjectSpeechPathPolicy.ts";
 import { ProjectSpeechWorkspaceScanner } from "./ProjectSpeechWorkspaceScanner.ts";
+import { ProjectSpeechVocabulary, speechVocabularyKeyterms } from "./ProjectSpeechVocabulary.ts";
 
 export const PROJECT_SPEECH_PROFILE_INDEX_FILE_LIMIT = 24;
+const PROJECT_SPEECH_PROFILE_KEYTERM_LIMIT = 100;
 const PROJECT_SPEECH_PROFILE_INDEX_TIMEOUT = "5 seconds";
 export const INDEX_FALLBACK_WARNING =
   "Full project indexing was unavailable; using a basic speech profile.";
@@ -226,6 +228,7 @@ export const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
   const workspaceScanner = yield* ProjectSpeechWorkspaceScanner;
+  const vocabulary = yield* Effect.serviceOption(ProjectSpeechVocabulary);
 
   const resolveProject = Effect.fn("ProjectSpeechProfiles.resolveProject")(function* (
     projectId: ProjectId,
@@ -323,11 +326,35 @@ export const make = Effect.gen(function* () {
   const index: ProjectSpeechProfiles["Service"]["index"] = Effect.fn("ProjectSpeechProfiles.index")(
     function* (projectId) {
       const project = yield* resolveProject(projectId);
-      const indexedContent = yield* buildIndexedContent(project).pipe(
+      let indexedContent = yield* buildIndexedContent(project).pipe(
         Effect.timeoutOption(PROJECT_SPEECH_PROFILE_INDEX_TIMEOUT),
         Effect.orElseSucceed(() => Option.none<ProjectSpeechProfileContent>()),
         Effect.catchDefect(() => Effect.succeed(Option.none<ProjectSpeechProfileContent>())),
       );
+      if (Option.isSome(vocabulary)) {
+        const refreshed = yield* vocabulary.value
+          .refresh({ workspaceRoot: project.workspaceRoot })
+          .pipe(Effect.option);
+        if (Option.isSome(indexedContent) && Option.isSome(refreshed)) {
+          const keyterms = [
+            ...indexedContent.value.keyterms.slice(0, 4),
+            ...speechVocabularyKeyterms(refreshed.value.entries),
+            ...indexedContent.value.keyterms,
+          ];
+          const seen = new Set<string>();
+          indexedContent = Option.some({
+            ...indexedContent.value,
+            keyterms: keyterms
+              .filter((term) => {
+                const normalized = term.toLowerCase();
+                if (seen.has(normalized)) return false;
+                seen.add(normalized);
+                return true;
+              })
+              .slice(0, PROJECT_SPEECH_PROFILE_KEYTERM_LIMIT),
+          });
+        }
+      }
       if (Option.isSome(indexedContent)) {
         return yield* persist(project, "indexed", indexedContent.value, null);
       }

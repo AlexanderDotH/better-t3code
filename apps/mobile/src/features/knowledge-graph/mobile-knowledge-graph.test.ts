@@ -1,10 +1,14 @@
-import type {
+import {
   EnvironmentId,
-  KnowledgeGraphNodeKind,
-  KnowledgeGraphNodeV1,
-  KnowledgeGraphStatusV1,
+  KnowledgeGraphEdgeId,
+  KnowledgeGraphNodeId,
+  KnowledgeGraphScopeId,
   ProjectId,
-  ThreadId,
+  type KnowledgeGraphSnapshotV1,
+  type KnowledgeGraphNodeKind,
+  type KnowledgeGraphNodeV1,
+  type KnowledgeGraphStatusV1,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -15,12 +19,15 @@ import {
   knowledgeGraphProvenanceMessageKey,
   knowledgeGraphSourceNavigationTarget,
   knowledgeGraphStatusMessageKey,
+  mobileStaticKnowledgeGraphSnapshot,
   mobileKnowledgeGraphClearConfirmationActions,
   mobileKnowledgeGraphThreadEntryTarget,
   resolveMobileKnowledgeGraphDragPosition,
   resolveMobileKnowledgeGraphAccess,
   resolveMobileKnowledgeGraphActions,
   resolveMobileKnowledgeGraphRoutePolicy,
+  resolveMobileKnowledgeGraphIndexRoute,
+  supportsMobileStaticKnowledgeGraph,
   toggleKnowledgeGraphKind,
 } from "./mobile-knowledge-graph";
 
@@ -48,6 +55,35 @@ const status = (
 });
 
 describe("mobile Knowledge Graph behavior", () => {
+  it("uses project indexing only after a supported selected scope is enabled", () => {
+    const base = { canRead: true, indexEnabled: true, loadFailed: false };
+    expect(resolveMobileKnowledgeGraphIndexRoute(base)).toBe("legacy");
+    expect(resolveMobileKnowledgeGraphIndexRoute({ ...base, projectIndexingVersion: 3 })).toBe(
+      "index",
+    );
+    expect(
+      resolveMobileKnowledgeGraphIndexRoute({
+        ...base,
+        projectIndexingVersion: 3,
+        indexEnabled: false,
+      }),
+    ).toBe("legacy");
+    expect(
+      resolveMobileKnowledgeGraphIndexRoute({
+        ...base,
+        projectIndexingVersion: 3,
+        indexEnabled: null,
+      }),
+    ).toBe("loading");
+    expect(
+      resolveMobileKnowledgeGraphIndexRoute({
+        ...base,
+        projectIndexingVersion: 3,
+        indexEnabled: null,
+        loadFailed: true,
+      }),
+    ).toBe("legacy");
+  });
   it("maps every contract-owned graph variant to a typed localized message", () => {
     expect(
       (
@@ -149,6 +185,68 @@ describe("mobile Knowledge Graph behavior", () => {
     );
   });
 
+  it("requires capability v2 before graph changes can run", () => {
+    expect(supportsMobileStaticKnowledgeGraph(1)).toBe(false);
+    expect(supportsMobileStaticKnowledgeGraph(2)).toBe(true);
+    expect(resolveMobileKnowledgeGraphRoutePolicy("available").canRebuild).toBe(false);
+    expect(resolveMobileKnowledgeGraphActions(status("ready")).canRebuild).toBe(false);
+  });
+
+  it("removes stored semantic nodes and relationships from a legacy snapshot", () => {
+    const scopeId = KnowledgeGraphScopeId.make("scope-1");
+    const deterministic: KnowledgeGraphNodeV1 = {
+      version: 1,
+      nodeId: KnowledgeGraphNodeId.make("source"),
+      scopeId,
+      kind: "file",
+      label: "source.ts",
+      provenance: "deterministic",
+      confidence: 1,
+      evidenceIds: [],
+      nodeRevision: 1,
+    };
+    const semantic: KnowledgeGraphNodeV1 = {
+      ...deterministic,
+      nodeId: KnowledgeGraphNodeId.make("generated"),
+      label: "Generated claim",
+      provenance: "semantic",
+    };
+    const snapshot: KnowledgeGraphSnapshotV1 = {
+      version: 1,
+      type: "snapshot",
+      scope: {
+        version: 1,
+        scopeId,
+        environmentId: EnvironmentId.make("environment-1"),
+        projectId: ProjectId.make("project-1"),
+        effectiveWorkspaceRoot: "/project",
+        isWorktree: false,
+      },
+      revision: 1,
+      nodes: [deterministic, semantic],
+      edges: [
+        {
+          version: 1,
+          edgeId: KnowledgeGraphEdgeId.make("generated-link"),
+          scopeId,
+          kind: "relates-to",
+          sourceNodeId: deterministic.nodeId,
+          targetNodeId: semantic.nodeId,
+          provenance: "semantic",
+          confidence: 0.5,
+          evidenceIds: [],
+          edgeRevision: 1,
+        },
+      ],
+      evidence: [],
+      status: status("ready"),
+      generatedAt: "2026-09-23T00:00:00.000Z",
+    };
+
+    expect(mobileStaticKnowledgeGraphSnapshot(snapshot).nodes).toEqual([deterministic]);
+    expect(mobileStaticKnowledgeGraphSnapshot(snapshot).edges).toEqual([]);
+  });
+
   it("keeps retained-data cleanup reachable while disabled without activating graph work", () => {
     expect(resolveMobileKnowledgeGraphRoutePolicy("unsupported")).toEqual({
       canOpenOwnerRoute: false,
@@ -160,7 +258,7 @@ describe("mobile Knowledge Graph behavior", () => {
       canCancel: false,
       canClearRetainedData: false,
     });
-    expect(resolveMobileKnowledgeGraphRoutePolicy("disabled")).toEqual({
+    expect(resolveMobileKnowledgeGraphRoutePolicy("disabled", true)).toEqual({
       canOpenOwnerRoute: true,
       canSubscribe: false,
       canQuery: false,
@@ -170,7 +268,7 @@ describe("mobile Knowledge Graph behavior", () => {
       canCancel: false,
       canClearRetainedData: true,
     });
-    expect(resolveMobileKnowledgeGraphRoutePolicy("available")).toEqual({
+    expect(resolveMobileKnowledgeGraphRoutePolicy("available", true)).toEqual({
       canOpenOwnerRoute: true,
       canSubscribe: true,
       canQuery: true,
@@ -205,14 +303,14 @@ describe("mobile Knowledge Graph behavior", () => {
   });
 
   it("derives reversible action states from the server status", () => {
-    expect(resolveMobileKnowledgeGraphActions(status("indexing"))).toEqual({
+    expect(resolveMobileKnowledgeGraphActions(status("indexing"), true)).toEqual({
       canCancel: true,
       canClear: true,
       canPause: true,
       canRebuild: false,
       pauseAction: "pause",
     });
-    expect(resolveMobileKnowledgeGraphActions(status("paused"))).toEqual({
+    expect(resolveMobileKnowledgeGraphActions(status("paused"), true)).toEqual({
       canCancel: false,
       canClear: true,
       canPause: true,
@@ -229,6 +327,7 @@ describe("mobile Knowledge Graph behavior", () => {
           totalFileCount: 10,
           queuedSemanticNodeCount: 0,
         }),
+        true,
       ),
     ).toEqual({
       canCancel: true,
@@ -237,7 +336,7 @@ describe("mobile Knowledge Graph behavior", () => {
       canRebuild: false,
       pauseAction: "pause",
     });
-    expect(resolveMobileKnowledgeGraphActions(status("cancelling"))).toEqual({
+    expect(resolveMobileKnowledgeGraphActions(status("cancelling"), true)).toEqual({
       canCancel: false,
       canClear: false,
       canPause: false,
@@ -316,6 +415,26 @@ describe("mobile Knowledge Graph behavior", () => {
         threadId,
       }),
     ).toBeNull();
+  });
+
+  it("keeps the project index entry independent of the legacy graph switch", () => {
+    expect(
+      mobileKnowledgeGraphThreadEntryTarget({
+        knowledgeGraphVersion: undefined,
+        projectIndexingVersion: 1,
+        enabled: false,
+        environmentId: "index-environment" as EnvironmentId,
+        projectId: "index-project" as ProjectId,
+        threadId: "index-thread" as ThreadId,
+      }),
+    ).toEqual({
+      screen: "KnowledgeGraph",
+      params: {
+        environmentId: "index-environment",
+        projectId: "index-project",
+        threadId: "index-thread",
+      },
+    });
   });
 
   it("converts dragged screen distance into bounded graph coordinates", () => {

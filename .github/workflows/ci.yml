@@ -17,7 +17,7 @@ jobs:
   check:
     name: Check
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -42,6 +42,16 @@ jobs:
           cache: true
           run-install: true
 
+      - name: Setup Bun for project indexing runtime check
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - name: Verify SQLite FTS5 in Node and Bun
+        run: |
+          node scripts/verify-project-indexing-fts.cjs
+          bun scripts/verify-project-indexing-fts.cjs
+
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
 
@@ -61,6 +71,9 @@ jobs:
         run: |
           sudo sed -i 's|http://|https://|g' /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
           sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
+
+      - name: Setup project indexer toolchains
+        uses: ./.github/actions/setup-project-indexers
 
       - name: Build desktop pipeline
         run: vp run build:desktop
@@ -140,9 +153,15 @@ jobs:
       # No Electron setup here: `t3` (apps/server) has no Electron dependency
       # and none of its tests touch the runtime. Only the non-server `test`
       # job, which covers @t3tools/desktop, needs the download.
+      - uses: ./.github/actions/setup-project-indexers
+
+      - name: Build project indexing analyzers
+        run: node scripts/build-project-indexers.ts
+
       - name: Test
         env:
           T3CODE_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/t3code-transfer-budget.md
+          T3CODE_REQUIRE_COMPILER_TESTS: "1"
           T3CODE_TRANSFER_BUDGET_RESULT_PATH: ${{ runner.temp }}/thread-transfer-result.json
         run: vp run --filter t3 test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
 
@@ -285,6 +304,9 @@ jobs:
         run: |
           vp run --filter t3 typecheck
           vp run --filter @t3tools/desktop typecheck
+
+      - name: Setup project indexer toolchains
+        uses: ./.github/actions/setup-project-indexers
 
       - name: Build Windows desktop and server pipeline
         run: vp run build:desktop

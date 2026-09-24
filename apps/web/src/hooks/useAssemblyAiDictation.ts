@@ -1,4 +1,5 @@
 import { renderAssemblyAiDictationDraft } from "@t3tools/client-runtime/assembly-ai";
+import type { VoiceFileReference } from "@t3tools/contracts";
 export { renderAssemblyAiDictationDraft } from "@t3tools/client-runtime/assembly-ai";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
@@ -13,6 +14,7 @@ export type AssemblyAiDictationState = "idle" | "starting" | "recording" | "stop
 export interface AssemblyAiDictationDraftSnapshot {
   readonly text: string;
   readonly cursor: number;
+  readonly references?: ReadonlyArray<VoiceFileReference>;
 }
 
 export interface AssemblyAiDictationNotice {
@@ -28,7 +30,13 @@ export function shouldCancelAssemblyAiDictation(
 }
 
 type StartTransport = typeof startAssemblyAiStreamingTranscription;
-type TransformTranscript = (transcript: string) => Promise<string>;
+interface ProcessedTranscript {
+  readonly text: string;
+  readonly references?: ReadonlyArray<VoiceFileReference>;
+  readonly warning?: string;
+}
+type TransformTranscript = (transcript: string) => Promise<string | ProcessedTranscript>;
+const DICTATION_PROCESSING_TIMEOUT_MS = 65_000;
 const AUDIO_WAVEFORM_SAMPLE_COUNT = 14;
 const EMPTY_AUDIO_WAVEFORM = Object.freeze(
   Array.from({ length: AUDIO_WAVEFORM_SAMPLE_COUNT }, () => 0),
@@ -37,23 +45,39 @@ const EMPTY_AUDIO_WAVEFORM = Object.freeze(
 export async function resolveAssemblyAiDictationTranscript(
   transcript: string,
   transformTranscript?: TransformTranscript,
-): Promise<{ readonly text: string; readonly error: Error | null }> {
+): Promise<ProcessedTranscript & { readonly error: Error | null }> {
   if (!transformTranscript || transcript.length === 0) {
     return { text: transcript, error: null };
   }
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
-    return { text: await transformTranscript(transcript), error: null };
+    const transformed = await Promise.race([
+      transformTranscript(transcript),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error("Voice input processing timed out. The original was kept.")),
+          DICTATION_PROCESSING_TIMEOUT_MS,
+        );
+      }),
+    ]);
+    return {
+      ...(typeof transformed === "string" ? { text: transformed } : transformed),
+      error: null,
+    };
   } catch (error) {
     return {
       text: transcript,
-      error: error instanceof Error ? error : new Error("Voice input translation failed."),
+      error: error instanceof Error ? error : new Error("Voice input processing failed."),
     };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
 export function useAssemblyAiDictation(input: {
   readonly configured: boolean;
   readonly lifecycleKey: string;
+  readonly draftText: string;
   readonly getDraftSnapshot: () => AssemblyAiDictationDraftSnapshot;
   readonly applyDraftSnapshot: (snapshot: AssemblyAiDictationDraftSnapshot) => void;
   readonly onNotice: (notice: AssemblyAiDictationNotice) => void;
@@ -63,12 +87,18 @@ export function useAssemblyAiDictation(input: {
 }) {
   const [state, setState] = useState<AssemblyAiDictationState>("idle");
   const [audioWaveform, setAudioWaveform] = useState<ReadonlyArray<number>>(EMPTY_AUDIO_WAVEFORM);
+  const [restorableDraft, setRestorableDraft] = useState<{
+    original: AssemblyAiDictationDraftSnapshot;
+    processedText: string;
+    lifecycleKey: string;
+  } | null>(null);
   const stateRef = useRef<AssemblyAiDictationState>("idle");
   const attemptRef = useRef(0);
   const abortControllerRef = useRef<AbortController | null>(null);
   const sessionRef = useRef<AssemblyAiStreamingSession | null>(null);
   const originalDraftRef = useRef<AssemblyAiDictationDraftSnapshot | null>(null);
   const latestTranscriptRef = useRef("");
+  const expectedDraftTextRef = useRef<string | null>(null);
   const mountedRef = useRef(true);
   const getDraftSnapshotRef = useRef(input.getDraftSnapshot);
   const applyDraftSnapshotRef = useRef(input.applyDraftSnapshot);
@@ -100,6 +130,7 @@ export function useAssemblyAiDictation(input: {
     sessionRef.current = null;
     originalDraftRef.current = null;
     latestTranscriptRef.current = "";
+    expectedDraftTextRef.current = null;
   }, []);
 
   const terminatePreservingDraft = useCallback(() => {
@@ -123,6 +154,24 @@ export function useAssemblyAiDictation(input: {
     return () => terminatePreservingDraft();
   }, [input.lifecycleKey, terminatePreservingDraft, transition]);
 
+  useLayoutEffect(() => {
+    if (stateRef.current !== "idle" && input.draftText !== expectedDraftTextRef.current) {
+      terminatePreservingDraft();
+      resetAudioWaveform();
+      transition("idle");
+    }
+  }, [input.draftText, resetAudioWaveform, terminatePreservingDraft, transition]);
+
+  const applySnapshot = useCallback((snapshot: AssemblyAiDictationDraftSnapshot) => {
+    expectedDraftTextRef.current = snapshot.text;
+    applyDraftSnapshotRef.current(snapshot);
+  }, []);
+
+  const draftUnchanged = useCallback(
+    () => getDraftSnapshotRef.current().text === expectedDraftTextRef.current,
+    [],
+  );
+
   const start = useCallback(async () => {
     if (stateRef.current !== "idle") return;
     if (!input.configured) {
@@ -136,7 +185,9 @@ export function useAssemblyAiDictation(input: {
     const attempt = attemptRef.current + 1;
     attemptRef.current = attempt;
     const originalDraft = getDraftSnapshotRef.current();
+    setRestorableDraft(null);
     originalDraftRef.current = originalDraft;
+    expectedDraftTextRef.current = originalDraft.text;
     latestTranscriptRef.current = "";
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
@@ -149,9 +200,15 @@ export function useAssemblyAiDictation(input: {
         ...(createTokenRef.current ? { createToken: createTokenRef.current } : {}),
         onTranscript: ({ text }) => {
           if (attemptRef.current !== attempt || abortController.signal.aborted) return;
+          if (!draftUnchanged()) {
+            terminatePreservingDraft();
+            resetAudioWaveform();
+            transition("idle");
+            return;
+          }
           latestTranscriptRef.current = text;
           const nextText = renderAssemblyAiDictationDraft(originalDraft.text, text);
-          applyDraftSnapshotRef.current({ text: nextText, cursor: nextText.length });
+          applySnapshot({ ...originalDraft, text: nextText, cursor: nextText.length });
         },
         onAudioLevel: (level) => {
           if (attemptRef.current !== attempt || abortController.signal.aborted) return;
@@ -187,7 +244,15 @@ export function useAssemblyAiDictation(input: {
         error: error instanceof Error ? error : new Error("Voice input setup failed."),
       });
     }
-  }, [clearAttempt, input.configured, resetAudioWaveform, transition]);
+  }, [
+    applySnapshot,
+    clearAttempt,
+    draftUnchanged,
+    input.configured,
+    resetAudioWaveform,
+    terminatePreservingDraft,
+    transition,
+  ]);
 
   const stop = useCallback(async () => {
     if (stateRef.current === "idle" || stateRef.current === "stopping") return;
@@ -207,38 +272,65 @@ export function useAssemblyAiDictation(input: {
     try {
       await session.stop();
     } catch (error) {
-      onNoticeRef.current({
-        title: "Could not stop voice input cleanly",
-        error: error instanceof Error ? error : new Error("AssemblyAI streaming stop failed."),
-      });
+      if (attemptRef.current === attempt) {
+        onNoticeRef.current({
+          title: "Could not stop voice input cleanly",
+          error: error instanceof Error ? error : new Error("AssemblyAI streaming stop failed."),
+        });
+      }
     }
 
-    if (attemptRef.current === attempt && originalDraft) {
+    if (attemptRef.current === attempt && originalDraft && draftUnchanged()) {
+      const originalText = renderAssemblyAiDictationDraft(
+        originalDraft.text,
+        latestTranscriptRef.current,
+      );
       const transformed = await resolveAssemblyAiDictationTranscript(
         latestTranscriptRef.current,
         transformTranscriptRef.current,
       );
-      if (attemptRef.current === attempt) {
+      if (attemptRef.current === attempt && draftUnchanged()) {
         const nextText = renderAssemblyAiDictationDraft(originalDraft.text, transformed.text);
-        applyDraftSnapshotRef.current({ text: nextText, cursor: nextText.length });
+        applySnapshot({
+          text: nextText,
+          cursor: nextText.length,
+          references: [...(originalDraft.references ?? []), ...(transformed.references ?? [])],
+        });
+        if (nextText !== originalText) {
+          setRestorableDraft({
+            original: { ...originalDraft, text: originalText, cursor: originalText.length },
+            processedText: nextText,
+            lifecycleKey: input.lifecycleKey,
+          });
+        }
         if (transformed.error) {
           onNoticeRef.current({
-            title: "Could not translate voice input",
+            title: "Could not process voice input",
             error: transformed.error,
           });
+        } else if (transformed.warning) {
+          onNoticeRef.current({ title: "Voice input", error: new Error(transformed.warning) });
         }
       }
     }
 
-    if (attemptRef.current === attempt) attemptRef.current += 1;
+    if (attemptRef.current !== attempt) return;
+    attemptRef.current += 1;
     clearAttempt();
     resetAudioWaveform();
     transition("idle");
-  }, [clearAttempt, resetAudioWaveform, transition]);
+  }, [
+    applySnapshot,
+    clearAttempt,
+    draftUnchanged,
+    input.lifecycleKey,
+    resetAudioWaveform,
+    transition,
+  ]);
 
   const cancel = useCallback(() => {
     if (stateRef.current === "idle") return;
-    const originalDraft = originalDraftRef.current;
+    const originalDraft = draftUnchanged() ? originalDraftRef.current : null;
     attemptRef.current += 1;
     abortControllerRef.current?.abort();
     sessionRef.current?.cancel();
@@ -246,7 +338,18 @@ export function useAssemblyAiDictation(input: {
     if (originalDraft) applyDraftSnapshotRef.current(originalDraft);
     resetAudioWaveform();
     transition("idle");
-  }, [clearAttempt, resetAudioWaveform, transition]);
+  }, [clearAttempt, draftUnchanged, resetAudioWaveform, transition]);
+
+  const restoreOriginal = useCallback(() => {
+    if (
+      !restorableDraft ||
+      restorableDraft.lifecycleKey !== input.lifecycleKey ||
+      getDraftSnapshotRef.current().text !== restorableDraft.processedText
+    )
+      return;
+    applyDraftSnapshotRef.current(restorableDraft.original);
+    setRestorableDraft(null);
+  }, [input.lifecycleKey, restorableDraft]);
 
   useEffect(() => {
     if (shouldCancelAssemblyAiDictation(input.configured, stateRef.current)) cancel();
@@ -271,5 +374,10 @@ export function useAssemblyAiDictation(input: {
     start,
     stop,
     cancel,
+    canRestoreOriginal:
+      restorableDraft !== null &&
+      restorableDraft.lifecycleKey === input.lifecycleKey &&
+      input.draftText === restorableDraft.processedText,
+    restoreOriginal,
   } as const;
 }

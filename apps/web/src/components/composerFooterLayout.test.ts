@@ -11,6 +11,7 @@ import {
   resolveRestingComposerControlsLayout,
   resolveRestingComposerControlsNaturalWidth,
   shouldAnimateComposerRestingTransition,
+  shouldUseCompactComposerControls,
   shouldUseCompactComposerPrimaryActions,
   shouldUseCompactComposerFooter,
   shouldUseRestingComposerLayout,
@@ -56,6 +57,39 @@ describe("shouldUseCompactComposerFooter", () => {
     expect(
       shouldUseCompactComposerFooter(COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX, {
         hasWideActions: true,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("shouldUseCompactComposerControls", () => {
+  it("shows full controls when enabled and there is room, with a compact fallback", () => {
+    expect(
+      shouldUseCompactComposerControls({
+        expandedControlsEnabled: true,
+        footerCompact: false,
+        inContextStrip: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldUseCompactComposerControls({
+        expandedControlsEnabled: true,
+        footerCompact: true,
+        inContextStrip: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldUseCompactComposerControls({
+        expandedControlsEnabled: false,
+        footerCompact: false,
+        inContextStrip: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldUseCompactComposerControls({
+        expandedControlsEnabled: false,
+        footerCompact: true,
+        inContextStrip: true,
       }),
     ).toBe(false);
   });

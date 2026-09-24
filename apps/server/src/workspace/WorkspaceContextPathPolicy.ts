@@ -11,6 +11,7 @@ const SKIPPED_DIRECTORY_NAMES = new Set([
   ".nuxt",
   ".parcel-cache",
   ".svn",
+  ".t3",
   ".turbo",
   ".vite",
   "__generated__",
@@ -32,10 +33,31 @@ const PRIVATE_KEY_EXTENSIONS = [".key", ".p12", ".pfx", ".pem"];
 export function normalizeWorkspaceContextPath(input: string): string | null {
   const normalized = input.replaceAll("\\", "/").replace(/^\.\//, "");
   if (!normalized || normalized === "." || normalized.includes("\0")) return null;
-  if (normalized.startsWith("/") || normalized === ".." || normalized.startsWith("../")) {
+  if (
+    normalized.startsWith("/") ||
+    /^[a-z]:/i.test(normalized) ||
+    normalized.split("/").some((segment) => segment === ".." || segment === ".")
+  ) {
     return null;
   }
   return normalized;
+}
+
+export function normalizeWorkspaceContextScope(input: string): string | null {
+  const normalized = input.replaceAll("\\", "/").replace(/\/+$/, "");
+  return normalized === "." ? "." : normalizeWorkspaceContextPath(normalized);
+}
+
+export function isWithinWorkspaceContextScopes(
+  relativePath: string,
+  scopes: ReadonlyArray<string> | undefined,
+): boolean {
+  return (
+    !scopes?.length ||
+    scopes.some(
+      (scope) => scope === "." || relativePath === scope || relativePath.startsWith(`${scope}/`),
+    )
+  );
 }
 
 export function shouldSkipWorkspaceContextDirectory(name: string): boolean {

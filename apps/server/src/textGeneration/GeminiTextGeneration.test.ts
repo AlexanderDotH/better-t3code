@@ -51,3 +51,47 @@ it.effect("GeminiTextGeneration uses SDK structured output with the selected mod
     });
   }),
 );
+
+it.effect(
+  "GeminiTextGeneration passes thinkingConfig when reasoningEffort option is selected",
+  () =>
+    Effect.gen(function* () {
+      const requests: Array<GenerateContentParameters> = [];
+      const client = {
+        models: {
+          generateContent: async (request: GenerateContentParameters) => {
+            requests.push(request);
+            return { text: '{"branch":"feature-deep-reasoning"}' } as GenerateContentResponse;
+          },
+          generateContentStream: async () => {
+            throw new Error("streaming is not used by text-generation tests");
+          },
+          list: async () => {
+            throw new Error("model discovery is not used by text-generation tests");
+          },
+        },
+      } as GeminiClient;
+      const textGeneration = yield* makeGeminiTextGeneration(
+        { enabled: true, customModels: [] },
+        { GOOGLE_API_KEY: "test-key" },
+        () => client,
+      );
+
+      const generated = yield* textGeneration.generateBranchName({
+        cwd: process.cwd(),
+        message: "Deep thinking task",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("gemini"),
+          model: "gemini-3.6-flash",
+          options: [{ id: "reasoningEffort", value: "high" }],
+        },
+      });
+
+      expect(generated).toEqual({ branch: "feature-deep-reasoning" });
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.config?.thinkingConfig).toEqual({
+        thinkingLevel: "HIGH",
+        includeThoughts: true,
+      });
+    }),
+);

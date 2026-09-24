@@ -1,4 +1,9 @@
-.usage-pace-notch {
+/* Clip only the shadow; clipping the fill exposes a seam at fractional positions. */
+.usage-pace-notch::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
   box-shadow: 0 0 0 2px var(--muted);
   clip-path: inset(-2px -2px -2px 50%);
 }

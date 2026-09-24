@@ -1324,6 +1324,14 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:speech:translate-transcript",
       tag: WS_METHODS.speechTranslateTranscript,
     }),
+    processSpeechDictation: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:speech:process-dictation",
+      tag: WS_METHODS.speechProcessDictation,
+    }),
+    listAssemblyAiModels: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:speech:list-assembly-ai-models",
+      tag: WS_METHODS.speechListAssemblyAiModels,
+    }),
     improvePrompt: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:prompt:improve",
       tag: WS_METHODS.promptImprove,

@@ -63,6 +63,7 @@ const assertCurrent = Effect.gen(function* () {
   assert.deepStrictEqual(yield* sql`SELECT migration_id, name FROM ${sql(forkMigrationTable)}`, [
     { migration_id: 61, name: "IndependentMigrationLedgers" },
     { migration_id: 62, name: "MessageEditContextIndex" },
+    { migration_id: 63, name: "KnowledgeGraphSemanticLookupIndexes" },
   ]);
   const editPlan = yield* sql<{ detail: string }>`
     EXPLAIN QUERY PLAN SELECT MAX(sequence) FROM orchestration_events
@@ -78,6 +79,17 @@ const assertCurrent = Effect.gen(function* () {
       ["scope", "evidence"],
     );
     assert.isTrue(plan.some(({ detail }) => detail.includes("scope_id=? AND evidence_id=?")));
+  }
+  for (const [table, predicate] of [
+    ["knowledge_graph_nodes", "provenance = 'semantic'"],
+    ["knowledge_graph_edges", "provenance = 'semantic'"],
+    ["knowledge_graph_evidence", "kind = 'semantic'"],
+  ] as const) {
+    const plan = yield* sql.unsafe<{ readonly detail: string }>(
+      `EXPLAIN QUERY PLAN SELECT 1 FROM ${table} WHERE scope_id = ? AND ${predicate}`,
+      ["scope"],
+    );
+    assert.isTrue(plan.some(({ detail }) => detail.includes(`idx_${table}_semantic_scope`)));
   }
   const before = yield* readSchema;
   const changes = yield* sql`SELECT total_changes() AS changes`;
@@ -254,7 +266,7 @@ it.effect(
         );
         assert.deepStrictEqual(
           yield* sql`SELECT MAX(migration_id) AS id FROM ${sql(forkMigrationTable)}`,
-          [{ id: 62 }],
+          [{ id: 63 }],
         );
       }).pipe(
         Effect.provide(

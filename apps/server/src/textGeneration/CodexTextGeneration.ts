@@ -529,7 +529,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
   const improvePrompt: TextGeneration.TextGeneration["Service"]["improvePrompt"] = Effect.fn(
     "CodexTextGeneration.improvePrompt",
   )(function* (input) {
-    const { prompt, outputSchema } = buildPromptImprovementPrompt({ text: input.text });
+    const { prompt, outputSchema } = buildPromptImprovementPrompt(input);
     const generated = yield* runCodexJson({
       operation: "improvePrompt",
       cwd: input.cwd,
@@ -578,6 +578,5 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     improvePrompt,
     reviewPlanParallelism,
     planFetchExploration,
-    enrichKnowledgeGraph: TextGeneration.unsupportedKnowledgeGraphEnrichment("Codex"),
   } satisfies TextGeneration.TextGeneration["Service"];
 });

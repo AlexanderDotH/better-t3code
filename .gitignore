@@ -35,6 +35,8 @@ artifacts/app-store/screenshots/
 apps/web/public/visualizations/
 apps/mobile/assets/visualizations/
 native/**/target/
+native/project-indexer-dotnet/bin/
+native/project-indexer-dotnet/obj/
 node_modules/
 .alchemy/
 *.log

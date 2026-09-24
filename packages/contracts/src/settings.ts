@@ -3,6 +3,7 @@ import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
+import { AssemblyAiVoiceSettings } from "./speech.ts";
 import {
   ForwardCompatibleNullable,
   NonNegativeInt,
@@ -44,6 +45,7 @@ import {
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 import { SkillSettings } from "./skills.ts";
+import { ProjectIndexModelSelection } from "./projectIndexing/common.ts";
 
 // ── Synchronized Client Preferences ────────────────────────────
 
@@ -1380,6 +1382,10 @@ export type SecretSettingValue = typeof SecretSettingValue.Type;
 
 export const AssemblyAiSpeechTranscriptionSettings = Schema.Struct({
   apiKey: SecretSettingValue.pipe(Schema.withDecodingDefault(Effect.succeed({ value: "" }))),
+  voice: AssemblyAiVoiceSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  projectOverrides: Schema.Record(ProjectId, AssemblyAiVoiceSettings).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
 });
 export type AssemblyAiSpeechTranscriptionSettings =
   typeof AssemblyAiSpeechTranscriptionSettings.Type;
@@ -1563,6 +1569,10 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   knowledgeGraphModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  projectIndexingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  projectIndexingDefaultModelSelection: Schema.NullOr(ProjectIndexModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   parallelPlanReviewModelSelection: ModelSelection.pipe(
@@ -1874,6 +1884,10 @@ export const ServerSettingsPatch = Schema.Struct({
   fetchModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   voiceTranslationModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   knowledgeGraphModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  projectIndexingEnabled: Schema.optionalKey(Schema.Boolean),
+  projectIndexingDefaultModelSelection: Schema.optionalKey(
+    Schema.NullOr(ProjectIndexModelSelection),
+  ),
   parallelPlanReviewModelSelection: Schema.optionalKey(ModelSelectionPatch),
   agentEnhancement: Schema.optionalKey(AgentEnhancementSettingsPatch),
   sourceControlWritingStyle: Schema.optionalKey(
@@ -1895,6 +1909,10 @@ export const ServerSettingsPatch = Schema.Struct({
       assemblyAi: Schema.optionalKey(
         Schema.Struct({
           apiKey: Schema.optionalKey(SecretSettingValuePatch),
+          voice: Schema.optionalKey(AssemblyAiVoiceSettings),
+          projectOverrides: Schema.optionalKey(
+            Schema.Record(ProjectId, Schema.NullOr(AssemblyAiVoiceSettings)),
+          ),
         }),
       ),
     }),

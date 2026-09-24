@@ -49,7 +49,7 @@ describe("KnowledgeGraphPanelController disabled owner", () => {
       <KnowledgeGraphPanelController
         environmentId={EnvironmentId.make("environment-remote")}
         projectId={ProjectId.make("project-1")}
-        knowledgeGraphVersion={1}
+        knowledgeGraphVersion={2}
         onOpenSource={() => undefined}
       />,
     );

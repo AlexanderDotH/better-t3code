@@ -1,4 +1,13 @@
-import { CommandId, EnvironmentId, MessageId, ProjectId, ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  EnvironmentId,
+  MessageId,
+  ProjectId,
+  ThreadId,
+  type VoiceFileReference,
+} from "@t3tools/contracts";
+import { appendVoiceFileContext, extractVoiceFileContext } from "@t3tools/shared/voiceFileContext";
+import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { QueuedThreadMessage } from "./thread-outbox-model";
@@ -20,6 +29,35 @@ function queuedMessage(overrides: Partial<QueuedThreadMessage> = {}): QueuedThre
 }
 
 describe("prepareQueuedPromptForDelivery", () => {
+  it("preserves every voice file candidate through improvement and a delivery retry", async () => {
+    const reference: VoiceFileReference = {
+      label: "index.ts",
+      previewPath: "apps/web/index.ts",
+      candidates: [
+        { path: "apps/web/index.ts", symbols: [] },
+        { path: "apps/server/index.ts", symbols: [] },
+      ],
+      truncated: false,
+    };
+    const prompt = `Fix ${serializeComposerFileLink(reference.previewPath)} please`;
+    const message = queuedMessage({
+      text: appendVoiceFileContext(prompt, [reference]),
+      improvePromptBeforeSend: true,
+    });
+    const improve = vi.fn(async (text: string) => text.replace(" please", " carefully"));
+    const persist = vi.fn(async () => true);
+    const result = await prepareQueuedPromptForDelivery({ message, projectId, improve, persist });
+    expect(improve.mock.calls[0]?.[0]).not.toContain("voice_file_context");
+    expect(result._tag).toBe("ready");
+    if (result._tag !== "ready") return;
+    expect(extractVoiceFileContext(result.message.text)).toEqual({
+      text: prompt.replace(" please", " carefully"),
+      references: [reference],
+    });
+    await prepareQueuedPromptForDelivery({ message: result.message, projectId, improve, persist });
+    expect(improve).toHaveBeenCalledTimes(1);
+  });
+
   it("persists improved text once and clears the deferred marker", async () => {
     const message = queuedMessage({ improvePromptBeforeSend: true });
     const improve = vi.fn(async () => "  Improved prompt  ");

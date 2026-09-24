@@ -1,4 +1,6 @@
 import { extractTrailingElementContexts } from "../../lib/elementContext";
+import type { VoiceFileReference } from "@t3tools/contracts";
+import { extractVoiceFileContext } from "@t3tools/shared/voiceFileContext";
 import { extractTrailingPreviewAnnotation } from "../../lib/previewAnnotation";
 import { extractTrailingTerminalContexts } from "../../lib/terminalContext";
 import { PLAN_IMPLEMENTATION_PROMPT_PREFIX } from "../../proposedPlan";
@@ -28,6 +30,7 @@ export interface ComposerPromptHistoryMessage {
 export interface ComposerPromptHistoryEntry {
   readonly id: string;
   readonly prompt: string;
+  readonly voiceFileReferences?: ReadonlyArray<VoiceFileReference>;
 }
 
 /**
@@ -59,6 +62,7 @@ function findActive(
 export interface ComposerPromptHistoryStep {
   readonly position: ComposerPromptHistoryPosition | null;
   readonly prompt: string;
+  readonly voiceFileReferences?: ReadonlyArray<VoiceFileReference>;
 }
 
 /**
@@ -115,7 +119,7 @@ function stripInlineTerminalLabels(prompt: string, headers: ReadonlyArray<string
  * never carries stale context from another turn.
  */
 export function recallableComposerPrompt(messageText: string): string {
-  let prompt = messageText.trim();
+  let prompt = extractVoiceFileContext(messageText).text.trim();
   if (prompt.startsWith(CLAUDE_ULTRATHINK_PREFIX)) {
     prompt = prompt.slice(CLAUDE_ULTRATHINK_PREFIX.length);
   }
@@ -171,12 +175,18 @@ export function buildComposerPromptHistoryEntries(
     if (message.role !== "user") continue;
     const prompt = recallableComposerPrompt(message.text);
     if (prompt.length === 0) continue;
+    const references = extractVoiceFileContext(message.text).references;
+    const entry = {
+      id: message.id,
+      prompt,
+      ...(references.length > 0 ? { voiceFileReferences: references } : {}),
+    };
     const previous = entries[entries.length - 1];
     if (previous && previous.prompt === prompt) {
-      entries[entries.length - 1] = { id: message.id, prompt };
+      entries[entries.length - 1] = entry;
       continue;
     }
-    entries.push({ id: message.id, prompt });
+    entries.push(entry);
   }
   return entries;
 }
@@ -202,11 +212,19 @@ export function stepComposerPromptHistory(input: {
     if (activeIndex < 0 && currentPrompt.length > 0) return null;
     const entry = entries[activeIndex < 0 ? entries.length - 1 : activeIndex - 1];
     if (!entry) return null;
-    return { position: { entryId: entry.id, recalled: entry.prompt }, prompt: entry.prompt };
+    return {
+      position: { entryId: entry.id, recalled: entry.prompt },
+      prompt: entry.prompt,
+      ...(entry.voiceFileReferences ? { voiceFileReferences: entry.voiceFileReferences } : {}),
+    };
   }
 
   if (activeIndex < 0) return null;
   const entry = entries[activeIndex + 1];
   if (!entry) return { position: null, prompt: "" };
-  return { position: { entryId: entry.id, recalled: entry.prompt }, prompt: entry.prompt };
+  return {
+    position: { entryId: entry.id, recalled: entry.prompt },
+    prompt: entry.prompt,
+    ...(entry.voiceFileReferences ? { voiceFileReferences: entry.voiceFileReferences } : {}),
+  };
 }

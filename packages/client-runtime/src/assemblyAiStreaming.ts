@@ -1,4 +1,4 @@
-import type { AssemblyAiStreamingTokenResult } from "@t3tools/contracts";
+export { buildAssemblyAiStreamingUrl } from "@t3tools/shared/assemblyAiStreamingUrl";
 
 export interface AssemblyAiTranscriptTurn {
   readonly transcript: string;
@@ -106,20 +106,6 @@ export class Pcm16ChunkEncoder {
     }
     return chunks;
   }
-}
-
-export function buildAssemblyAiStreamingUrl(config: AssemblyAiStreamingTokenResult): string {
-  const url = new URL(config.websocketUrl);
-  url.searchParams.set("sample_rate", String(config.sampleRate));
-  url.searchParams.set("encoding", config.encoding);
-  url.searchParams.set("speech_model", config.speechModel);
-  url.searchParams.set("format_turns", "true");
-  url.searchParams.set("prompt", config.context.prompt);
-  if (config.context.keyterms.length > 0) {
-    url.searchParams.set("keyterms_prompt", JSON.stringify(config.context.keyterms));
-  }
-  url.searchParams.set("token", config.token);
-  return url.toString();
 }
 
 export function parseAssemblyAiStreamingMessage(value: unknown): AssemblyAiStreamingMessage {

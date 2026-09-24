@@ -1,10 +1,4 @@
-import {
-  KnowledgeGraphSemanticModelOutputV1,
-  KnowledgeGraphSemanticModelRequestV1,
-  type ModelSelection,
-  type OpenAiSettings,
-  TextGenerationError,
-} from "@t3tools/contracts";
+import { type ModelSelection, type OpenAiSettings, TextGenerationError } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
@@ -40,9 +34,6 @@ const isOpenAiReasoningEffort = Schema.is(
   Schema.Literals(["none", "low", "medium", "high", "xhigh", "max"]),
 );
 const isOpenAiHttpError = Schema.is(OpenAiHttpError);
-const encodeKnowledgeGraphSemanticRequest = Schema.encodeSync(
-  Schema.fromJsonString(KnowledgeGraphSemanticModelRequestV1),
-);
 
 export interface OpenAiTextCompletionError {
   readonly _tag: string;
@@ -80,8 +71,7 @@ type TextGenerationOperation =
   | "translateTranscriptToEnglish"
   | "improvePrompt"
   | "reviewPlanParallelism"
-  | "planFetchExploration"
-  | "enrichKnowledgeGraph";
+  | "planFetchExploration";
 
 const responseFormatName: Record<TextGenerationOperation, string> = {
   decideAutoReasoning: "auto_reasoning",
@@ -94,7 +84,6 @@ const responseFormatName: Record<TextGenerationOperation, string> = {
   improvePrompt: "improved_prompt",
   reviewPlanParallelism: "plan_parallelism_review",
   planFetchExploration: "fetch_exploration_plan",
-  enrichKnowledgeGraph: "knowledge_graph_semantic_edges",
 };
 
 function safeRetryAt(now: number, retryAfterSeconds: number | undefined): number | undefined {
@@ -331,7 +320,7 @@ export function makeOpenAiTextGeneration(
       },
     ),
     improvePrompt: Effect.fn("OpenAiTextGeneration.improvePrompt")(function* (input) {
-      const { prompt, outputSchema } = buildPromptImprovementPrompt({ text: input.text });
+      const { prompt, outputSchema } = buildPromptImprovementPrompt(input);
       const generated = yield* runJson({
         operation: "improvePrompt",
         prompt,
@@ -360,24 +349,6 @@ export function makeOpenAiTextGeneration(
         outputSchema,
         modelSelection: input.modelSelection,
       });
-    }),
-    enrichKnowledgeGraph: Effect.fn("OpenAiTextGeneration.enrichKnowledgeGraph")(function* (input) {
-      return yield* runJson({
-        operation: "enrichKnowledgeGraph",
-        instructions:
-          "Return exactly one JSON object containing semantic edges. Use only candidate pairs and evidence IDs present in the request. Omit uncertain relationships. Never invent nodes, evidence, paths, or commentary.",
-        prompt: encodeKnowledgeGraphSemanticRequest(input.request),
-        outputSchema: KnowledgeGraphSemanticModelOutputV1,
-        modelSelection: input.modelSelection,
-      }).pipe(
-        Effect.withSpan("OpenAiTextGeneration.enrichKnowledgeGraph", {
-          attributes: {
-            "knowledge_graph.scope_id": input.request.scopeId,
-            "knowledge_graph.base_revision": input.request.baseRevision,
-            "knowledge_graph.model_generation": input.request.modelGeneration,
-          },
-        }),
-      );
     }),
   };
 }

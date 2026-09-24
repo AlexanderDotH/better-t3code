@@ -50,6 +50,46 @@ function renderPicker(input: {
 }
 
 describe("ProviderModelPicker", () => {
+  it("shows the settings placeholder when no model has been selected", () => {
+    const entry = providerEntry("codex", "codex");
+    const markup = renderToStaticMarkup(
+      <ProviderModelPicker
+        activeInstanceId={entry.instanceId}
+        model=""
+        lockedProvider={null}
+        instanceEntries={[entry]}
+        modelOptionsByInstance={
+          new Map([[entry.instanceId, [{ slug: "fallback", name: "Fallback model" }]]])
+        }
+        placeholder="Choose a model"
+        onInstanceModelChange={() => {}}
+      />,
+    );
+
+    expect(markup).toContain("Choose a model");
+    expect(markup).not.toContain("Fallback model");
+  });
+
+  it("keeps a stored model name instead of implying a fallback was selected", () => {
+    const entry = providerEntry("codex", "codex");
+    const markup = renderToStaticMarkup(
+      <ProviderModelPicker
+        activeInstanceId={entry.instanceId}
+        model="removed-model"
+        lockedProvider={null}
+        instanceEntries={[entry]}
+        modelOptionsByInstance={
+          new Map([[entry.instanceId, [{ slug: "fallback", name: "Fallback model" }]]])
+        }
+        fallbackToFirstModel={false}
+        onInstanceModelChange={() => {}}
+      />,
+    );
+
+    expect(markup).toContain("removed-model");
+    expect(markup).not.toContain("Fallback model");
+  });
+
   it.each(["", ANTIGRAVITY_DEFAULT_MODEL])(
     "shows a choice prompt before Antigravity has an account catalog for %s",
     (model) => {

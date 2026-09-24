@@ -26,7 +26,7 @@ import { ModelCapabilities } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerProviderUsageLimits, UsageLimitSourceSnapshots } from "./providerUsageLimits.ts";
 import { ServerSettings } from "./settings.ts";
-import { AssemblyAiSpeechContext } from "./speech.ts";
+import { AssemblyAiSpeechContext, AssemblyAiVoiceSettings } from "./speech.ts";
 
 const KeybindingsMalformedConfigIssue = Schema.Struct({
   kind: Schema.Literal("keybindings.malformed-config"),
@@ -974,6 +974,7 @@ export const AssemblyAiStreamingTokenResult = Schema.Struct({
   encoding: TrimmedNonEmptyString,
   speechModel: TrimmedNonEmptyString,
   context: AssemblyAiSpeechContext,
+  options: Schema.optionalKey(AssemblyAiVoiceSettings),
 });
 export type AssemblyAiStreamingTokenResult = typeof AssemblyAiStreamingTokenResult.Type;
 

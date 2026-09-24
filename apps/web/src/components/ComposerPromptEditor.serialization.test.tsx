@@ -85,6 +85,17 @@ afterEach(async () => {
 });
 
 describe("composer mention serialization", () => {
+  it("keeps a voice file reference atomic beside punctuation and removes the whole chip", async () => {
+    const prompt = "[index.ts](apps/web/index.ts), keep the public API unchanged.";
+    await renderPrompt(prompt);
+    expect(lexicalEditor.getEditorState().read(() => $firstMention().isInline())).toBe(true);
+    expect(editorRef.current?.readSnapshot().value).toBe(prompt);
+    await act(() => {
+      lexicalEditor.update(() => $firstMention().remove(), { discrete: true });
+    });
+    expect(editorRef.current?.readSnapshot().value).toBe(", keep the public API unchanged.");
+  });
+
   it.each([
     "@README.md control",
     "@terminal-1:3 Explain this output\n\n<terminal_context>\n- Terminal 1 line 3:\n  3 | output\n</terminal_context>",

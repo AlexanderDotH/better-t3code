@@ -1,4 +1,5 @@
 import { ThreadId } from "@t3tools/contracts";
+import { appendVoiceFileContext } from "@t3tools/shared/voiceFileContext";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -36,6 +37,27 @@ function makeContext(overrides?: Partial<TerminalContextDraft>): TerminalContext
 }
 
 describe("terminalContext", () => {
+  it("hides voice candidates in the chat bubble while retaining them in the copied agent prompt", () => {
+    const visible = "Fix [index.ts](apps/web/index.ts) please.";
+    const withVoice = appendVoiceFileContext(visible, [
+      {
+        label: "index.ts",
+        previewPath: "apps/web/index.ts",
+        candidates: [
+          { path: "apps/web/index.ts", symbols: [] },
+          { path: "apps/server/index.ts", symbols: [] },
+        ],
+        truncated: false,
+      },
+    ]);
+    const prompt = appendTerminalContextsToPrompt(withVoice, [makeContext()]);
+    const displayed = deriveDisplayedUserMessageState(prompt);
+    expect(displayed.visibleText).toBe(visible);
+    expect(displayed.contextCount).toBe(1);
+    expect(displayed.copyText).toContain("apps/server/index.ts");
+    expect(displayed.copyText).toContain("<voice_file_context>");
+  });
+
   it("formats terminal labels with line ranges", () => {
     expect(formatTerminalContextLabel(makeContext())).toBe("Terminal 1 lines 12-13");
     expect(

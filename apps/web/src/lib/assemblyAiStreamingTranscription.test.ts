@@ -36,7 +36,7 @@ describe("buildAssemblyAiStreamingUrl", () => {
     expect(url.searchParams.get("sample_rate")).toBe("16000");
     expect(url.searchParams.get("encoding")).toBe("pcm_s16le");
     expect(url.searchParams.get("speech_model")).toBe("universal-3-5-pro");
-    expect(url.searchParams.get("format_turns")).toBe("true");
+    expect(url.searchParams.has("format_turns")).toBe(false);
     expect(url.searchParams.get("prompt")).toBe("Software-development dictation for T3 Code.");
     expect(JSON.parse(url.searchParams.get("keyterms_prompt") ?? "null")).toEqual([
       "T3 Code",

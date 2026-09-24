@@ -36,10 +36,7 @@ import {
 
 const TEXT_GENERATION_TIMEOUT_MS = 180_000;
 
-type TextGenerationOperation = Exclude<
-  keyof TextGeneration.TextGeneration["Service"],
-  "enrichKnowledgeGraph"
->;
+type TextGenerationOperation = keyof TextGeneration.TextGeneration["Service"];
 
 export function makeOpenAiCompatibleTextGeneration(
   settings: OpenAiCompatibleSettings | LmStudioSettings,
@@ -216,7 +213,7 @@ export function makeOpenAiCompatibleTextGeneration(
       return { text: generated.text.trim() };
     }),
     improvePrompt: Effect.fn("OpenAiCompatibleTextGeneration.improvePrompt")(function* (input) {
-      const { prompt, outputSchema } = buildPromptImprovementPrompt({ text: input.text });
+      const { prompt, outputSchema } = buildPromptImprovementPrompt(input);
       const generated = yield* runJson({
         operation: "improvePrompt",
         prompt,
@@ -248,6 +245,5 @@ export function makeOpenAiCompatibleTextGeneration(
         });
       },
     ),
-    enrichKnowledgeGraph: TextGeneration.unsupportedKnowledgeGraphEnrichment(name),
   } satisfies TextGeneration.TextGeneration["Service"];
 }

@@ -89,7 +89,10 @@ it("shows each voice setting once and keeps credentials, models, and projects in
       ...DEFAULT_UNIFIED_SETTINGS,
       speechTranscription: {
         ...DEFAULT_UNIFIED_SETTINGS.speechTranscription,
-        assemblyAi: { apiKey: { value: `${environmentId}-key`, valueRedacted: false } },
+        assemblyAi: {
+          ...DEFAULT_UNIFIED_SETTINGS.speechTranscription.assemblyAi,
+          apiKey: { value: `${environmentId}-key`, valueRedacted: false },
+        },
       },
     });
   }
@@ -120,8 +123,18 @@ it("shows each voice setting once and keeps credentials, models, and projects in
       renderer = create(content("remote"));
     });
     const voiceRegion = renderer!.root.findByProps({ id: "better-t3-group-voice", role: "region" });
+    const composerRegion = renderer!.root.findByProps({
+      id: "better-t3-group-composer",
+      role: "region",
+    });
+    expect(
+      composerRegion.findAll(
+        (node) =>
+          typeof node.type === "string" &&
+          node.props["data-better-t3-feature"] === "agent.promptImprovement",
+      ),
+    ).toHaveLength(1);
     for (const featureId of [
-      "agent.promptImprovement",
       "voice.assemblyAi",
       "voice.outputLanguage",
       "voice.credentials",
@@ -152,7 +165,7 @@ it("shows each voice setting once and keeps credentials, models, and projects in
       },
     });
     await act(() =>
-      renderer!.root.findByProps({ "aria-label": "Voice post-processing model" }).props.onClick(),
+      renderer!.root.findByProps({ "aria-label": "Voice translation model" }).props.onClick(),
     );
     expect(fixture.updateSettings).toHaveBeenLastCalledWith("remote", {
       voiceTranslationModelSelection: { instanceId: "codex", model: "selected-voice-model" },
@@ -177,7 +190,7 @@ it("shows each voice setting once and keeps credentials, models, and projects in
     await act(() => renderer!.update(content("local", true)));
     expect(keyInput().props.disabled).toBe(true);
     expect(
-      renderer!.root.findByProps({ "aria-label": "Voice post-processing model" }).props.disabled,
+      renderer!.root.findByProps({ "aria-label": "Voice translation model" }).props.disabled,
     ).toBe(true);
   } finally {
     await act(() => renderer?.unmount());

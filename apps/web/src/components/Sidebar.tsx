@@ -129,6 +129,7 @@ import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments"
 import {
   readThreadShell,
   useAllEnvironmentProjectSnapshotsReady,
+  useAllEnvironmentShellsBootstrapped,
   useProjects,
   useThreadShells,
 } from "../state/entities";
@@ -2563,6 +2564,7 @@ export default function Sidebar() {
   // only after every catalog environment has a live project snapshot. Cached
   // or disconnected environments cannot establish that the project is gone.
   const allProjectSnapshotsReady = useAllEnvironmentProjectSnapshotsReady();
+  const shellsBootstrapped = useAllEnvironmentShellsBootstrapped();
   useEffect(() => {
     if (projectScopeKey !== null && allProjectSnapshotsReady && scopedProjectGroup === null) {
       setProjectScopeKey(null);
@@ -5205,8 +5207,13 @@ export default function Sidebar() {
             snoozedThreads.length +
             settledThreads.length ===
             0 ? (
-            <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
-              {projects.length === 0 ? (
+            <div
+              className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60"
+              role={shellsBootstrapped ? undefined : "status"}
+            >
+              {!shellsBootstrapped ? (
+                translator.message("common.loading")
+              ) : projects.length === 0 ? (
                 <>
                   <span>{translator.message("sidebar.project.noProjects")}</span>
                   <button

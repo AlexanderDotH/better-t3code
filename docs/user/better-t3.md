@@ -53,6 +53,13 @@ the agent to finish before editing. The separate fork action remains available t
 
 This is enabled by default. Turn it off under **Settings → Better T3 → Chat → Edit chat messages**.
 
+## Composer controls
+
+On web and desktop, open **Settings → Better T3 → Composer** to arrange the input area. Enable
+**Expanded composer controls** to show separate model and mode controls where space allows;
+narrow layouts use the compact menu. The same section contains the workspace card deck,
+context-window selector, plan bubble, and prompt improvement.
+
 Use [appearance and language](./appearance.md#language-and-chat-layout) for visual preferences,
 [resource protection](./resource-protection.md) when work waits for memory, and
 [delegated work](./general-subagents.md) to follow subagent tasks. Set up

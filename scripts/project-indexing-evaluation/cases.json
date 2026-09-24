@@ -1,0 +1,319 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "validator-module",
+      "category": "validator-wrong-module",
+      "task": "Check whether the invoice ingestion boundary depends on the correct validation module.",
+      "failure": {
+        "relevantPaths": ["src/ingest/invoice.ts", "src/ui/invoice-form.ts"],
+        "findings": [
+          {
+            "category": "validator-wrong-module",
+            "path": "src/ingest/invoice.ts",
+            "symbol": "ingestInvoice"
+          }
+        ],
+        "files": [
+          {
+            "path": "src/ui/invoice-form.ts",
+            "content": "export function validateInvoice(invoice: { amount: number }) {\n  if (invoice.amount <= 0) throw new Error(\"Amount must be positive\");\n  return invoice;\n}\n"
+          },
+          {
+            "path": "src/ingest/invoice.ts",
+            "content": "import { validateInvoice } from \"../ui/invoice-form\";\nexport function ingestInvoice(invoice: { amount: number }) {\n  return validateInvoice(invoice);\n}\n"
+          },
+          {
+            "path": "src/domain/invoice.ts",
+            "content": "export type Invoice = { amount: number };\n"
+          }
+        ]
+      },
+      "corrected": {
+        "relevantPaths": ["src/ingest/invoice.ts", "src/domain/invoice-validation.ts"],
+        "findings": [],
+        "files": [
+          {
+            "path": "src/domain/invoice-validation.ts",
+            "content": "export function validateInvoice(invoice: { amount: number }) {\n  if (invoice.amount <= 0) throw new Error(\"Amount must be positive\");\n  return invoice;\n}\n"
+          },
+          {
+            "path": "src/ingest/invoice.ts",
+            "content": "import { validateInvoice } from \"../domain/invoice-validation\";\nexport function ingestInvoice(invoice: { amount: number }) {\n  return validateInvoice(invoice);\n}\n"
+          },
+          {
+            "path": "src/ui/invoice-form.ts",
+            "content": "export { validateInvoice } from \"../domain/invoice-validation\";\n"
+          }
+        ]
+      }
+    },
+    {
+      "id": "processor-responsibilities",
+      "category": "overloaded-processor",
+      "task": "Review whether the order processor has distinct responsibilities mixed into one function.",
+      "failure": {
+        "relevantPaths": ["src/orders/process.ts"],
+        "findings": [
+          {
+            "category": "overloaded-processor",
+            "path": "src/orders/process.ts",
+            "symbol": "processOrder"
+          }
+        ],
+        "files": [
+          {
+            "path": "src/orders/process.ts",
+            "content": "type Order = { email: string; quantity: number; unitPrice: number };\ntype Services = { save(value: unknown): void; sendEmail(to: string, text: string): void; writeAudit(text: string): void };\nexport function processOrder(order: Order, services: Services) {\n  if (order.quantity <= 0) throw new Error(\"Invalid quantity\");\n  if (!order.email.includes(\"@\")) throw new Error(\"Invalid email\");\n  const normalized = { ...order, email: order.email.trim().toLowerCase() };\n  const total = normalized.quantity * normalized.unitPrice;\n  services.save({ ...normalized, total });\n  services.sendEmail(normalized.email, \"Order total: \" + total);\n  services.writeAudit(JSON.stringify({ kind: \"order\", total }));\n  return total;\n}\n"
+          }
+        ]
+      },
+      "corrected": {
+        "relevantPaths": ["src/orders/process.ts", "src/orders/prepare.ts"],
+        "findings": [],
+        "files": [
+          {
+            "path": "src/orders/prepare.ts",
+            "content": "export type Order = { email: string; quantity: number; unitPrice: number };\nexport function prepareOrder(order: Order) {\n  if (order.quantity <= 0) throw new Error(\"Invalid quantity\");\n  if (!order.email.includes(\"@\")) throw new Error(\"Invalid email\");\n  return { ...order, email: order.email.trim().toLowerCase(), total: order.quantity * order.unitPrice };\n}\n"
+          },
+          {
+            "path": "src/orders/process.ts",
+            "content": "import { prepareOrder, type Order } from \"./prepare\";\ntype Services = { save(value: ReturnType<typeof prepareOrder>): void; publish(value: ReturnType<typeof prepareOrder>): void };\nexport function processOrder(order: Order, services: Services) {\n  const prepared = prepareOrder(order);\n  services.save(prepared);\n  services.publish(prepared);\n  return prepared.total;\n}\n"
+          },
+          {
+            "path": "src/orders/notify.ts",
+            "content": "export function orderEmail(total: number) { return \"Order total: \" + total; }\nexport function orderAudit(total: number) { return JSON.stringify({ kind: \"order\", total }); }\n"
+          }
+        ]
+      }
+    },
+    {
+      "id": "nested-policy",
+      "category": "cognitive-complexity",
+      "task": "Review the shipment decision for nesting that obscures the acceptance rules.",
+      "failure": {
+        "relevantPaths": ["src/shipping/policy.ts"],
+        "findings": [
+          {
+            "category": "cognitive-complexity",
+            "path": "src/shipping/policy.ts",
+            "symbol": "canShip"
+          }
+        ],
+        "files": [
+          {
+            "path": "src/shipping/policy.ts",
+            "content": "type Shipment = { paid: boolean; address: string; stock: number; quantity: number; blocked: boolean; expedited: boolean; overnight: boolean };\nexport function canShip(order: Shipment) {\n  if (order.paid) {\n    if (order.address.length > 0) {\n      if (order.stock >= order.quantity) {\n        if (!order.blocked) {\n          if (order.expedited) {\n            if (order.overnight) { return \"overnight\"; }\n            else { return \"express\"; }\n          } else { return \"standard\"; }\n        } else { return null; }\n      } else { return null; }\n    } else { return null; }\n  } else { return null; }\n}\n"
+          }
+        ]
+      },
+      "corrected": {
+        "relevantPaths": ["src/shipping/policy.ts"],
+        "findings": [],
+        "files": [
+          {
+            "path": "src/shipping/policy.ts",
+            "content": "type Shipment = { paid: boolean; address: string; stock: number; quantity: number; blocked: boolean; expedited: boolean; overnight: boolean };\nexport function canShip(order: Shipment) {\n  if (!order.paid || order.address.length === 0) return null;\n  if (order.stock < order.quantity || order.blocked) return null;\n  if (!order.expedited) return \"standard\";\n  return order.overnight ? \"overnight\" : \"express\";\n}\n"
+          }
+        ]
+      }
+    },
+    {
+      "id": "repeated-filter",
+      "category": "duplicate-filtering",
+      "task": "Check the enabled-recipient flow for the same filter being applied twice.",
+      "failure": {
+        "relevantPaths": ["src/messages/select.ts", "src/messages/send.ts"],
+        "findings": [
+          {
+            "category": "duplicate-filtering",
+            "path": "src/messages/send.ts",
+            "symbol": "sendEnabled"
+          }
+        ],
+        "files": [
+          {
+            "path": "src/messages/select.ts",
+            "content": "export type Recipient = { enabled: boolean; address: string };\nexport function enabledRecipients(recipients: Recipient[]) {\n  return recipients.filter(recipient => recipient.enabled);\n}\n"
+          },
+          {
+            "path": "src/messages/send.ts",
+            "content": "import { enabledRecipients, type Recipient } from \"./select\";\nexport function sendEnabled(recipients: Recipient[], send: (address: string) => void) {\n  for (const recipient of enabledRecipients(recipients).filter(recipient => recipient.enabled)) {\n    send(recipient.address);\n  }\n}\n"
+          }
+        ]
+      },
+      "corrected": {
+        "relevantPaths": ["src/messages/select.ts", "src/messages/send.ts"],
+        "findings": [],
+        "files": [
+          {
+            "path": "src/messages/select.ts",
+            "content": "export type Recipient = { enabled: boolean; address: string };\nexport function enabledRecipients(recipients: Recipient[]) {\n  return recipients.filter(recipient => recipient.enabled);\n}\n"
+          },
+          {
+            "path": "src/messages/send.ts",
+            "content": "import { enabledRecipients, type Recipient } from \"./select\";\nexport function sendEnabled(recipients: Recipient[], send: (address: string) => void) {\n  for (const recipient of enabledRecipients(recipients)) send(recipient.address);\n}\n"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ignored-validation",
+      "category": "swallowed-validation-error",
+      "task": "Review whether validation failures can be mistaken for a successful import.",
+      "failure": {
+        "relevantPaths": ["src/import/read.ts", "src/import/validate.ts"],
+        "findings": [
+          {
+            "category": "swallowed-validation-error",
+            "path": "src/import/read.ts",
+            "symbol": "readRows"
+          }
+        ],
+        "files": [
+          {
+            "path": "src/import/validate.ts",
+            "content": "export function validateRow(row: string) {\n  if (!row.includes(\",\")) throw new Error(\"Missing separator\");\n  return row.split(\",\");\n}\n"
+          },
+          {
+            "path": "src/import/read.ts",
+            "content": "import { validateRow } from \"./validate\";\nexport function readRows(rows: string[]) {\n  try { return rows.map(validateRow); }\n  catch { return []; }\n}\n"
+          }
+        ]
+      },
+      "corrected": {
+        "relevantPaths": ["src/import/read.ts", "src/import/validate.ts"],
+        "findings": [],
+        "files": [
+          {
+            "path": "src/import/validate.ts",
+            "content": "export function validateRow(row: string) {\n  if (!row.includes(\",\")) throw new Error(\"Missing separator\");\n  return row.split(\",\");\n}\n"
+          },
+          {
+            "path": "src/import/read.ts",
+            "content": "import { validateRow } from \"./validate\";\nexport function readRows(rows: string[]) {\n  return rows.map(validateRow);\n}\n"
+          }
+        ]
+      }
+    },
+    {
+      "id": "copied-helper",
+      "category": "duplicated-helper",
+      "task": "Find repeated slug normalization knowledge in the article and catalog modules.",
+      "failure": {
+        "relevantPaths": ["src/articles/slug.ts", "src/catalog/slug.ts"],
+        "findings": [
+          {
+            "category": "duplicated-helper",
+            "path": "src/catalog/slug.ts",
+            "symbol": "catalogSlug",
+            "alternativePaths": ["src/articles/slug.ts"]
+          }
+        ],
+        "files": [
+          {
+            "path": "src/articles/slug.ts",
+            "content": "export function articleSlug(title: string) {\n  return title.trim().toLowerCase().replace(/[^a-z0-9]+/g, \"-\").replace(/^-|-$/g, \"\");\n}\n"
+          },
+          {
+            "path": "src/catalog/slug.ts",
+            "content": "export function catalogSlug(title: string) {\n  return title.trim().toLowerCase().replace(/[^a-z0-9]+/g, \"-\").replace(/^-|-$/g, \"\");\n}\n"
+          }
+        ]
+      },
+      "corrected": {
+        "relevantPaths": ["src/articles/slug.ts", "src/catalog/slug.ts", "src/shared/slug.ts"],
+        "findings": [],
+        "files": [
+          {
+            "path": "src/shared/slug.ts",
+            "content": "export function slug(title: string) {\n  return title.trim().toLowerCase().replace(/[^a-z0-9]+/g, \"-\").replace(/^-|-$/g, \"\");\n}\n"
+          },
+          {
+            "path": "src/articles/slug.ts",
+            "content": "export { slug as articleSlug } from \"../shared/slug\";\n"
+          },
+          {
+            "path": "src/catalog/slug.ts",
+            "content": "export { slug as catalogSlug } from \"../shared/slug\";\n"
+          }
+        ]
+      }
+    },
+    {
+      "id": "copied-asset-layout",
+      "category": "duplicate-asset-pattern",
+      "task": "Check whether the banner and icon loaders duplicate the same asset path policy.",
+      "failure": {
+        "relevantPaths": ["src/assets/banner.ts", "src/assets/icon.ts"],
+        "findings": [
+          {
+            "category": "duplicate-asset-pattern",
+            "path": "src/assets/icon.ts",
+            "symbol": "iconPath",
+            "alternativePaths": ["src/assets/banner.ts"]
+          }
+        ],
+        "files": [
+          {
+            "path": "src/assets/banner.ts",
+            "content": "export function bannerPath(locale: string, theme: string, name: string) {\n  return \"/assets/\" + locale.toLowerCase() + \"/\" + theme + \"/\" + name + \".svg\";\n}\n"
+          },
+          {
+            "path": "src/assets/icon.ts",
+            "content": "export function iconPath(locale: string, theme: string, name: string) {\n  return \"/assets/\" + locale.toLowerCase() + \"/\" + theme + \"/\" + name + \".svg\";\n}\n"
+          }
+        ]
+      },
+      "corrected": {
+        "relevantPaths": ["src/assets/banner.ts", "src/assets/icon.ts", "src/assets/path.ts"],
+        "findings": [],
+        "files": [
+          {
+            "path": "src/assets/path.ts",
+            "content": "export function assetPath(locale: string, theme: string, name: string) {\n  return \"/assets/\" + locale.toLowerCase() + \"/\" + theme + \"/\" + name + \".svg\";\n}\n"
+          },
+          {
+            "path": "src/assets/banner.ts",
+            "content": "export { assetPath as bannerPath } from \"./path\";\n"
+          },
+          {
+            "path": "src/assets/icon.ts",
+            "content": "export { assetPath as iconPath } from \"./path\";\n"
+          }
+        ]
+      }
+    },
+    {
+      "id": "path-roundtrip",
+      "category": "pointless-path-conversions",
+      "task": "Review unnecessary path representation conversions before passing the path to the reader.",
+      "failure": {
+        "relevantPaths": ["src/config/read.ts"],
+        "findings": [
+          {
+            "category": "pointless-path-conversions",
+            "path": "src/config/read.ts",
+            "symbol": "readConfig"
+          }
+        ],
+        "files": [
+          {
+            "path": "src/config/read.ts",
+            "content": "import { fileURLToPath, pathToFileURL } from \"node:url\";\nexport function readConfig(filePath: string, read: (path: string) => string) {\n  const firstPath = fileURLToPath(pathToFileURL(filePath));\n  const secondPath = fileURLToPath(pathToFileURL(firstPath));\n  return read(secondPath);\n}\n"
+          }
+        ]
+      },
+      "corrected": {
+        "relevantPaths": ["src/config/read.ts"],
+        "findings": [],
+        "files": [
+          {
+            "path": "src/config/read.ts",
+            "content": "export function readConfig(filePath: string, read: (path: string) => string) {\n  return read(filePath);\n}\n"
+          }
+        ]
+      }
+    }
+  ]
+}

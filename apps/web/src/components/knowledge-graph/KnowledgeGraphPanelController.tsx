@@ -15,6 +15,11 @@ import type {
   KnowledgeGraphPosition,
   KnowledgeGraphViewport,
 } from "@t3tools/client-runtime/knowledge-graph";
+import {
+  projectIndexingSupported,
+  projectIndexScopeKey,
+  type ProjectIndexClientApi,
+} from "@t3tools/client-runtime/project-indexing";
 import { AsyncResult } from "effect/unstable/reactivity";
 import * as Option from "effect/Option";
 import {
@@ -42,12 +47,16 @@ import {
 } from "./knowledgeGraphActions";
 import { resolveKnowledgeGraphLoadState } from "./knowledgeGraphPanelState";
 import { useKnowledgeGraphLayout } from "./useKnowledgeGraphLayout";
+import { ProjectIndexGraphPanelController } from "./ProjectIndexGraphPanelController";
 
 interface KnowledgeGraphPanelControllerProps {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
   readonly threadId?: ThreadId;
   readonly knowledgeGraphVersion?: number;
+  readonly projectIndexingVersion?: number | undefined;
+  readonly projectIndexingApi?: ProjectIndexClientApi;
+  readonly onOpenProjectIndexingSettings?: () => void;
   readonly onOpenSource: (path: string, line: number | null) => void;
 }
 
@@ -57,7 +66,7 @@ export function resolveKnowledgeGraphPanelMode(input: {
   readonly knowledgeGraphVersion: number | undefined;
   readonly enabled: boolean;
 }): KnowledgeGraphPanelMode {
-  if ((input.knowledgeGraphVersion ?? 0) < 1) return "unsupported";
+  if ((input.knowledgeGraphVersion ?? 0) < 2) return "unsupported";
   return input.enabled ? "connected" : "disabled-owner";
 }
 
@@ -233,10 +242,26 @@ function ConnectedKnowledgeGraphPanel(props: KnowledgeGraphPanelControllerProps)
   );
   const remoteQuery = Option.getOrNull(AsyncResult.value(remoteQueryResult));
   const remoteGraphResult = remoteQuery?.results[0] ?? null;
-  const displayedSnapshot = useMemo(
-    () => applyKnowledgeGraphQueryResult(snapshot, remoteGraphResult, remoteQuery?.revision),
-    [remoteGraphResult, remoteQuery?.revision, snapshot],
-  );
+  const displayedSnapshot = useMemo(() => {
+    const result = applyKnowledgeGraphQueryResult(
+      snapshot,
+      remoteGraphResult,
+      remoteQuery?.revision,
+    );
+    if (!result) return null;
+    const nodes = result.nodes.filter((node) => node.provenance === "deterministic");
+    const nodeIds = new Set(nodes.map((node) => node.nodeId));
+    return {
+      ...result,
+      nodes,
+      edges: result.edges.filter(
+        (edge) =>
+          edge.provenance === "deterministic" &&
+          nodeIds.has(edge.sourceNodeId) &&
+          nodeIds.has(edge.targetNodeId),
+      ),
+    };
+  }, [remoteGraphResult, remoteQuery?.revision, snapshot]);
 
   const layout = useKnowledgeGraphLayout({
     nodes: displayedSnapshot?.nodes ?? EMPTY_NODES,
@@ -406,7 +431,7 @@ function ConnectedKnowledgeGraphPanel(props: KnowledgeGraphPanelControllerProps)
   }
 
   const paused = displayedSnapshot.status.state === "paused";
-  const active = ["indexing", "semantic", "cancelling"].includes(displayedSnapshot.status.state);
+  const active = ["indexing", "cancelling"].includes(displayedSnapshot.status.state);
   return (
     <div ref={panelNode} className="flex min-h-0 flex-1">
       <KnowledgeGraphPanelView
@@ -424,9 +449,6 @@ function ConnectedKnowledgeGraphPanel(props: KnowledgeGraphPanelControllerProps)
         layoutAnimating={layout.isAnimating || draggingNodeId !== null}
         prefersReducedMotion={prefersReducedMotion}
         translate={translate}
-        formatConfidence={(confidence) =>
-          translator.number(confidence, { style: "percent", maximumFractionDigits: 0 })
-        }
         onQueryChange={setQuery}
         onToggleKind={toggleKind}
         onZoomChange={changeZoom}
@@ -514,6 +536,21 @@ function ConnectedKnowledgeGraphPanel(props: KnowledgeGraphPanelControllerProps)
 
 export function KnowledgeGraphPanelController(props: KnowledgeGraphPanelControllerProps) {
   const settings = useEnvironmentSettings(props.environmentId);
+  if (projectIndexingSupported({ projectIndexingVersion: props.projectIndexingVersion ?? 0 })) {
+    if (!props.projectIndexingApi)
+      return <KnowledgeGraphUnavailable messageKey="knowledgeGraph.error" />;
+    return (
+      <ProjectIndexGraphPanelController
+        key={projectIndexScopeKey(props, props.environmentId)}
+        api={props.projectIndexingApi}
+        environmentId={props.environmentId}
+        projectId={props.projectId}
+        {...(props.threadId === undefined ? {} : { threadId: props.threadId })}
+        onOpenSource={props.onOpenSource}
+        onOpenSettings={props.onOpenProjectIndexingSettings}
+      />
+    );
+  }
   const enabled = resolveBetterT3FeatureFlag(settings.betterT3Environment, "knowledge.graph");
   const mode = resolveKnowledgeGraphPanelMode({
     knowledgeGraphVersion: props.knowledgeGraphVersion,

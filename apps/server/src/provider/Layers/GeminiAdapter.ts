@@ -5,6 +5,7 @@ import type {
   GenerateContentResponse,
   GenerateContentResponseUsageMetadata,
   Part,
+  ThinkingConfig,
 } from "@google/genai";
 import {
   GEMINI_DEFAULT_MODEL,
@@ -13,6 +14,7 @@ import {
   ProviderInstanceId,
   TurnId,
 } from "@t3tools/contracts";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
@@ -45,6 +47,7 @@ import {
   geminiToolRequiresApproval,
   type GeminiHarnessToolExecutor,
 } from "./GeminiHarness.ts";
+import { resolveGeminiThinkingConfig } from "./GeminiProvider.ts";
 
 const PROVIDER = ProviderDriverKind.make("gemini");
 const GEMINI_RESUME_VERSION = 1 as const;
@@ -71,9 +74,14 @@ interface PersistedGeminiSession {
   readonly turns: Array<GeminiTurnRecord>;
 }
 
+interface GeminiSessionState {
+  reasoningEffort?: string | undefined;
+}
+
 interface GeminiProtocolState {
   readonly client: GeminiClient;
   readonly instructions: string;
+  readonly thinkingConfig?: ThinkingConfig | undefined;
 }
 
 type GeminiToolCall = NativeProviderToolCall<{ readonly id: string | undefined }>;
@@ -208,6 +216,7 @@ function streamGeminiRound(input: {
   readonly contents: ReadonlyArray<Content>;
   readonly declarations: ReadonlyArray<FunctionDeclaration>;
   readonly instructions: string;
+  readonly thinkingConfig?: ThinkingConfig | undefined;
   readonly signal: AbortSignal;
 }): Stream.Stream<NativeProviderRoundEvent<Content, GeminiToolCall>, ProviderAdapterRequestError> {
   return Stream.unwrap(
@@ -222,6 +231,7 @@ function streamGeminiRound(input: {
             ...(input.declarations.length > 0
               ? { tools: [{ functionDeclarations: [...input.declarations] }] }
               : {}),
+            ...(input.thinkingConfig ? { thinkingConfig: input.thinkingConfig } : {}),
           },
         }),
       catch: (cause) =>
@@ -333,7 +343,7 @@ export function makeGeminiAdapter(settings: GeminiSettings, options: GeminiAdapt
 
   return makeNativeProviderAdapter<
     Content,
-    object,
+    GeminiSessionState,
     GeminiProtocolState,
     FunctionDeclaration,
     GeminiToolCall
@@ -371,9 +381,13 @@ export function makeGeminiAdapter(settings: GeminiSettings, options: GeminiAdapt
         const modelSelection =
           input.modelSelection?.instanceId === instanceId ? input.modelSelection : undefined;
         const model = modelSelection?.model ?? GEMINI_DEFAULT_MODEL;
+        const reasoningEffort = modelSelection
+          ? (getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") ??
+            getModelSelectionStringOptionValue(modelSelection, "effort"))
+          : undefined;
         return {
           model,
-          state: {},
+          state: { reasoningEffort },
           configured: {
             harness: "t3-code",
             sdk: "@google/genai",
@@ -416,6 +430,15 @@ export function makeGeminiAdapter(settings: GeminiSettings, options: GeminiAdapt
           input.modelSelection?.instanceId === instanceId
             ? input.modelSelection.model
             : (session.session.model ?? GEMINI_DEFAULT_MODEL);
+        const reasoningEffort =
+          input.modelSelection?.instanceId === instanceId
+            ? (getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort") ??
+              getModelSelectionStringOptionValue(input.modelSelection, "effort"))
+            : session.state.reasoningEffort;
+        if (input.modelSelection?.instanceId === instanceId) {
+          session.state.reasoningEffort = reasoningEffort;
+        }
+        const thinkingConfig = resolveGeminiThinkingConfig(reasoningEffort, model);
         const declarations = geminiToolDeclarations({
           interactionMode: input.interactionMode,
           sandboxMode: session.sandboxMode,
@@ -433,6 +456,7 @@ export function makeGeminiAdapter(settings: GeminiSettings, options: GeminiAdapt
               interactionMode: input.interactionMode,
               fetchWorker: session.fetchWorker,
             }),
+            thinkingConfig,
           },
         };
       }),
@@ -443,6 +467,7 @@ export function makeGeminiAdapter(settings: GeminiSettings, options: GeminiAdapt
         contents: session.history,
         declarations: plan.toolDeclarations,
         instructions: plan.protocol.instructions,
+        thinkingConfig: plan.protocol.thinkingConfig,
         signal,
       }),
     toolHarness: {

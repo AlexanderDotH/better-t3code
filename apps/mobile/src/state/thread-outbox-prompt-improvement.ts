@@ -1,5 +1,10 @@
 import { resolvePromptForSend } from "@t3tools/client-runtime/prompt-improvement";
 import type { ProjectId } from "@t3tools/contracts";
+import {
+  appendVoiceFileContext,
+  extractVoiceFileContext,
+  translateVoiceDictationResult,
+} from "@t3tools/shared/voiceFileContext";
 
 import type { QueuedThreadMessage } from "./thread-outbox-model";
 
@@ -21,12 +26,12 @@ export async function prepareQueuedPromptForDelivery(input: {
 
   let text: string;
   try {
-    text = (
-      await resolvePromptForSend({
-        prompt: input.message.text,
-        improve: (prompt) => input.improve(prompt, input.projectId),
-      })
-    ).trim();
+    const parsed = extractVoiceFileContext(input.message.text);
+    const improved = await translateVoiceDictationResult(parsed, (prompt) =>
+      resolvePromptForSend({ prompt, improve: (text) => input.improve(text, input.projectId) }),
+    );
+    text = improved.text.trim();
+    if (text.length > 0) text = appendVoiceFileContext(text, improved.references);
   } catch (error) {
     input.onError?.("improve", error);
     return { _tag: "retry" };

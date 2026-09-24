@@ -135,6 +135,34 @@ describe("promptStashStore", () => {
     expect(usePromptStashStore.getState().takeEntry("citation-stash").entry).toBeNull();
   });
 
+  it("restores ambiguous voice references with the draft instead of selecting its preview file", () => {
+    const references = [
+      {
+        label: "index.ts",
+        previewPath: "apps/web/index.ts",
+        candidates: [
+          { path: "apps/web/index.ts", symbols: [] },
+          { path: "apps/server/index.ts", symbols: [] },
+        ],
+        truncated: false,
+      },
+    ];
+    const prompt = "Change [index.ts](apps/web/index.ts) please.";
+    writePromptStashStorageForTest(
+      JSON.stringify({
+        version: 2,
+        state: {
+          entries: [
+            { ...makeEntry({ id: "voice-stash", prompt }), voiceFileReferences: references },
+          ],
+        },
+      }),
+    );
+    const restored = usePromptStashStore.getState().takeEntry("voice-stash").entry;
+    expect(restored?.prompt).toBe(prompt);
+    expect(restored?.voiceFileReferences).toEqual(references);
+  });
+
   it("evicts the oldest entry past the cap and returns it", () => {
     const store = usePromptStashStore.getState();
     for (let index = 0; index < MAX_STASH_ENTRIES; index += 1) {

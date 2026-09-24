@@ -33,14 +33,14 @@ export const settingsThemeVoiceInterfaceCatalog = defineLocalizedInterfaceCatalo
   "settings.voice.output.native": ["Native", "Originalsprache", "Langue d’origine"],
   "settings.voice.output.english": ["English", "Englisch", "Anglais"],
   "settings.voice.model.title": [
-    "Voice post-processing model",
-    "Modell zur Sprachnachbearbeitung",
-    "Modèle de post-traitement vocal",
+    "Voice translation model",
+    "Modell für die Sprachübersetzung",
+    "Modèle de traduction vocale",
   ],
   "settings.voice.model.resetLabel": [
-    "voice post-processing model",
-    "Modell zur Sprachnachbearbeitung",
-    "modèle de post-traitement vocal",
+    "voice translation model",
+    "Modell für die Sprachübersetzung",
+    "modèle de traduction vocale",
   ],
   "settings.voice.model.description": [
     "Model used only for optional English translation after you stop recording. AssemblyAI still handles live speech recognition. By default, this follows the global text generation model.",

@@ -525,7 +525,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   const improvePrompt: TextGeneration.TextGeneration["Service"]["improvePrompt"] = Effect.fn(
     "ClaudeTextGeneration.improvePrompt",
   )(function* (input) {
-    const { prompt, outputSchema } = buildPromptImprovementPrompt({ text: input.text });
+    const { prompt, outputSchema } = buildPromptImprovementPrompt(input);
     const generated = yield* runClaudeJson({
       operation: "improvePrompt",
       cwd: input.cwd,
@@ -574,6 +574,5 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     improvePrompt,
     reviewPlanParallelism,
     planFetchExploration,
-    enrichKnowledgeGraph: TextGeneration.unsupportedKnowledgeGraphEnrichment("Claude"),
   } satisfies TextGeneration.TextGeneration["Service"];
 });

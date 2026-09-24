@@ -1,0 +1,43 @@
+name: Setup project indexer toolchains
+description: Install the build toolchains for the packaged C# and Java analyzers.
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-dotnet@v5
+      with:
+        dotnet-version: "10.0.x"
+    - uses: actions/setup-java@v5
+      with:
+        distribution: temurin
+        java-version: "21"
+        cache: maven
+        cache-dependency-path: native/project-indexer-java/pom.xml
+    - name: Install verified Maven distribution
+      shell: bash
+      run: |
+        set -euo pipefail
+        indexer_tools="$RUNNER_TEMP/project-indexer-tools"
+        if [ "$RUNNER_OS" = Windows ]; then
+          indexer_tools="$(cygpath -u "$indexer_tools")"
+        fi
+        indexer_archive="$indexer_tools/apache-maven-3.9.11-bin.tar.gz"
+        mkdir -p "$indexer_tools"
+        curl --fail --location --silent --show-error \
+          https://archive.apache.org/dist/maven/maven-3/3.9.11/binaries/apache-maven-3.9.11-bin.tar.gz \
+          --output "$indexer_archive"
+        node --input-type=module - "$indexer_archive" <<'NODE'
+        import { readFile } from 'node:fs/promises';
+        import { createHash } from 'node:crypto';
+        const actual = createHash('sha512').update(await readFile(process.argv[2])).digest('hex');
+        const expected = 'bcfe4fe305c962ace56ac7b5fc7a08b87d5abd8b7e89027ab251069faebee516b0ded8961445d6d91ec1985dfe30f8153268843c89aa392733d1a3ec956c9978';
+        if (actual !== expected) throw new Error('Maven archive checksum mismatch');
+        NODE
+        tar -xzf "$indexer_archive" -C "$indexer_tools"
+        indexer_bin="$indexer_tools/apache-maven-3.9.11/bin"
+        indexer_maven="$indexer_bin/mvn"
+        if [ "$RUNNER_OS" = Windows ]; then
+          indexer_bin="$(cygpath -m "$indexer_bin")"
+          indexer_maven="$indexer_bin/mvn.cmd"
+        fi
+        printf '%s\n' "$indexer_bin" >> "$GITHUB_PATH"
+        printf 'T3CODE_INDEXER_MAVEN=%s\n' "$indexer_maven" >> "$GITHUB_ENV"

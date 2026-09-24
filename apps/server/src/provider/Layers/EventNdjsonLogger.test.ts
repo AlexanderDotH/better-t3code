@@ -60,6 +60,39 @@ function parseLogLine(line: string) {
 }
 
 describe("EventNdjsonLogger", () => {
+  it.effect("excludes analysis-worker source from every diagnostic log stream", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-index-log-"));
+      const basePath = NodePath.join(tempDir, "provider-events.log");
+      try {
+        const store = yield* makeEventNdjsonLogStore(basePath);
+        assert.exists(store);
+        if (!store) return;
+        for (const stream of ["native", "canonical", "orchestration"] as const) {
+          const logger = store.logger(stream);
+          yield* logger.write(
+            { type: "item.completed", source: "SYNTHETIC_PRIVATE_INDEX_SOURCE" },
+            ThreadId.make("project-index:synthetic-generation"),
+          );
+          yield* logger.write(
+            { type: "turn.completed", detail: "ordinary diagnostic event" },
+            ThreadId.make("ordinary-thread"),
+          );
+        }
+        yield* store.close();
+        const files = NodeFS.readdirSync(tempDir);
+        assert.deepStrictEqual(files, [
+          NodePath.basename(ownedLogPath(basePath, "ordinary-thread")),
+        ]);
+        const log = NodeFS.readFileSync(NodePath.join(tempDir, files[0]!), "utf8");
+        assert.notInclude(log, "SYNTHETIC_PRIVATE_INDEX_SOURCE");
+        assert.include(log, "ordinary diagnostic event");
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
   it.effect("truncates only oversized diagnostic copies and records original bytes plus hash", () =>
     Effect.gen(function* () {
       const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));

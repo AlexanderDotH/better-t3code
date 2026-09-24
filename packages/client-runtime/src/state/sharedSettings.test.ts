@@ -19,6 +19,21 @@ const laptopId = EnvironmentId.make("env-laptop");
 const boxId = EnvironmentId.make("env-box");
 const restartCapabilities = { threadRestartContinuation: true };
 
+it("keeps project indexing defaults on the selected environment instead of syncing them across hosts", () => {
+  const localPatch = {
+    projectIndexingEnabled: true,
+    projectIndexingDefaultModelSelection: {
+      instanceId: ProviderInstanceId.make("environment-local"),
+      model: "synthetic-model",
+    },
+  };
+  expect(splitSharedServerPatch(localPatch)).toEqual({ sharedPatch: {}, localPatch });
+  expect(splitSharedServerPatch({ projectIndexingDefaultModelSelection: null })).toEqual({
+    sharedPatch: {},
+    localPatch: { projectIndexingDefaultModelSelection: null },
+  });
+});
+
 describe("supportsSharedSettingsSync", () => {
   it("accepts only connected servers that advertise the shared-settings capability", () => {
     expect(
