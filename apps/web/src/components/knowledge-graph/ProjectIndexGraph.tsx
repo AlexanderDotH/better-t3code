@@ -4,7 +4,7 @@ import type {
   ProjectImportV1,
   ProjectIndexGraphOverviewV1,
 } from "@t3tools/contracts";
-import { ExpandIcon, MinusIcon, PlusIcon } from "lucide-react";
+import { ExpandIcon, MinusIcon, PlusIcon, RotateCcwIcon } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
@@ -22,6 +22,7 @@ import { useProjectGraphMotion } from "./useProjectGraphMotion";
 import "./ProjectIndexGraph.css";
 
 const EMPTY_IMPORTS: ReadonlyArray<ProjectImportV1> = [];
+const DRAG_THRESHOLD_PX = 5;
 const INITIAL_VIEWPORT = { scale: 1, translateX: 0, translateY: 0 };
 
 function fitNodes(nodes: ReadonlyArray<{ x: number; y: number }>, width: number, height: number) {
@@ -69,7 +70,18 @@ export function ProjectIndexGraph({
   const { message, number } = useInterfaceTranslator();
   const graphId = useId();
   const svgRef = useRef<SVGSVGElement>(null);
-  const drag = useRef<{ pointerId: number; x: number; y: number } | null>(null);
+  const drag = useRef<{
+    pointerId: number;
+    x: number;
+    y: number;
+    clientX: number;
+    clientY: number;
+    node: { id: string; x: number; y: number } | null;
+    capture: Element;
+    moved: boolean;
+  } | null>(null);
+  const suppressClick = useRef(false);
+  const [draggedId, setDraggedId] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const overviewLayout = useMemo(
     () =>
@@ -102,7 +114,10 @@ export function ProjectIndexGraph({
   const [viewport, setViewport] = useState(() =>
     fitNodes(targetLayout.nodes, targetLayout.width, targetLayout.height),
   );
-  const nodes = useProjectGraphMotion(targetLayout.nodes);
+  const { nodes, moveNode, releaseNode, reset } = useProjectGraphMotion(
+    targetLayout.nodes,
+    targetLayout.edges,
+  );
   const layout = useMemo(
     () => ({
       ...targetLayout,
@@ -112,7 +127,9 @@ export function ProjectIndexGraph({
     [nodes, targetLayout],
   );
   const focusedId =
-    hoveredId ?? (selectedEntityId && layout.byId.has(selectedEntityId) ? selectedEntityId : null);
+    draggedId ??
+    hoveredId ??
+    (selectedEntityId && layout.byId.has(selectedEntityId) ? selectedEntityId : null);
   const hasNodes = layout.nodes.length > 0;
   const neighbors = useMemo(() => {
     if (!focusedId) return null;
@@ -139,6 +156,16 @@ export function ProjectIndexGraph({
     [layout.width, layout.height],
   );
   const fit = () => setViewport(fitNodes(nodes, layout.width, layout.height));
+  const finishDrag = () => {
+    const previous = drag.current;
+    drag.current = null;
+    setDraggedId(null);
+    if (!previous) return;
+    suppressClick.current = previous.moved;
+    if (previous.node && previous.moved) releaseNode();
+    if (previous.capture.hasPointerCapture(previous.pointerId))
+      previous.capture.releasePointerCapture(previous.pointerId);
+  };
 
   useEffect(() => {
     if (!hasNodes) return;
@@ -146,7 +173,7 @@ export function ProjectIndexGraph({
     if (!svg) return;
     const wheel = (event: WheelEvent) => {
       const matrix = svg.getScreenCTM();
-      if (!matrix) return;
+      if (!matrix || drag.current) return;
       event.preventDefault();
       const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse());
       zoom(event.deltaY > 0 ? 0.9 : 1.1, point.x, point.y);
@@ -176,6 +203,18 @@ export function ProjectIndexGraph({
           </p>
         </div>
         <div className="flex items-center gap-1">
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label={message("projectIndexing.graphReset")}
+            title={message("projectIndexing.graphReset")}
+            onClick={() => {
+              reset();
+              setViewport(fitNodes(targetLayout.nodes, layout.width, layout.height));
+            }}
+          >
+            <RotateCcwIcon />
+          </Button>
           <Button
             size="icon-sm"
             variant="ghost"
@@ -233,6 +272,7 @@ export function ProjectIndexGraph({
         onPointerDown={(event) => {
           if (
             event.button !== 0 ||
+            drag.current !== null ||
             (event.target instanceof Element && event.target.closest("button"))
           )
             return;
@@ -241,7 +281,17 @@ export function ProjectIndexGraph({
           const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(
             matrix.inverse(),
           );
-          drag.current = { pointerId: event.pointerId, x: point.x, y: point.y };
+          suppressClick.current = false;
+          drag.current = {
+            pointerId: event.pointerId,
+            x: point.x,
+            y: point.y,
+            clientX: event.clientX,
+            clientY: event.clientY,
+            node: null,
+            capture: event.currentTarget,
+            moved: false,
+          };
           event.currentTarget.setPointerCapture(event.pointerId);
         }}
         onPointerMove={(event) => {
@@ -252,21 +302,35 @@ export function ProjectIndexGraph({
           const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(
             matrix.inverse(),
           );
-          setViewport((current) => ({
-            ...current,
-            translateX: current.translateX + point.x - previous.x,
-            translateY: current.translateY + point.y - previous.y,
-          }));
-          drag.current = { pointerId: event.pointerId, x: point.x, y: point.y };
+          if (
+            !previous.moved &&
+            Math.hypot(event.clientX - previous.clientX, event.clientY - previous.clientY) <
+              DRAG_THRESHOLD_PX
+          )
+            return;
+          previous.moved = true;
+          suppressClick.current = true;
+          if (previous.node) {
+            setDraggedId(previous.node.id);
+            moveNode(previous.node.id, {
+              x: previous.node.x + (point.x - previous.x) / viewport.scale,
+              y: previous.node.y + (point.y - previous.y) / viewport.scale,
+            });
+          } else {
+            setViewport((current) => ({
+              ...current,
+              translateX: current.translateX + point.x - previous.x,
+              translateY: current.translateY + point.y - previous.y,
+            }));
+            previous.x = point.x;
+            previous.y = point.y;
+          }
         }}
         onPointerUp={(event) => {
-          if (drag.current?.pointerId !== event.pointerId) return;
-          drag.current = null;
-          event.currentTarget.releasePointerCapture(event.pointerId);
+          if (drag.current?.pointerId === event.pointerId) finishDrag();
         }}
-        onLostPointerCapture={() => {
-          drag.current = null;
-        }}
+        onPointerCancel={finishDrag}
+        onLostPointerCapture={finishDrag}
       >
         <defs>
           <pattern id={`${graphId}-grid`} width="36" height="36" patternUnits="userSpaceOnUse">
@@ -341,6 +405,7 @@ export function ProjectIndexGraph({
                       type="button"
                       className="project-index-graph-node"
                       data-kind={nodeCategory(node.kind)}
+                      data-dragging={draggedId === node.id}
                       data-expanded={node.expanded}
                       data-loading={node.id === loadingPath}
                       aria-busy={node.id === loadingPath}
@@ -361,7 +426,52 @@ export function ProjectIndexGraph({
                             ? node.filePath
                             : `${node.qualifiedName} · ${node.filePath}:${node.line}`
                       }
-                      onClick={() => (overview ? onSelectMapNode?.(node) : onSelectEntity(node.id))}
+                      onPointerDown={(event) => {
+                        if (event.button !== 0 || drag.current) return;
+                        const matrix = svgRef.current?.getScreenCTM();
+                        if (!matrix) return;
+                        event.stopPropagation();
+                        const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(
+                          matrix.inverse(),
+                        );
+                        suppressClick.current = false;
+                        drag.current = {
+                          pointerId: event.pointerId,
+                          x: point.x,
+                          y: point.y,
+                          clientX: event.clientX,
+                          clientY: event.clientY,
+                          node: { id: node.id, x: node.x, y: node.y },
+                          capture: event.currentTarget,
+                          moved: false,
+                        };
+                        event.currentTarget.setPointerCapture(event.pointerId);
+                      }}
+                      onKeyDown={(event) => {
+                        const directions: Record<string, readonly [number, number]> = {
+                          ArrowLeft: [-1, 0],
+                          ArrowRight: [1, 0],
+                          ArrowUp: [0, -1],
+                          ArrowDown: [0, 1],
+                        };
+                        const direction = directions[event.key];
+                        if (!direction) return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        const distance = event.shiftKey ? 40 : 12;
+                        moveNode(node.id, {
+                          x: node.x + direction[0] * distance,
+                          y: node.y + direction[1] * distance,
+                        });
+                      }}
+                      onClick={(event) => {
+                        if (suppressClick.current && event.detail !== 0) {
+                          suppressClick.current = false;
+                          return;
+                        }
+                        if (overview) onSelectMapNode?.(node);
+                        else onSelectEntity(node.id);
+                      }}
                       onMouseEnter={() => setHoveredId(node.id)}
                       onMouseLeave={() => setHoveredId(null)}
                       onFocus={() => setHoveredId(node.id)}
@@ -446,6 +556,7 @@ export function ProjectIndexGraph({
       </div>
       <details className="project-index-graph-notes">
         <summary>{message("projectIndexing.graphRelationships")}</summary>
+        <p>{message("projectIndexing.graphKeyboardNavigation")}</p>
         <p>
           {message(
             overview ? "projectIndexing.graphOverviewLegend" : "projectIndexing.graphMapLegend",

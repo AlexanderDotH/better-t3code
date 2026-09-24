@@ -48,7 +48,7 @@ export function ProjectIndexStatusChip(props: {
             role="img"
             aria-label={accessibleLabel}
             data-toolbar-status=""
-            className="inline-flex h-7 max-w-56 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-[var(--control-radius)] border border-input bg-popover px-[calc(--spacing(2)-1px)] text-xs font-medium text-foreground shadow-xs/5 dark:bg-input/32"
+            className="inline-flex h-7 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-[var(--control-radius)] border border-input bg-popover px-[calc(--spacing(2)-1px)] text-xs font-medium text-foreground shadow-xs/5 dark:bg-input/32"
           />
         }
       >
@@ -57,7 +57,7 @@ export function ProjectIndexStatusChip(props: {
           aria-hidden
           className={`size-1.5 shrink-0 rounded-full ${statusDotClasses[chatStatus.tone]}`}
         />
-        <span className="max-w-24 truncate">{compactStateLabel}</span>
+        <span>{compactStateLabel}</span>
       </TooltipTrigger>
       <TooltipPopup side="bottom">{accessibleLabel}</TooltipPopup>
     </Tooltip>

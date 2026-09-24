@@ -122,7 +122,9 @@
   padding: 5px 0 0;
   color: var(--graph-text);
   background: none;
-  cursor: pointer;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
   pointer-events: auto;
   outline: none;
 }
@@ -290,4 +292,8 @@
 .project-index-graph-legend [data-kind="directory"]::before {
   background: var(--graph-symbol);
   border-radius: 2px;
+}
+
+.project-index-graph-node[data-dragging="true"] {
+  cursor: grabbing;
 }

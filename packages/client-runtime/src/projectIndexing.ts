@@ -186,6 +186,7 @@ export function deriveProjectIndexActions(status: ProjectIndexStatusV1 | null) {
 function projectIndexChatTone(state: ProjectIndexState): "active" | "ready" | "attention" | "idle" {
   switch (state) {
     case "ready":
+    case "partial":
       return "ready";
     case "queued":
     case "discovering":
@@ -194,7 +195,6 @@ function projectIndexChatTone(state: ProjectIndexState): "active" | "ready" | "a
     case "updating":
       return "active";
     case "disabled":
-    case "partial":
     case "waiting-for-provider":
     case "waiting-for-resources":
     case "paused":
