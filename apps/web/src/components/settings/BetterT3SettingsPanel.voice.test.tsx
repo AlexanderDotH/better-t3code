@@ -123,8 +123,18 @@ it("shows each voice setting once and keeps credentials, models, and projects in
       renderer = create(content("remote"));
     });
     const voiceRegion = renderer!.root.findByProps({ id: "better-t3-group-voice", role: "region" });
+    const composerRegion = renderer!.root.findByProps({
+      id: "better-t3-group-composer",
+      role: "region",
+    });
+    expect(
+      composerRegion.findAll(
+        (node) =>
+          typeof node.type === "string" &&
+          node.props["data-better-t3-feature"] === "agent.promptImprovement",
+      ),
+    ).toHaveLength(1);
     for (const featureId of [
-      "agent.promptImprovement",
       "voice.assemblyAi",
       "voice.outputLanguage",
       "voice.credentials",
