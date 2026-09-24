@@ -398,7 +398,16 @@ export function makeProjectContextRetrieval(
         );
       }
     }
-    return { records: results, gaps };
+    // Keep original directives and file relationships ahead of neighboring declarations
+    // so a small context budget can still explain how the selected source is connected.
+    return {
+      records: [
+        ...results.filter((item) => item.kind === "rules"),
+        ...results.filter((item) => item.kind === "imports"),
+        ...results.filter((item) => item.kind !== "rules" && item.kind !== "imports"),
+      ],
+      gaps,
+    };
   });
 
   return { next, related, stageCount: stages.length };

@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { describe, expect, it } from "vite-plus/test";
+import { PROJECT_INDEX_SYNTAX_GRAMMARS } from "@t3tools/shared/projectIndexLanguages";
 
 import { scanInventory, type InventoryCursor } from "../extraction/inventory.ts";
 import { readSourceUnit, sourceHash } from "../extraction/source.ts";
@@ -102,12 +103,8 @@ describe("project indexing scale acceptance", () => {
   });
 
   it("loads all shipped syntax grammars from their actual runtime assets", async () => {
-    expect((await probeSyntaxGrammars()).map((entry) => entry.grammar)).toEqual([
-      "javascript",
-      "typescript",
-      "tsx",
-      "c_sharp",
-      "java",
-    ]);
+    expect((await probeSyntaxGrammars()).map((entry) => entry.grammar)).toEqual(
+      PROJECT_INDEX_SYNTAX_GRAMMARS,
+    );
   });
 });
