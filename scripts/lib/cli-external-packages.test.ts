@@ -92,6 +92,7 @@ describe("selectCliRuntimeExternalDependencies", () => {
         "@ff-labs/fff-node",
         "@harperfast/rocksdb-js",
         "@typescript/typescript6",
+        "msgpackr",
         "msgpackr-extract",
         "node-pty",
         "tree-sitter-wasms",

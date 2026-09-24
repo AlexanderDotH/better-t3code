@@ -30,8 +30,8 @@
         "scripts/cli.ts",
         "src/provider/testFixtures/*.mjs",
       ],
-      // Native msgpack acceleration, the web build prerequisite, and dynamically resolved WASM grammars.
-      "ignoreDependencies": ["msgpackr-extract", "@t3tools/web", "tree-sitter-wasms"],
+      // Bundled Effect imports msgpackr externally; its native acceleration and WASM grammars load dynamically.
+      "ignoreDependencies": ["msgpackr", "msgpackr-extract", "@t3tools/web", "tree-sitter-wasms"],
     },
     "apps/desktop": {
       // Electron loads these bundles by filename rather than importing them.
