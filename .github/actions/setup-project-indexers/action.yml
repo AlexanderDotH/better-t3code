@@ -17,6 +17,9 @@ runs:
       run: |
         set -euo pipefail
         indexer_tools="$RUNNER_TEMP/project-indexer-tools"
+        if [ "$RUNNER_OS" = Windows ]; then
+          indexer_tools="$(cygpath -u "$indexer_tools")"
+        fi
         indexer_archive="$indexer_tools/apache-maven-3.9.11-bin.tar.gz"
         mkdir -p "$indexer_tools"
         curl --fail --location --silent --show-error \
