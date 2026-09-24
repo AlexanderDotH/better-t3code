@@ -383,11 +383,7 @@ export const projectIndexingInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Projektwissen wird aktualisiert",
     "Mise à jour des connaissances du projet",
   ],
-  "projectIndexing.state.partial": [
-    "Partial index · review known gaps",
-    "Unvollständiger Index · bekannte Lücken prüfen",
-    "Index partiel · vérifiez les lacunes connues",
-  ],
+  "projectIndexing.state.partial": ["Indexed", "Indexiert", "Indexé"],
   "projectIndexing.state.waiting-for-provider": [
     "Waiting for the selected provider",
     "Warten auf den ausgewählten Provider",
@@ -398,7 +394,7 @@ export const projectIndexingInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Warten auf Ressourcen",
     "En attente de ressources",
   ],
-  "projectIndexing.state.ready": ["Index ready", "Index bereit", "Index prêt"],
+  "projectIndexing.state.ready": ["Indexed", "Indexiert", "Indexé"],
   "projectIndexing.state.paused": [
     "Indexing paused",
     "Indexierung pausiert",
@@ -473,10 +469,20 @@ export const projectIndexingInterfaceCatalog = defineLocalizedInterfaceCatalog({
   "projectIndexing.graphZoomIn": ["Zoom in", "Vergrößern", "Zoom avant"],
   "projectIndexing.graphZoomOut": ["Zoom out", "Verkleinern", "Zoom arrière"],
   "projectIndexing.graphFit": ["Fit graph", "Graph einpassen", "Ajuster le graphe"],
+  "projectIndexing.graphReset": [
+    "Reset layout",
+    "Anordnung zurücksetzen",
+    "Réinitialiser la disposition",
+  ],
   "projectIndexing.graphNavigation": [
-    "Drag to pan · Scroll to zoom · Select to explore",
-    "Ziehen zum Verschieben · Scrollen zum Zoomen · Auswählen zum Erkunden",
-    "Glisser pour déplacer · Défiler pour zoomer · Sélectionner pour explorer",
+    "Drag nodes to arrange · Drag background to pan · Scroll to zoom · Click to explore",
+    "Knoten ziehen zum Anordnen · Hintergrund ziehen zum Verschieben · Scrollen zum Zoomen · Klicken zum Erkunden",
+    "Glisser les nœuds pour les disposer · Glisser le fond pour déplacer · Défiler pour zoomer · Cliquer pour explorer",
+  ],
+  "projectIndexing.graphKeyboardNavigation": [
+    "Tab to a node and use arrow keys to move it; hold Shift for larger steps. Enter explores it. Focus the background to pan with arrows, zoom with +/−, or fit with Home. Reset layout restores all positions.",
+    "Mit Tab einen Knoten fokussieren und mit Pfeiltasten bewegen; Umschalt vergrößert die Schritte. Enter öffnet ihn. Auf dem Hintergrund verschieben Pfeiltasten die Ansicht, +/− zoomt und Pos1 passt den Graphen ein. Anordnung zurücksetzen stellt alle Positionen wieder her.",
+    "Utilisez Tab pour cibler un nœud, puis les flèches pour le déplacer ; Maj agrandit les pas. Entrée explore le nœud. Sur le fond, les flèches déplacent la vue, +/− zoome et Début ajuste le graphe. Réinitialiser la disposition restaure les positions.",
   ],
   "projectIndexing.graphRelationships": [
     "Reading this map",

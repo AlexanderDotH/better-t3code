@@ -272,6 +272,10 @@ describe("project indexing shared state", () => {
       )?.analysisUnits,
     ).toEqual({ completed: 1, total: 4 });
     expect(deriveProjectIndexChatStatus({ ...running, state: "ready" })?.tone).toBe("ready");
+    expect(deriveProjectIndexChatStatus({ ...running, state: "partial" })).toMatchObject({
+      state: "partial",
+      tone: "ready",
+    });
     expect(
       deriveProjectIndexChatStatus({
         ...running,
