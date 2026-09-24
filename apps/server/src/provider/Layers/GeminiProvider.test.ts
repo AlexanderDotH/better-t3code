@@ -1,6 +1,6 @@
 import { ThinkingLevel, type Model } from "@google/genai";
 import * as Effect from "effect/Effect";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
 
 import type { GeminiClient } from "../GeminiClient.ts";
 import {
@@ -260,75 +260,80 @@ describe("GeminiProvider", () => {
   });
 
   describe("model discovery via checkGeminiProviderStatus", () => {
-    it("filters out non-text models and equips text models with reasoning capabilities", async () => {
-      const mockRawModels: Array<Model> = [
-        {
-          name: "models/gemini-3.6-flash",
-          displayName: "Gemini 3.6 Flash",
-          supportedActions: ["generateContent"],
-          inputTokenLimit: 1_000_000,
-          outputTokenLimit: 8192,
-        },
-        {
-          name: "models/gemini-2.5-flash-image",
-          displayName: "Gemini 2.5 Flash Image",
-          supportedActions: ["generateContent"],
-        },
-        {
-          name: "models/text-embedding-004",
-          displayName: "Text Embedding 004",
-          supportedActions: ["embedContent"],
-        },
-        {
-          name: "models/imagen-3.0-generate-002",
-          displayName: "Imagen 3",
-          supportedActions: ["generateImages"],
-        },
-        {
-          name: "models/gemini-3.1-pro-preview",
-          displayName: "Gemini 3.1 Pro Preview",
-          supportedActions: ["generateContent"],
-          inputTokenLimit: 1_000_000,
-          outputTokenLimit: 8192,
-        },
-      ];
+    it.effect(
+      "filters out non-text models and equips text models with reasoning capabilities",
+      () =>
+        Effect.gen(function* () {
+          const mockRawModels: Array<Model> = [
+            {
+              name: "models/gemini-3.6-flash",
+              displayName: "Gemini 3.6 Flash",
+              supportedActions: ["generateContent"],
+              inputTokenLimit: 1_000_000,
+              outputTokenLimit: 8192,
+            },
+            {
+              name: "models/gemini-2.5-flash-image",
+              displayName: "Gemini 2.5 Flash Image",
+              supportedActions: ["generateContent"],
+            },
+            {
+              name: "models/text-embedding-004",
+              displayName: "Text Embedding 004",
+              supportedActions: ["embedContent"],
+            },
+            {
+              name: "models/imagen-3.0-generate-002",
+              displayName: "Imagen 3",
+              supportedActions: ["generateImages"],
+            },
+            {
+              name: "models/gemini-3.1-pro-preview",
+              displayName: "Gemini 3.1 Pro Preview",
+              supportedActions: ["generateContent"],
+              inputTokenLimit: 1_000_000,
+              outputTokenLimit: 8192,
+            },
+          ];
 
-      const discovered = discoveredGeminiModels(mockRawModels);
-      expect(discovered.map((m) => m.slug)).toEqual(["gemini-3.6-flash", "gemini-3.1-pro-preview"]);
+          const discovered = discoveredGeminiModels(mockRawModels);
+          expect(discovered.map((m) => m.slug)).toEqual([
+            "gemini-3.6-flash",
+            "gemini-3.1-pro-preview",
+          ]);
 
-      const fakeClient = {
-        models: {
-          list: async () => ({ page: mockRawModels }),
-          generateContent: async () => {
-            throw new Error("not implemented");
-          },
-          generateContentStream: async () => {
-            throw new Error("not implemented");
-          },
-        },
-      } as unknown as GeminiClient;
+          const fakeClient = {
+            models: {
+              list: async () => ({ page: mockRawModels }),
+              generateContent: async () => {
+                throw new Error("not implemented");
+              },
+              generateContentStream: async () => {
+                throw new Error("not implemented");
+              },
+            },
+          } as unknown as GeminiClient;
 
-      const provider = await Effect.runPromise(
-        checkGeminiProviderStatus(
-          { enabled: true, customModels: [] },
-          { GOOGLE_API_KEY: "test-google-key" },
-          () => fakeClient,
-        ),
-      );
+          const provider = yield* checkGeminiProviderStatus(
+            { enabled: true, customModels: [] },
+            { GOOGLE_API_KEY: "test-google-key" },
+            () => fakeClient,
+          );
 
-      expect(provider.models.map((m) => m.slug)).toEqual([
-        "gemini-3.6-flash",
-        "gemini-3.1-pro-preview",
-      ]);
-      const flashModel = provider.models.find((m) => m.slug === "gemini-3.6-flash");
-      expect(flashModel?.capabilities?.optionDescriptors).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            id: "reasoningEffort",
-            currentValue: "medium",
-          }),
-        ]),
-      );
-    });
+          expect(provider.models.map((m) => m.slug)).toEqual([
+            "gemini-3.6-flash",
+            "gemini-3.1-pro-preview",
+          ]);
+          const flashModel = provider.models.find((m) => m.slug === "gemini-3.6-flash");
+          expect(flashModel?.capabilities?.optionDescriptors).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                id: "reasoningEffort",
+                currentValue: "medium",
+              }),
+            ]),
+          );
+        }),
+    );
   });
 });
