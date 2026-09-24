@@ -13,6 +13,7 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk";
 import {
   ApprovalRequestId,
+  EnvironmentId,
   ClaudeSettings,
   ProviderDriverKind,
   ProviderItemId,
@@ -38,6 +39,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   SYNTHETIC_CLAUDE_CAPABLE_MODEL,
   SYNTHETIC_CLAUDE_COLLIDING_ALIAS,
@@ -172,6 +174,7 @@ function makeHarness(config?: {
   readonly instanceId?: ProviderInstanceId;
   readonly scopedLimitNames?: ClaudeAdapterLiveOptions["scopedLimitNames"];
   readonly environment?: ClaudeAdapterLiveOptions["environment"];
+  readonly resolveMcpServers?: ClaudeAdapterLiveOptions["resolveMcpServers"];
 }) {
   const query = new FakeClaudeQuery();
   let createInput:
@@ -182,6 +185,7 @@ function makeHarness(config?: {
     | undefined;
 
   const adapterOptions: ClaudeAdapterLiveOptions = {
+    ...(config?.resolveMcpServers ? { resolveMcpServers: config.resolveMcpServers } : {}),
     ...(config?.environment ? { environment: config.environment } : {}),
     ...(config?.instanceId ? { instanceId: config.instanceId } : {}),
     ...(config?.scopedLimitNames ? { scopedLimitNames: config.scopedLimitNames } : {}),
@@ -377,6 +381,78 @@ describe("ClaudeAdapterLive", () => {
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(layer),
+    );
+  });
+
+  it.effect("isolates Fetch workers from inherited privileges and denies non-read tools", () => {
+    let resolvedMcpServers = 0;
+    const harness = makeHarness({
+      resolveMcpServers: () =>
+        Effect.sync(() => {
+          resolvedMcpServers += 1;
+          return { unapproved: { type: "http" as const, url: "https://synthetic.invalid/mcp" } };
+        }),
+    });
+    const threadId = ThreadId.make("fetch:claude:analysis-read-only");
+    return Effect.gen(function* () {
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("synthetic-environment"),
+        threadId,
+        providerSessionId: "synthetic-session",
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer synthetic-token",
+      });
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        purpose: "fetch-worker",
+        runtimeMode: "full-access",
+        resumeCursor: { sessionId: "must-not-resume" },
+      });
+      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+      const options = harness.getLastCreateQueryInput()?.options;
+      assert.equal(session.runtimeMode, "approval-required");
+      assert.deepEqual(options?.tools, ["Read", "Grep", "Glob"]);
+      assert.deepEqual(options?.settingSources, []);
+      assert.equal(options?.allowDangerouslySkipPermissions, undefined);
+      assert.notEqual(options?.permissionMode, "bypassPermissions");
+      assert.equal(options?.resume, undefined);
+      assert.equal(options?.mcpServers, undefined);
+      assert.equal(resolvedMcpServers, 0);
+      const canUseTool = options?.canUseTool;
+      assert.isDefined(canUseTool);
+      if (!canUseTool) return;
+
+      for (const toolName of ["Bash", "Write", "Edit", "Agent", "mcp__unapproved__write"]) {
+        const permission = canUseTool(
+          toolName,
+          { description: "Synthetic blocked tool" },
+          {
+            signal: new AbortController().signal,
+            requestId: `request-${toolName}`,
+            toolUseID: `tool-${toolName}`,
+          },
+        );
+        const opened = yield* Stream.runHead(adapter.streamEvents);
+        assert.equal(opened._tag, "Some");
+        if (opened._tag !== "Some" || opened.value.type !== "request.opened") {
+          return yield* Effect.die("Fetch tool did not request approval");
+        }
+        yield* adapter.respondToRequest(
+          threadId,
+          ApprovalRequestId.make(String(opened.value.requestId)),
+          "decline",
+        );
+        const result = yield* Effect.promise(() => permission);
+        assert.equal(result?.behavior, "deny");
+        yield* Stream.runHead(adapter.streamEvents);
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+      Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
     );
   });
 

@@ -70,6 +70,9 @@ import {
   type ServerLifecycleStreamEvent,
   type ServerProvider,
   SpeechStreamingProxyError,
+  SpeechDictationError,
+  type SpeechStreamingStartInput,
+  resolveAssemblyAiVoiceSettings,
   SpeechStreamingSessionId,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
@@ -170,6 +173,8 @@ import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as ResourceProtection from "./resourceProtection/SubagentResourceGovernor.ts";
 import * as KnowledgeGraphRuntime from "./knowledge-graph/runtime/KnowledgeGraphRuntime.ts";
+import { ProjectIndexingRuntime } from "./projectIndexing/runtime/ProjectIndexingRuntimeService.ts";
+import { ProjectContextQuery } from "./projectIndexing/query/ProjectContextQuery.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
@@ -183,6 +188,11 @@ import { makeHarnessChatSync } from "./harnessChatSync.ts";
 import { makeT3ChatImport } from "./t3ChatImport.ts";
 import { AssemblyAiStreamingToken } from "./speech/Layers/AssemblyAiStreamingToken.ts";
 import * as ProjectSpeechProfiles from "./speech/ProjectSpeechProfiles.ts";
+import { AssemblyAiDictation } from "./speech/AssemblyAiDictation.ts";
+import {
+  ProjectSpeechVocabulary,
+  speechVocabularyKeyterms,
+} from "./speech/ProjectSpeechVocabulary.ts";
 import * as ProjectTextTransforms from "./speech/ProjectTextTransforms.ts";
 import * as PlanParallelismReview from "./plan/PlanParallelismReview.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
@@ -679,6 +689,39 @@ const makeWsRpcLayer = (
       const assemblyAiStreamingProxy = createAssemblyAiStreamingProxy({});
       yield* Effect.addFinalizer(() => Effect.sync(() => assemblyAiStreamingProxy.dispose()));
       const projectSpeechProfiles = yield* ProjectSpeechProfiles.make;
+      const assemblyAiDictation = yield* AssemblyAiDictation;
+      const speechVocabulary = yield* ProjectSpeechVocabulary;
+      const createSpeechStreamingConfiguration = Effect.fn("ws.createSpeechStreamingConfiguration")(
+        function* (input: SpeechStreamingStartInput) {
+          const workspaceRoot = yield* assemblyAiDictation.resolveWorkspace(input);
+          const settings = yield* serverSettings.getSettings.pipe(
+            Effect.mapError(
+              () => new SpeechDictationError({ reason: "Voice settings could not be loaded." }),
+            ),
+          );
+          const options = resolveAssemblyAiVoiceSettings(
+            settings.speechTranscription.assemblyAi,
+            input.projectId,
+          );
+          if (options.projectVocabulary || options.automaticFileReferences) {
+            yield* speechVocabulary.refreshInBackground({ workspaceRoot });
+          }
+          const context = yield* projectSpeechProfiles.contextForProject(input.projectId);
+          const snapshot = yield* speechVocabulary.snapshot({ workspaceRoot });
+          return yield* assemblyAiStreamingToken.create(
+            {
+              ...context,
+              keyterms:
+                snapshot.entries.length > 0
+                  ? speechVocabularyKeyterms(snapshot.entries)
+                  : input.threadId
+                    ? []
+                    : context.keyterms,
+            },
+            options,
+          );
+        },
+      );
       const projectTextTransforms = yield* ProjectTextTransforms.make;
       const planParallelismReview = yield* PlanParallelismReview.PlanParallelismReview;
       const mcpConfigEngine = yield* McpConfigEngine;
@@ -726,6 +769,8 @@ const makeWsRpcLayer = (
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
       const resourceProtection = yield* ResourceProtection.SubagentResourceGovernor;
       const knowledgeGraph = yield* KnowledgeGraphRuntime.KnowledgeGraphRuntime;
+      const projectIndexing = yield* ProjectIndexingRuntime;
+      const projectContext = yield* ProjectContextQuery;
       const usage = yield* UsageService.UsageService;
       const relayClient = yield* RelayClient.RelayClient;
       const withRuntimeCapabilities = (providers: ReadonlyArray<ServerProvider>) =>
@@ -2439,21 +2484,18 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "project-memory" },
           ),
-        [WS_METHODS.serverCreateAssemblyAiStreamingToken]: ({ projectId }) =>
+        [WS_METHODS.serverCreateAssemblyAiStreamingToken]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverCreateAssemblyAiStreamingToken,
-            projectSpeechProfiles
-              .contextForProject(projectId)
-              .pipe(Effect.flatMap(assemblyAiStreamingToken.create)),
+            createSpeechStreamingConfiguration(input),
             {
               "rpc.aggregate": "server",
             },
           ),
-        [WS_METHODS.speechStartStreamingSession]: ({ projectId }) =>
+        [WS_METHODS.speechStartStreamingSession]: (input) =>
           observeRpcEffect(
             WS_METHODS.speechStartStreamingSession,
-            projectSpeechProfiles.contextForProject(projectId).pipe(
-              Effect.flatMap(assemblyAiStreamingToken.create),
+            createSpeechStreamingConfiguration(input).pipe(
               Effect.flatMap((config) =>
                 Effect.tryPromise({
                   try: () => assemblyAiStreamingProxy.start(config),
@@ -2529,6 +2571,18 @@ const makeWsRpcLayer = (
             WS_METHODS.speechTranslateTranscript,
             projectTextTransforms.translateTranscript(input),
             { "rpc.aggregate": "speech" },
+          ),
+        [WS_METHODS.speechProcessDictation]: (input) =>
+          observeRpcEffect(WS_METHODS.speechProcessDictation, assemblyAiDictation.process(input), {
+            "rpc.aggregate": "speech",
+          }),
+        [WS_METHODS.speechListAssemblyAiModels]: () =>
+          observeRpcEffect(
+            WS_METHODS.speechListAssemblyAiModels,
+            assemblyAiDictation.listModels().pipe(Effect.map((models) => ({ models }))),
+            {
+              "rpc.aggregate": "speech",
+            },
           ),
         [WS_METHODS.promptImprove]: (input) =>
           observeRpcEffect(WS_METHODS.promptImprove, projectTextTransforms.improvePrompt(input), {
@@ -2686,9 +2740,57 @@ const makeWsRpcLayer = (
           observeRpcStreamEffect(
             WS_METHODS.knowledgeGraphSubscribe,
             knowledgeGraph.subscribe(input),
+            { "rpc.aggregate": "knowledgeGraph" },
+          ),
+        [WS_METHODS.projectIndexGetSettings]: (input) =>
+          observeRpcEffect(WS_METHODS.projectIndexGetSettings, projectIndexing.getSettings(input), {
+            "rpc.aggregate": "projectIndex",
+          }),
+        [WS_METHODS.projectIndexGetStatus]: (input) =>
+          observeRpcEffect(WS_METHODS.projectIndexGetStatus, projectIndexing.getStatus(input), {
+            "rpc.aggregate": "projectIndex",
+          }),
+        [WS_METHODS.projectIndexUpdateSettings]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectIndexUpdateSettings,
+            projectIndexing.updateSettings(input),
             {
-              "rpc.aggregate": "knowledgeGraph",
+              "rpc.aggregate": "projectIndex",
             },
+          ),
+        [WS_METHODS.projectIndexStart]: (input) =>
+          observeRpcEffect(WS_METHODS.projectIndexStart, projectIndexing.start(input), {
+            "rpc.aggregate": "projectIndex",
+          }),
+        [WS_METHODS.projectIndexControl]: (input) =>
+          observeRpcEffect(WS_METHODS.projectIndexControl, projectIndexing.control(input), {
+            "rpc.aggregate": "projectIndex",
+          }),
+        [WS_METHODS.projectIndexQuery]: (input) =>
+          observeRpcEffect(WS_METHODS.projectIndexQuery, projectContext.query(input), {
+            "rpc.aggregate": "projectIndex",
+          }),
+        [WS_METHODS.projectIndexCheckModel]: (input) =>
+          observeRpcEffect(WS_METHODS.projectIndexCheckModel, projectIndexing.checkModel(input), {
+            "rpc.aggregate": "projectIndex",
+          }),
+        [WS_METHODS.projectIndexReview]: (input) =>
+          observeRpcEffect(WS_METHODS.projectIndexReview, projectIndexing.review(input), {
+            "rpc.aggregate": "projectIndex",
+          }),
+        [WS_METHODS.projectIndexSubscribe]: (input) =>
+          observeRpcStreamEffect(
+            WS_METHODS.projectIndexSubscribe,
+            projectIndexing.subscribe(input),
+            {
+              "rpc.aggregate": "projectIndex",
+            },
+          ),
+        [WS_METHODS.projectIndexSubscribeActivity]: () =>
+          observeRpcStreamEffect(
+            WS_METHODS.projectIndexSubscribeActivity,
+            projectIndexing.subscribeActivity(),
+            { "rpc.aggregate": "projectIndex" },
           ),
         [WS_METHODS.knowledgeGraphQuery]: (input) =>
           observeRpcEffect(WS_METHODS.knowledgeGraphQuery, knowledgeGraph.query(input), {

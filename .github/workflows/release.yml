@@ -230,7 +230,15 @@ jobs:
       - name: Install browser secret helper build libraries
         run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
 
+      - name: Setup project indexer toolchains
+        uses: ./.github/actions/setup-project-indexers
+
+      - name: Build project indexing analyzers
+        run: node scripts/build-project-indexers.ts
+
       - name: Test
+        env:
+          T3CODE_REQUIRE_COMPILER_TESTS: "1"
         run: vp run test
 
   relay_public_config:
@@ -534,6 +542,9 @@ jobs:
         env:
           pnpm_config_cache_dir: ${{ runner.temp }}/pnpm-metadata
         run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+
+      - name: Setup project indexer toolchains
+        uses: ./.github/actions/setup-project-indexers
 
       - name: Cache resource monitor
         id: resource_monitor_cache
@@ -1026,6 +1037,9 @@ jobs:
           $listener.Stop()
           "UPDATE_PORT=$updatePort" >> $env:GITHUB_ENV
 
+      - name: Setup project indexer toolchains
+        uses: ./.github/actions/setup-project-indexers
+
       - name: Build signed mock-update base installer
         shell: bash
         env:
@@ -1192,6 +1206,9 @@ jobs:
 
       # The t3 build task depends on @t3tools/web#build, so the web client is
       # built (once) as part of this step.
+      - name: Setup project indexer toolchains
+        uses: ./.github/actions/setup-project-indexers
+
       - name: Build CLI package
         run: vp run --filter t3 build
 

@@ -4,13 +4,14 @@ import * as NodeFS from "node:fs";
 
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
+import * as Schema from "effect/Schema";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 
 import * as EffectAcpAgent from "effect-acp/agent";
 import * as AcpError from "effect-acp/errors";
-import type * as AcpSchema from "effect-acp/schema";
+import * as AcpSchema from "effect-acp/schema";
 
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const exitLogPath = process.env.T3_ACP_EXIT_LOG_PATH;
@@ -61,6 +62,15 @@ const permissionOptionIds = {
   rejectOnce: process.env.T3_ACP_REJECT_ONCE_OPTION_ID ?? "reject-once",
 };
 const omitAllowAlways = process.env.T3_ACP_OMIT_ALLOW_ALWAYS === "1";
+const permissionToolKind = Schema.decodeUnknownSync(AcpSchema.ToolKind)(
+  process.env.T3_ACP_PERMISSION_TOOL_KIND ?? "execute",
+);
+const permissionRawInput =
+  process.env.T3_ACP_PERMISSION_RAW_INPUT === undefined
+    ? undefined
+    : Schema.decodeSync(Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)))(
+        process.env.T3_ACP_PERMISSION_RAW_INPUT,
+      );
 const permissionRequestCount = Math.max(
   1,
   Number(process.env.T3_ACP_PERMISSION_REQUEST_COUNT ?? "1") || 1,
@@ -936,9 +946,9 @@ const program = Effect.gen(function* () {
             toolCall: {
               toolCallId: index === 0 ? toolCallId : `${toolCallId}-${index + 1}`,
               title: process.env.T3_ACP_PERMISSION_TITLE ?? `\`${command}\``,
-              kind: "execute",
+              kind: permissionToolKind,
               status: "pending",
-              rawInput: {
+              rawInput: permissionRawInput ?? {
                 variant: "Bash",
                 command,
                 description: index === 0 ? "Read package metadata" : "Read it again",

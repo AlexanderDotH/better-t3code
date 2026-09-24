@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "./chatList.js";
+import {
+  advanceChatTurnFoldRetention,
+  CHAT_LIST_ANCHOR_OFFSET,
+  createChatTurnFoldRetention,
+  forgetRetainedChatTurn,
+  resolveChatListAnchoredEndSpace,
+} from "./chatList.js";
 
 interface Row {
   readonly id: string;
@@ -49,5 +55,36 @@ describe("resolveChatListAnchoredEndSpace", () => {
     expect(resolveChatListAnchoredEndSpace(rows, "ignored", getAnchorId)).toBeUndefined();
     expect(resolveChatListAnchoredEndSpace(rows, "missing", getAnchorId)).toBeUndefined();
     expect(resolveChatListAnchoredEndSpace(rows, null, getAnchorId)).toBeUndefined();
+  });
+});
+
+describe("chat turn fold retention", () => {
+  const running = { turnId: "turn-1", state: "running" } as const;
+  const completed = { turnId: "turn-1", state: "completed" } as const;
+
+  it("keeps a settling turn expanded while reading history and releases it at the live edge", () => {
+    const initial = createChatTurnFoldRetention(running);
+    const retained = advanceChatTurnFoldRetention(initial, completed, false);
+
+    expect([...retained.retainedTurnIds]).toEqual(["turn-1"]);
+    expect(advanceChatTurnFoldRetention(retained, completed, false)).toBe(retained);
+    expect(advanceChatTurnFoldRetention(retained, completed, true).retainedTurnIds.size).toBe(0);
+  });
+
+  it("does not retain the turn for a reader following the end", () => {
+    const initial = createChatTurnFoldRetention(running);
+    expect(advanceChatTurnFoldRetention(initial, completed, true).retainedTurnIds.size).toBe(0);
+  });
+
+  it("keeps a replaced running turn visible and permits manual collapse", () => {
+    const initial = createChatTurnFoldRetention(running);
+    const retained = advanceChatTurnFoldRetention(
+      initial,
+      { turnId: "turn-2", state: "running" },
+      false,
+    );
+
+    expect([...retained.retainedTurnIds]).toEqual(["turn-1"]);
+    expect(forgetRetainedChatTurn(retained, "turn-1").retainedTurnIds.size).toBe(0);
   });
 });

@@ -27,7 +27,7 @@ Return concise exploratory evidence with exact paths, symbols, existing conventi
 Policy:
 - Do not edit files, apply patches, create files, or change repository state.
 - Do not run mutating commands or make external changes.
-- Prefer the authenticated T3 workspace_find tool for searches and workspace_read for bounded reads. Use workspace_context only for mixed batches. Otherwise use only provider-native bounded file, path, and text-search tools.
+- Prefer authenticated T3 project_context for relevant indexed responsibilities, rules, symbols, callers, and tests; knowledge_graph_query is also available for read-only graph evidence. Treat summaries as navigation hints, respect AGENTS instructions, and verify relevant original code with workspace_read before drawing conclusions. If the index is missing or incomplete, use scoped workspace_find searches and bounded workspace_read reads. Use workspace_context only for mixed batches. Otherwise use only provider-native bounded file, path, and text-search tools.
 - Do not execute shell or terminal commands, including read-only Git commands, and do not use general-purpose code execution tools to invoke them indirectly.
 - Do not ask the user questions; work only from the supplied request and repository.
 - Do not start or delegate to nested agents.
@@ -104,6 +104,8 @@ function isProviderNativeBoundedReadEvent(
 }
 
 const AUTHENTICATED_WORKSPACE_READ_TOOL_NAMES = new Set([
+  "project_context",
+  "knowledge_graph_query",
   "workspace_find",
   "workspace_read",
   "workspace_context",

@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./project-indexing": {
+      "types": "./src/projectIndexing.ts",
+      "default": "./src/projectIndexing.ts"
+    },
     "./load-balancing": {
       "types": "./src/load-balancing.ts",
       "default": "./src/load-balancing.ts"

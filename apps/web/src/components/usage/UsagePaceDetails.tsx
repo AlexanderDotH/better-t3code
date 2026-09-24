@@ -12,7 +12,54 @@ import { observeVisibleAnimation } from "../../lib/visibleAnimation";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import "./UsagePaceDetails.css";
 
-function ScrollingPaceLabel({ label, tone }: { label: string; tone: string }) {
+type DailyPace = NonNullable<ReturnType<typeof dailyUsagePace>>;
+
+function paceLabel(pace: DailyPace, percent: (value: number) => string): string {
+  return (pace.status === "fast" || pace.status === "exceeded") && pace.paceOverPercent !== null
+    ? `${DAILY_USAGE_PACE_LABELS[pace.status]} (${percent(pace.paceOverPercent)} over pace)`
+    : DAILY_USAGE_PACE_LABELS[pace.status];
+}
+
+function paceTone(status: DailyPace["status"]): string {
+  return status === "exceeded"
+    ? "text-destructive-foreground"
+    : status === "fast"
+      ? "text-warning-foreground"
+      : status === "good"
+        ? "text-success-foreground"
+        : "text-muted-foreground";
+}
+
+export function UsagePaceHeaderLabel({
+  window,
+  now,
+}: {
+  readonly window: ServerProviderUsageWindow;
+  readonly now: number;
+}) {
+  const settings = useClientSettings();
+  const { number } = useInterfaceTranslator();
+  const pace = dailyUsagePace(window, now, settings.usagePacingWorkdayHours);
+  if (!settings.usagePacingEnabled || !pace) return null;
+  const percent = (value: number) => `${number(value, { maximumFractionDigits: 1 })}%`;
+  return (
+    <span
+      className={`shrink-0 text-[11px] whitespace-nowrap @max-[650px]:hidden ${paceTone(pace.status)}`}
+    >
+      {paceLabel(pace, percent)}
+    </span>
+  );
+}
+
+function ScrollingPaceLabel({
+  label,
+  tone,
+  className = "",
+}: {
+  label: string;
+  tone: string;
+  className?: string;
+}) {
   const ref = useRef<HTMLSpanElement>(null);
   useEffect(() => {
     const element = ref.current;
@@ -35,7 +82,7 @@ function ScrollingPaceLabel({ label, tone }: { label: string; tone: string }) {
     };
   }, []);
   return (
-    <span ref={ref} className={`usage-pace-label w-full min-w-0 ${tone}`}>
+    <span ref={ref} className={`usage-pace-label w-full min-w-0 ${tone} ${className}`}>
       <span>{label}</span>
     </span>
   );
@@ -116,11 +163,13 @@ export function UsagePaceDetails({
   now,
   className = "",
   accountLabel,
+  statusInHeader = false,
 }: {
   readonly window: ServerProviderUsageWindow;
   readonly now: number;
   readonly className?: string;
   readonly accountLabel?: ReactNode;
+  readonly statusInHeader?: boolean;
 }) {
   const settings = useClientSettings();
   const { number } = useInterfaceTranslator();
@@ -131,19 +180,8 @@ export function UsagePaceDetails({
     pace.todayOverdrawPercent !== null && pace.todayOverdrawPercent > 0
       ? `${percent(pace.todayOverdrawPercent)} overdrawn today`
       : `${percent(pace.todayRemainingPercent)} left today`;
-  const warning = pace.status === "fast" || pace.status === "exceeded";
-  const label =
-    warning && pace.paceOverPercent !== null
-      ? `${DAILY_USAGE_PACE_LABELS[pace.status]} (${percent(pace.paceOverPercent)} over pace)`
-      : DAILY_USAGE_PACE_LABELS[pace.status];
-  const tone =
-    pace.status === "exceeded"
-      ? "text-destructive-foreground"
-      : warning
-        ? "text-warning-foreground"
-        : pace.status === "good"
-          ? "text-success-foreground"
-          : "text-muted-foreground";
+  const label = paceLabel(pace, percent);
+  const tone = paceTone(pace.status);
   return (
     <Tooltip>
       <TooltipTrigger
@@ -158,7 +196,12 @@ export function UsagePaceDetails({
           {" · "}
           {percent(pace.catchUpRemainingPercent)} catch-up left
         </span>
-        <ScrollingPaceLabel key={label} label={label} tone={tone} />
+        <ScrollingPaceLabel
+          key={label}
+          label={label}
+          tone={tone}
+          className={statusInHeader ? "@min-[651px]:hidden" : ""}
+        />
       </TooltipTrigger>
       <TooltipPopup side="top" className="max-w-80 text-xs">
         <div className="flex flex-col gap-1.5 p-1">

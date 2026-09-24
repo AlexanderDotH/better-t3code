@@ -36,7 +36,12 @@ const EMPTY_AGENT_PANEL_MODEL = emptyAgentPanelModel();
 const NOOP_OPEN_AGENTS = () => {};
 const NOOP_USE_ARTIFACT_TEMPLATE = () => {};
 const NOOP_OPEN_ATTACHMENT = (_attachment: ChatFileAttachment) => {};
-import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
+import {
+  advanceChatTurnFoldRetention,
+  createChatTurnFoldRetention,
+  forgetRetainedChatTurn,
+  resolveChatListAnchoredEndSpace,
+} from "@t3tools/shared/chatList";
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { getProjectFaviconCacheKey } from "@t3tools/shared/projectFavicon";
@@ -493,6 +498,20 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   loadEarlier = null,
 }: MessagesTimelineProps) {
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
+  const [foldRetention, setFoldRetention] = useState(() => createChatTurnFoldRetention(latestTurn));
+  const currentFoldRetention = advanceChatTurnFoldRetention(
+    foldRetention,
+    latestTurn,
+    liveFollowEnabled,
+  );
+  if (currentFoldRetention !== foldRetention) setFoldRetention(currentFoldRetention);
+  const expandedTurnIdsForRows = useMemo(
+    () =>
+      currentFoldRetention.retainedTurnIds.size === 0
+        ? expandedTurnIds
+        : new Set([...expandedTurnIds, ...currentFoldRetention.retainedTurnIds]),
+    [currentFoldRetention.retainedTurnIds, expandedTurnIds],
+  );
   const chatVisualMode = useChatVisualMode();
   const showReasoning = useClientSettings(
     (settings) =>
@@ -571,9 +590,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const onToggleTurnFold = useCallback(
     (turnId: TurnId) => {
       suspendEndScrollMaintenanceForDisclosure(`turn-fold:${turnId}`);
+      const wasRetained = currentFoldRetention.retainedTurnIds.has(turnId);
+      if (wasRetained) {
+        setFoldRetention((current) => forgetRetainedChatTurn(current, turnId));
+      }
       setExpandedTurnIds((existing) => {
         const next = new Set(existing);
-        if (next.has(turnId)) {
+        if (wasRetained || next.has(turnId)) {
           next.delete(turnId);
         } else {
           next.add(turnId);
@@ -581,7 +604,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         return next;
       });
     },
-    [suspendEndScrollMaintenanceForDisclosure],
+    [currentFoldRetention.retainedTurnIds, suspendEndScrollMaintenanceForDisclosure],
   );
   const onToggleWorkGroup = useCallback(
     (groupId: string, anchorKey: string) => {
@@ -599,8 +622,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     [expandedWorkGroupIds, suspendEndScrollMaintenanceForDisclosure],
   );
 
-  // An in-session interrupt leaves its turn expanded so the user keeps their
-  // place; the next turn (or a reload, since this is local state) folds it.
+  // An interrupted turn stays expanded. A later turn closes it only when the
+  // reader is at the live edge; closing it during history reading moves the viewport.
   const previousLatestTurnRef = useRef(latestTurn);
   useEffect(() => {
     const previous = previousLatestTurnRef.current;
@@ -618,6 +641,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       }
       return;
     }
+    if (!liveFollowEnabled) return;
     setExpandedTurnIds((existing) => {
       if (!existing.has(previous.turnId)) {
         return existing;
@@ -626,7 +650,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       next.delete(previous.turnId);
       return next;
     });
-  }, [latestTurn]);
+  }, [latestTurn, liveFollowEnabled]);
 
   const rowsProjectionRef = useRef<{
     threadKey: string;
@@ -643,7 +667,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         timelineEntries,
         latestTurn,
         runningTurnId,
-        expandedTurnIds,
+        expandedTurnIds: expandedTurnIdsForRows,
         expandedWorkGroupIds,
         isWorking,
         activeTurnStartedAt,
@@ -666,7 +690,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     timelineEntries,
     latestTurn,
     runningTurnId,
-    expandedTurnIds,
+    expandedTurnIdsForRows,
     expandedWorkGroupIds,
     isWorking,
     activeTurnStartedAt,

@@ -137,7 +137,7 @@ On web and desktop, the thread's workspace cards keep Chat, [Git](./git-workbenc
 [MCP](./mcp-servers.md) together. Bring a card forward to use that workspace view, or expand it for
 more detail. The selected thread still determines its environment and worktree.
 
-Enable or disable the card deck in **Settings → Better T3 → Visual**. An older server may offer
+Enable or disable the card deck in **Settings → Better T3 → Composer**. An older server may offer
 only the compact Git status and existing Git actions; update the environment for the full workbench.
 
 ## Copy the full conversation

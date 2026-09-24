@@ -14,6 +14,7 @@ import {
 
 import {
   isWorkspaceContextSearchablePath,
+  isWithinWorkspaceContextScopes,
   normalizeWorkspaceContextPath,
   shouldSkipWorkspaceContextDirectory,
 } from "./WorkspaceContextPathPolicy.ts";
@@ -26,6 +27,8 @@ const WORKSPACE_CONTEXT_MAX_GIT_OUTPUT_BYTES = 16 * 1024 * 1024;
 const WORKSPACE_CONTEXT_CONCURRENCY = 4;
 const DEADLINE_REACHED = Symbol("WorkspaceContextDeadlineReached");
 const GIT_SECRET_EXCLUDE_PATHS = [
+  ":(exclude,glob).t3/**",
+  ":(exclude,glob)**/.t3/**",
   ":(exclude,glob)**/.env*",
   ":(exclude,glob)**/id_dsa",
   ":(exclude,glob)**/id_ecdsa",
@@ -41,6 +44,7 @@ export type WorkspaceContextEngineQuery = {
   readonly text: string;
   readonly mode: WorkspaceContextQueryMode;
   readonly maxResults: number;
+  readonly scopes?: ReadonlyArray<string> | undefined;
 };
 
 export type WorkspaceContextEngineQueryResult = {
@@ -217,6 +221,7 @@ function searchInventory(
   const ranked: Array<{ item: WorkspaceContextMatch; score: number; tieBreaker: string }> = [];
   let totalMatches = 0;
   for (const entry of inventory.entries) {
+    if (!isWithinWorkspaceContextScopes(entry.path, query.scopes)) continue;
     const score = pathMatchScore(entry.path, normalizedQuery);
     if (score === null) continue;
     totalMatches += 1;
@@ -233,7 +238,10 @@ function searchInventory(
   };
 }
 
-function parseGitGrep(stdout: string, allowedPaths: ReadonlySet<string>): ParsedContentMatches {
+function parseGitGrep(
+  stdout: string,
+  scopes: ReadonlyArray<string> | undefined,
+): ParsedContentMatches {
   const matches: WorkspaceContextMatch[] = [];
   let cursor = 0;
   let truncated = false;
@@ -250,7 +258,13 @@ function parseGitGrep(stdout: string, allowedPaths: ReadonlySet<string>): Parsed
 
     const path = normalizeWorkspaceContextPath(rawPath);
     const matchLine = Number.parseInt(lineText, 10);
-    if (!path || !allowedPaths.has(path) || !Number.isSafeInteger(matchLine) || matchLine < 1) {
+    if (
+      !path ||
+      !isWorkspaceContextSearchablePath(path) ||
+      !isWithinWorkspaceContextScopes(path, scopes) ||
+      !Number.isSafeInteger(matchLine) ||
+      matchLine < 1
+    ) {
       continue;
     }
     if (matches.length >= WORKSPACE_CONTEXT_MAX_INTERNAL_CANDIDATES) {
@@ -338,7 +352,6 @@ function tokenMatches(
 
 async function gitContentSearch(
   workspaceRoot: string,
-  inventory: WorkspaceInventory,
   query: WorkspaceContextEngineQuery,
   deadlineAt: number,
 ): Promise<ParsedContentMatches & { readonly warnings: ReadonlyArray<string> }> {
@@ -355,7 +368,7 @@ async function gitContentSearch(
       "-e",
       query.text,
       "--",
-      ".",
+      ...gitSearchScopes(query.scopes),
       ...GIT_SECRET_EXCLUDE_PATHS,
     ],
     deadlineAt,
@@ -370,7 +383,7 @@ async function gitContentSearch(
       warnings: ["One content search could not be completed."],
     };
   }
-  const parsedLiteral = parseGitGrep(literal.stdout, inventory.filePaths);
+  const parsedLiteral = parseGitGrep(literal.stdout, query.scopes);
   if (parsedLiteral.matches.length > 0) {
     return {
       matches: parsedLiteral.matches.slice(0, query.maxResults),
@@ -393,7 +406,7 @@ async function gitContentSearch(
       "--exclude-standard",
       ...tokens.flatMap((token) => ["-e", token]),
       "--",
-      ".",
+      ...gitSearchScopes(query.scopes),
       ...GIT_SECRET_EXCLUDE_PATHS,
     ],
     deadlineAt,
@@ -408,7 +421,7 @@ async function gitContentSearch(
       warnings: ["One content search could not be completed."],
     };
   }
-  const parsedTokens = parseGitGrep(tokenResult.stdout, inventory.filePaths);
+  const parsedTokens = parseGitGrep(tokenResult.stdout, query.scopes);
   const rankedTokens = tokenMatches(parsedTokens.matches, tokens, query);
   return {
     matches: rankedTokens.matches,
@@ -462,7 +475,15 @@ async function discoverGit(
 ): Promise<WorkspaceContextDiscovery | null> {
   const inventoryCommand = await runGit(
     workspaceRoot,
-    ["ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "."],
+    [
+      "ls-files",
+      "--cached",
+      "--others",
+      "--exclude-standard",
+      "-z",
+      "--",
+      ...gitSearchScopes(queries[0]?.scopes),
+    ],
     deadlineAt,
   );
   if (inventoryCommand.failed) return null;
@@ -482,7 +503,7 @@ async function discoverGit(
       const contentResult =
         query.mode === "path"
           ? { matches: [], truncated: false, warnings: [] }
-          : await gitContentSearch(workspaceRoot, inventory, query, deadlineAt);
+          : await gitContentSearch(workspaceRoot, query, deadlineAt);
       const matches =
         query.mode === "auto"
           ? mergeAutoMatches(contentResult.matches, pathResult.matches, query.maxResults)
@@ -502,7 +523,11 @@ async function discoverGit(
     backend: "git",
     queries: queryResults,
     truncated: inventory.truncated || queryResults.some((query) => query.truncated),
-    warnings: inventory.truncated ? ["Workspace inventory reached its 25,000-entry limit."] : [],
+    warnings: inventory.truncated
+      ? [
+          "Workspace inventory reached its 25,000-entry limit; path search coverage is incomplete. Narrow the query scopes.",
+        ]
+      : [],
     inventoryCount: inventory.entries.length,
     ...(includeInventoryFilePaths
       ? { inventoryFilePaths: [...inventory.filePaths].toSorted() }
@@ -513,6 +538,7 @@ async function discoverGit(
 async function scanFilesystem(
   workspaceRoot: string,
   deadlineAt: number,
+  scopes?: ReadonlyArray<string>,
 ): Promise<{ readonly inventory: WorkspaceInventory; readonly deadlineReached: boolean }> {
   const pendingDirectories = [workspaceRoot];
   const filePaths: string[] = [];
@@ -548,10 +574,22 @@ async function scanFilesystem(
       );
       if (!relativePath) continue;
       if (entry.isDirectory()) {
-        if (!shouldSkipWorkspaceContextDirectory(entry.name)) pendingDirectories.push(absolutePath);
+        const includesDescendants = isWithinWorkspaceContextScopes(relativePath, scopes);
+        const containsScope = scopes?.some((scope) => scope.startsWith(`${relativePath}/`));
+        if (
+          !shouldSkipWorkspaceContextDirectory(entry.name) &&
+          (includesDescendants || containsScope)
+        ) {
+          pendingDirectories.push(absolutePath);
+        }
         continue;
       }
-      if (!entry.isFile() || !isWorkspaceContextSearchablePath(relativePath)) continue;
+      if (
+        !entry.isFile() ||
+        !isWorkspaceContextSearchablePath(relativePath) ||
+        !isWithinWorkspaceContextScopes(relativePath, scopes)
+      )
+        continue;
       filePaths.push(relativePath);
       if (filePaths.length > WORKSPACE_CONTEXT_MAX_PATH_ENTRIES) {
         hitEntryLimit = true;
@@ -656,7 +694,7 @@ async function discoverFilesystem(
   deadlineAt: number,
   includeInventoryFilePaths = false,
 ): Promise<WorkspaceContextDiscovery> {
-  const scan = await scanFilesystem(workspaceRoot, deadlineAt);
+  const scan = await scanFilesystem(workspaceRoot, deadlineAt, queries[0]?.scopes);
   const contentQueries = queries.filter((query) => query.mode !== "path");
   const literalByQuery = new Map(
     contentQueries.map((query) => [query, [] as WorkspaceContextMatch[]]),
@@ -666,7 +704,11 @@ async function discoverFilesystem(
   );
   const truncatedQueries = new Set<WorkspaceContextEngineQuery>();
   const filePaths = [...scan.inventory.filePaths];
-  for (let offset = 0; offset < filePaths.length; offset += WORKSPACE_CONTEXT_CONCURRENCY) {
+  for (
+    let offset = 0;
+    contentQueries.length > 0 && offset < filePaths.length;
+    offset += WORKSPACE_CONTEXT_CONCURRENCY
+  ) {
     if (deadlineRemaining(deadlineAt) === 0) break;
     const batch = filePaths.slice(offset, offset + WORKSPACE_CONTEXT_CONCURRENCY);
     const files = await Promise.all(
@@ -744,19 +786,54 @@ export async function discoverWorkspaceContext(input: {
 }): Promise<WorkspaceContextDiscovery> {
   const deadlineAt = performance.now() + WORKSPACE_CONTEXT_SEARCH_DEADLINE_MS;
   const includeInventoryFilePaths = input.includeInventoryFilePaths === true;
-  const git = await discoverGit(
-    input.workspaceRoot,
-    input.queries,
-    deadlineAt,
-    includeInventoryFilePaths,
+  const groups = new Map<string, WorkspaceContextEngineQuery[]>();
+  for (const query of input.queries) {
+    const key = JSON.stringify([...(query.scopes ?? [])].sort());
+    const group = groups.get(key) ?? [];
+    group.push(query);
+    groups.set(key, group);
+  }
+  if (groups.size === 0) groups.set("[]", []);
+  const discoveries = await mapConcurrent(
+    [...groups.values()],
+    WORKSPACE_CONTEXT_CONCURRENCY,
+    async (queries) =>
+      (await discoverGit(input.workspaceRoot, queries, deadlineAt, includeInventoryFilePaths)) ??
+      (await discoverFilesystem(
+        input.workspaceRoot,
+        queries,
+        deadlineAt,
+        includeInventoryFilePaths,
+      )),
   );
-  if (git) return git;
-  return discoverFilesystem(
-    input.workspaceRoot,
-    input.queries,
-    deadlineAt,
-    includeInventoryFilePaths,
-  );
+  const results = new Map<WorkspaceContextEngineQuery, WorkspaceContextEngineQueryResult>();
+  [...groups.values()].forEach((queries, groupIndex) => {
+    queries.forEach((query, queryIndex) => {
+      const result = discoveries[groupIndex]?.queries[queryIndex];
+      if (result) results.set(query, result);
+    });
+  });
+  return {
+    backend: discoveries.every((discovery) => discovery.backend === "git") ? "git" : "filesystem",
+    queries: input.queries.flatMap((query) => {
+      const result = results.get(query);
+      return result ? [result] : [];
+    }),
+    truncated: discoveries.some((discovery) => discovery.truncated),
+    warnings: [...new Set(discoveries.flatMap((discovery) => discovery.warnings))],
+    inventoryCount: discoveries.reduce((count, discovery) => count + discovery.inventoryCount, 0),
+    ...(includeInventoryFilePaths
+      ? {
+          inventoryFilePaths: [
+            ...new Set(discoveries.flatMap((discovery) => discovery.inventoryFilePaths ?? [])),
+          ].sort(),
+        }
+      : {}),
+  };
+}
+
+function gitSearchScopes(scopes: ReadonlyArray<string> | undefined): ReadonlyArray<string> {
+  return scopes?.length ? scopes.map((scope) => `:(literal)${scope}`) : ["."];
 }
 
 /** Internal deterministic boundaries exposed only for focused unit tests. */

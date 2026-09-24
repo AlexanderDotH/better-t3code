@@ -82,10 +82,12 @@ function ScopePicker({
 export function ProjectsSettings({
   projectKey,
   machineId,
+  indexingProjectId,
   onScopeChange,
 }: {
   projectKey: string | null;
   machineId: string | null;
+  indexingProjectId?: string | undefined;
   onScopeChange: (project: string | null, machine: string | null) => void;
 }) {
   const groups = useSettingsProjectGroups();
@@ -161,6 +163,7 @@ export function ProjectsSettings({
         <ProjectSettingsPanel
           projectKey={projectKey}
           environmentId={machine?.environmentId ?? null}
+          indexingProjectId={indexingProjectId}
         />
       )}
     </div>

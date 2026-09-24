@@ -23,14 +23,17 @@ import type { BetterT3PreparedStatusModel } from "@t3tools/client-runtime/better
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
 import { stripAutoReasoning } from "@t3tools/shared/model";
-import { knowledgeGraphStatusMessageKey } from "../knowledge-graph/mobile-knowledge-graph";
 
+type MobileVisiblePreparedStatusFeatureId = Exclude<
+  keyof BetterT3PreparedStatusModel,
+  "knowledge.progress"
+>;
 export type MobilePreparedStatusInput = {
-  [FeatureId in keyof BetterT3PreparedStatusModel]: {
+  [FeatureId in MobileVisiblePreparedStatusFeatureId]: {
     readonly featureId: FeatureId;
     readonly status: BetterT3PreparedStatusModel[FeatureId];
   };
-}[keyof BetterT3PreparedStatusModel];
+}[MobileVisiblePreparedStatusFeatureId];
 
 export function mobileBetterT3PreparedStatusInput(
   model: BetterT3PreparedStatusModel,
@@ -38,8 +41,6 @@ export function mobileBetterT3PreparedStatusInput(
 ): MobilePreparedStatusInput | null {
   switch (featureId) {
     case "workspace.checkpoints":
-      return { featureId, status: model[featureId] };
-    case "knowledge.progress":
       return { featureId, status: model[featureId] };
     case "integration.remoteReadiness":
       return { featureId, status: model[featureId] };
@@ -107,10 +108,6 @@ export function mobileBetterT3PreparedStatusMessageKey(
       return input.status.state === "ready"
         ? "settings.betterT3.control.statusEnabled"
         : unavailableStatusMessageKey(input.status.state);
-    case "knowledge.progress":
-      return input.status.graphState === null
-        ? unavailableStatusMessageKey(input.status.state)
-        : knowledgeGraphStatusMessageKey(input.status.graphState);
   }
 }
 
@@ -134,13 +131,6 @@ export type MobileBetterT3PreparedStatusDetail =
       readonly kind: "compatibility";
       readonly supportedCount: number;
       readonly totalCount: number;
-    }
-  | {
-      readonly kind: "knowledge-graph";
-      readonly nodeCount: number;
-      readonly processedFileCount: number | null;
-      readonly totalFileCount: number | null;
-      readonly queuedSemanticNodeCount: number | null;
     };
 
 export function mobileBetterT3PreparedStatusDetail(
@@ -184,33 +174,9 @@ export function mobileBetterT3PreparedStatusDetail(
             totalCount: input.status.totalFeatureCount,
           }
         : null;
-    case "knowledge.progress":
-      return input.status.graphState === null || input.status.nodeCount === null
-        ? null
-        : {
-            kind: "knowledge-graph",
-            nodeCount: input.status.nodeCount,
-            processedFileCount: input.status.progress?.processedFileCount ?? null,
-            totalFileCount: input.status.progress?.totalFileCount ?? null,
-            queuedSemanticNodeCount: input.status.progress?.queuedSemanticNodeCount ?? null,
-          };
     default:
       return null;
   }
-}
-
-export function shouldSubscribeMobileKnowledgeGraphProgress(input: {
-  readonly environmentAvailable: boolean;
-  readonly knowledgeGraphVersion: number | undefined;
-  readonly enabled: boolean;
-  readonly projectAvailable: boolean;
-}): boolean {
-  return (
-    input.environmentAvailable &&
-    (input.knowledgeGraphVersion ?? 0) >= 1 &&
-    input.enabled &&
-    input.projectAvailable
-  );
 }
 
 export function resolveMobileBetterT3EnvironmentTarget(input: {
@@ -230,6 +196,7 @@ export type MobileBetterT3SettingsDestination =
   | "SettingsBetterT3ResourceDiagnostics"
   | "SettingsBetterT3TranscriptPortability"
   | "SettingsEnvironments"
+  | "SettingsProjectIndexing"
   | "SettingsProjects";
 
 export const MOBILE_BETTER_T3_DIRECT_CONTROL_IDS = [
@@ -237,7 +204,6 @@ export const MOBILE_BETTER_T3_DIRECT_CONTROL_IDS = [
   "agent.cavemanMode",
   "chat.sorting",
   "chat.settling",
-  "knowledge.model",
 ] as const satisfies ReadonlyArray<BetterT3FeatureId>;
 
 export function resolveMobileBetterT3Destination(
@@ -252,6 +218,12 @@ export function resolveMobileBetterT3Destination(
     return "SettingsBetterT3ResourceDiagnostics";
   }
   if (featureId === "knowledge.progress") return null;
+  if (
+    featureId === "knowledge.projectIndexingMaster" ||
+    featureId === "knowledge.projectIndexingDefaultModel"
+  )
+    return "SettingsProjectIndexing";
+  if (featureId.startsWith("knowledge.projectIndexing")) return "SettingsProjects";
   if (featureId.startsWith("chat.")) return "SettingsAppearance";
   if (featureId.startsWith("workspace.") || featureId.startsWith("knowledge.")) {
     return "SettingsProjects";
@@ -304,8 +276,7 @@ export function createMobileBetterT3DeviceControlPatch(
 
 type MobileBetterT3EnvironmentControlUpdate =
   | { readonly id: "agent.cavemanMode"; readonly value: CavemanMode }
-  | { readonly id: "agent.autoReasoningModel"; readonly value: ModelSelection | null }
-  | { readonly id: "knowledge.model"; readonly value: ModelSelection | null };
+  | { readonly id: "agent.autoReasoningModel"; readonly value: ModelSelection | null };
 
 export function createMobileBetterT3EnvironmentControlPatch(
   update: MobileBetterT3EnvironmentControlUpdate,
@@ -318,8 +289,6 @@ export function createMobileBetterT3EnvironmentControlPatch(
         autoReasoningModelSelection:
           update.value === null ? null : stripAutoReasoning(update.value),
       };
-    case "knowledge.model":
-      return { knowledgeGraphModelSelection: update.value };
   }
 }
 
@@ -343,13 +312,6 @@ export function supportsMobileAutoReasoningModelOption(option: {
   return (
     MOBILE_AUTO_REASONING_EVALUATION_DRIVER_KINDS.has(option.providerDriver) && option.isSelectable
   );
-}
-
-export function supportsMobileKnowledgeGraphModelOption(option: {
-  readonly providerDriver: string;
-  readonly isSelectable: boolean;
-}): boolean {
-  return option.providerDriver === "openai" && option.isSelectable;
 }
 
 export interface MobileTranscriptPortabilityThread {
@@ -419,6 +381,7 @@ export function resolveMobileBetterT3ProjectSelection<
 const MOBILE_SECTION_ORDER: ReadonlyArray<BetterT3FeatureSection> = [
   "agent-workflows",
   "chat-layout",
+  "composer",
   "workspace-source-control",
   "voice-synchronization",
   "knowledge-automation",
@@ -498,10 +461,16 @@ export function buildMobileBetterT3Sections(input: {
 
   for (const descriptor of input.registry) {
     if (!descriptor.availability.surfaces.includes(input.surface)) continue;
+    if (descriptor.id === "knowledge.projectIndexingDefaultModel") continue;
     const value = switchValue(descriptor, input.deviceSettings, input.environmentSettings);
-    const unsupported = descriptor.availability.capabilities.some(
-      (requirement) => !capabilityMeetsRequirement(input.capabilities, requirement),
-    );
+    const unsupported =
+      descriptor.availability.capabilities.some(
+        (requirement) => !capabilityMeetsRequirement(input.capabilities, requirement),
+      ) ||
+      (descriptor.id === "knowledge.graph" &&
+        (input.capabilities.knowledgeGraphVersion ?? 0) < 2) ||
+      (descriptor.id === "knowledge.projectIndexingMaster" &&
+        (input.capabilities.projectIndexingVersion ?? 0) < 3);
     const dependency = dependencyAvailability(descriptor, controlsById);
     const requiresDevice = descriptor.scope === "device";
     const requiresEnvironment = descriptor.scope !== "device";

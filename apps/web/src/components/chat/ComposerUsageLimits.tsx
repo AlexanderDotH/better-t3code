@@ -5,7 +5,7 @@ import { GaugeIcon } from "lucide-react";
 import { getDriverOption } from "../settings/providerDriverMeta";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import { LimitWindows, ResetCredits } from "../usage/UsageLimits";
-import { UsagePaceDetails } from "../usage/UsagePaceDetails";
+import { UsagePaceDetails, UsagePaceHeaderLabel } from "../usage/UsagePaceDetails";
 import { ComposerBanner } from "./ComposerBanner";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 
@@ -52,8 +52,19 @@ export function usageLimitsBannerItem(
 ): ComposerBannerStackItem {
   const [first] = report.accounts;
   const single = report.accounts.length === 1 && first ? first : null;
+  const weeklyWindow =
+    single && !limitsNotice(single.limits)
+      ? single.limits.windows.find((window) => window.kind === "weekly")
+      : undefined;
   const summary = single ? (
-    <AccountSummary account={single} />
+    <span className="inline-flex max-w-full min-w-0 items-center gap-4 align-middle">
+      <span className="min-w-0 truncate">
+        <AccountSummary account={single} />
+      </span>
+      {weeklyWindow ? (
+        <UsagePaceHeaderLabel window={weeklyWindow} now={Date.parse(report.createdAt)} />
+      ) : null}
+    </span>
   ) : (
     `${report.accounts.length} accounts`
   );
@@ -129,6 +140,10 @@ function UsageLimitsBannerBody({
                   now={now}
                   accountLabel={
                     report.accounts.length > 1 ? <AccountSummary account={account} /> : undefined
+                  }
+                  statusInHeader={
+                    report.accounts.length === 1 &&
+                    window === account.limits.windows.find((entry) => entry.kind === "weekly")
                   }
                 />
               )),

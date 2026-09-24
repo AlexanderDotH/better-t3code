@@ -63,6 +63,7 @@ interface ChatHeaderProps {
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   rightPanelOpen: boolean;
+  projectIndexStatusControl?: ReactNode;
   transcriptCopyButton?: ReactNode;
   gitCwd: string | null;
   readonly onOpenPullRequest?: ((number: number) => void) | undefined;
@@ -133,6 +134,7 @@ export const ChatHeader = memo(function ChatHeader({
   keybindings,
   availableEditors,
   rightPanelOpen,
+  projectIndexStatusControl,
   transcriptCopyButton,
   gitCwd,
   onOpenPullRequest,
@@ -412,6 +414,7 @@ export const ChatHeader = memo(function ChatHeader({
           "[[data-panel-animations=true]_&]:motion-safe:transition-[padding-right] [[data-panel-animations=true]_&]:motion-safe:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:motion-safe:ease-out",
         )}
       >
+        {projectIndexStatusControl}
         {transcriptCopyButton}
         {activeProjectScripts && (
           <ProjectScriptsControl

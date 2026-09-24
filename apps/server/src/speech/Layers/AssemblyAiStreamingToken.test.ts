@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "@effect/vitest";
-import { makeBetterT3SettingsV1 } from "@t3tools/contracts";
+import { DEFAULT_ASSEMBLY_AI_VOICE_SETTINGS, makeBetterT3SettingsV1 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { HttpClient, type HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
@@ -41,6 +41,81 @@ const speechContext = {
 };
 
 describe("AssemblyAiStreamingToken", () => {
+  it.effect("validates language steering codes before contacting AssemblyAI", () => {
+    const { layer, execute } = makeTestLayer({
+      apiKey: "key",
+      respond: () => Response.json({ token: "unused" }),
+    });
+    return Effect.gen(function* () {
+      const service = yield* AssemblyAiStreamingToken;
+      const error = yield* service
+        .create(speechContext, {
+          ...DEFAULT_ASSEMBLY_AI_VOICE_SETTINGS,
+          languageCodes: ["de", "unsupported-language"],
+        })
+        .pipe(Effect.flip);
+      expect(error.reason).toBe("Invalid AssemblyAI voice settings.");
+      expect(execute).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(layer));
+  });
+  it.effect(
+    "uses resolved project options and prioritizes custom vocabulary within streaming limits",
+    () => {
+      const { layer } = makeTestLayer({
+        apiKey: "key",
+        respond: () => Response.json({ token: "temporary" }),
+      });
+      return Effect.gen(function* () {
+        const service = yield* AssemblyAiStreamingToken;
+        const result = yield* service.create(
+          {
+            ...speechContext,
+            keyterms: Array.from({ length: 100 }, (_, index) => `Symbol${index}`),
+          },
+          {
+            ...DEFAULT_ASSEMBLY_AI_VOICE_SETTINGS,
+            speechModel: "universal-streaming-multilingual",
+            customKeyterms: ["AssemblyAI"],
+            contextPrompt: "Additional context",
+          },
+        );
+        expect(result.speechModel).toBe("universal-streaming-multilingual");
+        expect(result.options?.speechModel).toBe("universal-streaming-multilingual");
+        expect(result.context.keyterms).toHaveLength(100);
+        expect(result.context.keyterms[0]).toBe("AssemblyAI");
+        expect(result.context.prompt).toContain("Additional context");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "omits project vocabulary when disabled and validates incompatible pause ranges",
+    () => {
+      const { layer, execute } = makeTestLayer({
+        apiKey: "key",
+        respond: () => Response.json({ token: "temporary" }),
+      });
+      return Effect.gen(function* () {
+        const service = yield* AssemblyAiStreamingToken;
+        const result = yield* service.create(speechContext, {
+          ...DEFAULT_ASSEMBLY_AI_VOICE_SETTINGS,
+          projectVocabulary: false,
+          customKeyterms: ["CustomName"],
+        });
+        expect(result.context.keyterms).toEqual(["CustomName"]);
+        expect(result.context.prompt).not.toContain("T3 Code");
+        const error = yield* service
+          .create(speechContext, {
+            ...DEFAULT_ASSEMBLY_AI_VOICE_SETTINGS,
+            minTurnSilence: 2000,
+            maxTurnSilence: 100,
+          })
+          .pipe(Effect.flip);
+        expect(error.reason).toBe("Invalid AssemblyAI voice settings.");
+        expect(execute).toHaveBeenCalledTimes(1);
+      }).pipe(Effect.provide(layer));
+    },
+  );
   it.effect("requests a short-lived global-edge token without returning the permanent key", () => {
     const { execute, layer } = makeTestLayer({
       apiKey: "permanent-secret-key",

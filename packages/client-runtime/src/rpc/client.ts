@@ -55,6 +55,8 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribeResourceTelemetry
   | typeof WS_METHODS.subscribeResourceProtection
   | typeof WS_METHODS.knowledgeGraphSubscribe
+  | typeof WS_METHODS.projectIndexSubscribe
+  | typeof WS_METHODS.projectIndexSubscribeActivity
   | typeof WS_METHODS.mcpRuntimeContextChanges
   | typeof WS_METHODS.mcpRuntimeChanges
   | typeof WS_METHODS.gitSubscribeWorkbench

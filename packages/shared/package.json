@@ -3,6 +3,15 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./projectIndexLanguages": "./src/projectIndexLanguages.ts",
+    "./voiceFileContext": {
+      "types": "./src/voiceFileContext.ts",
+      "import": "./src/voiceFileContext.ts"
+    },
+    "./assemblyAiStreamingUrl": {
+      "types": "./src/assemblyAiStreamingUrl.ts",
+      "import": "./src/assemblyAiStreamingUrl.ts"
+    },
     "./fetchMode": {
       "types": "./src/fetchMode.ts",
       "import": "./src/fetchMode.ts"

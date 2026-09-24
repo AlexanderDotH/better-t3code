@@ -1,0 +1,145 @@
+{
+  "version": 1,
+  "source": "Pre-static synthetic index query capture from the working checkout",
+  "command": "T3CODE_PROJECT_INDEX_EVALUATION_OUTPUT=/tmp/t3-static-index-legacy-query-capture.json vp test run apps/server/src/projectIndexing/acceptance/QueryAcceptance.test.ts",
+  "queryMaxTokens": 24000,
+  "limitations": [
+    "The working checkout was dirty and Project Indexing files were untracked when captured.",
+    "Synthetic code-review tasks do not include AGENTS.md rules.",
+    "queryTokens uses the index query estimator, not provider billing tokens."
+  ],
+  "cases": [
+    {
+      "caseId": "validator-module",
+      "variant": "failure",
+      "relevantPaths": 2,
+      "retrievedRelevantPaths": 2,
+      "topThreePaths": ["src/ui/invoice-form.ts", "src/ingest/invoice.ts", "src/domain/invoice.ts"],
+      "queryTokens": 12956
+    },
+    {
+      "caseId": "validator-module",
+      "variant": "corrected",
+      "relevantPaths": 2,
+      "retrievedRelevantPaths": 2,
+      "topThreePaths": [
+        "src/ui/invoice-form.ts",
+        "src/domain/invoice-validation.ts",
+        "src/ingest/invoice.ts"
+      ],
+      "queryTokens": 11033
+    },
+    {
+      "caseId": "processor-responsibilities",
+      "variant": "failure",
+      "relevantPaths": 1,
+      "retrievedRelevantPaths": 1,
+      "topThreePaths": ["src/orders/process.ts"],
+      "queryTokens": 23002
+    },
+    {
+      "caseId": "processor-responsibilities",
+      "variant": "corrected",
+      "relevantPaths": 2,
+      "retrievedRelevantPaths": 2,
+      "topThreePaths": ["src/orders/prepare.ts", "src/orders/process.ts", "src/orders/notify.ts"],
+      "queryTokens": 23619
+    },
+    {
+      "caseId": "nested-policy",
+      "variant": "failure",
+      "relevantPaths": 1,
+      "retrievedRelevantPaths": 1,
+      "topThreePaths": ["src/shipping/policy.ts"],
+      "queryTokens": 10905
+    },
+    {
+      "caseId": "nested-policy",
+      "variant": "corrected",
+      "relevantPaths": 1,
+      "retrievedRelevantPaths": 1,
+      "topThreePaths": ["src/shipping/policy.ts"],
+      "queryTokens": 10903
+    },
+    {
+      "caseId": "repeated-filter",
+      "variant": "failure",
+      "relevantPaths": 2,
+      "retrievedRelevantPaths": 2,
+      "topThreePaths": ["src/messages/select.ts", "src/messages/send.ts"],
+      "queryTokens": 15259
+    },
+    {
+      "caseId": "repeated-filter",
+      "variant": "corrected",
+      "relevantPaths": 2,
+      "retrievedRelevantPaths": 2,
+      "topThreePaths": ["src/messages/select.ts", "src/messages/send.ts"],
+      "queryTokens": 12816
+    },
+    {
+      "caseId": "ignored-validation",
+      "variant": "failure",
+      "relevantPaths": 2,
+      "retrievedRelevantPaths": 2,
+      "topThreePaths": ["src/import/validate.ts", "src/import/read.ts"],
+      "queryTokens": 10803
+    },
+    {
+      "caseId": "ignored-validation",
+      "variant": "corrected",
+      "relevantPaths": 2,
+      "retrievedRelevantPaths": 2,
+      "topThreePaths": ["src/import/validate.ts", "src/import/read.ts"],
+      "queryTokens": 10801
+    },
+    {
+      "caseId": "copied-helper",
+      "variant": "failure",
+      "relevantPaths": 2,
+      "retrievedRelevantPaths": 2,
+      "topThreePaths": ["src/catalog/slug.ts", "src/articles/slug.ts"],
+      "queryTokens": 16472
+    },
+    {
+      "caseId": "copied-helper",
+      "variant": "corrected",
+      "relevantPaths": 3,
+      "retrievedRelevantPaths": 3,
+      "topThreePaths": ["src/articles/slug.ts", "src/shared/slug.ts", "src/catalog/slug.ts"],
+      "queryTokens": 10540
+    },
+    {
+      "caseId": "copied-asset-layout",
+      "variant": "failure",
+      "relevantPaths": 2,
+      "retrievedRelevantPaths": 2,
+      "topThreePaths": ["src/assets/banner.ts", "src/assets/icon.ts"],
+      "queryTokens": 7991
+    },
+    {
+      "caseId": "copied-asset-layout",
+      "variant": "corrected",
+      "relevantPaths": 3,
+      "retrievedRelevantPaths": 3,
+      "topThreePaths": ["src/assets/banner.ts", "src/assets/icon.ts", "src/assets/path.ts"],
+      "queryTokens": 6235
+    },
+    {
+      "caseId": "path-roundtrip",
+      "variant": "failure",
+      "relevantPaths": 1,
+      "retrievedRelevantPaths": 1,
+      "topThreePaths": ["src/config/read.ts"],
+      "queryTokens": 12745
+    },
+    {
+      "caseId": "path-roundtrip",
+      "variant": "corrected",
+      "relevantPaths": 1,
+      "retrievedRelevantPaths": 1,
+      "topThreePaths": ["src/config/read.ts"],
+      "queryTokens": 4693
+    }
+  ]
+}

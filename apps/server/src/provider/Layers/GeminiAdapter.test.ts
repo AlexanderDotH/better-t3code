@@ -33,6 +33,7 @@ const testLayer = ServerConfig.layerTest(process.cwd(), {
 
 function response(input: {
   readonly text?: string;
+  readonly thought?: boolean;
   readonly functionCall?: {
     readonly id: string;
     readonly name: string;
@@ -45,7 +46,14 @@ function response(input: {
         content: {
           role: "model",
           parts: [
-            ...(input.text ? [{ text: input.text }] : []),
+            ...(input.text
+              ? [
+                  {
+                    text: input.text,
+                    ...(input.thought !== undefined ? { thought: input.thought } : {}),
+                  },
+                ]
+              : []),
             ...(input.functionCall ? [{ functionCall: input.functionCall }] : []),
           ],
         },
@@ -80,6 +88,12 @@ function fakeClient(input: {
     },
   } as GeminiClient;
 }
+
+const hasTranscriptItemType = <Type extends string>(
+  item: unknown,
+  type: Type,
+): item is { readonly type: Type } =>
+  typeof item === "object" && item !== null && "type" in item && item.type === type;
 
 describe("GeminiAdapter", () => {
   it.effect("completes and resumes a turn with more than 64 tool rounds", () =>
@@ -469,6 +483,73 @@ describe("GeminiAdapter", () => {
         if (failure._tag !== "ProviderAdapterRequestError")
           throw new Error(`Unexpected error: ${failure._tag}`);
         expect(failure.detail).toContain("no longer available");
+      }),
+    ).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("applies reasoning level option to thinkingConfig and receives thought chunks", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const requests: Array<GenerateContentParameters> = [];
+        const client = fakeClient({
+          requests,
+          rounds: [
+            [
+              response({ text: "Analyzing the request step by step...", thought: true }),
+              response({ text: "Here is the final answer." }),
+            ],
+          ],
+        });
+        const adapter = yield* makeGeminiAdapter(
+          { enabled: true, customModels: [] },
+          {
+            environment: { GOOGLE_API_KEY: "test-key" },
+            clientFactory: () => client,
+            toolExecutor: {
+              execute: () => Effect.die("No tool execution"),
+            },
+          },
+        );
+        const threadId = ThreadId.make("gemini-reasoning-turn");
+        yield* adapter.startSession({
+          threadId,
+          provider: ProviderDriverKind.make("gemini"),
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+          sandboxMode: "read-only",
+        });
+        yield* adapter.sendTurn({
+          threadId,
+          input: "Solve this complex puzzle.",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("gemini"),
+            model: "gemini-3.6-flash",
+            options: [{ id: "reasoningEffort", value: "high" }],
+          },
+        });
+
+        expect(requests).toHaveLength(1);
+        expect(requests[0]?.config?.thinkingConfig).toEqual({
+          thinkingLevel: "HIGH",
+          includeThoughts: true,
+        });
+
+        const transcript = yield* adapter.readThread(threadId);
+        expect(transcript.turns).toHaveLength(1);
+        const assistantItem = transcript.turns[0]?.items.find((item) =>
+          hasTranscriptItemType(item, "assistant_message"),
+        );
+        const reasoningItem = transcript.turns[0]?.items.find((item) =>
+          hasTranscriptItemType(item, "reasoning"),
+        );
+        expect(assistantItem).toMatchObject({
+          type: "assistant_message",
+          text: "Here is the final answer.",
+        });
+        expect(reasoningItem).toMatchObject({
+          type: "reasoning",
+          text: "Analyzing the request step by step...",
+        });
       }),
     ).pipe(Effect.provide(testLayer)),
   );

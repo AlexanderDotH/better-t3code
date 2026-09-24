@@ -584,6 +584,19 @@ it.layer(testLayer)("Antigravity provider snapshots", (it) => {
     ),
   );
 
+  it.effect("does not advertise Fetch workers when ordinary text generation is supported", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({ safe: true });
+        yield* harness.initialize;
+        yield* harness.provider.onSessionStarted(started);
+        const snapshot = yield* harness.provider.snapshot.getSnapshot;
+        expect(snapshot.supportsTextGeneration).toBe(true);
+        expect(snapshot.fetchWorkers).toBeUndefined();
+      }),
+    ),
+  );
+
   it.effect("exposes helper support only when the supplied safety check allows it", () =>
     Effect.scoped(
       Effect.gen(function* () {

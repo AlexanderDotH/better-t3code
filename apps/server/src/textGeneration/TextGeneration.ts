@@ -1,13 +1,7 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type {
-  ChatAttachment,
-  KnowledgeGraphSemanticModelRequestV1,
-  KnowledgeGraphSemanticModelResultV1,
-  ModelSelection,
-  ProviderInstanceId,
-} from "@t3tools/contracts";
+import type { ChatAttachment, ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
 import { TextGenerationError } from "@t3tools/contracts";
 
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
@@ -117,6 +111,10 @@ export interface PromptImprovementInput {
   cwd: string;
   text: string;
   modelSelection: ModelSelection;
+  voiceCleanup?: {
+    readonly instructions: string;
+    readonly context: string;
+  };
 }
 
 export interface PromptImprovementResult {
@@ -155,13 +153,6 @@ export interface FetchExplorationGenerationInput {
 
 export type FetchExplorationGenerationResult = FetchExplorationPlan;
 
-export interface KnowledgeGraphEnrichmentGenerationInput {
-  readonly request: KnowledgeGraphSemanticModelRequestV1;
-  readonly modelSelection: ModelSelection;
-}
-
-export type KnowledgeGraphEnrichmentGenerationResult = KnowledgeGraphSemanticModelResultV1;
-
 export interface AutoReasoningGenerationInput {
   readonly cwd: string;
   readonly userPrompt: string;
@@ -180,17 +171,6 @@ export interface AutoReasoningGenerationResult {
     readonly totalTokens?: number;
   };
 }
-
-export const unsupportedKnowledgeGraphEnrichment = (
-  providerName: string,
-): TextGeneration["Service"]["enrichKnowledgeGraph"] =>
-  Effect.fn(`${providerName}.enrichKnowledgeGraph`)(function* () {
-    return yield* new TextGenerationError({
-      operation: "enrichKnowledgeGraph",
-      detail: `${providerName} has not passed Knowledge Graph enrichment conformance.`,
-      reason: "model-unavailable",
-    });
-  });
 
 /**
  * TextGeneration - Service tag for commit and change request text generation.
@@ -248,10 +228,6 @@ export class TextGeneration extends Context.Service<
     readonly planFetchExploration: (
       input: FetchExplorationGenerationInput,
     ) => Effect.Effect<FetchExplorationGenerationResult, TextGenerationError>;
-
-    readonly enrichKnowledgeGraph: (
-      input: KnowledgeGraphEnrichmentGenerationInput,
-    ) => Effect.Effect<KnowledgeGraphEnrichmentGenerationResult, TextGenerationError>;
   }
 >()("t3/textGeneration/TextGeneration") {}
 
@@ -265,8 +241,7 @@ type TextGenerationOp =
   | "translateTranscriptToEnglish"
   | "improvePrompt"
   | "reviewPlanParallelism"
-  | "planFetchExploration"
-  | "enrichKnowledgeGraph";
+  | "planFetchExploration";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -338,10 +313,6 @@ export const makeTextGenerationFromRegistry = (
     planFetchExploration: (input) =>
       resolve("planFetchExploration", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.planFetchExploration(input)),
-      ),
-    enrichKnowledgeGraph: (input) =>
-      resolve("enrichKnowledgeGraph", input.modelSelection.instanceId).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.enrichKnowledgeGraph(input)),
       ),
   });
 };

@@ -42,6 +42,8 @@ import { GeneralSubagentToolkitHandlersLive } from "./toolkits/subagents/handler
 import { GeneralSubagentToolkit } from "./toolkits/subagents/tools.ts";
 import { KnowledgeGraphToolkitHandlersLive } from "./toolkits/knowledge-graph/handlers.ts";
 import { KnowledgeGraphToolkit } from "./toolkits/knowledge-graph/tools.ts";
+import { ProjectContextToolkit } from "./toolkits/project-context/tools.ts";
+import { ProjectContextToolkitHandlersLive } from "./toolkits/project-context/handlers.ts";
 import { ThreadContextToolkitHandlersLive } from "./toolkits/thread-context/handlers.ts";
 import { ThreadContextToolkit } from "./toolkits/thread-context/tools.ts";
 import { ProjectMemoryToolkitHandlersLive } from "./toolkits/project-memory/handlers.ts";
@@ -560,6 +562,10 @@ const KnowledgeGraphToolkitRegistrationLive = mcpCompatibleToolkit(KnowledgeGrap
   Layer.provide(KnowledgeGraphToolkitHandlersLive),
 );
 
+const ProjectContextToolkitRegistrationLive = mcpCompatibleToolkit(ProjectContextToolkit).pipe(
+  Layer.provide(ProjectContextToolkitHandlersLive),
+);
+
 const ProjectMemoryToolkitRegistrationLive = mcpCompatibleToolkit(ProjectMemoryToolkit).pipe(
   Layer.provide(ProjectMemoryToolkitHandlersLive),
 );
@@ -570,6 +576,7 @@ const ThreadContextToolkitRegistrationLive = mcpCompatibleToolkit(ThreadContextT
 
 const WorkspaceContextCoreToolkitRegistrationLive = Layer.mergeAll(
   WorkspaceContextToolkitRegistrationLive,
+  ProjectContextToolkitRegistrationLive,
   ThreadContextToolkitRegistrationLive,
 );
 

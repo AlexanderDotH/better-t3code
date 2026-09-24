@@ -1281,6 +1281,127 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('data-maintain-scroll-at-end="enabled"');
   });
 
+  it("keeps a completed turn open until the reader returns to the live edge", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const turnId = TurnId.make("turn-read-while-finishing");
+    const userEntry = buildUserTimelineEntry("Read file.");
+    const workEntry: TimelineEntry = {
+      id: "entry-read-file",
+      kind: "work",
+      createdAt: MESSAGE_CREATED_AT,
+      entry: {
+        id: "work-read-file",
+        turnId,
+        createdAt: MESSAGE_CREATED_AT,
+        label: "Read file",
+        tone: "tool",
+        toolCallId: "call-read-file",
+        toolLifecycleStatus: "completed",
+        sourceActivityKind: "tool.completed",
+      },
+    };
+    const assistant = buildAssistantTimelineEntry("Read complete.");
+    const assistantEntry: TimelineEntry = {
+      ...assistant,
+      id: "entry-assistant-final",
+      message: {
+        ...assistant.message,
+        id: MessageId.make("message-assistant-final"),
+        turnId,
+        streaming: true,
+      },
+    };
+    const runningTurn = {
+      turnId,
+      state: "running" as const,
+      startedAt: MESSAGE_CREATED_AT,
+      completedAt: null,
+    };
+    const completedTurn = {
+      ...runningTurn,
+      state: "completed" as const,
+      completedAt: MESSAGE_CREATED_AT,
+    };
+    const props = buildProps();
+    const entries = [userEntry, workEntry, assistantEntry];
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(() => {
+        renderer = create(
+          <MessagesTimeline
+            {...props}
+            isWorking
+            latestTurn={runningTurn}
+            runningTurnId={turnId}
+            liveFollowEnabled={false}
+            timelineEntries={entries}
+          />,
+        );
+      });
+      expect(renderer!.root.findAllByProps({ "data-timeline-row-kind": "turn-fold" })).toHaveLength(
+        0,
+      );
+
+      const settledEntries = [
+        userEntry,
+        workEntry,
+        { ...assistantEntry, message: { ...assistantEntry.message, streaming: false } },
+      ];
+      await act(() => {
+        renderer!.update(
+          <MessagesTimeline
+            {...props}
+            latestTurn={completedTurn}
+            liveFollowEnabled={false}
+            timelineEntries={settledEntries}
+          />,
+        );
+      });
+      const fold = renderer!.root.findByProps({ "data-timeline-row-kind": "turn-fold" });
+      expect(fold.findByType("button").props["aria-expanded"]).toBe(true);
+
+      await act(() => {
+        renderer!.update(
+          <MessagesTimeline
+            {...props}
+            latestTurn={completedTurn}
+            liveFollowEnabled
+            timelineEntries={settledEntries}
+          />,
+        );
+      });
+      expect(
+        renderer!.root.findByProps({ "data-timeline-row-kind": "turn-fold" }).findByType("button")
+          .props["aria-expanded"],
+      ).toBe(false);
+
+      await act(() => {
+        renderer!.root
+          .findByProps({ "data-timeline-row-kind": "turn-fold" })
+          .findByType("button")
+          .props.onClick();
+      });
+      await act(() => {
+        renderer!.update(
+          <MessagesTimeline
+            {...props}
+            latestTurn={{ ...runningTurn, turnId: TurnId.make("next-turn") }}
+            liveFollowEnabled={false}
+            timelineEntries={settledEntries}
+          />,
+        );
+      });
+      expect(
+        renderer!.root.findByProps({ "data-timeline-row-kind": "turn-fold" }).findByType("button")
+          .props["aria-expanded"],
+      ).toBe(true);
+    } finally {
+      await act(() => renderer?.unmount());
+    }
+  });
+
   it("hands end-following back to the list once the send anchor is released", () => {
     const firstEntry = buildUserTimelineEntry("First prompt.");
     const secondEntry = {

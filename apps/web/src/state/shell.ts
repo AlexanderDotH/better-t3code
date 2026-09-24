@@ -21,12 +21,23 @@ export const shellEnvironment = createShellEnvironmentAtoms(connectionAtomRuntim
 export const environmentShell = createEnvironmentShellAtoms(connectionAtomRuntime);
 export const environmentSnapshotAtom = createEnvironmentSnapshotAtom(environmentShell.stateAtom);
 
+function hasReadyEnvironmentCatalog(
+  catalog: EnvironmentCatalogState,
+  requiresPrimaryEnvironment: boolean,
+): boolean {
+  if (!catalog.isReady || catalog.entries.size === 0) return false;
+  return (
+    !requiresPrimaryEnvironment ||
+    Array.from(catalog.entries.values()).some(
+      (entry) => entry.target._tag === "PrimaryConnectionTarget",
+    )
+  );
+}
+
 export const allEnvironmentShellsBootstrappedAtom = Atom.make((get) => {
-  const catalog = AsyncResult.value(get(environmentCatalog.catalogAtom));
-  if (Option.isNone(catalog)) {
-    return false;
-  }
-  for (const environmentId of catalog.value.entries.keys()) {
+  const catalog = get(environmentCatalog.catalogValueAtom);
+  if (!hasReadyEnvironmentCatalog(catalog, !isHostedStaticApp())) return false;
+  for (const [environmentId, entry] of catalog.entries) {
     if (Option.isSome(get(environmentShell.stateValueAtom(environmentId)).snapshot)) {
       continue;
     }
@@ -34,6 +45,9 @@ export const allEnvironmentShellsBootstrappedAtom = Atom.make((get) => {
       AsyncResult.value(get(environmentCatalog.stateAtom(environmentId))),
       () => AVAILABLE_CONNECTION_STATE,
     );
+    if (connection.phase === "available" && entry.target._tag === "PrimaryConnectionTarget") {
+      return false;
+    }
     if (connectionProjectionPhase(connection) !== "disconnected") {
       return false;
     }
@@ -56,15 +70,7 @@ export function createAllEnvironmentProjectSnapshotsReadyAtom(input: {
     const catalog = get(input.catalogValueAtom);
     // The persisted catalog can emit before platform discovery registers the
     // primary environment. Neither that gap nor an empty catalog proves absence.
-    if (!catalog.isReady || catalog.entries.size === 0) return false;
-    if (
-      input.requiresPrimaryEnvironment &&
-      !Array.from(catalog.entries.values()).some(
-        (entry) => entry.target._tag === "PrimaryConnectionTarget",
-      )
-    ) {
-      return false;
-    }
+    if (!hasReadyEnvironmentCatalog(catalog, input.requiresPrimaryEnvironment)) return false;
     for (const environmentId of catalog.entries.keys()) {
       const shell = get(input.shellStateValueAtom(environmentId));
       if (shell.status !== "live" || Option.isNone(shell.snapshot)) return false;

@@ -1,4 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
+import {
+  EMPTY_PROJECT_INDEX_CLIENT_STATE,
+  applyProjectIndexStreamEvent,
+  projectIndexingSupported,
+} from "@t3tools/client-runtime/project-indexing";
 import type {
   KnowledgeGraphEdgeV1,
   KnowledgeGraphNodeId,
@@ -21,17 +26,29 @@ import {
   View,
 } from "react-native";
 
-import { AndroidScreenScaffold } from "../../components/AndroidScreenScaffold";
+import {
+  AndroidScreenScaffold,
+  ScreenScaffoldScrollView,
+} from "../../components/AndroidScreenScaffold";
 import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
 import { serverEnvironment } from "../../state/server";
 import { knowledgeGraphEnvironment } from "../../state/knowledge-graph";
+import { projectIndexEnvironment } from "../../state/project-index";
+import { environmentSession } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironmentQuery } from "../../state/query";
 import { useDebouncedValue } from "../../state/queries";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { KnowledgeGraphCanvas } from "./KnowledgeGraphCanvas";
+import { ProjectIndexingController } from "../project-indexing/ProjectIndexingController";
+import { mobileProjectIndexPermissions } from "../project-indexing/mobile-project-indexing";
+import {
+  mobileProjectIndexDefaults,
+  mobileProjectIndexEffectiveSettings,
+  mobileProjectIndexStatusWithDefaults,
+} from "../project-indexing/mobile-project-index-settings";
 import {
   knowledgeGraphDirectionMessageKey,
   knowledgeGraphEdgeKindMessageKey,
@@ -39,10 +56,13 @@ import {
   knowledgeGraphProvenanceMessageKey,
   knowledgeGraphSourceNavigationTarget,
   knowledgeGraphStatusMessageKey,
+  mobileStaticKnowledgeGraphSnapshot,
   mobileKnowledgeGraphClearConfirmationActions,
   resolveMobileKnowledgeGraphAccess,
   resolveMobileKnowledgeGraphActions,
   resolveMobileKnowledgeGraphRoutePolicy,
+  resolveMobileKnowledgeGraphIndexRoute,
+  supportsMobileStaticKnowledgeGraph,
 } from "./mobile-knowledge-graph";
 
 type KnowledgeGraphRouteScreenProps = StaticScreenProps<{
@@ -224,13 +244,14 @@ function NodeDetails(props: {
 
 function GraphActions(props: {
   readonly snapshot: KnowledgeGraphSnapshotV1;
+  readonly canMutate: boolean;
   readonly onRebuild: () => void;
   readonly onCancel: () => void;
   readonly onPause: (paused: boolean) => void;
   readonly onClear: () => void;
 }) {
   const translator = useMobileInterfaceTranslator();
-  const actions = resolveMobileKnowledgeGraphActions(props.snapshot.status);
+  const actions = resolveMobileKnowledgeGraphActions(props.snapshot.status, props.canMutate);
   return (
     <ScrollView
       horizontal
@@ -283,7 +304,10 @@ function GraphActions(props: {
   );
 }
 
-function DisabledKnowledgeGraphOwner(props: { readonly onClear: () => void }) {
+function DisabledKnowledgeGraphOwner(props: {
+  readonly onClear: () => void;
+  readonly canClear: boolean;
+}) {
   const translator = useMobileInterfaceTranslator();
   return (
     <View className="items-center px-8 py-8">
@@ -293,23 +317,111 @@ function DisabledKnowledgeGraphOwner(props: { readonly onClear: () => void }) {
       <Text className="mt-2 text-center font-sans text-base leading-normal text-foreground-muted">
         {translator.message("knowledgeGraph.disabled")}
       </Text>
-      <Text className="mt-2 text-center font-sans text-sm leading-normal text-foreground-muted">
-        {translator.message("knowledgeGraph.clearConfirm.description")}
-      </Text>
-      <Pressable
-        accessibilityRole="button"
-        className="mt-5 rounded-full border border-danger-border bg-card px-5 py-3 active:opacity-70"
-        onPress={props.onClear}
-      >
-        <Text className="text-sm font-t3-bold text-danger-foreground">
-          {translator.message("knowledgeGraph.clear")}
+      {!props.canClear ? (
+        <Text className="mt-2 text-center text-sm text-foreground-muted">
+          {translator.message("projectIndexing.updateServer")}
         </Text>
-      </Pressable>
+      ) : null}
+      {props.canClear ? (
+        <>
+          <Text className="mt-2 text-center font-sans text-sm leading-normal text-foreground-muted">
+            {translator.message("knowledgeGraph.clearConfirm.description")}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            className="mt-5 rounded-full border border-danger-border bg-card px-5 py-3 active:opacity-70"
+            onPress={props.onClear}
+          >
+            <Text className="text-sm font-t3-bold text-danger-foreground">
+              {translator.message("knowledgeGraph.clear")}
+            </Text>
+          </Pressable>
+        </>
+      ) : null}
     </View>
   );
 }
 
 export function KnowledgeGraphRouteScreen(props: KnowledgeGraphRouteScreenProps) {
+  const translator = useMobileInterfaceTranslator();
+  const environmentId = EnvironmentId.make(props.route.params.environmentId);
+  const projectId = ProjectId.make(props.route.params.projectId);
+  const threadId = props.route.params.threadId
+    ? ThreadId.make(props.route.params.threadId)
+    : undefined;
+  const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const sessionQuery = useEnvironmentQuery(environmentSession.sessionStateAtom(environmentId));
+  const session = sessionQuery.data;
+  const permissions = mobileProjectIndexPermissions(session);
+  const supported = projectIndexingSupported(config?.environment.capabilities);
+  const target = useMemo(
+    () =>
+      supported && permissions.canRead
+        ? { environmentId, input: { projectId, ...(threadId ? { threadId } : {}) } }
+        : null,
+    [environmentId, permissions.canRead, projectId, supported, threadId],
+  );
+  const indexStatus = useEnvironmentQuery(target ? projectIndexEnvironment.status(target) : null);
+  const indexUpdates = useEnvironmentQuery(target ? projectIndexEnvironment.events(target) : null);
+  const latestStatus =
+    indexStatus.data === null
+      ? (indexUpdates.data?.status ?? null)
+      : applyProjectIndexStreamEvent(indexUpdates.data ?? EMPTY_PROJECT_INDEX_CLIENT_STATE, {
+          type: "status",
+          status: indexStatus.data,
+        }).status;
+  const mode =
+    supported && session === null
+      ? "loading"
+      : resolveMobileKnowledgeGraphIndexRoute({
+          projectIndexingVersion: config?.environment.capabilities.projectIndexingVersion,
+          canRead: permissions.canRead,
+          indexEnabled: latestStatus
+            ? mobileProjectIndexEffectiveSettings(
+                mobileProjectIndexStatusWithDefaults(
+                  latestStatus,
+                  config ? mobileProjectIndexDefaults(config) : undefined,
+                ),
+              ).enabled
+            : null,
+          loadFailed: indexStatus.error !== null,
+        });
+
+  if (mode === "legacy") return <LegacyKnowledgeGraphRouteScreen {...props} />;
+
+  return (
+    <AndroidScreenScaffold title={translator.message("knowledgeGraph.title")}>
+      <NativeStackScreenOptions options={{ title: translator.message("knowledgeGraph.title") }} />
+      {sessionQuery.error ? (
+        <EmptyState
+          title={translator.message("projectIndexing.title")}
+          detail={sessionQuery.error}
+          actionLabel={translator.message("projectIndexing.retry")}
+          onAction={sessionQuery.refresh}
+          variant="plain"
+        />
+      ) : mode === "loading" ? (
+        <View className="flex-1 items-center justify-center gap-3">
+          <ActivityIndicator />
+          <Text className="text-sm text-foreground-muted">
+            {translator.message("projectIndexing.loading")}
+          </Text>
+        </View>
+      ) : (
+        <ScreenScaffoldScrollView>
+          <ProjectIndexingController
+            environmentId={environmentId}
+            projectId={projectId}
+            threadId={threadId}
+            environmentLabel={config?.environment.label}
+          />
+        </ScreenScaffoldScrollView>
+      )}
+    </AndroidScreenScaffold>
+  );
+}
+
+function LegacyKnowledgeGraphRouteScreen(props: KnowledgeGraphRouteScreenProps) {
   const translator = useMobileInterfaceTranslator();
   const environmentId = EnvironmentId.make(props.route.params.environmentId);
   const projectId = ProjectId.make(props.route.params.projectId);
@@ -330,7 +442,10 @@ export function KnowledgeGraphRouteScreen(props: KnowledgeGraphRouteScreenProps)
     knowledgeGraphVersion: config?.environment.capabilities.knowledgeGraphVersion,
     enabled,
   });
-  const routePolicy = resolveMobileKnowledgeGraphRoutePolicy(access);
+  const staticSupported = supportsMobileStaticKnowledgeGraph(
+    config?.environment.capabilities.knowledgeGraphVersion,
+  );
+  const routePolicy = resolveMobileKnowledgeGraphRoutePolicy(access, staticSupported);
   const stateTarget = useMemo(
     () => (routePolicy.canSubscribe ? { environmentId, input: { scope } } : null),
     [environmentId, routePolicy.canSubscribe, scope],
@@ -347,7 +462,11 @@ export function KnowledgeGraphRouteScreen(props: KnowledgeGraphRouteScreenProps)
   const debouncedQuery = useDebouncedValue(normalizedQuery, KNOWLEDGE_GRAPH_SEARCH_DEBOUNCE_MS);
   const [selectedNodeId, setSelectedNodeId] = useState<KnowledgeGraphNodeId | null>(null);
   const state = graph.data;
-  const snapshot = state?.snapshot ?? null;
+  const rawSnapshot = state?.snapshot ?? null;
+  const snapshot = useMemo(
+    () => (rawSnapshot ? mobileStaticKnowledgeGraphSnapshot(rawSnapshot) : null),
+    [rawSnapshot],
+  );
   const searchTarget = useMemo(
     () =>
       routePolicy.canQuery && debouncedQuery.length > 0
@@ -381,7 +500,7 @@ export function KnowledgeGraphRouteScreen(props: KnowledgeGraphRouteScreenProps)
     ) {
       return snapshot;
     }
-    return {
+    return mobileStaticKnowledgeGraphSnapshot({
       ...snapshot,
       nodes: result.nodes,
       edges: result.edges,
@@ -393,7 +512,7 @@ export function KnowledgeGraphRouteScreen(props: KnowledgeGraphRouteScreenProps)
           visibleNodes: result.truncated,
         },
       },
-    } satisfies KnowledgeGraphSnapshotV1;
+    } satisfies KnowledgeGraphSnapshotV1);
   }, [debouncedQuery, normalizedQuery, search.data?.results, snapshot]);
   const selectedNode = selectedNodeId
     ? (displayedSnapshot?.nodes.find((node) => node.nodeId === selectedNodeId) ?? null)
@@ -411,14 +530,16 @@ export function KnowledgeGraphRouteScreen(props: KnowledgeGraphRouteScreenProps)
 
   const runMutation = useCallback(
     async (label: string, operation: () => Promise<{ readonly _tag: string }>) => {
+      if (!staticSupported) return;
       const result = await operation();
       if (result._tag !== "Success") {
         Alert.alert(label, translator.message("knowledgeGraph.error"));
       }
     },
-    [translator],
+    [staticSupported, translator],
   );
   const requestRebuild = useCallback(() => {
+    if (!staticSupported) return;
     Alert.alert(translator.message("knowledgeGraph.rebuild"), undefined, [
       { text: translator.message("common.cancel"), style: "cancel" },
       {
@@ -437,8 +558,9 @@ export function KnowledgeGraphRouteScreen(props: KnowledgeGraphRouteScreenProps)
           ),
       },
     ]);
-  }, [environmentId, rebuild, runMutation, scope, translator]);
+  }, [environmentId, rebuild, runMutation, scope, staticSupported, translator]);
   const requestClear = useCallback(() => {
+    if (!staticSupported) return;
     const actions = mobileKnowledgeGraphClearConfirmationActions({
       environmentId,
       scope,
@@ -456,7 +578,7 @@ export function KnowledgeGraphRouteScreen(props: KnowledgeGraphRouteScreenProps)
         },
       ],
     );
-  }, [clear, environmentId, runMutation, scope, translator]);
+  }, [clear, environmentId, runMutation, scope, staticSupported, translator]);
 
   let content;
   if (access === "unsupported") {
@@ -468,7 +590,7 @@ export function KnowledgeGraphRouteScreen(props: KnowledgeGraphRouteScreenProps)
       />
     );
   } else if (access === "disabled") {
-    content = <DisabledKnowledgeGraphOwner onClear={requestClear} />;
+    content = <DisabledKnowledgeGraphOwner onClear={requestClear} canClear={staticSupported} />;
   } else if (graph.isPending && displayedSnapshot === null) {
     content = (
       <View className="flex-1 items-center justify-center gap-3">
@@ -491,9 +613,11 @@ export function KnowledgeGraphRouteScreen(props: KnowledgeGraphRouteScreenProps)
   } else if (displayedSnapshot === null) {
     content = (
       <EmptyState
-        actionLabel={translator.message("knowledgeGraph.rebuild")}
-        detail={translator.message("knowledgeGraph.empty")}
-        onAction={requestRebuild}
+        actionLabel={staticSupported ? translator.message("knowledgeGraph.rebuild") : undefined}
+        detail={translator.message(
+          staticSupported ? "knowledgeGraph.empty" : "projectIndexing.updateServer",
+        )}
+        onAction={staticSupported ? requestRebuild : undefined}
         title={translator.message("knowledgeGraph.title")}
         variant="plain"
       />
@@ -514,6 +638,7 @@ export function KnowledgeGraphRouteScreen(props: KnowledgeGraphRouteScreenProps)
           />
         </View>
         <GraphActions
+          canMutate={staticSupported}
           onCancel={() =>
             void runMutation(translator.message("knowledgeGraph.cancel"), () =>
               cancel({ environmentId, input: { scope } }),
@@ -531,7 +656,11 @@ export function KnowledgeGraphRouteScreen(props: KnowledgeGraphRouteScreenProps)
         />
         <View className="flex-row items-center justify-between gap-3 px-4 pb-2">
           <Text className="text-xs font-t3-semibold text-foreground-muted">
-            {translator.message(knowledgeGraphStatusMessageKey(displayedSnapshot.status.state))}
+            {translator.message(
+              staticSupported
+                ? knowledgeGraphStatusMessageKey(displayedSnapshot.status.state)
+                : "projectIndexing.updateServer",
+            )}
           </Text>
           {displayedSnapshot.status.truncated.visibleNodes ||
           displayedSnapshot.status.truncated.nodes ? (

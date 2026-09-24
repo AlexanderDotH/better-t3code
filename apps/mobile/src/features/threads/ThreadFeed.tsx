@@ -50,7 +50,13 @@ import {
   renderCodexFileCitationsAsMarkdown,
   splitCodexArtifactTemplateMarkdown,
 } from "@t3tools/client-runtime/codex-markdown-directives";
-import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
+import {
+  advanceChatTurnFoldRetention,
+  CHAT_LIST_ANCHOR_OFFSET,
+  createChatTurnFoldRetention,
+  forgetRetainedChatTurn,
+  resolveChatListAnchoredEndSpace,
+} from "@t3tools/shared/chatList";
 import { videoMimeType } from "@t3tools/shared/video";
 import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
 import { HeaderHeightContext } from "@react-navigation/elements";
@@ -100,6 +106,7 @@ import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { useFontFamily } from "../../lib/useFontFamily";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { extractVoiceFileContext } from "@t3tools/shared/voiceFileContext";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
@@ -1700,7 +1707,8 @@ function renderFeedEntry(
   if (entry.type === "message") {
     const { message } = entry;
     const isUser = message.role === "user";
-    const renderedText = renderAssistantCitationsAsText(message.text);
+    const visibleText = isUser ? extractVoiceFileContext(message.text).text : message.text;
+    const renderedText = renderAssistantCitationsAsText(visibleText);
     const styles = isUser ? markdownStyles.user : markdownStyles.assistant;
     const timestampLabel = formatMessageTime(isUser ? message.createdAt : message.updatedAt);
     const attachments = message.attachments ?? [];
@@ -1736,7 +1744,7 @@ function renderFeedEntry(
                   : null),
             }}
           >
-            {message.text.trim().length > 0 ? (
+            {visibleText.trim().length > 0 ? (
               <MarkdownImageAvailableWidthContext
                 value={props.userBubbleMaxWidth - USER_BUBBLE_HORIZONTAL_PADDING * 2}
               >
@@ -1816,7 +1824,7 @@ function renderFeedEntry(
                 <SymbolView name="pencil" size={14} tintColor={iconSubtleColor} />
               </Pressable>
             ) : null}
-            {message.text.trim().length > 0 ? (
+            {visibleText.trim().length > 0 ? (
               <CopyTextButton
                 accessibilityLabel="Copy message"
                 text={message.text}
@@ -2263,6 +2271,22 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     expandedTurnIds: new Set(),
   });
   const { copiedRowId, expandedWorkGroups, expandedWorkRows, expandedTurnIds } = interactionState;
+  const [foldRetention, setFoldRetention] = useState(() =>
+    createChatTurnFoldRetention(props.latestTurn),
+  );
+  const currentFoldRetention = advanceChatTurnFoldRetention(
+    foldRetention,
+    props.latestTurn,
+    endFollowEnabled,
+  );
+  if (currentFoldRetention !== foldRetention) setFoldRetention(currentFoldRetention);
+  const expandedTurnIdsForFeed = useMemo(
+    () =>
+      currentFoldRetention.retainedTurnIds.size === 0
+        ? expandedTurnIds
+        : new Set([...expandedTurnIds, ...currentFoldRetention.retainedTurnIds]),
+    [currentFoldRetention.retainedTurnIds, expandedTurnIds],
+  );
   const [expandedFile, setExpandedFile] = useState<FilePreviewSource | null>(null);
   const [expandedVideo, setExpandedVideo] = useState<VideoPreviewSource | null>(null);
   const fileShareSourceIdentifier = useId();
@@ -2687,7 +2711,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         deriveThreadFeedPresentation(
           props.feed,
           props.latestTurn,
-          expandedTurnIds,
+          expandedTurnIdsForFeed,
           expandedWorkGroupIds,
           props.activeWorkStartedAt,
           chatVisualMode,
@@ -2698,7 +2722,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     [
       chatVisualMode,
       props.queuedMessages,
-      expandedTurnIds,
+      expandedTurnIdsForFeed,
       expandedWorkGroupIds,
       props.activeWorkStartedAt,
       props.feed,
@@ -2752,6 +2776,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       }
       return;
     }
+    if (!endFollowEnabled) return;
     setInteractionState((current) => {
       if (!current.expandedTurnIds.has(previous.turnId)) {
         return current;
@@ -2760,7 +2785,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       next.delete(previous.turnId);
       return { ...current, expandedTurnIds: next };
     });
-  }, [props.latestTurn]);
+  }, [endFollowEnabled, props.latestTurn]);
 
   useEffect(() => {
     return () => {
@@ -2885,9 +2910,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const onToggleTurnFold = useCallback(
     (turnId: TurnId) => {
       suspendEndScrollMaintenanceForDisclosure(`turn-fold:${turnId}`);
+      const wasRetained = currentFoldRetention.retainedTurnIds.has(turnId);
+      if (wasRetained) {
+        setFoldRetention((current) => forgetRetainedChatTurn(current, turnId));
+      }
       setInteractionState((current) => {
         const next = new Set(current.expandedTurnIds);
-        if (next.has(turnId)) {
+        if (wasRetained || next.has(turnId)) {
           next.delete(turnId);
         } else {
           next.add(turnId);
@@ -2895,7 +2924,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         return { ...current, expandedTurnIds: next };
       });
     },
-    [suspendEndScrollMaintenanceForDisclosure],
+    [currentFoldRetention.retainedTurnIds, suspendEndScrollMaintenanceForDisclosure],
   );
 
   const onPressPreview = useCallback((source: FilePreviewSource) => {

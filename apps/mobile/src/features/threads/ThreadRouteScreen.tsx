@@ -103,6 +103,7 @@ import {
 import { useThreadShells } from "../../state/entities";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { mobileKnowledgeGraphThreadEntryTarget } from "../knowledge-graph/mobile-knowledge-graph";
+import { ProjectIndexChatStatus } from "../project-indexing/ProjectIndexChatStatus";
 
 interface ThreadInspectorSelection {
   readonly routeThreadIdentity: string | null;
@@ -358,6 +359,7 @@ function ThreadRouteContent(
     if (selectedThread === null || serverConfig === null) return null;
     return mobileKnowledgeGraphThreadEntryTarget({
       knowledgeGraphVersion: serverConfig.environment.capabilities.knowledgeGraphVersion,
+      projectIndexingVersion: serverConfig.environment.capabilities.projectIndexingVersion,
       enabled: resolveBetterT3FeatureFlag(
         serverConfig.settings.betterT3Environment,
         "knowledge.graph",
@@ -371,6 +373,19 @@ function ThreadRouteContent(
     if (knowledgeGraphEntryTarget === null) return;
     navigation.navigate(knowledgeGraphEntryTarget.screen, knowledgeGraphEntryTarget.params);
   }, [knowledgeGraphEntryTarget, navigation]);
+  const handleOpenProjectIndexSettings = useCallback(() => {
+    if (selectedThread === null) return;
+    navigation.navigate("SettingsSheet", {
+      screen: "SettingsContent",
+      params: {
+        screen: "SettingsProjectIndexing",
+        params: {
+          environmentId: String(selectedThread.environmentId),
+          projectId: String(selectedThread.projectId),
+        },
+      },
+    });
+  }, [navigation, selectedThread]);
   const threadForkingSupported = mobileThreadForkingSupported(
     serverConfig?.environment.capabilities ?? {},
   );
@@ -1066,6 +1081,22 @@ function ThreadRouteContent(
     <>
       <ThreadGitControls {...threadGitControlProps} showActionControls={showActionControls} />
 
+      {creationState === null &&
+      serverConfig !== null &&
+      (serverConfig.environment.capabilities.projectIndexingVersion ?? 0) >= 1 &&
+      ((serverConfig.environment.capabilities.projectIndexingDefaultsVersion ?? 0) < 1 ||
+        serverConfig.settings.projectIndexingEnabled) ? (
+        <ProjectIndexChatStatus
+          environmentId={selectedThread.environmentId}
+          projectId={selectedThread.projectId}
+          projectLabel={selectedThreadProject?.title ?? serverConfig.environment.label}
+          threadId={selectedThread.id}
+          config={serverConfig}
+          onOpenIndex={handleOpenKnowledgeGraph}
+          onOpenSettings={handleOpenProjectIndexSettings}
+        />
+      ) : null}
+
       {gitWorkbenchEnabled ? (
         <GitActionProgressOverlay progress={gitActionProgress} onDismiss={dismissGitActionResult} />
       ) : null}
@@ -1091,6 +1122,8 @@ function ThreadRouteContent(
           activePendingUserInputAnswers={requests.activePendingUserInputAnswers}
           respondingUserInputId={requests.respondingUserInputId}
           draftMessage={composer.draftMessage}
+          draftVoiceFileReferences={composer.draftVoiceFileReferences}
+          readDraftText={composer.readDraftText}
           draftAttachments={composer.draftAttachments}
           connectionStateLabel={routeConnectionState}
           threadSyncStatus={selectedThreadDetailState.status}

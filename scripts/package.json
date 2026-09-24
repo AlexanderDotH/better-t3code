@@ -18,7 +18,9 @@
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "@toon-format/toon": "4.1.1",
     "@types/pngjs": "6.0.5",
+    "gpt-tokenizer": "4.0.0",
     "typescript": "catalog:",
     "typescript-legacy": "npm:typescript@~6.0.3",
     "vite-plus": "catalog:",

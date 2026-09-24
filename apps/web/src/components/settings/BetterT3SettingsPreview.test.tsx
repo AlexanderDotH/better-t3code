@@ -52,6 +52,29 @@ function PlanBubbleChoiceHarness() {
   );
 }
 
+function ComposerOrSidebarChoiceHarness({
+  featureId,
+}: {
+  featureId: "agent.expandedComposerControls" | "chat.classicSidebar";
+}) {
+  const [enabled, setEnabled] = useState(false);
+  return (
+    <BetterT3FeatureChoice
+      disabled={false}
+      featureId={featureId}
+      model={buildBetterT3SettingsPreviewModel({
+        features: [],
+        chatVisualMode: "current",
+        sidebarPosition: "left",
+        contextWindowSelector: "native",
+      })}
+      translate={translate}
+      value={enabled}
+      onChange={(nextValue) => setEnabled(nextValue === true)}
+    />
+  );
+}
+
 describe("context window visual choice", () => {
   it("switches between two translated cards and preserves the selection while disabled", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -110,3 +133,31 @@ describe("plan bubble visual choice", () => {
     }
   });
 });
+
+describe.each(["agent.expandedComposerControls", "chat.classicSidebar"] as const)(
+  "%s visual choice",
+  (featureId) => {
+    it("shows both layouts and updates the selected card", async () => {
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      let renderer: ReactTestRenderer | undefined;
+      try {
+        await act(() => {
+          renderer = create(<ComposerOrSidebarChoiceHarness featureId={featureId} />);
+        });
+        const radios = renderer!.root.findAllByProps({ role: "radio" });
+        expect(radios).toHaveLength(2);
+        expect(radios.map((radio) => radio.props["aria-checked"])).toEqual([true, false]);
+        const previews = renderer!.root.findAllByProps({
+          "data-better-t3-feature-visual": featureId,
+        });
+        expect(previews).toHaveLength(2);
+
+        await act(() => radios[1]!.props.onClick());
+        expect(radios.map((radio) => radio.props["aria-checked"])).toEqual([false, true]);
+      } finally {
+        await act(() => renderer?.unmount());
+        vi.unstubAllGlobals();
+      }
+    });
+  },
+);

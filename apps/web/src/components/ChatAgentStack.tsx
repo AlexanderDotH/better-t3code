@@ -8,6 +8,7 @@ import {
   useMemo,
   useState,
   type AnimationEvent as ReactAnimationEvent,
+  type Ref,
 } from "react";
 
 import { cn } from "~/lib/utils";
@@ -35,6 +36,7 @@ export interface ChatAgentStackProps {
   readonly selectedSubagentId: SubagentId | null;
   readonly onSelectSubagent: (subagentId: SubagentId) => void;
   readonly className?: string;
+  readonly stackRef?: Ref<HTMLDivElement>;
 }
 
 const ARCHIVED_AGENT_RENDER_PAGE_SIZE = 50;
@@ -70,6 +72,7 @@ export const ChatAgentStack = memo(function ChatAgentStack({
   selectedSubagentId,
   onSelectSubagent,
   className,
+  stackRef,
 }: ChatAgentStackProps) {
   const translate = useInterfaceTranslator().message;
   const lifecycle = useSubagentLifecycleStack(subagents);
@@ -83,6 +86,7 @@ export const ChatAgentStack = memo(function ChatAgentStack({
 
   return (
     <div
+      ref={stackRef}
       data-chat-agent-stack="true"
       data-compact-open={compactOpen && hasSubagents ? "true" : "false"}
       data-has-subagents={hasSubagents ? "true" : "false"}

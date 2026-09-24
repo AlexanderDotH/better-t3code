@@ -8,7 +8,9 @@ import type {
   ProviderOptionSelection,
   RuntimeMode,
   ServerProvider,
+  VoiceFileReference,
 } from "@t3tools/contracts";
+import { appendVoiceFileContext } from "@t3tools/shared/voiceFileContext";
 import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -150,6 +152,7 @@ type NewTaskFlowContextValue = {
   readonly draftKey: string | null;
   readonly editingPendingTask: QueuedThreadMessage | null;
   readonly prompt: string;
+  readonly voiceFileReferences?: ReadonlyArray<VoiceFileReference>;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly submitting: boolean;
   readonly branchQuery: string;
@@ -201,7 +204,7 @@ type NewTaskFlowContextValue = {
       readonly currentCheckoutBranch?: string | null;
     },
   ) => QueuedThreadMessage | null;
-  readonly setPrompt: (value: string) => void;
+  readonly setPrompt: (value: string, references?: ReadonlyArray<VoiceFileReference>) => void;
   readonly replaceAttachments: (attachments: ReadonlyArray<DraftComposerAttachment>) => void;
   /** Appends draft attachments; returns how many the live cap rejected. */
   readonly appendAttachments: (attachments: ReadonlyArray<DraftComposerAttachment>) => number;
@@ -594,11 +597,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
 
   const providerGroups = useMemo(() => groupByProvider(modelOptions), [modelOptions]);
   const setPrompt = useCallback(
-    (value: string) => {
+    (value: string, references?: ReadonlyArray<VoiceFileReference>) => {
       if (!selectedProjectDraftKey) {
         return;
       }
-      setComposerDraftText(selectedProjectDraftKey, value);
+      setComposerDraftText(selectedProjectDraftKey, value, references);
     },
     [selectedProjectDraftKey],
   );
@@ -1002,7 +1005,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         threadId: ThreadId.make(metadata.threadId),
         messageId: MessageId.make(metadata.messageId),
         commandId: CommandId.make(metadata.commandId),
-        text,
+        text: appendVoiceFileContext(text, draft.voiceFileReferences ?? []),
         attachments: draft.attachments,
         modelSelection: draftModelSelection,
         runtimeMode: draft.runtimeMode ?? DEFAULT_RUNTIME_MODE,
@@ -1173,6 +1176,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       draftKey: selectedProjectDraftKey,
       editingPendingTask,
       prompt,
+      voiceFileReferences: selectedProjectDraft.voiceFileReferences,
       attachments,
       submitting,
       branchQuery,
@@ -1257,6 +1261,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedModelKey,
       selectedModelOption,
       selectedProjectDraftKey,
+      selectedProjectDraft.voiceFileReferences,
       selectedProviderStatus,
       setSelectedModelOptions,
       selectedProject,

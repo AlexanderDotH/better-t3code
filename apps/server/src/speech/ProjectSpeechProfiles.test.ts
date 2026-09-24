@@ -16,6 +16,7 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as ProjectSpeechProfileStore from "./ProjectSpeechProfileStore.ts";
 import * as ProjectSpeechProfiles from "./ProjectSpeechProfiles.ts";
 import * as ProjectSpeechWorkspaceScanner from "./ProjectSpeechWorkspaceScanner.ts";
+import { ProjectSpeechVocabulary } from "./ProjectSpeechVocabulary.ts";
 
 const projectId = ProjectId.make("project-speech");
 const project: OrchestrationProjectShell = {
@@ -104,6 +105,7 @@ function serviceLayer(options: {
   readonly list: WorkspaceEntries.WorkspaceEntries["Service"]["list"];
   readonly readFile: WorkspaceFileSystem.WorkspaceFileSystem["Service"]["readFile"];
   readonly scan?: ProjectSpeechWorkspaceScanner.ProjectSpeechWorkspaceScanner["Service"]["scan"];
+  readonly vocabulary?: ProjectSpeechVocabulary["Service"];
 }) {
   const migratedSqlite = Layer.effectDiscard(runMigrations()).pipe(
     Layer.provideMerge(NodeSqliteClient.layerMemory()),
@@ -113,6 +115,9 @@ function serviceLayer(options: {
     storeLayer,
     projectionLayer(options.resolveProject ?? (() => options.project ?? Option.some(project))),
     workspaceLayer(options),
+    ...(options.vocabulary === undefined
+      ? []
+      : [Layer.succeed(ProjectSpeechVocabulary, options.vocabulary)]),
   );
   return ProjectSpeechProfiles.layer.pipe(Layer.provideMerge(dependencies));
 }
@@ -209,6 +214,47 @@ it.effect("indexes readable high-signal files, skips read errors, and persists t
     ),
   );
 });
+
+it.effect(
+  "manual indexing refreshes granular vocabulary and adds declarations beyond the summary files",
+  () => {
+    const refreshedRoots: string[] = [];
+    return Effect.gen(function* () {
+      const profiles = yield* ProjectSpeechProfiles.ProjectSpeechProfiles;
+      const indexed = yield* profiles.index(projectId);
+      assert.deepStrictEqual(refreshedRoots, [project.workspaceRoot]);
+      assert.include(indexed.keyterms, "DeeplyNestedVoiceController");
+      assert.isAtMost(indexed.keyterms.length, 100);
+    }).pipe(
+      Effect.provide(
+        serviceLayer({
+          list: () =>
+            Effect.succeed({ entries: [{ kind: "file", path: "package.json" }], truncated: false }),
+          readFile: successfulReadFile({ "package.json": '{"name":"t3-speech"}' }),
+          vocabulary: {
+            snapshot: () => Effect.die("manual indexing must refresh"),
+            refreshInBackground: () => Effect.die("manual indexing must wait for its result"),
+            refresh: ({ workspaceRoot }) => {
+              refreshedRoots.push(workspaceRoot);
+              return Effect.succeed({
+                version: 1,
+                truncated: false,
+                entries: [
+                  {
+                    kind: "class",
+                    name: "DeeplyNestedVoiceController",
+                    path: "src/deep/Voice.ts",
+                    line: 1,
+                  },
+                ],
+              });
+            },
+          },
+        }),
+      ),
+    );
+  },
+);
 
 it.effect("does not create the native workspace search index while building speech context", () => {
   const entries: ReadonlyArray<ProjectEntry> = [

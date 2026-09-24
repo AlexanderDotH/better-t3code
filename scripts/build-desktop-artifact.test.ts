@@ -27,7 +27,9 @@ import {
   createBuildConfig,
   DESKTOP_ELECTRON_LANGUAGES,
   DESKTOP_FILE_EXCLUSIONS,
+  PROJECT_INDEXER_ASAR_UNPACK_GLOBS,
   DESKTOP_EXTRA_RESOURCES,
+  PROJECT_INDEXER_DECLARATION_RESOURCES,
   LINUX_CAPTURE_EXTRA_RESOURCES,
   LINUX_BROWSER_SECRET_EXTRA_RESOURCES,
   MAC_FILE_EXCLUSIONS,
@@ -568,11 +570,15 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }
 
     assert.deepStrictEqual(DESKTOP_FILE_EXCLUSIONS, [
+      "!**/.t3",
+      "!**/.t3/**/*",
       "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**/*",
       "!apps/desktop/resources/browser-secret",
       "!apps/desktop/resources/browser-secret/**/*",
       "!apps/desktop/prod-resources/browser-secret",
       "!apps/desktop/prod-resources/browser-secret/**/*",
+      "!apps/desktop/prod-resources/project-indexer-declarations",
+      "!apps/desktop/prod-resources/project-indexer-declarations/**/*",
       "!apps/desktop/prod-resources/windows-server",
       "!apps/desktop/prod-resources/windows-server/**/*",
       "!apps/desktop/prod-resources/wsl-runtime.tar.gz",
@@ -631,19 +637,25 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         false,
       );
 
-      // Windows unpacks native files explicitly so their JavaScript and metadata
-      // stay archived. Other platforms retain electron-builder's defaults.
+      // Compiler subprocesses and worker imports need real paths on every platform.
       assert.notProperty(mac, "asar");
       assert.notProperty(linux, "asar");
-      assert.notProperty(mac, "asarUnpack");
-      assert.notProperty(linux, "asarUnpack");
+      assert.deepStrictEqual(mac.asarUnpack, PROJECT_INDEXER_ASAR_UNPACK_GLOBS);
+      assert.deepStrictEqual(linux.asarUnpack, PROJECT_INDEXER_ASAR_UNPACK_GLOBS);
       assert.deepStrictEqual(win.asar, { smartUnpack: false });
-      assert.deepStrictEqual(win.asarUnpack, [WINDOWS_NATIVE_ASAR_UNPACK_GLOB]);
+      assert.deepStrictEqual(win.asarUnpack, [
+        WINDOWS_NATIVE_ASAR_UNPACK_GLOB,
+        ...PROJECT_INDEXER_ASAR_UNPACK_GLOBS,
+      ]);
       assert.deepStrictEqual(winWithoutWslPrebuild.asar, win.asar);
       assert.deepStrictEqual(winWithoutWslPrebuild.asarUnpack, win.asarUnpack);
-      assert.deepStrictEqual(mac.extraResources, DESKTOP_EXTRA_RESOURCES);
+      assert.deepStrictEqual(mac.extraResources, [
+        ...DESKTOP_EXTRA_RESOURCES,
+        ...PROJECT_INDEXER_DECLARATION_RESOURCES,
+      ]);
       assert.deepStrictEqual(linux.extraResources, [
         ...DESKTOP_EXTRA_RESOURCES,
+        ...PROJECT_INDEXER_DECLARATION_RESOURCES,
         ...LINUX_CAPTURE_EXTRA_RESOURCES,
         { from: "apps/desktop/prod-resources/browser-secret", to: "browser-secret" },
       ]);
@@ -670,9 +682,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       // and .bin shims never ship.
       assert.equal(
         WINDOWS_SERVER_ASAR_UNPACK_GLOB,
-        "{**/*.node,**/*.dll,**/*.exe,**/*.so,**/*.so.*,**/*.dylib,**/resource-monitor/**/t3-resource-monitor}",
+        `{**/*.node,**/*.dll,**/*.exe,**/*.so,**/*.so.*,**/*.dylib,**/resource-monitor/**/t3-resource-monitor,${PROJECT_INDEXER_ASAR_UNPACK_GLOBS.join(",")}}`,
       );
       assert.deepStrictEqual(WINDOWS_SERVER_ASAR_IGNORE_GLOBS, [
+        "**/.t3",
+        "**/.t3/**",
         "**/node_modules/@anthropic-ai/claude-agent-sdk-*",
         "**/node_modules/@anthropic-ai/claude-agent-sdk-*/**",
         "**/node_modules/.bin",
@@ -1187,7 +1201,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         ]);
 
         assert.equal(result.packagedAppDir, fixture.packagedAppDir);
-        assert.deepStrictEqual(result.unpackedFiles, ["node_modules/native/addon.node"]);
+        assert.deepStrictEqual(result.unpackedFiles, [
+          "apps/server/dist/bin.mjs",
+          "node_modules/native/addon.node",
+        ]);
         assert.isBelow(result.fileCount, WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT);
         assert.deepStrictEqual(secondAsar, firstAsar);
       }),
@@ -1574,6 +1591,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.instanceOf(error, WindowsPackagedPayloadValidationError);
         assert.equal(error.reason, "unpacked-native-missing");
         assert.deepStrictEqual(error.missingFiles, [
+          "server.asar.unpacked/apps/server/dist/bin.mjs",
           "server.asar.unpacked/node_modules/native/addon.node",
         ]);
       }),

@@ -2,6 +2,7 @@ export type SettingsSheetTarget =
   | "SettingsEnvironments"
   | "SettingsAgents"
   | "SettingsProjects"
+  | "SettingsProjectIndexing"
   | "SettingsArchive"
   | "SettingsAppearance"
   | "SettingsBetterT3"

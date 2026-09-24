@@ -181,7 +181,8 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       expect(second.capabilities.visualizationsVersion).toBe(1);
       expect(second.capabilities.projectSettingsVersion).toBe(1);
       expect(second.capabilities.harnessChatSyncVersion).toBe(1);
-      expect(second.capabilities.knowledgeGraphVersion).toBe(1);
+      expect(second.capabilities.knowledgeGraphVersion).toBe(2);
+      expect(second.capabilities.projectIndexingVersion).toBe(3);
       expect(second.capabilities.resourceProtectionVersion).toBe(1);
       expect(second.capabilities.resourceDiagnosticsVersion).toBe(1);
       expect(second.capabilities.midChatProviderSwitching).toBe(true);

@@ -143,7 +143,7 @@ const SURFACE_DISABLED_REASONS = {
   diff: "Diff is only available for server threads in Git repositories.",
   pullRequest: "This thread's branch has no pull request yet.",
   agents: "Agents are only available from a thread.",
-  knowledgeGraph: "Knowledge graph requires a compatible project environment.",
+  knowledgeGraph: "Enable Project Indexing for this project to open its knowledge graph.",
 } as const;
 
 /** Overlays that must win over the launcher's letter shortcuts. */
@@ -166,7 +166,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
   diff: "Available for Git repositories.",
   pullRequest: "No pull request on this branch yet.",
   agents: "Available from a thread.",
-  knowledgeGraph: "Available with a compatible project environment.",
+  knowledgeGraph: "Enable Project Indexing for this project.",
 } as const;
 
 type TabContextMenuAction =

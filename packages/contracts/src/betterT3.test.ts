@@ -31,6 +31,33 @@ describe("Better T3 feature registry", () => {
     }
   });
 
+  it("places composer controls together and omits duplicate Knowledge Graph actions", () => {
+    for (const id of [
+      "agent.promptImprovement",
+      "agent.expandedComposerControls",
+      "chat.workspaceCardDeck",
+      "chat.cardMorphing",
+      "chat.hideComposerDivider",
+      "chat.contextWindowSelector",
+      "chat.classicBubbleOnly",
+    ] as const) {
+      expect(BETTER_T3_FEATURE_REGISTRY.find((feature) => feature.id === id)?.section).toBe(
+        "composer",
+      );
+    }
+    for (const id of [
+      "knowledge.progress",
+      "knowledge.rebuild",
+      "knowledge.pause",
+      "knowledge.clear",
+    ])
+      expect(BETTER_T3_FEATURE_REGISTRY.some((feature) => feature.id === id)).toBe(false);
+    expect(
+      BETTER_T3_FEATURE_REGISTRY.find((feature) => feature.id === "agent.expandedComposerControls")
+        ?.defaults,
+    ).toEqual({ clean: true, existing: true });
+  });
+
   it("keeps the two resource policies independent", () => {
     const admission = BETTER_T3_FEATURE_REGISTRY.find(
       ({ id }) => id === "resource.adaptiveAdmission",
@@ -41,6 +68,34 @@ describe("Better T3 feature registry", () => {
 
     expect(admission?.dependencies).toEqual([]);
     expect(suspension?.dependencies).toEqual([]);
+  });
+
+  it("owns project indexing defaults in the environment while keeping project controls separate", () => {
+    for (const [id, controlKind, path] of [
+      ["knowledge.projectIndexingMaster", "switch", "projectIndexingEnabled"],
+      ["knowledge.projectIndexingDefaultModel", "selector", "projectIndexingDefaultModelSelection"],
+    ] as const) {
+      expect(BETTER_T3_FEATURE_REGISTRY.find((feature) => feature.id === id)).toMatchObject({
+        scope: "environment",
+        controlKind,
+        defaults: { clean: false, existing: false },
+        compatibilityMirrors: [{ store: "server-settings", path, access: "read-write" }],
+        availability: {
+          capabilities: [
+            { name: "projectIndexingVersion", minimumVersion: 3 },
+            { name: "projectIndexingDefaultsVersion", minimumVersion: 1 },
+          ],
+        },
+      });
+    }
+    for (const id of ["knowledge.projectIndexing", "knowledge.projectIndexingReview"] as const) {
+      expect(BETTER_T3_FEATURE_REGISTRY.find((feature) => feature.id === id)).toMatchObject({
+        scope: "project",
+        compatibilityMirrors: [
+          { store: "project-settings", path: "projectIndexing", access: "deep-link" },
+        ],
+      });
+    }
   });
 
   it("does not advertise web-only controls on mobile while keeping real server mirrors", () => {
@@ -214,10 +269,11 @@ describe("BetterT3SettingsV1", () => {
 
     expect(
       switchFeatureIds.filter((featureId) => resolveBetterT3FeatureFlag(clean, featureId)),
-    ).toEqual(["chat.messageEditing"]);
+    ).toEqual(["agent.expandedComposerControls", "chat.messageEditing"]);
     expect(
       switchFeatureIds.filter((featureId) => resolveBetterT3FeatureFlag(existing, featureId)),
     ).toEqual([
+      "agent.expandedComposerControls",
       "agent.generalSubagents",
       "agent.projectCoordination",
       "chat.workspaceCardDeck",

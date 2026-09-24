@@ -633,6 +633,8 @@ const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "autoReasoningModelSelection",
   "voiceTranslationModelSelection",
   "parallelPlanReviewModelSelection",
+  // Voice validation needs both pause limits even when they equal their defaults.
+  "voice",
 ]);
 
 // Preserve both enabled states because provider history cannot recover a new opt-in.

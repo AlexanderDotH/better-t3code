@@ -65,6 +65,48 @@ const collectSpanNames = <A, E, R>(
   });
 
 describe("RpcInstrumentation", () => {
+  it.effect("keeps project index source failures out of traces while retaining metrics", () =>
+    Effect.gen(function* () {
+      for (const method of [
+        WS_METHODS.projectIndexGetSettings,
+        WS_METHODS.projectIndexGetStatus,
+        WS_METHODS.projectIndexUpdateSettings,
+        WS_METHODS.projectIndexStart,
+        WS_METHODS.projectIndexControl,
+        WS_METHODS.projectIndexQuery,
+        WS_METHODS.projectIndexCheckModel,
+        WS_METHODS.projectIndexReview,
+      ]) {
+        const spans = yield* collectSpanNames(
+          observeRpcEffect(
+            method,
+            Effect.fail("SYNTHETIC_PRIVATE_SOURCE").pipe(Effect.withSpan("index-source-validator")),
+          ).pipe(Effect.exit),
+        );
+        assert.deepStrictEqual(spans, []);
+        assert.isTrue(
+          hasMetricSnapshot(yield* Metric.snapshot, "t3_rpc_requests_total", {
+            method,
+            outcome: "failure",
+          }),
+        );
+      }
+      const streamed = yield* collectSpanNames(
+        observeRpcStreamEffect(
+          WS_METHODS.projectIndexSubscribe,
+          Effect.succeed(
+            Stream.fromEffect(
+              Effect.succeed("SYNTHETIC_PRIVATE_SOURCE").pipe(
+                Effect.withSpan("index-source-status"),
+              ),
+            ),
+          ),
+        ).pipe(Stream.runDrain),
+      );
+      assert.deepStrictEqual(streamed, []);
+    }),
+  );
+
   it.effect("records success metrics for unary RPC handlers", () =>
     Effect.gen(function* () {
       yield* observeRpcEffect("rpc.instrumentation.success", Effect.succeed("ok"), {

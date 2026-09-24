@@ -23,11 +23,8 @@ import {
   type InterfaceTranslator,
 } from "@t3tools/shared/interfaceLanguage";
 import { stripAutoReasoning } from "@t3tools/shared/model";
-import {
-  prepareBetterT3StatusModel,
-  prepareKnowledgeGraphStatus,
-  resolveBetterT3CapabilitySupport,
-} from "@t3tools/client-runtime/better-t3-status";
+import { prepareBetterT3StatusModel } from "@t3tools/client-runtime/better-t3-status";
+import { projectIndexingDefaultsSupported } from "@t3tools/client-runtime/project-indexing";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -46,10 +43,11 @@ import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { useEnvironments } from "../../state/environments";
 import { useProjects, useThreadShells } from "../../state/entities";
-import { knowledgeGraphEnvironment } from "../../state/knowledge-graph";
 import { useEnvironmentQuery } from "../../state/query";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { serverEnvironment } from "../../state/server";
+import { environmentSession } from "../../state/session";
+import { mobileProjectIndexPermissions } from "../project-indexing/mobile-project-indexing";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
@@ -78,8 +76,6 @@ import {
   resolveMobileBetterT3EnvironmentTarget,
   resolveMobileBetterT3ProjectSelection,
   supportsMobileAutoReasoningModelOption,
-  supportsMobileKnowledgeGraphModelOption,
-  shouldSubscribeMobileKnowledgeGraphProgress,
   type MobilePreparedStatusInput,
   type MobileBetterT3Control,
 } from "./better-t3-settings";
@@ -93,6 +89,7 @@ function messageKey(value: string, fallback: InterfaceMessageKey): InterfaceMess
 const SECTION_ICONS: Readonly<Record<BetterT3FeatureSection, AppSymbolName>> = {
   "agent-workflows": "sparkles",
   "chat-layout": "rectangle.split.3x1",
+  composer: "square.and.pencil",
   "workspace-source-control": "arrow.triangle.branch",
   "voice-synchronization": "waveform",
   "knowledge-automation": "point.3.connected.trianglepath.dotted",
@@ -113,6 +110,9 @@ type BetterT3SettingsNavigation = NativeStackNavigationProp<{
   SettingsBetterT3TranscriptPortability: { readonly environmentId: EnvironmentId };
   SettingsEnvironments: undefined;
   SettingsProjects: undefined;
+  SettingsProjectIndexing:
+    | { readonly environmentId?: string; readonly projectId?: string }
+    | undefined;
 }>;
 
 type BetterT3ChoiceValue = string | number | null;
@@ -261,76 +261,7 @@ function preparedStatusText(
         supported: detail.supportedCount,
         total: detail.totalCount,
       });
-    case "knowledge-graph": {
-      const parts = [message("knowledgeGraph.nodeCount", { count: detail.nodeCount })];
-      if (
-        detail.processedFileCount !== null &&
-        detail.totalFileCount !== null &&
-        detail.queuedSemanticNodeCount !== null
-      ) {
-        parts.push(
-          message("settings.betterT3.status.knowledgeProgress", {
-            processed: detail.processedFileCount,
-            total: detail.totalFileCount,
-            queued: detail.queuedSemanticNodeCount,
-          }),
-        );
-      }
-      return `${primary} · ${parts.join(" · ")}`;
-    }
   }
-}
-
-function KnowledgeGraphStatusRow(props: {
-  readonly control: MobileBetterT3Control;
-  readonly environmentId: EnvironmentId | null;
-  readonly environmentAvailable: boolean;
-  readonly projectId: ProjectId | null;
-  readonly graphEnabled: boolean;
-  readonly knowledgeGraphVersion: number | undefined;
-  readonly label: string;
-  readonly description: string;
-}) {
-  const translator = useMobileInterfaceTranslator();
-  const shouldSubscribe = shouldSubscribeMobileKnowledgeGraphProgress({
-    environmentAvailable: props.environmentAvailable,
-    knowledgeGraphVersion: props.knowledgeGraphVersion,
-    enabled: props.graphEnabled,
-    projectAvailable: props.projectId !== null,
-  });
-  const target =
-    shouldSubscribe && props.environmentId !== null && props.projectId !== null
-      ? {
-          environmentId: props.environmentId,
-          input: { scope: { projectId: props.projectId } },
-        }
-      : null;
-  const graph = useEnvironmentQuery(
-    target === null ? null : knowledgeGraphEnvironment.state(target),
-  );
-  const snapshot = graph.data?.snapshot ?? null;
-  const capability = resolveBetterT3CapabilitySupport(
-    props.environmentAvailable ? { knowledgeGraphVersion: props.knowledgeGraphVersion } : null,
-    "knowledgeGraphVersion",
-    1,
-  );
-  const prepared = prepareKnowledgeGraphStatus({
-    capability,
-    project: props.projectId === null ? null : { projectId: props.projectId },
-    status: snapshot?.status ?? null,
-  });
-  const status = !props.graphEnabled
-    ? translator.message("settings.betterT3.control.statusDisabled")
-    : preparedStatusText({ featureId: "knowledge.progress", status: prepared }, translator.message);
-  return (
-    <BetterT3ActionRow
-      control={props.control}
-      description={props.description}
-      label={props.label}
-      onPress={() => undefined}
-      status={status}
-    />
-  );
 }
 
 export function SettingsBetterT3RouteScreen() {
@@ -351,7 +282,6 @@ export function SettingsBetterT3RouteScreen() {
   const [activeChoice, setActiveChoice] = useState<
     "caveman" | "project-sort" | "thread-sort" | null
   >(null);
-  const [knowledgeModelPickerOpen, setKnowledgeModelPickerOpen] = useState(false);
   const [autoReasoningModelPickerOpen, setAutoReasoningModelPickerOpen] = useState(false);
 
   useEffect(() => {
@@ -375,6 +305,13 @@ export function SettingsBetterT3RouteScreen() {
     serverConfigAvailable: serverConfig !== null,
   });
   const environmentAvailable = environmentTargetId !== null;
+  const indexingSession = useEnvironmentQuery(
+    environmentTargetId !== null &&
+      projectIndexingDefaultsSupported(serverConfig?.environment.capabilities)
+      ? environmentSession.sessionStateAtom(environmentTargetId)
+      : null,
+  );
+  const indexingCanOperate = mobileProjectIndexPermissions(indexingSession.data).canOperate;
   const welcome = useEnvironmentQuery(
     environmentTargetId !== null
       ? serverEnvironment.welcome({ environmentId: environmentTargetId, input: {} })
@@ -419,9 +356,7 @@ export function SettingsBetterT3RouteScreen() {
   const threadSortOrder =
     devicePreferences?.sidebarThreadSortOrder ?? DEFAULT_SIDEBAR_THREAD_SORT_ORDER;
   const cavemanMode = serverConfig?.settings.agentEnhancement.cavemanMode ?? "off";
-  const knowledgeGraphModelSelection = serverConfig?.settings.knowledgeGraphModelSelection ?? null;
   const autoReasoningModelSelection = serverConfig?.settings.autoReasoningModelSelection ?? null;
-  const knowledgeGraphEnabled = resolveBetterT3FeatureFlag(environmentSettings, "knowledge.graph");
   const environmentProjects = useMemo(
     () => projects.filter((project) => project.environmentId === selectedEnvironmentId),
     [projects, selectedEnvironmentId],
@@ -459,7 +394,6 @@ export function SettingsBetterT3RouteScreen() {
     }
     setSelectedGitThreadId(null);
   }, [gitWorkbenchThreadOptions, selectedGitThreadId]);
-  const knowledgeGraphProjectId = selectedProject?.id ?? null;
   const preparedStatusModel = useMemo(
     () =>
       prepareBetterT3StatusModel({
@@ -547,49 +481,52 @@ export function SettingsBetterT3RouteScreen() {
     [deviceSettings, environmentSettings, savePreferences, updateEnvironmentSettings],
   );
 
-  const navigateToControl = useCallback(
-    (featureId: BetterT3FeatureId) => {
-      const destination = resolveMobileBetterT3Destination(featureId);
-      switch (destination) {
-        case null:
-          return;
-        case "GitOverview":
-          if (environmentTargetId !== null && selectedGitThread !== null) {
-            navigation.navigate("GitOverview", {
-              environmentId: String(environmentTargetId),
-              threadId: String(selectedGitThread.threadId),
-            });
-          }
-          return;
-        case "SettingsAgents":
-          navigation.navigate("SettingsAgents");
-          return;
-        case "SettingsAppearance":
-          navigation.navigate("SettingsAppearance");
-          return;
-        case "SettingsEnvironments":
-          navigation.navigate("SettingsEnvironments");
-          return;
-        case "SettingsProjects":
-          navigation.navigate("SettingsProjects");
-          return;
-        case "SettingsBetterT3ResourceDiagnostics":
-          if (selectedEnvironmentId !== null) {
-            navigation.navigate("SettingsBetterT3ResourceDiagnostics", {
-              environmentId: selectedEnvironmentId,
-            });
-          }
-          return;
-        case "SettingsBetterT3TranscriptPortability":
-          if (selectedEnvironmentId !== null) {
-            navigation.navigate("SettingsBetterT3TranscriptPortability", {
-              environmentId: selectedEnvironmentId,
-            });
-          }
-      }
-    },
-    [environmentTargetId, navigation, selectedEnvironmentId, selectedGitThread],
-  );
+  const navigateToControl = (featureId: BetterT3FeatureId) => {
+    const destination = resolveMobileBetterT3Destination(featureId);
+    switch (destination) {
+      case null:
+        return;
+      case "GitOverview":
+        if (environmentTargetId !== null && selectedGitThread !== null) {
+          navigation.navigate("GitOverview", {
+            environmentId: String(environmentTargetId),
+            threadId: String(selectedGitThread.threadId),
+          });
+        }
+        return;
+      case "SettingsAgents":
+        navigation.navigate("SettingsAgents");
+        return;
+      case "SettingsAppearance":
+        navigation.navigate("SettingsAppearance");
+        return;
+      case "SettingsEnvironments":
+        navigation.navigate("SettingsEnvironments");
+        return;
+      case "SettingsProjects":
+        navigation.navigate("SettingsProjects");
+        return;
+      case "SettingsProjectIndexing":
+        if (environmentTargetId !== null)
+          navigation.navigate("SettingsProjectIndexing", {
+            environmentId: String(environmentTargetId),
+          });
+        return;
+      case "SettingsBetterT3ResourceDiagnostics":
+        if (selectedEnvironmentId !== null) {
+          navigation.navigate("SettingsBetterT3ResourceDiagnostics", {
+            environmentId: selectedEnvironmentId,
+          });
+        }
+        return;
+      case "SettingsBetterT3TranscriptPortability":
+        if (selectedEnvironmentId !== null) {
+          navigation.navigate("SettingsBetterT3TranscriptPortability", {
+            environmentId: selectedEnvironmentId,
+          });
+        }
+    }
+  };
 
   return (
     <AndroidScreenScaffold title={translator.message("settings.betterT3.title")}>
@@ -842,6 +779,21 @@ export function SettingsBetterT3RouteScreen() {
                   ? null
                   : preparedStatusText(preparedStatus, translator.message);
               const available = control.availability.state === "available";
+              if (control.id === "knowledge.projectIndexingMaster") {
+                return (
+                  <SettingsSwitchRow
+                    key={control.id}
+                    disabled={!available || !indexingCanOperate}
+                    icon={SECTION_ICONS[section.id]}
+                    label={label}
+                    subtitle={available ? description : `${description} · ${status}`}
+                    value={serverConfig?.settings.projectIndexingEnabled ?? false}
+                    onValueChange={(projectIndexingEnabled) => {
+                      void updateEnvironmentSettings({ projectIndexingEnabled });
+                    }}
+                  />
+                );
+              }
               if (control.controlKind === "switch") {
                 if (control.id === "workspace.gitWorkbench") {
                   const ownerAvailable = mobileGitWorkbenchCanActivate(
@@ -966,41 +918,6 @@ export function SettingsBetterT3RouteScreen() {
               if (control.id === "chat.settling") {
                 return <AutoSettleSettingsRows key={control.id} />;
               }
-              if (control.id === "knowledge.model") {
-                return (
-                  <BetterT3ActionRow
-                    key={control.id}
-                    control={control}
-                    description={description}
-                    label={label}
-                    onPress={() => setKnowledgeModelPickerOpen(true)}
-                    status={
-                      !available || serverConfig === null
-                        ? status
-                        : knowledgeGraphModelSelection === null
-                          ? translator.message("knowledgeGraph.localIndexing")
-                          : modelSelectionLabel(serverConfig, knowledgeGraphModelSelection)
-                    }
-                  />
-                );
-              }
-              if (control.id === "knowledge.progress") {
-                return (
-                  <KnowledgeGraphStatusRow
-                    key={control.id}
-                    control={control}
-                    description={description}
-                    environmentId={selectedEnvironmentId}
-                    environmentAvailable={environmentAvailable}
-                    graphEnabled={knowledgeGraphEnabled}
-                    knowledgeGraphVersion={
-                      serverConfig?.environment.capabilities.knowledgeGraphVersion
-                    }
-                    label={label}
-                    projectId={knowledgeGraphProjectId}
-                  />
-                );
-              }
               return (
                 <BetterT3ActionRow
                   key={control.id}
@@ -1098,22 +1015,6 @@ export function SettingsBetterT3RouteScreen() {
             }
             optionPredicate={supportsMobileAutoReasoningModelOption}
             visible={autoReasoningModelPickerOpen}
-          />
-          <ModelSelectionModal
-            config={serverConfig}
-            current={knowledgeGraphModelSelection}
-            defaultLabel={translator.message("knowledgeGraph.localIndexing")}
-            onClose={() => setKnowledgeModelPickerOpen(false)}
-            onSelect={(selection: ModelSelection | null) =>
-              void updateEnvironmentSettings(
-                createMobileBetterT3EnvironmentControlPatch({
-                  id: "knowledge.model",
-                  value: selection,
-                }),
-              )
-            }
-            optionPredicate={supportsMobileKnowledgeGraphModelOption}
-            visible={knowledgeModelPickerOpen}
           />
         </>
       )}

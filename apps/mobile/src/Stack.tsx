@@ -6,6 +6,7 @@ import {
 } from "./features/threads/git/MobileGitRouteGate";
 import { SettingsAgentEnvironmentsRouteScreen } from "./features/settings/SettingsAgentEnvironmentsRouteScreen";
 import { SettingsProjectsRouteScreen } from "./features/settings/SettingsProjectsRouteScreen";
+import { SettingsProjectIndexingRouteScreen } from "./features/settings/SettingsProjectIndexingRouteScreen";
 import { SettingsBetterT3RouteScreen } from "./features/settings/SettingsBetterT3RouteScreen";
 import { SettingsBetterT3ResourceDiagnosticsRouteScreen } from "./features/settings/SettingsBetterT3ResourceDiagnosticsRouteScreen";
 import { SettingsBetterT3TranscriptPortabilityRouteScreen } from "./features/settings/SettingsBetterT3TranscriptPortabilityRouteScreen";
@@ -187,6 +188,10 @@ const SettingsContentStack = createNativeStackNavigator({
     SettingsProjects: createNativeStackScreen({
       screen: SettingsProjectsRouteScreen,
       options: { title: "Projects" },
+    }),
+    SettingsProjectIndexing: createNativeStackScreen({
+      screen: SettingsProjectIndexingRouteScreen,
+      options: { title: "Project Indexing" },
     }),
     SettingsBetterT3: createNativeStackScreen({
       screen: SettingsBetterT3RouteScreen,

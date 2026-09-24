@@ -1,5 +1,6 @@
 // @effect-diagnostics globalTimers:off - WebSocket handshakes and termination acknowledgements are callback boundaries outside an Effect service.
 import type { AssemblyAiStreamingTokenResult } from "@t3tools/contracts";
+import { buildAssemblyAiStreamingUrl } from "@t3tools/shared/assemblyAiStreamingUrl";
 import * as NodeCrypto from "node:crypto";
 import * as NodeTimers from "node:timers";
 
@@ -29,20 +30,6 @@ interface ProxySession {
   transcript: string;
   failure: Error | null;
   resolveTermination: (() => void) | null;
-}
-
-function streamingUrl(config: AssemblyAiStreamingTokenResult): string {
-  const url = new URL(config.websocketUrl);
-  url.searchParams.set("sample_rate", String(config.sampleRate));
-  url.searchParams.set("encoding", config.encoding);
-  url.searchParams.set("speech_model", config.speechModel);
-  url.searchParams.set("format_turns", "true");
-  url.searchParams.set("prompt", config.context.prompt);
-  if (config.context.keyterms.length > 0) {
-    url.searchParams.set("keyterms_prompt", JSON.stringify(config.context.keyterms));
-  }
-  url.searchParams.set("token", config.token);
-  return url.toString();
 }
 
 function updateTranscript(session: ProxySession, value: unknown): void {
@@ -103,7 +90,7 @@ export function createAssemblyAiStreamingProxy(options: {
 
   const start = async (config: AssemblyAiStreamingTokenResult) => {
     const sessionId = createSessionId();
-    const socket = createSocket(streamingUrl(config));
+    const socket = createSocket(buildAssemblyAiStreamingUrl(config));
     socket.binaryType = "arraybuffer";
     const session: ProxySession = {
       socket,

@@ -352,7 +352,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
   const improvePrompt: TextGeneration.TextGeneration["Service"]["improvePrompt"] = Effect.fn(
     "GrokTextGeneration.improvePrompt",
   )(function* (input) {
-    const { prompt, outputSchema } = buildPromptImprovementPrompt({ text: input.text });
+    const { prompt, outputSchema } = buildPromptImprovementPrompt(input);
     const generated = yield* runGrokJson({
       operation: "improvePrompt",
       cwd: input.cwd,
@@ -401,6 +401,5 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
     improvePrompt,
     reviewPlanParallelism,
     planFetchExploration,
-    enrichKnowledgeGraph: TextGeneration.unsupportedKnowledgeGraphEnrichment("Grok"),
   } satisfies TextGeneration.TextGeneration["Service"];
 });

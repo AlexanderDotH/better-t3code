@@ -271,7 +271,7 @@ export const makeChatGptTextGeneration = (
       },
     ),
     improvePrompt: Effect.fn("ChatGptTextGeneration.improvePrompt")(function* (input) {
-      const { prompt, outputSchema } = buildPromptImprovementPrompt({ text: input.text });
+      const { prompt, outputSchema } = buildPromptImprovementPrompt(input);
       const generated = yield* runJson({
         operation: "improvePrompt",
         prompt,
@@ -303,7 +303,5 @@ export const makeChatGptTextGeneration = (
         });
       },
     ),
-    enrichKnowledgeGraph:
-      TextGeneration.unsupportedKnowledgeGraphEnrichment("ChatGPT Subscription"),
   } satisfies TextGeneration.TextGeneration["Service"];
 };

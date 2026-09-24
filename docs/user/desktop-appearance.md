@@ -1,6 +1,6 @@
 # Desktop appearance
 
-On macOS, open **Settings → Better T3 → Visual → Background transparency and blur** to
+On macOS, open **Settings → Better T3 → Appearance → Background transparency and blur** to
 show the desktop through a tinted, natively blurred window. The setting starts
 off, applies immediately, and is remembered for the next launch. Turn it off to
 restore solid backgrounds. Text, controls, and code surfaces retain their theme

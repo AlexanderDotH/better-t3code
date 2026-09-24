@@ -120,6 +120,13 @@ export function shouldOfferModelPickerSetup(
 }
 
 const EMPTY_MODEL_JUMP_LABELS = new Map<string, string>();
+const EMPTY_AUXILIARY_MODELS: ReadonlyArray<{ readonly id: string; readonly name: string }> = [];
+const AUXILIARY_MODELS_KEY = "auxiliary-models";
+const AUXILIARY_MODEL_PREFIX = "auxiliary-model:";
+
+function auxiliaryModelKey(modelId: string): string {
+  return `${AUXILIARY_MODEL_PREFIX}${modelId}`;
+}
 
 function ModelListSeparator() {
   return <div className="h-0.5" />;
@@ -152,6 +159,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
    * model set but are free to diverge via customModels).
    */
   modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>>;
+  auxiliaryModels?: ReadonlyArray<{ readonly id: string; readonly name: string }>;
+  selectedAuxiliaryModel?: string | null;
+  onAuxiliaryModelChange?: (model: string) => void;
   terminalOpen: boolean;
   onRequestClose?: () => void;
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
@@ -164,8 +174,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     instanceEntries,
     getModelDisabledReason,
     onInstanceModelChange,
+    onAuxiliaryModelChange,
   } = props;
   const [searchQuery, setSearchQuery] = useState("");
+  const [auxiliaryModelsExpanded, setAuxiliaryModelsExpanded] = useState(
+    Boolean(props.selectedAuxiliaryModel),
+  );
   const [showTopScrollFade, setShowTopScrollFade] = useState(false);
   const [showBottomScrollFade, setShowBottomScrollFade] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -182,9 +196,22 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   });
   const activeModelSlug =
     activeModel?.slug ?? (props.model === ANTIGRAVITY_DEFAULT_MODEL ? "" : props.model);
-  const activeModelKey = activeModelSlug
-    ? modelPickerModelKey(props.activeInstanceId, activeModelSlug)
-    : null;
+  const activeModelKey = props.selectedAuxiliaryModel
+    ? auxiliaryModelKey(props.selectedAuxiliaryModel)
+    : activeModelSlug
+      ? modelPickerModelKey(props.activeInstanceId, activeModelSlug)
+      : null;
+  const matchingAuxiliaryModels = useMemo(() => {
+    if (!props.auxiliaryModels) return EMPTY_AUXILIARY_MODELS;
+    const search = searchQuery.trim().toLowerCase();
+    return props.auxiliaryModels.filter((model) => {
+      return !search || `${model.name} ${model.id} AssemblyAI`.toLowerCase().includes(search);
+    });
+  }, [props.auxiliaryModels, searchQuery]);
+  const visibleAuxiliaryModels =
+    searchQuery.trim() || auxiliaryModelsExpanded
+      ? matchingAuxiliaryModels
+      : EMPTY_AUXILIARY_MODELS;
   const activeInstanceHasSelectableUnavailableModel =
     activeEntry !== undefined &&
     (modelOptionsByInstance.get(props.activeInstanceId) ?? []).some((option) =>
@@ -616,6 +643,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       NonNullable<ReturnType<typeof modelPickerJumpCommandForIndex>>
     >();
     let selectableModelIndex = 0;
+    for (const model of visibleAuxiliaryModels) {
+      const jumpCommand = modelPickerJumpCommandForIndex(selectableModelIndex);
+      if (!jumpCommand) return mapping;
+      mapping.set(auxiliaryModelKey(model.id), jumpCommand);
+      selectableModelIndex += 1;
+    }
     for (const model of visibleModels) {
       if (getModelDisabledReason?.(model.instanceId, model.slug)) {
         continue;
@@ -628,13 +661,15 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       selectableModelIndex += 1;
     }
     return mapping;
-  }, [getModelDisabledReason, visibleModels]);
+  }, [getModelDisabledReason, visibleAuxiliaryModels, visibleModels]);
   const modelJumpModelKeys = useMemo(
     () => [...modelJumpCommandByKey.keys()],
     [modelJumpCommandByKey],
   );
   const allItemKeys = useMemo(
     (): string[] => [
+      ...(props.auxiliaryModels?.length ? [AUXILIARY_MODELS_KEY] : []),
+      ...(props.auxiliaryModels?.map((model) => auxiliaryModelKey(model.id)) ?? []),
       ...flatModels.map((model) => modelPickerModelKey(model.instanceId, model.slug)),
       ...new Set(
         flatModels
@@ -642,18 +677,21 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           .map((model) => modelPickerLegacySectionKey(model.instanceId)),
       ),
     ],
-    [flatModels],
+    [flatModels, props.auxiliaryModels],
   );
   const filteredItemKeys = useMemo((): string[] => {
     const modelKeys = visibleModels.map((model) =>
       modelPickerModelKey(model.instanceId, model.slug),
     );
-    if (!legacySection) {
-      return modelKeys;
+    if (legacySection) {
+      modelKeys.splice(legacySection.currentModels.length, 0, legacySection.key);
     }
-    modelKeys.splice(legacySection.currentModels.length, 0, legacySection.key);
-    return modelKeys;
-  }, [legacySection, visibleModels]);
+    return [
+      ...(matchingAuxiliaryModels.length ? [AUXILIARY_MODELS_KEY] : []),
+      ...visibleAuxiliaryModels.map((model) => auxiliaryModelKey(model.id)),
+      ...modelKeys,
+    ];
+  }, [legacySection, matchingAuxiliaryModels, visibleAuxiliaryModels, visibleModels]);
   const filteredModelByKey = useMemo(
     (): ReadonlyMap<string, ModelPickerItem> =>
       new Map(
@@ -724,6 +762,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       if (!targetModelKey) {
         return;
       }
+      if (targetModelKey.startsWith(AUXILIARY_MODEL_PREFIX)) {
+        onAuxiliaryModelChange?.(targetModelKey.slice(AUXILIARY_MODEL_PREFIX.length));
+        return;
+      }
       const model = parseModelPickerModelKey(targetModelKey);
       if (!model) {
         return;
@@ -736,7 +778,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     return () => {
       window.removeEventListener("keydown", onWindowKeyDown, true);
     };
-  }, [handleModelSelect, keybindings, modelJumpModelKeys, modelJumpShortcutContext]);
+  }, [
+    handleModelSelect,
+    keybindings,
+    modelJumpModelKeys,
+    modelJumpShortcutContext,
+    onAuxiliaryModelChange,
+  ]);
 
   useLayoutEffect(() => {
     setShowTopScrollFade(false);
@@ -799,6 +847,14 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             if (typeof modelKey !== "string") {
               return;
             }
+            if (modelKey === AUXILIARY_MODELS_KEY) {
+              setAuxiliaryModelsExpanded((expanded) => !expanded);
+              return;
+            }
+            if (modelKey.startsWith(AUXILIARY_MODEL_PREFIX)) {
+              onAuxiliaryModelChange?.(modelKey.slice(AUXILIARY_MODEL_PREFIX.length));
+              return;
+            }
             const legacyInstanceId = parseModelPickerLegacySectionKey(modelKey);
             if (legacyInstanceId) {
               toggleLegacySection(legacyInstanceId);
@@ -843,6 +899,16 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                       ).preventBaseUIHandler?.();
                       e.preventDefault();
                       e.stopPropagation();
+                      if (highlightedModelKeyRef.current === AUXILIARY_MODELS_KEY) {
+                        setAuxiliaryModelsExpanded((expanded) => !expanded);
+                        return;
+                      }
+                      if (highlightedModelKeyRef.current.startsWith(AUXILIARY_MODEL_PREFIX)) {
+                        onAuxiliaryModelChange?.(
+                          highlightedModelKeyRef.current.slice(AUXILIARY_MODEL_PREFIX.length),
+                        );
+                        return;
+                      }
                       const legacyInstanceId = parseModelPickerLegacySectionKey(
                         highlightedModelKeyRef.current,
                       );
@@ -883,6 +949,55 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                   extraData={modelListExtraData}
                   keyExtractor={(modelKey) => modelKey}
                   renderItem={({ item: modelKey, index }) => {
+                    if (modelKey === AUXILIARY_MODELS_KEY) {
+                      return (
+                        <ComboboxItem
+                          hideIndicator
+                          index={index}
+                          value={modelKey}
+                          aria-expanded={isSearching || auxiliaryModelsExpanded}
+                          className="group w-full cursor-pointer rounded-md px-2 py-2"
+                          contentClassName="flex w-full items-center gap-3"
+                        >
+                          <span className="min-w-0 flex-1 text-left text-xs font-medium">
+                            AssemblyAI Gateway · {matchingAuxiliaryModels.length} models
+                          </span>
+                          <ChevronRightIcon
+                            className={cn(
+                              "size-4 transition-transform",
+                              (isSearching || auxiliaryModelsExpanded) && "rotate-90",
+                            )}
+                          />
+                        </ComboboxItem>
+                      );
+                    }
+                    if (modelKey.startsWith(AUXILIARY_MODEL_PREFIX)) {
+                      const model = visibleAuxiliaryModels.find(
+                        (candidate) => auxiliaryModelKey(candidate.id) === modelKey,
+                      );
+                      if (!model) return null;
+                      return (
+                        <ComboboxItem
+                          index={index}
+                          value={modelKey}
+                          disabled={!onAuxiliaryModelChange}
+                          className="group w-full cursor-pointer rounded-md px-2 py-2"
+                          contentClassName="flex w-full min-w-0 items-center gap-3"
+                        >
+                          <span className="min-w-0 flex-1 text-left">
+                            <span className="block truncate text-xs font-medium">{model.name}</span>
+                            <span className="block truncate text-xs text-muted-foreground">
+                              {model.id}
+                            </span>
+                          </span>
+                          {modelJumpLabelByKey.get(modelKey) ? (
+                            <span className="text-xs text-muted-foreground">
+                              {modelJumpLabelByKey.get(modelKey)}
+                            </span>
+                          ) : null}
+                        </ComboboxItem>
+                      );
+                    }
                     if (legacySection?.key === modelKey) {
                       return (
                         <ComboboxItem

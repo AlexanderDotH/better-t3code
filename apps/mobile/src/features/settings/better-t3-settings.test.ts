@@ -8,14 +8,12 @@ import {
   ThreadId,
   type BetterT3FeatureId,
   type ExecutionEnvironmentCapabilities,
-  type KnowledgeGraphStatusV1,
   type ServerLifecycleWelcomePayload,
 } from "@t3tools/contracts";
 import {
   BETTER_T3_ANALYTICS_BUILD_STATUS,
   prepareCheckpointStatus,
   prepareCompatibilityStatus,
-  prepareKnowledgeGraphStatus,
   prepareLifecycleStatus,
   prepareMcpStatus,
   prepareRemoteReadinessStatus,
@@ -37,35 +35,12 @@ import {
   resolveMobileBetterT3EnvironmentTarget,
   resolveMobileBetterT3Destination,
   resolveMobileBetterT3ProjectSelection,
-  shouldSubscribeMobileKnowledgeGraphProgress,
   supportsMobileAutoReasoningModelOption,
-  supportsMobileKnowledgeGraphModelOption,
   buildMobileTranscriptPortabilityOptions,
   formatMobileResourceBytes,
   supportsMobileResourceDiagnostics,
   supportsMobileTranscriptPortability,
 } from "./better-t3-settings";
-
-function graphStatus(state: KnowledgeGraphStatusV1["state"]): KnowledgeGraphStatusV1 {
-  return {
-    version: 1,
-    scopeId: "scope:mobile-status",
-    state,
-    revision: 3,
-    indexedFileCount: 12,
-    nodeCount: 42,
-    edgeCount: 56,
-    evidenceCount: 60,
-    semanticQueueDepth: 2,
-    truncated: {
-      eligibleFiles: false,
-      nodes: false,
-      visibleNodes: false,
-      omittedFileCount: 0,
-      omittedNodeCount: 0,
-    },
-  } as KnowledgeGraphStatusV1;
-}
 
 const capabilities = (
   overrides: Partial<ExecutionEnvironmentCapabilities> = {},
@@ -209,7 +184,16 @@ describe("mobile Better T3 settings", () => {
     expect(feature(migrated, "chat.characterStreamingMotion")).toBeUndefined();
     expect(feature(clean, "voice.assemblyAi")?.value).toBe(false);
     expect(feature(migrated, "voice.assemblyAi")?.value).toBe(true);
-    expect(feature(clean, "knowledge.model")?.availability.state).toBe("blocked");
+    expect(
+      clean.find((section) => section.id === "composer")?.controls.map((control) => control.id),
+    ).toContain("agent.promptImprovement");
+    for (const id of [
+      "knowledge.progress",
+      "knowledge.rebuild",
+      "knowledge.pause",
+      "knowledge.clear",
+    ] as const)
+      expect(feature(clean, id)).toBeUndefined();
 
     const enabled = buildMobileBetterT3Sections({
       registry: BETTER_T3_FEATURE_REGISTRY,
@@ -221,9 +205,9 @@ describe("mobile Better T3 settings", () => {
         ...DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
         flags: { "knowledge.graph": true },
       },
-      capabilities: capabilities({ knowledgeGraphVersion: 1 }),
+      capabilities: capabilities({ knowledgeGraphVersion: 2 }),
     });
-    expect(feature(enabled, "knowledge.model")?.availability).toEqual({ state: "available" });
+    expect(feature(enabled, "knowledge.graph")?.availability).toEqual({ state: "available" });
   });
 
   it("marks version-gated controls unsupported on mixed-version environments", () => {
@@ -243,7 +227,7 @@ describe("mobile Better T3 settings", () => {
       environmentAvailable: true,
       deviceSettings: DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
       environmentSettings: DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
-      capabilities: capabilities({ knowledgeGraphVersion: 1 }),
+      capabilities: capabilities({ knowledgeGraphVersion: 2 }),
     });
 
     expect(feature(legacy, "knowledge.graph")?.availability.state).toBe("unsupported");
@@ -258,7 +242,7 @@ describe("mobile Better T3 settings", () => {
       environmentAvailable: false,
       deviceSettings: DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
       environmentSettings: DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
-      capabilities: capabilities({ knowledgeGraphVersion: 1 }),
+      capabilities: capabilities({ knowledgeGraphVersion: 2 }),
     });
 
     expect(feature(sections, "agent.fetch")?.availability).toEqual({ state: "available" });
@@ -278,7 +262,7 @@ describe("mobile Better T3 settings", () => {
       environmentAvailable: true,
       deviceSettings: DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
       environmentSettings: DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
-      capabilities: capabilities({ knowledgeGraphVersion: 1 }),
+      capabilities: capabilities({ knowledgeGraphVersion: 2 }),
     });
 
     expect(feature(sections, "agent.fetch")?.availability).toEqual({
@@ -388,6 +372,16 @@ describe("mobile Better T3 settings", () => {
       "SettingsBetterT3ResourceDiagnostics",
     );
     expect(resolveMobileBetterT3Destination("workspace.checkpoints")).toBe("SettingsProjects");
+    expect(resolveMobileBetterT3Destination("knowledge.projectIndexingMaster")).toBe(
+      "SettingsProjectIndexing",
+    );
+    expect(resolveMobileBetterT3Destination("knowledge.projectIndexingDefaultModel")).toBe(
+      "SettingsProjectIndexing",
+    );
+    expect(resolveMobileBetterT3Destination("knowledge.projectIndexing")).toBe("SettingsProjects");
+    expect(resolveMobileBetterT3Destination("knowledge.projectIndexingReview")).toBe(
+      "SettingsProjects",
+    );
     expect(resolveMobileBetterT3Destination("integration.mcp")).toBe("SettingsAgents");
     expect(resolveMobileBetterT3Destination("integration.skills")).toBe("SettingsAgents");
     expect(
@@ -458,7 +452,9 @@ describe("mobile Better T3 settings", () => {
       environmentSettingsVersion: 1,
       projectSettingsVersion: 1,
       harnessChatSyncVersion: 1,
-      knowledgeGraphVersion: 1,
+      knowledgeGraphVersion: 2,
+      projectIndexingVersion: 3,
+      projectIndexingDefaultsVersion: 1,
       gitWorkbenchVersion: 1,
       resourceProtectionVersion: 1,
       resourceDiagnosticsVersion: 1,
@@ -589,84 +585,6 @@ describe("mobile Better T3 settings", () => {
     ).toBe("settings.betterT3.control.statusDisabled");
   });
 
-  it("reports Knowledge Graph progress without subscribing before its prerequisites exist", () => {
-    const base = {
-      environmentAvailable: true,
-      knowledgeGraphVersion: 1,
-      enabled: true,
-      projectAvailable: true,
-      error: false,
-      snapshot: null,
-    } as const;
-    expect(shouldSubscribeMobileKnowledgeGraphProgress(base)).toBe(true);
-    expect(
-      shouldSubscribeMobileKnowledgeGraphProgress({ ...base, environmentAvailable: false }),
-    ).toBe(false);
-    expect(
-      shouldSubscribeMobileKnowledgeGraphProgress({
-        ...base,
-        knowledgeGraphVersion: undefined,
-      }),
-    ).toBe(false);
-    expect(shouldSubscribeMobileKnowledgeGraphProgress({ ...base, enabled: false })).toBe(false);
-    expect(shouldSubscribeMobileKnowledgeGraphProgress({ ...base, projectAvailable: false })).toBe(
-      false,
-    );
-    expect(
-      prepareKnowledgeGraphStatus({ capability: "unknown", project: null, status: null }).state,
-    ).toBe("unknown");
-    expect(
-      prepareKnowledgeGraphStatus({ capability: "unsupported", project: null, status: null }).state,
-    ).toBe("unsupported");
-    expect(
-      prepareKnowledgeGraphStatus({ capability: "supported", project: null, status: null }).state,
-    ).toBe("project-required");
-    expect(
-      prepareKnowledgeGraphStatus({
-        capability: "supported",
-        project: { projectId: "project" },
-        status: null,
-      }).state,
-    ).toBe("unknown");
-    expect(
-      prepareKnowledgeGraphStatus({
-        capability: "supported",
-        project: { projectId: "project" },
-        status: graphStatus("disabled"),
-      }).state,
-    ).toBe("disabled");
-    expect(
-      prepareKnowledgeGraphStatus({
-        capability: "supported",
-        project: { projectId: "project" },
-        status: graphStatus("ready"),
-      }),
-    ).toMatchObject({ state: "ready", graphState: "ready", nodeCount: 42 });
-    const readyGraph = prepareKnowledgeGraphStatus({
-      capability: "supported",
-      project: { projectId: "project" },
-      status: graphStatus("ready"),
-    });
-    expect(
-      mobileBetterT3PreparedStatusMessageKey({
-        featureId: "knowledge.progress",
-        status: readyGraph,
-      }),
-    ).toBe("knowledgeGraph.status.ready");
-    expect(
-      mobileBetterT3PreparedStatusDetail({
-        featureId: "knowledge.progress",
-        status: readyGraph,
-      }),
-    ).toEqual({
-      kind: "knowledge-graph",
-      nodeCount: 42,
-      processedFileCount: null,
-      totalFileCount: null,
-      queuedSemanticNodeCount: null,
-    });
-  });
-
   it("builds effective device patches for native sorting and settling controls", () => {
     expect(
       createMobileBetterT3DeviceControlPatch({
@@ -688,7 +606,7 @@ describe("mobile Better T3 settings", () => {
     ).toEqual({ sidebarAutoSettleOnMerge: false, autoSettleOnMerge: false });
   });
 
-  it("builds exact Caveman, Auto reasoning, and Knowledge Graph model server patches", () => {
+  it("builds exact Caveman and Auto reasoning model server patches", () => {
     const selection = {
       instanceId: ProviderInstanceId.make("openai"),
       model: "gpt-5.5",
@@ -699,12 +617,6 @@ describe("mobile Better T3 settings", () => {
         value: "ultra",
       }),
     ).toEqual({ agentEnhancement: { cavemanMode: "ultra" } });
-    expect(
-      createMobileBetterT3EnvironmentControlPatch({ id: "knowledge.model", value: selection }),
-    ).toEqual({ knowledgeGraphModelSelection: selection });
-    expect(
-      createMobileBetterT3EnvironmentControlPatch({ id: "knowledge.model", value: null }),
-    ).toEqual({ knowledgeGraphModelSelection: null });
     expect(
       createMobileBetterT3EnvironmentControlPatch({
         id: "agent.autoReasoningModel",
@@ -753,21 +665,6 @@ describe("mobile Better T3 settings", () => {
     expect(
       supportsMobileAutoReasoningModelOption({
         providerDriver: "unsupported-evaluator",
-        isSelectable: true,
-      }),
-    ).toBe(false);
-  });
-
-  it("offers only selectable OpenAI models for Knowledge Graph enrichment", () => {
-    expect(
-      supportsMobileKnowledgeGraphModelOption({ providerDriver: "openai", isSelectable: true }),
-    ).toBe(true);
-    expect(
-      supportsMobileKnowledgeGraphModelOption({ providerDriver: "openai", isSelectable: false }),
-    ).toBe(false);
-    expect(
-      supportsMobileKnowledgeGraphModelOption({
-        providerDriver: "openrouter",
         isSelectable: true,
       }),
     ).toBe(false);

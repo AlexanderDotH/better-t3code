@@ -161,6 +161,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Versioned provider, skill, speech, and import administration surface.
       Missing on older servers, so clients retain connection-only settings. */
   environmentSettingsVersion: Schema.optionalKey(PositiveInt),
+  supportsSpeechDictationProcessing: Schema.optionalKey(Schema.Boolean),
   visualizationsVersion: Schema.optionalKey(PositiveInt),
   /** Versioned project metadata and agent-coordination administration surface.
       Missing on older servers, so clients keep project settings read-only. */
@@ -170,6 +171,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   harnessChatSyncVersion: Schema.optionalKey(PositiveInt),
   /** Versioned continuous project Knowledge Graph queries and mutation controls. */
   knowledgeGraphVersion: Schema.optionalKey(PositiveInt),
+  projectIndexingVersion: Schema.optionalKey(PositiveInt),
+  projectIndexingDefaultsVersion: Schema.optionalKey(PositiveInt),
   /** Versioned adaptive admission and provider-process suspension policies.
       Missing on older servers, so clients do not expose policy switches that
       the environment cannot enforce. */

@@ -49,6 +49,7 @@ import {
 } from "./ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { resolveThreadSidebarLayout, ThreadSidebarSelection } from "./ThreadSidebarSelection";
+import { ProjectIndexActivitySubscriptions } from "./project-indexing/ProjectIndexActivitySubscriptions";
 import { resolveAppSidebarPlacement } from "./AppSidebarLayout.logic";
 import { useBetterT3DeviceFeature } from "../hooks/useBetterT3Feature";
 import { useInterfaceTranslator } from "../hooks/useInterfaceTranslator";
@@ -249,6 +250,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         style={sidebarProviderStyle}
       >
         <ProjectProjectionRetention />
+        {!isOnSettings ? <ProjectIndexActivitySubscriptions /> : null}
         <Sidebar
           side={sidebarPosition}
           collapsible="offcanvas"

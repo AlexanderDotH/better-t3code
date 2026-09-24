@@ -1,6 +1,25 @@
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
+import {
+  ProjectIndexGetSettingsInput,
+  ProjectIndexSettings,
+  ProjectIndexGetStatusInput,
+  ProjectIndexStatusV1,
+  ProjectIndexUpdateSettingsInput,
+  ProjectIndexStartInput,
+  ProjectIndexControlInput,
+  ProjectIndexSubscribeInput,
+  ProjectIndexStreamEvent,
+  ProjectIndexActivityEvent,
+  ProjectIndexQueryInput,
+  ProjectIndexQueryResultV1,
+  ProjectIndexModelCheckInput,
+  ProjectIndexModelCheckResult,
+  ProjectIndexReviewInput,
+  ProjectIndexReviewResultV1,
+  ProjectIndexOperationError,
+} from "./projectIndexing.ts";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   AiEndpointDiscoveryError,
@@ -376,6 +395,11 @@ import {
   ProjectSpeechProfile,
   ProjectSpeechProfileError,
   ProjectSpeechProfileInput,
+  SpeechStreamingStartInput,
+  SpeechProcessDictationInput,
+  SpeechProcessDictationResult,
+  SpeechDictationError,
+  AssemblyAiModelsResult,
   ProjectSpeechProfileListResult,
   ProjectTextTransformError,
   ProjectTextTransformResult,
@@ -531,6 +555,8 @@ export const WS_METHODS = {
   speechIndexProject: "speech.indexProject",
   speechCreateBasicProjectProfile: "speech.createBasicProjectProfile",
   speechTranslateTranscript: "speech.translateTranscript",
+  speechProcessDictation: "speech.processDictation",
+  speechListAssemblyAiModels: "speech.listAssemblyAiModels",
   promptImprove: "prompt.improve",
   planReviewParallelism: "plan.reviewParallelism",
   serverDiscoverSourceControl: "server.discoverSourceControl",
@@ -631,6 +657,16 @@ export const WS_METHODS = {
   knowledgeGraphCancel: "knowledgeGraph.cancel",
   knowledgeGraphPause: "knowledgeGraph.pause",
   knowledgeGraphClear: "knowledgeGraph.clear",
+  projectIndexGetSettings: "projectIndex.getSettings",
+  projectIndexGetStatus: "projectIndex.getStatus",
+  projectIndexUpdateSettings: "projectIndex.updateSettings",
+  projectIndexStart: "projectIndex.start",
+  projectIndexControl: "projectIndex.control",
+  projectIndexSubscribe: "projectIndex.subscribe",
+  projectIndexSubscribeActivity: "projectIndex.subscribeActivity",
+  projectIndexQuery: "projectIndex.query",
+  projectIndexCheckModel: "projectIndex.checkModel",
+  projectIndexReview: "projectIndex.review",
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -850,23 +886,25 @@ const WsProjectMemoryClearRpc = Rpc.make(WS_METHODS.projectMemoryClear, {
 const WsServerCreateAssemblyAiStreamingTokenRpc = Rpc.make(
   WS_METHODS.serverCreateAssemblyAiStreamingToken,
   {
-    payload: ProjectSpeechProfileInput,
+    payload: SpeechStreamingStartInput,
     success: AssemblyAiStreamingTokenResult,
     error: Schema.Union([
       AssemblyAiStreamingTokenError,
       ProjectSpeechProfileError,
+      SpeechDictationError,
       EnvironmentAuthorizationError,
     ]),
   },
 );
 
 const WsSpeechStartStreamingSessionRpc = Rpc.make(WS_METHODS.speechStartStreamingSession, {
-  payload: ProjectSpeechProfileInput,
+  payload: SpeechStreamingStartInput,
   success: SpeechStreamingSessionStartResult,
   error: Schema.Union([
     SpeechStreamingProxyError,
     AssemblyAiStreamingTokenError,
     ProjectSpeechProfileError,
+    SpeechDictationError,
     EnvironmentAuthorizationError,
   ]),
 });
@@ -917,6 +955,18 @@ const WsSpeechTranslateTranscriptRpc = Rpc.make(WS_METHODS.speechTranslateTransc
   payload: TranslateTranscriptInput,
   success: ProjectTextTransformResult,
   error: Schema.Union([ProjectTextTransformError, EnvironmentAuthorizationError]),
+});
+
+const WsSpeechProcessDictationRpc = Rpc.make(WS_METHODS.speechProcessDictation, {
+  payload: SpeechProcessDictationInput,
+  success: SpeechProcessDictationResult,
+  error: Schema.Union([SpeechDictationError, EnvironmentAuthorizationError]),
+});
+
+const WsSpeechListAssemblyAiModelsRpc = Rpc.make(WS_METHODS.speechListAssemblyAiModels, {
+  payload: Schema.Struct({}),
+  success: AssemblyAiModelsResult,
+  error: Schema.Union([SpeechDictationError, EnvironmentAuthorizationError]),
 });
 
 const WsPromptImproveRpc = Rpc.make(WS_METHODS.promptImprove, {
@@ -1862,6 +1912,76 @@ const WsSubscribeTerminalEventsRpc = Rpc.make(WS_METHODS.subscribeTerminalEvents
   stream: true,
 });
 
+const ProjectIndexRpcError = Schema.Union([
+  ProjectIndexOperationError,
+  EnvironmentAuthorizationError,
+]);
+
+export const WsProjectIndexGetSettingsRpc = Rpc.make(WS_METHODS.projectIndexGetSettings, {
+  payload: ProjectIndexGetSettingsInput,
+  success: ProjectIndexSettings,
+  error: ProjectIndexRpcError,
+});
+
+export const WsProjectIndexGetStatusRpc = Rpc.make(WS_METHODS.projectIndexGetStatus, {
+  payload: ProjectIndexGetStatusInput,
+  success: ProjectIndexStatusV1,
+  error: ProjectIndexRpcError,
+});
+
+export const WsProjectIndexUpdateSettingsRpc = Rpc.make(WS_METHODS.projectIndexUpdateSettings, {
+  payload: ProjectIndexUpdateSettingsInput,
+  success: ProjectIndexStatusV1,
+  error: ProjectIndexRpcError,
+});
+
+export const WsProjectIndexStartRpc = Rpc.make(WS_METHODS.projectIndexStart, {
+  payload: ProjectIndexStartInput,
+  success: ProjectIndexStatusV1,
+  error: ProjectIndexRpcError,
+});
+
+export const WsProjectIndexControlRpc = Rpc.make(WS_METHODS.projectIndexControl, {
+  payload: ProjectIndexControlInput,
+  success: ProjectIndexStatusV1,
+  error: ProjectIndexRpcError,
+});
+
+export const WsProjectIndexSubscribeRpc = Rpc.make(WS_METHODS.projectIndexSubscribe, {
+  payload: ProjectIndexSubscribeInput,
+  success: ProjectIndexStreamEvent,
+  error: ProjectIndexRpcError,
+  stream: true,
+});
+
+export const WsProjectIndexSubscribeActivityRpc = Rpc.make(
+  WS_METHODS.projectIndexSubscribeActivity,
+  {
+    payload: Schema.Struct({}),
+    success: ProjectIndexActivityEvent,
+    error: ProjectIndexRpcError,
+    stream: true,
+  },
+);
+
+export const WsProjectIndexQueryRpc = Rpc.make(WS_METHODS.projectIndexQuery, {
+  payload: ProjectIndexQueryInput,
+  success: ProjectIndexQueryResultV1,
+  error: ProjectIndexRpcError,
+});
+
+export const WsProjectIndexCheckModelRpc = Rpc.make(WS_METHODS.projectIndexCheckModel, {
+  payload: ProjectIndexModelCheckInput,
+  success: ProjectIndexModelCheckResult,
+  error: ProjectIndexRpcError,
+});
+
+export const WsProjectIndexReviewRpc = Rpc.make(WS_METHODS.projectIndexReview, {
+  payload: ProjectIndexReviewInput,
+  success: ProjectIndexReviewResultV1,
+  error: ProjectIndexRpcError,
+});
+
 const KnowledgeGraphRpcError = Schema.Union([
   KnowledgeGraphOperationError,
   EnvironmentAuthorizationError,
@@ -2017,6 +2137,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsSpeechIndexProjectRpc,
   WsSpeechCreateBasicProjectProfileRpc,
   WsSpeechTranslateTranscriptRpc,
+  WsSpeechProcessDictationRpc,
+  WsSpeechListAssemblyAiModelsRpc,
   WsPromptImproveRpc,
   WsPlanReviewParallelismRpc,
   WsServerDiscoverSourceControlRpc,
@@ -2108,6 +2230,16 @@ export const WsRpcGroup = RpcGroup.make(
   WsAttachmentsDeleteRpc,
   WsProviderUploadFeedbackRpc,
   WsKnowledgeGraphSubscribeRpc,
+  WsProjectIndexGetSettingsRpc,
+  WsProjectIndexGetStatusRpc,
+  WsProjectIndexUpdateSettingsRpc,
+  WsProjectIndexStartRpc,
+  WsProjectIndexControlRpc,
+  WsProjectIndexSubscribeRpc,
+  WsProjectIndexSubscribeActivityRpc,
+  WsProjectIndexQueryRpc,
+  WsProjectIndexCheckModelRpc,
+  WsProjectIndexReviewRpc,
   WsKnowledgeGraphQueryRpc,
   WsKnowledgeGraphNodeContentRpc,
   WsKnowledgeGraphRebuildRpc,

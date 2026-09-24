@@ -14,7 +14,11 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
-import { isIgnoredKnowledgeGraphWatchPath } from "../extraction/KnowledgeGraphPathPolicy.ts";
+import {
+  isIgnoredKnowledgeGraphDirectory,
+  isIgnoredKnowledgeGraphWatchPath,
+  isSecretKnowledgeGraphPath,
+} from "../extraction/KnowledgeGraphPathPolicy.ts";
 
 type ScopeChangeHandler = (
   scopes: ReadonlyArray<KnowledgeGraphScopeV1>,
@@ -42,6 +46,7 @@ export interface KnowledgeGraphWatcherMultiplexerShape {
   readonly reconcile: (
     scopes: ReadonlyArray<KnowledgeGraphScopeV1>,
     onChange: ScopeChangeHandler,
+    consumerId?: string,
   ) => Effect.Effect<void>;
   readonly clear: Effect.Effect<void>;
   readonly watchedRoots: Effect.Effect<ReadonlyArray<string>>;
@@ -80,6 +85,34 @@ function relativeWatchPath(workspaceRoot: string, eventPath: string): string | n
   return relativePath;
 }
 
+function isProjectIndexMetadataChange(relativePath: string): boolean {
+  if (isSecretKnowledgeGraphPath(relativePath)) return false;
+  if (/^\.git\/(?:HEAD$|index$|refs\/heads\/)/.test(relativePath)) return true;
+  const segments = relativePath.split("/");
+  const filename = segments.at(-1) ?? "";
+  const directories = segments.slice(0, -1);
+  const isAssetsManifest = filename === "project.assets.json" && directories.at(-1) === "obj";
+  const isRuleDirectory = (directory: string) =>
+    directory === ".agents" || directory === ".claude" || directory === ".cursor";
+  if (
+    directories.some(
+      (directory) =>
+        isIgnoredKnowledgeGraphDirectory(directory) &&
+        !isRuleDirectory(directory) &&
+        !(directory === "obj" && isAssetsManifest),
+    )
+  ) {
+    return false;
+  }
+  return (
+    isAssetsManifest ||
+    directories.some(isRuleDirectory) ||
+    /^\.(?:editorconfig|gitignore|gitattributes|eslintrc(?:\.[^/]+)?|prettierrc(?:\.[^/]+)?)$/.test(
+      filename,
+    )
+  );
+}
+
 export const makeKnowledgeGraphWatcherMultiplexer = Effect.fn(
   "KnowledgeGraphWatcherMultiplexer.make",
 )(function* (
@@ -88,6 +121,8 @@ export const makeKnowledgeGraphWatcherMultiplexer = Effect.fn(
   const watcherScope = yield* Scope.Scope;
   const registrations = yield* Ref.make(new Map<string, WatchRegistration>());
   const semaphore = yield* Semaphore.make(1);
+  const consumers = new Map<string, WatchState>();
+  const consumerSemaphore = yield* Semaphore.make(1);
 
   const startRegistration = Effect.fn("KnowledgeGraphWatcherMultiplexer.startRegistration")(
     function* (workspaceRoot: string, state: WatchState) {
@@ -96,7 +131,15 @@ export const makeKnowledgeGraphWatcherMultiplexer = Effect.fn(
         dependencies.watchWorkspaceRoot(workspaceRoot, { recursive: true }).pipe(
           Stream.filter((event) => {
             const relativePath = relativeWatchPath(workspaceRoot, event.path);
-            return relativePath !== null && !isIgnoredKnowledgeGraphWatchPath(relativePath);
+            return (
+              relativePath !== null &&
+              (!isIgnoredKnowledgeGraphWatchPath(relativePath) ||
+                (consumers
+                  .get("project-indexing")
+                  ?.scopes.some((scope) => scope.effectiveWorkspaceRoot === workspaceRoot) ===
+                  true &&
+                  isProjectIndexMetadataChange(relativePath)))
+            );
           }),
           Stream.debounce(dependencies.debounce),
           Stream.runForEach(() =>
@@ -131,7 +174,10 @@ export const makeKnowledgeGraphWatcherMultiplexer = Effect.fn(
     },
   );
 
-  const reconcile: KnowledgeGraphWatcherMultiplexerShape["reconcile"] = (scopes, onChange) =>
+  const reconcileAll = (
+    scopes: ReadonlyArray<KnowledgeGraphScopeV1>,
+    onChange: ScopeChangeHandler,
+  ) =>
     semaphore.withPermits(1)(
       Effect.gen(function* () {
         const nextByRoot = groupScopesByRoot(scopes);
@@ -159,14 +205,47 @@ export const makeKnowledgeGraphWatcherMultiplexer = Effect.fn(
       }),
     );
 
-  const clear = semaphore.withPermits(1)(
-    Effect.gen(function* () {
-      const current = yield* Ref.getAndSet(registrations, new Map());
-      yield* Effect.forEach(current.values(), ({ fiber }) => Fiber.interrupt(fiber), {
-        discard: true,
-      });
-    }),
-  );
+  const reconcile: KnowledgeGraphWatcherMultiplexerShape["reconcile"] = (
+    scopes,
+    onChange,
+    consumerId = "knowledge-graph",
+  ) =>
+    consumerSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        if (scopes.length === 0) consumers.delete(consumerId);
+        else consumers.set(consumerId, { scopes, onChange });
+        const active = [...consumers.values()];
+        const allScopes = [
+          ...new Map(
+            active
+              .flatMap((consumer) => consumer.scopes)
+              .map((scope) => [scope.scopeId, scope] as const),
+          ).values(),
+        ];
+        yield* reconcileAll(allScopes, (changed) =>
+          Effect.forEach(
+            active,
+            (consumer) => {
+              const matching = changed.filter((scope) =>
+                consumer.scopes.some((owned) => owned.scopeId === scope.scopeId),
+              );
+              return matching.length === 0
+                ? Effect.void
+                : consumer
+                    .onChange(matching)
+                    .pipe(
+                      Effect.catchCause((cause) =>
+                        Effect.logWarning("Knowledge Graph watcher consumer failed", { cause }),
+                      ),
+                    );
+            },
+            { discard: true },
+          ),
+        );
+      }),
+    );
+
+  const clear = reconcile([], () => Effect.void);
 
   return {
     reconcile,

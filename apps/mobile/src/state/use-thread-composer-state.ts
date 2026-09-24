@@ -15,7 +15,12 @@ import {
   type ProviderInteractionMode,
   type RuntimeMode,
   type ThreadId,
+  type VoiceFileReference,
 } from "@t3tools/contracts";
+import {
+  appendVoiceFileContext,
+  translateVoiceDictationResult,
+} from "@t3tools/shared/voiceFileContext";
 import {
   buildPlanImplementationPrompt,
   type PlanImplementationStrategy,
@@ -114,6 +119,7 @@ export function useThreadDraftForThread(input: {
 
   return {
     draftMessage: draft.text,
+    draftVoiceFileReferences: draft.voiceFileReferences,
     draftAttachments: draft.attachments,
   };
 }
@@ -244,6 +250,7 @@ export function useThreadComposerState() {
 
   const selectedDraft = selectedThreadKey ? composerDrafts[selectedThreadKey] : null;
   const draftMessage = selectedDraft?.text ?? "";
+  const draftVoiceFileReferences = selectedDraft?.voiceFileReferences;
   const draftAttachments = selectedDraft?.attachments ?? [];
   const selectedThreadQueueCount = selectedThreadQueuedMessages.length;
   const selectedThread = selectedThreadDetail ?? selectedThreadShell;
@@ -447,27 +454,33 @@ export function useThreadComposerState() {
 
     if (shouldImprovePromptBeforeSend && environmentConnected) {
       setIsImprovingPrompt(true);
-      const result = await improvePrompt({
-        environmentId: selectedThreadShell.environmentId,
-        input: { projectId: selectedThreadShell.projectId, text },
-      });
-      setIsImprovingPrompt(false);
-      if (AsyncResult.isFailure(result)) {
-        const error = Cause.squash(result.cause);
+      try {
+        const improved = await translateVoiceDictationResult(
+          { text, references: draft.voiceFileReferences ?? [] },
+          async (text) => {
+            const result = await improvePrompt({
+              environmentId: selectedThreadShell.environmentId,
+              input: { projectId: selectedThreadShell.projectId, text },
+            });
+            if (AsyncResult.isFailure(result)) throw Cause.squash(result.cause);
+            return result.value.text;
+          },
+        );
+        if (getComposerDraftSnapshot(threadKey).text !== draft.text) return null;
+        text = improved.text.trim();
+      } catch (error) {
         setPendingConnectionError(
           error instanceof Error ? error.message : "Could not improve the prompt.",
         );
         return null;
+      } finally {
+        setIsImprovingPrompt(false);
       }
-      const currentDraft = getComposerDraftSnapshot(threadKey);
-      if (currentDraft.text !== draft.text) {
-        return null;
-      }
-      text = result.value.text.trim();
     }
 
     const metadata = makeQueuedMessageMetadata();
     const messageId = MessageId.make(metadata.messageId);
+    text = appendVoiceFileContext(text, draft.voiceFileReferences ?? []);
     // Enqueue publishes the queued atom synchronously (the durable write
     // happens behind it), so clearing the draft here gives send feedback on
     // the tap frame instead of after file I/O. If the write fails the message
@@ -537,30 +550,36 @@ export function useThreadComposerState() {
       return;
     }
     const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
-    const original = getComposerDraftSnapshot(threadKey).text;
+    const draft = getComposerDraftSnapshot(threadKey);
+    const original = draft.text;
     const text = original.trim();
     if (text.length === 0) {
       return;
     }
 
     setIsImprovingPrompt(true);
-    const result = await improvePrompt({
-      environmentId: selectedThreadShell.environmentId,
-      input: { projectId: selectedThreadShell.projectId, text },
-    });
-    setIsImprovingPrompt(false);
-    if (AsyncResult.isFailure(result)) {
-      const error = Cause.squash(result.cause);
+    try {
+      const improved = await translateVoiceDictationResult(
+        { text, references: draft.voiceFileReferences ?? [] },
+        async (text) => {
+          const result = await improvePrompt({
+            environmentId: selectedThreadShell.environmentId,
+            input: { projectId: selectedThreadShell.projectId, text },
+          });
+          if (AsyncResult.isFailure(result)) throw Cause.squash(result.cause);
+          return result.value.text;
+        },
+      );
+      if (getComposerDraftSnapshot(threadKey).text !== original) return;
+      setComposerDraftText(threadKey, improved.text, improved.references);
+      setPendingConnectionError(null);
+    } catch (error) {
       setPendingConnectionError(
         error instanceof Error ? error.message : "Could not improve the prompt.",
       );
-      return;
+    } finally {
+      setIsImprovingPrompt(false);
     }
-    if (getComposerDraftSnapshot(threadKey).text !== original) {
-      return;
-    }
-    setComposerDraftText(threadKey, result.value.text);
-    setPendingConnectionError(null);
   }, [improvePrompt, isImprovingPrompt, selectedThreadShell, workflowSettings.supported]);
 
   const onImplementPlan = useCallback(
@@ -636,13 +655,13 @@ export function useThreadComposerState() {
   );
 
   const onChangeDraftMessage = useCallback(
-    (value: string) => {
+    (value: string, references?: ReadonlyArray<VoiceFileReference>) => {
       if (!selectedThreadShell) {
         return;
       }
 
       const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
-      setComposerDraftText(threadKey, value);
+      setComposerDraftText(threadKey, value, references);
     },
     [selectedThreadShell],
   );
@@ -863,6 +882,8 @@ export function useThreadComposerState() {
 
   return {
     feedbackSubmissions,
+    readDraftText: () =>
+      selectedThreadKey ? getComposerDraftSnapshot(selectedThreadKey).text : "",
     dismissFeedback,
     selectedThreadFeed,
     selectedThreadQueueCount,
@@ -871,6 +892,7 @@ export function useThreadComposerState() {
     activeWorkStartedAt,
     isCompacting,
     draftMessage,
+    draftVoiceFileReferences,
     draftAttachments,
     modelSelection,
     runtimeMode,

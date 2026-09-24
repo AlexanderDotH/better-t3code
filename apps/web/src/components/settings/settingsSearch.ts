@@ -162,9 +162,17 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "voice-translation-model",
-    title: "Voice post-processing model",
+    title: "Voice translation model",
     to: "/settings/better-t3",
-    searchTerms: ["dictation translation English Sprache Nachbearbeitung"],
+    searchTerms: ["dictation translation English Sprache Übersetzung"],
+  },
+  {
+    id: "voice-recording-options",
+    title: "Voice recording and cleanup",
+    to: "/settings/better-t3",
+    searchTerms: [
+      "AssemblyAI speech model latency VAD vocabulary file references Nachbearbeitung Bereinigung Spracherkennung",
+    ],
   },
   {
     id: "project-speech-context",

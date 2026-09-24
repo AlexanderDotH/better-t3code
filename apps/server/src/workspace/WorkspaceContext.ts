@@ -36,6 +36,7 @@ import {
 } from "./WorkspaceContextEngine.ts";
 import * as WorkspaceFileSystem from "./WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
+import { normalizeWorkspaceContextScope } from "./WorkspaceContextPathPolicy.ts";
 
 export {
   WorkspaceContextPathError,
@@ -317,6 +318,7 @@ function engineQueries(input: WorkspaceContextInput): ReadonlyArray<WorkspaceCon
     text: query.text,
     mode: query.mode ?? "auto",
     maxResults,
+    ...(query.scopes === undefined ? {} : { scopes: query.scopes }),
   }));
 }
 
@@ -362,16 +364,38 @@ export const make = Effect.gen(function* () {
     function* (request) {
       const workspaceRoot = yield* validateWorkspaceRoot(request.workspaceRoot);
       const queries = engineQueries(request.input);
-      const discovery = yield* Effect.tryPromise({
-        try: () => discoverWorkspaceContext({ workspaceRoot, queries }),
-        catch: (cause) =>
-          new WorkspaceContextSearchError({
-            backend: "filesystem",
-            operation: "inventory",
-            reason: "operation_failed",
-            cause,
-          }),
-      });
+      const scopedQueries = yield* Effect.forEach(queries, (query) =>
+        Effect.gen(function* () {
+          const scopes = yield* Effect.forEach(query.scopes ?? [], (relativePath) => {
+            const normalized = normalizeWorkspaceContextScope(relativePath);
+            return normalized === null
+              ? Effect.fail(
+                  new WorkspaceContextPathError({ relativePath, reason: "path_outside_root" }),
+                )
+              : Effect.succeed(normalized);
+          });
+          return { ...query, scopes };
+        }),
+      );
+      const discovery: WorkspaceContextDiscovery =
+        scopedQueries.length === 0
+          ? {
+              backend: "filesystem",
+              queries: [],
+              truncated: false,
+              warnings: [],
+              inventoryCount: 0,
+            }
+          : yield* Effect.tryPromise({
+              try: () => discoverWorkspaceContext({ workspaceRoot, queries: scopedQueries }),
+              catch: (cause) =>
+                new WorkspaceContextSearchError({
+                  backend: "filesystem",
+                  operation: "inventory",
+                  reason: "operation_failed",
+                  cause,
+                }),
+            });
 
       const requestedPaths = [
         ...contentMatchPaths(discovery),

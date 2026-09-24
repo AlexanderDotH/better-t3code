@@ -64,6 +64,12 @@ export function makeKnowledgeGraphRuntimeQueries(
     if (input.afterRevision === undefined) {
       return Stream.concat(Stream.make(snapshot), live);
     }
+    const hasLegacySemanticData = yield* dependencies.repository
+      .hasLegacySemanticData(scope.scopeId)
+      .pipe(mapPersistenceError("subscribe", scope.scopeId));
+    if (hasLegacySemanticData) {
+      return Stream.concat(Stream.make(snapshot), live);
+    }
     if (input.afterRevision === snapshot.revision) return live;
     const patches =
       input.afterRevision < snapshot.revision

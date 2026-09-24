@@ -2,6 +2,7 @@ import { TurnAbortCoordinator } from "../Services/TurnAbortCoordinator.ts";
 import { FetchWorkerCoordinator } from "../../fetch/FetchWorkerCoordinator.ts";
 import { NoOpSkillEngineLayer } from "../../skills/testUtils/NoOpSkillEngine.ts";
 import { ProjectMemoryStore } from "../../projectMemory/ProjectMemoryStore.ts";
+import { ProjectContextQuery } from "../../projectIndexing/query/ProjectContextQuery.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -14,6 +15,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSetupError,
+  EMPTY_PROJECT_INDEX_COVERAGE,
+  ProjectIndexOperationError,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import {
@@ -186,6 +189,7 @@ describe("ProviderCommandReactor", () => {
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderServiceError>;
     readonly tryHandlePromptCommandEffect?: ProviderAuthService["Service"]["tryHandlePromptCommand"];
+    readonly projectContext?: ProjectContextQuery["Service"];
   }) {
     const now = "2026-01-01T00:00:00.000Z";
     const baseDir =
@@ -457,6 +461,11 @@ describe("ProviderCommandReactor", () => {
       }),
     ).pipe(Layer.provide(orchestrationLayer));
     const layer = ProviderCommandReactorLive.pipe(
+      Layer.provide(
+        input?.projectContext === undefined
+          ? Layer.empty
+          : Layer.succeed(ProjectContextQuery, input.projectContext),
+      ),
       Layer.provideMerge(reactorOrchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
@@ -653,6 +662,103 @@ describe("ProviderCommandReactor", () => {
       },
     };
   }
+
+  it("refreshes indexed task context inside an existing provider session and falls back on index failure", async () => {
+    let revision = 0;
+    const query = vi.fn<ProjectContextQuery["Service"]["query"]>((input) => {
+      if (input.text === "Continue without index")
+        return Effect.fail(
+          new ProjectIndexOperationError({
+            code: "store-unavailable",
+            message: "Synthetic unavailable index",
+            retryable: true,
+          }),
+        );
+      return Effect.succeed({
+        version: 1,
+        scope: {
+          projectId: input.projectId,
+          ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
+          scopeId: "test-index",
+          workspaceFingerprint: "synthetic-workspace",
+        },
+        revision: ++revision,
+        operation: input.operation,
+        summary: "Synthetic indexed project context",
+        entities: [],
+        callsites: [],
+        modules: [],
+        behaviors: [],
+        flows: [],
+        rules: [
+          {
+            id: "synthetic-rule",
+            name: "Source rule",
+            description: `Applicable source for ${input.text}`,
+            severity: "info",
+            source: "explicit",
+            appliesToEntityIds: [],
+            evidenceIds: ["synthetic-rule-source"],
+            provenance: "parser",
+            freshness: "current",
+          },
+        ],
+        evidence: [
+          {
+            id: "synthetic-rule-source",
+            filePath: "AGENTS.md",
+            sourceHash: "source-hash",
+            range: { startLine: 1, startColumn: 1, endLine: 1, endColumn: 20 },
+            provenance: "parser",
+          },
+        ],
+        gaps: [],
+        coverage: EMPTY_PROJECT_INDEX_COVERAGE,
+        nextCursor: null,
+        truncated: false,
+        estimatedTokens: 500,
+      });
+    });
+    const harness = await createHarness({ projectContext: { query } });
+    for (const [index, text] of [
+      "Edit decoder",
+      "Edit formatter",
+      "Continue without index",
+    ].entries()) {
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`indexed-turn-${index}`),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId(`indexed-message-${index}`),
+            role: "user",
+            text,
+            attachments: [],
+          },
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        }),
+      );
+      await harness.drain();
+    }
+    expect(harness.startSession).toHaveBeenCalledOnce();
+    expect(harness.sendTurn).toHaveBeenCalledTimes(3);
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      transcriptHandoff: { text: expect.stringContaining("Applicable source for Edit decoder") },
+    });
+    expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({
+      transcriptHandoff: { text: expect.stringContaining("Applicable source for Edit formatter") },
+    });
+    expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({
+      transcriptHandoff: { text: expect.stringContaining("Hash matches do not mean checks ran") },
+    });
+    expect(harness.sendTurn.mock.calls[2]?.[0]).not.toHaveProperty("transcriptHandoff");
+    expect(query.mock.calls.map(([input]) => [input.projectId, input.threadId])).toEqual(
+      Array.from({ length: 3 }, () => ["project-1", "thread-1"]),
+    );
+  });
 
   effectIt.effect.each(["new", "ready", "stopped"] as const)(
     "handles sign-out for a %s thread before worktree repair, text helpers, or startup",

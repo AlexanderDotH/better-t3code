@@ -21,9 +21,12 @@ describe("resolveKnowledgeGraphPanelMode", () => {
       "unsupported",
     );
     expect(resolveKnowledgeGraphPanelMode({ knowledgeGraphVersion: 1, enabled: false })).toBe(
+      "unsupported",
+    );
+    expect(resolveKnowledgeGraphPanelMode({ knowledgeGraphVersion: 2, enabled: false })).toBe(
       "disabled-owner",
     );
-    expect(resolveKnowledgeGraphPanelMode({ knowledgeGraphVersion: 1, enabled: true })).toBe(
+    expect(resolveKnowledgeGraphPanelMode({ knowledgeGraphVersion: 2, enabled: true })).toBe(
       "connected",
     );
   });

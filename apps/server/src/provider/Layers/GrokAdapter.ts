@@ -1071,7 +1071,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               provider: PROVIDER,
               providerInstanceId: boundInstanceId,
             },
-            runtimeMode: input.runtimeMode,
+            runtimeMode,
             ...(resumeSessionId ? { resumeSessionId } : {}),
             clientInfo: { name: "t3-code", version: "0.0.0" },
             ...(mcpSession
@@ -1228,9 +1228,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                       : undefined;
                   const alreadyApproved =
                     approvalKey !== undefined && sessionApprovedOperations.has(approvalKey);
-                  if (input.runtimeMode === "full-access" || alreadyApproved) {
+                  if (runtimeMode === "full-access" || alreadyApproved) {
                     const autoApprovedOptionId =
-                      input.runtimeMode === "full-access"
+                      runtimeMode === "full-access"
                         ? selectAutoApprovedPermissionOption(params)
                         : selectGrokPermissionOptionId(params, "accept");
                     if (autoApprovedOptionId !== undefined) {

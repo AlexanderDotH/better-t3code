@@ -92,10 +92,11 @@ function serviceStub<T extends object>(overrides: Partial<T>): T {
   }) as T;
 }
 
-function makeQueries(patches: ReadonlyArray<KnowledgeGraphPatchV1>) {
+function makeQueries(patches: ReadonlyArray<KnowledgeGraphPatchV1>, hasLegacySemanticData = false) {
   const repository = serviceStub<KnowledgeGraphRepository.KnowledgeGraphRepository["Service"]>({
     ensureScope: (resolved) => Effect.succeed(resolved),
     getSnapshot: () => Effect.succeed(Option.some(snapshot)),
+    hasLegacySemanticData: () => Effect.succeed(hasLegacySemanticData),
     listPatchesAfter: () => Effect.succeed(patches),
   });
   const catalog = serviceStub<KnowledgeGraphScopeCatalog.KnowledgeGraphScopeCatalog["Service"]>({
@@ -119,6 +120,20 @@ function makeQueries(patches: ReadonlyArray<KnowledgeGraphPatchV1>) {
     requireEnabled: () => Effect.void,
   });
 }
+
+it.effect("sends a clean snapshot when a reconnecting client may hold legacy model facts", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const queries = makeQueries([], true);
+      const stream = yield* queries.subscribe({
+        scope: { projectId },
+        afterRevision: snapshot.revision,
+      });
+      const first = yield* Stream.runHead(stream);
+      assert.deepStrictEqual(Option.getOrThrow(first), snapshot);
+    }),
+  ),
+);
 
 it.effect("replays contiguous patches and falls back to invalidate plus snapshot for a gap", () =>
   Effect.scoped(

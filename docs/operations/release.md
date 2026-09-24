@@ -41,6 +41,18 @@ This document covers the unified release workflow for stable and nightly desktop
   - nightly releases are aliased to the `nightly` hosted app channel
 - Signing is optional and auto-detected per platform from secrets.
 
+Desktop and CLI builds also package the project-indexing analyzers. The shared
+`setup-project-indexers` action provisions .NET 10, Java 21, and Maven for those
+builds and for compiler-backed server tests. Local builds require the same
+toolchains; `T3CODE_INDEXER_DOTNET`, `T3CODE_INDEXER_MAVEN`, `JAVA_HOME`, and
+`T3CODE_INDEXER_MAVEN_REPOSITORY` can select existing installations and caches.
+`scripts/build-project-indexers.ts` builds only the checked-in analyzer helpers.
+Never build a user's project as part of indexing.
+
+Before release, run `scripts/verify-project-indexing-artifacts.ts` against the
+packaged module URL with `--probe-helpers`. This checks real unpacked compiler
+paths and the archive's exclusion of `.t3` data without launching the app.
+
 ## Required release credentials
 
 Stable releases require these GitHub Actions secrets in addition to the platform and deployment

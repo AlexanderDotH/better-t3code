@@ -1,9 +1,19 @@
 import { useThreadFork } from "../hooks/useThreadFork";
 import { InlineMessageEditor } from "./chat/InlineMessageEditor";
 import { resolveInterruptedTurnRetryTarget } from "@t3tools/client-runtime/state/thread-retry";
+import {
+  appendVoiceFileContext,
+  extractVoiceFileContext,
+  reconcileVoiceFileReferences,
+  translateVoiceDictationResult,
+} from "@t3tools/shared/voiceFileContext";
 import { resolveFetchMode } from "@t3tools/shared/fetchMode";
 import { resolveThreadAbortPresentation } from "@t3tools/client-runtime/state/thread-abort";
 import { KnowledgeGraphPanelController } from "./knowledge-graph/KnowledgeGraphPanelController";
+import { ProjectIndexActivitySummary } from "./project-indexing/ProjectIndexActivitySummary";
+import { selectProjectIndexActivity } from "../lib/projectIndexActivitySelection";
+import { useProjectIndexActivityStore } from "../state/projectIndexActivity";
+import { bindProjectIndexApi } from "../state/projectIndexing";
 import { ChatWorkspaceDeckController } from "./workspace-deck/ChatWorkspaceDeckController";
 import { GitWorkspaceChangesIndicator } from "./git-workbench/GitWorkspaceChangesIndicator";
 import { threadHasStarted } from "./ChatView.logic";
@@ -1613,6 +1623,9 @@ export default function ChatView(props: ChatViewProps) {
     (store) => store.setPreviewAnnotations,
   );
   const setComposerDraftReviewComments = useComposerDraftStore((store) => store.setReviewComments);
+  const setComposerDraftVoiceFileReferences = useComposerDraftStore(
+    (store) => store.setVoiceFileReferences,
+  );
   const setComposerDraftModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const setComposerDraftRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
   const setComposerDraftInteractionMode = useComposerDraftStore(
@@ -1935,6 +1948,11 @@ export default function ChatView(props: ChatViewProps) {
     [activeThreadEnvironmentId, activeThreadId],
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
+  // Delayed scroll callbacks share the list ref across route changes.
+  const timelineRouteKeyRef = useRef(routeThreadKey);
+  useLayoutEffect(() => {
+    timelineRouteKeyRef.current = routeThreadKey;
+  }, [routeThreadKey]);
   const forkSourceRef = useMemo(
     () =>
       activeThread?.fork
@@ -2399,12 +2417,25 @@ export default function ChatView(props: ChatViewProps) {
     ? (activeEnvironment?.serverConfig ?? null)
     : (primaryEnvironment?.serverConfig ?? null);
   const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
+  const projectIndexEnabled = useProjectIndexActivityStore((state) => {
+    if (!activeProject) return false;
+    const activity = selectProjectIndexActivity(
+      state.activitiesByEnvironment.get(activeProject.environmentId),
+      activeProject.id,
+      activeThread?.id,
+    );
+    return activity?.settings.enabled === true && activity.defaults?.enabled !== false;
+  });
   const knowledgeGraphOwnerAvailable = Boolean(
-    activeProject && (serverConfig?.environment.capabilities.knowledgeGraphVersion ?? 0) >= 1,
+    activeProject &&
+    ((serverConfig?.environment.capabilities.knowledgeGraphVersion ?? 0) >= 2 ||
+      (serverConfig?.environment.capabilities.projectIndexingVersion ?? 0) >= 3),
   );
   const knowledgeGraphAvailable =
     knowledgeGraphOwnerAvailable &&
-    resolveBetterT3FeatureFlag(settings.betterT3Environment, "knowledge.graph");
+    projectIndexEnabled &&
+    ((serverConfig?.environment.capabilities.projectIndexingVersion ?? 0) >= 3 ||
+      resolveBetterT3FeatureFlag(settings.betterT3Environment, "knowledge.graph"));
   useEffect(() => {
     if (!activeThreadRef || knowledgeGraphOwnerAvailable) return;
     const graph = rightPanelState.surfaces.find((surface) => surface.kind === "knowledge-graph");
@@ -4903,22 +4934,26 @@ export default function ChatView(props: ChatViewProps) {
   }, []);
   // Live-follow stays active after send/thread-open until an actual list scroll
   // gesture opts out.
-  const scrollToEnd = useCallback((animated = false) => {
-    isAtEndRef.current = true;
-    timelineScrollModeRef.current = "following-end";
-    liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
-    setTimelineLiveFollowEnabled(true);
-    pendingTimelineAnchorRef.current = null;
-    positionedTimelineAnchorRef.current = null;
-    settledTimelineAnchorRef.current = null;
-    activeTimelineAnchorIndexRef.current = null;
-    showScrollDebouncer.current.cancel();
-    setShowScrollToBottom(false);
-    setTimelineAnchor(releaseChatTimelineAnchor);
-    requestAnimationFrame(() => {
-      void legendListRef.current?.scrollToEnd?.({ animated });
-    });
-  }, []);
+  const scrollToEnd = useCallback(
+    (animated = false) => {
+      isAtEndRef.current = true;
+      timelineScrollModeRef.current = "following-end";
+      liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
+      setTimelineLiveFollowEnabled(true);
+      pendingTimelineAnchorRef.current = null;
+      positionedTimelineAnchorRef.current = null;
+      settledTimelineAnchorRef.current = null;
+      activeTimelineAnchorIndexRef.current = null;
+      showScrollDebouncer.current.cancel();
+      setShowScrollToBottom(false);
+      setTimelineAnchor(releaseChatTimelineAnchor);
+      requestAnimationFrame(() => {
+        if (timelineRouteKeyRef.current !== routeThreadKey) return;
+        void legendListRef.current?.scrollToEnd?.({ animated });
+      });
+    },
+    [routeThreadKey],
+  );
   useLayoutEffect(() => {
     if (timelineScrollModeRef.current !== "anchoring-new-turn") {
       return;
@@ -5090,53 +5125,67 @@ export default function ChatView(props: ChatViewProps) {
       }
       removeListeners?.();
     };
-  }, [activeThread?.id, isTimelineAtLogicalEnd, timelineRealContentOverflowsViewport]);
+  }, [
+    routeThreadKey,
+    activeThread?.id,
+    isTimelineAtLogicalEnd,
+    timelineRealContentOverflowsViewport,
+  ]);
 
-  const onTimelineAnchorReady = useCallback((messageId: MessageId, anchorIndex: number) => {
-    // Anchored-end space can be remeasured when the turn completes. Once the
-    // user has scrolled away (or returned to ordinary end-following), that
-    // remeasurement must not restart the send-time anchor positioning.
-    if (timelineScrollModeRef.current !== "anchoring-new-turn") {
-      return;
-    }
-    if (pendingTimelineAnchorRef.current === messageId) {
-      pendingTimelineAnchorRef.current = null;
-    }
-    activeTimelineAnchorIndexRef.current = anchorIndex;
-    if (positionedTimelineAnchorRef.current === messageId) {
-      return;
-    }
-    positionedTimelineAnchorRef.current = messageId;
-    settledTimelineAnchorRef.current = null;
-    const positionAnchor = (remainingAttempts: number) => {
-      requestAnimationFrame(() => {
-        if (positionedTimelineAnchorRef.current !== messageId) {
-          return;
-        }
-        const list = legendListRef.current;
-        if (!list) {
-          if (remainingAttempts > 0) {
-            positionAnchor(remainingAttempts - 1);
+  const onTimelineAnchorReady = useCallback(
+    (messageId: MessageId, anchorIndex: number) => {
+      // Anchored-end space can be remeasured when the turn completes. Once the
+      // user has scrolled away (or returned to ordinary end-following), that
+      // remeasurement must not restart the send-time anchor positioning.
+      if (timelineScrollModeRef.current !== "anchoring-new-turn") {
+        return;
+      }
+      if (pendingTimelineAnchorRef.current === messageId) {
+        pendingTimelineAnchorRef.current = null;
+      }
+      activeTimelineAnchorIndexRef.current = anchorIndex;
+      if (positionedTimelineAnchorRef.current === messageId) {
+        return;
+      }
+      positionedTimelineAnchorRef.current = messageId;
+      settledTimelineAnchorRef.current = null;
+      const positionAnchor = (remainingAttempts: number) => {
+        requestAnimationFrame(() => {
+          if (timelineRouteKeyRef.current !== routeThreadKey) {
+            return;
           }
-          return;
-        }
-        void list
-          .scrollToIndex({
-            index: anchorIndex,
-            animated: true,
-            viewPosition: 0,
-            viewOffset: CHAT_TIMELINE_ANCHOR_OFFSET,
-          })
-          .then(() => {
-            if (positionedTimelineAnchorRef.current !== messageId) {
-              return;
+          if (positionedTimelineAnchorRef.current !== messageId) {
+            return;
+          }
+          const list = legendListRef.current;
+          if (!list) {
+            if (remainingAttempts > 0) {
+              positionAnchor(remainingAttempts - 1);
             }
-            settledTimelineAnchorRef.current = messageId;
-          });
-      });
-    };
-    requestAnimationFrame(() => positionAnchor(12));
-  }, []);
+            return;
+          }
+          void list
+            .scrollToIndex({
+              index: anchorIndex,
+              animated: true,
+              viewPosition: 0,
+              viewOffset: CHAT_TIMELINE_ANCHOR_OFFSET,
+            })
+            .then(() => {
+              if (timelineRouteKeyRef.current !== routeThreadKey) {
+                return;
+              }
+              if (positionedTimelineAnchorRef.current !== messageId) {
+                return;
+              }
+              settledTimelineAnchorRef.current = messageId;
+            });
+        });
+      };
+      requestAnimationFrame(() => positionAnchor(12));
+    },
+    [routeThreadKey],
+  );
 
   const onToolOutputCollapsedAtEnd = useCallback(() => {
     composerRef.current?.restoreAfterTimelineReachedEnd();
@@ -5224,7 +5273,7 @@ export default function ChatView(props: ChatViewProps) {
         cancelAnimationFrame(secondFrame);
       }
     };
-  }, [activeThread?.id, timelineEntries, getActiveTimelineTurnMetrics]);
+  }, [routeThreadKey, activeThread?.id, timelineEntries, getActiveTimelineTurnMetrics]);
 
   useEffect(() => {
     setPullRequestDialogState(null);
@@ -5240,7 +5289,7 @@ export default function ChatView(props: ChatViewProps) {
     showScrollDebouncer.current.cancel();
     setShowScrollToBottom(false);
     // activeThreadRef resets transitively with the active thread.
-  }, [activeThread?.id]);
+  }, [routeThreadKey, activeThread?.id]);
 
   useEffect(() => {
     setIsRevertingCheckpoint(false);
@@ -6893,12 +6942,23 @@ export default function ChatView(props: ChatViewProps) {
         messagePromptForSend = await resolvePromptForSend({
           prompt: promptForSend,
           improve: async (text) => {
-            const result = await improvePrompt({
-              environmentId,
-              input: { projectId: activeThread.projectId, text },
-            });
-            if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-            return result.value.text;
+            const improved = await translateVoiceDictationResult(
+              {
+                text,
+                references:
+                  useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)
+                    ?.voiceFileReferences ?? [],
+              },
+              async (protectedText) => {
+                const result = await improvePrompt({
+                  environmentId,
+                  input: { projectId: activeThread.projectId, text: protectedText },
+                });
+                if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+                return result.value.text;
+              },
+            );
+            return improved.text;
           },
         });
       } catch (error) {
@@ -6924,8 +6984,14 @@ export default function ChatView(props: ChatViewProps) {
     const composerElementContextsSnapshot = [...composerElementContexts];
     const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
     const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...composerReviewComments];
+    const composerVoiceFileReferencesSnapshot =
+      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.voiceFileReferences ??
+      [];
     const messageTextWithContexts = appendElementContextsToPrompt(
-      appendTerminalContextsToPrompt(messagePromptForSend, composerTerminalContextsSnapshot),
+      appendTerminalContextsToPrompt(
+        appendVoiceFileContext(messagePromptForSend, composerVoiceFileReferencesSnapshot),
+        composerTerminalContextsSnapshot,
+      ),
       composerElementContextsSnapshot,
     );
     const messageTextWithPreviewAnnotations = composerPreviewAnnotationsSnapshot.reduce(
@@ -7351,6 +7417,10 @@ export default function ChatView(props: ChatViewProps) {
         setComposerDraftElementContexts(composerDraftTarget, composerElementContextsSnapshot);
         setComposerDraftPreviewAnnotations(composerDraftTarget, composerPreviewAnnotationsSnapshot);
         setComposerDraftReviewComments(composerDraftTarget, composerReviewCommentsSnapshot);
+        setComposerDraftVoiceFileReferences(
+          composerDraftTarget,
+          composerVoiceFileReferencesSnapshot,
+        );
         composerRef.current?.resetCursorState({
           cursor: collapseExpandedComposerCursor(promptForSend, promptForSend.length),
           prompt: promptForSend,
@@ -8292,7 +8362,13 @@ export default function ChatView(props: ChatViewProps) {
                               threadId: activeThread.id,
                               messageId: editingMessage.message.id,
                               expectedText: editingMessage.message.text,
-                              text,
+                              text: appendVoiceFileContext(
+                                text,
+                                reconcileVoiceFileReferences(
+                                  text,
+                                  extractVoiceFileContext(editingMessage.message.text).references,
+                                ),
+                              ),
                             },
                           });
                           if (result._tag === "Failure") throw squashAtomCommandFailure(result);
@@ -8307,7 +8383,7 @@ export default function ChatView(props: ChatViewProps) {
                   environmentId: activeThread.environmentId,
                   threadId: activeThread.id,
                   message,
-                  draftRef: { current: message.text },
+                  draftRef: { current: extractVoiceFileContext(message.text).text },
                 });
             },
           }
@@ -8595,6 +8671,20 @@ export default function ChatView(props: ChatViewProps) {
         environmentId={activeThread.environmentId}
         projectId={activeProject.id}
         threadId={activeThread.id}
+        projectIndexingVersion={serverConfig?.environment.capabilities.projectIndexingVersion}
+        projectIndexingApi={bindProjectIndexApi(activeThread.environmentId)}
+        onOpenProjectIndexingSettings={() =>
+          void navigate({
+            to: "/settings/projects",
+            search: {
+              project: deriveLogicalProjectKeyFromSettings(activeProject, projectGroupingSettings),
+              machine: activeThread.environmentId,
+              indexing: activeProject.id,
+            },
+            hash: "project-indexing-enabled",
+            hashScrollIntoView: false,
+          })
+        }
         {...(serverConfig?.environment.capabilities.knowledgeGraphVersion === undefined
           ? {}
           : { knowledgeGraphVersion: serverConfig.environment.capabilities.knowledgeGraphVersion })}
@@ -8729,6 +8819,23 @@ export default function ChatView(props: ChatViewProps) {
       ? (activePlan?.turnId ?? null)
       : null;
 
+  let projectIndexStatusControl: React.ReactNode = null;
+  if (isServerThread && activeProject) {
+    const indexingVersion = serverConfig?.environment.capabilities.projectIndexingVersion ?? 0;
+    if (indexingVersion >= 3) {
+      projectIndexStatusControl = (
+        <ProjectIndexActivitySummary
+          current={{
+            environmentId: activeThread.environmentId,
+            projectId: activeProject.id,
+            threadId: activeThread.id,
+          }}
+          projectLabel={activeProject.title}
+        />
+      );
+    }
+  }
+
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden window-surface bg-background">
       {routeKind === "draft" && draftId && activeProject && !threadHasStarted(activeThread) ? (
@@ -8771,6 +8878,7 @@ export default function ChatView(props: ChatViewProps) {
             {...(routeKind === "draft" && draftId ? { draftId } : {})}
             activeThreadTitle={activeThread.title}
             isServerThread={isServerThread}
+            projectIndexStatusControl={projectIndexStatusControl}
             transcriptCopyButton={
               isServerThread && supportsAgentWorkflowExtensions ? (
                 <ChatTranscriptCopyButton
@@ -8878,7 +8986,7 @@ export default function ChatView(props: ChatViewProps) {
                 onCiteAssistantText={citeAssistantText}
                 agentPanelModel={agentPanelModel}
                 onOpenAgents={addAgentsSurface}
-                key={activeThread.id}
+                key={routeThreadKey}
                 isWorking={isWorking}
                 isPreparingWorktree={isPreparingWorktree}
                 isCompacting={isCompacting}
@@ -9337,7 +9445,7 @@ export default function ChatView(props: ChatViewProps) {
           agentsAvailable={nativeSubagentDisplay}
           knowledgeGraphAvailable={knowledgeGraphAvailable}
           onAddKnowledgeGraph={() => {
-            if (activeThreadRef)
+            if (activeThreadRef && knowledgeGraphAvailable)
               useRightPanelStore.getState().open(activeThreadRef, "knowledge-graph");
           }}
           liveAgentCount={nativeSubagentDisplay ? agentPanelModel.liveCount : 0}
@@ -9392,7 +9500,7 @@ export default function ChatView(props: ChatViewProps) {
             agentsAvailable={nativeSubagentDisplay}
             knowledgeGraphAvailable={knowledgeGraphAvailable}
             onAddKnowledgeGraph={() => {
-              if (activeThreadRef)
+              if (activeThreadRef && knowledgeGraphAvailable)
                 useRightPanelStore.getState().open(activeThreadRef, "knowledge-graph");
             }}
             liveAgentCount={nativeSubagentDisplay ? agentPanelModel.liveCount : 0}

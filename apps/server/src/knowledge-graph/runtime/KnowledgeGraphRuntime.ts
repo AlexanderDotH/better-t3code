@@ -3,7 +3,6 @@ import {
   KnowledgeGraphOperationError,
   type KnowledgeGraphScopeId,
   type KnowledgeGraphScopeV1,
-  type ModelSelection,
   resolveBetterT3FeatureFlag,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -18,17 +17,13 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as ServerSettings from "../../serverSettings.ts";
-import * as TextGeneration from "../../textGeneration/TextGeneration.ts";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
 import * as KnowledgeGraphRepository from "../persistence/KnowledgeGraphRepository.ts";
-import * as KnowledgeGraphSemanticQueueRepository from "../persistence/KnowledgeGraphSemanticQueueRepository.ts";
-import * as KnowledgeGraphSemanticWorker from "../semantic/KnowledgeGraphSemanticWorker.ts";
 import * as KnowledgeGraphEventHub from "./KnowledgeGraphEventHub.ts";
 import * as KnowledgeGraphIndexer from "./KnowledgeGraphIndexer.ts";
 import { makeKnowledgeGraphRuntimeQueries } from "./KnowledgeGraphRuntimeQueries.ts";
 import * as KnowledgeGraphScopeCatalog from "./KnowledgeGraphScopeCatalog.ts";
-import { makeKnowledgeGraphSemanticRuntime } from "./KnowledgeGraphSemanticRuntime.ts";
 import * as KnowledgeGraphWatcherMultiplexer from "./KnowledgeGraphWatcherMultiplexer.ts";
 import { graphError, KnowledgeGraphRuntime } from "./KnowledgeGraphRuntimeService.ts";
 
@@ -55,15 +50,11 @@ function isScopeCatalogEvent(type: string): boolean {
 export const makeKnowledgeGraphRuntime = Effect.gen(function* () {
   const parentScope = yield* Scope.Scope;
   const repository = yield* KnowledgeGraphRepository.KnowledgeGraphRepository;
-  const semanticQueue =
-    yield* KnowledgeGraphSemanticQueueRepository.KnowledgeGraphSemanticQueueRepository;
-  const semanticWorker = yield* KnowledgeGraphSemanticWorker.KnowledgeGraphSemanticWorker;
   const catalog = yield* KnowledgeGraphScopeCatalog.KnowledgeGraphScopeCatalog;
   const watcher = yield* KnowledgeGraphWatcherMultiplexer.KnowledgeGraphWatcherMultiplexer;
   const indexer = yield* KnowledgeGraphIndexer.KnowledgeGraphIndexer;
   const eventHub = yield* KnowledgeGraphEventHub.KnowledgeGraphEventHub;
   const settings = yield* ServerSettings.ServerSettingsService;
-  const textGeneration = yield* TextGeneration.TextGeneration;
   const workspaceFiles = yield* WorkspaceFileSystem.WorkspaceFileSystem;
   const orchestration = yield* OrchestrationEngine.OrchestrationEngineService;
   const enabled = yield* Ref.make(false);
@@ -72,20 +63,6 @@ export const makeKnowledgeGraphRuntime = Effect.gen(function* () {
   const indexes = yield* Ref.make(new Map<KnowledgeGraphScopeId, IndexRegistration>());
   const indexRegistrationSemaphore = yield* Semaphore.make(1);
   const indexingSemaphore = yield* Semaphore.make(1);
-  const semanticRuntime = yield* makeKnowledgeGraphSemanticRuntime({
-    repository,
-    semanticQueue,
-    semanticWorker,
-    publish: eventHub.publish,
-    enrich: (request, modelSelection) =>
-      textGeneration
-        .enrichKnowledgeGraph({ request, modelSelection })
-        .pipe(
-          Effect.mapError(
-            KnowledgeGraphSemanticWorker.knowledgeGraphSemanticModelErrorFromTextGeneration,
-          ),
-        ),
-  });
 
   const mapPersistenceError = (operation: string, scopeId?: KnowledgeGraphScopeId) =>
     Effect.mapError(() =>
@@ -181,10 +158,6 @@ export const makeKnowledgeGraphRuntime = Effect.gen(function* () {
       return;
     }
     const value = committed.value;
-    yield* semanticRuntime.enqueueChangedNodes({
-      scope,
-      changedNodeIds: value.changedNodes.map(({ node }) => node.nodeId),
-    });
     if (value.delivery === "patch") {
       yield* eventHub.publish(value.patch);
       return;
@@ -469,29 +442,14 @@ export const makeKnowledgeGraphRuntime = Effect.gen(function* () {
         ),
       { discard: true },
     );
-    const currentSettings = yield* settings.getSettings.pipe(
-      Effect.mapError(() =>
-        graphError({
-          operation: "semantic-model",
-          code: "persistence",
-          retryable: true,
-          detail: "Knowledge Graph model settings could not be read.",
-        }),
-      ),
-    );
-    yield* semanticRuntime.reconcileSelection({
-      environmentId,
-      modelSelection: currentSettings.knowledgeGraphModelSelection,
-      scopes,
-    });
   });
 
   const deactivate = Effect.gen(function* () {
     yield* Ref.set(enabled, false);
     yield* watcher.clear;
     yield* cancelAllIndexes;
-    yield* semanticRuntime.stopAll;
     const environmentId = yield* resolveEnvironmentId("deactivate");
+    const keepPaused = yield* Ref.get(paused);
     const scopes = yield* repository.listScopes(environmentId);
     yield* Effect.forEach(
       scopes,
@@ -502,7 +460,7 @@ export const makeKnowledgeGraphRuntime = Effect.gen(function* () {
               onNone: () => Effect.void,
               onSome: (status) =>
                 repository
-                  .updateStatus({ ...status, state: "disabled" })
+                  .updateStatus({ ...status, state: keepPaused ? "paused" : "disabled" })
                   .pipe(Effect.andThen(publishStatus(scope.scopeId))),
             }),
           ),
@@ -539,54 +497,8 @@ export const makeKnowledgeGraphRuntime = Effect.gen(function* () {
   )(function* (input) {
     const scope = yield* resolveScope(input.scope);
     yield* requireEnabled("rebuild", scope.scopeId);
-    if (input.mode === "semantic") {
-      yield* semanticRuntime.rebuildScope({
-        scope,
-        start: !(yield* Ref.get(paused)),
-      });
-      const status = yield* repository
-        .getStatus(scope.scopeId)
-        .pipe(mapPersistenceError("rebuild", scope.scopeId));
-      return {
-        version: 1,
-        accepted: true,
-        ...(Option.isSome(status) ? { status: status.value } : {}),
-      };
-    }
-    if (input.mode === "full") {
-      const previous = yield* repository
-        .getStatus(scope.scopeId)
-        .pipe(mapPersistenceError("rebuild", scope.scopeId));
-      yield* cancelIndex(scope.scopeId);
-      yield* semanticRuntime.stopEnvironment(scope.environmentId);
-      yield* semanticQueue.clearScope(scope.scopeId).pipe(
-        Effect.mapError(() =>
-          graphError({
-            operation: "rebuild",
-            code: "persistence",
-            retryable: true,
-            detail: "The semantic queue could not be cleared.",
-            scopeId: scope.scopeId,
-          }),
-        ),
-      );
-      yield* repository
-        .clearScope(scope.scopeId)
-        .pipe(mapPersistenceError("rebuild", scope.scopeId));
-      yield* repository.ensureScope(scope).pipe(mapPersistenceError("rebuild", scope.scopeId));
-      yield* eventHub.publish({
-        version: 1,
-        type: "invalidate",
-        scopeId: scope.scopeId,
-        reason: "rebuild",
-        expectedRevision: Option.isSome(previous) ? previous.value.revision : 0,
-        availableRevision: 0,
-      });
-    }
+    // Old clients may still send `semantic`; every mode now refreshes source facts.
     yield* scheduleIndex(scope);
-    if (!(yield* Ref.get(paused))) {
-      yield* semanticRuntime.startEnvironment(scope.environmentId);
-    }
     const status = yield* repository
       .getStatus(scope.scopeId)
       .pipe(mapPersistenceError("rebuild", scope.scopeId));
@@ -603,18 +515,6 @@ export const makeKnowledgeGraphRuntime = Effect.gen(function* () {
     const scope = yield* resolveScope(input);
     yield* requireEnabled("cancel", scope.scopeId);
     yield* cancelIndex(scope.scopeId);
-    yield* semanticRuntime.stopEnvironment(scope.environmentId);
-    yield* semanticQueue.cancelScope(scope.scopeId).pipe(
-      Effect.mapError(() =>
-        graphError({
-          operation: "cancel",
-          code: "persistence",
-          retryable: true,
-          detail: "Owned semantic work could not be cancelled.",
-          scopeId: scope.scopeId,
-        }),
-      ),
-    );
     const status = yield* repository
       .getStatus(scope.scopeId)
       .pipe(mapPersistenceError("cancel", scope.scopeId));
@@ -626,12 +526,9 @@ export const makeKnowledgeGraphRuntime = Effect.gen(function* () {
         ...settled
       } = status.value;
       yield* repository
-        .updateStatus({ ...settled, state: "idle" })
+        .updateStatus({ ...settled, state: (yield* Ref.get(paused)) ? "paused" : "idle" })
         .pipe(mapPersistenceError("cancel", scope.scopeId));
       yield* publishStatus(scope.scopeId);
-    }
-    if (!(yield* Ref.get(paused))) {
-      yield* semanticRuntime.startEnvironment(scope.environmentId);
     }
     const current = yield* repository
       .getStatus(scope.scopeId)
@@ -693,10 +590,8 @@ export const makeKnowledgeGraphRuntime = Effect.gen(function* () {
         yield* Ref.set(paused, true);
         yield* watcher.clear;
         yield* cancelAllIndexes;
-        yield* semanticRuntime.pauseEnvironment(scope.environmentId);
         yield* setScopesState(scope.environmentId, "paused");
       } else {
-        yield* semanticRuntime.resumeEnvironment(scope.environmentId);
         yield* Ref.set(paused, false);
         yield* setScopesState(scope.environmentId, "idle");
         yield* reconcileKnownScopes(true);
@@ -720,18 +615,6 @@ export const makeKnowledgeGraphRuntime = Effect.gen(function* () {
           .getStatus(scope.scopeId)
           .pipe(mapPersistenceError("clear", scope.scopeId));
         yield* cancelIndex(scope.scopeId);
-        yield* semanticRuntime.stopEnvironment(scope.environmentId);
-        yield* semanticQueue.clearScope(scope.scopeId).pipe(
-          Effect.mapError(() =>
-            graphError({
-              operation: "clear",
-              code: "persistence",
-              retryable: true,
-              detail: "The semantic queue could not be cleared.",
-              scopeId: scope.scopeId,
-            }),
-          ),
-        );
         yield* repository
           .clearScope(scope.scopeId)
           .pipe(mapPersistenceError("clear", scope.scopeId));
@@ -743,9 +626,6 @@ export const makeKnowledgeGraphRuntime = Effect.gen(function* () {
           expectedRevision: Option.isSome(previous) ? previous.value.revision : 0,
           availableRevision: 0,
         });
-        if ((yield* Ref.get(enabled)) && !(yield* Ref.get(paused))) {
-          yield* semanticRuntime.startEnvironment(scope.environmentId);
-        }
         return { version: 1, accepted: true };
       }
       const environmentId = yield* resolveEnvironmentId("clear");
@@ -762,23 +642,6 @@ export const makeKnowledgeGraphRuntime = Effect.gen(function* () {
         ),
       );
       yield* cancelAllIndexes;
-      yield* semanticRuntime.stopEnvironment(environmentId);
-      yield* Effect.forEach(
-        persisted,
-        (scope) =>
-          semanticQueue.clearScope(scope.scopeId).pipe(
-            Effect.mapError(() =>
-              graphError({
-                operation: "clear",
-                code: "persistence",
-                retryable: true,
-                detail: "The semantic queue could not be cleared.",
-                scopeId: scope.scopeId,
-              }),
-            ),
-          ),
-        { discard: true },
-      );
       yield* repository.clearEnvironment(environmentId).pipe(mapPersistenceError("clear"));
       yield* Effect.forEach(
         invalidations,
@@ -797,41 +660,13 @@ export const makeKnowledgeGraphRuntime = Effect.gen(function* () {
     },
   );
 
-  const reconcileSemanticSettings = Effect.fn("KnowledgeGraphRuntime.reconcileSemanticSettings")(
-    function* (next: { readonly knowledgeGraphModelSelection: ModelSelection | null }) {
-      if (!(yield* Ref.get(enabled)) || (yield* Ref.get(paused))) return;
-      const scopes = yield* catalog.listKnownScopes().pipe(
-        Effect.mapError(() =>
-          graphError({
-            operation: "semantic-model",
-            code: "scope-not-found",
-            retryable: true,
-            detail: "Registered graph scopes could not be resolved after a model change.",
-          }),
-        ),
-      );
-      const environmentId = yield* resolveEnvironmentId("semantic-model");
-      yield* semanticRuntime.reconcileSelection({
-        environmentId,
-        modelSelection: next.knowledgeGraphModelSelection,
-        scopes,
-      });
-    },
-  );
-
   yield* Effect.addFinalizer(() =>
     Ref.set(enabled, false).pipe(
       Effect.andThen(watcher.clear),
       Effect.andThen(cancelAllIndexes),
-      Effect.andThen(semanticRuntime.stopAll),
       Effect.catchCause((cause) =>
         Effect.logWarning("Knowledge Graph shutdown recovery failed", { cause }),
       ),
-    ),
-  );
-  yield* semanticWorker.recover.pipe(
-    Effect.catchCause((cause) =>
-      Effect.logWarning("Knowledge Graph semantic recovery failed", { cause }),
     ),
   );
   const initialSettings = yield* settings.getSettings;
@@ -842,17 +677,17 @@ export const makeKnowledgeGraphRuntime = Effect.gen(function* () {
   yield* Ref.set(enabled, initialEnabled);
   if (initialEnabled) {
     const environmentId = yield* resolveEnvironmentId("startup");
-    const queueStatus = yield* semanticQueue.getStatus(environmentId).pipe(
-      Effect.orElseSucceed(() => ({
-        environmentId,
-        queuedCount: 0,
-        runningCount: 0,
-        paused: false,
-        rateLimitedUntil: null,
-      })),
+    const persistedScopes = yield* repository
+      .listScopes(environmentId)
+      .pipe(mapPersistenceError("startup"));
+    const persistedStatuses = yield* Effect.forEach(persistedScopes, (scope) =>
+      repository.getStatus(scope.scopeId).pipe(mapPersistenceError("startup", scope.scopeId)),
     );
-    yield* Ref.set(paused, queueStatus.paused);
-    if (queueStatus.paused) {
+    const wasPaused = persistedStatuses.some(
+      (status) => Option.isSome(status) && status.value.state === "paused",
+    );
+    yield* Ref.set(paused, wasPaused);
+    if (wasPaused) {
       yield* setScopesState(environmentId, "paused").pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("Knowledge Graph paused status recovery failed", { cause }),
@@ -871,7 +706,6 @@ export const makeKnowledgeGraphRuntime = Effect.gen(function* () {
       applyEnabledSetting(
         resolveBetterT3FeatureFlag(next.betterT3Environment, "knowledge.graph"),
       ).pipe(
-        Effect.andThen(reconcileSemanticSettings(next)),
         Effect.catchCause((cause) =>
           Effect.logWarning("Knowledge Graph setting reconciliation failed", { cause }),
         ),

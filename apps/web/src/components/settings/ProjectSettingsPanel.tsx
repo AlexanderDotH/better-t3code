@@ -117,6 +117,7 @@ import {
 import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
 import { ProjectCheckpointControls } from "./ProjectCheckpointControls";
 import { ProjectMemorySettingsController } from "./ProjectMemorySettingsController";
+import { ProjectIndexingProjectSettings } from "../project-indexing/ProjectIndexingSettingsSection";
 import {
   resolveProjectCheckpointSetting,
   runExclusiveProjectGroupUpdate,
@@ -167,9 +168,11 @@ function memberKey(member: { environmentId: string; id: string }): string {
 export function ProjectSettingsPanel({
   projectKey,
   environmentId = null,
+  indexingProjectId,
 }: {
   projectKey: string;
   environmentId?: EnvironmentId | null;
+  indexingProjectId?: string | undefined;
 }) {
   const groups = useSettingsProjectGroups();
   const navigate = useNavigate();
@@ -241,9 +244,10 @@ export function ProjectSettingsPanel({
   };
   return (
     <ProjectDetail
-      key={`${selected.projectKey}:${environmentId ?? "all"}`}
+      key={`${selected.projectKey}:${environmentId ?? "all"}:${indexingProjectId ?? ""}`}
       group={scopedGroup}
       hasOtherMembers={members.length < selected.memberProjects.length}
+      indexingProjectId={indexingProjectId}
     />
   );
 }
@@ -391,9 +395,11 @@ export function useProjectScriptSettings(
 function ProjectDetail({
   group,
   hasOtherMembers,
+  indexingProjectId,
 }: {
   group: SidebarProjectSnapshot;
   hasOtherMembers: boolean;
+  indexingProjectId?: string | undefined;
 }) {
   const navigate = useNavigate();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -747,7 +753,12 @@ function ProjectDetail({
 
   // ----- checkout selection and scripts -----
   const hasMultipleCheckouts = group.memberProjects.length > 1;
-  const [selectedCheckoutKey, setSelectedCheckoutKey] = useState<string | null>(null);
+  const indexingCheckoutKey = group.memberProjects.find(
+    (member) => member.id === indexingProjectId,
+  )?.physicalProjectKey;
+  const [selectedCheckoutKey, setSelectedCheckoutKey] = useState<string | null>(
+    indexingCheckoutKey ?? null,
+  );
   const selectedCheckoutMatch = group.memberProjects.find(
     (member) => member.physicalProjectKey === selectedCheckoutKey,
   );
@@ -1466,6 +1477,11 @@ function ProjectDetail({
         <ProjectMemorySettingsController
           key={`${selectedCheckout.environmentId}:${selectedCheckout.id}`}
           project={selectedCheckout}
+        />
+
+        <ProjectIndexingProjectSettings
+          environmentId={selectedCheckout.environmentId}
+          projectId={selectedCheckout.id}
         />
 
         <SettingsSection title="Danger">

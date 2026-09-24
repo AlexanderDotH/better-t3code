@@ -11,17 +11,32 @@ export function NativeVoiceDictationControl(props: {
   readonly onStart: () => void | Promise<void>;
   readonly onStop: () => void | Promise<void>;
   readonly onCancel: () => void;
+  readonly canRestoreOriginal?: boolean;
+  readonly onRestoreOriginal?: () => void;
 }) {
   const translator = useMobileInterfaceTranslator();
   if (props.state === "idle") {
     return (
-      <ComposerToolbarButton
-        accessibilityLabel={translator.message("mobile.thread.voiceStart")}
-        disabled={props.disabled}
-        icon="mic"
-        onPress={() => void props.onStart()}
-        showChevron={false}
-      />
+      <>
+        {props.canRestoreOriginal ? (
+          <ComposerToolbarButton
+            accessibilityLabel={translator.message("chat.composer.voiceRestoreOriginal")}
+            disabled={props.disabled}
+            icon="arrow.uturn.backward"
+            label={translator.message("chat.composer.voiceRestoreOriginal")}
+            maxWidth={132}
+            onPress={() => props.onRestoreOriginal?.()}
+            showChevron={false}
+          />
+        ) : null}
+        <ComposerToolbarButton
+          accessibilityLabel={translator.message("mobile.thread.voiceStart")}
+          disabled={props.disabled}
+          icon="mic"
+          onPress={() => void props.onStart()}
+          showChevron={false}
+        />
+      </>
     );
   }
 
@@ -30,18 +45,17 @@ export function NativeVoiceDictationControl(props: {
     props.state === "starting"
       ? translator.message("mobile.thread.voiceConnecting")
       : props.state === "stopping"
-        ? translator.message("mobile.thread.voiceStopping")
+        ? translator.message("chat.composer.voiceProcessing")
         : peak > 0.35
           ? translator.message("mobile.thread.voiceListening")
           : translator.message("mobile.thread.voiceSpeak");
   return (
     <ComposerToolbarButton
       accessibilityLabel={
-        props.state === "starting"
+        props.state === "starting" || props.state === "stopping"
           ? translator.message("mobile.thread.voiceCancel")
           : translator.message("mobile.thread.voiceStop")
       }
-      disabled={props.state === "stopping"}
       icon={props.state === "recording" ? "stop.fill" : undefined}
       iconNode={
         props.state === "starting" || props.state === "stopping" ? (
@@ -52,7 +66,7 @@ export function NativeVoiceDictationControl(props: {
       }
       label={label}
       maxWidth={132}
-      onPress={() => (props.state === "starting" ? props.onCancel() : void props.onStop())}
+      onPress={() => (props.state === "recording" ? void props.onStop() : props.onCancel())}
       showChevron={false}
       variant="danger"
     />

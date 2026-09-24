@@ -8,7 +8,10 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
-import { isIgnoredProjectSpeechDirectoryName } from "./ProjectSpeechPathPolicy.ts";
+import {
+  isIgnoredProjectSpeechDirectoryName,
+  isIgnoredProjectSpeechPath,
+} from "./ProjectSpeechPathPolicy.ts";
 
 const DEFAULT_ENTRY_LIMIT = 25_000;
 
@@ -96,16 +99,16 @@ export const make = (
           if (entry.isSymbolicLink()) continue;
           if (entry.isDirectory() && isIgnoredProjectSpeechDirectoryName(entry.name)) continue;
           if (!entry.isDirectory() && !entry.isFile()) continue;
-          if (entries.length === entryLimit) {
-            truncated = true;
-            break;
-          }
-
           const relativePath = normalizeRelativePath(
             directory.relativePath.length === 0
               ? entry.name
               : path.join(directory.relativePath, entry.name),
           );
+          if (isIgnoredProjectSpeechPath(relativePath)) continue;
+          if (entries.length === entryLimit) {
+            truncated = true;
+            break;
+          }
           if (entry.isDirectory()) {
             entries.push({ path: relativePath, kind: "directory" });
             pendingDirectories.push({

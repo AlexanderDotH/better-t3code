@@ -1,8 +1,12 @@
 import {
   KnowledgeGraphEvidenceId,
-  KnowledgeGraphModelGeneration,
+  KnowledgeGraphEdgeV1,
+  KnowledgeGraphEdgeId,
   KnowledgeGraphNodeId,
+  KnowledgeGraphNodeV1,
+  KnowledgeGraphPatchV1,
   KnowledgeGraphScopeId,
+  KnowledgeGraphStatusV1,
   ProjectId,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -26,6 +30,10 @@ const migratedSqlite = Layer.effectDiscard(Migration0059).pipe(
 const layer = KnowledgeGraphRepositoryLive.pipe(Layer.provideMerge(migratedSqlite));
 
 const decodeDeterministicPatch = Schema.decodeUnknownSync(KnowledgeGraphDeterministicPatchV1);
+const encodeEdgeJson = Schema.encodeSync(Schema.fromJsonString(KnowledgeGraphEdgeV1));
+const encodeNodeJson = Schema.encodeSync(Schema.fromJsonString(KnowledgeGraphNodeV1));
+const encodePatchJson = Schema.encodeSync(Schema.fromJsonString(KnowledgeGraphPatchV1));
+const encodeStatusJson = Schema.encodeSync(Schema.fromJsonString(KnowledgeGraphStatusV1));
 
 const scope = Schema.decodeUnknownSync(KnowledgeGraphScopeV1)({
   version: 1,
@@ -753,43 +761,163 @@ it.layer(layer)("KnowledgeGraphRepository", (it) => {
     }),
   );
 
-  it.effect("keeps one restart-stable semantic model generation per environment", () =>
+  it.effect("hides legacy model facts and clears them only with a committed source revision", () =>
     Effect.gen(function* () {
       const repository = yield* KnowledgeGraphRepository;
+      const sql = yield* SqlClient.SqlClient;
+      const legacyScope = {
+        ...scope,
+        scopeId: KnowledgeGraphScopeId.make("scope-legacy-semantic"),
+        effectiveWorkspaceRoot: "/workspace/legacy-semantic",
+      };
+      const initialPatch = decodeDeterministicPatch({
+        ...patch,
+        scope: legacyScope,
+        nodes: patch.nodes.map((node) => ({ ...node, scopeId: legacyScope.scopeId })),
+      });
+      const initialCommit = yield* repository.applyDeterministicPatch(initialPatch);
+      const semanticNode = {
+        ...initialPatch.nodes[0]!,
+        nodeId: KnowledgeGraphNodeId.make("semantic-generated-node"),
+        label: "Model-written component",
+        provenance: "semantic" as const,
+      };
+      yield* sql`
+        INSERT INTO knowledge_graph_nodes (
+          scope_id, node_id, kind, label, source_path, source_start_line,
+          source_end_line, source_symbol, summary, language, provenance,
+          confidence, node_revision, node_json
+        ) VALUES (
+          ${legacyScope.scopeId}, ${semanticNode.nodeId}, ${semanticNode.kind},
+          ${semanticNode.label}, NULL, NULL, NULL, NULL, NULL, NULL,
+          ${semanticNode.provenance}, ${semanticNode.confidence},
+          ${semanticNode.nodeRevision}, ${encodeNodeJson(semanticNode)}
+        )
+      `;
+      const semanticEdge = {
+        version: 1 as const,
+        edgeId: KnowledgeGraphEdgeId.make("semantic:node-file:relates-to:node-file"),
+        scopeId: legacyScope.scopeId,
+        kind: "relates-to" as const,
+        sourceNodeId: KnowledgeGraphNodeId.make("node-file"),
+        targetNodeId: KnowledgeGraphNodeId.make("node-file"),
+        summary: "Model-written relationship",
+        provenance: "semantic" as const,
+        confidence: 0.6,
+        evidenceIds: [],
+        edgeRevision: 1,
+      };
+      yield* sql`
+        INSERT INTO knowledge_graph_edges (
+          scope_id, edge_id, kind, source_node_id, target_node_id,
+          provenance, confidence, edge_revision, edge_json
+        ) VALUES (
+          ${legacyScope.scopeId}, ${semanticEdge.edgeId}, ${semanticEdge.kind},
+          ${semanticEdge.sourceNodeId}, ${semanticEdge.targetNodeId},
+          ${semanticEdge.provenance}, ${semanticEdge.confidence},
+          ${semanticEdge.edgeRevision}, ${encodeEdgeJson(semanticEdge)}
+        )
+      `;
+      yield* sql`
+        UPDATE knowledge_graph_patch_log SET patch_json = ${encodePatchJson({
+          ...initialCommit.patch,
+          upsertedEdges: [semanticEdge],
+        })}
+        WHERE scope_id = ${legacyScope.scopeId} AND revision = 1
+      `;
+      yield* sql`
+        UPDATE knowledge_graph_scopes SET status_json = ${encodeStatusJson({
+          ...initialCommit.patch.status,
+          state: "semantic",
+          edgeCount: 1,
+          nodeCount: 2,
+          semanticQueueDepth: 1,
+          progress: {
+            version: 1,
+            phase: "semantic",
+            discoveredFileCount: 1,
+            processedFileCount: 1,
+            queuedSemanticNodeCount: 1,
+          },
+        })}
+        WHERE scope_id = ${legacyScope.scopeId}
+      `;
+      const before = Option.getOrThrow(yield* repository.getSnapshot(legacyScope.scopeId));
+      const search = yield* repository.query({
+        scopeId: legacyScope.scopeId,
+        query: { queries: [{ id: "search", type: "search", text: "index" }] },
+      });
+      const neighbors = yield* repository.query({
+        scopeId: legacyScope.scopeId,
+        query: {
+          queries: [
+            { id: "neighbors", type: "neighbors", nodeId: semanticEdge.sourceNodeId, depth: 1 },
+          ],
+        },
+      });
+      const oldPatches = yield* repository.listPatchesAfter({
+        scopeId: legacyScope.scopeId,
+        afterRevision: 0,
+      });
+      assert.deepStrictEqual(before.edges, []);
+      assert.equal(before.nodes.length, 1);
+      assert.equal(before.status.edgeCount, 0);
+      assert.equal(before.status.nodeCount, 1);
+      assert.equal(before.status.state, "ready");
+      assert.equal(before.status.semanticQueueDepth, 0);
+      assert.isUndefined(before.status.progress);
+      assert.equal(search.results[0]?.edges.length, 0);
+      assert.equal(neighbors.results[0]?.edges.length, 0);
+      assert.isTrue(
+        Option.isNone(
+          yield* repository.getNodeBundle({
+            scopeId: legacyScope.scopeId,
+            nodeId: semanticNode.nodeId,
+          }),
+        ),
+      );
+      assert.deepStrictEqual(oldPatches, []);
+      assert.isTrue(
+        Option.getOrThrow(yield* repository.getDeterministicState(legacyScope.scopeId))
+          .hasLegacySemanticData,
+      );
 
-      const initial = yield* repository.reconcileSemanticModel({
-        environmentId: scope.environmentId,
-        modelKey: null,
-      });
-      const selected = yield* repository.reconcileSemanticModel({
-        environmentId: scope.environmentId,
-        modelKey: "openai:gpt-5.6",
-      });
-      const restarted = yield* repository.reconcileSemanticModel({
-        environmentId: scope.environmentId,
-        modelKey: "openai:gpt-5.6",
-      });
-      const changed = yield* repository.reconcileSemanticModel({
-        environmentId: scope.environmentId,
-        modelKey: "openai:gpt-5.7",
-      });
+      const stale = yield* Effect.flip(repository.applyDeterministicPatch(initialPatch));
+      assert.equal(stale.reason, "revision-conflict");
+      const storedBeforeCommit = yield* sql<{ readonly count: number }>`
+        SELECT count(*) AS count FROM knowledge_graph_edges
+        WHERE scope_id = ${legacyScope.scopeId} AND provenance = 'semantic'
+      `;
+      assert.equal(storedBeforeCommit[0]?.count, 1);
 
-      assert.deepStrictEqual(initial, {
-        modelGeneration: KnowledgeGraphModelGeneration.make(0),
-        changed: false,
-      });
-      assert.deepStrictEqual(selected, {
-        modelGeneration: KnowledgeGraphModelGeneration.make(1),
-        changed: true,
-      });
-      assert.deepStrictEqual(restarted, {
-        modelGeneration: KnowledgeGraphModelGeneration.make(1),
-        changed: false,
-      });
-      assert.deepStrictEqual(changed, {
-        modelGeneration: KnowledgeGraphModelGeneration.make(2),
-        changed: true,
-      });
+      const rebuilt = yield* repository.applyDeterministicPatch(
+        decodeDeterministicPatch({
+          ...initialPatch,
+          baseRevision: 1,
+          nodes: [],
+          changedNodeIds: [],
+          committedAt: "2026-08-29T10:01:00.000Z",
+        }),
+      );
+      assert.equal(rebuilt.delivery, "invalidate");
+      const storedAfterCommit = yield* sql<{ readonly count: number }>`
+        SELECT count(*) AS count FROM knowledge_graph_edges
+        WHERE scope_id = ${legacyScope.scopeId} AND provenance = 'semantic'
+      `;
+      assert.equal(storedAfterCommit[0]?.count, 0);
+      const storedNodesAfterCommit = yield* sql<{ readonly count: number }>`
+        SELECT count(*) AS count FROM knowledge_graph_nodes
+        WHERE scope_id = ${legacyScope.scopeId} AND provenance = 'semantic'
+      `;
+      assert.equal(storedNodesAfterCommit[0]?.count, 0);
+      assert.deepStrictEqual(
+        yield* repository.listPatchesAfter({ scopeId: legacyScope.scopeId, afterRevision: 0 }),
+        [],
+      );
+      assert.isFalse(
+        Option.getOrThrow(yield* repository.getDeterministicState(legacyScope.scopeId))
+          .hasLegacySemanticData,
+      );
     }),
   );
 });

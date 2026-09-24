@@ -37,6 +37,10 @@ import {
   parseRemoteRefWithRemoteNames,
 } from "../git/remoteRefs.ts";
 import { ServerConfig } from "../config.ts";
+import {
+  assertPublicProjectPaths,
+  PRIVATE_PROJECT_GIT_PATHSPECS,
+} from "../projectIndexing/privacy/WorkspacePrivacy.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 // `git worktree add` checks out the full tree, so on large repositories it can
@@ -1872,18 +1876,73 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       })),
     );
 
+  const assertPublicCommitPaths = Effect.fn("GitVcsDriver.assertPublicCommitPaths")(function* (
+    cwd: string,
+    paths: ReadonlyArray<string>,
+  ) {
+    yield* Effect.try({
+      try: () => assertPublicProjectPaths(paths),
+      catch: () =>
+        new GitCommandError({
+          operation: "GitVcsDriver.assertPublicCommitPaths",
+          command: "git",
+          cwd,
+          detail: "Private .t3 data cannot be staged or committed.",
+        }),
+    });
+  });
+
+  const assertPublicStagedChanges = Effect.fn("GitVcsDriver.assertPublicStagedChanges")(function* (
+    cwd: string,
+  ) {
+    const staged = yield* executeGit(
+      "GitVcsDriver.assertPublicStagedChanges",
+      cwd,
+      ["diff", "--cached", "--name-only", "-z", "--no-renames"],
+      { appendTruncationMarker: false },
+    );
+    if (staged.stdoutTruncated) {
+      return yield* new GitCommandError({
+        operation: "GitVcsDriver.assertPublicStagedChanges",
+        command: "git",
+        cwd,
+        detail: "The staged path list is too large to verify private-data exclusion.",
+      });
+    }
+    yield* assertPublicCommitPaths(cwd, splitNullSeparatedGitStdoutPaths(staged));
+  });
+
+  const stagePublicPaths = Effect.fn("GitVcsDriver.stagePublicPaths")(function* (
+    cwd: string,
+    paths: ReadonlyArray<string>,
+  ) {
+    yield* assertPublicCommitPaths(cwd, paths);
+    yield* runGit("GitVcsDriver.prepareCommitContext.addSelected", cwd, [
+      "add",
+      "-A",
+      "--",
+      ...paths.map((path) => `:(literal)${path}`),
+      ...PRIVATE_PROJECT_GIT_PATHSPECS,
+    ]);
+  });
+
   const prepareCommitContext: GitVcsDriver.GitVcsDriver["Service"]["prepareCommitContext"] =
     Effect.fn("prepareCommitContext")(function* (cwd, filePaths, commitSelection) {
+      yield* assertPublicCommitPaths(
+        cwd,
+        commitSelection?.mode === "paths" ? commitSelection.paths : (filePaths ?? []),
+      );
+      yield* assertPublicStagedChanges(cwd);
       if (commitSelection?.mode === "all") {
-        yield* runGit("GitVcsDriver.prepareCommitContext.addAll", cwd, ["add", "-A"]);
-      } else if (commitSelection?.mode === "paths") {
-        yield* runGit("GitVcsDriver.prepareCommitContext.addSelected", cwd, [
-          "--literal-pathspecs",
+        yield* runGit("GitVcsDriver.prepareCommitContext.addAll", cwd, [
           "add",
           "-A",
           "--",
-          ...commitSelection.paths,
+          ":/",
+          ...PRIVATE_PROJECT_GIT_PATHSPECS,
         ]);
+      } else if (commitSelection?.mode === "paths") {
+        yield* stagePublicPaths(cwd, commitSelection.paths);
       } else if (commitSelection?.mode === "staged") {
         // The standard-index path commits exactly what is already staged.
       } else if (filePaths && filePaths.length > 0) {
@@ -1892,16 +1951,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             GitCommandError: () => Effect.void,
           }),
         );
-        yield* runGit("GitVcsDriver.prepareCommitContext.addSelected", cwd, [
-          "--literal-pathspecs",
+        yield* stagePublicPaths(cwd, filePaths);
+      } else {
+        yield* runGit("GitVcsDriver.prepareCommitContext.addAll", cwd, [
           "add",
           "-A",
           "--",
-          ...filePaths,
+          ":/",
+          ...PRIVATE_PROJECT_GIT_PATHSPECS,
         ]);
-      } else {
-        yield* runGit("GitVcsDriver.prepareCommitContext.addAll", cwd, ["add", "-A"]);
       }
+
+      yield* assertPublicStagedChanges(cwd);
 
       const stagedSummary = yield* runGitStdout(
         "GitVcsDriver.prepareCommitContext.stagedSummary",
@@ -1934,6 +1995,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     body,
     options?: GitVcsDriver.GitCommitOptions,
   ) {
+    yield* assertPublicStagedChanges(cwd);
     const args = ["commit", "-m", subject];
     const trimmedBody = body.trim();
     if (trimmedBody.length > 0) {

@@ -1,0 +1,293 @@
+.project-index-graph {
+  --graph-space: var(--background);
+  --graph-panel: color-mix(in srgb, var(--card) 75%, transparent);
+  --graph-line: var(--border);
+  --graph-text: var(--foreground);
+  --graph-muted: var(--muted-foreground);
+  --graph-file: color-mix(in srgb, var(--primary) 65%, var(--foreground));
+  --graph-symbol: var(--primary);
+  --graph-type: var(--muted-foreground);
+  overflow: hidden;
+  border: 1px solid var(--graph-line);
+  border-radius: var(--radius-lg);
+  color: var(--graph-text);
+  background: var(--graph-space);
+  isolation: isolate;
+}
+.project-index-graph-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--graph-line);
+  background: var(--graph-panel);
+}
+.project-index-graph-toolbar button {
+  color: var(--graph-text);
+  --control-icon-color: var(--graph-muted);
+}
+.project-index-graph-toolbar button:hover {
+  background: var(--graph-line);
+}
+.project-index-graph-eyebrow {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--graph-text);
+}
+.project-index-graph-count {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--graph-muted);
+  font-variant-numeric: tabular-nums;
+}
+.project-index-graph-scale {
+  width: 38px;
+  text-align: center;
+  font: 10px var(--font-mono);
+  color: var(--graph-muted);
+}
+.project-index-graph-canvas {
+  display: block;
+  width: 100%;
+  height: clamp(320px, 48vh, 560px);
+  cursor: grab;
+  touch-action: none;
+  background: radial-gradient(
+    ellipse at 50% 48%,
+    color-mix(in srgb, var(--graph-symbol) 4%, transparent),
+    transparent 64%
+  );
+}
+.project-index-graph-canvas:active {
+  cursor: grabbing;
+}
+.project-index-graph-canvas:focus-visible {
+  outline: 2px solid var(--graph-symbol);
+  outline-offset: -3px;
+}
+.project-index-graph-grid {
+  stroke: var(--graph-line);
+  stroke-width: 1;
+}
+.project-index-graph-cluster {
+  pointer-events: none;
+}
+.project-index-graph-cluster text {
+  fill: var(--graph-muted);
+  font: 10px var(--font-mono);
+  letter-spacing: 0.03em;
+}
+.project-index-graph-edge {
+  stroke: var(--graph-symbol);
+  stroke-width: 1;
+  opacity: 0.35;
+  pointer-events: none;
+}
+.project-index-graph-edge[data-kind="contains"] {
+  stroke: var(--graph-muted);
+  stroke-dasharray: 2 4;
+  opacity: 0.45;
+}
+.project-index-graph-edge[data-kind="candidate"] {
+  stroke: var(--graph-type);
+  stroke-dasharray: 5 5;
+}
+.project-index-graph-edge[data-kind="imports"] {
+  stroke: var(--graph-file);
+}
+.project-index-graph-edge[data-highlighted="true"] {
+  stroke-width: 1.8;
+  opacity: 1;
+}
+.project-index-graph-edge[data-dimmed="true"] {
+  opacity: 0.12;
+}
+.project-index-graph-node-wrap {
+  overflow: visible;
+  pointer-events: none;
+}
+.project-index-graph-node-wrap[data-dimmed="true"] {
+  opacity: 0.28;
+}
+.project-index-graph-node {
+  --node-color: var(--graph-symbol);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  border: 0;
+  padding: 5px 0 0;
+  color: var(--graph-text);
+  background: none;
+  cursor: pointer;
+  pointer-events: auto;
+  outline: none;
+}
+.project-index-graph-node[data-kind="file"] {
+  --node-color: var(--graph-file);
+}
+.project-index-graph-node[data-kind="type"] {
+  --node-color: var(--graph-type);
+}
+.project-index-graph-node-dot {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 6px solid var(--graph-space);
+  border-radius: 50%;
+  background: var(--node-color);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--node-color) 28%, transparent),
+    0 0 12px color-mix(in srgb, var(--node-color) 12%, transparent);
+  pointer-events: auto;
+}
+.project-index-graph-node-dot svg {
+  width: 12px;
+  height: 12px;
+  color: var(--graph-space);
+  stroke-width: 2.5;
+}
+.project-index-graph-node[data-expanded="true"] .project-index-graph-node-dot {
+  box-shadow:
+    0 0 0 1px var(--node-color),
+    0 0 20px color-mix(in srgb, var(--node-color) 24%, transparent);
+}
+.project-index-graph-node[data-loading="true"] .project-index-graph-node-dot {
+  outline: 1px dashed var(--node-color);
+  outline-offset: 4px;
+}
+.project-index-graph-node[data-kind="file"] .project-index-graph-node-dot {
+  border-radius: 7px;
+}
+.project-index-graph-node[data-kind="type"] .project-index-graph-node-dot {
+  border-radius: 5px;
+  transform: rotate(45deg);
+}
+.project-index-graph-node[data-stale="true"] .project-index-graph-node-dot {
+  background: var(--graph-space);
+  border: 2px dashed var(--node-color);
+}
+.project-index-graph-node-label {
+  max-width: 132px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--graph-space) 88%, transparent);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  pointer-events: auto;
+}
+.project-index-graph-node:hover .project-index-graph-node-dot,
+.project-index-graph-node:focus-visible .project-index-graph-node-dot,
+.project-index-graph-node[aria-pressed="true"] .project-index-graph-node-dot {
+  box-shadow:
+    0 0 0 3px var(--graph-space),
+    0 0 0 4px var(--node-color),
+    0 0 22px color-mix(in srgb, var(--node-color) 40%, transparent);
+}
+.project-index-graph-node:hover .project-index-graph-node-label,
+.project-index-graph-node:focus-visible .project-index-graph-node-label,
+.project-index-graph-node[aria-pressed="true"] .project-index-graph-node-label {
+  color: var(--node-color);
+}
+.project-index-graph-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--graph-line);
+  font-size: 10px;
+  color: var(--graph-muted);
+}
+.project-index-graph-legend {
+  display: flex;
+  gap: 14px;
+}
+.project-index-graph-legend span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.project-index-graph-legend span::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--graph-symbol);
+}
+.project-index-graph-legend [data-kind="file"]::before {
+  background: var(--graph-file);
+  border-radius: 1px;
+}
+.project-index-graph-legend [data-kind="contains"]::before {
+  width: 12px;
+  height: 0;
+  border-top: 1px dashed var(--graph-muted);
+  background: none;
+}
+.project-index-graph-legend [data-kind="type"]::before {
+  background: var(--graph-type);
+  border-radius: 1px;
+  transform: rotate(45deg);
+}
+.project-index-graph-notes {
+  padding: 0 16px 12px;
+  font-size: 10px;
+  line-height: 1.6;
+  color: var(--graph-muted);
+}
+.project-index-graph-notes summary {
+  cursor: pointer;
+}
+.project-index-graph-notes p {
+  margin-top: 6px;
+}
+@media (forced-colors: active) {
+  .project-index-graph-node-dot {
+    border: 2px solid ButtonText;
+  }
+  .project-index-graph-node[aria-pressed="true"] .project-index-graph-node-label {
+    outline: 1px solid Highlight;
+  }
+  .project-index-graph-edge,
+  .project-index-graph-grid {
+    stroke: CanvasText;
+  }
+  .project-index-graph-cluster text {
+    fill: CanvasText;
+  }
+}
+
+.project-index-graph-node[data-show-label="false"] .project-index-graph-node-label {
+  visibility: hidden;
+}
+.project-index-graph-node:focus-visible .project-index-graph-node-label,
+.project-index-graph-node:hover .project-index-graph-node-label {
+  visibility: visible;
+}
+
+.project-index-graph-node[data-kind="directory"] .project-index-graph-node-dot {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  border-width: 7px;
+}
+.project-index-graph-node-count {
+  color: var(--graph-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: auto;
+}
+.project-index-graph-legend [data-kind="directory"]::before {
+  background: var(--graph-symbol);
+  border-radius: 2px;
+}

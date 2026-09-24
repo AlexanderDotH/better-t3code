@@ -262,7 +262,7 @@ export function makeOpenRouterTextGeneration(
       return { text: generated.text.trim() };
     }),
     improvePrompt: Effect.fn("OpenRouterTextGeneration.improvePrompt")(function* (input) {
-      const { prompt, outputSchema } = buildPromptImprovementPrompt({ text: input.text });
+      const { prompt, outputSchema } = buildPromptImprovementPrompt(input);
       const generated = yield* runJson({
         operation: "improvePrompt",
         prompt,
@@ -294,6 +294,5 @@ export function makeOpenRouterTextGeneration(
         });
       },
     ),
-    enrichKnowledgeGraph: TextGeneration.unsupportedKnowledgeGraphEnrichment("OpenRouter"),
   } satisfies TextGeneration.TextGeneration["Service"];
 }

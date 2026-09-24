@@ -1,5 +1,6 @@
 import { type GeminiSettings, type ModelSelection, TextGenerationError } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -10,6 +11,7 @@ import {
   resolveGeminiApiKey,
   type GeminiClientFactory,
 } from "../provider/GeminiClient.ts";
+import { resolveGeminiThinkingConfig } from "../provider/Layers/GeminiProvider.ts";
 import { buildAutoReasoningPrompt, validateAutoReasoningDecision } from "./AutoReasoning.ts";
 import {
   buildBranchNamePrompt,
@@ -81,6 +83,10 @@ export const makeGeminiTextGeneration = Effect.fn("makeGeminiTextGeneration")((
         });
       }
       const client = clientFactory(credential.apiKey);
+      const reasoningEffort =
+        getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") ??
+        getModelSelectionStringOptionValue(modelSelection, "effort");
+      const thinkingConfig = resolveGeminiThinkingConfig(reasoningEffort, modelSelection.model);
       const response = yield* Effect.tryPromise({
         try: (signal) =>
           client.models.generateContent({
@@ -91,6 +97,7 @@ export const makeGeminiTextGeneration = Effect.fn("makeGeminiTextGeneration")((
               responseMimeType: "application/json",
               responseJsonSchema: toJsonSchemaObject(outputSchemaJson),
               temperature: 0.2,
+              ...(thinkingConfig ? { thinkingConfig } : {}),
             },
           }),
         catch: (cause) =>
@@ -268,7 +275,7 @@ export const makeGeminiTextGeneration = Effect.fn("makeGeminiTextGeneration")((
   const improvePrompt: TextGeneration.TextGeneration["Service"]["improvePrompt"] = Effect.fn(
     "GeminiTextGeneration.improvePrompt",
   )(function* (input) {
-    const { prompt, outputSchema } = buildPromptImprovementPrompt({ text: input.text });
+    const { prompt, outputSchema } = buildPromptImprovementPrompt(input);
     const generated = yield* runGeminiJson({
       operation: "improvePrompt",
       cwd: input.cwd,
@@ -315,6 +322,5 @@ export const makeGeminiTextGeneration = Effect.fn("makeGeminiTextGeneration")((
     improvePrompt,
     reviewPlanParallelism,
     planFetchExploration,
-    enrichKnowledgeGraph: TextGeneration.unsupportedKnowledgeGraphEnrichment("Gemini"),
   } satisfies TextGeneration.TextGeneration["Service"]);
 });

@@ -79,6 +79,35 @@ it("keeps the hard daily budget opt-in and supports turning it off", () => {
   expect(() => decodeServerSettingsPatch({ usageHardBudgetEnabled: "true" })).toThrow();
 });
 
+it("keeps environment project indexing opt-in with an explicit nullable default model", () => {
+  expect(decodeServerSettings({})).toMatchObject({
+    projectIndexingEnabled: false,
+    projectIndexingDefaultModelSelection: null,
+  });
+  const selection = { instanceId: "analysis", model: "synthetic-model" };
+  for (const enabled of [true, false]) {
+    const patch = decodeServerSettingsPatch({
+      projectIndexingEnabled: enabled,
+      projectIndexingDefaultModelSelection: selection,
+    });
+    expect(encodeServerSettings(decodeServerSettings(patch))).toMatchObject(patch);
+  }
+  expect(decodeServerSettingsPatch({ projectIndexingDefaultModelSelection: null })).toEqual({
+    projectIndexingDefaultModelSelection: null,
+  });
+  expect(() => decodeServerSettingsPatch({ projectIndexingEnabled: "true" })).toThrow();
+  expect(() =>
+    decodeServerSettingsPatch({
+      projectIndexingDefaultModelSelection: { model: "incomplete-selection" },
+    }),
+  ).toThrow();
+  expect(() =>
+    decodeServerSettingsPatch({
+      projectIndexingDefaultModelSelection: { provider: "codex", model: "legacy-routing" },
+    }),
+  ).toThrow();
+});
+
 describe("ServerSettings usage price overrides", () => {
   const prices = { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 };
 

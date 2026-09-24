@@ -147,7 +147,8 @@ describe("searchSettings", () => {
     for (const [query, id] of [
       ["Voice input", "voice-input"],
       ["AssemblyAI API key", "voice-credentials"],
-      ["Voice post-processing model", "voice-translation-model"],
+      ["Voice translation model", "voice-translation-model"],
+      ["Voice recording and cleanup", "voice-recording-options"],
       ["Project speech context", "project-speech-context"],
       ["Improve prompts before sending", "prompt-improvement"],
     ]) {

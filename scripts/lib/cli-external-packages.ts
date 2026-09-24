@@ -26,11 +26,19 @@
  * enforced by a test, not by inspection.
  */
 export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
+  "web-tree-sitter",
+  "tree-sitter-wasms",
+  "typescript/",
+  "@typescript/",
+  "@types/emscripten",
   "node-pty",
   "ffi-rs",
   "@yuuang/",
   "@ff-labs/",
+  "@harperfast/",
   "@clerk/electron-passkeys",
+  "msgpackr",
+  "ordered-binary",
   "@msgpackr-extract/",
   "msgpackr-extract",
   "node-gyp-build",
@@ -69,7 +77,9 @@ export const CLI_EXTERNAL_PACKAGE_PREFIXES = [
 ] as const;
 
 export function isRuntimeExternalCliDependency(id: string): boolean {
-  return CLI_RUNTIME_EXTERNAL_PREFIXES.some((prefix) => id.startsWith(prefix));
+  return (
+    id === "typescript" || CLI_RUNTIME_EXTERNAL_PREFIXES.some((prefix) => id.startsWith(prefix))
+  );
 }
 
 /**
@@ -83,7 +93,9 @@ export function isRuntimeExternalCliDependency(id: string): boolean {
  * inlined while node-pty (a declared dependency) stayed external.
  */
 export function isExternalCliDependency(id: string): boolean {
-  return CLI_EXTERNAL_PACKAGE_PREFIXES.some((prefix) => id.startsWith(prefix));
+  return (
+    id === "typescript" || CLI_EXTERNAL_PACKAGE_PREFIXES.some((prefix) => id.startsWith(prefix))
+  );
 }
 
 /** True when the CLI bundle should inline `id` rather than leave it external. */

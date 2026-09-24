@@ -1,16 +1,15 @@
-import { renderAssemblyAiDictationDraft } from "@t3tools/client-runtime/assembly-ai";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, ThreadId, VoiceFileReference } from "@t3tools/contracts";
 import {
   requestRecordingPermissionsAsync,
   setAudioModeAsync,
   useAudioStream,
   type AudioStreamBuffer,
 } from "expo-audio";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -19,6 +18,7 @@ import {
   type NativeServerSpeechSession,
 } from "./native-server-speech-transport";
 import { shouldDeactivateNativeAssemblyAiDictation } from "./native-assembly-ai-dictation-policy";
+import { createNativeDictationDraft, processNativeDictation } from "./native-dictation-draft";
 
 export type NativeVoiceDictationState = "idle" | "starting" | "recording" | "stopping";
 
@@ -34,12 +34,20 @@ export function useNativeAssemblyAiDictation(input: {
   readonly configured: boolean;
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
+  readonly threadId?: ThreadId;
+  readonly processingSupported: boolean;
   readonly lifecycleKey: string;
   readonly draftText: string;
+  readonly readDraftText?: () => string;
+  readonly draftReferences?: ReadonlyArray<VoiceFileReference>;
   readonly outputLanguage: "native" | "english";
-  readonly onChangeDraftText: (text: string) => void;
+  readonly onChangeDraftText: (
+    text: string,
+    references?: ReadonlyArray<VoiceFileReference>,
+  ) => void;
   readonly onNotice: (title: string, error: Error) => void;
 }) {
+  const { readDraftText } = input;
   const startStreamingSession = useAtomCommand(serverEnvironment.startSpeechStreamingSession, {
     reportFailure: false,
   });
@@ -55,20 +63,28 @@ export function useNativeAssemblyAiDictation(input: {
   const translateTranscript = useAtomCommand(serverEnvironment.translateSpeechTranscript, {
     reportFailure: false,
   });
+  const processDictation = useAtomCommand(serverEnvironment.processSpeechDictation, {
+    reportFailure: false,
+  });
   const [state, setState] = useState<NativeVoiceDictationState>("idle");
   const [audioWaveform, setAudioWaveform] = useState<ReadonlyArray<number>>(EMPTY_WAVEFORM);
   const stateRef = useRef<NativeVoiceDictationState>("idle");
   const attemptRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
   const sessionRef = useRef<NativeServerSpeechSession | null>(null);
-  const originalDraftRef = useRef("");
-  const latestTranscriptRef = useRef("");
+  const draftSessionRef = useRef<ReturnType<typeof createNativeDictationDraft> | null>(null);
+  const [restorableDraft, setRestorableDraft] = useState<{
+    text: string;
+    lifecycleKey: string;
+  } | null>(null);
   const draftTextRef = useRef(input.draftText);
+  const lifecycleKeyRef = useRef(input.lifecycleKey);
   const onChangeDraftTextRef = useRef(input.onChangeDraftText);
   const onNoticeRef = useRef(input.onNotice);
-  draftTextRef.current = input.draftText;
-  onChangeDraftTextRef.current = input.onChangeDraftText;
-  onNoticeRef.current = input.onNotice;
+  useLayoutEffect(() => {
+    onChangeDraftTextRef.current = input.onChangeDraftText;
+    onNoticeRef.current = input.onNotice;
+  }, [input.onChangeDraftText, input.onNotice]);
 
   const onAudioBuffer = useCallback((buffer: AudioStreamBuffer) => {
     sessionRef.current?.pushAudio(buffer);
@@ -88,7 +104,6 @@ export function useNativeAssemblyAiDictation(input: {
   const reset = useCallback(() => {
     abortRef.current = null;
     sessionRef.current = null;
-    latestTranscriptRef.current = "";
     setAudioWaveform(EMPTY_WAVEFORM);
   }, []);
 
@@ -98,6 +113,8 @@ export function useNativeAssemblyAiDictation(input: {
   }, [audioStream.stream]);
 
   const deactivate = useCallback(() => {
+    draftSessionRef.current?.invalidate();
+    setRestorableDraft(null);
     if (stateRef.current === "idle") return;
     attemptRef.current += 1;
     abortRef.current?.abort();
@@ -109,7 +126,7 @@ export function useNativeAssemblyAiDictation(input: {
 
   const cancel = useCallback(() => {
     if (stateRef.current === "idle") return;
-    onChangeDraftTextRef.current(originalDraftRef.current);
+    draftSessionRef.current?.cancel();
     deactivate();
   }, [deactivate]);
 
@@ -118,27 +135,25 @@ export function useNativeAssemblyAiDictation(input: {
     deactivate();
   }, [deactivate, input.configured]);
 
+  useLayoutEffect(() => {
+    draftTextRef.current = input.draftText;
+    lifecycleKeyRef.current = input.lifecycleKey;
+    if (draftSessionRef.current && !draftSessionRef.current.isCurrent()) {
+      // External edits and thread changes end ownership before a pending result can land.
+      deactivate();
+    }
+  }, [deactivate, input.draftText, input.lifecycleKey]);
+
   useEffect(() => {
     return () => {
       attemptRef.current += 1;
+      draftSessionRef.current?.invalidate();
       abortRef.current?.abort();
       audioStream.stream.stop();
       void setAudioModeAsync({ allowsRecording: false }).catch(() => undefined);
       sessionRef.current?.cancel();
     };
   }, [audioStream.stream]);
-
-  useEffect(() => {
-    if (stateRef.current === "idle") return;
-    // Switching project/thread must never keep the microphone attached to the
-    // previous draft. Preserve the latest transcript instead of reverting it.
-    attemptRef.current += 1;
-    abortRef.current?.abort();
-    releaseAudio();
-    sessionRef.current?.cancel();
-    reset();
-    transition("idle");
-  }, [input.lifecycleKey, releaseAudio, reset, transition]);
 
   const start = useCallback(async () => {
     if (stateRef.current !== "idle") return;
@@ -151,8 +166,22 @@ export function useNativeAssemblyAiDictation(input: {
     }
     const attempt = attemptRef.current + 1;
     attemptRef.current = attempt;
-    originalDraftRef.current = draftTextRef.current;
-    latestTranscriptRef.current = "";
+    draftSessionRef.current?.invalidate();
+    const lifecycleKey = input.lifecycleKey;
+    const draftSession = createNativeDictationDraft({
+      original: {
+        text: readDraftText?.() ?? draftTextRef.current,
+        references: input.draftReferences ?? [],
+      },
+      readText: () => readDraftText?.() ?? draftTextRef.current,
+      isCurrent: () => lifecycleKeyRef.current === lifecycleKey,
+      write: ({ text, references }) => {
+        draftTextRef.current = text;
+        onChangeDraftTextRef.current(text, references);
+      },
+    });
+    draftSessionRef.current = draftSession;
+    setRestorableDraft(null);
     const abortController = new AbortController();
     abortRef.current = abortController;
     setAudioWaveform(EMPTY_WAVEFORM);
@@ -172,7 +201,10 @@ export function useNativeAssemblyAiDictation(input: {
         startSession: async () => {
           const result = await startStreamingSession({
             environmentId: input.environmentId,
-            input: { projectId: input.projectId },
+            input: {
+              projectId: input.projectId,
+              ...(input.processingSupported && input.threadId ? { threadId: input.threadId } : {}),
+            },
           });
           if (result._tag === "Failure") {
             throw commandFailureMessage(result, "Could not start server voice streaming.");
@@ -210,10 +242,7 @@ export function useNativeAssemblyAiDictation(input: {
         },
         onTranscript: (text) => {
           if (attemptRef.current !== attempt || abortController.signal.aborted) return;
-          latestTranscriptRef.current = text;
-          onChangeDraftTextRef.current(
-            renderAssemblyAiDictationDraft(originalDraftRef.current, text),
-          );
+          if (!draftSession.updateTranscript(text)) deactivate();
         },
         onAudioLevel: (level) => {
           if (attemptRef.current !== attempt || abortController.signal.aborted) return;
@@ -260,6 +289,12 @@ export function useNativeAssemblyAiDictation(input: {
     input.configured,
     input.environmentId,
     input.projectId,
+    input.threadId,
+    input.lifecycleKey,
+    input.draftReferences,
+    readDraftText,
+    input.processingSupported,
+    deactivate,
     pushStreamingAudio,
     releaseAudio,
     reset,
@@ -271,51 +306,92 @@ export function useNativeAssemblyAiDictation(input: {
     if (stateRef.current === "idle" || stateRef.current === "stopping") return;
     const attempt = attemptRef.current;
     const session = sessionRef.current;
+    const draftSession = draftSessionRef.current;
+    const abortController = abortRef.current;
     transition("stopping");
     releaseAudio();
     try {
       await session?.stop();
     } catch (error) {
-      onNoticeRef.current(
-        "Could not stop voice input cleanly",
-        error instanceof Error ? error : new Error("Voice input stop failed."),
+      if (attemptRef.current === attempt)
+        onNoticeRef.current(
+          "Could not stop voice input cleanly",
+          error instanceof Error ? error : new Error("Voice input stop failed."),
+        );
+    }
+
+    if (attemptRef.current !== attempt || !draftSession?.isCurrent() || !abortController) return;
+    const transcript = draftSession.transcript.trim();
+    if (transcript) {
+      const result = await processNativeDictation({
+        transcript,
+        signal: abortController.signal,
+        ...(input.processingSupported
+          ? {
+              process: async (transcript: string) => {
+                const result = await processDictation({
+                  environmentId: input.environmentId,
+                  input: {
+                    projectId: input.projectId,
+                    ...(input.threadId ? { threadId: input.threadId } : {}),
+                    transcript,
+                  },
+                });
+                if (result._tag === "Failure")
+                  throw commandFailureMessage(result, "Voice processing failed.");
+                return result.value;
+              },
+            }
+          : {}),
+        ...(input.outputLanguage === "english"
+          ? {
+              translate: async (text: string) => {
+                const result = await translateTranscript({
+                  environmentId: input.environmentId,
+                  input: { projectId: input.projectId, text },
+                });
+                if (result._tag === "Failure")
+                  throw commandFailureMessage(result, "Voice translation failed.");
+                return result.value.text;
+              },
+            }
+          : {}),
+      });
+      if (attemptRef.current !== attempt || !draftSession.isCurrent()) return;
+      draftSession.applyProcessed(result);
+      setRestorableDraft(
+        draftSession.canRestoreOriginal()
+          ? {
+              text: draftTextRef.current,
+              lifecycleKey: input.lifecycleKey,
+            }
+          : null,
       );
+      if (result.warning) onNoticeRef.current("Voice input", new Error(result.warning));
     }
 
-    if (attemptRef.current === attempt && input.outputLanguage === "english") {
-      const transcript = latestTranscriptRef.current.trim();
-      if (transcript) {
-        const result = await translateTranscript({
-          environmentId: input.environmentId,
-          input: { projectId: input.projectId, text: transcript },
-        });
-        if (attemptRef.current === attempt) {
-          if (result._tag === "Success") {
-            onChangeDraftTextRef.current(
-              renderAssemblyAiDictationDraft(originalDraftRef.current, result.value.text),
-            );
-          } else if (!isAtomCommandInterrupted(result)) {
-            onNoticeRef.current(
-              "Could not translate voice input",
-              commandFailureMessage(result, "Voice translation failed."),
-            );
-          }
-        }
-      }
-    }
-
-    if (attemptRef.current === attempt) attemptRef.current += 1;
+    if (attemptRef.current !== attempt) return;
+    attemptRef.current += 1;
     reset();
     transition("idle");
   }, [
     input.environmentId,
     input.outputLanguage,
     input.projectId,
+    input.threadId,
+    input.processingSupported,
+    input.lifecycleKey,
+    processDictation,
     releaseAudio,
     reset,
     transition,
     translateTranscript,
   ]);
+
+  const restoreOriginal = useCallback(() => {
+    draftSessionRef.current?.restoreOriginal();
+    setRestorableDraft(null);
+  }, []);
 
   return {
     state,
@@ -324,5 +400,10 @@ export function useNativeAssemblyAiDictation(input: {
     start,
     stop,
     cancel,
+    canRestoreOriginal:
+      restorableDraft !== null &&
+      restorableDraft.text === input.draftText &&
+      restorableDraft.lifecycleKey === input.lifecycleKey,
+    restoreOriginal,
   } as const;
 }

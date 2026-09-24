@@ -22,6 +22,7 @@ export interface BetterT3ChatPreviewModel {
   readonly cardMorphing: boolean;
   readonly characterStreamingMotion: boolean;
   readonly composerPlanBubble: boolean;
+  readonly expandedComposerControls: boolean;
   readonly classicSidebar: boolean;
   readonly draftIndicators: boolean;
   readonly presentation: ChatVisualMode;
@@ -66,6 +67,10 @@ export function buildBetterT3SettingsPreviewModel(input: {
     projectCoordination: effectiveFeatureEnabled(input.features, "agent.projectCoordination"),
   };
   const chat = {
+    expandedComposerControls: effectiveFeatureEnabled(
+      input.features,
+      "agent.expandedComposerControls",
+    ),
     workspaceCardDeck: effectiveFeatureEnabled(input.features, "chat.workspaceCardDeck"),
     cardMorphing: effectiveFeatureEnabled(input.features, "chat.cardMorphing"),
     characterStreamingMotion: effectiveFeatureEnabled(

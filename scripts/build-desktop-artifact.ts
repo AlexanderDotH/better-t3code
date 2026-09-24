@@ -24,6 +24,10 @@ import serverPackageJson from "../apps/server/package.json" with { type: "json" 
 
 import { applyWebBrandAssets } from "./apply-web-brand-assets.ts";
 import {
+  pruneProjectIndexerRuntimeAssets,
+  stageProjectIndexerDeclarations,
+} from "./build-project-indexers.ts";
+import {
   BRAND_ASSET_PATHS,
   resolveWebAssetBrandForChannel,
   type WebAssetBrand,
@@ -997,6 +1001,8 @@ interface StagePackageJson {
 export const STAGE_INSTALL_ARGS = ["install", "--prod"] as const;
 export const DESKTOP_ELECTRON_LANGUAGES = ["en-US"] as const;
 export const DESKTOP_FILE_EXCLUSIONS = [
+  "!**/.t3",
+  "!**/.t3/**/*",
   // T3 Code always passes the user's installed Claude executable to the SDK,
   // so the SDK's optional platform packages (each a ~200MB bundled executable)
   // are dead weight. The trailing dash keeps the SDK's own JS package.
@@ -1005,6 +1011,8 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!apps/desktop/resources/browser-secret/**/*",
   "!apps/desktop/prod-resources/browser-secret",
   "!apps/desktop/prod-resources/browser-secret/**/*",
+  "!apps/desktop/prod-resources/project-indexer-declarations",
+  "!apps/desktop/prod-resources/project-indexer-declarations/**/*",
   // Windows stages the server sidecar below prod-resources so electron-builder
   // can copy it using project-relative extraResources matchers. Keep those
   // staging inputs out of app.asar; they are emitted once at resources/.
@@ -1046,13 +1054,31 @@ export const WINDOWS_SERVER_ASAR_RESOURCE = "server.asar";
 // asar redirect convention). Everything else stays packed.
 export const WINDOWS_NATIVE_ASAR_UNPACK_GLOB =
   "{**/*.node,**/*.dll,**/*.exe,**/*.so,**/*.so.*,**/*.dylib}";
-export const WINDOWS_SERVER_ASAR_UNPACK_GLOB =
-  "{**/*.node,**/*.dll,**/*.exe,**/*.so,**/*.so.*,**/*.dylib,**/resource-monitor/**/t3-resource-monitor}";
+export const PROJECT_INDEXER_ASAR_UNPACK_GLOBS = [
+  "**/apps/server/dist/**/*.mjs",
+  "**/apps/server/dist/project-indexer/**",
+  "**/node_modules/typescript/**",
+  "**/node_modules/@typescript/**",
+  "**/node_modules/web-tree-sitter/**",
+  "**/node_modules/tree-sitter-wasms/**",
+] as const;
+// Electron's node_modules filter strips declaration files even from unpacked
+// packages. Both TypeScript runtimes read their standard libraries from disk.
+export const PROJECT_INDEXER_DECLARATION_RESOURCES = [
+  {
+    from: "apps/desktop/prod-resources/project-indexer-declarations",
+    to: "app.asar.unpacked/node_modules/@typescript",
+    filter: ["**/*.d.ts"],
+  },
+] as const;
+export const WINDOWS_SERVER_ASAR_UNPACK_GLOB = `{**/*.node,**/*.dll,**/*.exe,**/*.so,**/*.so.*,**/*.dylib,**/resource-monitor/**/t3-resource-monitor,${PROJECT_INDEXER_ASAR_UNPACK_GLOBS.join(",")}}`;
 // Mirrors DESKTOP_FILE_EXCLUSIONS for the hand-packed sidecar: the Claude SDK
 // platform packages are dead weight (see above), and node_modules/.bin shims
 // are never spawned at runtime (and are symlinks on POSIX build hosts, which
 // the asar extraction path deliberately does not support).
 export const WINDOWS_SERVER_ASAR_IGNORE_GLOBS = [
+  "**/.t3",
+  "**/.t3/**",
   "**/node_modules/@anthropic-ai/claude-agent-sdk-*",
   "**/node_modules/@anthropic-ai/claude-agent-sdk-*/**",
   "**/node_modules/.bin",
@@ -2805,10 +2831,14 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // metadata. Windows keeps those files archived so native dependencies do
     // not inflate the loose-file count and slow NSIS installation.
     ...(platform === "win"
-      ? { asar: { smartUnpack: false }, asarUnpack: [WINDOWS_NATIVE_ASAR_UNPACK_GLOB] }
-      : {}),
+      ? {
+          asar: { smartUnpack: false },
+          asarUnpack: [WINDOWS_NATIVE_ASAR_UNPACK_GLOB, ...PROJECT_INDEXER_ASAR_UNPACK_GLOBS],
+        }
+      : { asarUnpack: [...PROJECT_INDEXER_ASAR_UNPACK_GLOBS] }),
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
+      ...(platform === "win" ? [] : PROJECT_INDEXER_DECLARATION_RESOURCES),
       ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_BROWSER_SECRET_EXTRA_RESOURCES : []),
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
@@ -3257,6 +3287,7 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
     arch: input.arch,
     prebuildPath: input.wslPrebuildPath,
   });
+  yield* Effect.tryPromise(() => pruneProjectIndexerRuntimeAssets(serverStageDir));
   yield* stageWslResourceMonitorPrebuild({
     serverStageDir,
     arch: input.arch,
@@ -4031,6 +4062,15 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   );
   yield* stageClerkPasskeyNativeBinaries(stageAppDir, options.platform, options.arch);
   yield* stageKeyringNativeBinaries(stageAppDir, options.platform, options.arch);
+  if (options.platform !== "win") {
+    yield* Effect.tryPromise(() => pruneProjectIndexerRuntimeAssets(stageAppDir));
+    yield* Effect.tryPromise(() =>
+      stageProjectIndexerDeclarations(
+        stageAppDir,
+        path.join(stageAppDir, "apps/desktop/prod-resources/project-indexer-declarations"),
+      ),
+    );
+  }
 
   // WSL is Windows-only, so only the Windows artifact carries the server
   // sidecar (which embeds the Linux node-pty prebuild); other platforms

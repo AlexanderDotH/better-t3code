@@ -29,8 +29,8 @@ const fileNode: KnowledgeGraphNodeV1 = {
   label: "knowledgeGraphState.ts",
   summary: "Applies revisioned graph patches",
   source: { path: "packages/client-runtime/src/knowledgeGraphState.ts", startLine: 12 },
-  provenance: "semantic",
-  confidence: 0.82,
+  provenance: "deterministic",
+  confidence: 1,
   evidenceIds: [],
   nodeRevision: 1,
 };
@@ -95,7 +95,7 @@ const translate = (key: string, values: Readonly<Record<string, string | number>
         "knowledgeGraph.zoomOut": "Zoom out",
         "knowledgeGraph.resetView": "Reset view",
         "knowledgeGraph.provenance": "Provenance",
-        "knowledgeGraph.provenance.semantic": "Semantic provenance",
+        "knowledgeGraph.provenance.deterministic": "Deterministic provenance",
         "knowledgeGraph.confidence": "Confidence",
         "knowledgeGraph.relationships": "Relationships",
         "knowledgeGraph.openSource": "Open source",
@@ -137,7 +137,6 @@ describe("KnowledgeGraphPanelView", () => {
         layoutAnimating={false}
         prefersReducedMotion
         translate={translate}
-        formatConfidence={(confidence) => `${Math.round(confidence * 100)} localized percent`}
         onQueryChange={() => undefined}
         onToggleKind={() => undefined}
         onZoomChange={() => undefined}
@@ -160,8 +159,9 @@ describe("KnowledgeGraphPanelView", () => {
     expect(markup).toContain('data-highlighted="true"');
     expect(markup.match(/data-expanded-node=/g)).toHaveLength(1);
     expect(markup).toContain("knowledgeGraphState.ts");
-    expect(markup).toContain("Semantic provenance");
-    expect(markup).toContain("82 localized percent");
+    expect(markup).toContain("Deterministic provenance");
+    expect(markup).not.toContain("Confidence");
+    expect(markup).not.toContain("Shared client behavior");
     expect(markup).toContain('aria-label="Relationships"');
     expect(markup).toContain("Client runtime");
     expect(markup).toContain("Open source");
@@ -189,7 +189,6 @@ describe("KnowledgeGraphPanelView", () => {
         layoutAnimating
         prefersReducedMotion={false}
         translate={translate}
-        formatConfidence={(confidence) => `${Math.round(confidence * 100)}%`}
         onQueryChange={() => undefined}
         onToggleKind={() => undefined}
         onZoomChange={() => undefined}
@@ -236,7 +235,6 @@ describe("KnowledgeGraphPanelView", () => {
         layoutAnimating={false}
         prefersReducedMotion={false}
         translate={translate}
-        formatConfidence={(confidence) => `${Math.round(confidence * 100)}%`}
         onQueryChange={() => undefined}
         onToggleKind={() => undefined}
         onZoomChange={() => undefined}
@@ -278,7 +276,6 @@ describe("KnowledgeGraphPanelView", () => {
         layoutAnimating={false}
         prefersReducedMotion={false}
         translate={translate}
-        formatConfidence={(confidence) => `${Math.round(confidence * 100)}%`}
         onQueryChange={() => undefined}
         onToggleKind={() => undefined}
         onZoomChange={() => undefined}
@@ -341,7 +338,6 @@ describe("KnowledgeGraphPanelView", () => {
           layoutAnimating={false}
           prefersReducedMotion={false}
           translate={translate}
-          formatConfidence={(confidence) => `${Math.round(confidence * 100)}%`}
           onQueryChange={() => undefined}
           onToggleKind={() => undefined}
           onZoomChange={() => undefined}
@@ -381,7 +377,6 @@ describe("KnowledgeGraphPanelView", () => {
         layoutAnimating={false}
         prefersReducedMotion={false}
         translate={translate}
-        formatConfidence={(confidence) => `${Math.round(confidence * 100)}%`}
         onQueryChange={() => undefined}
         onToggleKind={() => undefined}
         onZoomChange={() => undefined}
@@ -414,7 +409,6 @@ describe("KnowledgeGraphPanelView", () => {
         layoutAnimating={false}
         prefersReducedMotion={false}
         translate={translate}
-        formatConfidence={(confidence) => `${Math.round(confidence * 100)}%`}
         onQueryChange={() => undefined}
         onToggleKind={() => undefined}
         onZoomChange={() => undefined}

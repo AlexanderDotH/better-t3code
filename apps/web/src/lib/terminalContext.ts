@@ -1,4 +1,5 @@
 import { type ThreadId } from "@t3tools/contracts";
+import { extractVoiceFileContext } from "@t3tools/shared/voiceFileContext";
 
 import { extractTrailingElementContexts, type ParsedElementContextEntry } from "./elementContext";
 
@@ -211,7 +212,8 @@ export function deriveDisplayedUserMessageState(prompt: string): DisplayedUserMe
   // Order matters: send-time appends `<terminal_context>` first, then
   // `<element_context>` last. Strip element first so the (now-trailing)
   // terminal block can be matched by `extractTrailingTerminalContexts`.
-  const extractedElement = extractTrailingElementContexts(prompt);
+  const extractedVoice = extractVoiceFileContext(prompt);
+  const extractedElement = extractTrailingElementContexts(extractedVoice.text);
   const extractedTerminal = extractTrailingTerminalContexts(extractedElement.promptText);
   return {
     visibleText: extractedTerminal.promptText,

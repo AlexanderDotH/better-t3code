@@ -68,7 +68,6 @@ export interface KnowledgeGraphPanelViewProps {
   readonly layoutAnimating: boolean;
   readonly prefersReducedMotion: boolean;
   readonly translate: KnowledgeGraphTranslate;
-  readonly formatConfidence: (confidence: number) => string;
   readonly onQueryChange: (query: string) => void;
   readonly onToggleKind: (kind: KnowledgeGraphNodeKind) => void;
   readonly onZoomChange: (zoom: number) => void;
@@ -157,7 +156,6 @@ function GraphToolbar(props: KnowledgeGraphPanelViewProps) {
 function ExpandedNode(props: {
   readonly view: ReturnType<typeof deriveKnowledgeGraphView>;
   readonly translate: KnowledgeGraphTranslate;
-  readonly formatConfidence: KnowledgeGraphPanelViewProps["formatConfidence"];
   readonly onOpenSource: KnowledgeGraphPanelViewProps["onOpenSource"];
   readonly details?: React.ReactNode;
 }) {
@@ -171,9 +169,6 @@ function ExpandedNode(props: {
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="truncate text-sm font-semibold">{node.label}</h3>
-          {node.summary ? (
-            <p className="mt-1 text-xs text-muted-foreground">{node.summary}</p>
-          ) : null}
         </div>
         {node.source ? (
           <Button
@@ -188,8 +183,6 @@ function ExpandedNode(props: {
       <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
         <dt className="text-muted-foreground">{props.translate("knowledgeGraph.provenance")}</dt>
         <dd>{props.translate(`knowledgeGraph.provenance.${node.provenance}`)}</dd>
-        <dt className="text-muted-foreground">{props.translate("knowledgeGraph.confidence")}</dt>
-        <dd>{props.formatConfidence(node.confidence)}</dd>
       </dl>
       <ul
         className="mt-3 space-y-1 text-xs"
@@ -380,7 +373,6 @@ export function KnowledgeGraphPanelView(props: KnowledgeGraphPanelViewProps) {
       <ExpandedNode
         view={view}
         translate={props.translate}
-        formatConfidence={props.formatConfidence}
         onOpenSource={props.onOpenSource}
         details={props.expandedDetails}
       />

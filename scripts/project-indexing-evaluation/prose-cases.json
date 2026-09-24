@@ -1,0 +1,149 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "validator-module",
+      "text": "The overview helps a reader notice the boundary between validation and presentation. It offers an orientation to responsibility rather than a substitute for inspecting source. Following the responsibility across neighboring modules makes the structure easier to understand. A compact explanation remains useful when it preserves this connection between validation, presentation, and their boundary.",
+      "cues": [
+        {
+          "id": "validation",
+          "terms": ["validation"]
+        },
+        {
+          "id": "presentation",
+          "terms": ["presentation"]
+        },
+        {
+          "id": "boundary",
+          "terms": ["boundary", "boundaries"]
+        }
+      ]
+    },
+    {
+      "id": "processor-responsibilities",
+      "text": "The processor is a useful starting point for understanding several responsibilities that meet in one place. Its surrounding modules give a reader a sense of orchestration and the separation of concerns. This narrative explains why following a responsibility outward can reveal a clearer organization. The goal of the overview is to connect the central processor with the responsibilities it coordinates.",
+      "cues": [
+        {
+          "id": "processor",
+          "terms": ["processor"]
+        },
+        {
+          "id": "responsibilities",
+          "terms": ["responsibility", "responsibilities"]
+        },
+        {
+          "id": "separation",
+          "terms": ["separation", "separate"]
+        }
+      ]
+    },
+    {
+      "id": "nested-policy",
+      "text": "The policy overview draws attention to nesting and readability. A reader can use the explanation to orient themselves before tracing individual branches. The useful contrast is between following a deeply nested path and seeing the overall decision structure at a glance. Clear prose about nesting, branches, and readability can help that orientation without replacing the original implementation.",
+      "cues": [
+        {
+          "id": "nesting",
+          "terms": ["nesting", "nested"]
+        },
+        {
+          "id": "branches",
+          "terms": ["branch", "branches"]
+        },
+        {
+          "id": "readability",
+          "terms": ["readability", "readable"]
+        }
+      ]
+    },
+    {
+      "id": "repeated-filter",
+      "text": "This overview follows filtering as a responsibility across a pipeline. It helps a reader recognize repetition when the same kind of selection appears in nearby stages. The surrounding explanation connects the pipeline to the responsibility of selecting a relevant set. Preserving the ideas of filtering and repetition is more useful here than preserving decorative introductory wording.",
+      "cues": [
+        {
+          "id": "filtering",
+          "terms": ["filter", "filtering"]
+        },
+        {
+          "id": "repetition",
+          "terms": ["repetition", "repeated"]
+        },
+        {
+          "id": "pipeline",
+          "terms": ["pipeline"]
+        }
+      ]
+    },
+    {
+      "id": "ignored-validation",
+      "text": "The explanation gives a reader an orientation to validation and error visibility. It draws attention to the difference between noticing a failure and seeing a result that appears successful. The value of the narrative is in connecting error handling to the reader's understanding of the overall operation. A shorter version is still useful when validation, failure, and visibility remain understandable.",
+      "cues": [
+        {
+          "id": "validation",
+          "terms": ["validation"]
+        },
+        {
+          "id": "failure",
+          "terms": ["failure"]
+        },
+        {
+          "id": "visibility",
+          "terms": ["visibility", "visible"]
+        }
+      ]
+    },
+    {
+      "id": "copied-helper",
+      "text": "The overview connects duplicated normalization to a possible shared responsibility. It provides a map for readers who are comparing similar transformations in neighboring modules. The central idea is that repetition can obscure the common purpose behind two implementations. Explanatory prose can remain brief while retaining the connection between duplication, normalization, and a shared responsibility.",
+      "cues": [
+        {
+          "id": "duplication",
+          "terms": ["duplicate", "duplicated", "duplication"]
+        },
+        {
+          "id": "normalization",
+          "terms": ["normalization"]
+        },
+        {
+          "id": "shared",
+          "terms": ["shared", "common"]
+        }
+      ]
+    },
+    {
+      "id": "copied-asset-layout",
+      "text": "This narrative orients a reader to duplication in asset organization. A shared policy provides a useful way to understand why neighboring loaders look similar. The explanation is meant to connect the shape of those loaders to the idea of a common asset policy. Its usefulness depends on preserving the relationship between assets, duplication, and shared organization.",
+      "cues": [
+        {
+          "id": "assets",
+          "terms": ["asset", "assets"]
+        },
+        {
+          "id": "duplication",
+          "terms": ["duplicate", "duplication"]
+        },
+        {
+          "id": "shared",
+          "terms": ["shared", "common"]
+        }
+      ]
+    },
+    {
+      "id": "path-roundtrip",
+      "text": "The overview draws attention to repeated conversions as a source of unnecessary indirection. It helps a reader follow the representation of a path through a small sequence of transformations. The important explanatory connection is between the path, its conversions, and the extra indirection introduced by that sequence. This orientation supplements the original code without replacing its exact details.",
+      "cues": [
+        {
+          "id": "path",
+          "terms": ["path"]
+        },
+        {
+          "id": "conversions",
+          "terms": ["conversion", "conversions"]
+        },
+        {
+          "id": "indirection",
+          "terms": ["indirection"]
+        }
+      ]
+    }
+  ]
+}

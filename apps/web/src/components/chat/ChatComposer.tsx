@@ -39,6 +39,8 @@ import type {
   ServerProvider,
   ThreadId,
   SnapShotSource,
+  SpeechProcessDictationResult,
+  VoiceFileReference,
 } from "@t3tools/contracts";
 import {
   ProviderDriverKind,
@@ -48,6 +50,7 @@ import {
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import { translateVoiceDictationResult } from "@t3tools/shared/voiceFileContext";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
@@ -92,7 +95,6 @@ import {
 import {
   composerFloatingLayerProps,
   isInsideCollapsedComposerControls,
-  isInsideComposerFloatingLayer,
   isInsideRestingComposerControlScope,
 } from "./composerEventScope";
 import {
@@ -191,6 +193,7 @@ import {
   getRestingComposerImagePreviewCounts,
   resolveRestingComposerControlsLayout,
   shouldAnimateComposerRestingTransition,
+  shouldUseCompactComposerControls,
   shouldUseCompactComposerPrimaryActions,
   shouldUseCompactComposerFooter,
   shouldUseRestingComposerLayout,
@@ -1657,6 +1660,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           })
       : null);
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
+  const setComposerDraftVoiceFileReferences = useComposerDraftStore(
+    (store) => store.setVoiceFileReferences,
+  );
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const removeComposerDraftImage = useComposerDraftStore((store) => store.removeImage);
   const addComposerDraftFiles = useComposerDraftStore((store) => store.addFiles);
@@ -3187,14 +3193,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const translateVoiceTranscript = useAtomCommand(serverEnvironment.translateSpeechTranscript, {
     reportFailure: false,
   });
+  const processVoiceDictation = useAtomCommand(serverEnvironment.processSpeechDictation, {
+    reportFailure: false,
+  });
+  const supportsVoiceProcessing =
+    voiceServerConfig?.environment.capabilities.supportsSpeechDictationProcessing === true;
   const voiceDictation = useAssemblyAiDictation({
     configured: voiceInputConfigured,
+    draftText: prompt,
     lifecycleKey:
       typeof composerDraftTarget === "string"
         ? `draft:${composerDraftTarget}`
         : `thread:${composerDraftTarget.environmentId}:${composerDraftTarget.threadId}`,
-    getDraftSnapshot: () => ({ text: promptRef.current, cursor: composerCursor }),
-    applyDraftSnapshot: ({ text, cursor }) => {
+    getDraftSnapshot: () => ({
+      text: promptRef.current,
+      cursor: composerCursor,
+      references:
+        useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)
+          ?.voiceFileReferences ?? [],
+    }),
+    applyDraftSnapshot: ({ text, cursor, references }) => {
       const nextCursor = clampCollapsedComposerCursor(text, cursor);
       onPromptChange(
         text,
@@ -3203,35 +3221,67 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         false,
         composerTerminalContextsRef.current.map((context) => context.id),
       );
+      setComposerDraftVoiceFileReferences(composerDraftTarget, references ?? []);
     },
     onNotice: ({ title, error }) => {
-      toastManager.add({ type: "error", title, description: error.message });
+      toastManager.add({
+        type: "error",
+        title,
+        description: error.message,
+        ...(title === "Could not process voice input" || title === "Voice input"
+          ? { timeout: 0 }
+          : {}),
+      });
     },
     createToken: async () => {
       if (!activeThread) throw new Error("Project context is unavailable for voice input.");
       const result = await createVoiceToken({
         environmentId,
-        input: { projectId: activeThread.projectId },
+        input: {
+          projectId: activeThread.projectId,
+          ...(supportsVoiceProcessing && typeof composerDraftTarget !== "string"
+            ? { threadId: activeThread.id }
+            : {}),
+        },
       });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
       return result.value;
     },
-    ...(settings.voiceInputOutputLanguage === "english"
-      ? {
-          transformTranscript: async (text: string) => {
-            if (!activeThread)
-              throw new Error("Project context is unavailable for voice translation.");
-            const result = await translateVoiceTranscript({
-              environmentId,
-              input: { projectId: activeThread.projectId, text },
-            });
+    transformTranscript: async (transcript) => {
+      if (!activeThread) throw new Error("Project context is unavailable for voice input.");
+      const processed: SpeechProcessDictationResult = supportsVoiceProcessing
+        ? await processVoiceDictation({
+            environmentId,
+            input: {
+              projectId: activeThread.projectId,
+              ...(typeof composerDraftTarget !== "string" ? { threadId: activeThread.id } : {}),
+              transcript,
+            },
+          }).then((result) => {
             if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-            return result.value.text;
-          },
-        }
-      : {}),
+            return result.value;
+          })
+        : { text: transcript, references: [] };
+      if (settings.voiceInputOutputLanguage !== "english" || processed.warning) return processed;
+      try {
+        return await translateVoiceDictationResult(processed, async (text) => {
+          const result = await translateVoiceTranscript({
+            environmentId,
+            input: { projectId: activeThread.projectId, text },
+          });
+          if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+          return result.value.text;
+        });
+      } catch {
+        return {
+          ...processed,
+          warning: "Could not translate voice input. The original language was kept.",
+        };
+      }
+    },
   });
-  const showVoiceInputAction = voiceInputConfigured || voiceDictation.active;
+  const showVoiceInputAction =
+    voiceInputConfigured || voiceDictation.active || voiceDictation.canRestoreOriginal;
 
   useEffect(() => {
     onVoiceRecordingActiveChange?.(voiceDictation.active);
@@ -3401,14 +3451,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, [promptHistoryTargetKey]);
 
   const replacePromptFromHistory = useCallback(
-    (nextPrompt: string) => {
+    (nextPrompt: string, references: ReadonlyArray<VoiceFileReference> = []) => {
       promptRef.current = nextPrompt;
       setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+      setComposerDraftVoiceFileReferences(composerDraftTarget, references);
       setComposerCursor(collapseExpandedComposerCursor(nextPrompt, nextPrompt.length));
       setComposerTrigger(null);
       setComposerHighlightedItemId(null);
     },
-    [composerDraftTarget, promptRef, setComposerDraftPrompt],
+    [composerDraftTarget, promptRef, setComposerDraftPrompt, setComposerDraftVoiceFileReferences],
   );
 
   const navigatePromptHistory = useCallback(
@@ -3447,7 +3498,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
       if (!step) return false;
       promptHistoryPositionRef.current = step.position;
-      replacePromptFromHistory(step.prompt);
+      replacePromptFromHistory(step.prompt, step.voiceFileReferences);
       return true;
     },
     [
@@ -3604,6 +3655,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (promptChanged) {
         promptRef.current = nextPrompt;
         setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+        setComposerDraftVoiceFileReferences(composerDraftTarget, [
+          ...(useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)
+            ?.voiceFileReferences ?? []),
+          ...(entry.voiceFileReferences ?? []),
+        ]);
         setComposerCursor(collapseExpandedComposerCursor(nextPrompt, nextPrompt.length));
         setComposerTrigger(null);
       }
@@ -3819,6 +3875,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       environmentId,
       promptRef,
       setComposerDraftPrompt,
+      setComposerDraftVoiceFileReferences,
       takeStashEntry,
       translate,
     ],
@@ -3918,6 +3975,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         id: entryId,
         createdAt: new Date().toISOString(),
         prompt,
+        voiceFileReferences:
+          useComposerDraftStore.getState().getComposerDraft(stashTarget)?.voiceFileReferences ?? [],
         attachments: [],
         ...(stashedFiles.length > 0 ? { files: stashedFiles } : {}),
         droppedImageNames: [],
@@ -4317,7 +4376,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   ]);
 
   const restingHiddenBlockCount = composerControlsInStrip ? restingControlsHiddenBlockCount : 0;
-  const composerControlsCompact = !composerControlsInStrip && isComposerFooterCompact;
+  const composerControlsCompact = shouldUseCompactComposerControls({
+    expandedControlsEnabled: resolveBetterT3FeatureFlag(
+      settings.betterT3Device,
+      "agent.expandedComposerControls",
+    ),
+    footerCompact: isComposerFooterCompact,
+    inContextStrip: composerControlsInStrip,
+  });
   const restingProviderTraitsPickerInput = {
     ...providerTraitsPickerInput,
     size: "xs" as const,
@@ -6142,17 +6208,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       state={voiceDictation.state}
                       audioWaveform={voiceDictation.audioWaveform}
                       disabled={
+                        !voiceInputConfigured ||
                         isConnecting ||
                         isSendBusy ||
                         isSendDisabled ||
                         noProviderAvailable ||
                         projectSelectionRequired ||
-                        phase === "running" ||
                         environmentUnavailable !== null ||
                         pendingUserInputs.length > 0
                       }
                       onStart={voiceDictation.start}
                       onStop={voiceDictation.stop}
+                      onCancel={voiceDictation.cancel}
+                      onRestoreOriginal={
+                        voiceDictation.canRestoreOriginal
+                          ? voiceDictation.restoreOriginal
+                          : undefined
+                      }
                     />
                   ) : null}
                   <ComposerFooterPrimaryActions

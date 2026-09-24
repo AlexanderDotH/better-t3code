@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "numeric-result-rule",
+      "task": "Find the result function in src/math and its applicable numeric-result instruction.",
+      "expectedTopPaths": ["src/math/result.ts"],
+      "requiredSourcePaths": ["src/math/result.ts"],
+      "requiredRulePaths": ["AGENTS.md"],
+      "maxTokens": 6000,
+      "failure": {
+        "files": [
+          { "path": "AGENTS.md", "content": "Keep numeric results numeric.\n" },
+          {
+            "path": "src/math/result.ts",
+            "content": "export function result(value: number) { return String(value + 1); }\n"
+          },
+          {
+            "path": "src/math/unused.ts",
+            "content": "export function unusedMath() { return 0; }\n"
+          }
+        ]
+      },
+      "corrected": {
+        "files": [
+          { "path": "AGENTS.md", "content": "Keep numeric results numeric.\n" },
+          {
+            "path": "src/math/result.ts",
+            "content": "export function result(value: number) { return value + 1; }\n"
+          },
+          {
+            "path": "src/math/unused.ts",
+            "content": "export function unusedMath() { return 0; }\n"
+          }
+        ]
+      }
+    },
+    {
+      "id": "nested-request-rule",
+      "task": "Find parseRequest in src/api and its applicable repository instructions.",
+      "expectedTopPaths": ["src/api/request.ts"],
+      "requiredSourcePaths": ["src/api/request.ts"],
+      "requiredRulePaths": ["AGENTS.md", "src/api/AGENTS.md"],
+      "maxTokens": 6000,
+      "failure": {
+        "files": [
+          { "path": "AGENTS.md", "content": "Preserve input errors in request handling.\n" },
+          { "path": "src/api/AGENTS.md", "content": "Validate request IDs before using them.\n" },
+          {
+            "path": "src/api/request.ts",
+            "content": "export function parseRequest(id: string) { return id.trim(); }\n"
+          },
+          {
+            "path": "src/ui/view.ts",
+            "content": "export function renderView() { return 'ready'; }\n"
+          }
+        ]
+      },
+      "corrected": {
+        "files": [
+          { "path": "AGENTS.md", "content": "Preserve input errors in request handling.\n" },
+          { "path": "src/api/AGENTS.md", "content": "Validate request IDs before using them.\n" },
+          {
+            "path": "src/api/request.ts",
+            "content": "export function parseRequest(id: string) { if (!id.trim()) throw new Error('missing ID'); return id.trim(); }\n"
+          },
+          {
+            "path": "src/ui/view.ts",
+            "content": "export function renderView() { return 'ready'; }\n"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { VoiceFileReference } from "@t3tools/contracts";
 import { create } from "zustand";
 
 import {
@@ -37,6 +38,7 @@ const StashEntrySchema = Schema.Struct({
   id: Schema.String,
   createdAt: Schema.String,
   prompt: Schema.String,
+  voiceFileReferences: Schema.optionalKey(Schema.Array(VoiceFileReference)),
   attachments: Schema.Array(PersistedComposerImageAttachment),
   files: Schema.optionalKey(Schema.Array(PersistedComposerFileAttachment)),
   /** Names of images that exceeded the attachment budget and were not saved. */

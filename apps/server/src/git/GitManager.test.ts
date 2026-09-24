@@ -291,7 +291,6 @@ function createTextGeneration(
     improvePrompt: () => Effect.die("unused"),
     planFetchExploration: () => Effect.die("unused"),
     reviewPlanParallelism: () => Effect.die("unused"),
-    enrichKnowledgeGraph: () => Effect.die("unused"),
     generateCommitMessage: (input) =>
       Effect.succeed({
         subject: "Implement stacked git actions",

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { appendVoiceFileContext } from "@t3tools/shared/voiceFileContext";
 
 import { appendElementContextsToPrompt } from "../../lib/elementContext";
 import {
@@ -31,6 +32,32 @@ function forward(position: ComposerPromptHistoryPosition | null, currentPrompt: 
 }
 
 describe("recallableComposerPrompt", () => {
+  it("recalls only the chip text and keeps all file candidates for sending it again", () => {
+    const prompt = "Change [index.ts](apps/web/index.ts).";
+    const references = [
+      {
+        label: "index.ts",
+        previewPath: "apps/web/index.ts",
+        candidates: [
+          { path: "apps/web/index.ts", symbols: [] },
+          { path: "apps/server/index.ts", symbols: [] },
+        ],
+        truncated: false,
+      },
+    ];
+    const text = appendVoiceFileContext(prompt, references);
+    const entries = buildComposerPromptHistoryEntries([{ id: "voice", role: "user", text }]);
+    const step = stepComposerPromptHistory({
+      direction: "backward",
+      entries,
+      position: null,
+      currentPrompt: "",
+    });
+    expect(step?.prompt).toBe(prompt);
+    expect(step?.voiceFileReferences).toEqual(references);
+    expect(appendVoiceFileContext(step!.prompt, step!.voiceFileReferences!)).toBe(text);
+  });
+
   it("strips send-time context blocks and the ultrathink prefix", () => {
     const withTerminal = appendTerminalContextsToPrompt("Investigate this", [
       {

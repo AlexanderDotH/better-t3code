@@ -23,6 +23,14 @@ export function shouldUseCompactComposerFooter(
   return width !== null && width < breakpoint;
 }
 
+export function shouldUseCompactComposerControls(input: {
+  readonly expandedControlsEnabled: boolean;
+  readonly footerCompact: boolean;
+  readonly inContextStrip: boolean;
+}): boolean {
+  return !input.inContextStrip && (!input.expandedControlsEnabled || input.footerCompact);
+}
+
 export function shouldUseRestingComposerLayout(input: {
   isExistingThread: boolean;
   isMobileViewport: boolean;

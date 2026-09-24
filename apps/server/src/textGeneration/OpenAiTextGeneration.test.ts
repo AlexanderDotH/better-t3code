@@ -1,12 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
-import {
-  KnowledgeGraphSemanticModelRequestV1,
-  ProviderInstanceId,
-  TextGenerationError,
-} from "@t3tools/contracts";
+import { ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
 
 import { OpenAiHttpError } from "../provider/openai/OpenAiTransport.ts";
 import { makeOpenAiTextGeneration, type OpenAiTextCompletion } from "./OpenAiTextGeneration.ts";
@@ -16,69 +11,6 @@ const selection = {
   model: "gpt-5.6-sol",
   options: [{ id: "reasoningEffort", value: "high" }],
 } as const;
-
-const semanticRequest = Schema.decodeUnknownSync(KnowledgeGraphSemanticModelRequestV1)({
-  version: 1,
-  environmentId: "environment-openai",
-  scopeId: "scope-openai",
-  baseRevision: 3,
-  modelGeneration: 2,
-  items: [
-    {
-      sourceNode: {
-        version: 1,
-        nodeId: "node-source",
-        scopeId: "scope-openai",
-        kind: "file",
-        label: "src/source.ts",
-        provenance: "deterministic",
-        confidence: 1,
-        evidenceIds: ["evidence-source"],
-        nodeRevision: 1,
-      },
-      candidates: [
-        {
-          candidateNode: {
-            version: 1,
-            nodeId: "node-target",
-            scopeId: "scope-openai",
-            kind: "file",
-            label: "src/target.ts",
-            provenance: "deterministic",
-            confidence: 1,
-            evidenceIds: ["evidence-target"],
-            nodeRevision: 1,
-          },
-          evidenceIds: ["evidence-source", "evidence-target"],
-          score: 0.9,
-        },
-      ],
-    },
-  ],
-  evidence: [
-    {
-      version: 1,
-      evidenceId: "evidence-source",
-      scopeId: "scope-openai",
-      kind: "source",
-      fingerprint: "sha256:source",
-      confidence: 1,
-      evidenceRevision: 1,
-    },
-    {
-      version: 1,
-      evidenceId: "evidence-target",
-      scopeId: "scope-openai",
-      kind: "source",
-      fingerprint: "sha256:target",
-      confidence: 1,
-      evidenceRevision: 1,
-    },
-  ],
-});
-const encodeSemanticRequest = Schema.encodeSync(
-  Schema.fromJsonString(KnowledgeGraphSemanticModelRequestV1),
-);
 
 describe("OpenAiTextGeneration", () => {
   it.effect("uses the selected live model for strict structured generation", () =>
@@ -137,54 +69,6 @@ describe("OpenAiTextGeneration", () => {
       });
       expect(requests[0]?.prompt).toContain("<t3code_metadata_call>");
       expect(requests[0]?.prompt).toContain('exactly two keys: "title" and "branch"');
-    }),
-  );
-
-  it.effect("enriches a bounded Knowledge Graph request through strict structured output", () =>
-    Effect.gen(function* () {
-      const requests: Array<Parameters<OpenAiTextCompletion>[0]> = [];
-      const complete: OpenAiTextCompletion = (request) =>
-        Effect.sync(() => {
-          requests.push(request);
-          return {
-            // Keep the external model fixture independent of the decoder under test.
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
-            text: JSON.stringify({
-              version: 1,
-              edges: [
-                {
-                  kind: "relates-to",
-                  sourceNodeId: "node-source",
-                  targetNodeId: "node-target",
-                  confidence: 0.85,
-                  summary: "The source delegates to the target.",
-                  evidenceIds: ["evidence-source", "evidence-target"],
-                },
-              ],
-            }),
-          };
-        });
-      const textGeneration = makeOpenAiTextGeneration({ enabled: true }, complete, {
-        isModelAvailable: () => Effect.succeed(true),
-      });
-
-      const result = yield* textGeneration.enrichKnowledgeGraph({
-        request: semanticRequest,
-        modelSelection: selection,
-      });
-
-      expect(result.edges).toHaveLength(1);
-      expect(requests[0]).toMatchObject({
-        model: "gpt-5.6-sol",
-        reasoningEffort: "high",
-        responseFormat: {
-          name: "knowledge_graph_semantic_edges",
-          schema: expect.any(Object),
-        },
-      });
-      expect(requests[0]!.prompt).toBe(encodeSemanticRequest(semanticRequest));
-      expect(requests[0]!.instructions).toContain("candidate pairs");
-      expect(requests[0]!.instructions).toContain("evidence IDs");
     }),
   );
 
@@ -368,14 +252,16 @@ describe("OpenAiTextGeneration", () => {
         );
 
         const error = yield* Effect.flip(
-          textGeneration.enrichKnowledgeGraph({
-            request: semanticRequest,
+          textGeneration.generateThreadTitle({
+            cwd: "/workspace",
+            message: "Check model availability",
+            attachments: [],
             modelSelection: selection,
           }),
         );
 
         expect(error).toMatchObject({
-          operation: "enrichKnowledgeGraph",
+          operation: "generateThreadTitle",
           reason,
           detail: "OpenAI text generation request failed.",
         });
@@ -386,21 +272,23 @@ describe("OpenAiTextGeneration", () => {
     }),
   );
 
-  it.effect("rejects semantic output with fields outside the strict contract", () =>
+  it.effect("rejects invalid structured output", () =>
     Effect.gen(function* () {
       const textGeneration = makeOpenAiTextGeneration({ enabled: true }, () =>
-        Effect.succeed({ text: '{"version":1,"edges":[],"commentary":"trust me"}' }),
+        Effect.succeed({ text: '{"title":42}' }),
       );
 
       const error = yield* Effect.flip(
-        textGeneration.enrichKnowledgeGraph({
-          request: semanticRequest,
+        textGeneration.generateThreadTitle({
+          cwd: "/workspace",
+          message: "Check structured output",
+          attachments: [],
           modelSelection: selection,
         }),
       );
 
       expect(error).toMatchObject({
-        operation: "enrichKnowledgeGraph",
+        operation: "generateThreadTitle",
         detail: "OpenAI returned invalid structured output.",
       });
     }),

@@ -6,7 +6,10 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  type VoiceFileReference,
 } from "@t3tools/contracts";
+import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import { appendVoiceFileContext, extractVoiceFileContext } from "@t3tools/shared/voiceFileContext";
 import { onTestFinished, vi } from "vite-plus/test";
 
 const composerDraftFileMocks = vi.hoisted(() => {
@@ -188,6 +191,17 @@ const DRAFT: ComposerDraft = {
   attachments: [],
 };
 
+const voiceReference: VoiceFileReference = {
+  label: "index.ts",
+  previewPath: "apps/web/index.ts",
+  candidates: [
+    { path: "apps/web/index.ts", symbols: [{ name: "App", kind: "class", line: 12 }] },
+    { path: "apps/server/index.ts", symbols: [{ name: "startServer", kind: "function", line: 7 }] },
+  ],
+  truncated: false,
+};
+const voicePrompt = `Change ${serializeComposerFileLink(voiceReference.previewPath)} without changing the API.`;
+
 afterEach(() => {
   vi.useRealTimers();
   resetComposerDraftsLoadState();
@@ -211,6 +225,49 @@ afterEach(() => {
 });
 
 describe("mobile composer drafts", () => {
+  it("persists ambiguous voice references with the visible draft and removes them with their chip", async () => {
+    const draftKey = "environment-1:thread-1";
+    setComposerDraftText(draftKey, voicePrompt, [voiceReference]);
+    await flushComposerDrafts();
+    const restored = decodePersistedComposerState(JSON.parse(composerDraftFileMocks.getDocument()));
+    expect(restored.drafts[draftKey]?.text).toBe(voicePrompt);
+    expect(restored.drafts[draftKey]?.voiceFileReferences).toEqual([voiceReference]);
+    setComposerDraftText(draftKey, "Do not change the API.");
+    expect(getComposerDraftSnapshot(draftKey).voiceFileReferences).toBeUndefined();
+  });
+
+  it("recovers hidden candidates when editing a queued message and resends every alternative", () => {
+    const draftKey = "environment-1:thread-1";
+    const outgoing = appendVoiceFileContext(voicePrompt, [voiceReference]);
+    setComposerDraftText(draftKey, outgoing);
+    const restored = getComposerDraftSnapshot(draftKey);
+    expect(restored.text).toBe(voicePrompt);
+    expect(restored.text).not.toContain("voice_file_context");
+    expect(restored.voiceFileReferences).toEqual([voiceReference]);
+    const resent = appendVoiceFileContext(restored.text, restored.voiceFileReferences ?? []);
+    expect(extractVoiceFileContext(resent)).toEqual({
+      text: voicePrompt,
+      references: [voiceReference],
+    });
+  });
+
+  it("merges a failed send without exposing its context or losing existing draft text", () => {
+    const draftKey = "environment-1:thread-1";
+    const restored = mergeComposerDraftContentState({ [draftKey]: DRAFT }, draftKey, {
+      text: appendVoiceFileContext(voicePrompt, [voiceReference]),
+      attachments: [],
+    });
+    expect(restored[draftKey]?.text).toBe(`hello\n\n${voicePrompt}`);
+    expect(restored[draftKey]?.voiceFileReferences).toEqual([voiceReference]);
+    const cleared = clearComposerDraftContentState(restored, draftKey);
+    expect(cleared[draftKey]).toBeUndefined();
+  });
+
+  it("keeps backward-compatible drafts readable without reference metadata", () => {
+    const restored = decodePersistedComposerState({ schemaVersion: 1, drafts: { old: DRAFT } });
+    expect(restored.drafts.old).toEqual(DRAFT);
+  });
+
   // Hydration is one-shot per module instance and the attachment sweep now
   // triggers it too, so this test must observe it before any sweep test runs.
   it("hydrates generic file attachments from their saved local paths", () => {

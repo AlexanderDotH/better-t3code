@@ -91,6 +91,8 @@ import {
 import { applyProjectAgentInstructionsToProviderInput } from "../../projectAgent/ProjectAgentInstructions.ts";
 import { applyAgentEnhancementsToProviderInput } from "../../provider/enhancements/index.ts";
 import { ProjectMemoryStore } from "../../projectMemory/ProjectMemoryStore.ts";
+import { ProjectContextQuery } from "../../projectIndexing/query/ProjectContextQuery.ts";
+import { prepareProjectIndexTurnContext } from "../../projectIndexing/integration/ProjectIndexTurnContext.ts";
 import {
   findOpenPendingInteractions,
   type OpenPendingInteraction,
@@ -512,6 +514,7 @@ const make = Effect.gen(function* () {
   const serverSettingsService = yield* ServerSettingsService;
   const skillEngine = yield* SkillEngine;
   const projectMemory = yield* ProjectMemoryStore;
+  const projectContext = yield* Effect.serviceOption(ProjectContextQuery);
   const serverCommandId = (tag: string) =>
     crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
   const serverEventId = () => crypto.randomUUIDv4.pipe(Effect.map(EventId.make));
@@ -1510,7 +1513,18 @@ const make = Effect.gen(function* () {
       projectMemoryRead.value.entries.length > 0
         ? `<t3code_project_memory>\n${projectMemoryRead.value.markdown.trim()}\n</t3code_project_memory>`
         : undefined;
-    const transcriptContext = [projectMemoryContext, compactHandoff?.handoff]
+    const indexContext =
+      project && Option.isSome(projectContext)
+        ? yield* prepareProjectIndexTurnContext(
+            projectContext.value,
+            {
+              projectId: thread.projectId,
+              threadId: input.threadId,
+            },
+            input.messageText,
+          )
+        : undefined;
+    const transcriptContext = [projectMemoryContext, indexContext, compactHandoff?.handoff]
       .filter((value): value is string => value !== undefined)
       .join("\n\n");
     const transcriptHandoff = transcriptContext

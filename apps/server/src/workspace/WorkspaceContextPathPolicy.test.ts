@@ -11,6 +11,8 @@ describe("WorkspaceContextPathPolicy", () => {
     expect(normalizeWorkspaceContextPath("./src\\index.ts")).toBe("src/index.ts");
     expect(normalizeWorkspaceContextPath("/etc/passwd")).toBeNull();
     expect(normalizeWorkspaceContextPath("../secret.txt")).toBeNull();
+    expect(normalizeWorkspaceContextPath("src/../../secret.txt")).toBeNull();
+    expect(normalizeWorkspaceContextPath("C:\\private\\secret.txt")).toBeNull();
   });
 
   it("keeps useful hidden project directories while skipping generated and dependency trees", () => {
@@ -19,6 +21,7 @@ describe("WorkspaceContextPathPolicy", () => {
     expect(shouldSkipWorkspaceContextDirectory("node_modules")).toBe(true);
     expect(shouldSkipWorkspaceContextDirectory("dist")).toBe(true);
     expect(isWorkspaceContextSearchablePath("node_modules/pkg/index.ts")).toBe(false);
+    expect(isWorkspaceContextSearchablePath(".t3/knowledge/knowledge.sqlite")).toBe(false);
   });
 
   it("excludes env and private-key files from broad discovery", () => {

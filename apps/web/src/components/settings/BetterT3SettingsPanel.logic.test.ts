@@ -96,7 +96,7 @@ describe("buildBetterT3ControlStates", () => {
       betterT3Environment: { version: 1, flags: { "chat.visualizations": true } },
     });
   });
-  it("keeps non-switch controls visible while capability-gating their actions", () => {
+  it("keeps Knowledge Graph actions on their owning page", () => {
     const legacy = buildBetterT3ControlStates({
       registry: BETTER_T3_FEATURE_REGISTRY,
       device: DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
@@ -109,22 +109,18 @@ describe("buildBetterT3ControlStates", () => {
       device: DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
       environment: DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
       surface: "web",
-      capabilities: { knowledgeGraphVersion: 1 },
+      capabilities: { knowledgeGraphVersion: 2 },
     });
 
     expect(legacy).toHaveLength(BETTER_T3_FEATURE_REGISTRY.length);
-    expect(legacy.find((entry) => entry.descriptor.id === "knowledge.rebuild")).toMatchObject({
-      availability: { state: "unsupported" },
-      value: null,
-    });
-    expect(current.find((entry) => entry.descriptor.id === "knowledge.progress")).toMatchObject({
-      availability: { state: "available" },
-      value: null,
-    });
-    expect(current.find((entry) => entry.descriptor.id === "knowledge.rebuild")).toMatchObject({
-      availability: { state: "blocked" },
-      value: null,
-    });
+    for (const id of [
+      "knowledge.progress",
+      "knowledge.rebuild",
+      "knowledge.pause",
+      "knowledge.clear",
+    ])
+      expect(current.some((entry) => entry.descriptor.id === id)).toBe(false);
+    expect(current.find((entry) => entry.descriptor.id === "knowledge.graph")).toBeDefined();
   });
 
   it("marks desktop-only controls unsupported on phone without hiding them", () => {

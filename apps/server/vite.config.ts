@@ -36,7 +36,12 @@ export default mergeConfig(
       },
     },
     pack: {
-      entry: ["src/bin.ts"],
+      entry: {
+        bin: "src/bin.ts",
+        "service-launcher": "src/service-launcher.ts",
+        "project-indexer-typescript-compatible":
+          "src/projectIndexing/extraction/typescriptCompatibleWorker.ts",
+      },
       outDir: "dist",
       sourcemap: true,
       clean: true,

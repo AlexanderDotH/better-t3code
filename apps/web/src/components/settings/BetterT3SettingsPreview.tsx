@@ -34,7 +34,9 @@ export const BETTER_T3_VISUAL_FEATURE_IDS = [
   "agent.planMode",
   "agent.generalSubagents",
   "agent.reasoningVisibility",
+  "agent.expandedComposerControls",
   "chat.sidebarPosition",
+  "chat.classicSidebar",
   "chat.presentation",
   "chat.contextWindowSelector",
   "chat.workspaceCardDeck",
@@ -51,7 +53,10 @@ function FeatureVisualFrame(props: {
 }) {
   return (
     <div
-      className="relative flex h-36 items-center justify-center overflow-hidden bg-muted/25 p-3"
+      className={cn(
+        "relative flex items-center justify-center overflow-hidden bg-muted/25 p-3",
+        props.featureId === "chat.classicSidebar" ? "h-24" : "h-36",
+      )}
       data-better-t3-feature-visual={props.featureId}
       key={props.animationKey}
     >
@@ -445,6 +450,8 @@ function visualChoiceModel(
   switch (featureId) {
     case "agent.planMode":
       return { ...model, agent: { ...model.agent, planMode: value === true } };
+    case "agent.expandedComposerControls":
+      return { ...model, chat: { ...model.chat, expandedComposerControls: value === true } };
     case "agent.generalSubagents":
       return { ...model, agent: { ...model.agent, generalSubagents: value === true } };
     case "agent.reasoningVisibility":
@@ -461,6 +468,8 @@ function visualChoiceModel(
         ...model,
         chat: { ...model.chat, sidebarPosition: value === "right" ? "right" : "left" },
       };
+    case "chat.classicSidebar":
+      return { ...model, chat: { ...model.chat, classicSidebar: value === true } };
     case "chat.presentation":
       return {
         ...model,
@@ -557,6 +566,44 @@ function BetterT3FeatureVisual(props: {
           <AgentPromptPreview model={agent} translate={props.translate} />
         </FeatureVisualFrame>
       );
+    case "agent.expandedComposerControls":
+      return (
+        <FeatureVisualFrame
+          animationKey={`composer-controls:${chat.expandedComposerControls}`}
+          featureId={props.featureId}
+        >
+          <div className="flex h-full flex-col justify-between rounded-lg border border-border/70 bg-card p-3 shadow-xs">
+            <span className="text-[9px] text-muted-foreground">
+              {props.translate("settings.betterT3.preview.chat.prompt")}
+            </span>
+            <div className="flex items-center gap-1">
+              <span className="inline-flex h-5 items-center gap-1 rounded-md border border-border/70 bg-background px-1.5 text-[9px]">
+                <BotIcon className="size-2.5" />
+                <span className="h-1.5 w-5 rounded-full bg-current opacity-45" />
+                <ChevronDownIcon className="size-2.5 text-muted-foreground" />
+              </span>
+              {chat.expandedComposerControls ? (
+                <>
+                  <span className="inline-flex h-5 items-center gap-1 rounded-md border border-border/70 bg-background px-1.5 text-[9px]">
+                    <WorkflowIcon className="size-2.5" />
+                    {props.translate("settings.betterT3.preview.agent.plan")}
+                  </span>
+                  <span className="inline-flex h-5 items-center rounded-md border border-border/70 bg-background px-1.5 text-[9px]">
+                    {props.translate("settings.betterT3.preview.agent.build")}
+                  </span>
+                </>
+              ) : (
+                <span className="flex size-5 items-center justify-center rounded-md border border-border/70 bg-background text-xs">
+                  ···
+                </span>
+              )}
+              <span className="ml-auto flex size-5 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                <ArrowUpIcon className="size-2.5" />
+              </span>
+            </div>
+          </div>
+        </FeatureVisualFrame>
+      );
     case "chat.classicBubbleOnly":
       return (
         <FeatureVisualFrame
@@ -585,6 +632,15 @@ function BetterT3FeatureVisual(props: {
               <div className="mx-2 h-7 rounded-lg border border-border/55 bg-card shadow-sm" />
             ) : null}
           </div>
+        </FeatureVisualFrame>
+      );
+    case "chat.classicSidebar":
+      return (
+        <FeatureVisualFrame
+          animationKey={`classic-sidebar:${chat.classicSidebar}:${chat.sidebarPosition}`}
+          featureId={props.featureId}
+        >
+          <SidebarLayoutPreview model={chat} translate={props.translate} />
         </FeatureVisualFrame>
       );
     case "agent.generalSubagents":

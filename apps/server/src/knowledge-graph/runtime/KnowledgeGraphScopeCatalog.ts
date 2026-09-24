@@ -26,6 +26,7 @@ export const KnowledgeGraphScopeResolutionReason = Schema.Literals([
   "thread-not-found",
   "thread-project-mismatch",
   "workspace-root-unavailable",
+  "workspace-root-protected",
 ]);
 export type KnowledgeGraphScopeResolutionReason = typeof KnowledgeGraphScopeResolutionReason.Type;
 
@@ -40,6 +41,8 @@ export class KnowledgeGraphScopeResolutionError extends Schema.TaggedError<Knowl
   },
 ) {
   override get message(): string {
+    if (this.reason === "workspace-root-protected")
+      return "Choose a project folder. Home directories and filesystem roots cannot be indexed.";
     return `Knowledge Graph scope resolution failed (${this.reason}).`;
   }
 }
@@ -162,7 +165,7 @@ export function makeKnowledgeGraphScopeCatalog(
       !isKnowledgeGraphWorkspaceRootIndexable(effectiveWorkspaceRoot, dependencies.homeDirectory)
     ) {
       return yield* new KnowledgeGraphScopeResolutionError({
-        reason: "workspace-root-unavailable",
+        reason: "workspace-root-protected",
         projectId: input.projectId,
         workspaceRoot: input.workspaceRoot,
       });

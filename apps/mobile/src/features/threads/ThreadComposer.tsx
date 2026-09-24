@@ -26,6 +26,7 @@ import type {
   RuntimeMode,
   ServerConfig as T3ServerConfig,
   UsageLimitsReport,
+  VoiceFileReference,
 } from "@t3tools/contracts";
 import {
   collectProviderUsageLimits,
@@ -126,6 +127,8 @@ export const COMPOSER_EXPANDED_CHROME = 156;
 
 export interface ThreadComposerProps {
   readonly draftMessage: string;
+  readonly readDraftText?: () => string;
+  readonly draftVoiceFileReferences?: ReadonlyArray<VoiceFileReference>;
   readonly draftAttachments: ReadonlyArray<DraftComposerAttachment>;
   readonly placeholder: string;
   readonly contentMaxWidth?: number;
@@ -141,7 +144,10 @@ export interface ThreadComposerProps {
   /** Why sending is blocked right now (shown as the send button's label), or null. */
   readonly sendBlockedReason?: string | null;
   readonly editorRef?: RefObject<ComposerEditorHandle | null>;
-  readonly onChangeDraftMessage: (value: string) => void;
+  readonly onChangeDraftMessage: (
+    value: string,
+    references?: ReadonlyArray<VoiceFileReference>,
+  ) => void;
   readonly onPickDraftMedia: () => Promise<void>;
   readonly onPickDraftFiles: () => Promise<void>;
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
@@ -327,8 +333,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     configured: voiceConfigured,
     environmentId: props.environmentId,
     projectId: props.selectedThread.projectId,
+    threadId: props.selectedThread.id,
+    processingSupported:
+      props.serverConfig?.environment.capabilities.supportsSpeechDictationProcessing === true,
     lifecycleKey: scopedThreadKey(props.environmentId, props.selectedThread.id),
     draftText: props.draftMessage,
+    ...(props.readDraftText ? { readDraftText: props.readDraftText } : {}),
+    draftReferences: props.draftVoiceFileReferences,
     outputLanguage: voiceOutputLanguage,
     onChangeDraftText: props.onChangeDraftMessage,
     onNotice: (title, error) => Alert.alert(title, error.message),
@@ -844,10 +855,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   <NativeVoiceDictationControl
                     state={voiceDictation.state}
                     audioWaveform={voiceDictation.audioWaveform}
-                    disabled={voiceInput.isBusy}
+                    disabled={voiceInput.isBusy || props.isImprovingPrompt}
                     onStart={voiceDictation.start}
                     onStop={voiceDictation.stop}
                     onCancel={voiceDictation.cancel}
+                    canRestoreOriginal={voiceDictation.canRestoreOriginal}
+                    onRestoreOriginal={voiceDictation.restoreOriginal}
                   />
                 ) : (
                   <ComposerDictationStartAction
@@ -940,7 +953,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     ) : null}
                     <Pressable
                       accessibilityRole="button"
-                      disabled={props.isImprovingPrompt || !props.draftMessage.trim()}
+                      disabled={
+                        props.isImprovingPrompt ||
+                        voiceDictation.active ||
+                        !props.draftMessage.trim()
+                      }
                       onPress={() => void props.onImproveDraft()}
                       className="p-2"
                     >
@@ -967,10 +984,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     <NativeVoiceDictationControl
                       state={voiceDictation.state}
                       audioWaveform={voiceDictation.audioWaveform}
-                      disabled={voiceInput.isBusy}
+                      disabled={voiceInput.isBusy || props.isImprovingPrompt}
                       onStart={voiceDictation.start}
                       onStop={voiceDictation.stop}
                       onCancel={voiceDictation.cancel}
+                      canRestoreOriginal={voiceDictation.canRestoreOriginal}
+                      onRestoreOriginal={voiceDictation.restoreOriginal}
                     />
                   ) : (
                     <ComposerDictationPrimaryAction

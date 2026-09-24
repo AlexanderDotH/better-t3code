@@ -478,7 +478,6 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
     reviewPlanParallelism,
     planFetchExploration,
     decideAutoReasoning,
-    enrichKnowledgeGraph: TextGeneration.unsupportedKnowledgeGraphEnrichment("Antigravity"),
     generateCommitMessage,
     generatePrContent,
     generateBranchName,

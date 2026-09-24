@@ -281,6 +281,7 @@ export function applyServerSettingsPatch(
   const fetchModelSelectionPatch = patch.fetchModelSelection;
   const voiceTranslationSelectionPatch = patch.voiceTranslationModelSelection;
   const knowledgeGraphSelectionPatch = patch.knowledgeGraphModelSelection;
+  const projectIndexingSelectionPatch = patch.projectIndexingDefaultModelSelection;
   const parallelPlanReviewSelectionPatch = patch.parallelPlanReviewModelSelection;
   const deepThinkingCompatibilityValue =
     patch.betterT3Environment?.flags?.["agent.deepThinking"] ??
@@ -299,10 +300,12 @@ export function applyServerSettingsPatch(
     usagePriceOverrides: usagePriceOverridesPatch,
     projectAgentBrowserAccessOverrides: projectAgentBrowserAccessOverridesPatch,
     projectAutoPullOverrides: projectAutoPullOverridesPatch,
+    speechTranscription: speechTranscriptionPatch,
     textGenerationModelSelection: _textGenerationModelSelection,
     fetchModelSelection: _fetchModelSelection,
     voiceTranslationModelSelection: _voiceTranslationModelSelection,
     knowledgeGraphModelSelection: _knowledgeGraphModelSelection,
+    projectIndexingDefaultModelSelection: _projectIndexingDefaultModelSelection,
     parallelPlanReviewModelSelection: _parallelPlanReviewModelSelection,
     ...patchForMerge
   } = patch;
@@ -349,6 +352,25 @@ export function applyServerSettingsPatch(
   });
   const nextWithReplacementsBase = {
     ...next,
+    ...(speechTranscriptionPatch?.assemblyAi !== undefined
+      ? {
+          speechTranscription: {
+            ...current.speechTranscription,
+            assemblyAi: {
+              ...current.speechTranscription.assemblyAi,
+              ...speechTranscriptionPatch.assemblyAi,
+              apiKey: {
+                ...current.speechTranscription.assemblyAi.apiKey,
+                ...speechTranscriptionPatch.assemblyAi.apiKey,
+              },
+              projectOverrides: mergeSettingsEntries(
+                current.speechTranscription.assemblyAi.projectOverrides,
+                speechTranscriptionPatch.assemblyAi.projectOverrides ?? {},
+              ),
+            },
+          },
+        }
+      : {}),
     ...(betterT3Environment !== undefined || deepThinkingCompatibilityValue !== undefined
       ? {
           betterT3Environment: {
@@ -451,6 +473,9 @@ export function applyServerSettingsPatch(
       : {}),
     ...(knowledgeGraphSelectionPatch !== undefined
       ? { knowledgeGraphModelSelection: knowledgeGraphSelectionPatch }
+      : {}),
+    ...(projectIndexingSelectionPatch !== undefined
+      ? { projectIndexingDefaultModelSelection: projectIndexingSelectionPatch }
       : {}),
     ...(patch.mcp?.servers !== undefined
       ? { mcp: { ...next.mcp, servers: patch.mcp.servers } }

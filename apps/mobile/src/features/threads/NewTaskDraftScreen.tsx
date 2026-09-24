@@ -60,6 +60,7 @@ import { ProviderIcon } from "../../components/ProviderIcon";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { hasProviderUsageLimits, isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
+import { translateVoiceDictationResult } from "@t3tools/shared/voiceFileContext";
 import { COMPOSER_LAYOUT_TRANSITION, ComposerSurface } from "./ThreadComposer";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
@@ -228,8 +229,14 @@ export function NewTaskDraftScreen(props: {
     configured: voiceConfigured,
     environmentId: selectedProject?.environmentId ?? EnvironmentId.make("unavailable"),
     projectId: selectedProject?.id ?? ProjectId.make("unavailable"),
-    lifecycleKey: selectedProjectKey ?? "new-task-unselected",
+    processingSupported:
+      selectedEnvironmentServerConfig?.environment.capabilities
+        .supportsSpeechDictationProcessing === true,
+    lifecycleKey: `${selectedProjectKey ?? "new-task-unselected"}:${flow.draftKey ?? ""}`,
     draftText: flow.prompt,
+    readDraftText: () =>
+      flow.draftKey ? getComposerDraftSnapshot(flow.draftKey).text : flow.prompt,
+    draftReferences: flow.voiceFileReferences,
     outputLanguage: voiceOutputLanguage,
     onChangeDraftText: flow.setPrompt,
     onNotice: (title, error) => Alert.alert(title, error.message),
@@ -993,30 +1000,39 @@ export function NewTaskDraftScreen(props: {
     if (!project || !draftKey || !workflowSettings.supported || isImprovingPrompt) {
       return;
     }
-    const original = getComposerDraftSnapshot(draftKey).text;
+    const draft = getComposerDraftSnapshot(draftKey);
+    const original = draft.text;
     const text = original.trim();
     if (text.length === 0) {
       return;
     }
 
     setIsImprovingPrompt(true);
-    const result = await improvePrompt({
-      environmentId: project.environmentId,
-      input: { projectId: project.id, text },
-    });
-    setIsImprovingPrompt(false);
-    if (result._tag === "Failure") {
-      if (!isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        Alert.alert(
-          "Could not improve prompt",
-          error instanceof Error ? error.message : "The prompt could not be improved.",
-        );
+    try {
+      const improved = await translateVoiceDictationResult(
+        { text, references: draft.voiceFileReferences ?? [] },
+        async (text) => {
+          const result = await improvePrompt({
+            environmentId: project.environmentId,
+            input: { projectId: project.id, text },
+          });
+          if (result._tag === "Failure") {
+            if (isAtomCommandInterrupted(result)) return text;
+            throw squashAtomCommandFailure(result);
+          }
+          return result.value.text;
+        },
+      );
+      if (getComposerDraftSnapshot(draftKey).text === original) {
+        setComposerDraftText(draftKey, improved.text, improved.references);
       }
-      return;
-    }
-    if (getComposerDraftSnapshot(draftKey).text === original) {
-      setComposerDraftText(draftKey, result.value.text);
+    } catch (error) {
+      Alert.alert(
+        "Could not improve prompt",
+        error instanceof Error ? error.message : "The prompt could not be improved.",
+      );
+    } finally {
+      setIsImprovingPrompt(false);
     }
   }
 
@@ -1528,10 +1544,12 @@ export function NewTaskDraftScreen(props: {
                 <NativeVoiceDictationControl
                   state={voiceDictation.state}
                   audioWaveform={voiceDictation.audioWaveform}
-                  disabled={isComposerInteractionLocked || voiceInput.isBusy}
+                  disabled={isComposerInteractionLocked || voiceInput.isBusy || isImprovingPrompt}
                   onStart={voiceDictation.start}
                   onStop={voiceDictation.stop}
                   onCancel={voiceDictation.cancel}
+                  canRestoreOriginal={voiceDictation.canRestoreOriginal}
+                  onRestoreOriginal={voiceDictation.restoreOriginal}
                 />
               ) : (
                 <ComposerDictationPrimaryAction

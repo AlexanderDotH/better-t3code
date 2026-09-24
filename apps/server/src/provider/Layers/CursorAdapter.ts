@@ -689,7 +689,7 @@ export function makeCursorAdapter(
             ...(options?.environment ? { environment: options.environment } : {}),
             childProcessSpawner,
             cwd,
-            runtimeMode: input.runtimeMode,
+            runtimeMode,
             providerProcess: {
               threadId: input.threadId,
               provider: PROVIDER,

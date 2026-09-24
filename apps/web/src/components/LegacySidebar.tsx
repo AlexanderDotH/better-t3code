@@ -24,6 +24,7 @@ import {
 } from "./ThreadStatusIndicators";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { ProjectFavicon } from "./ProjectFavicon";
+import { ProjectIndexSidebarIndicator } from "./project-indexing/ProjectIndexSidebarIndicator";
 import { useAtomValue } from "@effect/atom-react";
 import { autoAnimate } from "@formkit/auto-animate";
 import React, {
@@ -95,6 +96,7 @@ import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import {
   readThreadShell,
+  useAllEnvironmentShellsBootstrapped,
   useProjects,
   useServerConfigs,
   useThreadShells,
@@ -2736,7 +2738,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       <div className="group/project-header relative">
         <SidebarMenuButton
           ref={isManualProjectSorting ? dragHandleProps?.setActivatorNodeRef : undefined}
-          className={`pr-14 group-hover/project-header:bg-sidebar-row-hover group-hover/project-header:text-sidebar-foreground max-sm:pr-20 ${
+          className={`pr-14 group-hover/project-header:bg-sidebar-row-hover group-hover/project-header:text-sidebar-foreground ${project.environmentPresence === "remote-only" ? "max-sm:pr-28" : "max-sm:pr-20"} ${
             isManualProjectSorting ? "cursor-grab active:cursor-grabbing" : ""
           }`}
           {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.attributes : {})}
@@ -2822,6 +2824,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             </TooltipPopup>
           </Tooltip>
         )}
+        <ProjectIndexSidebarIndicator project={project} />
         <div className="pointer-events-none absolute top-[calc(50%+1px)] right-0.5 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100">
           <Tooltip>
             <TooltipTrigger
@@ -3494,6 +3497,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
   props: SidebarProjectsContentProps,
 ) {
   const translator = useInterfaceTranslator();
+  const shellsBootstrapped = useAllEnvironmentShellsBootstrapped();
   const {
     showArm64IntelBuildWarning,
     arm64IntelBuildWarningDescription,
@@ -3694,8 +3698,13 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
         </SidebarOlderProjectsSection>
 
         {projectsLength === 0 && (
-          <div className="px-2 pt-4 text-center text-secondary-label text-xs">
-            {translator.message("sidebar.project.noProjects")}
+          <div
+            className="px-2 pt-4 text-center text-secondary-label text-xs"
+            role={shellsBootstrapped ? undefined : "status"}
+          >
+            {translator.message(
+              shellsBootstrapped ? "sidebar.project.noProjects" : "common.loading",
+            )}
           </div>
         )}
       </SidebarGroup>

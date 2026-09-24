@@ -162,6 +162,25 @@ const buildCmd = Command.make(
         }),
       );
 
+      yield* runCommand(
+        ChildProcess.make(
+          process.execPath,
+          [
+            path.join(repoRoot, "scripts/build-project-indexers.ts"),
+            "--repo-root",
+            repoRoot,
+            "--server-dist",
+            path.join(serverDir, "dist"),
+          ],
+          {
+            cwd: repoRoot,
+            stdout: config.verbose ? "inherit" : "ignore",
+            stderr: "inherit",
+            shell: false,
+          },
+        ),
+      );
+
       const webDist = path.join(repoRoot, "apps/web/dist");
       const clientTarget = path.join(serverDir, "dist/client");
 
@@ -226,6 +245,9 @@ const publishCmd = Command.make(
       for (const relPath of [
         "dist/bin.mjs",
         "dist/service-launcher.mjs",
+        "dist/project-indexer-typescript-compatible.mjs",
+        "dist/project-indexer/ProjectIndexer.dll",
+        "dist/project-indexer/project-indexer-java.jar",
         "dist/client/index.html",
       ]) {
         const abs = path.join(serverDir, relPath);

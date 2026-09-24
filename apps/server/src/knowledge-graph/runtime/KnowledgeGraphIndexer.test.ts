@@ -1,5 +1,7 @@
 import {
   KnowledgeGraphScopeId,
+  KnowledgeGraphEdgeId,
+  KnowledgeGraphEdgeV1,
   ProjectId,
   type KnowledgeGraphProgressV1,
 } from "@t3tools/contracts";
@@ -15,6 +17,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import Migration0059 from "../../persistence/Migrations/059_KnowledgeGraphDerivedData.ts";
@@ -25,6 +28,7 @@ import {
 import { KnowledgeGraphIndexer, layer } from "./KnowledgeGraphIndexer.ts";
 
 const decodeScope = Schema.decodeUnknownSync(KnowledgeGraphScopeV1);
+const encodeEdgeJson = Schema.encodeSync(Schema.fromJsonString(KnowledgeGraphEdgeV1));
 
 const migratedSqlite = Layer.effectDiscard(Migration0059).pipe(
   Layer.provideMerge(NodeSqliteClient.layerMemory()),
@@ -80,6 +84,99 @@ it.effect("persists only incremental changes across repeated external edits", ()
         assert.isUndefined(recoveredStatus.retryAt);
         assert.strictEqual(snapshot.revision, 2);
         assert.isTrue(snapshot.nodes.some(({ label }) => label === "second"));
+      }).pipe(Effect.provide(testLayer)),
+    (workspaceRoot) =>
+      Effect.promise(() => NodeFSP.rm(workspaceRoot, { recursive: true, force: true })),
+  ),
+);
+
+it.effect("publishes a new static revision to retire stored model relationships", () =>
+  Effect.acquireUseRelease(
+    Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-kg-legacy-"))),
+    (temporaryRoot) =>
+      Effect.gen(function* () {
+        const workspaceRoot = yield* Effect.promise(() => NodeFSP.realpath(temporaryRoot));
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(NodePath.join(workspaceRoot, "index.ts"), "export const first = 1;\n"),
+        );
+        const scope = decodeScope({
+          version: 1,
+          scopeId: KnowledgeGraphScopeId.make("scope-indexer-legacy"),
+          environmentId: "environment-1",
+          projectId: ProjectId.make("project-indexer-legacy"),
+          effectiveWorkspaceRoot: workspaceRoot,
+          isWorktree: false,
+        });
+        const repository = yield* KnowledgeGraphRepository;
+        const indexer = yield* KnowledgeGraphIndexer;
+        const sql = yield* SqlClient.SqlClient;
+        yield* indexer.indexScope(scope);
+        const firstSnapshot = Option.getOrThrow(yield* repository.getSnapshot(scope.scopeId));
+        const nodeId = firstSnapshot.nodes[0]?.nodeId;
+        assert.isDefined(nodeId);
+        const edge: KnowledgeGraphEdgeV1 = {
+          version: 1,
+          edgeId: KnowledgeGraphEdgeId.make("semantic:legacy"),
+          scopeId: scope.scopeId,
+          kind: "relates-to",
+          sourceNodeId: nodeId!,
+          targetNodeId: nodeId!,
+          summary: "Old model claim",
+          provenance: "semantic",
+          confidence: 0.5,
+          evidenceIds: [],
+          edgeRevision: 1,
+        };
+        yield* sql`
+          INSERT INTO knowledge_graph_edges (
+            scope_id, edge_id, kind, source_node_id, target_node_id,
+            provenance, confidence, edge_revision, edge_json
+          ) VALUES (
+            ${scope.scopeId}, ${edge.edgeId}, ${edge.kind},
+            ${edge.sourceNodeId}, ${edge.targetNodeId},
+            ${edge.provenance}, ${edge.confidence}, ${edge.edgeRevision},
+            ${encodeEdgeJson(edge)}
+          )
+        `;
+        yield* sql`
+          INSERT INTO knowledge_graph_semantic_queue (
+            job_id, environment_id, scope_id, node_id, desired_node_revision,
+            model_generation, status, available_at, candidates_json,
+            created_at, updated_at
+          ) VALUES (
+            ${"legacy-job"}, ${scope.environmentId}, ${scope.scopeId}, ${nodeId},
+            1, 1, ${"queued"}, 0, ${"[]"}, 0, 0
+          )
+        `;
+        yield* sql`
+          INSERT INTO knowledge_graph_semantic_environments (
+            environment_id, paused, semantic_model_key, model_generation, updated_at
+          ) VALUES (${scope.environmentId}, 0, ${"openai:old-model"}, 1, 0)
+        `;
+
+        const rebuilt = Option.getOrThrow(yield* indexer.indexScope(scope));
+        const snapshot = Option.getOrThrow(yield* repository.getSnapshot(scope.scopeId));
+
+        assert.equal(rebuilt.delivery, "invalidate");
+        assert.equal(snapshot.revision, firstSnapshot.revision + 1);
+        assert.deepStrictEqual(
+          snapshot.edges.map(({ edgeId }) => edgeId),
+          firstSnapshot.edges.map(({ edgeId }) => edgeId),
+        );
+        assert.isFalse(
+          Option.getOrThrow(yield* repository.getDeterministicState(scope.scopeId))
+            .hasLegacySemanticData,
+        );
+        const queued = yield* sql<{ readonly count: number }>`
+          SELECT count(*) AS count FROM knowledge_graph_semantic_queue
+          WHERE scope_id = ${scope.scopeId}
+        `;
+        assert.equal(queued[0]?.count, 0);
+        const modelSettings = yield* sql<{ readonly count: number }>`
+          SELECT count(*) AS count FROM knowledge_graph_semantic_environments
+          WHERE environment_id = ${scope.environmentId}
+        `;
+        assert.equal(modelSettings[0]?.count, 0);
       }).pipe(Effect.provide(testLayer)),
     (workspaceRoot) =>
       Effect.promise(() => NodeFSP.rm(workspaceRoot, { recursive: true, force: true })),

@@ -47,6 +47,7 @@ describe("shouldBundleCliDependency", () => {
       "ffi-rs",
       "@yuuang/ffi-rs-win32-x64-msvc",
       "@ff-labs/fff-node",
+      "@harperfast/rocksdb-js",
       "@clerk/electron-passkeys",
       "msgpackr-extract",
       "@msgpackr-extract/msgpackr-extract-win32-x64",
@@ -87,7 +88,16 @@ describe("selectCliRuntimeExternalDependencies", () => {
   it("selects every external root declared by the server", () => {
     assert.deepStrictEqual(
       Object.keys(selectCliRuntimeExternalDependencies(serverPackageJson.dependencies)).sort(),
-      ["@ff-labs/fff-node", "msgpackr-extract", "node-pty"],
+      [
+        "@ff-labs/fff-node",
+        "@harperfast/rocksdb-js",
+        "@typescript/typescript6",
+        "msgpackr-extract",
+        "node-pty",
+        "tree-sitter-wasms",
+        "typescript",
+        "web-tree-sitter",
+      ],
     );
   });
 });

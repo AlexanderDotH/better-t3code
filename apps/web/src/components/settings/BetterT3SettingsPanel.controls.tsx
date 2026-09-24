@@ -1,10 +1,8 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MAX_PROJECT_THREAD_PREVIEW_COUNT,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MIN_PROJECT_THREAD_PREVIEW_COUNT,
-  resolveBetterT3FeatureFlag,
   type BetterT3FeatureControlStateV1,
   type BetterT3FeatureId,
   type CavemanMode,
@@ -12,15 +10,11 @@ import {
   type ClientSettingsPatch,
   type ContextWindowSelector,
   type EnvironmentId,
-  type KnowledgeGraphStatusV1,
   type ModelSelection,
-  type ProjectId,
   type ServerProvider,
   type ServerSettingsPatch,
   type SidebarProjectSortOrder,
   type SidebarThreadSortOrder,
-  type ScopedThreadRef,
-  type ThreadId,
   type UnifiedSettings,
   type VoiceInputOutputLanguage,
 } from "@t3tools/contracts";
@@ -28,7 +22,7 @@ import { isFetchCapableProvider } from "@t3tools/shared/fetchMode";
 import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { createModelSelection, stripAutoReasoning } from "@t3tools/shared/model";
 import { Link } from "@tanstack/react-router";
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 
 import { useChatVisualMode, useSetChatVisualMode } from "../../chatVisualModeSync";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
@@ -39,11 +33,6 @@ import {
   type ProviderInstanceEntry,
 } from "../../providerInstances";
 import { useProjectThreadPreviewCount } from "../../projectThreadPreviewSync";
-import { useProjects, useThreadShells } from "../../state/entities";
-import { knowledgeGraphEnvironment } from "../../state/knowledgeGraph";
-import { useEnvironmentQuery } from "../../state/query";
-import { useAtomCommand } from "../../state/use-atom-command";
-import { useRightPanelStore } from "../../rightPanelStore";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -63,11 +52,6 @@ const WEB_BETTER_T3_PREPARED_CONTROL_IDS = [
   "chat.sorting",
   "chat.settling",
   "voice.outputLanguage",
-  "knowledge.model",
-  "knowledge.progress",
-  "knowledge.rebuild",
-  "knowledge.pause",
-  "knowledge.clear",
 ] as const satisfies ReadonlyArray<BetterT3FeatureId>;
 
 type WebBetterT3PreparedControlId = (typeof WEB_BETTER_T3_PREPARED_CONTROL_IDS)[number];
@@ -80,19 +64,6 @@ type BetterT3ScalarControlUpdate =
   | { readonly id: "chat.settling.days"; readonly value: number | null }
   | { readonly id: "chat.settling.onMerge"; readonly value: boolean }
   | { readonly id: "voice.outputLanguage"; readonly value: VoiceInputOutputLanguage };
-
-interface KnowledgeGraphProjectOption {
-  readonly projectId: ProjectId;
-  readonly label: string;
-}
-
-export interface KnowledgeGraphOwnerThreadOption {
-  readonly environmentId: EnvironmentId;
-  readonly id: ThreadId;
-  readonly title: string;
-  readonly updatedAt: string;
-  readonly archivedAt: string | null;
-}
 
 const SETTLE_DAY_OPTIONS = [1, 3, 7, 14, 30, 90] as const;
 
@@ -125,60 +96,6 @@ function availableFeature(
     features.find((feature) => feature.descriptor.id === featureId)?.availability.state ===
     "available"
   );
-}
-
-export function resolveSelectedKnowledgeGraphProjectId(
-  projects: ReadonlyArray<KnowledgeGraphProjectOption>,
-  requestedProjectId: ProjectId | null,
-): ProjectId | null {
-  if (
-    requestedProjectId !== null &&
-    projects.some((project) => project.projectId === requestedProjectId)
-  ) {
-    return requestedProjectId;
-  }
-  return projects[0]?.projectId ?? null;
-}
-
-export function resolveKnowledgeGraphPauseAction(state: KnowledgeGraphStatusV1["state"] | null): {
-  readonly paused: boolean;
-  readonly messageId: "knowledgeGraph.pause" | "knowledgeGraph.resume";
-} {
-  return state === "paused"
-    ? { paused: false, messageId: "knowledgeGraph.resume" }
-    : { paused: true, messageId: "knowledgeGraph.pause" };
-}
-
-export function knowledgeGraphOwnerThreadKey(
-  thread: Pick<KnowledgeGraphOwnerThreadOption, "environmentId" | "id">,
-): string {
-  return JSON.stringify([thread.environmentId, thread.id]);
-}
-
-export function buildKnowledgeGraphOwnerThreadOptions(
-  threads: ReadonlyArray<KnowledgeGraphOwnerThreadOption>,
-  environmentId: EnvironmentId,
-): ReadonlyArray<KnowledgeGraphOwnerThreadOption> {
-  return threads
-    .filter((thread) => thread.environmentId === environmentId && thread.archivedAt === null)
-    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-}
-
-export function resolveSelectedKnowledgeGraphOwnerThread(
-  options: ReadonlyArray<KnowledgeGraphOwnerThreadOption>,
-  selectedKey: string | null,
-): KnowledgeGraphOwnerThreadOption | null {
-  if (selectedKey === null) return null;
-  return options.find((option) => knowledgeGraphOwnerThreadKey(option) === selectedKey) ?? null;
-}
-
-export function openKnowledgeGraphOwnerThread(
-  thread: KnowledgeGraphOwnerThreadOption,
-  open: (threadRef: ScopedThreadRef, kind: "knowledge-graph") => void,
-): { readonly environmentId: EnvironmentId; readonly threadId: ThreadId } {
-  const threadRef = scopeThreadRef(thread.environmentId, thread.id);
-  open(threadRef, "knowledge-graph");
-  return { environmentId: threadRef.environmentId, threadId: threadRef.threadId };
 }
 
 function selectableProviderEntries(
@@ -218,12 +135,6 @@ export function buildAutoReasoningModelSelectionPatch(
   return {
     autoReasoningModelSelection: selection === null ? null : stripAutoReasoning(selection),
   };
-}
-
-export function supportsKnowledgeGraphEnrichment(
-  provider: Pick<ServerProvider, "driver">,
-): boolean {
-  return provider.driver === "openai";
 }
 
 function firstSelectableModel(entry: ProviderInstanceEntry): string | null {
@@ -278,7 +189,7 @@ function BetterT3ModelSelectionControl(props: {
     entries,
     props.selection ?? props.fallbackSelection,
   );
-  if (!resolvedSelection && props.featureId !== "knowledge.model") {
+  if (!resolvedSelection) {
     return (
       <span className="text-xs text-muted-foreground">
         {props.translate("settings.betterT3.value.unavailable")}
@@ -297,11 +208,7 @@ function BetterT3ModelSelectionControl(props: {
           variant={props.selection === null ? "secondary" : "outline"}
           onClick={() => props.onChange(null)}
         >
-          {props.translate(
-            props.featureId === "knowledge.model"
-              ? "knowledgeGraph.localIndexing"
-              : "settings.betterT3.value.automatic",
-          )}
+          {props.translate("settings.betterT3.value.automatic")}
         </Button>
       ) : null}
       {resolvedSelection ? (
@@ -482,222 +389,6 @@ function ChatSettlingControl(props: {
   );
 }
 
-function KnowledgeGraphProjectSelect(props: {
-  readonly projects: ReadonlyArray<KnowledgeGraphProjectOption>;
-  readonly selectedProjectId: ProjectId | null;
-  readonly disabled: boolean;
-  readonly translate: Translate;
-  readonly onChange: (projectId: ProjectId) => void;
-}) {
-  const selected = props.projects.find((project) => project.projectId === props.selectedProjectId);
-  if (!selected) {
-    return (
-      <span className="text-xs text-muted-foreground">
-        {props.translate("settings.betterT3.value.unavailable")}
-      </span>
-    );
-  }
-  return (
-    <Select
-      value={selected.projectId}
-      disabled={props.disabled}
-      onValueChange={(value) => {
-        const project = props.projects.find((candidate) => candidate.projectId === value);
-        if (project) props.onChange(project.projectId);
-      }}
-    >
-      <SelectTrigger
-        size="sm"
-        className="max-w-52"
-        aria-label={props.translate("knowledgeGraph.title")}
-      >
-        <SelectValue>{selected.label}</SelectValue>
-      </SelectTrigger>
-      <SelectPopup align="end">
-        {props.projects.map((project) => (
-          <SelectItem key={project.projectId} value={project.projectId}>
-            {project.label}
-          </SelectItem>
-        ))}
-      </SelectPopup>
-    </Select>
-  );
-}
-
-function KnowledgeGraphStatusControl(props: {
-  readonly environmentId: EnvironmentId;
-  readonly projectId: ProjectId;
-  readonly disabled: boolean;
-  readonly translate: Translate;
-}) {
-  const result = useEnvironmentQuery(
-    props.disabled
-      ? null
-      : knowledgeGraphEnvironment.state({
-          environmentId: props.environmentId,
-          input: { scope: { projectId: props.projectId } },
-        }),
-  );
-  const snapshot = result.data?.snapshot ?? null;
-  if (props.disabled) {
-    return (
-      <span className="text-xs text-muted-foreground">
-        {props.translate("knowledgeGraph.status.disabled")}
-      </span>
-    );
-  }
-  if (result.error) {
-    return (
-      <>
-        <span className="text-xs text-danger">{props.translate("knowledgeGraph.error")}</span>
-        <Button size="xs" variant="outline" onClick={result.refresh} disabled={result.isPending}>
-          {props.translate("knowledgeGraph.retry")}
-        </Button>
-      </>
-    );
-  }
-  if (!snapshot) {
-    return (
-      <span className="text-xs text-muted-foreground">
-        {props.translate("knowledgeGraph.loading")}
-      </span>
-    );
-  }
-  return (
-    <span className="text-xs text-muted-foreground" aria-live="polite">
-      {props.translate(`knowledgeGraph.status.${snapshot.status.state}`)} ·{" "}
-      {props.translate("knowledgeGraph.indexedFileCount", {
-        count: snapshot.status.indexedFileCount,
-      })}
-      {" · "}
-      {props.translate("knowledgeGraph.nodeCount", { count: snapshot.status.nodeCount })}
-    </span>
-  );
-}
-
-function KnowledgeGraphPauseControl(props: {
-  readonly environmentId: EnvironmentId;
-  readonly projectId: ProjectId;
-  readonly disabled: boolean;
-  readonly translate: Translate;
-}) {
-  const result = useEnvironmentQuery(
-    props.disabled
-      ? null
-      : knowledgeGraphEnvironment.state({
-          environmentId: props.environmentId,
-          input: { scope: { projectId: props.projectId } },
-        }),
-  );
-  const snapshot = result.data?.snapshot ?? null;
-  const pause = useAtomCommand(knowledgeGraphEnvironment.pause, "Knowledge Graph pause");
-  const action = resolveKnowledgeGraphPauseAction(snapshot?.status.state ?? null);
-  return (
-    <Button
-      size="xs"
-      variant="outline"
-      disabled={props.disabled || snapshot === null}
-      onClick={() =>
-        void pause({
-          environmentId: props.environmentId,
-          input: { scope: { projectId: props.projectId }, paused: action.paused },
-        })
-      }
-    >
-      {props.translate(action.messageId)}
-    </Button>
-  );
-}
-
-function KnowledgeGraphRebuildControl(props: {
-  readonly environmentId: EnvironmentId;
-  readonly projectId: ProjectId;
-  readonly disabled: boolean;
-  readonly translate: Translate;
-}) {
-  const rebuild = useAtomCommand(knowledgeGraphEnvironment.rebuild, "Knowledge Graph rebuild");
-  return (
-    <Button
-      size="xs"
-      variant="outline"
-      disabled={props.disabled}
-      onClick={() =>
-        void rebuild({
-          environmentId: props.environmentId,
-          input: { scope: { projectId: props.projectId }, mode: "full" },
-        })
-      }
-    >
-      {props.translate("knowledgeGraph.rebuild")}
-    </Button>
-  );
-}
-
-function KnowledgeGraphOwnerControl(props: {
-  readonly threads: ReadonlyArray<KnowledgeGraphOwnerThreadOption>;
-  readonly disabled: boolean;
-  readonly translate: Translate;
-}) {
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const selected = resolveSelectedKnowledgeGraphOwnerThread(props.threads, selectedKey);
-  if (props.threads.length === 0) {
-    return (
-      <span className="text-xs text-muted-foreground">
-        {props.translate("settings.betterT3.knowledgeOwner.empty")}
-      </span>
-    );
-  }
-  return (
-    <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-      <Select
-        value={selected ? selectedKey : null}
-        disabled={props.disabled}
-        onValueChange={setSelectedKey}
-      >
-        <SelectTrigger
-          size="sm"
-          className="w-full max-w-72 sm:w-72"
-          aria-label={props.translate("settings.betterT3.knowledgeOwner.selectThread")}
-        >
-          <SelectValue>
-            {selected?.title ?? props.translate("settings.betterT3.knowledgeOwner.selectThread")}
-          </SelectValue>
-        </SelectTrigger>
-        <SelectPopup align="end">
-          {props.threads.map((thread) => (
-            <SelectItem
-              key={knowledgeGraphOwnerThreadKey(thread)}
-              value={knowledgeGraphOwnerThreadKey(thread)}
-            >
-              {thread.title}
-            </SelectItem>
-          ))}
-        </SelectPopup>
-      </Select>
-      {selected ? (
-        <Button
-          render={
-            <Link
-              to="/$environmentId/$threadId"
-              params={{ environmentId: selected.environmentId, threadId: selected.id }}
-            />
-          }
-          size="xs"
-          variant="outline"
-          disabled={props.disabled}
-          onClick={() =>
-            openKnowledgeGraphOwnerThread(selected, (threadRef, kind) =>
-              useRightPanelStore.getState().open(threadRef, kind),
-            )
-          }
-        >
-          {props.translate("settings.betterT3.knowledgeOwner.open")}
-        </Button>
-      ) : null}
-    </div>
-  );
-}
-
 export function useBetterT3PreparedControls(input: {
   readonly environmentId: EnvironmentId;
   readonly settings: UnifiedSettings;
@@ -709,33 +400,6 @@ export function useBetterT3PreparedControls(input: {
   const chatVisualMode = useChatVisualMode();
   const setChatVisualMode = useSetChatVisualMode();
   const { count: previewCount, setCount: setPreviewCount } = useProjectThreadPreviewCount();
-  const projects = useProjects();
-  const threads = useThreadShells();
-  const projectOptions = useMemo(
-    () =>
-      projects
-        .filter((project) => project.environmentId === input.environmentId)
-        .map((project) => ({ projectId: project.id, label: project.title })),
-    [input.environmentId, projects],
-  );
-  const [requestedProjectId, setRequestedProjectId] = useState<ProjectId | null>(null);
-  const selectedProjectId = resolveSelectedKnowledgeGraphProjectId(
-    projectOptions,
-    requestedProjectId,
-  );
-  const selectedProjectControl = (
-    <KnowledgeGraphProjectSelect
-      projects={projectOptions}
-      selectedProjectId={selectedProjectId}
-      disabled={!availableFeature(input.features, "knowledge.progress")}
-      translate={input.translate}
-      onChange={setRequestedProjectId}
-    />
-  );
-  const knowledgeGraphOwnerThreads = useMemo(
-    () => buildKnowledgeGraphOwnerThreadOptions(threads, input.environmentId),
-    [input.environmentId, threads],
-  );
   const scalarControlDisabled = (featureId: BetterT3FeatureId) =>
     !availableFeature(input.features, featureId);
 
@@ -883,65 +547,6 @@ export function useBetterT3PreparedControls(input: {
             buildBetterT3ScalarControlPatch({ id: "voice.outputLanguage", value }),
           )
         }
-      />
-    ),
-    "knowledge.model": (
-      <BetterT3ModelSelectionControl
-        featureId="knowledge.model"
-        settings={input.settings}
-        providers={input.providers}
-        selection={input.settings.knowledgeGraphModelSelection}
-        fallbackSelection={input.settings.textGenerationModelSelection}
-        allowAutomatic
-        disabled={scalarControlDisabled("knowledge.model")}
-        predicate={supportsKnowledgeGraphEnrichment}
-        translate={input.translate}
-        onChange={(knowledgeGraphModelSelection) =>
-          input.updateSettings({ knowledgeGraphModelSelection })
-        }
-      />
-    ),
-    "knowledge.progress": (
-      <div className="flex max-w-md flex-wrap items-center justify-end gap-2">
-        {selectedProjectControl}
-        {selectedProjectId ? (
-          <KnowledgeGraphStatusControl
-            environmentId={input.environmentId}
-            projectId={selectedProjectId}
-            disabled={
-              scalarControlDisabled("knowledge.progress") ||
-              !resolveBetterT3FeatureFlag(input.settings.betterT3Environment, "knowledge.graph")
-            }
-            translate={input.translate}
-          />
-        ) : null}
-      </div>
-    ),
-    "knowledge.rebuild": selectedProjectId ? (
-      <KnowledgeGraphRebuildControl
-        environmentId={input.environmentId}
-        projectId={selectedProjectId}
-        disabled={scalarControlDisabled("knowledge.rebuild")}
-        translate={input.translate}
-      />
-    ) : (
-      selectedProjectControl
-    ),
-    "knowledge.pause": selectedProjectId ? (
-      <KnowledgeGraphPauseControl
-        environmentId={input.environmentId}
-        projectId={selectedProjectId}
-        disabled={scalarControlDisabled("knowledge.pause")}
-        translate={input.translate}
-      />
-    ) : (
-      selectedProjectControl
-    ),
-    "knowledge.clear": (
-      <KnowledgeGraphOwnerControl
-        threads={knowledgeGraphOwnerThreads}
-        disabled={scalarControlDisabled("knowledge.clear")}
-        translate={input.translate}
       />
     ),
   } satisfies Record<WebBetterT3PreparedControlId, ReactNode>;

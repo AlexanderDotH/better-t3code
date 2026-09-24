@@ -10,6 +10,7 @@ import {
   type InterfaceMessageTemplate,
   type LocalizedInterfaceCatalog,
 } from "./interfaceLanguageCatalog.types.ts";
+import { projectIndexingFeatureCopy } from "./interfaceLanguageCatalog.projectIndexing.ts";
 
 const betterT3SettingsCatalog = defineLocalizedInterfaceCatalog({
   "settings.betterT3.title": ["Better T3", "Better T3", "Better T3"],
@@ -77,6 +78,7 @@ const betterT3SettingsCatalog = defineLocalizedInterfaceCatalog({
     "Votre conversation reste centrée. Déplacez le curseur pour voir les retours à la ligne et l’espace de saisie s’adapter.",
   ],
   "settings.betterT3.tab.chat": ["Chat", "Chat", "Discussion"],
+  "settings.betterT3.tab.composer": ["Composer", "Eingabe", "Rédaction"],
   "settings.betterT3.tab.sidebar": ["Sidebar", "Seitenleiste", "Barre latérale"],
   "settings.betterT3.tab.usage": ["Usage", "Nutzung", "Utilisation"],
   "settings.betterT3.tab.agents": ["Agents", "Agenten", "Agents"],
@@ -122,6 +124,7 @@ const betterT3SettingsCatalog = defineLocalizedInterfaceCatalog({
     "Chat und Layout",
     "Discussion et mise en page",
   ],
+  "settings.betterT3.section.composer": ["Composer", "Eingabe", "Rédaction"],
   "settings.betterT3.section.workspace-source-control": [
     "Workspace and source control",
     "Workspace und Versionsverwaltung",
@@ -424,21 +427,6 @@ const betterT3SettingsCatalog = defineLocalizedInterfaceCatalog({
     "Keine aktiven Chats aus einer verbundenen, kompatiblen Umgebung verfügbar.",
     "Aucune discussion active n’est disponible depuis un environnement connecté et compatible.",
   ],
-  "settings.betterT3.knowledgeOwner.selectThread": [
-    "Select a thread",
-    "Chat auswählen",
-    "Sélectionner une discussion",
-  ],
-  "settings.betterT3.knowledgeOwner.empty": [
-    "No active threads are available in this environment.",
-    "In dieser Umgebung sind keine aktiven Chats verfügbar.",
-    "Aucune discussion active n’est disponible dans cet environnement.",
-  ],
-  "settings.betterT3.knowledgeOwner.open": [
-    "Open Knowledge Graph",
-    "Wissensgraph öffnen",
-    "Ouvrir le graphe de connaissances",
-  ],
   "settings.betterT3.mobile.transcript.description": [
     "Select a thread before copying its complete Markdown transcript.",
     "Wähle einen Chat aus, bevor du sein vollständiges Markdown-Transkript kopierst.",
@@ -681,11 +669,13 @@ const featureLabels = {
   ],
   "voice.credentials": ["Voice credentials", "Sprachzugangsdaten", "Identifiants vocaux"],
   "knowledge.graph": ["Knowledge Graph", "Wissensgraph", "Graphe de connaissances"],
-  "knowledge.model": [
-    "Knowledge Graph model",
-    "Wissensgraph-Modell",
-    "Modèle du graphe de connaissances",
-  ],
+  "knowledge.projectIndexingMaster":
+    projectIndexingFeatureCopy["knowledge.projectIndexingMaster"].label,
+  "knowledge.projectIndexingDefaultModel":
+    projectIndexingFeatureCopy["knowledge.projectIndexingDefaultModel"].label,
+  "knowledge.projectIndexing": projectIndexingFeatureCopy["knowledge.projectIndexing"].label,
+  "knowledge.projectIndexingReview":
+    projectIndexingFeatureCopy["knowledge.projectIndexingReview"].label,
   "knowledge.progress": [
     "Indexing progress",
     "Indexierungsfortschritt",
@@ -738,15 +728,17 @@ const featureLabels = {
 } as const satisfies Readonly<Record<BetterT3FeatureId, FeatureLabel>>;
 
 const featureDescriptionOverrides: Partial<Record<BetterT3FeatureId, FeatureLabel>> = {
+  "knowledge.projectIndexingMaster":
+    projectIndexingFeatureCopy["knowledge.projectIndexingMaster"].description,
+  "knowledge.projectIndexingDefaultModel":
+    projectIndexingFeatureCopy["knowledge.projectIndexingDefaultModel"].description,
+  "knowledge.projectIndexing": projectIndexingFeatureCopy["knowledge.projectIndexing"].description,
+  "knowledge.projectIndexingReview":
+    projectIndexingFeatureCopy["knowledge.projectIndexingReview"].description,
   "chat.visualizations": [
     "Show diagrams and charts for learning and data analysis, and encourage agents to use them when helpful. Applies to all clients connected to this environment.",
     "Diagramme und Charts zum Lernen und zur Datenauswertung anzeigen und Agenten zur passenden Nutzung ermutigen. Gilt für alle Clients dieser Umgebung.",
     "Afficher des diagrammes pour apprendre et analyser les données, et encourager les agents à les utiliser lorsque cela aide. Pour tous les clients de cet environnement.",
-  ],
-  "knowledge.model": [
-    "Optional model enrichment requires an OpenAI API provider. Local indexing works without a model.",
-    "Optionale Modellanreicherung benötigt einen OpenAI-API-Provider. Die lokale Indexierung funktioniert ohne Modell.",
-    "L’enrichissement optionnel nécessite un fournisseur API OpenAI. L’indexation locale fonctionne sans modèle.",
   ],
   "agent.autoReasoningModel": [
     "Used to select the reasoning level. Automatic uses the text-generation model.",
@@ -757,6 +749,11 @@ const featureDescriptionOverrides: Partial<Record<BetterT3FeatureId, FeatureLabe
     "Start agent work in planning mode so it proposes a plan before changing files.",
     "Startet Agentenarbeit im Planmodus, damit vor Dateiänderungen zuerst ein Plan vorgeschlagen wird.",
     "Démarre le travail de l’agent en mode Plan afin de proposer un plan avant toute modification de fichiers.",
+  ],
+  "agent.expandedComposerControls": [
+    "Show separate model and mode controls in the composer when there is room. Narrow layouts use the compact menu.",
+    "Zeigt Modell- und Modussteuerung bei genügend Platz getrennt im Eingabefeld. Bei wenig Platz bleibt das kompakte Menü.",
+    "Affiche séparément les commandes du modèle et du mode dans la zone de saisie si l’espace le permet. Les vues étroites gardent le menu compact.",
   ],
   "agent.generalSubagents": [
     "Allow the agent to delegate focused work to parallel subagents and show their progress.",
@@ -787,6 +784,11 @@ const featureDescriptionOverrides: Partial<Record<BetterT3FeatureId, FeatureLabe
     "Move project navigation and its controls to the left or right side.",
     "Verschiebt Projektnavigation und Bedienelemente auf die linke oder rechte Seite.",
     "Déplace la navigation du projet et ses commandes vers le côté gauche ou droit.",
+  ],
+  "chat.classicSidebar": [
+    "Choose the classic project list or the current sidebar layout.",
+    "Wähle zwischen der klassischen Projektliste und der aktuellen Seitenleiste.",
+    "Choisissez entre la liste de projets classique et la barre latérale actuelle.",
   ],
   "chat.presentation": [
     "Choose between the current grouped chat layout and the classic transcript view.",

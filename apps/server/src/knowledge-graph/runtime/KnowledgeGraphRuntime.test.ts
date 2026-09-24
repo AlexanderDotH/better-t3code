@@ -2,17 +2,14 @@ import { assert, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
-  KnowledgeGraphModelGeneration,
   KnowledgeGraphNodeId,
   KnowledgeGraphOperationError,
   KnowledgeGraphScopeId,
   type KnowledgeGraphScopeV1,
   type KnowledgeGraphStatusV1,
   type KnowledgeGraphStreamEvent,
-  type ModelSelection,
   makeBetterT3SettingsV1,
   ProjectId,
-  ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -25,11 +22,8 @@ import * as Stream from "effect/Stream";
 
 import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
 import * as ServerSettings from "../../serverSettings.ts";
-import * as TextGeneration from "../../textGeneration/TextGeneration.ts";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import * as KnowledgeGraphRepository from "../persistence/KnowledgeGraphRepository.ts";
-import * as KnowledgeGraphSemanticQueueRepository from "../persistence/KnowledgeGraphSemanticQueueRepository.ts";
-import * as KnowledgeGraphSemanticWorker from "../semantic/KnowledgeGraphSemanticWorker.ts";
 import * as KnowledgeGraphEventHub from "./KnowledgeGraphEventHub.ts";
 import * as KnowledgeGraphIndexer from "./KnowledgeGraphIndexer.ts";
 import { makeKnowledgeGraphRuntime } from "./KnowledgeGraphRuntime.ts";
@@ -64,7 +58,7 @@ function status(state: KnowledgeGraphStatusV1["state"]): KnowledgeGraphStatusV1 
     nodeCount: 0,
     edgeCount: 0,
     evidenceCount: 0,
-    semanticQueueDepth: 3,
+    semanticQueueDepth: 0,
     truncated: {
       eligibleFiles: false,
       nodes: false,
@@ -88,8 +82,6 @@ const makeRuntimeHarness = (
   knownScopes: ReadonlyArray<KnowledgeGraphScopeV1> = [scope],
   initiallyPersistedScopes: ReadonlyArray<KnowledgeGraphScopeV1> = knownScopes,
   indexScopeOverride?: KnowledgeGraphIndexer.KnowledgeGraphIndexerShape["indexScope"],
-  initialQueuePaused = false,
-  semanticModelSelection: ModelSelection | null = null,
   initialStatusState: KnowledgeGraphStatusV1["state"] = "ready",
 ) =>
   Effect.gen(function* () {
@@ -97,15 +89,8 @@ const makeRuntimeHarness = (
     const idleStatuses = yield* Queue.unbounded<void>();
     const indexed = yield* Ref.make(0);
     const indexedScopeIds = yield* Ref.make<ReadonlyArray<string>>([]);
-    const cancelledScopes = yield* Ref.make<ReadonlyArray<string>>([]);
-    const clearedSemanticScopes = yield* Ref.make<ReadonlyArray<string>>([]);
     const clearedGraphScopes = yield* Ref.make<ReadonlyArray<string>>([]);
     const clearedEnvironments = yield* Ref.make<ReadonlyArray<string>>([]);
-    const pausedEnvironments = yield* Ref.make<ReadonlyArray<string>>([]);
-    const resumedEnvironments = yield* Ref.make<ReadonlyArray<string>>([]);
-    const recoveredEnvironments = yield* Ref.make<ReadonlyArray<string>>([]);
-    const recoverCount = yield* Ref.make(0);
-    const semanticRuns = yield* Ref.make(0);
     const watcherClears = yield* Ref.make(0);
     const watcherReconciles = yield* Ref.make(0);
     const publishedEvents = yield* Ref.make<ReadonlyArray<KnowledgeGraphStreamEvent>>([]);
@@ -113,7 +98,6 @@ const makeRuntimeHarness = (
     const disabled = yield* Deferred.make<void>();
     const initialIndexed = yield* Deferred.make<void>();
     const initialIndexSettled = yield* Deferred.make<void>();
-    const semanticRan = yield* Deferred.make<void>();
     const indexFailed = yield* Deferred.make<void>();
     const reindexed = yield* Deferred.make<void>();
     const reindexedSettled = yield* Deferred.make<void>();
@@ -128,7 +112,6 @@ const makeRuntimeHarness = (
     const watcherChangeHandler = yield* Ref.make<WatchChangeHandler | null>(null);
     const enabledSettings = {
       ...DEFAULT_SERVER_SETTINGS,
-      knowledgeGraphModelSelection: semanticModelSelection,
       betterT3Environment: makeBetterT3SettingsV1("clean-install", {
         "knowledge.graph": true,
       }),
@@ -202,43 +185,6 @@ const makeRuntimeHarness = (
           ),
           Effect.asVoid,
         ),
-      reconcileSemanticModel: () =>
-        Effect.succeed({
-          modelGeneration: KnowledgeGraphModelGeneration.make(0),
-          changed: false,
-        }),
-    });
-    const semanticQueue = serviceStub<
-      KnowledgeGraphSemanticQueueRepository.KnowledgeGraphSemanticQueueRepository["Service"]
-    >({
-      cancelScope: (scopeId) =>
-        Ref.update(cancelledScopes, (current) => [...current, String(scopeId)]),
-      clearScope: (scopeId) =>
-        Ref.update(clearedSemanticScopes, (current) => [...current, String(scopeId)]),
-      getStatus: () =>
-        Effect.succeed({
-          environmentId,
-          queuedCount: 3,
-          runningCount: 0,
-          paused: initialQueuePaused,
-          rateLimitedUntil: null,
-        }),
-    });
-    const semanticWorker = serviceStub<
-      KnowledgeGraphSemanticWorker.KnowledgeGraphSemanticWorker["Service"]
-    >({
-      recover: Ref.update(recoverCount, (count) => count + 1),
-      recoverEnvironment: (nextEnvironmentId) =>
-        Ref.update(recoveredEnvironments, (current) => [...current, String(nextEnvironmentId)]),
-      pauseEnvironment: (nextEnvironmentId) =>
-        Ref.update(pausedEnvironments, (current) => [...current, String(nextEnvironmentId)]),
-      resumeEnvironment: (nextEnvironmentId) =>
-        Ref.update(resumedEnvironments, (current) => [...current, String(nextEnvironmentId)]),
-      runNextBatch: () =>
-        Ref.update(semanticRuns, (count) => count + 1).pipe(
-          Effect.andThen(Deferred.succeed(semanticRan, undefined)),
-          Effect.as({ status: "idle" as const, environmentId }),
-        ),
     });
     const catalog = KnowledgeGraphScopeCatalog.KnowledgeGraphScopeCatalog.of({
       getEnvironmentId: Effect.succeed(environmentId),
@@ -289,11 +235,6 @@ const makeRuntimeHarness = (
         streamChanges: Stream.fromQueue(settingsChanges),
       }),
     );
-    const textGeneration = TextGeneration.TextGeneration.of(
-      serviceStub<TextGeneration.TextGeneration["Service"]>({
-        enrichKnowledgeGraph: () => Effect.die("semantic enrichment is not used in this test"),
-      }),
-    );
     const workspaceFiles = WorkspaceFileSystem.WorkspaceFileSystem.of(
       serviceStub<WorkspaceFileSystem.WorkspaceFileSystem["Service"]>({
         readFile: () => Effect.die("node content is not used in this test"),
@@ -307,14 +248,6 @@ const makeRuntimeHarness = (
 
     const runtime = yield* makeKnowledgeGraphRuntime.pipe(
       Effect.provideService(KnowledgeGraphRepository.KnowledgeGraphRepository, repository),
-      Effect.provideService(
-        KnowledgeGraphSemanticQueueRepository.KnowledgeGraphSemanticQueueRepository,
-        semanticQueue,
-      ),
-      Effect.provideService(
-        KnowledgeGraphSemanticWorker.KnowledgeGraphSemanticWorker,
-        semanticWorker,
-      ),
       Effect.provideService(KnowledgeGraphScopeCatalog.KnowledgeGraphScopeCatalog, catalog),
       Effect.provideService(
         KnowledgeGraphWatcherMultiplexer.KnowledgeGraphWatcherMultiplexer,
@@ -323,7 +256,6 @@ const makeRuntimeHarness = (
       Effect.provideService(KnowledgeGraphIndexer.KnowledgeGraphIndexer, indexer),
       Effect.provideService(KnowledgeGraphEventHub.KnowledgeGraphEventHub, eventHub),
       Effect.provideService(ServerSettings.ServerSettingsService, settings),
-      Effect.provideService(TextGeneration.TextGeneration, textGeneration),
       Effect.provideService(WorkspaceFileSystem.WorkspaceFileSystem, workspaceFiles),
       Effect.provideService(OrchestrationEngine.OrchestrationEngineService, orchestration),
     );
@@ -338,16 +270,8 @@ const makeRuntimeHarness = (
       indexedScopeIds,
       persistedScopes,
       failNextStatusRead,
-      cancelledScopes,
-      clearedSemanticScopes,
       clearedGraphScopes,
       clearedEnvironments,
-      pausedEnvironments,
-      resumedEnvironments,
-      recoveredEnvironments,
-      recoverCount,
-      semanticRuns,
-      semanticRan,
       watcherClears,
       watcherReconciles,
       watcherChangeHandler,
@@ -362,7 +286,7 @@ const makeRuntimeHarness = (
     };
   });
 
-it.effect("feature-off preserves queued work and re-enables all registered scopes", () =>
+it.effect("feature-off stops indexing and re-enables all registered scopes", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const harness = yield* makeRuntimeHarness([scope, worktreeScope]);
@@ -375,9 +299,6 @@ it.effect("feature-off preserves queued work and re-enables all registered scope
       yield* Queue.offer(harness.settingsChanges, harness.disabledSettings);
       yield* Deferred.await(harness.disabled);
 
-      assert.deepStrictEqual(yield* Ref.get(harness.cancelledScopes), []);
-      assert.deepStrictEqual(yield* Ref.get(harness.pausedEnvironments), []);
-      assert.strictEqual(yield* Ref.get(harness.recoverCount), 2);
       assert.strictEqual(yield* Ref.get(harness.watcherClears), 1);
 
       yield* Queue.offer(harness.settingsChanges, harness.enabledSettings);
@@ -436,7 +357,6 @@ it.effect("blocks every activating RPC while disabled but leaves destructive cle
       const cleared = yield* harness.runtime.clear({ target: "scope", scope: scopeInput });
       assert.isTrue(cleared.accepted);
       assert.deepStrictEqual(yield* Ref.get(harness.clearedGraphScopes), [String(scope.scopeId)]);
-      assert.strictEqual(yield* Ref.get(harness.semanticRuns), 0);
     }),
   ),
 );
@@ -465,61 +385,50 @@ it.effect("clears stale failure metadata when a disabled scope is re-enabled", (
   ),
 );
 
-it.effect(
-  "manual pause retains work while explicit scope cancellation discards only that scope",
-  () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeRuntimeHarness();
-        const scopeInput = { projectId, threadId };
-        yield* Ref.set(harness.currentStatus, {
-          ...status("indexing"),
-          errorMessage: "Interrupted extraction.",
-          retryAt: 1_788_000_000_000,
-          progress: {
-            version: 1,
-            phase: "extracting",
-            discoveredFileCount: 12,
-            processedFileCount: 4,
-            queuedSemanticNodeCount: 0,
-          },
-        });
+it.effect("manual pause stops indexing and explicit cancellation settles only that scope", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const harness = yield* makeRuntimeHarness();
+      const scopeInput = { projectId, threadId };
+      yield* Ref.set(harness.currentStatus, {
+        ...status("indexing"),
+        errorMessage: "Interrupted extraction.",
+        retryAt: 1_788_000_000_000,
+        progress: {
+          version: 1,
+          phase: "extracting",
+          discoveredFileCount: 12,
+          processedFileCount: 4,
+          queuedSemanticNodeCount: 0,
+        },
+      });
 
-        yield* harness.runtime.pause({ scope: scopeInput, paused: true });
-        assert.strictEqual((yield* Ref.get(harness.currentStatus)).state, "paused");
-        assert.deepStrictEqual(yield* Ref.get(harness.pausedEnvironments), [String(environmentId)]);
-        assert.deepStrictEqual(yield* Ref.get(harness.cancelledScopes), []);
+      yield* harness.runtime.pause({ scope: scopeInput, paused: true });
+      assert.strictEqual((yield* Ref.get(harness.currentStatus)).state, "paused");
+      assert.strictEqual(yield* Ref.get(harness.watcherClears), 1);
 
-        yield* harness.runtime.pause({ scope: scopeInput, paused: false });
-        const resumedStatus = yield* Ref.get(harness.currentStatus);
-        assert.strictEqual(resumedStatus.state, "idle");
-        assert.notProperty(resumedStatus, "errorMessage");
-        assert.notProperty(resumedStatus, "progress");
-        assert.notProperty(resumedStatus, "retryAt");
-        assert.deepStrictEqual(yield* Ref.get(harness.resumedEnvironments), [
-          String(environmentId),
-        ]);
+      yield* harness.runtime.pause({ scope: scopeInput, paused: false });
+      const resumedStatus = yield* Ref.get(harness.currentStatus);
+      assert.strictEqual(resumedStatus.state, "idle");
+      assert.notProperty(resumedStatus, "errorMessage");
+      assert.notProperty(resumedStatus, "progress");
+      assert.notProperty(resumedStatus, "retryAt");
 
-        yield* Ref.set(harness.currentStatus, {
-          ...status("error"),
-          errorMessage: "Cancelled semantic attempt.",
-          retryAt: 1_788_000_000_000,
-        });
-        yield* harness.runtime.cancel(scopeInput);
-        assert.deepStrictEqual(yield* Ref.get(harness.cancelledScopes), [String(scope.scopeId)]);
-        assert.deepStrictEqual(yield* Ref.get(harness.recoveredEnvironments), [
-          String(environmentId),
-          String(environmentId),
-        ]);
-        const cancelledStatus = yield* Ref.get(harness.currentStatus);
-        assert.strictEqual(cancelledStatus.state, "idle");
-        assert.notProperty(cancelledStatus, "errorMessage");
-        assert.notProperty(cancelledStatus, "retryAt");
-      }),
-    ),
+      yield* Ref.set(harness.currentStatus, {
+        ...status("error"),
+        errorMessage: "Cancelled source extraction.",
+        retryAt: 1_788_000_000_000,
+      });
+      yield* harness.runtime.cancel(scopeInput);
+      const cancelledStatus = yield* Ref.get(harness.currentStatus);
+      assert.strictEqual(cancelledStatus.state, "idle");
+      assert.notProperty(cancelledStatus, "errorMessage");
+      assert.notProperty(cancelledStatus, "retryAt");
+    }),
+  ),
 );
 
-it.effect("routes incremental, semantic, and full rebuild modes without crossing scope data", () =>
+it.effect("all rebuild modes reindex without clearing the published revision", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const scopeInput = { projectId, threadId };
@@ -537,7 +446,6 @@ it.effect("routes incremental, semantic, and full rebuild modes without crossing
         String(scope.scopeId),
       ]);
       assert.deepStrictEqual(yield* Ref.get(incremental.clearedGraphScopes), []);
-      assert.deepStrictEqual(yield* Ref.get(incremental.clearedSemanticScopes), []);
 
       const semantic = yield* makeRuntimeHarness();
       yield* Deferred.await(semantic.initialIndexed);
@@ -546,8 +454,11 @@ it.effect("routes incremental, semantic, and full rebuild modes without crossing
         mode: "semantic",
       });
       assert.isTrue(semanticResult.accepted);
-      assert.deepStrictEqual(yield* Ref.get(semantic.cancelledScopes), [String(scope.scopeId)]);
-      assert.deepStrictEqual(yield* Ref.get(semantic.indexedScopeIds), [String(scope.scopeId)]);
+      yield* Deferred.await(semantic.reindexed);
+      assert.deepStrictEqual(yield* Ref.get(semantic.indexedScopeIds), [
+        String(scope.scopeId),
+        String(scope.scopeId),
+      ]);
       assert.deepStrictEqual(yield* Ref.get(semantic.clearedGraphScopes), []);
 
       const full = yield* makeRuntimeHarness();
@@ -556,20 +467,12 @@ it.effect("routes incremental, semantic, and full rebuild modes without crossing
       const fullResult = yield* full.runtime.rebuild({ scope: scopeInput, mode: "full" });
       yield* Deferred.await(full.reindexed);
       assert.isTrue(fullResult.accepted);
-      assert.deepStrictEqual(yield* Ref.get(full.clearedSemanticScopes), [String(scope.scopeId)]);
-      assert.deepStrictEqual(yield* Ref.get(full.clearedGraphScopes), [String(scope.scopeId)]);
-      assert.deepStrictEqual(
+      assert.deepStrictEqual(yield* Ref.get(full.clearedGraphScopes), []);
+      assert.strictEqual((yield* Ref.get(full.currentStatus)).revision, 7);
+      assert.isUndefined(
         (yield* Ref.get(full.publishedEvents)).find(
           (event) => event.type === "invalidate" && event.reason === "rebuild",
         ),
-        {
-          version: 1,
-          type: "invalidate",
-          scopeId: scope.scopeId,
-          reason: "rebuild",
-          expectedRevision: 7,
-          availableRevision: 0,
-        },
       );
     }),
   ),
@@ -594,22 +497,6 @@ it.effect("maps an activation status-read failure at the pause RPC boundary", ()
       assert.strictEqual(error.scopeId, scope.scopeId);
     }),
   ),
-);
-
-it.effect("recovers interrupted semantic claims when the server runtime scope closes", () =>
-  Effect.gen(function* () {
-    const observation = yield* Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeRuntimeHarness();
-        return {
-          recoverCount: harness.recoverCount,
-          countBeforeClose: yield* Ref.get(harness.recoverCount),
-        };
-      }),
-    );
-
-    assert.strictEqual(yield* Ref.get(observation.recoverCount), observation.countBeforeClose + 1);
-  }),
 );
 
 it.effect("indexes every registered project scope and only the externally changed worktree", () =>
@@ -695,7 +582,6 @@ it.effect("interrupts owned indexing for an explicit pause and settles paused", 
       yield* Deferred.await(interrupted);
 
       assert.strictEqual((yield* Ref.get(harness.currentStatus)).state, "paused");
-      assert.deepStrictEqual(yield* Ref.get(harness.pausedEnvironments), [String(environmentId)]);
     }),
   ),
 );
@@ -706,14 +592,7 @@ it.effect("repairs orphan indexing and cancelling states before startup indexing
     (orphanState) =>
       Effect.scoped(
         Effect.gen(function* () {
-          const harness = yield* makeRuntimeHarness(
-            [scope],
-            [scope],
-            undefined,
-            false,
-            null,
-            orphanState,
-          );
+          const harness = yield* makeRuntimeHarness([scope], [scope], undefined, orphanState);
           yield* Deferred.await(harness.initialIndexSettled);
 
           const statusEvents = (yield* Ref.get(harness.publishedEvents)).filter(
@@ -736,9 +615,6 @@ it.effect("clears persisted environment data after its last registered project i
 
       yield* harness.runtime.clear({ target: "environment" });
 
-      assert.deepStrictEqual(yield* Ref.get(harness.clearedSemanticScopes), [
-        String(scope.scopeId),
-      ]);
       assert.deepStrictEqual(yield* Ref.get(harness.clearedEnvironments), [String(environmentId)]);
       const invalidation = (yield* Ref.get(harness.publishedEvents)).find(
         (event) => event.type === "invalidate",
@@ -813,38 +689,13 @@ it.effect("publishes a recoverable error state when deterministic indexing fails
   ),
 );
 
-it.effect("reconciles persisted scope status when a paused queue survives restart", () =>
+it.effect("keeps a persisted pause across restart without resuming indexing", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const harness = yield* makeRuntimeHarness([scope], [scope], undefined, true);
+      const harness = yield* makeRuntimeHarness([scope], [scope], undefined, "paused");
 
       assert.strictEqual((yield* Ref.get(harness.currentStatus)).state, "paused");
       assert.deepStrictEqual(yield* Ref.get(harness.indexedScopeIds), []);
-    }),
-  ),
-);
-
-it.effect("does not restart semantic work when a disabled graph scope is cleared", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const modelSelection: ModelSelection = {
-        instanceId: ProviderInstanceId.make("openai"),
-        model: "gpt-5.2",
-      };
-      const harness = yield* makeRuntimeHarness([scope], [scope], undefined, false, modelSelection);
-      yield* Deferred.await(harness.semanticRan);
-      yield* Queue.offer(harness.settingsChanges, harness.disabledSettings);
-      yield* Deferred.await(harness.disabled);
-      const runsBeforeClear = yield* Ref.get(harness.semanticRuns);
-
-      yield* harness.runtime.clear({
-        target: "scope",
-        scope: { projectId, threadId },
-      });
-      yield* Effect.yieldNow;
-
-      assert.deepStrictEqual(yield* Ref.get(harness.clearedGraphScopes), [String(scope.scopeId)]);
-      assert.strictEqual(yield* Ref.get(harness.semanticRuns), runsBeforeClear);
     }),
   ),
 );

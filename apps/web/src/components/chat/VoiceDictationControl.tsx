@@ -1,4 +1,4 @@
-import { MicIcon, SquareIcon } from "lucide-react";
+import { MicIcon, SquareIcon, Undo2Icon, XIcon } from "lucide-react";
 import { memo } from "react";
 
 import type { AssemblyAiDictationState } from "../../hooks/useAssemblyAiDictation";
@@ -34,32 +34,55 @@ export const VoiceDictationControl = memo(function VoiceDictationControl({
   disabled,
   onStart,
   onStop,
+  onCancel,
+  onRestoreOriginal,
 }: {
   readonly state: AssemblyAiDictationState;
   readonly audioWaveform: ReadonlyArray<number>;
   readonly disabled: boolean;
   readonly onStart: () => void | Promise<void>;
   readonly onStop: () => void | Promise<void>;
+  readonly onCancel: () => void;
+  readonly onRestoreOriginal?: (() => void) | undefined;
 }) {
   const translate = useInterfaceTranslator().message;
   if (state === "idle") {
     return (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              className="flex h-9 w-9 enabled:cursor-pointer items-center justify-center rounded-full border border-border/70 bg-background text-muted-foreground transition-all duration-150 hover:scale-105 hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30 sm:h-8 sm:w-8"
-              disabled={disabled}
-              onClick={() => void onStart()}
-              aria-label={translate("chat.composer.voiceStart")}
-            />
-          }
-        >
-          <MicIcon className="size-4" />
-        </TooltipTrigger>
-        <TooltipPopup side="top">{translate("chat.composer.voiceStart")}</TooltipPopup>
-      </Tooltip>
+      <div className="flex items-center gap-1">
+        {onRestoreOriginal ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground"
+                  onClick={onRestoreOriginal}
+                  aria-label={translate("chat.composer.voiceRestoreOriginal")}
+                />
+              }
+            >
+              <Undo2Icon className="size-4" />
+            </TooltipTrigger>
+            <TooltipPopup>{translate("chat.composer.voiceRestoreOriginal")}</TooltipPopup>
+          </Tooltip>
+        ) : null}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                className="flex h-9 w-9 enabled:cursor-pointer items-center justify-center rounded-full border border-border/70 bg-background text-muted-foreground transition-all duration-150 hover:scale-105 hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30 sm:h-8 sm:w-8"
+                disabled={disabled}
+                onClick={() => void onStart()}
+                aria-label={translate("chat.composer.voiceStart")}
+              />
+            }
+          >
+            <MicIcon className="size-4" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">{translate("chat.composer.voiceStart")}</TooltipPopup>
+        </Tooltip>
+      </div>
     );
   }
 
@@ -68,7 +91,7 @@ export const VoiceDictationControl = memo(function VoiceDictationControl({
     state === "starting"
       ? translate("chat.composer.voiceCancelConnection")
       : state === "stopping"
-        ? translate("chat.composer.voiceStopping")
+        ? translate("chat.composer.voiceProcessing")
         : translate("chat.composer.voiceStop");
   const buttonTooltip =
     state === "starting"
@@ -126,6 +149,14 @@ export const VoiceDictationControl = memo(function VoiceDictationControl({
         </TooltipTrigger>
         <TooltipPopup side="top">{buttonTooltip}</TooltipPopup>
       </Tooltip>
+      <button
+        type="button"
+        className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground"
+        onClick={onCancel}
+        aria-label={translate("chat.composer.voiceCancel")}
+      >
+        <XIcon className="size-3.5" />
+      </button>
     </div>
   );
 });
