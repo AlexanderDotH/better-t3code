@@ -87,7 +87,7 @@ const KNOWN_GEMINI_REASONING_PROFILES: Readonly<Record<string, GeminiReasoningPr
   "gemini-2.5-flash-lite": { defaultLevel: "low", levels: ["low", "medium", "high"] },
 };
 
-export function isGemini3OrLater(slug: string): boolean {
+function isGemini3OrLater(slug: string): boolean {
   return /^gemini-(?:[3-9]|\d{2,})/i.test(slug);
 }
 
@@ -123,7 +123,7 @@ export function resolveGeminiReasoningProfile(
   return undefined;
 }
 
-export function createGeminiReasoningOptionDescriptor(
+function createGeminiReasoningOptionDescriptor(
   levels: ReadonlyArray<GeminiReasoningLevel>,
   defaultLevel: GeminiReasoningLevel,
 ): SelectProviderOptionDescriptor {
@@ -270,7 +270,7 @@ export function geminiModelSupportsTextOutput(
   return true;
 }
 
-export const GEMINI_MODEL_CAPABILITIES: ModelCapabilities =
+const GEMINI_MODEL_CAPABILITIES: ModelCapabilities =
   createGeminiModelCapabilities(GEMINI_DEFAULT_MODEL);
 
 const BUILT_IN_GEMINI_MODELS: ReadonlyArray<ServerProviderModel> = [
@@ -284,7 +284,7 @@ const BUILT_IN_GEMINI_MODELS: ReadonlyArray<ServerProviderModel> = [
   capabilities: createGeminiModelCapabilities(model.slug),
 }));
 
-export function normalizedModelSlug(name: string | undefined): string | undefined {
+function normalizedModelSlug(name: string | undefined): string | undefined {
   const slug = name?.replace(/^(?:models|tunedModels)\//u, "").trim();
   return slug && slug.length > 0 ? slug : undefined;
 }

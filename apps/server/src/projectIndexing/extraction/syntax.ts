@@ -20,7 +20,7 @@ import { rangeFromOffsets, sourceHash, stableId } from "./source.ts";
 import { syntaxModuleSpecifiers } from "./syntaxModules.ts";
 
 const require = NodeModule.createRequire(import.meta.url);
-export const projectIndexerAssets = {
+const projectIndexerAssets = {
   runtime: "web-tree-sitter/tree-sitter.wasm",
   grammars: PROJECT_INDEX_SYNTAX_GRAMMARS.map(
     (name) => `tree-sitter-wasms/out/tree-sitter-${name}.wasm`,

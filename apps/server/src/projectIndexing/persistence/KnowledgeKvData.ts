@@ -24,7 +24,7 @@ export interface StoredRecord {
   readonly calls: ReadonlyArray<{ readonly callerId: string; readonly calleeId: string }>;
 }
 
-export const recordKey = (kind: KnowledgeRecordKind, id: string) => kvKey("r", kind, id);
+const recordKey = (kind: KnowledgeRecordKind, id: string) => kvKey("r", kind, id);
 const counterKey = (counter: string) => kvKey("count", counter);
 function counters(record: StoredRecord) {
   const value = JSON.parse(record.payload) as { status?: string; resolution?: string };

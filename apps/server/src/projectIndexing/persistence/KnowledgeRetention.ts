@@ -5,7 +5,7 @@ import type { KnowledgeWorkspace } from "../privacy/WorkspacePrivacy.ts";
 import { asStoreError } from "./KnowledgeStoreSchema.ts";
 import { removeOwnedKnowledgeArtifact } from "./KnowledgeViews.ts";
 
-export const RETAINED_KNOWLEDGE_GENERATIONS = 3;
+const RETAINED_KNOWLEDGE_GENERATIONS = 3;
 const ARTIFACT_COLLECTION_BATCH_SIZE = 100;
 
 const retainedRevisions = Effect.fn("retainedKnowledgeRevisions")(function* (

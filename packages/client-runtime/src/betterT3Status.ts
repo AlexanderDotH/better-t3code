@@ -75,7 +75,7 @@ export function prepareLifecycleStatus(input: {
 
 type CapabilityValues = Readonly<Record<string, unknown>>;
 
-export function resolveBetterT3CapabilitySupport(
+function resolveBetterT3CapabilitySupport(
   capabilities: CapabilityValues | null,
   name: string,
   minimumVersion?: number,

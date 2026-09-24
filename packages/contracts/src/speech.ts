@@ -22,7 +22,7 @@ export const AssemblyAiSpeechModel = Schema.Literals([
 ]);
 export type AssemblyAiSpeechModel = typeof AssemblyAiSpeechModel.Type;
 
-export const ASSEMBLY_AI_LANGUAGE_CODES: readonly string[] = [
+const ASSEMBLY_AI_LANGUAGE_CODES: readonly string[] = [
   "en",
   "es",
   "fr",

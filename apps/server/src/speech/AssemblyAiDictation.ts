@@ -197,7 +197,7 @@ function exactFileMentions(
     .map((name) => ({ mention: name, file: name }));
 }
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const settings = yield* ServerSettingsService;
   const projection = yield* ProjectionSnapshotQuery;
   const vocabulary = yield* ProjectSpeechVocabulary;

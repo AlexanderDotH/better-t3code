@@ -25,9 +25,9 @@ import {
 import { isIgnoredProjectSpeechPath } from "./ProjectSpeechPathPolicy.ts";
 import { ProjectSpeechWorkspaceScanner } from "./ProjectSpeechWorkspaceScanner.ts";
 
-export const SPEECH_VOCABULARY_VERSION = 1;
-export const SPEECH_VOCABULARY_REFRESH_INTERVAL_MS = 60_000;
-export const SPEECH_VOCABULARY_CONTEXT_ENTRY_LIMIT = 200;
+const SPEECH_VOCABULARY_VERSION = 1;
+const SPEECH_VOCABULARY_REFRESH_INTERVAL_MS = 60_000;
+const SPEECH_VOCABULARY_CONTEXT_ENTRY_LIMIT = 200;
 export const SPEECH_VOCABULARY_CONTEXT_CHAR_LIMIT = 16_000;
 const MAX_SOURCE_FILE_BYTES = 1_048_576;
 const MAX_CACHE_BYTES = 32 * 1_048_576;

@@ -29,7 +29,7 @@ export function isWithinRoot(root: string, candidate: string): boolean {
   );
 }
 
-export async function resolveSourcePath(root: string, filePath: string): Promise<string> {
+async function resolveSourcePath(root: string, filePath: string): Promise<string> {
   if (!isSafeProjectSourcePath(filePath))
     throw new Error("Private source paths cannot be indexed.");
   if (NodePath.isAbsolute(filePath) || filePath.split(/[\\/]/).includes("..")) {

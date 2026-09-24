@@ -15,7 +15,7 @@ import { projectArtifactPathReason } from "./ProjectArtifactPathPolicy.ts";
 
 const execFileAsync = NodeUtil.promisify(NodeChildProcess.execFile);
 const PRIVATE_DIRECTORY = ".t3";
-export const KNOWLEDGE_DIRECTORY = ".t3/knowledge";
+const KNOWLEDGE_DIRECTORY = ".t3/knowledge";
 export const PRIVATE_PROJECT_GIT_PATHSPECS = [
   ":(top,exclude,glob).t3/**",
   ":(top,exclude,glob)**/.t3/**",

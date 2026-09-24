@@ -209,7 +209,7 @@ async function addConfigDependencies(
   }
 }
 
-export async function configDependenciesForFile(
+async function configDependenciesForFile(
   root: string,
   filePath: string,
   onGap?: (gap: ExtractionGap) => void,

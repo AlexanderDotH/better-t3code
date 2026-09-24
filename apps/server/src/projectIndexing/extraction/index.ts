@@ -14,19 +14,8 @@ import { resolveTypeScriptCompatible } from "./typescriptCompatible.ts";
 import { resolveTypeScriptNative } from "./typescriptNative.ts";
 import { preferredTypeScriptMode } from "./typescriptVersion.ts";
 
-export {
-  scanInventory,
-  configDependenciesForFile,
-  sourceLanguage,
-  supportsSyntax,
-  excludedPathReason,
-  type InventoryCursor,
-  type ExtractionGap,
-} from "./inventory.ts";
-export { readSourceUnit, sourceHash } from "./source.ts";
-export { extractSyntax, probeSyntaxGrammars, projectIndexerAssets } from "./syntax.ts";
-export { resolveImports } from "./imports.ts";
-export { extractManifestModule } from "./manifests.ts";
+export { scanInventory, type InventoryCursor, type ExtractionGap } from "./inventory.ts";
+export { readSourceUnit } from "./source.ts";
 export type { SemanticInput, SemanticResult } from "./semantic.ts";
 
 export interface FileExtraction extends SyntaxExtraction {
@@ -168,11 +157,10 @@ export function filesAffectedByChange(
 }
 
 export { resolveProjectBatches } from "./streaming.ts";
-export {
-  SEMANTIC_BATCH_SIZE,
-  type SemanticReader,
-  type SemanticBatch,
-  type StreamingSemanticInput,
-  type SemanticLocation,
-  type SemanticDeclaration,
+export type {
+  SemanticReader,
+  SemanticBatch,
+  StreamingSemanticInput,
+  SemanticLocation,
+  SemanticDeclaration,
 } from "./streamingTypes.ts";

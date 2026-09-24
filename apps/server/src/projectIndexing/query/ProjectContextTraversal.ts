@@ -4,8 +4,8 @@ import * as Effect from "effect/Effect";
 import type { ProjectContextReader } from "./ProjectContextSources.ts";
 import type { KnowledgeStoreError } from "../persistence/KnowledgeStore.ts";
 
-export const PROJECT_CONTEXT_MAX_IMPACT_DEPTH = 3;
-export const PROJECT_CONTEXT_MAX_IMPACT_CALLSITES = 200;
+const PROJECT_CONTEXT_MAX_IMPACT_DEPTH = 3;
+const PROJECT_CONTEXT_MAX_IMPACT_CALLSITES = 200;
 
 /** Impact follows confirmed incoming calls. Candidate calls remain visible evidence. */
 export const projectContextImpact = Effect.fn("ProjectContextQuery.impact")(function* (

@@ -1,12 +1,8 @@
 import { deriveProjectIndexChatStatus } from "@t3tools/client-runtime/project-indexing";
-import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { WaypointsIcon } from "lucide-react";
-import { useMemo } from "react";
 
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
-import { bindProjectIndexApi } from "../../state/projectIndexing";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { useProjectIndexController } from "./useProjectIndexController";
 
 const statusDotClasses = {
   active: "bg-primary",
@@ -24,23 +20,6 @@ const compactStateKeys = {
   "waiting-for-resources": "projectIndexing.compactState.waiting-for-resources",
   updating: "projectIndexing.compactState.updating",
 } as const;
-
-export function ProjectIndexChatStatus(props: {
-  readonly environmentId: EnvironmentId;
-  readonly projectId: ProjectId;
-  readonly projectLabel: string;
-  readonly threadId: ThreadId;
-}) {
-  const scope = useMemo(
-    () => ({ projectId: props.projectId, threadId: props.threadId }),
-    [props.projectId, props.threadId],
-  );
-  const { snapshot } = useProjectIndexController(bindProjectIndexApi(props.environmentId), scope);
-  const chatStatus = deriveProjectIndexChatStatus(snapshot.status);
-  if (chatStatus === null) return null;
-
-  return <ProjectIndexStatusChip projectLabel={props.projectLabel} status={chatStatus} />;
-}
 
 export function ProjectIndexStatusChip(props: {
   readonly projectLabel: string;

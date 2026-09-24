@@ -268,18 +268,6 @@ export function applyProjectIndexActivityEvent(
   return next;
 }
 
-export function formatProjectIndexProgress(status: ProjectIndexStatusV1): string {
-  const { coverage, job } = status;
-  if (status.state === "discovering")
-    return `${coverage.discoveredFiles.toLocaleString()} files discovered`;
-  if (status.state === "analyzing" && job) {
-    const { completed, pending, running, failed, stale, cancelled } = job.units;
-    const total = completed + pending + running + failed + stale + cancelled;
-    return `${completed.toLocaleString()} / ${total.toLocaleString()} analysis units`;
-  }
-  return `${coverage.indexedFiles.toLocaleString()} / ${coverage.eligibleFiles.toLocaleString()} files · ${coverage.analyzedEntities.toLocaleString()} / ${coverage.totalEntities.toLocaleString()} entities analyzed`;
-}
-
 export function formatProjectIndexUsage(usage: ProjectIndexUsageV1): string {
   if (usage.usageStatus === "unavailable") return "Token usage unavailable";
   const input = usage.inputTokens?.toLocaleString() ?? "unknown";

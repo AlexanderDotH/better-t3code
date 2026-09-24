@@ -41,7 +41,7 @@ function resolvedScope(
   };
 }
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const catalog = yield* KnowledgeGraphScopeCatalog.KnowledgeGraphScopeCatalog;
   const watcher = yield* KnowledgeGraphWatcherMultiplexer.KnowledgeGraphWatcherMultiplexer;
   const registry = yield* ProviderRegistry;

@@ -24,7 +24,7 @@ export function resolveFilesystemAsset(filePath: string): string {
   }
 }
 
-export function filesystemModuleUrl(moduleUrl: string): URL {
+function filesystemModuleUrl(moduleUrl: string): URL {
   return NodeURL.pathToFileURL(resolveFilesystemAsset(NodeURL.fileURLToPath(moduleUrl)));
 }
 

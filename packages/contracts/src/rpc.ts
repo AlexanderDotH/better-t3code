@@ -1917,66 +1917,63 @@ const ProjectIndexRpcError = Schema.Union([
   EnvironmentAuthorizationError,
 ]);
 
-export const WsProjectIndexGetSettingsRpc = Rpc.make(WS_METHODS.projectIndexGetSettings, {
+const WsProjectIndexGetSettingsRpc = Rpc.make(WS_METHODS.projectIndexGetSettings, {
   payload: ProjectIndexGetSettingsInput,
   success: ProjectIndexSettings,
   error: ProjectIndexRpcError,
 });
 
-export const WsProjectIndexGetStatusRpc = Rpc.make(WS_METHODS.projectIndexGetStatus, {
+const WsProjectIndexGetStatusRpc = Rpc.make(WS_METHODS.projectIndexGetStatus, {
   payload: ProjectIndexGetStatusInput,
   success: ProjectIndexStatusV1,
   error: ProjectIndexRpcError,
 });
 
-export const WsProjectIndexUpdateSettingsRpc = Rpc.make(WS_METHODS.projectIndexUpdateSettings, {
+const WsProjectIndexUpdateSettingsRpc = Rpc.make(WS_METHODS.projectIndexUpdateSettings, {
   payload: ProjectIndexUpdateSettingsInput,
   success: ProjectIndexStatusV1,
   error: ProjectIndexRpcError,
 });
 
-export const WsProjectIndexStartRpc = Rpc.make(WS_METHODS.projectIndexStart, {
+const WsProjectIndexStartRpc = Rpc.make(WS_METHODS.projectIndexStart, {
   payload: ProjectIndexStartInput,
   success: ProjectIndexStatusV1,
   error: ProjectIndexRpcError,
 });
 
-export const WsProjectIndexControlRpc = Rpc.make(WS_METHODS.projectIndexControl, {
+const WsProjectIndexControlRpc = Rpc.make(WS_METHODS.projectIndexControl, {
   payload: ProjectIndexControlInput,
   success: ProjectIndexStatusV1,
   error: ProjectIndexRpcError,
 });
 
-export const WsProjectIndexSubscribeRpc = Rpc.make(WS_METHODS.projectIndexSubscribe, {
+const WsProjectIndexSubscribeRpc = Rpc.make(WS_METHODS.projectIndexSubscribe, {
   payload: ProjectIndexSubscribeInput,
   success: ProjectIndexStreamEvent,
   error: ProjectIndexRpcError,
   stream: true,
 });
 
-export const WsProjectIndexSubscribeActivityRpc = Rpc.make(
-  WS_METHODS.projectIndexSubscribeActivity,
-  {
-    payload: Schema.Struct({}),
-    success: ProjectIndexActivityEvent,
-    error: ProjectIndexRpcError,
-    stream: true,
-  },
-);
+const WsProjectIndexSubscribeActivityRpc = Rpc.make(WS_METHODS.projectIndexSubscribeActivity, {
+  payload: Schema.Struct({}),
+  success: ProjectIndexActivityEvent,
+  error: ProjectIndexRpcError,
+  stream: true,
+});
 
-export const WsProjectIndexQueryRpc = Rpc.make(WS_METHODS.projectIndexQuery, {
+const WsProjectIndexQueryRpc = Rpc.make(WS_METHODS.projectIndexQuery, {
   payload: ProjectIndexQueryInput,
   success: ProjectIndexQueryResultV1,
   error: ProjectIndexRpcError,
 });
 
-export const WsProjectIndexCheckModelRpc = Rpc.make(WS_METHODS.projectIndexCheckModel, {
+const WsProjectIndexCheckModelRpc = Rpc.make(WS_METHODS.projectIndexCheckModel, {
   payload: ProjectIndexModelCheckInput,
   success: ProjectIndexModelCheckResult,
   error: ProjectIndexRpcError,
 });
 
-export const WsProjectIndexReviewRpc = Rpc.make(WS_METHODS.projectIndexReview, {
+const WsProjectIndexReviewRpc = Rpc.make(WS_METHODS.projectIndexReview, {
   payload: ProjectIndexReviewInput,
   success: ProjectIndexReviewResultV1,
   error: ProjectIndexRpcError,
