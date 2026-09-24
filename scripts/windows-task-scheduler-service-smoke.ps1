@@ -247,6 +247,10 @@ try {
 }
 finally {
   if (-not $completed) {
+    if (Test-Path -LiteralPath $serviceLogPath -PathType Leaf) {
+      Write-Host "Service startup log:"
+      Get-Content -LiteralPath $serviceLogPath -Tail 100 | ForEach-Object { Write-Host $_ }
+    }
     if ($installed) {
       try {
         Invoke-ServiceCommand -Command "uninstall"

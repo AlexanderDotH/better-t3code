@@ -28,6 +28,7 @@
         "src/service-launcher.ts!",
         "src/projectIndexing/extraction/typescriptCompatibleWorker.ts!",
         "scripts/cli.ts",
+        "scripts/verify-service-launcher-bundle.mjs",
         "src/provider/testFixtures/*.mjs",
       ],
       // Bundled Effect imports msgpackr externally; its native acceleration and WASM grammars load dynamically.
