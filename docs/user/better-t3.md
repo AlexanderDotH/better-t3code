@@ -12,6 +12,13 @@ cannot be changed here.
 Some features depend on another feature being enabled. Enable the indicated dependency first.
 Turning a feature off does not remove its saved conversations or project data.
 
+## Suppress Errors and Warnings
+
+On web and desktop, enable **Settings → Better T3 → General → Suppress Errors and Warnings**
+to hide error and warning pop-ups, including slow-request and reconnect-failure notices.
+Connection status and recovery controls in the chat remain visible. This device setting is off
+by default; turn it off to receive future pop-ups again.
+
 ## Diagrams and data visualization
 
 Enable **Settings → Better T3 → Chat → Diagrams & data visualization** for the

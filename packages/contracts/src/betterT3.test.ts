@@ -112,6 +112,7 @@ describe("Better T3 feature registry", () => {
       "chat.classicBubbleOnly",
       "chat.shiftClickShowLess",
       "chat.draftIndicators",
+      "integration.suppressErrorsAndWarnings",
     ] as const) {
       expect(
         BETTER_T3_FEATURE_REGISTRY.find(({ id }) => id === featureId)?.availability.surfaces,
@@ -228,6 +229,28 @@ describe("Better T3 feature registry", () => {
 });
 
 describe("BetterT3SettingsV1", () => {
+  it("keeps notification suppression opt-in and persists both toggle directions", () => {
+    for (const origin of ["clean-install", "existing-install-migration"] as const) {
+      expect(
+        resolveBetterT3FeatureFlag(
+          makeBetterT3SettingsV1(origin),
+          "integration.suppressErrorsAndWarnings",
+        ),
+      ).toBe(false);
+      for (const enabled of [true, false]) {
+        const settings = makeBetterT3SettingsV1(origin, {
+          "integration.suppressErrorsAndWarnings": enabled,
+        });
+        expect(
+          resolveBetterT3FeatureFlag(
+            decodeSettings(encodeSettings(settings)),
+            "integration.suppressErrorsAndWarnings",
+          ),
+        ).toBe(enabled);
+      }
+    }
+  });
+
   it("keeps visualizations opt-in and persists both toggle directions independently", () => {
     for (const origin of ["clean-install", "existing-install-migration"] as const) {
       expect(

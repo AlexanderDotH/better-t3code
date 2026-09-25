@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "react";
+import { resolveBetterT3FeatureFlag } from "@t3tools/contracts";
 
 import { type SlowRpcAckRequest, useSlowRpcAckRequests } from "../rpc/requestLatencyState";
+import { useClientSettings } from "../hooks/useSettings";
 import { toastManager } from "./ui/toast";
 
 function describeSlowRequests(requests: ReadonlyArray<SlowRpcAckRequest>): string {
@@ -33,10 +35,13 @@ function SlowRequestDetails({ requests }: { requests: ReadonlyArray<SlowRpcAckRe
 
 export function SlowRpcRequestToastCoordinator() {
   const slowRequests = useSlowRpcAckRequests();
+  const suppressErrorsAndWarnings = useClientSettings((settings) =>
+    resolveBetterT3FeatureFlag(settings.betterT3Device, "integration.suppressErrorsAndWarnings"),
+  );
   const toastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
 
   useEffect(() => {
-    if (slowRequests.length === 0) {
+    if (slowRequests.length === 0 || suppressErrorsAndWarnings) {
       if (toastIdRef.current !== null) {
         toastManager.close(toastIdRef.current);
         toastIdRef.current = null;
@@ -61,7 +66,7 @@ export function SlowRpcRequestToastCoordinator() {
     } else {
       toastManager.update(toastIdRef.current, nextToast);
     }
-  }, [slowRequests]);
+  }, [slowRequests, suppressErrorsAndWarnings]);
 
   useEffect(
     () => () => {

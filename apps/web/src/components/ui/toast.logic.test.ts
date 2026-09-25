@@ -5,7 +5,20 @@ import {
   hasVisibleToastAction,
   shouldHideCollapsedToastContent,
   shouldRenderThreadScopedToast,
+  shouldSuppressToast,
 } from "./toast.logic";
+
+describe("shouldSuppressToast", () => {
+  it("hides error and warning pop-ups only while suppression is enabled", () => {
+    for (const type of ["error", "warning"]) {
+      assert.equal(shouldSuppressToast(type, true), true);
+      assert.equal(shouldSuppressToast(type, false), false);
+    }
+    for (const type of ["success", "info", "loading", undefined]) {
+      assert.equal(shouldSuppressToast(type, true), false);
+    }
+  });
+});
 
 describe("hasVisibleToastAction", () => {
   it("treats a labeled action as visible", () => {

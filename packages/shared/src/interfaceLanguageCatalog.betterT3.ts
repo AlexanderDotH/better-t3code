@@ -712,6 +712,11 @@ const featureLabels = {
     "Remote-Bereitschaft",
     "Préparation à distance",
   ],
+  "integration.suppressErrorsAndWarnings": [
+    "Suppress Errors and Warnings",
+    "Fehler und Warnungen unterdrücken",
+    "Masquer les erreurs et avertissements",
+  ],
   "integration.analyticsRemoval": [
     "Analytics removal",
     "Entfernung der Analyseübertragung",
@@ -735,6 +740,11 @@ const featureDescriptionOverrides: Partial<Record<BetterT3FeatureId, FeatureLabe
   "knowledge.projectIndexing": projectIndexingFeatureCopy["knowledge.projectIndexing"].description,
   "knowledge.projectIndexingReview":
     projectIndexingFeatureCopy["knowledge.projectIndexingReview"].description,
+  "integration.suppressErrorsAndWarnings": [
+    "Hide error and warning pop-ups, including slow-request notices. Connection status and recovery controls remain visible.",
+    "Blendet Fehler- und Warnungs-Pop-ups aus, auch Hinweise auf langsame Anfragen. Verbindungsstatus und Wiederherstellungsaktionen bleiben sichtbar.",
+    "Masque les fenêtres d’erreur et d’avertissement, y compris les requêtes lentes. L’état de connexion et les actions de reprise restent visibles.",
+  ],
   "chat.visualizations": [
     "Show diagrams and charts for learning and data analysis, and encourage agents to use them when helpful. Applies to all clients connected to this environment.",
     "Diagramme und Charts zum Lernen und zur Datenauswertung anzeigen und Agenten zur passenden Nutzung ermutigen. Gilt für alle Clients dieser Umgebung.",

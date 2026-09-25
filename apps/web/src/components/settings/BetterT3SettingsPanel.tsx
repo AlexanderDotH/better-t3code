@@ -149,6 +149,7 @@ const BETTER_T3_SETTINGS_GROUPS = [
 const BETTER_T3_FEATURE_GROUP_OVERRIDES: Partial<
   Record<BetterT3FeatureId, (typeof BETTER_T3_SETTINGS_GROUPS)[number]["id"]>
 > = {
+  "integration.suppressErrorsAndWarnings": "general",
   "agent.reasoningVisibility": "chat",
   "agent.reasoningWorkingOverlay": "chat",
   "chat.classicSidebar": "sidebar",
@@ -479,7 +480,7 @@ export function BetterT3SettingsContent(props: BetterT3SettingsPanelViewProps) {
             <BetterT3InterfaceSection control={props.languageControl} translate={props.translate} />
           ) : null}
           {group.id === "usage" ? props.usagePacingControl : null}
-          {group.id !== "general" && group.id !== "usage" ? (
+          {group.id !== "usage" ? (
             <SettingsSection title={props.translate(group.labelMessageId)} hideTitle>
               {group.id === "appearance" ? props.visualSettings : null}
               {renderFeatureRows(

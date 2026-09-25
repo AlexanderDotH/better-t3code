@@ -1,5 +1,5 @@
 import { isMacElectron } from "../env";
-import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
+import { resolveBetterT3FeatureFlag, type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -11,7 +11,7 @@ import {
   useNavigate,
 } from "@tanstack/react-router";
 import { CheckIcon, CopyIcon } from "lucide-react";
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { resolveServerBackedAppDisplayName } from "../branding.logic";
@@ -111,6 +111,20 @@ export const Route = createRootRoute({
   }),
 });
 
+function AppToastProviders({ children }: { children: ReactNode }) {
+  const suppressErrorsAndWarnings = useClientSettings((settings) =>
+    resolveBetterT3FeatureFlag(settings.betterT3Device, "integration.suppressErrorsAndWarnings"),
+  );
+
+  return (
+    <ToastProvider suppressErrorsAndWarnings={suppressErrorsAndWarnings}>
+      <AnchoredToastProvider suppressErrorsAndWarnings={suppressErrorsAndWarnings}>
+        {children}
+      </AnchoredToastProvider>
+    </ToastProvider>
+  );
+}
+
 function RootRouteView() {
   const pathname = useLocation({ select: (location) => location.pathname });
   const { authGateState } = Route.useRouteContext();
@@ -145,23 +159,21 @@ function RootRouteView() {
   // and other startup dialogs suspended until setup finishes.
   if (pathname === "/welcome") {
     return (
-      <ToastProvider>
-        <AnchoredToastProvider>
-          <DocumentTitleSync />
-          <ContrastAppearanceSync />
-          <EnvironmentThemeSync />
-          <InterfaceLanguageSyncCoordinator />
-          <ChatVisualModeSyncCoordinator />
-          <ProjectThreadPreviewSyncCoordinator />
-          <GlassAppearanceSync />
-          <FontAppearanceSync />
-          <CommandPalette>
-            <AppSidebarLayout>
-              <Outlet />
-            </AppSidebarLayout>
-          </CommandPalette>
-        </AnchoredToastProvider>
-      </ToastProvider>
+      <AppToastProviders>
+        <DocumentTitleSync />
+        <ContrastAppearanceSync />
+        <EnvironmentThemeSync />
+        <InterfaceLanguageSyncCoordinator />
+        <ChatVisualModeSyncCoordinator />
+        <ProjectThreadPreviewSyncCoordinator />
+        <GlassAppearanceSync />
+        <FontAppearanceSync />
+        <CommandPalette>
+          <AppSidebarLayout>
+            <Outlet />
+          </AppSidebarLayout>
+        </CommandPalette>
+      </AppToastProviders>
     );
   }
 
@@ -187,41 +199,39 @@ function RootRouteView() {
   // decision is known, so a fresh install renders nothing (not the shell,
   // not a flash of threads) before landing on the welcome wizard.
   return (
-    <ToastProvider>
-      <AnchoredToastProvider>
-        <DocumentTitleSync />
-        <ContrastAppearanceSync />
-        <EnvironmentThemeSync />
-        <InterfaceLanguageSyncCoordinator />
-        <ChatVisualModeSyncCoordinator />
-        <ProjectThreadPreviewSyncCoordinator />
-        <GlassAppearanceSync />
-        <FontAppearanceSync />
-        <FirstRunGate
-          enabled={primaryEnvironmentAuthenticated}
-          hostedStatic={authGateState.status === "hosted-static"}
-        >
-          {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
-          {primaryEnvironmentAuthenticated ? <DesktopAppActivationCoordinator /> : null}
-          <RelayClientInstallDialog />
-          <ConnectOnboardingDialog />
-          <SshPasswordPromptDialog />
-          <SnapShotCoordinator />
-          <ConfirmDialogHost />
-          <SlowRpcRequestToastCoordinator />
-          <HostedStaticEnvironmentBootstrap />
-          {primaryEnvironmentAuthenticated ? (
-            <EventRouter skipInitialBootstrapNavigation={returningFromWelcomeRef.current} />
-          ) : null}
-          {primaryEnvironmentAuthenticated ? <PlanAgentSelectionHeal /> : null}
-          {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
-          {appShell}
-          {/* Above the router: a theme draft is judged by walking the app, so the
+    <AppToastProviders>
+      <DocumentTitleSync />
+      <ContrastAppearanceSync />
+      <EnvironmentThemeSync />
+      <InterfaceLanguageSyncCoordinator />
+      <ChatVisualModeSyncCoordinator />
+      <ProjectThreadPreviewSyncCoordinator />
+      <GlassAppearanceSync />
+      <FontAppearanceSync />
+      <FirstRunGate
+        enabled={primaryEnvironmentAuthenticated}
+        hostedStatic={authGateState.status === "hosted-static"}
+      >
+        {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
+        {primaryEnvironmentAuthenticated ? <DesktopAppActivationCoordinator /> : null}
+        <RelayClientInstallDialog />
+        <ConnectOnboardingDialog />
+        <SshPasswordPromptDialog />
+        <SnapShotCoordinator />
+        <ConfirmDialogHost />
+        <SlowRpcRequestToastCoordinator />
+        <HostedStaticEnvironmentBootstrap />
+        {primaryEnvironmentAuthenticated ? (
+          <EventRouter skipInitialBootstrapNavigation={returningFromWelcomeRef.current} />
+        ) : null}
+        {primaryEnvironmentAuthenticated ? <PlanAgentSelectionHeal /> : null}
+        {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
+        {appShell}
+        {/* Above the router: a theme draft is judged by walking the app, so the
               editor has to survive navigation away from settings. */}
-          <ThemeEditorHost />
-        </FirstRunGate>
-      </AnchoredToastProvider>
-    </ToastProvider>
+        <ThemeEditorHost />
+      </FirstRunGate>
+    </AppToastProviders>
   );
 }
 
