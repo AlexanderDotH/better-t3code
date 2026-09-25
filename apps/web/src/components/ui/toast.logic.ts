@@ -1,5 +1,12 @@
 import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 
+export function shouldSuppressToast(
+  type: string | undefined,
+  suppressErrorsAndWarnings: boolean,
+): boolean {
+  return suppressErrorsAndWarnings && (type === "error" || type === "warning");
+}
+
 /**
  * Base UI toast updates omit `undefined` fields, so callers that need to remove
  * an action must pass a defined `actionProps` whose `children` are empty.

@@ -27,6 +27,7 @@ export function showAnchoredCopyErrorToast(
 ) {
   if (!ref.current) return;
   anchoredToastManager.add({
+    type: "error",
     data: {
       tooltipStyle: true,
     },

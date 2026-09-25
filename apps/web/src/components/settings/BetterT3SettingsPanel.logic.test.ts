@@ -68,6 +68,26 @@ describe("buildBetterT3SwitchStates", () => {
 });
 
 describe("buildBetterT3ControlStates", () => {
+  it("allows notification suppression on the device while disconnected", () => {
+    const controls = buildBetterT3ControlStates({
+      registry: BETTER_T3_FEATURE_REGISTRY,
+      device: DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
+      environment: DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
+      surface: "desktop",
+      capabilities: {},
+      environmentAvailable: false,
+    });
+
+    expect(
+      controls.find((entry) => entry.descriptor.id === "integration.suppressErrorsAndWarnings"),
+    ).toMatchObject({ value: false, availability: { state: "available" } });
+    expect(
+      buildBetterT3SwitchSettingsPatch("integration.suppressErrorsAndWarnings", true, "device"),
+    ).toEqual({
+      betterT3Device: { version: 1, flags: { "integration.suppressErrorsAndWarnings": true } },
+    });
+  });
+
   it("uses the selected environment's visualization flag and requires renderer capability", () => {
     for (const supported of [true, false]) {
       for (const enabled of [true, false]) {

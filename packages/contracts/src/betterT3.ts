@@ -85,6 +85,7 @@ const featureIds = [
   "resource.processSuspension",
   "resource.diagnostics",
   "integration.remoteReadiness",
+  "integration.suppressErrorsAndWarnings",
   "integration.analyticsRemoval",
   "integration.lifecycleHealth",
   "integration.mcp",
@@ -123,6 +124,7 @@ const switchFeatureIds = [
   "knowledge.projectIndexingMaster",
   "resource.adaptiveAdmission",
   "resource.processSuspension",
+  "integration.suppressErrorsAndWarnings",
 ] as const;
 
 export const BetterT3SwitchFeatureId = Schema.Literals(switchFeatureIds);
@@ -612,6 +614,13 @@ export const BETTER_T3_FEATURE_REGISTRY = [
     scope: "environment",
     controlKind: "status-only",
     mirrors: [{ store: "capability", path: "repositoryIdentity", access: "read-only" }],
+  }),
+  descriptor({
+    id: "integration.suppressErrorsAndWarnings",
+    section: "integration-status",
+    scope: "device",
+    controlKind: "switch",
+    surfaces: ["web", "desktop"],
   }),
   descriptor({
     id: "integration.analyticsRemoval",
