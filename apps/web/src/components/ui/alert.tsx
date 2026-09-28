@@ -3,6 +3,7 @@ import { Children, isValidElement } from "react";
 import type * as React from "react";
 
 import { cn } from "~/lib/utils";
+import { shouldSuppressNotification, useNotificationSuppression } from "./notificationSuppression";
 
 const alertVariants = cva("relative rounded-xl border px-3.5 py-3 text-card-foreground text-sm", {
   defaultVariants: {
@@ -50,6 +51,9 @@ function Alert({
   VariantProps<typeof alertVariants> & {
     controlAlignment?: "center" | "first-line";
   }) {
+  const suppressErrorsAndWarnings = useNotificationSuppression();
+  if (shouldSuppressNotification(variant, suppressErrorsAndWarnings)) return null;
+
   const icon: React.ReactNode[] = [];
   const content: React.ReactNode[] = [];
   const action: React.ReactNode[] = [];

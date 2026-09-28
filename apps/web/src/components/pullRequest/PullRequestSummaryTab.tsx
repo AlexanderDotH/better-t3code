@@ -29,6 +29,7 @@ import { useOpenLink } from "~/browser/useOpenLink";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
 import { Button } from "../ui/button";
+import { useNotificationSuppression } from "../ui/notificationSuppression";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
@@ -461,6 +462,7 @@ export function PullRequestSummaryTab({
   ) => Promise<{ readonly commentPosted: boolean }>;
   onRefresh: () => void;
 }) {
+  const suppressErrorsAndWarnings = useNotificationSuppression();
   // Keyed by the pull request, so opening another one starts at the end of its conversation
   // rather than wherever the last one had been read back to.
   const [shown, setShown] = useState({ url: detail.url, count: COMMENT_PAGE });
@@ -916,7 +918,7 @@ export function PullRequestSummaryTab({
           <PullRequestActivityUnavailableState compact error={activityError} onRetry={onRefresh} />
         ) : (
           <>
-            {detail.commentsTruncated ? (
+            {detail.commentsTruncated && !suppressErrorsAndWarnings ? (
               <p className="mb-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-2 py-1.5 text-xs">
                 This conversation is longer than this page reads in one go. The most recent{" "}
                 {detail.comments.length} are here; open it on the host to read the rest.

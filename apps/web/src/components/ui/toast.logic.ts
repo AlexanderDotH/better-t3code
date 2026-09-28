@@ -1,10 +1,11 @@
 import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import { shouldSuppressNotification } from "./notificationSuppression";
 
 export function shouldSuppressToast(
   type: string | undefined,
   suppressErrorsAndWarnings: boolean,
 ): boolean {
-  return suppressErrorsAndWarnings && (type === "error" || type === "warning");
+  return shouldSuppressNotification(type, suppressErrorsAndWarnings);
 }
 
 /**

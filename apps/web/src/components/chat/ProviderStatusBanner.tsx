@@ -5,6 +5,10 @@ import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { formatProviderDriverKindLabel } from "../../providerModels";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import {
+  shouldSuppressNotification,
+  useNotificationSuppression,
+} from "../ui/notificationSuppression";
 
 export function getProviderStatusBannerKey(status: ServerProvider | null): string | null {
   if (!status || status.status === "ready" || status.status === "disabled") return null;
@@ -26,7 +30,9 @@ export function getProviderStatusBannerKey(status: ServerProvider | null): strin
 export function shouldShowProviderStatusBanner(
   status: ServerProvider | null,
   dismissedBannerKey: string | null,
+  suppressErrorsAndWarnings = false,
 ): boolean {
+  if (shouldSuppressNotification(status?.status, suppressErrorsAndWarnings)) return false;
   const bannerKey = getProviderStatusBannerKey(status);
   return bannerKey !== null && bannerKey !== dismissedBannerKey;
 }
@@ -70,7 +76,12 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   status: ServerProvider | null;
 }) {
-  if (!status || getProviderStatusBannerKey(status) === null) {
+  const suppressErrorsAndWarnings = useNotificationSuppression();
+  if (
+    !status ||
+    getProviderStatusBannerKey(status) === null ||
+    shouldSuppressNotification(status.status, suppressErrorsAndWarnings)
+  ) {
     return null;
   }
 

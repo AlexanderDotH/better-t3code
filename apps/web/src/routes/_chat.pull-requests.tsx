@@ -114,6 +114,7 @@ import { isElectron } from "../env";
 import { resolveShortcutCommand } from "../keybindings";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { PanelLayoutControls } from "../components/chat/PanelLayoutControls";
+import { useNotificationSuppression } from "../components/ui/notificationSuppression";
 import { Button } from "../components/ui/button";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../components/ui/menu";
 import { SidebarInset } from "../components/ui/sidebar";
@@ -284,6 +285,7 @@ export const Route = createFileRoute("/_chat/pull-requests")({
 });
 
 function PullRequestsRouteView() {
+  const suppressErrorsAndWarnings = useNotificationSuppression();
   const search = Route.useSearch();
   const sort = search.sort ?? "ready";
   const statsPolicy: PullRequestStatsPolicy =
@@ -1639,10 +1641,16 @@ function PullRequestsRouteView() {
         </div>
       )}
 
-      {listQuery.error && entries.length > 0 ? (
+      {listQuery.error && entries.length > 0 && !suppressErrorsAndWarnings ? (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs">
           <span>{listQuery.error} Showing the last pull requests loaded.</span>
           <Button size="xs" variant="outline" onClick={() => listQuery.refresh()}>
+            Retry
+          </Button>
+        </div>
+      ) : listQuery.error && entries.length > 0 ? (
+        <div className="flex justify-end px-3 py-2">
+          <Button size="xs" variant="ghost" onClick={() => listQuery.refresh()}>
             Retry
           </Button>
         </div>

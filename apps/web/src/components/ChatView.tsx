@@ -371,6 +371,7 @@ import { useInterfaceTranslator } from "../hooks/useInterfaceTranslator";
 import { ChatHeader } from "./chat/ChatHeader";
 import { ChatTranscriptCopyButton } from "./chat/ChatTranscriptCopyButton";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
+import { useNotificationSuppression } from "./ui/notificationSuppression";
 import { expandedImageKey, type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import { WorkspacePageHeader } from "./WorkspacePageHeader";
@@ -1564,6 +1565,7 @@ export default function ChatView(props: ChatViewProps) {
   }, [routeKind, routeThreadRef, routeThreadState]);
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
   const settings = useEnvironmentSettings(environmentId);
+  const suppressErrorsAndWarnings = useNotificationSuppression();
   const clientSettingsHydrated = useClientSettingsHydrated();
   const nativeSubagentDisplay = resolveBetterT3FeatureFlag(
     settings.betterT3Device,
@@ -1892,6 +1894,7 @@ export default function ChatView(props: ChatViewProps) {
     routeThreadKey,
     threadError,
     isThreadErrorBannerDismissedForSession(threadErrorBannerKey),
+    suppressErrorsAndWarnings,
   )
     ? threadError
     : null;
@@ -3437,6 +3440,7 @@ export default function ChatView(props: ChatViewProps) {
   const visibleProviderStatus = shouldShowProviderStatusBanner(
     activeProviderStatus,
     dismissedProviderStatusBannerKey,
+    suppressErrorsAndWarnings,
   )
     ? activeProviderStatus
     : null;

@@ -15,6 +15,7 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
+import { useNotificationSuppression } from "../ui/notificationSuppression";
 import { Input } from "../ui/input";
 import { resolveKnowledgeGraphZeroNodeState } from "./knowledgeGraphPanelState";
 
@@ -214,6 +215,7 @@ function ExpandedNode(props: {
 }
 
 export function KnowledgeGraphPanelView(props: KnowledgeGraphPanelViewProps) {
+  const suppressErrorsAndWarnings = useNotificationSuppression();
   const view = deriveKnowledgeGraphView({
     snapshot: props.snapshot,
     query: props.query,
@@ -252,7 +254,8 @@ export function KnowledgeGraphPanelView(props: KnowledgeGraphPanelViewProps) {
       <div className="px-3 py-1.5 text-xs text-muted-foreground" aria-live="polite">
         {props.translate("knowledgeGraph.resultCount", { count: view.matchingNodeCount })}
       </div>
-      {view.truncation.eligibleFiles || view.truncation.nodes || view.truncation.visibleNodes ? (
+      {!suppressErrorsAndWarnings &&
+      (view.truncation.eligibleFiles || view.truncation.nodes || view.truncation.visibleNodes) ? (
         <div className="border-y border-warning/25 bg-warning/8 px-3 py-2 text-xs" role="status">
           <p>{props.translate("knowledgeGraph.truncated")}</p>
           {view.truncation.omittedNodeCount > 0 ? (
