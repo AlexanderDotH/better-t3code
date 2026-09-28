@@ -91,6 +91,7 @@ const makeDesktopWindowLayer = (selectedAction: Deferred.Deferred<string>) =>
     handleBackendReady: () => Effect.void,
     handleBackendNotReady: Effect.void,
     flushMainWindowBounds: Effect.void,
+    setRightPanelWindowExpansion: () => Effect.succeed(false),
     prepareCaptureReveal: Effect.void,
     dispatchMenuAction: (action) => Deferred.succeed(selectedAction, action).pipe(Effect.asVoid),
     dispatchSnapShotEvent: () => Effect.void,

@@ -1452,6 +1452,11 @@ export interface DesktopBridge {
   onQuitShortcut?: (listener: (event: QuitShortcutHintEvent) => void) => () => void;
   getWindowFullscreenState: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
+  /** Optional while older desktop shells can host a newer web client. Null restores unchanged bounds. */
+  setRightPanelWindowExpansion?: (request: {
+    panelWidth: number | null;
+    direction: "left" | "right";
+  }) => Promise<boolean>;
   getUpdateState: () => Promise<DesktopUpdateState>;
   setUpdateChannel: (channel: DesktopUpdateChannel) => Promise<DesktopUpdateState>;
   checkForUpdate: () => Promise<DesktopUpdateCheckResult>;

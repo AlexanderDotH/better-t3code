@@ -35,6 +35,7 @@ import * as ElectronMenu from "../../electron/ElectronMenu.ts";
 import * as ElectronShell from "../../electron/ElectronShell.ts";
 import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import {
@@ -84,6 +85,27 @@ export const getWindowFullscreenState = DesktopIpc.makeSyncIpcMethod({
     const electronWindow = yield* ElectronWindow.ElectronWindow;
     const window = yield* electronWindow.currentMainOrFirst;
     return Option.isSome(window) && window.value.isFullScreen();
+  }),
+});
+
+export const setRightPanelWindowExpansion = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.SET_RIGHT_PANEL_WINDOW_EXPANSION_CHANNEL,
+  payload: Schema.Struct({
+    panelWidth: Schema.NullOr(Schema.Finite),
+    direction: Schema.Literals(["left", "right"]),
+  }),
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.window.setRightPanelWindowExpansion")(function* (
+    { panelWidth, direction },
+    event,
+  ) {
+    if (event === undefined) return false;
+    const desktopWindow = yield* DesktopWindow.DesktopWindow;
+    return yield* desktopWindow.setRightPanelWindowExpansion(
+      panelWidth,
+      direction,
+      event.sender.id,
+    );
   }),
 });
 

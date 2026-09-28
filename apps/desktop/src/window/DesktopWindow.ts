@@ -101,6 +101,11 @@ export class DesktopWindow extends Context.Service<
     // produce a stranded window pointing at nothing.
     readonly handleBackendNotReady: Effect.Effect<void>;
     readonly flushMainWindowBounds: Effect.Effect<void>;
+    readonly setRightPanelWindowExpansion: (
+      panelWidth: number | null,
+      direction: "left" | "right",
+      senderId: number,
+    ) => Effect.Effect<boolean>;
     readonly prepareCaptureReveal: Effect.Effect<void>;
     readonly dispatchMenuAction: (
       action: string,
@@ -166,6 +171,32 @@ function windowBoundsEqual(
     left.width === right.width &&
     left.height === right.height
   );
+}
+
+export function expandedRightPanelWindowBounds(
+  windowBounds: DesktopAppSettings.DesktopWindowBounds,
+  displayBounds: DisplayBounds,
+  panelWidth: number,
+  direction: "left" | "right",
+): DesktopAppSettings.DesktopWindowBounds | null {
+  if (
+    !Number.isFinite(panelWidth) ||
+    panelWidth <= 0 ||
+    !windowFitsWithinDisplay(windowBounds, displayBounds)
+  ) {
+    return null;
+  }
+  const availableWidth =
+    direction === "left"
+      ? windowBounds.x - displayBounds.x
+      : displayBounds.x + displayBounds.width - windowBounds.x - windowBounds.width;
+  const addedWidth = Math.min(Math.floor(panelWidth), availableWidth);
+  if (addedWidth <= 0) return null;
+  return {
+    ...windowBounds,
+    x: direction === "left" ? windowBounds.x - addedWidth : windowBounds.x,
+    width: windowBounds.width + addedWidth,
+  };
 }
 
 export function resolveInitialMainWindowBounds(
@@ -350,6 +381,37 @@ export const make = Effect.gen(function* () {
 
   const currentMainWindow = electronWindow.currentMainOrFirst.pipe(Effect.flatMap(withoutSplash));
   const focusedMainWindow = electronWindow.focusedMainOrFirst.pipe(Effect.flatMap(withoutSplash));
+  const rightPanelExpansions = new WeakMap<
+    Electron.BrowserWindow,
+    {
+      originalBounds: DesktopAppSettings.DesktopWindowBounds;
+      expandedBounds: DesktopAppSettings.DesktopWindowBounds;
+      panelWidth: number;
+      direction: "left" | "right";
+      restorePending: boolean;
+      animating: boolean;
+    }
+  >();
+
+  const animateWindowBounds = (window: Electron.BrowserWindow, bounds: Electron.Rectangle) => {
+    const resized = new Promise<void>((resolve) => window.once("resized", () => resolve()));
+    window.setBounds(bounds, true);
+    return resized;
+  };
+
+  const restoreRightPanelWindow = async (window: Electron.BrowserWindow) => {
+    const expansion = rightPanelExpansions.get(window);
+    if (!expansion) return;
+    if (window.isFullScreen() || window.isMaximized()) {
+      expansion.restorePending = true;
+      return;
+    }
+    if (expansion.animating || windowBoundsEqual(window.getBounds(), expansion.expandedBounds)) {
+      expansion.animating = true;
+      await animateWindowBounds(window, expansion.originalBounds);
+    }
+    rightPanelExpansions.delete(window);
+  };
 
   const createWindow = Effect.fn("desktop.window.createWindow")(function* (): Effect.fn.Return<
     Electron.BrowserWindow,
@@ -432,11 +494,16 @@ export const make = Effect.gen(function* () {
         window.isFullScreen() || window.isMaximized() || window.isMinimized()
           ? window.getNormalBounds()
           : window.getBounds();
+      const expansion = rightPanelExpansions.get(window);
+      const persistableBounds =
+        expansion && (expansion.animating || windowBoundsEqual(bounds, expansion.expandedBounds))
+          ? expansion.originalBounds
+          : bounds;
       return DesktopAppSettings.normalizeMainWindowBounds({
-        x: Math.round(bounds.x),
-        y: Math.round(bounds.y),
-        width: Math.round(bounds.width),
-        height: Math.round(bounds.height),
+        x: Math.round(persistableBounds.x),
+        y: Math.round(persistableBounds.y),
+        width: Math.round(persistableBounds.width),
+        height: Math.round(persistableBounds.height),
       });
     };
     const fallbackWindowBounds = boundsPersistenceEnabled ? null : readPersistableBounds();
@@ -671,7 +738,12 @@ export const make = Effect.gen(function* () {
     window.on("resize", scheduleBoundsPersist);
     window.on("move", scheduleBoundsPersist);
     window.on("maximize", scheduleBoundsPersist);
-    window.on("unmaximize", scheduleBoundsPersist);
+    window.on("unmaximize", () => {
+      if (rightPanelExpansions.get(window)?.restorePending) {
+        void restoreRightPanelWindow(window);
+      }
+      scheduleBoundsPersist();
+    });
     window.on("close", () => {
       runFork(flushBoundsPersist);
     });
@@ -681,6 +753,9 @@ export const make = Effect.gen(function* () {
         window.webContents.send(WINDOW_FULLSCREEN_STATE_CHANNEL, true);
       });
       window.on("leave-full-screen", () => {
+        if (rightPanelExpansions.get(window)?.restorePending) {
+          void restoreRightPanelWindow(window);
+        }
         window.webContents.send(WINDOW_FULLSCREEN_STATE_CHANNEL, false);
       });
     }
@@ -983,6 +1058,64 @@ export const make = Effect.gen(function* () {
     ),
     flushMainWindowBounds: Effect.suspend(() => flushMainWindowBounds).pipe(
       Effect.withSpan("desktop.window.flushMainWindowBounds"),
+    ),
+    setRightPanelWindowExpansion: Effect.fn("desktop.window.setRightPanelWindowExpansion")(
+      function* (panelWidth, direction, senderId) {
+        if (environment.platform !== "darwin") return false;
+        const mainWindow = yield* electronWindow.main;
+        if (Option.isNone(mainWindow)) return false;
+        const window = mainWindow.value;
+        if (window.isDestroyed() || window.webContents.id !== senderId) return false;
+        if (panelWidth === null) {
+          yield* Effect.promise(() => restoreRightPanelWindow(window));
+          return false;
+        }
+        if (window.isFullScreen() || window.isMaximized()) return false;
+        let originalBounds = window.getBounds();
+        const expansion = rightPanelExpansions.get(window);
+        if (expansion) {
+          if (windowBoundsEqual(originalBounds, expansion.expandedBounds)) {
+            if (expansion.panelWidth === panelWidth && expansion.direction === direction) {
+              expansion.restorePending = false;
+              return true;
+            }
+            yield* Effect.promise(() => restoreRightPanelWindow(window));
+            originalBounds = window.getBounds();
+          }
+          rightPanelExpansions.delete(window);
+        }
+        const displayBounds = Electron.screen.getDisplayMatching(originalBounds).bounds;
+        const requestedBounds = expandedRightPanelWindowBounds(
+          originalBounds,
+          displayBounds,
+          panelWidth,
+          direction,
+        );
+        if (requestedBounds === null) return false;
+        const pendingExpansion = {
+          originalBounds,
+          expandedBounds: requestedBounds,
+          panelWidth,
+          direction,
+          restorePending: false,
+          animating: true,
+        };
+        rightPanelExpansions.set(window, pendingExpansion);
+        yield* Effect.promise(() => animateWindowBounds(window, requestedBounds));
+        const expandedBounds = window.getBounds();
+        if (
+          expandedBounds.width > originalBounds.width &&
+          windowFitsWithinDisplay(expandedBounds, displayBounds)
+        ) {
+          pendingExpansion.expandedBounds = expandedBounds;
+          pendingExpansion.animating = false;
+          return true;
+        } else {
+          yield* Effect.promise(() => animateWindowBounds(window, originalBounds));
+          rightPanelExpansions.delete(window);
+          return false;
+        }
+      },
     ),
     dispatchMenuAction: Effect.fn("desktop.window.dispatchMenuAction")(function* (action, options) {
       yield* Effect.annotateCurrentSpan({ action });

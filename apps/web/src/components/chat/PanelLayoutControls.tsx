@@ -1,4 +1,10 @@
-import { Maximize2Icon, Minimize2Icon, PanelBottomIcon, PanelRightIcon } from "lucide-react";
+import {
+  Maximize2Icon,
+  Minimize2Icon,
+  MoveHorizontalIcon,
+  PanelBottomIcon,
+  PanelRightIcon,
+} from "lucide-react";
 import { memo } from "react";
 
 import { Toggle } from "../ui/toggle";
@@ -13,10 +19,16 @@ interface PanelLayoutControlsProps {
   rightPanelOpen: boolean;
   rightPanelShortcutLabel: string | null;
   rightPanelUnavailableLabel?: string;
+  windowExpansionAvailable: boolean;
+  windowExpanded: boolean;
+  windowExpansionPreparing: boolean;
+  windowExpansionBlocked?: boolean;
+  windowExpansionDirection: "left" | "right";
   /** Running + waiting subagents in this thread; badges the right panel toggle. */
   liveAgentCount: number;
   onToggleTerminal: () => void;
   onToggleRightPanel: () => void;
+  onToggleWindowExpansion: () => void;
 }
 
 export const PanelLayoutControls = memo(function PanelLayoutControls({
@@ -28,10 +40,27 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   rightPanelOpen,
   rightPanelShortcutLabel,
   rightPanelUnavailableLabel = "Right panel is unavailable",
+  windowExpansionAvailable,
+  windowExpanded,
+  windowExpansionPreparing,
+  windowExpansionBlocked = false,
+  windowExpansionDirection,
   liveAgentCount,
   onToggleTerminal,
   onToggleRightPanel,
+  onToggleWindowExpansion,
 }: PanelLayoutControlsProps) {
+  const windowExpansionLabel =
+    windowExpansionBlocked && !windowExpanded
+      ? "Restore panel size to expand the window"
+      : windowExpanded
+        ? rightPanelOpen
+          ? "Close right panel and restore window size"
+          : "Restore window size"
+        : rightPanelOpen
+          ? `Expand window to the ${windowExpansionDirection}`
+          : `Open right panel and expand window to the ${windowExpansionDirection}`;
+
   return (
     <div
       className="flex h-full shrink-0 items-center gap-1 [-webkit-app-region:no-drag]"
@@ -95,6 +124,31 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
             : rightPanelUnavailableLabel}
         </TooltipPopup>
       </Tooltip>
+      {windowExpansionAvailable ? (
+        <Tooltip>
+          <TooltipTrigger render={<span className="flex shrink-0" />}>
+            <Toggle
+              className="shrink-0 [-webkit-app-region:no-drag]"
+              pressed={windowExpanded}
+              onPressedChange={onToggleWindowExpansion}
+              aria-label={windowExpansionLabel}
+              aria-busy={windowExpansionPreparing}
+              variant="ghost"
+              size="sm"
+              disabled={
+                (!rightPanelAvailable && !windowExpanded) ||
+                windowExpansionPreparing ||
+                (windowExpansionBlocked && !windowExpanded)
+              }
+            >
+              <MoveHorizontalIcon className="size-4" />
+            </Toggle>
+          </TooltipTrigger>
+          <TooltipPopup side="bottom">
+            {windowExpansionPreparing ? "Resizing window…" : windowExpansionLabel}
+          </TooltipPopup>
+        </Tooltip>
+      ) : null}
     </div>
   );
 });

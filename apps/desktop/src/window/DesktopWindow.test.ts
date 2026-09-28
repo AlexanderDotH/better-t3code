@@ -33,6 +33,9 @@ vi.mock("electron", async (importOriginal) => ({
         bounds: { x: 0, y: 0, width: 1920, height: 1080 },
       },
     ]),
+    getDisplayMatching: vi.fn(() => ({
+      bounds: { x: 0, y: 0, width: 1920, height: 1080 },
+    })),
   },
 }));
 
@@ -73,6 +76,7 @@ function makeFakeBrowserWindow() {
   const webContentsListeners = new Map<string, (...args: readonly unknown[]) => void>();
   let zoomLevel = 0;
   const webContents = {
+    id: 17,
     copyImageAt: vi.fn(),
     focus: vi.fn(),
     isDestroyed: vi.fn(() => false),
@@ -114,6 +118,16 @@ function makeFakeBrowserWindow() {
     }),
     restore: vi.fn(),
     setBackgroundColor: vi.fn(),
+    setBounds: vi.fn((bounds: Electron.Rectangle, animate?: boolean) => {
+      window.getBounds.mockReturnValue(bounds);
+      if (animate) {
+        queueMicrotask(() => {
+          const onResized = windowListeners.get("resized");
+          windowListeners.delete("resized");
+          onResized?.();
+        });
+      }
+    }),
     setVibrancy: vi.fn(),
     setAutoHideCursor: vi.fn(),
     setFullScreen: vi.fn(),
@@ -127,6 +141,7 @@ function makeFakeBrowserWindow() {
   return {
     window: window as unknown as Electron.BrowserWindow,
     getBounds: window.getBounds,
+    setBounds: window.setBounds,
     getNormalBounds: window.getNormalBounds,
     isDestroyed: window.isDestroyed,
     isFullScreen: window.isFullScreen,
@@ -436,7 +451,170 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
 const captureOne = DesktopSnapShotId.make("11111111-1111-4111-8111-111111111111");
 const captureTwo = DesktopSnapShotId.make("22222222-2222-4222-8222-222222222222");
 
+describe("expandedRightPanelWindowBounds", () => {
+  const display = { x: 0, y: 0, width: 1920, height: 1080 };
+
+  it("grows toward the requested side without crossing the display", () => {
+    assert.deepEqual(
+      DesktopWindow.expandedRightPanelWindowBounds(
+        { x: 800, y: 80, width: 1000, height: 780 },
+        display,
+        540,
+        "right",
+      ),
+      { x: 800, y: 80, width: 1120, height: 780 },
+    );
+    assert.deepEqual(
+      DesktopWindow.expandedRightPanelWindowBounds(
+        { x: 800, y: 80, width: 1000, height: 780 },
+        display,
+        540,
+        "left",
+      ),
+      { x: 260, y: 80, width: 1540, height: 780 },
+    );
+  });
+
+  it("uses only available monitor space and leaves the remaining width to the content layout", () => {
+    assert.deepEqual(
+      DesktopWindow.expandedRightPanelWindowBounds(
+        { x: 100, y: 80, width: 1700, height: 780 },
+        display,
+        540,
+        "right",
+      ),
+      { x: 100, y: 80, width: 1820, height: 780 },
+    );
+    assert.deepEqual(
+      DesktopWindow.expandedRightPanelWindowBounds(
+        { x: 100, y: 80, width: 1700, height: 780 },
+        display,
+        540,
+        "left",
+      ),
+      { x: 0, y: 80, width: 1800, height: 780 },
+    );
+  });
+
+  it("does not enlarge a window already spanning or crossing its display", () => {
+    assert.isNull(
+      DesktopWindow.expandedRightPanelWindowBounds(
+        { x: 0, y: 0, width: 1920, height: 1080 },
+        display,
+        540,
+        "right",
+      ),
+    );
+    assert.isNull(
+      DesktopWindow.expandedRightPanelWindowBounds(
+        { x: 1600, y: 80, width: 500, height: 780 },
+        display,
+        540,
+        "right",
+      ),
+    );
+    assert.isNull(
+      DesktopWindow.expandedRightPanelWindowBounds(
+        { x: 0, y: 80, width: 1000, height: 780 },
+        display,
+        540,
+        "left",
+      ),
+    );
+  });
+});
+
 describe("DesktopWindow", () => {
+  it.effect(
+    "expands the macOS window for its renderer, restores it, and persists the original bounds",
+    () =>
+      Effect.gen(function* () {
+        const fakeWindow = makeFakeBrowserWindow();
+        const originalBounds = { x: 800, y: 80, width: 1000, height: 780 };
+        fakeWindow.getBounds.mockReturnValue(originalBounds);
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const mainWindowBoundsUpdates: DesktopAppSettings.DesktopWindowBounds[] = [];
+        const layer = makeTestLayer({
+          window: fakeWindow.window,
+          createCount,
+          mainWindow,
+          mainWindowBoundsUpdates,
+        });
+
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+          assert.isFalse(yield* desktopWindow.setRightPanelWindowExpansion(540, "right", 99));
+          assert.deepEqual(fakeWindow.setBounds.mock.calls, []);
+
+          assert.isTrue(yield* desktopWindow.setRightPanelWindowExpansion(540, "right", 17));
+          assert.deepEqual(fakeWindow.setBounds.mock.calls, [
+            [{ x: 800, y: 80, width: 1120, height: 780 }, true],
+          ]);
+          yield* desktopWindow.flushMainWindowBounds;
+          assert.deepEqual(mainWindowBoundsUpdates, [originalBounds]);
+
+          assert.isFalse(yield* desktopWindow.setRightPanelWindowExpansion(null, "right", 17));
+          assert.deepEqual(fakeWindow.setBounds.mock.calls.at(-1), [originalBounds, true]);
+
+          assert.isTrue(yield* desktopWindow.setRightPanelWindowExpansion(540, "right", 17));
+          fakeWindow.getBounds.mockReturnValue({ x: 830, y: 80, width: 1120, height: 780 });
+          assert.isFalse(yield* desktopWindow.setRightPanelWindowExpansion(null, "right", 17));
+          assert.equal(fakeWindow.setBounds.mock.calls.length, 3);
+        }).pipe(Effect.provide(layer));
+      }),
+  );
+
+  it.effect("restores an expanded window after leaving macOS fullscreen", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const originalBounds = { x: 800, y: 80, width: 1000, height: 780 };
+      fakeWindow.getBounds.mockReturnValue(originalBounds);
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({ window: fakeWindow.window, createCount, mainWindow });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        yield* desktopWindow.setRightPanelWindowExpansion(540, "right", 17);
+        fakeWindow.isFullScreen.mockReturnValue(true);
+        yield* desktopWindow.setRightPanelWindowExpansion(null, "right", 17);
+        assert.equal(fakeWindow.setBounds.mock.calls.length, 1);
+
+        fakeWindow.isFullScreen.mockReturnValue(false);
+        fakeWindow.windowListeners.get("leave-full-screen")?.();
+        assert.deepEqual(fakeWindow.setBounds.mock.calls.at(-1), [originalBounds, true]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("repositions from the original bounds when the expansion direction changes", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const originalBounds = { x: 600, y: 80, width: 1000, height: 780 };
+      fakeWindow.getBounds.mockReturnValue(originalBounds);
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({ window: fakeWindow.window, createCount, mainWindow });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        assert.isTrue(yield* desktopWindow.setRightPanelWindowExpansion(540, "right", 17));
+        assert.isTrue(yield* desktopWindow.setRightPanelWindowExpansion(540, "left", 17));
+        assert.deepEqual(fakeWindow.setBounds.mock.calls, [
+          [{ x: 600, y: 80, width: 1320, height: 780 }, true],
+          [originalBounds, true],
+          [{ x: 60, y: 80, width: 1540, height: 780 }, true],
+        ]);
+        assert.isFalse(yield* desktopWindow.setRightPanelWindowExpansion(null, "left", 17));
+        assert.deepEqual(fakeWindow.setBounds.mock.calls.at(-1), [originalBounds, true]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   it.effect("shows native context menus for browser guests and sign-in popups", () =>
     Effect.gen(function* () {
       const host = makeFakeBrowserWindow();

@@ -35,6 +35,7 @@ import {
   useCallback,
   useEffect,
   useEffectEvent,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -115,6 +116,7 @@ import { resolveShortcutCommand } from "../keybindings";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { PanelLayoutControls } from "../components/chat/PanelLayoutControls";
 import { useNotificationSuppression } from "../components/ui/notificationSuppression";
+import { useMacRightPanelWindowExpansion } from "../hooks/useMacRightPanelWindowExpansion";
 import { Button } from "../components/ui/button";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../components/ui/menu";
 import { SidebarInset } from "../components/ui/sidebar";
@@ -197,6 +199,7 @@ const SORT_OPTIONS = [
 
 /** Long enough that a keystroke does not become a request, short enough to feel answered. */
 const SEARCH_DEBOUNCE_MS = 250;
+const PULL_REQUEST_PANEL_WIDTH_STORAGE_KEY = "t3code:pull-request-panel-width";
 /** What `scorePullRequestMatch` gives a row none of whose own fields carry the search text. */
 const MATCHED_ELSEWHERE_SCORE = 10;
 /**
@@ -430,7 +433,32 @@ function PullRequestsRouteView() {
   );
   const selectedPullRequestSurface =
     selectedRightPanelSurface?.kind === "pull-request" ? selectedRightPanelSurface : null;
+  const windowExpansionTargetId = rightPanelRef ? (selectedPullRequestSurface?.id ?? null) : null;
+  const windowExpansionTargetRef = useRef(windowExpansionTargetId);
+  useLayoutEffect(() => {
+    windowExpansionTargetRef.current = windowExpansionTargetId;
+    return () => {
+      windowExpansionTargetRef.current = null;
+    };
+  }, [windowExpansionTargetId]);
   const activePullRequestSurface = rightPanelState.isOpen ? selectedPullRequestSurface : null;
+  const [defaultPanelWidth] = useState(() =>
+    typeof window === "undefined" ? 640 : Math.floor(window.innerWidth / 2),
+  );
+  const rightPanelWindowExpansion = useMacRightPanelWindowExpansion({
+    panelWidthStorageKey: PULL_REQUEST_PANEL_WIDTH_STORAGE_KEY,
+    defaultPanelWidth,
+  });
+  const [windowExpansionReveal, setWindowExpansionReveal] = useState<{
+    surfaceId: string;
+    direction: "left" | "right";
+  } | null>(null);
+  if (
+    windowExpansionReveal !== null &&
+    (!rightPanelState.isOpen || windowExpansionReveal.surfaceId !== windowExpansionTargetId)
+  ) {
+    setWindowExpansionReveal(null);
+  }
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
   const rightPanelPresenceValue = useMemo(
@@ -1459,6 +1487,29 @@ function PullRequestsRouteView() {
     useRightPanelStore.getState().show(rightPanelRef);
     selectSurfaceInUrl(selectedPullRequestSurface);
   };
+  const toggleWindowExpansion = () => {
+    if (rightPanelWindowExpansion.expanded) {
+      if (rightPanelState.isOpen) toggleRightPanel();
+      void rightPanelWindowExpansion.toggle();
+      return;
+    }
+    if (rightPanelState.isOpen) {
+      void rightPanelWindowExpansion.toggle();
+      return;
+    }
+    if (rightPanelRef === null || selectedPullRequestSurface === null) return;
+    const surface = selectedPullRequestSurface;
+    const direction = rightPanelWindowExpansion.direction;
+    void rightPanelWindowExpansion.prepareOpen().then((applied) => {
+      if (windowExpansionTargetRef.current !== surface.id) {
+        rightPanelWindowExpansion.cancelPreparedOpen();
+        return;
+      }
+      if (applied) setWindowExpansionReveal({ surfaceId: surface.id, direction });
+      useRightPanelStore.getState().show(rightPanelRef);
+      selectSurfaceInUrl(surface);
+    });
+  };
 
   // The provider list is the workspace's hosts, not the filtered ones, so switching to a host
   // cannot make the switcher that got you there disappear.
@@ -1536,21 +1587,22 @@ function PullRequestsRouteView() {
       rightPanelOpen={rightPanelState.isOpen}
       rightPanelShortcutLabel={null}
       rightPanelUnavailableLabel="Select a pull request first"
+      windowExpansionAvailable={rightPanelWindowExpansion.available}
+      windowExpanded={rightPanelWindowExpansion.expanded}
+      windowExpansionPreparing={rightPanelWindowExpansion.preparing}
+      windowExpansionDirection={rightPanelWindowExpansion.direction}
       liveAgentCount={0}
       onToggleTerminal={() => undefined}
       onToggleRightPanel={toggleRightPanel}
+      onToggleWindowExpansion={toggleWindowExpansion}
     />
   );
   const openPanelControls = (
     <div
-      // The bare workspace-titlebar-controls inset plus mr-px: the same
-      // anchor the thread view's controls and the sidebar trigger use, so
-      // every titlebar cluster in the app sits one shared inset from its
-      // edge.
-      className="absolute top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]"
+      className="pointer-events-none absolute inset-y-0 right-[var(--workspace-controls-right)] z-50 mr-px flex items-center [-webkit-app-region:no-drag]"
       data-workspace-titlebar-controls
     >
-      {panelToggleControls}
+      <div className="pointer-events-auto">{panelToggleControls}</div>
     </div>
   );
   // The rows carried over from the last filters can also narrow to nothing one step further on,
@@ -1775,41 +1827,10 @@ function PullRequestsRouteView() {
     sortMenu,
     filtersMenu,
     rightPanelControl:
-      // Footprint reserve while the panel is closed: the toggle itself stays
-      // mounted at the fixed titlebar inset in both states so it cannot move
-      // on toggle, and this spacer keeps refresh from sliding underneath it
-      // (sized per header padding so refresh ends a normal gap short of it).
-      !pullRequestsSupported ? null : (
-        <span
-          aria-hidden
-          className={cn(
-            "shrink-0",
-            rightPanelState.isOpen ? "-ml-3 w-0" : "w-7 sm:w-5",
-            panelAnimationsActive && "transition-[width,margin] ease-out",
-          )}
-          style={
-            panelAnimationsActive
-              ? { transitionDuration: `${panelAnimationDurationMs}ms` }
-              : undefined
-          }
-        />
-      ),
-    titlebarControls:
-      // While the panel is closed the strip lives inside the header: a no-drag
-      // descendant beats the header's desktop drag-region, where a floating
-      // sibling loses (app-region hit-testing ignores z-index). While the
-      // floating strip crosses the header during motion, the narrow extension
-      // keeps that overlap non-draggable without moving the toggle.
-      pullRequestsSupported ? (
-        rightPanelPresent ? (
-          <span
-            aria-hidden
-            className="pointer-events-none absolute inset-y-0 left-full w-7 [-webkit-app-region:no-drag]"
-          />
-        ) : (
-          openPanelControls
-        )
+      pullRequestsSupported && !rightPanelState.isOpen ? (
+        <span aria-hidden className="w-16 shrink-0" />
       ) : null,
+    titlebarControls: pullRequestsSupported && !rightPanelState.isOpen ? openPanelControls : null,
     rightPanelOpen: rightPanelState.isOpen,
     listBody,
     scrollRef,
@@ -1892,18 +1913,24 @@ function PullRequestsRouteView() {
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none window-surface bg-background text-foreground">
       <div className="relative flex min-h-0 flex-1">
-        {pullRequestsSupported && rightPanelPresent ? openPanelControls : null}
         <PullRequestsColumn {...columnProps} />
 
         {rightPanelPresent && renderedPullRequestSurface && panelEnvironmentId !== null ? (
           <RightPanelTabs
             mode="inline"
             open={rightPanelState.isOpen}
-            widthStorageKey="t3code:pull-request-panel-width"
+            layoutControls={rightPanelState.isOpen ? panelToggleControls : null}
+            windowExpansionRevealDirection={
+              rightPanelState.isOpen &&
+              windowExpansionReveal?.surfaceId === renderedPullRequestSurface.id
+                ? windowExpansionReveal.direction
+                : undefined
+            }
+            widthStorageKey={PULL_REQUEST_PANEL_WIDTH_STORAGE_KEY}
             // Default to roughly half the viewport: the PR list needs more
             // room than a chat, so the 540px chat-preview default squashes
             // it. SSR has no window, so fall back to a reasonable width.
-            defaultWidth={typeof window === "undefined" ? 640 : Math.floor(window.innerWidth / 2)}
+            defaultWidth={defaultPanelWidth}
             surfaces={renderedRightPanelSurfaces}
             environmentId={panelEnvironmentId}
             activeSurfaceId={renderedPullRequestSurface.id}
@@ -2221,13 +2248,8 @@ function PullRequestsColumn({
     // Painted flat like the chat column: the inset underneath carries the chrome grain, and a
     // content surface that lets it show reads as a different background than every thread.
     <div className="@container/pr-list flex min-h-0 min-w-0 flex-1 flex-col window-surface bg-background">
-      {/* A closed right panel leaves this column full-width, so the shared header
-          reserves native window controls and hosts the controls strip itself: on
-          desktop the header is a drag-region, and only a no-drag descendant wins
-          clicks from it - a floating sibling loses to app-region hit-testing no
-          matter its z-index. While the panel is open, the strip mounts back at
-          the route level, whose box spans the panel too, so the toggle keeps one
-          fixed top-right anchor. */}
+      {/* The closed panel's controls live inside this header so the desktop drag
+          region cannot intercept clicks. The open panel renders them in its own tab bar. */}
       <WorkspacePageHeader
         electron={isElectron}
         reserveNativeControls={!rightPanelOpen}
