@@ -86,15 +86,19 @@ it("holds a dragged node, displaces its neighbor, and stops after release", asyn
   await act(() => {
     renderer = create(<Harness nodes={nearby} />);
   });
-  await act(() => motion.moveNode("parent", { x: 200, y: 100 }));
-  expect(rendered[0]).toMatchObject({ x: 200, y: 100 });
+  await act(() => motion.moveNode("parent", { x: 600, y: 100 }));
+  expect(rendered[0]).toMatchObject({ x: 600, y: 100 });
+  expect(rendered[1]!.x).toBeGreaterThan(200);
+  const neighborAfterFirstMove = rendered[1]!.x;
+  await act(() => motion.moveNode("parent", { x: 700, y: 100 }));
+  expect(rendered[1]!.x).toBeGreaterThan(neighborAfterFirstMove);
   await frame(100);
   expect(rendered[1]!.x).toBeGreaterThan(200);
   await act(() => motion.releaseNode());
   await frame(200);
   await frame(1500);
   expect(frames.size).toBe(0);
-  expect(rendered[0]).toMatchObject({ x: 200, y: 100 });
+  expect(rendered[0]).toMatchObject({ x: 700, y: 100 });
   expect(rendered.every((node) => Number.isFinite(node.x) && Number.isFinite(node.y))).toBe(true);
   await act(() => motion.reset());
   await frame(500);
@@ -106,8 +110,9 @@ it("moves directly with reduced motion and leaves no work after a drag unmounts"
   await act(() => {
     renderer = create(<Harness nodes={expanded} />);
   });
-  await act(() => motion.moveNode("parent", { x: 150, y: 170 }));
-  expect(rendered[0]).toMatchObject({ x: 150, y: 170 });
+  await act(() => motion.moveNode("parent", { x: 600, y: 100 }));
+  expect(rendered[0]).toMatchObject({ x: 600, y: 100 });
+  expect(rendered[1]!.x).toBeGreaterThan(300);
   expect(frames.size).toBe(0);
   reduced = false;
   await act(() => motion.moveNode("parent", { x: 180, y: 170 }));
