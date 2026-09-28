@@ -45,7 +45,7 @@ export type PromptedStructuredOutputRunner<E> = (
   input: PromptedDecisionRunnerInput,
 ) => Effect.Effect<PromptedDecisionOutput, E>;
 
-export function normalizePromptedDecisionError(cause: unknown): DecisionGenerationError {
+function normalizePromptedDecisionError(cause: unknown): DecisionGenerationError {
   if (isDecisionGenerationError(cause)) return cause;
   return new DecisionGenerationError({
     operation: "decide",
