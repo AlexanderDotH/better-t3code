@@ -3441,7 +3441,7 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
       },
     });
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-batched-decisions"),
