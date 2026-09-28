@@ -3,6 +3,7 @@ import type {
   ServerProvider,
   UnifiedSettings,
 } from "@t3tools/contracts";
+import { supportsModelSelectionPurpose } from "@t3tools/shared/model";
 import { useMemo } from "react";
 
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
@@ -37,12 +38,20 @@ export function ProjectIndexModelPicker({
     () =>
       sortProviderInstanceEntries(
         applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings),
+      ).filter((entry) =>
+        entry.models.some((model) => supportsModelSelectionPurpose(model, "text-generation")),
       ),
     [providers, settings],
   );
   const models = useMemo(
     () =>
-      getCustomModelOptionsByInstance(settings, providers, selection?.instanceId, selection?.model),
+      getCustomModelOptionsByInstance(
+        settings,
+        providers,
+        selection?.instanceId,
+        selection?.model,
+        "text-generation",
+      ),
     [settings, providers, selection],
   );
   const selectedEntry = entries.find((entry) => entry.instanceId === selection?.instanceId);
@@ -65,6 +74,7 @@ export function ProjectIndexModelPicker({
       lockedProvider={null}
       instanceEntries={entries}
       modelOptionsByInstance={models}
+      modelSelectionPurpose="text-generation"
       disabled={disabled || !hasModels}
       triggerVariant="outline"
       triggerClassName="w-full max-w-none sm:w-64 sm:max-w-64"

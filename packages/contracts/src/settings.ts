@@ -1562,6 +1562,9 @@ export const ServerSettings = Schema.Struct({
   autoReasoningModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  projectIndexingDecisionModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   fetchModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -1879,6 +1882,7 @@ export const ServerSettingsPatch = Schema.Struct({
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   autoReasoningModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  projectIndexingDecisionModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   // Fetch selection is an atomic value: provider, model, and traits must
   // always be replaced together so a patch cannot mix two runtimes.
   fetchModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),

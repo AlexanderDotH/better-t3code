@@ -1,5 +1,6 @@
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
+  type ModelSelectionPurpose,
   type ProviderInstanceId,
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
@@ -8,8 +9,9 @@ import { OpenRouterCatalogFilterPanel } from "./openrouter-model-picker/OpenRout
 import {
   buildOpenRouterModelCatalogView,
   DEFAULT_OPENROUTER_MODEL_CATALOG_FILTER_STATE,
+  type OpenRouterModelCatalogFilterState,
 } from "@t3tools/shared/modelCatalogFilters";
-import { resolveSelectableModel } from "@t3tools/shared/model";
+import { resolveModelSelectionSupport, resolveSelectableModel } from "@t3tools/shared/model";
 import { useAtomValue } from "@effect/atom-react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { memo, useMemo, useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
@@ -123,6 +125,26 @@ const EMPTY_MODEL_JUMP_LABELS = new Map<string, string>();
 const EMPTY_AUXILIARY_MODELS: ReadonlyArray<{ readonly id: string; readonly name: string }> = [];
 const AUXILIARY_MODELS_KEY = "auxiliary-models";
 const AUXILIARY_MODEL_PREFIX = "auxiliary-model:";
+const NON_AGENT_OPENROUTER_MODEL_CATALOG_FILTER_STATE: OpenRouterModelCatalogFilterState = {
+  ...DEFAULT_OPENROUTER_MODEL_CATALOG_FILTER_STATE,
+  featureFilters: new Set(),
+};
+
+export function defaultOpenRouterCatalogFilters(
+  purpose: ModelSelectionPurpose,
+): OpenRouterModelCatalogFilterState {
+  return purpose === "agent"
+    ? DEFAULT_OPENROUTER_MODEL_CATALOG_FILTER_STATE
+    : NON_AGENT_OPENROUTER_MODEL_CATALOG_FILTER_STATE;
+}
+
+export function decisionSupportBadge(
+  model: Pick<ModelEsque, "capabilities">,
+  purpose: ModelSelectionPurpose,
+): "native" | "prompted" | undefined {
+  if (purpose !== "decision") return undefined;
+  return resolveModelSelectionSupport(model).decision === "native" ? "native" : "prompted";
+}
 
 function auxiliaryModelKey(modelId: string): string {
   return `${AUXILIARY_MODEL_PREFIX}${modelId}`;
@@ -159,6 +181,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
    * model set but are free to diverge via customModels).
    */
   modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>>;
+  modelSelectionPurpose: ModelSelectionPurpose;
   auxiliaryModels?: ReadonlyArray<{ readonly id: string; readonly name: string }>;
   selectedAuxiliaryModel?: string | null;
   onAuxiliaryModelChange?: (model: string) => void;
@@ -230,9 +253,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       activeEntry,
       modelOptionsByInstance.get(props.activeInstanceId) ?? [],
     );
-  const [catalogFilters, setCatalogFilters] = useState(
-    DEFAULT_OPENROUTER_MODEL_CATALOG_FILTER_STATE,
-  );
+  const defaultCatalogFilters = defaultOpenRouterCatalogFilters(props.modelSelectionPurpose);
+  const [catalogFilters, setCatalogFilters] = useState(defaultCatalogFilters);
   const [selectedInstanceId, setSelectedInstanceId] = useState<ProviderInstanceId | "favorites">(
     () => {
       if (
@@ -935,6 +957,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             {openRouterCatalog ? (
               <OpenRouterCatalogFilterPanel
                 state={catalogFilters}
+                defaultState={defaultCatalogFilters}
                 view={{ ...openRouterCatalog, matchingCount: filteredModels.length }}
                 {...(catalogInstance ? { instanceDisplayName: catalogInstance.displayName } : {})}
                 onChange={setCatalogFilters}
@@ -1029,6 +1052,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     }
                     const disabledReason =
                       getModelDisabledReason?.(model.instanceId, model.slug) ?? null;
+                    const decisionSupport = decisionSupportBadge(
+                      model,
+                      props.modelSelectionPurpose,
+                    );
                     return (
                       <ModelListRow
                         key={modelKey}
@@ -1046,6 +1073,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                         preferShortName={!isLocked}
                         useTriggerLabel={false}
                         showNewBadge={model.badge === "new"}
+                        {...(decisionSupport ? { decisionSupport } : {})}
                         unavailable={model.isUnavailable === true}
                         jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
                         disabledReason={disabledReason}

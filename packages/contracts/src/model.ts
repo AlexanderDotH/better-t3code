@@ -135,7 +135,28 @@ const NonNegativeFiniteNumber = Schema.Number.check(
   Schema.isGreaterThanOrEqualTo(0),
 );
 
+export const ModelDecisionSupport = Schema.Literals(["none", "prompted", "native"]);
+export type ModelDecisionSupport = typeof ModelDecisionSupport.Type;
+
+export const ModelSelectionSupport = Schema.Struct({
+  agent: Schema.Boolean,
+  textGeneration: Schema.Boolean,
+  decision: ModelDecisionSupport,
+});
+export type ModelSelectionSupport = typeof ModelSelectionSupport.Type;
+
+export const ModelSelectionPurpose = Schema.Literals(["agent", "text-generation", "decision"]);
+export type ModelSelectionPurpose = typeof ModelSelectionPurpose.Type;
+
+/** Capability assumptions for selectable models advertised by older servers. */
+export const LEGACY_MODEL_SELECTION_SUPPORT: ModelSelectionSupport = {
+  agent: true,
+  textGeneration: true,
+  decision: "prompted",
+};
+
 export const ModelCapabilities = Schema.Struct({
+  selectionSupport: Schema.optional(ModelSelectionSupport),
   optionDescriptors: Schema.optional(Schema.Array(ProviderOptionDescriptor)),
   contextWindow: Schema.optional(
     Schema.Struct({

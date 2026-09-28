@@ -11,6 +11,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import type { OpenRouterReasoningEffort } from "../provider/openrouter/OpenRouterProtocol.ts";
+import { makePromptedDecisionProviderFromStructuredOutput } from "../decisionGeneration/PromptedDecisionGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
@@ -58,6 +59,7 @@ export interface OpenRouterTextGenerationOptions {
 }
 
 type TextGenerationOperation =
+  | "decisionGeneration"
   | "decideAutoReasoning"
   | "generateCommitMessage"
   | "generatePrContent"
@@ -88,11 +90,11 @@ export function makeOpenRouterTextGeneration(
         detail: "OpenRouter is disabled in this provider instance.",
       });
     }
-    const model = settings.defaultModel.trim();
+    const model = input.modelSelection.model.trim();
     if (!model) {
       return yield* new TextGenerationError({
         operation: input.operation,
-        detail: "Select an explicit OpenRouter default model before using text generation.",
+        detail: "Select an explicit OpenRouter model before using text generation.",
       });
     }
     if (options?.isModelAvailable) {
@@ -101,7 +103,7 @@ export function makeOpenRouterTextGeneration(
           () =>
             new TextGenerationError({
               operation: input.operation,
-              detail: "OpenRouter could not verify the configured default model.",
+              detail: "OpenRouter could not verify the selected model.",
             }),
         ),
       );
@@ -109,7 +111,7 @@ export function makeOpenRouterTextGeneration(
         return yield* new TextGenerationError({
           operation: input.operation,
           detail:
-            "The configured OpenRouter default model is no longer available. Select another model before using text generation.",
+            "The selected OpenRouter model is no longer available. Select another model before using text generation.",
         });
       }
     }
@@ -165,7 +167,17 @@ export function makeOpenRouterTextGeneration(
     );
   });
 
+  const decisionGeneration = makePromptedDecisionProviderFromStructuredOutput((input) =>
+    runJson({
+      operation: "decisionGeneration",
+      prompt: input.prompt,
+      outputSchema: input.outputSchema,
+      modelSelection: input.modelSelection,
+    }),
+  );
+
   return {
+    decisionGeneration,
     decideAutoReasoning: Effect.fn("OpenRouterTextGeneration.decideAutoReasoning")(
       function* (input) {
         const { prompt, outputSchema } = buildAutoReasoningPrompt(input);

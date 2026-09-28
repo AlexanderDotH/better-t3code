@@ -1,8 +1,11 @@
 import {
   type CustomModelSetting,
   CODEX_REASONING_EFFORT_OPTION_ID,
+  LEGACY_MODEL_SELECTION_SUPPORT,
   MODEL_SLUG_ALIASES_BY_PROVIDER,
   ModelCapabilities,
+  type ModelSelectionPurpose,
+  type ModelSelectionSupport,
   type ModelSelection,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -22,6 +25,7 @@ export interface SelectableModelOption {
 }
 
 export function createModelCapabilities(input: {
+  selectionSupport?: ModelCapabilities["selectionSupport"];
   optionDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
   contextWindow?: ModelCapabilities["contextWindow"];
   inputModalities?: ModelCapabilities["inputModalities"];
@@ -30,6 +34,7 @@ export function createModelCapabilities(input: {
   toolSupport?: ModelCapabilities["toolSupport"];
 }): ModelCapabilities {
   return {
+    ...(input.selectionSupport ? { selectionSupport: { ...input.selectionSupport } } : {}),
     optionDescriptors: input.optionDescriptors.map(cloneDescriptor),
     ...(input.contextWindow ? { contextWindow: { ...input.contextWindow } } : {}),
     ...(input.inputModalities ? { inputModalities: [...input.inputModalities] } : {}),
@@ -37,6 +42,36 @@ export function createModelCapabilities(input: {
     ...(input.pricing ? { pricing: { ...input.pricing } } : {}),
     ...(input.toolSupport ? { toolSupport: { ...input.toolSupport } } : {}),
   };
+}
+
+export function resolveModelSelectionSupport(model: {
+  readonly isSelectable?: boolean | undefined;
+  readonly capabilities?: ModelCapabilities | null | undefined;
+}): ModelSelectionSupport {
+  const advertised = model.capabilities?.selectionSupport;
+  if (advertised) return advertised;
+  if (model.isSelectable === false) {
+    return { agent: false, textGeneration: false, decision: "none" };
+  }
+  return LEGACY_MODEL_SELECTION_SUPPORT;
+}
+
+export function supportsModelSelectionPurpose(
+  model: {
+    readonly isSelectable?: boolean | undefined;
+    readonly capabilities?: ModelCapabilities | null | undefined;
+  },
+  purpose: ModelSelectionPurpose,
+): boolean {
+  const support = resolveModelSelectionSupport(model);
+  switch (purpose) {
+    case "agent":
+      return support.agent;
+    case "text-generation":
+      return support.textGeneration;
+    case "decision":
+      return support.decision !== "none";
+  }
 }
 
 function getRawSelectionValueById(
@@ -503,7 +538,10 @@ export function readCustomModelEntries(value: unknown): CustomModelDefinition[] 
       slug,
       name,
       capabilities: capabilities
-        ? createModelCapabilities({ optionDescriptors: capabilities.optionDescriptors ?? [] })
+        ? createModelCapabilities({
+            selectionSupport: capabilities.selectionSupport,
+            optionDescriptors: capabilities.optionDescriptors ?? [],
+          })
         : null,
     });
   }
@@ -516,13 +554,19 @@ export function readCustomModelEntries(value: unknown): CustomModelDefinition[] 
  */
 export function toCustomModelSetting(entry: CustomModelDefinition): CustomModelSetting {
   const descriptors = entry.capabilities?.optionDescriptors ?? [];
+  const selectionSupport = entry.capabilities?.selectionSupport;
   const name = entry.name !== entry.slug ? entry.name : undefined;
-  if (!name && descriptors.length === 0) return entry.slug;
+  if (!name && descriptors.length === 0 && selectionSupport === undefined) return entry.slug;
   return {
     slug: entry.slug,
     ...(name ? { name } : {}),
-    ...(descriptors.length > 0
-      ? { capabilities: createModelCapabilities({ optionDescriptors: descriptors }) }
+    ...(descriptors.length > 0 || selectionSupport !== undefined
+      ? {
+          capabilities: createModelCapabilities({
+            selectionSupport,
+            optionDescriptors: descriptors,
+          }),
+        }
       : {}),
   };
 }

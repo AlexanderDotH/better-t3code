@@ -13,6 +13,7 @@ import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
 import { TextGenerationError } from "@t3tools/contracts";
+import { makePromptedDecisionProviderFromStructuredOutput } from "../decisionGeneration/PromptedDecisionGeneration.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
@@ -60,6 +61,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
     environmentOverride,
   }: {
     operation:
+      | "decisionGeneration"
       | "decideAutoReasoning"
       | "generateCommitMessage"
       | "generatePrContent"
@@ -85,7 +87,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
         childProcessSpawner: commandSpawner,
         cwd,
         clientInfo: { name: "t3-code-git-text", version: "0.0.0" },
-        ...(operation === "decideAutoReasoning"
+        ...(operation === "decideAutoReasoning" || operation === "decisionGeneration"
           ? { runtimeMode: "approval-required" as const }
           : {}),
       }).pipe(Effect.provideService(Crypto.Crypto, crypto));
@@ -224,6 +226,31 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
         Effect.scoped,
       );
     });
+
+  const decisionGeneration = makePromptedDecisionProviderFromStructuredOutput((input) =>
+    Effect.gen(function* () {
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-decision-generation-grok-cwd-",
+      });
+      const configHome = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-decision-generation-grok-config-",
+      });
+      return yield* runGrokJson({
+        operation: "decisionGeneration",
+        cwd,
+        prompt: input.prompt,
+        outputSchemaJson: input.outputSchema,
+        modelSelection: input.modelSelection,
+        environmentOverride: {
+          ...environment,
+          HOME: configHome,
+          USERPROFILE: configHome,
+          XDG_CONFIG_HOME: configHome,
+          GROK_HOME: configHome,
+        },
+      });
+    }).pipe(Effect.scoped),
+  );
 
   const generateCommitMessage: TextGeneration.TextGeneration["Service"]["generateCommitMessage"] =
     Effect.fn("GrokTextGeneration.generateCommitMessage")(function* (input) {
@@ -391,6 +418,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
     });
 
   return {
+    decisionGeneration,
     decideAutoReasoning,
     generateCommitMessage,
     generatePrContent,

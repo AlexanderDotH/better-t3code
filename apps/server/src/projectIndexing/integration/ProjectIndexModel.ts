@@ -7,6 +7,8 @@ import {
 } from "@t3tools/shared/model";
 import * as Schema from "effect/Schema";
 
+import { modelSupportsSelectionPurpose } from "../../provider/ModelSelectionPurposePolicy.ts";
+
 const ANALYSIS_OUTPUT_RESERVATION = 16_384;
 const MINIMUM_ANALYSIS_CONTEXT = 4_096;
 // Native harness instructions are outside the supplied source prompt. This is
@@ -85,7 +87,9 @@ export function resolveProjectIndexModel(
     });
   }
   const model = provider.models.find(
-    (candidate) => candidate.slug === selection.model && candidate.isSelectable !== false,
+    (candidate) =>
+      candidate.slug === selection.model &&
+      modelSupportsSelectionPurpose(candidate, "text-generation"),
   );
   if (model === undefined) {
     throw new ProjectIndexModelError({ message: "The selected analysis model is unavailable." });

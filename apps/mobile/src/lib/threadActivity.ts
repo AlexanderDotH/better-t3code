@@ -459,6 +459,17 @@ function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): bool
 
 const decodeQuestionAttachmentAnswer = Schema.decodeUnknownOption(UserInputAttachmentAnswerPayload);
 
+function projectIndexContextDecisionLabel(
+  activity: OrchestrationThreadActivity,
+  payload: Record<string, unknown> | null,
+): string | null {
+  if (activity.kind !== "project-index.context-decision") return null;
+  if (payload?.fallback === true) return "Project Index context used (decision fallback)";
+  if (payload?.choice === "include") return "Project Index context used";
+  if (payload?.choice === "skip") return "Project Index context skipped";
+  return null;
+}
+
 function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWorkLogEntry {
   const payload =
     activity.payload && typeof activity.payload === "object"
@@ -496,7 +507,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     createdAt: activity.createdAt,
     turnId: activity.turnId,
     ...(taskId ? { taskId } : {}),
-    label: taskLabel || activity.summary,
+    label: taskLabel || projectIndexContextDecisionLabel(activity, payload) || activity.summary,
     tone:
       activity.kind === "task.progress"
         ? "thinking"

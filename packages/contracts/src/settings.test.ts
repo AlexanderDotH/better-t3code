@@ -83,6 +83,7 @@ it("keeps environment project indexing opt-in with an explicit nullable default 
   expect(decodeServerSettings({})).toMatchObject({
     projectIndexingEnabled: false,
     projectIndexingDefaultModelSelection: null,
+    projectIndexingDecisionModelSelection: null,
   });
   const selection = { instanceId: "analysis", model: "synthetic-model" };
   for (const enabled of [true, false]) {
@@ -94,6 +95,12 @@ it("keeps environment project indexing opt-in with an explicit nullable default 
   }
   expect(decodeServerSettingsPatch({ projectIndexingDefaultModelSelection: null })).toEqual({
     projectIndexingDefaultModelSelection: null,
+  });
+  expect(decodeServerSettingsPatch({ projectIndexingDecisionModelSelection: selection })).toEqual({
+    projectIndexingDecisionModelSelection: selection,
+  });
+  expect(decodeServerSettingsPatch({ projectIndexingDecisionModelSelection: null })).toEqual({
+    projectIndexingDecisionModelSelection: null,
   });
   expect(() => decodeServerSettingsPatch({ projectIndexingEnabled: "true" })).toThrow();
   expect(() =>

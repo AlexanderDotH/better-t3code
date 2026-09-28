@@ -325,6 +325,7 @@ export function AssemblyAiVoiceSettingsForm({
             lockedProvider={null}
             instanceEntries={t3Models.instanceEntries}
             modelOptionsByInstance={t3Models.optionsByInstance}
+            modelSelectionPurpose="text-generation"
             auxiliaryModels={modelOptions}
             selectedAuxiliaryModel={draft.cleanupModelSelection ? null : draft.cleanupModel}
             fallbackToFirstModel={false}

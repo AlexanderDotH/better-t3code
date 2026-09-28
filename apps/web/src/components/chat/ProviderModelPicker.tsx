@@ -1,5 +1,6 @@
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
+  type ModelSelectionPurpose,
   type ProviderInstanceId,
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
@@ -40,6 +41,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
   keybindings?: ResolvedKeybindingsConfig;
   modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>>;
+  modelSelectionPurpose?: ModelSelectionPurpose;
   activeProviderIconClassName?: string;
   instanceIndicatorBackground?: string;
   size?: ComposerControlSize;
@@ -258,6 +260,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           instanceEntries={props.instanceEntries}
           {...(props.keybindings ? { keybindings: props.keybindings } : {})}
           modelOptionsByInstance={props.modelOptionsByInstance}
+          modelSelectionPurpose={props.modelSelectionPurpose ?? "agent"}
           {...(props.auxiliaryModels ? { auxiliaryModels: props.auxiliaryModels } : {})}
           {...(props.selectedAuxiliaryModel
             ? { selectedAuxiliaryModel: props.selectedAuxiliaryModel }

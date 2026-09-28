@@ -35,6 +35,7 @@ const MODEL: OpenRouterCatalogModel = {
   reasoningEfforts: ["low", "medium", "high"],
   defaultReasoningEffort: "medium",
   toolCapabilities: { tools: true, parallelToolCalls: true, toolChoice: true },
+  selectionSupport: { agent: true, textGeneration: true, decision: "prompted" },
   isCustom: false,
   isVerified: true,
 };

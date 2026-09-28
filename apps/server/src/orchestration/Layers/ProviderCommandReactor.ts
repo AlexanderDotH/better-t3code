@@ -25,10 +25,7 @@ import { resolveFetchLunaFallback, resolveFetchModelSelection } from "@t3tools/s
 import {
   getModelSelectionStringOptionValue,
   isAutoReasoningEnabled,
-  readAutoReasoningResolution,
   resolveCodexContextWindowTokens,
-  selectManualReasoningEffort,
-  stripAutoReasoning,
 } from "@t3tools/shared/model";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
@@ -58,10 +55,21 @@ import {
   ProviderWorkspaceMissingError,
 } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
+import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import {
-  type AutoReasoningGenerationResult,
-  TextGeneration,
-} from "../../textGeneration/TextGeneration.ts";
+  DecisionGeneration,
+  type DecisionGenerationRequest,
+} from "../../decisionGeneration/DecisionGeneration.ts";
+import {
+  AUTO_REASONING_TIMEOUT,
+  applyAutoReasoningDecisionResult,
+  buildAutoReasoningActivityPayload,
+  buildAutoReasoningDecisionRequest,
+  resolveAutoReasoningDecisionModelSelection,
+  reuseAutoReasoningForRetry,
+  type AutoReasoningDiagnostic,
+  type AutoReasoningResolution,
+} from "../../textGeneration/AutoReasoning.ts";
 import { ProviderAuthService } from "../../provider/Services/ProviderAuthService.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
@@ -92,7 +100,20 @@ import { applyProjectAgentInstructionsToProviderInput } from "../../projectAgent
 import { applyAgentEnhancementsToProviderInput } from "../../provider/enhancements/index.ts";
 import { ProjectMemoryStore } from "../../projectMemory/ProjectMemoryStore.ts";
 import { ProjectContextQuery } from "../../projectIndexing/query/ProjectContextQuery.ts";
-import { prepareProjectIndexTurnContext } from "../../projectIndexing/integration/ProjectIndexTurnContext.ts";
+import {
+  prepareProjectIndexTurnContext,
+  retrieveProjectIndexTurnContextCandidate,
+} from "../../projectIndexing/integration/ProjectIndexTurnContext.ts";
+import {
+  PROJECT_INDEX_CONTEXT_DECISION_ACTIVITY_KIND,
+  applyProjectIndexContextDecisionResult,
+  buildProjectIndexContextDecisionInput,
+  failOpenProjectIndexContextDecision,
+  findReusableProjectIndexContextDecision,
+  projectIndexContextDecisionActivitySummary,
+  type ProjectIndexContextDecisionActivityPayload,
+  type ProjectIndexContextDecisionResolution,
+} from "../../projectIndexing/integration/ProjectIndexContextDecision.ts";
 import {
   findOpenPendingInteractions,
   type OpenPendingInteraction,
@@ -170,19 +191,7 @@ const FETCH_CONTEXT_TRUNCATION_MARKER = "\n[T3 Fetch context truncated]";
 const FIRST_USER_CONTEXT_TRUNCATION_MARKER = "\n[First user message truncated]";
 const STARTUP_PENDING_INTERACTION_ID_PREFIX = "startup-pending-interaction";
 const STARTUP_PENDING_INTERACTION_REASON = "provider-runtime-unavailable-after-startup";
-const AUTO_REASONING_TIMEOUT = Duration.seconds(15);
 const AUTO_REASONING_CONVERSATION_MESSAGE_LIMIT = 3;
-
-interface AutoReasoningDiagnostic {
-  readonly routerModel: {
-    readonly instanceId: string;
-    readonly model: string;
-  } | null;
-  readonly effort: string;
-  readonly durationMs: number;
-  readonly fallback: boolean;
-  readonly usage?: AutoReasoningGenerationResult["usage"];
-}
 
 function collectAutoReasoningConversation(
   messages: ReadonlyArray<OrchestrationMessage>,
@@ -196,38 +205,6 @@ function collectAutoReasoningConversation(
     )
     .slice(-AUTO_REASONING_CONVERSATION_MESSAGE_LIMIT)
     .map((message) => ({ role: message.role, text: message.text }));
-}
-
-function reuseAutoReasoningForRetry(input: {
-  readonly selection: ModelSelection;
-  readonly activities: OrchestrationReadModel["threads"][number]["activities"];
-  readonly retryOfTurnId?: TurnId;
-}):
-  | {
-      readonly effectiveSelection: ModelSelection;
-      readonly diagnostic?: AutoReasoningDiagnostic;
-    }
-  | undefined {
-  if (!isAutoReasoningEnabled(input.selection)) return undefined;
-
-  const previous =
-    input.retryOfTurnId === undefined
-      ? null
-      : readAutoReasoningResolution(input.activities, input.retryOfTurnId);
-  const effort =
-    previous?.effectiveEffort ??
-    getModelSelectionStringOptionValue(input.selection, CODEX_REASONING_EFFORT_OPTION_ID);
-  if (!effort) return { effectiveSelection: stripAutoReasoning(input.selection) };
-
-  return {
-    effectiveSelection: selectManualReasoningEffort(input.selection, effort),
-    diagnostic: {
-      routerModel: null,
-      effort,
-      durationMs: 0,
-      fallback: previous?.fallback ?? true,
-    } satisfies AutoReasoningDiagnostic,
-  };
 }
 
 export function requiresProviderSessionRestartForModelSelectionChange(input: {
@@ -511,6 +488,7 @@ const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
+  const decisionGeneration = yield* DecisionGeneration;
   const serverSettingsService = yield* ServerSettingsService;
   const skillEngine = yield* SkillEngine;
   const projectMemory = yield* ProjectMemoryStore;
@@ -657,13 +635,7 @@ const make = Effect.gen(function* () {
             tone: "info",
             kind: "auto-reasoning.resolved",
             summary: "Auto reasoning resolved",
-            payload: {
-              autoReasoningEffort: input.diagnostic.effort,
-              autoReasoningFallback: input.diagnostic.fallback,
-              autoReasoningRouterModel: input.diagnostic.routerModel,
-              autoReasoningDurationMs: input.diagnostic.durationMs,
-              autoReasoningUsage: input.diagnostic.usage ?? null,
-            },
+            payload: buildAutoReasoningActivityPayload(input.diagnostic),
             turnId: input.turnId,
             createdAt: input.createdAt,
           },
@@ -672,119 +644,116 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const resolveAutoReasoning = Effect.fn("ProviderCommandReactor.resolveAutoReasoning")(
-    function* (input: {
-      readonly selection: ModelSelection;
-      readonly cwd: string;
-      readonly userPrompt: string;
-      readonly interactionMode: "default" | "plan";
-      readonly attachments: ReadonlyArray<ChatAttachment>;
-      readonly conversation: ReadonlyArray<{
-        readonly role: "user" | "assistant";
-        readonly text: string;
-      }>;
-    }) {
-      if (!isAutoReasoningEnabled(input.selection)) return undefined;
+  const appendProjectIndexContextDecisionActivity = (input: {
+    readonly threadId: ThreadId;
+    readonly turnId: TurnId;
+    readonly activity: ProjectIndexContextDecisionActivityPayload;
+    readonly createdAt: string;
+  }) =>
+    Effect.all({
+      commandId: serverCommandId("project-index-context-decision-activity"),
+      eventId: serverEventId(),
+    }).pipe(
+      Effect.flatMap(({ commandId, eventId }) =>
+        orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId,
+          threadId: input.threadId,
+          activity: {
+            id: eventId,
+            tone: "info",
+            kind: PROJECT_INDEX_CONTEXT_DECISION_ACTIVITY_KIND,
+            summary: projectIndexContextDecisionActivitySummary(input.activity),
+            payload: input.activity,
+            turnId: input.turnId,
+            createdAt: input.createdAt,
+          },
+          createdAt: input.createdAt,
+        }),
+      ),
+    );
 
-      const providers = yield* providerRegistry.getProviders;
-      const provider = providers.find(
-        (candidate) => candidate.instanceId === input.selection.instanceId,
-      );
-      if (provider?.driver !== ProviderDriverKind.make("codex")) return undefined;
+  const prepareAutoReasoningDecision = Effect.fn(
+    "ProviderCommandReactor.prepareAutoReasoningDecision",
+  )(function* (input: {
+    readonly agentModelSelection: ModelSelection;
+    readonly decisionModelSelection: ModelSelection;
+    readonly cwd: string;
+    readonly userPrompt: string;
+    readonly interactionMode: "default" | "plan";
+    readonly attachments: ReadonlyArray<ChatAttachment>;
+    readonly conversation: ReadonlyArray<{
+      readonly role: "user" | "assistant";
+      readonly text: string;
+    }>;
+  }): Effect.fn.Return<
+    | {
+        readonly decisionModelSelection: ModelSelection;
+        readonly allowedEfforts: ReadonlyArray<string>;
+        readonly request?: DecisionGenerationRequest;
+        readonly resolution?: AutoReasoningResolution;
+      }
+    | undefined
+  > {
+    if (!isAutoReasoningEnabled(input.agentModelSelection)) return undefined;
 
-      const model = provider.models.find(
-        (candidate) => candidate.slug === input.selection.model && candidate.isSelectable !== false,
-      );
-      const descriptor = model?.capabilities?.optionDescriptors?.find(
-        (candidate) =>
-          candidate.id === CODEX_REASONING_EFFORT_OPTION_ID && candidate.type === "select",
-      );
-      const live =
-        provider.enabled &&
-        provider.installed &&
-        provider.availability !== "unavailable" &&
-        provider.status !== "error" &&
-        provider.status !== "disabled" &&
-        provider.auth.status !== "unauthenticated";
-      const allowedEfforts =
-        live && descriptor?.type === "select" ? descriptor.options.map((option) => option.id) : [];
-      const concreteFallback = getModelSelectionStringOptionValue(
-        input.selection,
-        CODEX_REASONING_EFFORT_OPTION_ID,
-      );
-      const effectiveFallback = stripAutoReasoning(input.selection);
-      if (!concreteFallback) {
-        yield* Effect.logInfo("auto reasoning resolved", {
-          routerModel: null,
-          chosenEffort: null,
+    const providers = yield* providerRegistry.getProviders;
+    const provider = providers.find(
+      (candidate) => candidate.instanceId === input.agentModelSelection.instanceId,
+    );
+    if (provider?.driver !== ProviderDriverKind.make("codex")) return undefined;
+
+    const model = provider.models.find(
+      (candidate) =>
+        candidate.slug === input.agentModelSelection.model && candidate.isSelectable !== false,
+    );
+    const descriptor = model?.capabilities?.optionDescriptors?.find(
+      (candidate) =>
+        candidate.id === CODEX_REASONING_EFFORT_OPTION_ID && candidate.type === "select",
+    );
+    const live =
+      provider.enabled &&
+      provider.installed &&
+      provider.availability !== "unavailable" &&
+      provider.status !== "error" &&
+      provider.status !== "disabled" &&
+      provider.auth.status !== "unauthenticated";
+    const allowedEfforts =
+      live && descriptor?.type === "select" ? descriptor.options.map((option) => option.id) : [];
+    const concreteFallback = getModelSelectionStringOptionValue(
+      input.agentModelSelection,
+      CODEX_REASONING_EFFORT_OPTION_ID,
+    );
+    const canDecide = concreteFallback !== undefined && allowedEfforts.length > 0;
+    const resolution = canDecide
+      ? undefined
+      : applyAutoReasoningDecisionResult({
+          agentModelSelection: input.agentModelSelection,
+          decisionModelSelection: input.decisionModelSelection,
+          allowedEfforts,
           durationMs: 0,
-          fallback: true,
-          usage: null,
         });
-        return { effectiveSelection: effectiveFallback };
-      }
-
-      const settings = yield* serverSettingsService.getSettings;
-      const routerSelection = stripAutoReasoning(
-        settings.autoReasoningModelSelection ?? settings.textGenerationModelSelection,
-      );
-      const routerModel = {
-        instanceId: String(routerSelection.instanceId),
-        model: routerSelection.model,
-      };
-      const startedAt = yield* Clock.currentTimeMillis;
-      const decisionExit =
-        allowedEfforts.length === 0
-          ? undefined
-          : yield* Effect.exit(
-              textGeneration
-                .decideAutoReasoning({
-                  cwd: input.cwd,
-                  userPrompt: input.userPrompt,
-                  interactionMode: input.interactionMode,
-                  attachments: input.attachments,
-                  allowedEfforts,
-                  conversation: input.conversation,
-                  modelSelection: routerSelection,
-                })
-                .pipe(Effect.timeoutOption(AUTO_REASONING_TIMEOUT)),
-            );
-      if (
-        decisionExit !== undefined &&
-        Exit.isFailure(decisionExit) &&
-        Cause.hasInterruptsOnly(decisionExit.cause)
-      ) {
-        return yield* Effect.failCause(decisionExit.cause);
-      }
-      const decision =
-        decisionExit !== undefined &&
-        Exit.isSuccess(decisionExit) &&
-        Option.isSome(decisionExit.value) &&
-        allowedEfforts.includes(decisionExit.value.value.effort)
-          ? decisionExit.value.value
-          : undefined;
-      const effort = decision?.effort ?? concreteFallback;
-      const durationMs = Math.max(0, (yield* Clock.currentTimeMillis) - startedAt);
-      const diagnostic: AutoReasoningDiagnostic = {
-        routerModel,
-        effort,
-        durationMs,
-        fallback: decision === undefined,
-        ...(decision?.usage !== undefined ? { usage: decision.usage } : {}),
-      };
-      yield* Effect.logInfo("auto reasoning resolved", {
-        routerModel,
-        chosenEffort: diagnostic.effort,
-        durationMs: diagnostic.durationMs,
-        fallback: diagnostic.fallback,
-        usage: diagnostic.usage ?? null,
-      });
-      return {
-        effectiveSelection: selectManualReasoningEffort(effectiveFallback, effort),
-        diagnostic,
-      };
-    },
-  );
+    return {
+      decisionModelSelection: input.decisionModelSelection,
+      allowedEfforts,
+      ...(canDecide
+        ? {
+            request: {
+              cwd: input.cwd,
+              ...buildAutoReasoningDecisionRequest({
+                decisionModelSelection: input.decisionModelSelection,
+                userPrompt: input.userPrompt,
+                interactionMode: input.interactionMode,
+                attachments: input.attachments,
+                allowedEfforts,
+                conversation: input.conversation,
+              }).request,
+            },
+          }
+        : {}),
+      ...(resolution === undefined ? {} : { resolution }),
+    };
+  });
 
   const formatFailureDetail = (cause: Cause.Cause<unknown>): string => {
     const failReason = cause.reasons.find(Cause.isFailReason);
@@ -1393,20 +1362,54 @@ const make = Effect.gen(function* () {
       }) ??
       project?.workspaceRoot ??
       process.cwd();
-    const reasoningHistory = isAutoReasoningEnabled(durableModelSelection)
-      ? yield* projectionSnapshotQuery
-          .getThreadDetailById(input.threadId)
-          .pipe(Effect.map(Option.getOrUndefined))
-      : undefined;
-    const autoReasoning =
+    const settings = yield* serverSettingsService.getSettings;
+    const projectIndexDecisionModelSelection = settings.projectIndexingDecisionModelSelection;
+    const legacyIndexContext =
+      project && Option.isSome(projectContext) && projectIndexDecisionModelSelection === null
+        ? yield* prepareProjectIndexTurnContext(
+            projectContext.value,
+            {
+              projectId: thread.projectId,
+              threadId: input.threadId,
+            },
+            input.messageText,
+          )
+        : undefined;
+    const projectIndexCandidate =
+      project && Option.isSome(projectContext) && projectIndexDecisionModelSelection !== null
+        ? yield* retrieveProjectIndexTurnContextCandidate(
+            projectContext.value,
+            {
+              projectId: thread.projectId,
+              threadId: input.threadId,
+            },
+            input.messageText,
+          )
+        : undefined;
+    const reasoningHistory =
+      isAutoReasoningEnabled(durableModelSelection) || projectIndexCandidate !== undefined
+        ? yield* projectionSnapshotQuery
+            .getThreadDetailById(input.threadId)
+            .pipe(Effect.map(Option.getOrUndefined))
+        : undefined;
+    const reusedAutoReasoning =
       input.resultOnly === true
         ? reuseAutoReasoningForRetry({
-            selection: durableModelSelection,
+            agentModelSelection: durableModelSelection,
             activities: reasoningHistory?.activities ?? [],
             ...(input.retryOfTurnId !== undefined ? { retryOfTurnId: input.retryOfTurnId } : {}),
           })
-        : yield* resolveAutoReasoning({
-            selection: durableModelSelection,
+        : undefined;
+    const autoReasoningDecisionModelSelection = resolveAutoReasoningDecisionModelSelection({
+      autoReasoningModelSelection: settings.autoReasoningModelSelection,
+      textGenerationModelSelection: settings.textGenerationModelSelection,
+    });
+    const preparedAutoReasoning =
+      input.resultOnly === true
+        ? undefined
+        : yield* prepareAutoReasoningDecision({
+            agentModelSelection: durableModelSelection,
+            decisionModelSelection: autoReasoningDecisionModelSelection,
             cwd: effectiveCwd,
             userPrompt: input.messageText,
             interactionMode: input.interactionMode ?? "default",
@@ -1416,6 +1419,85 @@ const make = Effect.gen(function* () {
               input.boundaryMessageId,
             ),
           });
+    let autoReasoning = reusedAutoReasoning ?? preparedAutoReasoning?.resolution;
+    let projectIndexContextDecision: ProjectIndexContextDecisionResolution | undefined =
+      projectIndexCandidate !== undefined && input.retryOfTurnId !== undefined
+        ? findReusableProjectIndexContextDecision(
+            projectIndexCandidate,
+            reasoningHistory?.activities ?? [],
+            input.retryOfTurnId,
+          )
+        : undefined;
+    const pendingDecisions: Array<{
+      readonly kind: "auto-reasoning" | "project-index";
+      readonly request: DecisionGenerationRequest;
+    }> = [];
+    if (autoReasoning === undefined && preparedAutoReasoning?.request !== undefined) {
+      pendingDecisions.push({ kind: "auto-reasoning", request: preparedAutoReasoning.request });
+    }
+    if (
+      projectIndexContextDecision === undefined &&
+      projectIndexCandidate !== undefined &&
+      projectIndexDecisionModelSelection !== null
+    ) {
+      pendingDecisions.push({
+        kind: "project-index",
+        request: {
+          cwd: effectiveCwd,
+          ...buildProjectIndexContextDecisionInput(
+            projectIndexDecisionModelSelection,
+            input.messageText,
+            projectIndexCandidate,
+          ),
+        },
+      });
+    }
+    if (pendingDecisions.length > 0) {
+      const startedAt = yield* Clock.currentTimeMillis;
+      const decisionExit = yield* Effect.exit(
+        decisionGeneration
+          .decideMany(pendingDecisions.map(({ request }) => request))
+          .pipe(Effect.timeoutOption(AUTO_REASONING_TIMEOUT)),
+      );
+      if (Exit.isFailure(decisionExit) && Cause.hasInterruptsOnly(decisionExit.cause)) {
+        return yield* Effect.failCause(decisionExit.cause);
+      }
+      const results =
+        Exit.isSuccess(decisionExit) && Option.isSome(decisionExit.value)
+          ? decisionExit.value.value
+          : [];
+      const durationMs = Math.max(0, (yield* Clock.currentTimeMillis) - startedAt);
+      for (const [decisionIndex, pending] of pendingDecisions.entries()) {
+        const result = results[decisionIndex];
+        if (pending.kind === "auto-reasoning" && preparedAutoReasoning !== undefined) {
+          autoReasoning = applyAutoReasoningDecisionResult({
+            agentModelSelection: durableModelSelection,
+            decisionModelSelection: preparedAutoReasoning.decisionModelSelection,
+            allowedEfforts: preparedAutoReasoning.allowedEfforts,
+            ...(result === undefined ? {} : { result }),
+            durationMs,
+          });
+        }
+        if (pending.kind === "project-index" && projectIndexCandidate !== undefined) {
+          projectIndexContextDecision =
+            result === undefined
+              ? failOpenProjectIndexContextDecision(projectIndexCandidate, {
+                  model: projectIndexDecisionModelSelection?.model ?? "unknown",
+                  durationMs,
+                })
+              : applyProjectIndexContextDecisionResult(projectIndexCandidate, result, durationMs);
+        }
+      }
+    }
+    if (autoReasoning?.diagnostic !== undefined) {
+      yield* Effect.logInfo("auto reasoning resolved", {
+        routerModel: autoReasoning.diagnostic.routerModel,
+        chosenEffort: autoReasoning.diagnostic.effort,
+        durationMs: autoReasoning.diagnostic.durationMs,
+        fallback: autoReasoning.diagnostic.fallback,
+        usage: autoReasoning.diagnostic.usage ?? null,
+      });
+    }
     const effectiveInputModelSelection = autoReasoning?.effectiveSelection ?? input.modelSelection;
     const memoryModelSelection = autoReasoning?.effectiveSelection ?? durableModelSelection;
     const projectMemoryRead = project
@@ -1513,17 +1595,7 @@ const make = Effect.gen(function* () {
       projectMemoryRead.value.entries.length > 0
         ? `<t3code_project_memory>\n${projectMemoryRead.value.markdown.trim()}\n</t3code_project_memory>`
         : undefined;
-    const indexContext =
-      project && Option.isSome(projectContext)
-        ? yield* prepareProjectIndexTurnContext(
-            projectContext.value,
-            {
-              projectId: thread.projectId,
-              threadId: input.threadId,
-            },
-            input.messageText,
-          )
-        : undefined;
+    const indexContext = legacyIndexContext ?? projectIndexContextDecision?.context;
     const transcriptContext = [projectMemoryContext, indexContext, compactHandoff?.handoff]
       .filter((value): value is string => value !== undefined)
       .join("\n\n");
@@ -1602,6 +1674,9 @@ const make = Effect.gen(function* () {
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
       ...(autoReasoning?.diagnostic !== undefined
         ? { autoReasoning: autoReasoning.diagnostic }
+        : {}),
+      ...(projectIndexContextDecision !== undefined
+        ? { projectIndexContextDecision: projectIndexContextDecision.activity }
         : {}),
     };
   });
@@ -2538,7 +2613,8 @@ const make = Effect.gen(function* () {
                     ? { input: enhancementApplication.providerInput }
                     : {}),
                 };
-          const { autoReasoning, ...providerRequest } = enhancedRequest;
+          const { autoReasoning, projectIndexContextDecision, ...providerRequest } =
+            enhancedRequest;
           const started = yield* providerService.sendTurn(providerRequest);
           if (autoReasoning !== undefined) {
             yield* appendAutoReasoningActivity({
@@ -2554,6 +2630,24 @@ const make = Effect.gen(function* () {
                   durationMs: autoReasoning.durationMs,
                   fallback: autoReasoning.fallback,
                   usage: autoReasoning.usage ?? null,
+                }),
+              ),
+            );
+          }
+          if (projectIndexContextDecision !== undefined) {
+            yield* appendProjectIndexContextDecisionActivity({
+              threadId: event.payload.threadId,
+              turnId: started.turnId,
+              activity: projectIndexContextDecision,
+              createdAt: event.payload.createdAt,
+            }).pipe(
+              Effect.catchCause(() =>
+                Effect.logWarning("failed to persist Project Index context decision activity", {
+                  model: projectIndexContextDecision.model,
+                  choice: projectIndexContextDecision.choice,
+                  fallback: projectIndexContextDecision.fallback,
+                  durationMs: projectIndexContextDecision.durationMs,
+                  fingerprint: projectIndexContextDecision.fingerprint,
                 }),
               ),
             );

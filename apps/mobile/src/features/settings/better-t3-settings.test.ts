@@ -35,7 +35,6 @@ import {
   resolveMobileBetterT3EnvironmentTarget,
   resolveMobileBetterT3Destination,
   resolveMobileBetterT3ProjectSelection,
-  supportsMobileAutoReasoningModelOption,
   buildMobileTranscriptPortabilityOptions,
   formatMobileResourceBytes,
   supportsMobileResourceDiagnostics,
@@ -205,7 +204,11 @@ describe("mobile Better T3 settings", () => {
         ...DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
         flags: { "knowledge.graph": true },
       },
-      capabilities: capabilities({ knowledgeGraphVersion: 2 }),
+      capabilities: capabilities({
+        knowledgeGraphVersion: 2,
+        projectIndexingVersion: 3,
+        decisionModelsVersion: 1,
+      }),
     });
     expect(feature(enabled, "knowledge.graph")?.availability).toEqual({ state: "available" });
   });
@@ -227,11 +230,21 @@ describe("mobile Better T3 settings", () => {
       environmentAvailable: true,
       deviceSettings: DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
       environmentSettings: DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
-      capabilities: capabilities({ knowledgeGraphVersion: 2 }),
+      capabilities: capabilities({
+        knowledgeGraphVersion: 2,
+        projectIndexingVersion: 3,
+        decisionModelsVersion: 1,
+      }),
     });
 
     expect(feature(legacy, "knowledge.graph")?.availability.state).toBe("unsupported");
     expect(feature(current, "knowledge.graph")?.availability.state).toBe("available");
+    expect(feature(legacy, "knowledge.projectIndexingDecisionModel")?.availability.state).toBe(
+      "unsupported",
+    );
+    expect(feature(current, "knowledge.projectIndexingDecisionModel")?.availability.state).toBe(
+      "available",
+    );
   });
 
   it("keeps device controls available while disabling environment controls without a target", () => {
@@ -378,6 +391,9 @@ describe("mobile Better T3 settings", () => {
     expect(resolveMobileBetterT3Destination("knowledge.projectIndexingDefaultModel")).toBe(
       "SettingsProjectIndexing",
     );
+    expect(resolveMobileBetterT3Destination("knowledge.projectIndexingDecisionModel")).toBe(
+      "SettingsProjectIndexing",
+    );
     expect(resolveMobileBetterT3Destination("knowledge.projectIndexing")).toBe("SettingsProjects");
     expect(resolveMobileBetterT3Destination("knowledge.projectIndexingReview")).toBe(
       "SettingsProjects",
@@ -459,6 +475,7 @@ describe("mobile Better T3 settings", () => {
       resourceProtectionVersion: 1,
       resourceDiagnosticsVersion: 1,
       mcpWorkspaceVersion: 1,
+      decisionModelsVersion: 1,
     });
     const mcp = prepareMcpStatus({
       capability: "supported",
@@ -640,34 +657,6 @@ describe("mobile Better T3 settings", () => {
         value: null,
       }),
     ).toEqual({ autoReasoningModelSelection: null });
-  });
-
-  it("keeps supported, selectable Auto Reasoning evaluation models available", () => {
-    for (const providerDriver of [
-      "codex",
-      "antigravity",
-      "claudeAgent",
-      "cursor",
-      "grok",
-      "opencode",
-      "gemini",
-      "chatgpt",
-      "openrouter",
-      "openai",
-    ]) {
-      expect(supportsMobileAutoReasoningModelOption({ providerDriver, isSelectable: true })).toBe(
-        true,
-      );
-    }
-    expect(
-      supportsMobileAutoReasoningModelOption({ providerDriver: "codex", isSelectable: false }),
-    ).toBe(false);
-    expect(
-      supportsMobileAutoReasoningModelOption({
-        providerDriver: "unsupported-evaluator",
-        isSelectable: true,
-      }),
-    ).toBe(false);
   });
 
   it("requires an explicit transcript choice from the selected environment", () => {

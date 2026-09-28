@@ -36,13 +36,31 @@ const MODELS = [
     reasoningEfforts: ["low", "high"],
     defaultReasoningEffort: "high",
     toolCapabilities: { tools: true, parallelToolCalls: true, toolChoice: true },
+    selectionSupport: { agent: true, textGeneration: true, decision: "prompted" },
     isCustom: false,
     isVerified: true,
   },
 ] as const;
 
+const NATIVE_DECISION_MODEL = {
+  id: "research/future-system-one",
+  name: "Future System One",
+  contextWindowTokens: 64_000,
+  inputModalities: ["text"],
+  outputModalities: ["decisions"],
+  promptPriceUsdPerMillion: 0.5,
+  completionPriceUsdPerMillion: 0.5,
+  reasoningEfforts: [],
+  toolCapabilities: { tools: false, parallelToolCalls: false, toolChoice: false },
+  selectionSupport: { agent: false, textGeneration: false, decision: "native" },
+  incompatibilityReason: "Only available for decision features.",
+  isCustom: false,
+  isVerified: true,
+} as const;
+
 const FULL_CATALOG = [
   ...MODELS,
+  NATIVE_DECISION_MODEL,
   {
     id: "openai/no-tools",
     name: "No tools",
@@ -53,6 +71,7 @@ const FULL_CATALOG = [
     completionPriceUsdPerMillion: 0,
     reasoningEfforts: [],
     toolCapabilities: { tools: false, parallelToolCalls: false, toolChoice: false },
+    selectionSupport: { agent: false, textGeneration: true, decision: "prompted" },
     incompatibilityReason: "This model does not support the tool calling required by T3 Code.",
     isCustom: false,
     isVerified: true,
@@ -103,6 +122,16 @@ describe("OpenRouterProvider", () => {
           optionDescriptors: [
             expect.objectContaining({ id: "reasoningEffort", currentValue: "high" }),
           ],
+          selectionSupport: { agent: true, textGeneration: true, decision: "prompted" },
+        }),
+      }),
+      expect.objectContaining({
+        slug: "research/future-system-one",
+        isSelectable: false,
+        unavailableReason: "Only available for decision features.",
+        capabilities: expect.objectContaining({
+          outputModalities: ["decisions"],
+          selectionSupport: { agent: false, textGeneration: false, decision: "native" },
         }),
       }),
       expect.objectContaining({
@@ -131,6 +160,13 @@ describe("OpenRouterProvider", () => {
         status: "warning",
         models: [
           expect.objectContaining({ slug: "openai/gpt-5.5", isSelectable: true }),
+          expect.objectContaining({
+            slug: "research/future-system-one",
+            isSelectable: false,
+            capabilities: expect.objectContaining({
+              selectionSupport: { agent: false, textGeneration: false, decision: "native" },
+            }),
+          }),
           expect.objectContaining({ slug: "openai/no-tools", isSelectable: false }),
         ],
       });

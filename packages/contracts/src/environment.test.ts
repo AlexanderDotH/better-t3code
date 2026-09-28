@@ -131,6 +131,20 @@ describe("ExecutionEnvironmentCapabilities", () => {
     ).toThrow();
   });
 
+  it("keeps decision models unavailable until a server advertises the versioned contract", () => {
+    const legacy = decodeCapabilities({ repositoryIdentity: true });
+    const current = decodeCapabilities({
+      repositoryIdentity: true,
+      decisionModelsVersion: 1,
+    });
+
+    expect(legacy.decisionModelsVersion).toBeUndefined();
+    expect(current.decisionModelsVersion).toBe(1);
+    expect(() =>
+      decodeCapabilities({ repositoryIdentity: true, decisionModelsVersion: 0 }),
+    ).toThrow();
+  });
+
   it("keeps resource diagnostics optional and versioned under mixed clients", () => {
     const legacy = decodeCapabilities({ repositoryIdentity: true });
     const current = decodeCapabilities({

@@ -16,6 +16,7 @@ import {
   mobileProjectIndexDefaults,
   mobileProjectIndexEffectiveSettings,
   mobileProjectIndexStatusWithDefaults,
+  supportsMobileDecisionModels,
   supportsMobileStaticProjectIndex,
 } from "./mobile-project-index-settings";
 
@@ -82,6 +83,12 @@ describe("mobile project indexing defaults", () => {
     expect(supportsMobileStaticProjectIndex(undefined)).toBe(false);
     expect(supportsMobileStaticProjectIndex(2)).toBe(false);
     expect(supportsMobileStaticProjectIndex(3)).toBe(true);
+  });
+
+  it("gates decision model settings on the dedicated server capability", () => {
+    expect(supportsMobileDecisionModels(undefined)).toBe(false);
+    expect(supportsMobileDecisionModels(0)).toBe(false);
+    expect(supportsMobileDecisionModels(1)).toBe(true);
   });
   it("inherits a default, keeps an override, and resets only that project's override", () => {
     const defaults = { enabled: true, modelSelection: defaultModel };

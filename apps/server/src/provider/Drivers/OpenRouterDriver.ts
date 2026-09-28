@@ -30,6 +30,7 @@ import { makeNativeProviderHarness } from "../nativeHarness/NativeProviderHarnes
 import { makeNativeProviderMcpToolBridge } from "../nativeHarness/NativeProviderMcpToolBridge.ts";
 import { nativeHarnessCommandEnvironment } from "../nativeHarness/NativeHarnessTools.ts";
 import { makeOpenRouterAdapter } from "../openrouter/OpenRouterAdapter.ts";
+import { makeOpenRouterDecisionGeneration } from "../openrouter/OpenRouterDecisionGeneration.ts";
 import { makeOpenRouterAuthentication } from "../openrouter/auth/OpenRouterAuthentication.ts";
 import { makeOpenRouterCredentialStore } from "../openrouter/auth/OpenRouterCredentialStore.ts";
 import { makeOpenRouterKeyValidator } from "../openrouter/auth/OpenRouterKeyValidation.ts";
@@ -265,12 +266,13 @@ export const OpenRouterDriver: ProviderDriver<OpenRouterSettings, OpenRouterDriv
                 Effect.map((catalog) =>
                   catalog.some(
                     (candidate) =>
-                      candidate.id === model && candidate.incompatibilityReason === undefined,
+                      candidate.id === model && candidate.selectionSupport.textGeneration,
                   ),
                 ),
               ),
         },
       );
+      const decisionGeneration = makeOpenRouterDecisionGeneration(effectiveConfig, transport);
       const authentication = makeOpenRouterAuthentication({
         instanceId,
         credentialStore,
@@ -289,6 +291,7 @@ export const OpenRouterDriver: ProviderDriver<OpenRouterSettings, OpenRouterDriv
         snapshot,
         adapter,
         historySync,
+        decisionGeneration,
         textGeneration,
         authentication,
       } satisfies ProviderInstance;

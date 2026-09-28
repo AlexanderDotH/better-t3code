@@ -566,6 +566,17 @@ function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): bool
 
 const decodeQuestionAttachmentAnswer = Schema.decodeUnknownOption(UserInputAttachmentAnswerPayload);
 
+function projectIndexContextDecisionLabel(
+  activity: OrchestrationThreadActivity,
+  payload: Record<string, unknown> | null,
+): string | null {
+  if (activity.kind !== "project-index.context-decision") return null;
+  if (payload?.fallback === true) return "Project Index context used (decision fallback)";
+  if (payload?.choice === "skip") return "Project Index context skipped";
+  if (payload?.choice === "include") return "Project Index context used";
+  return null;
+}
+
 function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWorkLogEntry {
   const cachedEntry = derivedWorkLogEntryByActivity.get(activity);
   if (cachedEntry) {
@@ -597,6 +608,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       ? payload.detail
       : null;
   const taskLabel = taskSummary || taskDetailAsLabel;
+  const projectIndexDecisionLabel = projectIndexContextDecisionLabel(activity, payload);
   const detail = isReasoningActivity
     ? typeof payload?.text === "string" && payload.text.length > 0
       ? payload.text
@@ -615,7 +627,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     createdAt: activity.createdAt,
     turnId: activity.turnId,
     ...(activity.historyOrigin ? { historyOrigin: activity.historyOrigin } : {}),
-    label: taskLabel || activity.summary,
+    label: taskLabel || projectIndexDecisionLabel || activity.summary,
     tone:
       activity.kind === "task.progress" || isReasoningActivity
         ? "thinking"

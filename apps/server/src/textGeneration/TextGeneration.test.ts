@@ -5,10 +5,16 @@ import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
 
-import { ProviderInstanceId } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+  type ServerProviderModel,
+} from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "../provider/providerMaintenance.ts";
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 
@@ -41,20 +47,45 @@ const makeStubTextGeneration = (
 const makeStubInstance = (
   instanceId: ProviderInstanceId,
   textGeneration: TextGeneration.TextGeneration["Service"],
-): ProviderInstance =>
-  ({
+  models: ReadonlyArray<ServerProviderModel> = [],
+): ProviderInstance => {
+  const driver = ProviderDriverKind.make("codex");
+  const snapshot: ServerProvider = {
     instanceId,
-    driverKind: instanceId as unknown as ProviderInstance["driverKind"],
+    driver,
+    status: "ready",
+    enabled: true,
+    installed: true,
+    auth: { status: "authenticated" },
+    checkedAt: "2026-09-28T00:00:00.000Z",
+    version: "1.0.0",
+    models: [...models],
+    slashCommands: [],
+    skills: [],
+  };
+  return {
+    instanceId,
+    driverKind: driver,
     continuationIdentity: {
-      driverKind: instanceId as unknown as ProviderInstance["driverKind"],
+      driverKind: driver,
       continuationKey: `${instanceId}:test`,
     },
     displayName: undefined,
     enabled: true,
-    snapshot: {} as ProviderInstance["snapshot"],
+    snapshot: {
+      resolveMaintenance: () =>
+        Effect.succeed(
+          makeManualOnlyProviderMaintenanceCapabilities({ provider: driver, packageName: null }),
+        ),
+      getSnapshot: Effect.succeed(snapshot),
+      refresh: Effect.succeed(snapshot),
+      streamChanges: Stream.empty,
+      applyUsageLimits: () => Effect.void,
+    },
     adapter: {} as ProviderInstance["adapter"],
     textGeneration,
-  }) satisfies ProviderInstance;
+  } satisfies ProviderInstance;
+};
 
 const makeStubRegistry = (
   instances: ReadonlyArray<ProviderInstance>,
@@ -92,6 +123,54 @@ describe("makeTextGenerationFromRegistry", () => {
       expect(result._tag).toBe("Failure");
       if (result._tag === "Failure")
         expect(result.failure.detail).toBe("Hard daily budget reached");
+    }),
+  );
+
+  it.effect("rejects native decision models from text generation and review dispatch", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("openrouter");
+      let dispatches = 0;
+      const textGeneration = makeStubTextGeneration({
+        generateBranchName: () =>
+          Effect.sync(() => {
+            dispatches += 1;
+            return { branch: "should-not-run" };
+          }),
+        reviewPlanParallelism: () =>
+          Effect.sync(() => {
+            dispatches += 1;
+            return { recommendedSubagents: 1 };
+          }),
+      });
+      const nativeDecisionModel: ServerProviderModel = {
+        slug: "labs/system-one",
+        name: "System One",
+        isCustom: false,
+        isSelectable: false,
+        capabilities: {
+          selectionSupport: { agent: false, textGeneration: false, decision: "native" },
+        },
+      };
+      const generation = makeTextGeneration(
+        makeStubRegistry([makeStubInstance(instanceId, textGeneration, [nativeDecisionModel])]),
+      );
+      const modelSelection = createModelSelection(instanceId, nativeDecisionModel.slug);
+
+      const textResult = yield* generation
+        .generateBranchName({ cwd: process.cwd(), message: "name this", modelSelection })
+        .pipe(Effect.result);
+      const reviewResult = yield* generation
+        .reviewPlanParallelism({
+          cwd: process.cwd(),
+          planMarkdown: "Implement it.",
+          maxSubagents: 8,
+          modelSelection,
+        })
+        .pipe(Effect.result);
+
+      expect(textResult._tag).toBe("Failure");
+      expect(reviewResult._tag).toBe("Failure");
+      expect(dispatches).toBe(0);
     }),
   );
   it.effect("delegates to the matching instance's textGeneration closure", () =>

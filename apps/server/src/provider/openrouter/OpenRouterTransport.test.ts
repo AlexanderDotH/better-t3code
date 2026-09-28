@@ -1,14 +1,18 @@
 import { describe, expect, it } from "@effect/vitest";
 import type { OpenRouterSettings } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpBody, HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import {
   completeOpenRouterText,
   OPENROUTER_API_ORIGIN,
+  OPENROUTER_DECISIONS_ENDPOINT,
   OpenRouterAuthenticationError,
   type OpenRouterTransport,
   makeOpenRouterTransport,
@@ -59,6 +63,38 @@ const modelCatalogResponse = {
   total_count: 1,
 };
 
+const decisionRequest = {
+  model: "research/future-system-one",
+  state: { task: "Choose an effort" },
+  questions: {
+    effort: {
+      type: "choice" as const,
+      instructions: "Choose the appropriate reasoning effort.",
+      criteria: { low: "A straightforward task.", high: "A complex task." },
+    },
+  },
+};
+
+const decisionResponse = {
+  id: "gen-dec-1",
+  model: "research/future-system-one-20260928",
+  provider: "Research Lab",
+  answers: {
+    effort: {
+      type: "choice",
+      choice: "high",
+      probabilities: { low: 0.1, high: 0.9 },
+      confidence: 0.8,
+    },
+  },
+  usage: { input_tokens: 25, output_tokens: 4, cost: 0.00002 },
+};
+
+const decodeRequestBody = (request: Request): unknown => {
+  const body = request.body as HttpBody.HttpBody;
+  return body._tag === "Uint8Array" ? JSON.parse(new TextDecoder().decode(body.body)) : undefined;
+};
+
 describe("OpenRouter transport", () => {
   it.effect("uses the fixed origin and resolves the current API key for every request", () =>
     Effect.gen(function* () {
@@ -84,6 +120,91 @@ describe("OpenRouter transport", () => {
         "Bearer first-key",
         "Bearer second-key",
       ]);
+    }),
+  );
+
+  it.effect("posts typed choice questions to the exact Decisions endpoint", () =>
+    Effect.gen(function* () {
+      const requests: Array<Request> = [];
+      const client = HttpClient.make((request) => {
+        requests.push(request);
+        return response(request, Response.json({ ...decisionResponse, ignored: "future field" }));
+      });
+      const transport = yield* makeOpenRouterTransport({
+        resolveApiKey: Effect.succeed(Redacted.make("decision-key")),
+      }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+
+      const result = yield* transport.decide(decisionRequest);
+
+      expect(result).toEqual(decisionResponse);
+      expect(requests).toHaveLength(1);
+      expect(requests[0]).toMatchObject({
+        url: OPENROUTER_DECISIONS_ENDPOINT,
+        method: "POST",
+        headers: expect.objectContaining({
+          accept: "application/json",
+          authorization: "Bearer decision-key",
+          "content-type": "application/json",
+        }),
+      });
+      expect(decodeRequestBody(requests[0]!)).toEqual(decisionRequest);
+    }),
+  );
+
+  it.effect("maps invalid Decisions responses without retaining provider payloads", () =>
+    Effect.gen(function* () {
+      const client = HttpClient.make((request) =>
+        response(
+          request,
+          Response.json({ answers: { effort: { type: "choice", choice: 42 } }, secret: "leak" }),
+        ),
+      );
+      const transport = yield* makeOpenRouterTransport({
+        resolveApiKey: Effect.succeed(Redacted.make("secret-key")),
+      }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+
+      const error = yield* Effect.flip(transport.decide(decisionRequest));
+
+      expect(error).toMatchObject({
+        _tag: "OpenRouterHttpError",
+        operation: "decisions",
+        category: "transport",
+        message: "OpenRouter Decisions response schema is invalid",
+      });
+      // A schema encoder could hide leaked properties by stripping unknown fields.
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      expect(JSON.stringify(error)).not.toContain("leak");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      expect(JSON.stringify(error)).not.toContain("secret-key");
+    }),
+  );
+
+  it.effect("attributes Decisions status errors to the Decisions operation", () =>
+    Effect.gen(function* () {
+      const client = HttpClient.make((request) =>
+        response(
+          request,
+          new Response("private upstream details", {
+            status: 429,
+            headers: { "retry-after": "11" },
+          }),
+        ),
+      );
+      const transport = yield* makeOpenRouterTransport({
+        resolveApiKey: Effect.succeed(Redacted.make("secret-key")),
+      }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+
+      const error = yield* Effect.flip(transport.decide(decisionRequest));
+
+      expect(error).toMatchObject({
+        _tag: "OpenRouterHttpError",
+        operation: "decisions",
+        category: "rate-limit",
+        status: 429,
+        retryAfterSeconds: 11,
+      });
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      expect(JSON.stringify(error)).not.toContain("private upstream details");
     }),
   );
 
@@ -144,6 +265,71 @@ describe("OpenRouter transport", () => {
         "Bearer same-origin-key",
         "Bearer same-origin-key",
       ]);
+    }),
+  );
+
+  it.effect("rejects redirects to unlisted alpha endpoints without forwarding the body", () =>
+    Effect.gen(function* () {
+      const requests: Array<Request> = [];
+      const client = HttpClient.make((request) => {
+        requests.push(request);
+        return response(
+          request,
+          new Response(null, {
+            status: 307,
+            headers: { location: "https://openrouter.ai/api/alpha/not-decisions" },
+          }),
+        );
+      });
+      const transport = yield* makeOpenRouterTransport({
+        resolveApiKey: Effect.succeed(Redacted.make("secret-key")),
+      }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+
+      const error = yield* Effect.flip(transport.decide(decisionRequest));
+
+      expect(error._tag).toBe("OpenRouterTransportSecurityError");
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.url).toBe(OPENROUTER_DECISIONS_ENDPOINT);
+    }),
+  );
+
+  it.effect("interrupts an active Decisions request when its AbortSignal fires", () =>
+    Effect.gen(function* () {
+      const requestStarted = yield* Deferred.make<void>();
+      const client = HttpClient.make(() =>
+        Deferred.succeed(requestStarted, undefined).pipe(Effect.andThen(Effect.never)),
+      );
+      const transport = yield* makeOpenRouterTransport({
+        resolveApiKey: Effect.succeed(Redacted.make("secret-key")),
+      }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+      const controller = new AbortController();
+      const fiber = yield* Effect.forkChild(
+        transport.decide({ ...decisionRequest, signal: controller.signal }),
+      );
+      yield* Deferred.await(requestStarted);
+
+      controller.abort();
+      const exit = yield* Fiber.await(fiber);
+
+      expect(Exit.hasInterrupts(exit)).toBe(true);
+    }),
+  );
+
+  it.effect("times out a Decisions request with a typed operation error", () =>
+    Effect.gen(function* () {
+      const client = HttpClient.make(() => Effect.never);
+      const transport = yield* makeOpenRouterTransport({
+        resolveApiKey: Effect.succeed(Redacted.make("secret-key")),
+        decisionsTimeoutMs: 0,
+      }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+
+      const error = yield* Effect.flip(transport.decide(decisionRequest));
+
+      expect(error).toMatchObject({
+        _tag: "OpenRouterHttpError",
+        operation: "decisions",
+        category: "timeout",
+      });
     }),
   );
 
@@ -377,6 +563,7 @@ describe("OpenRouter transport", () => {
       let receivedTools: ReadonlyArray<unknown> | undefined;
       const transport: OpenRouterTransport = {
         listModels: () => Effect.succeed([]),
+        decide: () => Effect.die("unused"),
         streamRound: (request) => {
           receivedTools = request.tools;
           return Stream.succeed({

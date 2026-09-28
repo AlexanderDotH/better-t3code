@@ -2036,6 +2036,37 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("defaults, persists, and clears the Project Index decision model", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const initial = yield* serverSettings.getSettings;
+      const selection = createModelSelection(
+        ProviderInstanceId.make("openrouter_work"),
+        "labs/system-one",
+      );
+
+      assert.equal(initial.projectIndexingDecisionModelSelection, null);
+
+      const saved = yield* serverSettings.updateSettings({
+        projectIndexingDecisionModelSelection: selection,
+      });
+      assert.deepEqual(saved.projectIndexingDecisionModelSelection, selection);
+      const savedRaw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Check the raw stored model rather than a decoded default.
+      assert.deepEqual(JSON.parse(savedRaw).projectIndexingDecisionModelSelection, selection);
+
+      const reset = yield* serverSettings.updateSettings({
+        projectIndexingDecisionModelSelection: null,
+      });
+      assert.equal(reset.projectIndexingDecisionModelSelection, null);
+      const resetRaw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Clearing the selection must remove its persisted key.
+      assert.equal(JSON.parse(resetRaw).projectIndexingDecisionModelSelection, undefined);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("persists and replaces the project thread preview sync record", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;

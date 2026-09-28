@@ -15,9 +15,9 @@ Turning a feature off does not remove its saved conversations or project data.
 ## Suppress Errors and Warnings
 
 On web and desktop, enable **Settings → Better T3 → General → Suppress Errors and Warnings**
-to hide error and warning pop-ups, including slow-request and reconnect-failure notices.
-Connection status and recovery controls in the chat remain visible. This device setting is off
-by default; turn it off to receive future pop-ups again.
+to hide error and warning messages, including provider status banners, slow-request notices, and
+reconnect-failure notices. Provider availability and connection state are unchanged. This device
+setting is off by default; turn it off to show future messages again.
 
 ## Diagrams and data visualization
 
@@ -42,6 +42,19 @@ examples and forecasts should be identified before using a chart to make a decis
 
 Turning the feature off restores ordinary code blocks without deleting their content. Agent
 guidance changes on the next turn. Turning it back on also renders diagrams in older messages.
+
+## Decision models
+
+Environments that support decision models show a dedicated model selector for Auto Reasoning and,
+when Project Index is available, under **Settings → Better T3 → Knowledge Automation**. These
+selectors include both ordinary text models and provider-native decision models. Native decision
+models do not appear in normal agent or text-generation model lists.
+
+The Project Index decision is off by default. When enabled, T3 first retrieves local indexed
+context and then asks the selected model whether that candidate is useful for the current prompt.
+The prompt and retrieved candidate are sent to that model's provider. A failed decision keeps the
+context, so enabling the experiment cannot remove context merely because the provider is
+unavailable. The thread activity shows whether context was used, skipped, or retained by fallback.
 
 ## Thinking traces
 

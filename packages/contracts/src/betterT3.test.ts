@@ -98,6 +98,30 @@ describe("Better T3 feature registry", () => {
     }
   });
 
+  it("keeps the project-index decision model opt-in and version-gated", () => {
+    expect(
+      BETTER_T3_FEATURE_REGISTRY.find(({ id }) => id === "knowledge.projectIndexingDecisionModel"),
+    ).toMatchObject({
+      section: "knowledge-automation",
+      scope: "environment",
+      controlKind: "selector",
+      defaults: { clean: false, existing: false },
+      compatibilityMirrors: [
+        {
+          store: "server-settings",
+          path: "projectIndexingDecisionModelSelection",
+          access: "read-write",
+        },
+      ],
+      availability: {
+        capabilities: [
+          { name: "projectIndexingVersion", minimumVersion: 3 },
+          { name: "decisionModelsVersion", minimumVersion: 1 },
+        ],
+      },
+    });
+  });
+
   it("does not advertise web-only controls on mobile while keeping real server mirrors", () => {
     for (const featureId of [
       "agent.expandedComposerControls",

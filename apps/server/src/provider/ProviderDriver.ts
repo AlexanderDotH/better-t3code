@@ -33,6 +33,7 @@ import type * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 
 import type * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import type { DecisionGenerationProvider } from "../decisionGeneration/DecisionGenerationProvider.ts";
 import type { ProviderAdapterError, ProviderDriverError } from "./Errors.ts";
 import type { ProviderAdapterShape } from "./Services/ProviderAdapter.ts";
 import type { ProviderHistorySyncFacet } from "./Services/ProviderHistorySync.ts";
@@ -87,6 +88,7 @@ export interface ProviderInstance {
   >;
   readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
   readonly historySync?: ProviderHistorySyncFacet;
+  readonly decisionGeneration?: DecisionGenerationProvider;
   readonly textGeneration: TextGeneration.TextGeneration["Service"];
   readonly auth?: ProviderAuthController;
   readonly authentication?: ProviderAuthenticationFacet;

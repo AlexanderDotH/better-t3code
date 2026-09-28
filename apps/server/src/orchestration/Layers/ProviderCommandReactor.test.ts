@@ -45,7 +45,7 @@ import { it as effectIt } from "@effect/vitest";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { deriveServerPaths, ServerConfig } from "../../config.ts";
-import { TextGenerationError } from "@t3tools/contracts";
+import { DecisionGenerationError, TextGenerationError } from "@t3tools/contracts";
 import {
   ProviderAdapterRequestError,
   ProviderWorkspaceMissingError,
@@ -61,6 +61,8 @@ import {
 import { ProviderAuthService } from "../../provider/Services/ProviderAuthService.ts";
 import { makeProviderRegistryLayer } from "../../provider/testUtils/providerRegistryMock.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
+import { DecisionGeneration } from "../../decisionGeneration/DecisionGeneration.ts";
+import { makeDecisionGenerationTestLayer } from "../../decisionGeneration/testUtils.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
@@ -190,6 +192,8 @@ describe("ProviderCommandReactor", () => {
     ) => Effect.Effect<ProviderSession, ProviderServiceError>;
     readonly tryHandlePromptCommandEffect?: ProviderAuthService["Service"]["tryHandlePromptCommand"];
     readonly projectContext?: ProjectContextQuery["Service"];
+    readonly decisionGeneration?: Partial<DecisionGeneration["Service"]>;
+    readonly serverSettings?: Parameters<typeof ServerSettingsService.layerTest>[0];
   }) {
     const now = "2026-01-01T00:00:00.000Z";
     const baseDir =
@@ -522,7 +526,8 @@ describe("ProviderCommandReactor", () => {
           generateThreadTitle,
         }),
       ),
-      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(makeDecisionGenerationTestLayer(input?.decisionGeneration)),
+      Layer.provideMerge(ServerSettingsService.layerTest(input?.serverSettings)),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
@@ -719,7 +724,13 @@ describe("ProviderCommandReactor", () => {
         estimatedTokens: 500,
       });
     });
-    const harness = await createHarness({ projectContext: { query } });
+    const decideMany = vi.fn<DecisionGeneration["Service"]["decideMany"]>(() =>
+      Effect.die("Opt-out must not call decision generation"),
+    );
+    const harness = await createHarness({
+      projectContext: { query },
+      decisionGeneration: { decideMany },
+    });
     for (const [index, text] of [
       "Edit decoder",
       "Edit formatter",
@@ -758,6 +769,161 @@ describe("ProviderCommandReactor", () => {
     expect(query.mock.calls.map(([input]) => [input.projectId, input.threadId])).toEqual(
       Array.from({ length: 3 }, () => ["project-1", "thread-1"]),
     );
+    expect(decideMany).not.toHaveBeenCalled();
+  });
+
+  it("gates retrieved Project Index context and fails open without persisting source text", async () => {
+    const decisionModelSelection = createModelSelection(
+      ProviderInstanceId.make("openrouter"),
+      "typesafe/jev-1.13",
+    );
+    const query = vi.fn<ProjectContextQuery["Service"]["query"]>((input) =>
+      Effect.succeed({
+        version: 1,
+        scope: {
+          projectId: input.projectId,
+          ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
+          scopeId: "decision-index",
+          workspaceFingerprint: "decision-workspace",
+        },
+        revision: input.text === "No indexed hits" ? 0 : 7,
+        operation: input.operation,
+        summary: "Decision-gated indexed context",
+        entities: [],
+        callsites: [],
+        modules: [],
+        behaviors: [],
+        flows: [],
+        rules:
+          input.text === "No indexed hits"
+            ? []
+            : [
+                {
+                  id: "decision-rule",
+                  name: "Decision source rule",
+                  description: `Private candidate for ${input.text}`,
+                  severity: "info",
+                  source: "explicit",
+                  appliesToEntityIds: [],
+                  evidenceIds: ["decision-rule-source"],
+                  provenance: "parser",
+                  freshness: "current",
+                },
+              ],
+        evidence:
+          input.text === "No indexed hits"
+            ? []
+            : [
+                {
+                  id: "decision-rule-source",
+                  filePath: "AGENTS.md",
+                  sourceHash: "decision-source-hash",
+                  range: { startLine: 1, startColumn: 1, endLine: 1, endColumn: 20 },
+                  provenance: "parser",
+                },
+              ],
+        gaps: [],
+        coverage: EMPTY_PROJECT_INDEX_COVERAGE,
+        nextCursor: null,
+        truncated: false,
+        estimatedTokens: 500,
+      }),
+    );
+    const decideMany = vi.fn<DecisionGeneration["Service"]["decideMany"]>((requests) => {
+      if (requests.some((request) => request.state.includes("Fail open context"))) {
+        return Effect.fail(
+          new DecisionGenerationError({
+            operation: "decide",
+            reason: "provider-failed",
+            detail: "Synthetic decision failure",
+          }),
+        );
+      }
+      return Effect.succeed(
+        requests.map((request) => ({
+          model: decisionModelSelection.model,
+          answers: {
+            "project-index-context": {
+              choice: request.state.includes("Skip indexed context") ? "skip" : "include",
+              confidence: 0.84,
+            },
+          },
+        })),
+      );
+    });
+    const harness = await createHarness({
+      projectContext: { query },
+      decisionGeneration: { decideMany },
+      serverSettings: {
+        projectIndexingDecisionModelSelection: decisionModelSelection,
+      },
+    });
+
+    for (const [index, text] of [
+      "Include indexed context",
+      "Skip indexed context",
+      "Fail open context",
+      "No indexed hits",
+    ].entries()) {
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`decision-indexed-turn-${index}`),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId(`decision-indexed-message-${index}`),
+            role: "user",
+            text,
+            attachments: [],
+          },
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          createdAt: `2026-01-01T00:00:0${index}.000Z`,
+        }),
+      );
+      await harness.drain();
+    }
+
+    expect(decideMany).toHaveBeenCalledTimes(3);
+    expect(decideMany.mock.calls.every(([requests]) => requests.length === 1)).toBe(true);
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      transcriptHandoff: { text: expect.stringContaining("Private candidate for Include") },
+    });
+    expect(harness.sendTurn.mock.calls[1]?.[0]).not.toHaveProperty("transcriptHandoff");
+    expect(harness.sendTurn.mock.calls[2]?.[0]).toMatchObject({
+      transcriptHandoff: { text: expect.stringContaining("Private candidate for Fail open") },
+    });
+    expect(harness.sendTurn.mock.calls[3]?.[0]).not.toHaveProperty("transcriptHandoff");
+
+    const activities = (await harness.readModel()).threads
+      .find((thread) => thread.id === ThreadId.make("thread-1"))
+      ?.activities.filter((activity) => activity.kind === "project-index.context-decision");
+    expect(activities?.map((activity) => activity.summary)).toEqual([
+      "Project Index context used",
+      "Project Index context skipped",
+      "Project Index context used (decision fallback)",
+    ]);
+    expect(activities?.map((activity) => activity.payload)).toEqual([
+      expect.objectContaining({
+        model: "typesafe/jev-1.13",
+        choice: "include",
+        fallback: false,
+        confidence: 0.84,
+      }),
+      expect.objectContaining({
+        model: "typesafe/jev-1.13",
+        choice: "skip",
+        fallback: false,
+        confidence: 0.84,
+      }),
+      expect.objectContaining({
+        model: "typesafe/jev-1.13",
+        choice: "include",
+        fallback: true,
+      }),
+    ]);
+    expect(JSON.stringify(activities)).not.toContain("Private candidate");
+    expect(JSON.stringify(activities)).not.toContain("Include indexed context");
   });
 
   effectIt.effect.each(["new", "ready", "stopped"] as const)(

@@ -94,6 +94,7 @@ import { TurnQuiescenceNotifierLive } from "../src/git-workbench/TurnQuiescenceN
 import { FetchWorkerCoordinator } from "../src/fetch/FetchWorkerCoordinator.ts";
 import { NoOpSkillEngineLayer } from "../src/skills/testUtils/NoOpSkillEngine.ts";
 import { ProjectMemoryStore } from "../src/projectMemory/ProjectMemoryStore.ts";
+import { makeDecisionGenerationTestLayer } from "../src/decisionGeneration/testUtils.ts";
 
 const decodeCodexSettings = Schema.decodeEffect(CodexSettings);
 
@@ -385,6 +386,7 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(runtimeServicesLayer),
       Layer.provideMerge(gitWorkflowLayer),
       Layer.provideMerge(textGenerationLayer),
+      Layer.provideMerge(makeDecisionGenerationTestLayer()),
       Layer.provideMerge(serverSettingsLayer),
     );
     const checkpointReactorLayer = CheckpointReactorLive.pipe(

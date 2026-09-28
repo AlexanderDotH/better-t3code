@@ -338,6 +338,13 @@ const betterT3SettingsCatalog = defineLocalizedInterfaceCatalog({
     "Comportement existant conservé",
   ],
   "settings.betterT3.value.automatic": ["Automatic", "Automatisch", "Automatique"],
+  "settings.betterT3.value.projectIndexDecisionOff": [
+    "Off — always use found context",
+    "Aus – gefundenen Kontext immer verwenden",
+    "Désactivé — toujours utiliser le contexte trouvé",
+  ],
+  "chat.model.decision.native": ["Native decision", "Native Entscheidung", "Décision native"],
+  "chat.model.decision.prompted": ["Prompted", "Prompt-basiert", "Guidé par prompt"],
   "settings.betterT3.value.unavailable": ["Unavailable", "Nicht verfügbar", "Indisponible"],
   "settings.betterT3.value.current": ["Current", "Aktuell", "Actuel"],
   "settings.betterT3.value.native": ["Native T3 Code", "Natives T3 Code", "T3 Code natif"],
@@ -673,6 +680,11 @@ const featureLabels = {
     projectIndexingFeatureCopy["knowledge.projectIndexingMaster"].label,
   "knowledge.projectIndexingDefaultModel":
     projectIndexingFeatureCopy["knowledge.projectIndexingDefaultModel"].label,
+  "knowledge.projectIndexingDecisionModel": [
+    "Project Index context decision model",
+    "Entscheidungsmodell für Project-Index-Kontext",
+    "Modèle de décision du contexte Project Index",
+  ],
   "knowledge.projectIndexing": projectIndexingFeatureCopy["knowledge.projectIndexing"].label,
   "knowledge.projectIndexingReview":
     projectIndexingFeatureCopy["knowledge.projectIndexingReview"].label,
@@ -737,13 +749,18 @@ const featureDescriptionOverrides: Partial<Record<BetterT3FeatureId, FeatureLabe
     projectIndexingFeatureCopy["knowledge.projectIndexingMaster"].description,
   "knowledge.projectIndexingDefaultModel":
     projectIndexingFeatureCopy["knowledge.projectIndexingDefaultModel"].description,
+  "knowledge.projectIndexingDecisionModel": [
+    "After local retrieval, decide whether to include the found Project Index context. The current prompt and retrieved context are sent to the selected provider. Off always includes found context.",
+    "Entscheidet nach der lokalen Suche, ob der gefundene Project-Index-Kontext verwendet wird. Der aktuelle Prompt und der gefundene Kontext werden an den ausgewählten Provider gesendet. Aus verwendet gefundenen Kontext immer.",
+    "Après la recherche locale, décide d’inclure ou non le contexte Project Index trouvé. Le prompt actuel et le contexte trouvé sont envoyés au fournisseur sélectionné. Désactivé inclut toujours le contexte trouvé.",
+  ],
   "knowledge.projectIndexing": projectIndexingFeatureCopy["knowledge.projectIndexing"].description,
   "knowledge.projectIndexingReview":
     projectIndexingFeatureCopy["knowledge.projectIndexingReview"].description,
   "integration.suppressErrorsAndWarnings": [
-    "Hide error and warning pop-ups, including slow-request notices. Connection status and recovery controls remain visible.",
-    "Blendet Fehler- und Warnungs-Pop-ups aus, auch Hinweise auf langsame Anfragen. Verbindungsstatus und Wiederherstellungsaktionen bleiben sichtbar.",
-    "Masque les fenêtres d’erreur et d’avertissement, y compris les requêtes lentes. L’état de connexion et les actions de reprise restent visibles.",
+    "Hide error and warning messages, including provider status banners and slow-request notices. Provider and connection state remain unchanged.",
+    "Blendet Fehler- und Warnmeldungen aus, einschließlich Provider-Status-Bannern und Hinweisen auf langsame Anfragen. Provider- und Verbindungsstatus bleiben unverändert.",
+    "Masque les messages d’erreur et d’avertissement, y compris les bannières d’état des fournisseurs et les requêtes lentes. L’état des fournisseurs et des connexions reste inchangé.",
   ],
   "chat.visualizations": [
     "Show diagrams and charts for learning and data analysis, and encourage agents to use them when helpful. Applies to all clients connected to this environment.",

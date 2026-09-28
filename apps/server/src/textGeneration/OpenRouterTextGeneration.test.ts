@@ -33,7 +33,7 @@ const selection = {
 } as const;
 
 describe("OpenRouterTextGeneration", () => {
-  it.effect("uses the explicit provider default model for structured text generation", () =>
+  it.effect("uses the selected model for structured text generation", () =>
     Effect.gen(function* () {
       const requests: Array<Parameters<OpenRouterTextCompletion>[0]> = [];
       const complete: OpenRouterTextCompletion = (request) =>
@@ -53,17 +53,55 @@ describe("OpenRouterTextGeneration", () => {
       expect(result).toEqual({ title: "Native OpenRouter" });
       expect(requests).toHaveLength(1);
       expect(requests[0]).toMatchObject({
-        model: "openai/gpt-5.5",
+        model: "anthropic/claude-sonnet-4",
         reasoningEffort: "high",
       });
       expect(requests[0]?.instructions).toContain("exactly one JSON object");
     }),
   );
 
-  it.effect("blocks text generation while the default model is missing", () =>
+  it.effect("uses the selected model and shared prompted schema for decisions", () =>
+    Effect.gen(function* () {
+      const requests: Array<Parameters<OpenRouterTextCompletion>[0]> = [];
+      const textGeneration = makeOpenRouterTextGeneration(SETTINGS, (request) =>
+        Effect.sync(() => {
+          requests.push(request);
+          return { text: '{"answers":{"context":{"choice":"include"}}}' };
+        }),
+      );
+      const provider = textGeneration.decisionGeneration;
+      if (provider === undefined) return yield* Effect.die("missing prompted decision provider");
+
+      const result = yield* provider.decide({
+        cwd: "/workspace",
+        modelSelection: selection,
+        state: "Repository state",
+        questions: {
+          context: {
+            instructions: "Choose whether to include context.",
+            criteria: { include: "Useful", skip: "Not useful" },
+          },
+        },
+      });
+
+      expect(result).toEqual({
+        model: "anthropic/claude-sonnet-4",
+        answers: { context: { choice: "include" } },
+      });
+      expect(requests).toHaveLength(1);
+      expect(requests[0]).toMatchObject({
+        model: "anthropic/claude-sonnet-4",
+        reasoningEffort: "high",
+      });
+      expect(requests[0]?.prompt).toContain("<t3code_decision_call>");
+      expect(requests[0]?.prompt).toContain("Repository state");
+    }),
+  );
+
+  it.effect("blocks text generation while the selected model is missing", () =>
     Effect.gen(function* () {
       let calls = 0;
-      const textGeneration = makeOpenRouterTextGeneration({ ...SETTINGS, defaultModel: "" }, () =>
+      const textGeneration = makeOpenRouterTextGeneration(SETTINGS, () =>
         Effect.sync(() => {
           calls++;
           return { text: "{}" };
@@ -75,17 +113,17 @@ describe("OpenRouterTextGeneration", () => {
           cwd: "/workspace",
           message: "Blocked",
           attachments: [],
-          modelSelection: selection,
+          modelSelection: { ...selection, model: "" },
         }),
       );
 
       expect(error).toBeInstanceOf(TextGenerationError);
-      expect(error.detail).toContain("default model");
+      expect(error.detail).toContain("OpenRouter model");
       expect(calls).toBe(0);
     }),
   );
 
-  it.effect("blocks text generation when the configured default left the live catalog", () =>
+  it.effect("blocks text generation when the selected model left the live catalog", () =>
     Effect.gen(function* () {
       let calls = 0;
       const textGeneration = makeOpenRouterTextGeneration(
@@ -97,7 +135,7 @@ describe("OpenRouterTextGeneration", () => {
           }),
         {
           isModelAvailable: (model) => {
-            expect(model).toBe("openai/gpt-5.5");
+            expect(model).toBe("anthropic/claude-sonnet-4");
             return Effect.succeed(false);
           },
         },
@@ -113,7 +151,7 @@ describe("OpenRouterTextGeneration", () => {
       );
 
       expect(error).toBeInstanceOf(TextGenerationError);
-      expect(error.detail).toContain("no longer available");
+      expect(error.detail).toContain("selected OpenRouter model");
       expect(calls).toBe(0);
     }),
   );

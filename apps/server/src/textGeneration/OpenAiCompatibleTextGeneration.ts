@@ -15,6 +15,7 @@ import {
   type OpenAiCompatibleAdapterOptions,
 } from "../provider/openaiCompatible/OpenAiCompatibleAdapter.ts";
 import { completeOpenAiCompatibleText } from "../provider/openaiCompatible/OpenAiCompatibleTransport.ts";
+import { makePromptedDecisionProviderFromStructuredOutput } from "../decisionGeneration/PromptedDecisionGeneration.ts";
 import { buildAutoReasoningPrompt, validateAutoReasoningDecision } from "./AutoReasoning.ts";
 import {
   buildBranchNamePrompt,
@@ -113,6 +114,14 @@ export function makeOpenAiCompatibleTextGeneration(
   });
 
   return {
+    decisionGeneration: makePromptedDecisionProviderFromStructuredOutput((input) =>
+      runJson({
+        operation: "decisionGeneration",
+        prompt: input.prompt,
+        outputSchema: input.outputSchema,
+        modelSelection: input.modelSelection,
+      }),
+    ),
     decideAutoReasoning: Effect.fn("OpenAiCompatibleTextGeneration.decideAutoReasoning")(
       function* (input) {
         const { prompt, outputSchema } = buildAutoReasoningPrompt(input);

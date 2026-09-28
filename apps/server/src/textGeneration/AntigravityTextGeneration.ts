@@ -20,6 +20,7 @@ import { type AcpError, AcpRequestError } from "effect-acp/errors";
 import { applyAntigravityAcpModelSelection } from "../provider/acp/AntigravityAcpSupport.ts";
 import { removeAntigravitySessionFiles } from "../provider/acp/AntigravitySessionFiles.ts";
 import type { AcpSessionRuntime } from "../provider/acp/AcpSessionRuntime.ts";
+import { makePromptedDecisionProviderFromStructuredOutput } from "../decisionGeneration/PromptedDecisionGeneration.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
@@ -471,7 +472,17 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
       return yield* validateAutoReasoningDecision(input.allowedEfforts, generated);
     });
 
+  const decisionGeneration = makePromptedDecisionProviderFromStructuredOutput((input) =>
+    runAntigravityJson({
+      operation: "decisionGeneration",
+      prompt: input.prompt,
+      outputSchema: input.outputSchema,
+      modelSelection: input.modelSelection,
+    }),
+  );
+
   return {
+    decisionGeneration,
     generateThreadMetadata,
     translateTranscriptToEnglish,
     improvePrompt,

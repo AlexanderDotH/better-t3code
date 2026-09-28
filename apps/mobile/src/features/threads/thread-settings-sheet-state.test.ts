@@ -25,6 +25,7 @@ function modelOption(
     isLegacy: false,
     isSelectable: true,
     unavailableReason: null,
+    selectionSupport: { agent: true, textGeneration: true, decision: "prompted" },
     continuationGroupKey: null,
     requiresNewThreadForModelChange: false,
     capabilities: null,

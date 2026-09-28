@@ -276,6 +276,42 @@ function makeThread(
 }
 
 describe("buildThreadFeed", () => {
+  it("renders Project Index context decisions without exposing decision input", () => {
+    const thread = makeThread({
+      id: ThreadId.make("project-index-decisions"),
+      projectId: ProjectId.make("project-1"),
+      title: "Project Index decisions",
+      activities: [
+        { choice: "include", fallback: false },
+        { choice: "skip", fallback: false },
+        { choice: "include", fallback: true },
+      ].map((payload, index) =>
+        makeActivity({
+          id: EventId.make(`project-index-decision-${index}`),
+          kind: "project-index.context-decision",
+          summary: "Project Index context decision",
+          createdAt: `2026-09-28T00:00:0${index}.000Z`,
+          payload: {
+            ...payload,
+            model: "decision-model",
+            durationMs: 12,
+            fingerprint: { indexRevision: 4, candidateHash: "candidate-hash" },
+          },
+        }),
+      ),
+    });
+
+    const summaries = buildThreadFeed(thread).flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities.map((activity) => activity.summary) : [],
+    );
+    expect(summaries).toEqual([
+      "Project Index context used",
+      "Project Index context skipped",
+      "Project Index context used (decision fallback)",
+    ]);
+    expect(JSON.stringify(buildThreadFeed(thread))).not.toContain("candidate-hash");
+  });
+
   it("reuses unchanged feed and presentation rows during an assistant text update", () => {
     const completedTurnId = TurnId.make("completed-turn");
     const activeTurnId = TurnId.make("active-turn");

@@ -1401,6 +1401,57 @@ it.layer(
       ]);
     });
 
+    it("keeps newly advertised selection roles instead of restoring cached capabilities", () => {
+      const previousProvider = {
+        instanceId: ProviderInstanceId.make("openrouter"),
+        driver: ProviderDriverKind.make("openrouter"),
+        status: "ready",
+        enabled: true,
+        installed: true,
+        auth: { status: "authenticated" },
+        checkedAt: "2026-09-28T00:00:00.000Z",
+        version: "1.0.0",
+        models: [
+          {
+            slug: "labs/model",
+            name: "Labs model",
+            isCustom: false,
+            capabilities: createModelCapabilities({
+              optionDescriptors: [booleanDescriptor("thinking", "Thinking")],
+            }),
+          },
+        ],
+        slashCommands: [],
+        skills: [],
+      } satisfies ServerProvider;
+      const refreshedProvider = {
+        ...previousProvider,
+        checkedAt: "2026-09-28T00:01:00.000Z",
+        models: [
+          {
+            slug: "labs/model",
+            name: "Labs model",
+            isCustom: false,
+            capabilities: createModelCapabilities({
+              selectionSupport: { agent: false, textGeneration: false, decision: "native" },
+              optionDescriptors: [],
+            }),
+          },
+        ],
+      } satisfies ServerProvider;
+      const refreshedModel = refreshedProvider.models[0]!;
+
+      assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
+        {
+          ...refreshedModel,
+          capabilities: {
+            ...refreshedModel.capabilities,
+            optionDescriptors: previousProvider.models[0]?.capabilities?.optionDescriptors,
+          },
+        },
+      ]);
+    });
+
     it.effect("does not run provider probes during layer construction", () =>
       Effect.gen(function* () {
         const codexDriver = ProviderDriverKind.make("codex");

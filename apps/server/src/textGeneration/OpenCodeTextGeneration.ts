@@ -15,6 +15,7 @@ import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
 import * as ServerConfig from "../config.ts";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
+import { makePromptedDecisionProviderFromStructuredOutput } from "../decisionGeneration/PromptedDecisionGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
@@ -41,6 +42,7 @@ const OPENCODE_MODEL_SELECTION_FORMAT_ERROR =
 const isTextGenerationError = Schema.is(TextGenerationError);
 
 const OpenCodeTextGenerationOperation = Schema.Literals([
+  "decisionGeneration",
   "decideAutoReasoning",
   "generateCommitMessage",
   "generatePrContent",
@@ -248,7 +250,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
           });
         }
         const selectedAgent =
-          input.operation === "decideAutoReasoning"
+          input.operation === "decideAutoReasoning" || input.operation === "decisionGeneration"
             ? undefined
             : getModelSelectionStringOptionValue(input.modelSelection, "agent");
         const selectedVariant = getModelSelectionStringOptionValue(input.modelSelection, "variant");
@@ -410,6 +412,21 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
         Effect.scoped,
       );
     });
+
+  const decisionGeneration = makePromptedDecisionProviderFromStructuredOutput((input) =>
+    Effect.gen(function* () {
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-decision-generation-opencode-cwd-",
+      });
+      return yield* runOpenCodeJson({
+        operation: "decisionGeneration",
+        cwd,
+        prompt: input.prompt,
+        outputSchemaJson: input.outputSchema,
+        modelSelection: input.modelSelection,
+      });
+    }).pipe(Effect.scoped),
+  );
 
   const generateCommitMessage: TextGeneration.TextGeneration["Service"]["generateCommitMessage"] =
     Effect.fn("OpenCodeTextGeneration.generateCommitMessage")(function* (input) {
@@ -573,6 +590,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
     });
 
   return {
+    decisionGeneration,
     decideAutoReasoning,
     generateCommitMessage,
     generatePrContent,

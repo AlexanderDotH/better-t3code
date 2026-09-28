@@ -86,6 +86,7 @@ export function SourceControlWritingSettingsSection() {
     textGenerationProviders,
     activeSelection.instanceId,
     activeSelection.model,
+    "text-generation",
   );
 
   return (
@@ -210,6 +211,7 @@ export function SourceControlWritingSettingsSection() {
                 lockedProvider={null}
                 instanceEntries={instanceEntries}
                 modelOptionsByInstance={modelOptionsByInstance}
+                modelSelectionPurpose="text-generation"
                 triggerVariant="outline"
                 triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                 triggerAriaLabel="Source control writer model"

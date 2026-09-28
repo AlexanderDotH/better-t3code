@@ -56,6 +56,7 @@ import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
+import * as DecisionGeneration from "./decisionGeneration/DecisionGeneration.ts";
 import * as PlanParallelismReview from "./plan/PlanParallelismReview.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
@@ -624,6 +625,7 @@ const ProjectContextLayerLive = ProjectContextQuery.layer.pipe(
 );
 
 const RuntimeCoreServicesLive = ReactorLayerLive.pipe(
+  Layer.provideMerge(DecisionGeneration.layer),
   Layer.provideMerge(ProjectContextLayerLive),
   Layer.provideMerge(AntigravityInstallationRefreshLive),
   Layer.provideMerge(ProviderAuthServiceLive),

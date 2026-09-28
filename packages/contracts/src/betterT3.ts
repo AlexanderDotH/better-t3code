@@ -76,6 +76,7 @@ const featureIds = [
   "knowledge.projectIndexing",
   "knowledge.projectIndexingMaster",
   "knowledge.projectIndexingDefaultModel",
+  "knowledge.projectIndexingDecisionModel",
   "knowledge.projectIndexingReview",
   "knowledge.progress",
   "knowledge.rebuild",
@@ -567,6 +568,14 @@ export const BETTER_T3_FEATURE_REGISTRY = [
       capability("projectIndexingDefaultsVersion", 1),
     ],
     mirrors: [serverMirror("projectIndexingDefaultModelSelection")],
+  }),
+  descriptor({
+    id: "knowledge.projectIndexingDecisionModel",
+    section: "knowledge-automation",
+    scope: "environment",
+    controlKind: "selector",
+    capabilities: [capability("projectIndexingVersion", 3), capability("decisionModelsVersion", 1)],
+    mirrors: [serverMirror("projectIndexingDecisionModelSelection")],
   }),
   descriptor({
     id: "knowledge.projectIndexing",

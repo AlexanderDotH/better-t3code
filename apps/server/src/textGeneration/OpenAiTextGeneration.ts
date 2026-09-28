@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 
 import type { OpenAiReasoningEffort } from "../provider/openai/OpenAiProtocol.ts";
 import { OpenAiHttpError } from "../provider/openai/OpenAiTransport.ts";
+import { makePromptedDecisionProviderFromStructuredOutput } from "../decisionGeneration/PromptedDecisionGeneration.ts";
 import { buildAutoReasoningPrompt, validateAutoReasoningDecision } from "./AutoReasoning.ts";
 import {
   buildBranchNamePrompt,
@@ -62,6 +63,7 @@ export interface OpenAiTextGenerationOptions {
 }
 
 type TextGenerationOperation =
+  | "decisionGeneration"
   | "decideAutoReasoning"
   | "generateCommitMessage"
   | "generatePrContent"
@@ -74,6 +76,7 @@ type TextGenerationOperation =
   | "planFetchExploration";
 
 const responseFormatName: Record<TextGenerationOperation, string> = {
+  decisionGeneration: "decision_generation",
   decideAutoReasoning: "auto_reasoning",
   generateCommitMessage: "commit_message",
   generatePrContent: "pull_request_content",
@@ -228,6 +231,14 @@ export function makeOpenAiTextGeneration(
   });
 
   return {
+    decisionGeneration: makePromptedDecisionProviderFromStructuredOutput((input) =>
+      runJson({
+        operation: "decisionGeneration",
+        prompt: input.prompt,
+        outputSchema: input.outputSchema,
+        modelSelection: input.modelSelection,
+      }),
+    ),
     decideAutoReasoning: Effect.fn("OpenAiTextGeneration.decideAutoReasoning")(function* (input) {
       const { prompt, outputSchema } = buildAutoReasoningPrompt(input);
       const generated = yield* runJson({

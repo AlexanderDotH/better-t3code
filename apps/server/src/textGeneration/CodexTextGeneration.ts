@@ -21,6 +21,7 @@ import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shar
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import { expandHomePath } from "../pathExpansion.ts";
+import { makePromptedDecisionProviderFromStructuredOutput } from "../decisionGeneration/PromptedDecisionGeneration.ts";
 import { codexExecLaunchArgs, resolveCodexLaunchArgs } from "../provider/Layers/codexLaunchArgs.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import {
@@ -125,6 +126,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
 
   const encodeJsonForOperation = (
     operation:
+      | "decisionGeneration"
       | "decideAutoReasoning"
       | "generateCommitMessage"
       | "generatePrContent"
@@ -158,6 +160,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     isolatedHome,
   }: {
     operation:
+      | "decisionGeneration"
       | "decideAutoReasoning"
       | "generateCommitMessage"
       | "generatePrContent"
@@ -402,6 +405,29 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       );
     });
 
+  const decisionGeneration = makePromptedDecisionProviderFromStructuredOutput((input) =>
+    Effect.gen(function* () {
+      if (resolveCodexLaunchArgs(codexConfig.launchArgs, resolvedEnvironment).length > 0) {
+        return yield* new TextGenerationError({
+          operation: "decisionGeneration",
+          detail: "Custom Codex launch arguments prevent isolated decision generation.",
+        });
+      }
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-decision-codex-cwd-",
+      });
+      const isolatedHome = yield* makeIsolatedCodexHome();
+      return yield* runCodexJson({
+        operation: "decisionGeneration",
+        cwd,
+        prompt: input.prompt,
+        outputSchemaJson: input.outputSchema,
+        modelSelection: input.modelSelection,
+        isolatedHome,
+      });
+    }).pipe(Effect.scoped),
+  );
+
   const generateCommitMessage: TextGeneration.TextGeneration["Service"]["generateCommitMessage"] =
     Effect.fn("CodexTextGeneration.generateCommitMessage")(function* (input) {
       const { prompt, outputSchema } = buildCommitMessagePrompt({
@@ -568,6 +594,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     });
 
   return {
+    decisionGeneration,
     decideAutoReasoning,
     generateCommitMessage,
     generatePrContent,

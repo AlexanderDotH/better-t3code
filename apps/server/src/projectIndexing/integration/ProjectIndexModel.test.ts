@@ -88,6 +88,29 @@ it("does not invent context controls for other provider adapters", () => {
   expect(() => projectIndexWorkerSelection(other, selection, 500_000)).toThrow("capacity");
 });
 
+it("rejects native decision-only models for Project Index analysis", () => {
+  const decisionOnly = {
+    ...provider,
+    models: [
+      {
+        ...provider.models[0]!,
+        capabilities: {
+          ...provider.models[0]!.capabilities,
+          selectionSupport: {
+            agent: false,
+            textGeneration: false,
+            decision: "native" as const,
+          },
+        },
+      },
+    ],
+  };
+
+  expect(() => resolveProjectIndexModel([decisionOnly], selection)).toThrow(
+    "analysis model is unavailable",
+  );
+});
+
 it("keeps native instructions and output capacity outside the source budget", () => {
   const capabilities = resolveProjectIndexModel([provider], selection);
   const smallRequest = "x".repeat(8_508);

@@ -582,6 +582,70 @@ describe("workEntryIndicatesToolNeutralStatus", () => {
 });
 
 describe("deriveWorkLogEntries", () => {
+  it("renders Project Index context decisions without exposing decision inputs", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        id: "project-index-include",
+        kind: "project-index.context-decision",
+        summary: "Project Index decision complete",
+        sequence: 1,
+        payload: {
+          model: "typesafe/jev-1.13",
+          choice: "include",
+          fallback: false,
+          confidence: 0.92,
+          durationMs: 31,
+          fingerprint: { indexRevision: "revision-1", candidateHash: "candidate-1" },
+        },
+      }),
+      makeActivity({
+        id: "project-index-skip",
+        kind: "project-index.context-decision",
+        summary: "Project Index decision complete",
+        sequence: 2,
+        payload: {
+          model: "typesafe/jev-1.13",
+          choice: "skip",
+          fallback: false,
+          durationMs: 24,
+          fingerprint: { indexRevision: "revision-1", candidateHash: "candidate-2" },
+        },
+      }),
+      makeActivity({
+        id: "project-index-fallback",
+        kind: "project-index.context-decision",
+        summary: "Project Index decision complete",
+        sequence: 3,
+        payload: {
+          model: "openai/gpt-5-mini",
+          choice: "include",
+          fallback: true,
+          durationMs: 5000,
+          fingerprint: { indexRevision: "revision-1", candidateHash: "candidate-3" },
+        },
+      }),
+    ]);
+
+    expect(entries).toMatchObject([
+      {
+        id: "project-index-include",
+        label: "Project Index context used",
+        sourceActivityKind: "project-index.context-decision",
+      },
+      {
+        id: "project-index-skip",
+        label: "Project Index context skipped",
+        sourceActivityKind: "project-index.context-decision",
+      },
+      {
+        id: "project-index-fallback",
+        label: "Project Index context used (decision fallback)",
+        sourceActivityKind: "project-index.context-decision",
+      },
+    ]);
+    expect(JSON.stringify(entries)).not.toContain("candidate-1");
+  });
+
   it("keeps the latest task progress without emitting plan-update log entries", () => {
     const activities = [
       makeActivity({ id: "before", kind: "tool.completed", summary: "Read files", sequence: 0 }),

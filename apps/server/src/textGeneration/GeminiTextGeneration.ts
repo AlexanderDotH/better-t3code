@@ -11,6 +11,7 @@ import {
   resolveGeminiApiKey,
   type GeminiClientFactory,
 } from "../provider/GeminiClient.ts";
+import { makePromptedDecisionProviderFromStructuredOutput } from "../decisionGeneration/PromptedDecisionGeneration.ts";
 import { resolveGeminiThinkingConfig } from "../provider/Layers/GeminiProvider.ts";
 import { buildAutoReasoningPrompt, validateAutoReasoningDecision } from "./AutoReasoning.ts";
 import {
@@ -53,6 +54,7 @@ export const makeGeminiTextGeneration = Effect.fn("makeGeminiTextGeneration")((
     modelSelection,
   }: {
     operation:
+      | "decisionGeneration"
       | "decideAutoReasoning"
       | "generateCommitMessage"
       | "generatePrContent"
@@ -163,6 +165,16 @@ export const makeGeminiTextGeneration = Effect.fn("makeGeminiTextGeneration")((
       });
       return yield* validateAutoReasoningDecision(input.allowedEfforts, generated);
     });
+
+  const decisionGeneration = makePromptedDecisionProviderFromStructuredOutput((input) =>
+    runGeminiJson({
+      operation: "decisionGeneration",
+      cwd: input.cwd,
+      prompt: input.prompt,
+      outputSchemaJson: input.outputSchema,
+      modelSelection: input.modelSelection,
+    }),
+  );
 
   const generateCommitMessage: TextGeneration.TextGeneration["Service"]["generateCommitMessage"] =
     Effect.fn("GeminiTextGeneration.generateCommitMessage")(function* (input) {
@@ -312,6 +324,7 @@ export const makeGeminiTextGeneration = Effect.fn("makeGeminiTextGeneration")((
     });
 
   return Effect.succeed({
+    decisionGeneration,
     decideAutoReasoning,
     generateCommitMessage,
     generatePrContent,

@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import type { ChatGptSubscriptionTransport } from "../provider/chatgpt/ChatGptSubscriptionTransport.ts";
+import { makePromptedDecisionProviderFromStructuredOutput } from "../decisionGeneration/PromptedDecisionGeneration.ts";
 import { buildAutoReasoningPrompt, validateAutoReasoningDecision } from "./AutoReasoning.ts";
 import {
   buildBranchNamePrompt,
@@ -58,6 +59,7 @@ export const makeChatGptTextGeneration = (
 ): TextGeneration.TextGeneration["Service"] => {
   const runJson = <S extends Schema.Top>(input: {
     readonly operation:
+      | "decisionGeneration"
       | "decideAutoReasoning"
       | "generateCommitMessage"
       | "generatePrContent"
@@ -179,6 +181,14 @@ export const makeChatGptTextGeneration = (
     );
 
   return {
+    decisionGeneration: makePromptedDecisionProviderFromStructuredOutput((input) =>
+      runJson({
+        operation: "decisionGeneration",
+        prompt: input.prompt,
+        outputSchema: input.outputSchema,
+        modelSelection: input.modelSelection,
+      }),
+    ),
     decideAutoReasoning: Effect.fn("ChatGptTextGeneration.decideAutoReasoning")(function* (input) {
       const { prompt, outputSchema } = buildAutoReasoningPrompt(input);
       const generated = yield* runJson({
