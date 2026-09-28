@@ -10,20 +10,22 @@ import {
 import { isElectron } from "~/env";
 import { useResizableWidth } from "~/hooks/useResizableWidth";
 import { cn } from "~/lib/utils";
+import {
+  PREVIEW_PANEL_DEFAULT_WIDTH,
+  PREVIEW_PANEL_MIN_WIDTH,
+  PREVIEW_PANEL_WIDTH_STORAGE_KEY,
+} from "~/rightPanelLayout";
 
 import { RightPanelResizeHandle } from "./RightPanelResizeHandle";
 
 export type PreviewPanelMode = "inline" | "sheet" | "sidebar" | "embedded";
 
-const PREVIEW_PANEL_WIDTH_STORAGE_KEY = "t3code:preview-panel-width";
-const PREVIEW_PANEL_MIN_WIDTH = 360;
 /**
  * Upper bound as a fraction of the viewport; only binds on wide screens.
  * On narrow windows the container clamp below is what preserves the
  * sibling column's space.
  */
 const PREVIEW_PANEL_MAX_WIDTH_FRACTION = 0.7;
-const PREVIEW_PANEL_DEFAULT_WIDTH = 540;
 /**
  * Width reserved for the sibling column (chat, pull-request list) sharing the
  * panel's flex row. The viewport fraction alone is not enough: the app
@@ -62,6 +64,7 @@ export function PreviewPanelShell(props: {
   widthStorageKey?: string;
   /** Overrides the initial width (px) before the user has resized the panel. */
   defaultWidth?: number;
+  windowExpansionRevealDirection?: "left" | "right";
   children: ReactNode;
 }) {
   const useDragRegion = isElectron && props.mode !== "sheet" && props.mode !== "embedded";
@@ -69,6 +72,8 @@ export function PreviewPanelShell(props: {
   const collapsible = isInline && props.open !== undefined;
   const open = props.open ?? true;
   const maximized = props.maximized ?? false;
+  const windowExpansionRevealDirection =
+    isInline && open ? props.windowExpansionRevealDirection : undefined;
   const hostRef = useRef<HTMLDivElement | null>(null);
   // Only inline non-maximized mode applies `width`/`maxWidth`; skip the
   // container measurement (and its re-renders) everywhere else.
@@ -128,8 +133,12 @@ export function PreviewPanelShell(props: {
             : "shrink-0 border-l border-border"
           : "w-full",
         collapsible &&
+          !windowExpansionRevealDirection &&
           "[[data-panel-animations=true]_&]:transition-[width] [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
-        collapsible && open && "[[data-panel-animations=true]_&]:starting:w-0!",
+        collapsible &&
+          open &&
+          !windowExpansionRevealDirection &&
+          "[[data-panel-animations=true]_&]:starting:w-0!",
         collapsible && !open && "pointer-events-none",
       )}
       style={
@@ -142,6 +151,7 @@ export function PreviewPanelShell(props: {
       }
       data-preview-panel-mode={props.mode}
       data-preview-panel-maximized={maximized ? "true" : "false"}
+      data-window-expansion-reveal={windowExpansionRevealDirection}
     >
       {isInline && !maximized ? <RightPanelResizeHandle handlers={handlers} /> : null}
       <div className={cn("h-full min-h-0 w-full", collapsible && "overflow-clip")}>

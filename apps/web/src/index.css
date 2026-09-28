@@ -134,6 +134,32 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   );
 }
 
+[data-panel-animations="true"] [data-window-expansion-reveal="right"] {
+  animation: right-panel-reveal-right var(--panel-animation-duration) ease-out both;
+}
+
+[data-panel-animations="true"] [data-window-expansion-reveal="left"] {
+  animation: right-panel-reveal-left var(--panel-animation-duration) ease-out both;
+}
+
+@keyframes right-panel-reveal-right {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0);
+  }
+}
+
+@keyframes right-panel-reveal-left {
+  from {
+    clip-path: inset(0 0 0 100%);
+  }
+  to {
+    clip-path: inset(0);
+  }
+}
+
 /* The font tokens are declared outside the inline theme so utilities reference
    the variables and Settings -> Appearance can override them at runtime. The
    default stacks are mirrored in `appearanceFonts.ts`. */

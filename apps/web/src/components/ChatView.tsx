@@ -196,7 +196,11 @@ import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { subscribeSnapShotComposerFocus } from "../lib/desktopSnapShot";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import { useMediaQuery } from "../hooks/useMediaQuery";
-import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
+import {
+  PREVIEW_PANEL_DEFAULT_WIDTH,
+  PREVIEW_PANEL_WIDTH_STORAGE_KEY,
+  RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY,
+} from "../rightPanelLayout";
 import {
   pullRequestSurface,
   selectActiveRightPanel,
@@ -371,6 +375,7 @@ import { useInterfaceTranslator } from "../hooks/useInterfaceTranslator";
 import { ChatHeader } from "./chat/ChatHeader";
 import { ChatTranscriptCopyButton } from "./chat/ChatTranscriptCopyButton";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
+import { useMacRightPanelWindowExpansion } from "../hooks/useMacRightPanelWindowExpansion";
 import { useNotificationSuppression } from "./ui/notificationSuppression";
 import { expandedImageKey, type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
@@ -1951,6 +1956,13 @@ export default function ChatView(props: ChatViewProps) {
     [activeThreadEnvironmentId, activeThreadId],
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
+  const windowExpansionTargetRef = useRef(activeThreadKey);
+  useLayoutEffect(() => {
+    windowExpansionTargetRef.current = activeThreadKey;
+    return () => {
+      windowExpansionTargetRef.current = null;
+    };
+  }, [activeThreadKey]);
   // Delayed scroll callbacks share the list ref across route changes.
   const timelineRouteKeyRef = useRef(routeThreadKey);
   useLayoutEffect(() => {
@@ -2049,8 +2061,7 @@ export default function ChatView(props: ChatViewProps) {
     panelAnimationDurationMs,
   );
   const rightPanelPresent = rightPanelPresence.present;
-  const rightPanelControlsInPanel = shouldUseRightPanelSheet && rightPanelPresent && rightPanelOpen;
-  const rightPanelControlsAtRoot = rightPanelPresent && !shouldUseRightPanelSheet;
+  const rightPanelControlsInPanel = rightPanelPresent && rightPanelOpen;
   const renderedRightPanelSurface = rightPanelPresence.value?.activeSurface ?? null;
   const renderedRightPanelSurfaces = rightPanelPresence.value?.surfaces ?? [];
   const previewMiniPlayerVisible = shouldRenderPreviewMiniPlayer(
@@ -2060,6 +2071,20 @@ export default function ChatView(props: ChatViewProps) {
   const canMaximizeRightPanel = rightPanelOpen && !shouldUseRightPanelSheet;
   const rightPanelMaximized =
     canMaximizeRightPanel && maximizedRightPanelThreadKey === routeThreadKey;
+  const rightPanelWindowExpansion = useMacRightPanelWindowExpansion({
+    panelWidthStorageKey: PREVIEW_PANEL_WIDTH_STORAGE_KEY,
+    defaultPanelWidth: PREVIEW_PANEL_DEFAULT_WIDTH,
+  });
+  const [windowExpansionReveal, setWindowExpansionReveal] = useState<{
+    threadKey: string;
+    direction: "left" | "right";
+  } | null>(null);
+  if (
+    windowExpansionReveal !== null &&
+    (!rightPanelOpen || windowExpansionReveal.threadKey !== activeThreadKey)
+  ) {
+    setWindowExpansionReveal(null);
+  }
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUseRightPanelSheet;
 
   useEffect(() => {
@@ -4573,6 +4598,33 @@ export default function ChatView(props: ChatViewProps) {
     }
     useRightPanelStore.getState().toggleVisibility(activeThreadRef);
   }, [activeThreadRef, closePreviewPanel, rightPanelOpen]);
+  const toggleWindowExpansion = useCallback(() => {
+    if (rightPanelWindowExpansion.expanded) {
+      if (rightPanelOpen) closePreviewPanel();
+      void rightPanelWindowExpansion.toggle();
+      return;
+    }
+    if (rightPanelOpen) {
+      void rightPanelWindowExpansion.toggle();
+      return;
+    }
+    if (!activeThreadRef || !activeThreadKey) return;
+    const direction = rightPanelWindowExpansion.direction;
+    void rightPanelWindowExpansion.prepareOpen().then((applied) => {
+      if (windowExpansionTargetRef.current !== activeThreadKey) {
+        rightPanelWindowExpansion.cancelPreparedOpen();
+        return;
+      }
+      if (applied) setWindowExpansionReveal({ threadKey: activeThreadKey, direction });
+      useRightPanelStore.getState().show(activeThreadRef);
+    });
+  }, [
+    activeThreadKey,
+    activeThreadRef,
+    closePreviewPanel,
+    rightPanelOpen,
+    rightPanelWindowExpansion,
+  ]);
   const toggleRightPanelMaximized = useCallback(() => {
     if (!canMaximizeRightPanel) return;
     setMaximizedRightPanelThreadKey((threadKey) =>
@@ -8547,6 +8599,11 @@ export default function ChatView(props: ChatViewProps) {
       rightPanelAvailable={activeProject !== null}
       rightPanelOpen={rightPanelOpen}
       rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
+      windowExpansionAvailable={rightPanelWindowExpansion.available}
+      windowExpanded={rightPanelWindowExpansion.expanded}
+      windowExpansionPreparing={rightPanelWindowExpansion.preparing}
+      windowExpansionBlocked={rightPanelMaximized}
+      windowExpansionDirection={rightPanelWindowExpansion.direction}
       // Suppressed while the Agents surface is visible: the roster itself is
       // on screen, so the toggle badge would be pointing at nothing.
       liveAgentCount={
@@ -8556,35 +8613,24 @@ export default function ChatView(props: ChatViewProps) {
       }
       onToggleTerminal={toggleTerminalVisibility}
       onToggleRightPanel={toggleRightPanel}
+      onToggleWindowExpansion={toggleWindowExpansion}
     />
   );
   const panelLayoutControls = (
     <div
-      className={cn(
-        // Keep one viewport anchor inside the header's no-drag region. The
-        // header can shrink behind the right panel without moving the controls.
-        "pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
-      )}
+      className="pointer-events-none absolute inset-y-0 right-[var(--workspace-controls-right)] z-50 mr-px flex items-center [-webkit-app-region:no-drag]"
       data-workspace-titlebar-controls
     >
-      {!shouldUseRightPanelSheet ? (
-        <span
-          aria-hidden={!rightPanelOpen}
-          className={cn(
-            "flex shrink-0",
-            panelAnimationsActive &&
-              "motion-safe:transition-opacity motion-safe:[transition-duration:var(--panel-animation-duration)] motion-safe:ease-out",
-            rightPanelOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0",
-          )}
-          inert={!rightPanelOpen}
-        >
-          <RightPanelMaximizeControl
-            maximized={rightPanelMaximized}
-            onToggle={toggleRightPanelMaximized}
-          />
-        </span>
-      ) : null}
       <div className="pointer-events-auto flex h-full items-center">{panelToggleControls}</div>
+    </div>
+  );
+  const inlineRightPanelControls = (
+    <div className="mr-px flex shrink-0 items-center gap-1">
+      <RightPanelMaximizeControl
+        maximized={rightPanelMaximized}
+        onToggle={toggleRightPanelMaximized}
+      />
+      {panelToggleControls}
     </div>
   );
   const rightPanelContent = activeThreadRef ? (
@@ -8851,7 +8897,6 @@ export default function ChatView(props: ChatViewProps) {
           promptRef={promptRef}
         />
       ) : null}
-      {rightPanelControlsAtRoot ? panelLayoutControls : null}
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
@@ -8866,13 +8911,7 @@ export default function ChatView(props: ChatViewProps) {
           reserveNativeControls={reserveTitleBarControlInset && !inlineRightPanelOwnsTitleBar}
           className="relative window-surface bg-background"
         >
-          {isElectron && rightPanelControlsAtRoot ? (
-            <span
-              aria-hidden
-              className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] h-[var(--workspace-topbar-height)] w-28 [-webkit-app-region:no-drag]"
-            />
-          ) : null}
-          {!rightPanelControlsAtRoot && !rightPanelControlsInPanel ? panelLayoutControls : null}
+          {!rightPanelControlsInPanel ? panelLayoutControls : null}
           <ChatHeader
             {...(!supportsPullRequests || activeProjectRepository === null
               ? {}
@@ -8902,7 +8941,8 @@ export default function ChatView(props: ChatViewProps) {
             }
             keybindings={keybindings}
             availableEditors={availableEditors}
-            rightPanelOpen={rightPanelOpen}
+            reservePanelControls={!rightPanelControlsInPanel}
+            windowExpansionAvailable={rightPanelWindowExpansion.available}
             gitCwd={gitCwd}
             onNewThreadInProject={handleNewThreadInActiveProject}
             {...(activeDraftLogicalProjectKey
@@ -9419,6 +9459,12 @@ export default function ChatView(props: ChatViewProps) {
         <RightPanelTabs
           mode="inline"
           open={rightPanelOpen}
+          layoutControls={rightPanelOpen ? inlineRightPanelControls : null}
+          windowExpansionRevealDirection={
+            rightPanelOpen && windowExpansionReveal?.threadKey === activeThreadKey
+              ? windowExpansionReveal.direction
+              : undefined
+          }
           maximized={rightPanelMaximized}
           surfaces={renderedRightPanelSurfaces}
           environmentId={activeThreadRef.environmentId}

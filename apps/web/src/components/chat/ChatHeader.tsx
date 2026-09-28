@@ -62,7 +62,8 @@ interface ChatHeaderProps {
   preferredScriptId: string | null;
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
-  rightPanelOpen: boolean;
+  reservePanelControls: boolean;
+  windowExpansionAvailable: boolean;
   projectIndexStatusControl?: ReactNode;
   transcriptCopyButton?: ReactNode;
   gitCwd: string | null;
@@ -133,7 +134,8 @@ export const ChatHeader = memo(function ChatHeader({
   preferredScriptId,
   keybindings,
   availableEditors,
-  rightPanelOpen,
+  reservePanelControls,
+  windowExpansionAvailable,
   projectIndexStatusControl,
   transcriptCopyButton,
   gitCwd,
@@ -410,7 +412,7 @@ export const ChatHeader = memo(function ChatHeader({
         data-chat-header-actions
         className={cn(
           "flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3",
-          rightPanelOpen ? "pr-0" : "pr-16",
+          reservePanelControls ? (windowExpansionAvailable ? "pr-24" : "pr-16") : "pr-0",
           "[[data-panel-animations=true]_&]:motion-safe:transition-[padding-right] [[data-panel-animations=true]_&]:motion-safe:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:motion-safe:ease-out",
         )}
       >
