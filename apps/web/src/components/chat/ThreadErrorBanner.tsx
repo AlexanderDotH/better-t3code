@@ -3,6 +3,7 @@ import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { CircleAlertIcon, XIcon } from "lucide-react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useNotificationSuppression } from "../ui/notificationSuppression";
 
 export function getThreadErrorBannerKey(threadKey: string, error: string | null): string | null {
   return error === null ? null : `${threadKey}\u0000${error}`;
@@ -12,8 +13,11 @@ export function shouldShowThreadErrorBanner(
   threadKey: string,
   error: string | null,
   isDismissed: boolean,
+  suppressErrorsAndWarnings = false,
 ): boolean {
-  return getThreadErrorBannerKey(threadKey, error) !== null && !isDismissed;
+  return (
+    getThreadErrorBannerKey(threadKey, error) !== null && !isDismissed && !suppressErrorsAndWarnings
+  );
 }
 
 // Session-scoped (module-level so it survives ChatView remounts, e.g. route
@@ -40,7 +44,8 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   error: string | null;
   onDismiss?: () => void;
 }) {
-  if (!error) return null;
+  const suppressErrorsAndWarnings = useNotificationSuppression();
+  if (!error || suppressErrorsAndWarnings) return null;
   return (
     <div className="pointer-events-auto mx-auto w-fit max-w-[min(48rem,calc(100%-2rem))] pt-3">
       <Alert

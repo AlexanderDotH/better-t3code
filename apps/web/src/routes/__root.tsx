@@ -31,6 +31,7 @@ import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useDefaultThemeAdoption } from "../hooks/useDefaultTheme";
 import { useEnvironmentThemeSync } from "../hooks/useEnvironmentTheme";
 import { Button } from "../components/ui/button";
+import { NotificationSuppressionProvider } from "../components/ui/notificationSuppression";
 import {
   AnchoredToastProvider,
   stackedThreadToast,
@@ -117,11 +118,13 @@ function AppToastProviders({ children }: { children: ReactNode }) {
   );
 
   return (
-    <ToastProvider suppressErrorsAndWarnings={suppressErrorsAndWarnings}>
-      <AnchoredToastProvider suppressErrorsAndWarnings={suppressErrorsAndWarnings}>
-        {children}
-      </AnchoredToastProvider>
-    </ToastProvider>
+    <NotificationSuppressionProvider enabled={suppressErrorsAndWarnings}>
+      <ToastProvider suppressErrorsAndWarnings={suppressErrorsAndWarnings}>
+        <AnchoredToastProvider suppressErrorsAndWarnings={suppressErrorsAndWarnings}>
+          {children}
+        </AnchoredToastProvider>
+      </ToastProvider>
+    </NotificationSuppressionProvider>
   );
 }
 

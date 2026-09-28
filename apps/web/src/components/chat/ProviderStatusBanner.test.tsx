@@ -1,6 +1,7 @@
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
+import { NotificationSuppressionProvider } from "../ui/notificationSuppression";
 
 import {
   getProviderStatusBannerKey,
@@ -69,6 +70,20 @@ describe("ProviderStatusBanner", () => {
 
     expect(shouldShowProviderStatusBanner(status, null)).toBe(true);
     expect(shouldShowProviderStatusBanner(status, getProviderStatusBannerKey(status))).toBe(false);
+  });
+
+  it("hides Codex warnings and provider errors while suppression is enabled", () => {
+    const warning = warningProvider();
+    expect(shouldShowProviderStatusBanner(warning, null, true)).toBe(false);
+    expect(shouldShowProviderStatusBanner({ ...warning, status: "error" }, null, true)).toBe(false);
+    expect(shouldShowProviderStatusBanner(warning, null, false)).toBe(true);
+
+    const markup = renderToStaticMarkup(
+      <NotificationSuppressionProvider enabled>
+        <ProviderStatusBanner status={warning} onDismiss={() => {}} />
+      </NotificationSuppressionProvider>,
+    );
+    expect(markup).toBe("");
   });
 
   it("renders an accessible dismiss control for provider warnings", () => {

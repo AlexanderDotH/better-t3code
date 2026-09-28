@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
+import { NotificationSuppressionProvider } from "../ui/notificationSuppression";
 
 import {
   dismissThreadErrorBannerForSession,
@@ -68,6 +69,17 @@ describe("ThreadErrorBanner", () => {
 
   it("never shows a null error", () => {
     expect(shouldShowThreadErrorBanner("env:thread-e", null, false)).toBe(false);
+  });
+  it("hides thread errors while suppression is enabled", () => {
+    expect(shouldShowThreadErrorBanner("env:thread-f", "Turn failed", false, true)).toBe(false);
+    expect(shouldShowThreadErrorBanner("env:thread-f", "Turn failed", false, false)).toBe(true);
+    expect(
+      renderToStaticMarkup(
+        <NotificationSuppressionProvider enabled>
+          <ThreadErrorBanner error="Turn failed" />
+        </NotificationSuppressionProvider>,
+      ),
+    ).toBe("");
   });
   it("aligns the warning and dismiss icons with the first line of a multi-line error", () => {
     const markup = renderToStaticMarkup(

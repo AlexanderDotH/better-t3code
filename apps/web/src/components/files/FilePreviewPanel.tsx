@@ -41,6 +41,7 @@ import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 import { isAbsolutePath, resolvePathLinkTarget } from "~/terminal-links";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Toggle } from "~/components/ui/toggle";
+import { useNotificationSuppression } from "~/components/ui/notificationSuppression";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
@@ -970,6 +971,7 @@ export default function FilePreviewPanel({
   workspaceMutationId,
 }: FilePreviewPanelProps) {
   const { resolvedTheme } = useTheme();
+  const suppressErrorsAndWarnings = useNotificationSuppression();
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const remoteOpenState = useRemoteOpenState(environmentId);
@@ -1213,7 +1215,11 @@ export default function FilePreviewPanel({
           ) : null}
         </div>
       ) : null}
-      {relativePath && !isMedia && !renderBrowserFile && file.data?.truncated ? (
+      {relativePath &&
+      !isMedia &&
+      !renderBrowserFile &&
+      file.data?.truncated &&
+      !suppressErrorsAndWarnings ? (
         <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-[11px] text-warning-foreground">
           Preview limited to the first 1 MB of a {file.data.byteLength.toLocaleString()} byte file.
         </div>
