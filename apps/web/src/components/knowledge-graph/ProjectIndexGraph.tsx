@@ -80,6 +80,7 @@ export function ProjectIndexGraph({
     capture: Element;
     moved: boolean;
   } | null>(null);
+  const dragListenerCleanup = useRef<(() => void) | null>(null);
   const suppressClick = useRef(false);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -156,16 +157,73 @@ export function ProjectIndexGraph({
     [layout.width, layout.height],
   );
   const fit = () => setViewport(fitNodes(nodes, layout.width, layout.height));
-  const finishDrag = () => {
+  const finishDrag = useCallback(() => {
     const previous = drag.current;
     drag.current = null;
+    dragListenerCleanup.current?.();
+    dragListenerCleanup.current = null;
     setDraggedId(null);
     if (!previous) return;
     suppressClick.current = previous.moved;
     if (previous.node && previous.moved) releaseNode();
     if (previous.capture.hasPointerCapture(previous.pointerId))
       previous.capture.releasePointerCapture(previous.pointerId);
-  };
+  }, [releaseNode]);
+  const moveDrag = useCallback(
+    (event: Pick<PointerEvent, "clientX" | "clientY" | "pointerId" | "preventDefault">) => {
+      const previous = drag.current;
+      if (!previous || previous.pointerId !== event.pointerId) return;
+      const matrix = svgRef.current?.getScreenCTM();
+      if (!matrix) return;
+      const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse());
+      if (
+        !previous.moved &&
+        Math.hypot(event.clientX - previous.clientX, event.clientY - previous.clientY) <
+          DRAG_THRESHOLD_PX
+      )
+        return;
+      event.preventDefault();
+      previous.moved = true;
+      suppressClick.current = true;
+      if (previous.node) {
+        setDraggedId(previous.node.id);
+        moveNode(previous.node.id, {
+          x: previous.node.x + (point.x - previous.x) / viewport.scale,
+          y: previous.node.y + (point.y - previous.y) / viewport.scale,
+        });
+        return;
+      }
+      setViewport((current) => ({
+        ...current,
+        translateX: current.translateX + point.x - previous.x,
+        translateY: current.translateY + point.y - previous.y,
+      }));
+      previous.x = point.x;
+      previous.y = point.y;
+    },
+    [moveNode, viewport.scale],
+  );
+  const startListeningForDrag = useCallback(() => {
+    dragListenerCleanup.current?.();
+    const finishPointerDrag = (event: PointerEvent) => {
+      if (drag.current?.pointerId === event.pointerId) finishDrag();
+    };
+    window.addEventListener("pointermove", moveDrag);
+    window.addEventListener("pointerup", finishPointerDrag);
+    window.addEventListener("pointercancel", finishPointerDrag);
+    dragListenerCleanup.current = () => {
+      window.removeEventListener("pointermove", moveDrag);
+      window.removeEventListener("pointerup", finishPointerDrag);
+      window.removeEventListener("pointercancel", finishPointerDrag);
+    };
+  }, [finishDrag, moveDrag]);
+
+  useEffect(
+    () => () => {
+      dragListenerCleanup.current?.();
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!hasNodes) return;
@@ -293,43 +351,8 @@ export function ProjectIndexGraph({
             moved: false,
           };
           event.currentTarget.setPointerCapture(event.pointerId);
+          startListeningForDrag();
         }}
-        onPointerMove={(event) => {
-          const previous = drag.current;
-          if (!previous || previous.pointerId !== event.pointerId) return;
-          const matrix = event.currentTarget.getScreenCTM();
-          if (!matrix) return;
-          const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(
-            matrix.inverse(),
-          );
-          if (
-            !previous.moved &&
-            Math.hypot(event.clientX - previous.clientX, event.clientY - previous.clientY) <
-              DRAG_THRESHOLD_PX
-          )
-            return;
-          previous.moved = true;
-          suppressClick.current = true;
-          if (previous.node) {
-            setDraggedId(previous.node.id);
-            moveNode(previous.node.id, {
-              x: previous.node.x + (point.x - previous.x) / viewport.scale,
-              y: previous.node.y + (point.y - previous.y) / viewport.scale,
-            });
-          } else {
-            setViewport((current) => ({
-              ...current,
-              translateX: current.translateX + point.x - previous.x,
-              translateY: current.translateY + point.y - previous.y,
-            }));
-            previous.x = point.x;
-            previous.y = point.y;
-          }
-        }}
-        onPointerUp={(event) => {
-          if (drag.current?.pointerId === event.pointerId) finishDrag();
-        }}
-        onPointerCancel={finishDrag}
         onLostPointerCapture={finishDrag}
       >
         <defs>
@@ -446,6 +469,7 @@ export function ProjectIndexGraph({
                           moved: false,
                         };
                         event.currentTarget.setPointerCapture(event.pointerId);
+                        startListeningForDrag();
                       }}
                       onKeyDown={(event) => {
                         const directions: Record<string, readonly [number, number]> = {

@@ -40,6 +40,7 @@ const entity: ProjectEntityV1 = {
 };
 let renderer: ReactTestRenderer | undefined;
 let captured = false;
+const windowListeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
 const capture = {
   setPointerCapture: () => {
     captured = true;
@@ -58,8 +59,19 @@ const svg = {
 
 beforeEach(() => {
   captured = false;
+  windowListeners.clear();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("window", { matchMedia: () => ({ matches: true }) });
+  vi.stubGlobal("window", {
+    matchMedia: () => ({ matches: true }),
+    addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => {
+      const listeners = windowListeners.get(type) ?? new Set();
+      listeners.add(listener);
+      windowListeners.set(type, listeners);
+    },
+    removeEventListener: (type: string, listener: EventListenerOrEventListenerObject) => {
+      windowListeners.get(type)?.delete(listener);
+    },
+  });
   vi.stubGlobal(
     "DOMPoint",
     class {
@@ -79,7 +91,6 @@ afterEach(async () => {
 });
 
 const nodeButton = () => renderer!.root.findByProps({ className: "project-index-graph-node" });
-const canvas = () => renderer!.root.findByProps({ className: "project-index-graph-canvas" });
 const position = () => {
   const node = renderer!.root.findByType("foreignObject");
   return { x: node.props.x as number, y: node.props.y as number };
@@ -92,6 +103,22 @@ const pointer = (x: number, y: number) => ({
   currentTarget: capture,
   stopPropagation: vi.fn(),
 });
+async function dispatchWindowPointer(type: string, x: number, y: number) {
+  const event = {
+    type,
+    pointerId: 7,
+    clientX: x,
+    clientY: y,
+    preventDefault: vi.fn(),
+  } as unknown as PointerEvent;
+  await act(() => {
+    for (const listener of windowListeners.get(type) ?? []) {
+      if (typeof listener === "function") listener(event);
+      else listener.handleEvent(event);
+    }
+  });
+  return event;
+}
 
 async function renderGraph() {
   const select = vi.fn();
@@ -111,15 +138,16 @@ async function renderGraph() {
   return select;
 }
 
-it("drags in graph coordinates after zoom, suppresses exploration, and resets positions", async () => {
+it("moves on the first window pointer movement after press and resets positions", async () => {
   const select = await renderGraph();
   await act(() => renderer!.root.findByProps({ "aria-label": "Zoom in" }).props.onClick());
   const start = position();
   await act(() => nodeButton().props.onPointerDown(pointer(100, 100)));
-  await act(() => canvas().props.onPointerMove({ ...pointer(200, 160), currentTarget: svg }));
+  const move = await dispatchWindowPointer("pointermove", 200, 160);
   expect(position().x - start.x).toBeCloseTo((100 * 0.5) / 1.25);
   expect(position().y - start.y).toBeCloseTo((60 * 0.5) / 1.25);
-  await act(() => canvas().props.onPointerUp(pointer(200, 160)));
+  expect(move.preventDefault).toHaveBeenCalledOnce();
+  await dispatchWindowPointer("pointerup", 200, 160);
   expect(captured).toBe(false);
   await act(() => nodeButton().props.onClick({ detail: 1 }));
   expect(select).not.toHaveBeenCalled();
@@ -131,8 +159,8 @@ it("treats small pointer jitter as a click and supports keyboard positioning", a
   const select = await renderGraph();
   const start = position();
   await act(() => nodeButton().props.onPointerDown(pointer(100, 100)));
-  await act(() => canvas().props.onPointerMove({ ...pointer(102, 101), currentTarget: svg }));
-  await act(() => canvas().props.onPointerUp(pointer(102, 101)));
+  await dispatchWindowPointer("pointermove", 102, 101);
+  await dispatchWindowPointer("pointerup", 102, 101);
   await act(() => nodeButton().props.onClick({ detail: 1 }));
   expect(select).toHaveBeenCalledWith("widget");
   expect(position()).toEqual(start);
@@ -150,11 +178,11 @@ it("treats small pointer jitter as a click and supports keyboard positioning", a
 it("ends a cancelled drag without leaving pointer capture or selecting the node", async () => {
   const select = await renderGraph();
   await act(() => nodeButton().props.onPointerDown(pointer(100, 100)));
-  await act(() => canvas().props.onPointerMove({ ...pointer(150, 150), currentTarget: svg }));
-  await act(() => canvas().props.onPointerCancel());
+  await dispatchWindowPointer("pointermove", 150, 150);
+  await dispatchWindowPointer("pointercancel", 150, 150);
   expect(captured).toBe(false);
   const cancelled = position();
-  await act(() => canvas().props.onPointerMove({ ...pointer(300, 300), currentTarget: svg }));
+  await dispatchWindowPointer("pointermove", 300, 300);
   expect(position()).toEqual(cancelled);
   expect(select).not.toHaveBeenCalled();
 });

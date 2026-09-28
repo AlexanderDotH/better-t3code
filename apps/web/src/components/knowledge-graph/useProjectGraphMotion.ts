@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   stepProjectGraphPhysics,
@@ -11,6 +11,7 @@ const TRANSITION_MS = 280;
 const PHYSICS_STEP_MS = 1000 / 60;
 const MAX_SETTLE_MS = 1400;
 const SETTLED_SPEED = 0.03;
+const DIRECT_MANIPULATION_STEPS = 1;
 const EMPTY_LINKS: ReadonlyArray<GraphLink> = [];
 interface PositionedNode extends GraphPoint {
   readonly id: string;
@@ -37,6 +38,7 @@ export function useProjectGraphMotion<Node extends PositionedNode>(
   const lastInteractionAt = useRef(0);
   const bodies = useRef<ReadonlyArray<GraphBody>>([]);
   const pinned = useRef(new Map<string, GraphPoint>());
+  const anchors = useMemo(() => new Map(target.map((node) => [node.id, node])), [target]);
   const commit = useCallback((nodes: ReadonlyArray<Node>) => {
     current.current = nodes;
     setPositions(nodes);
@@ -82,27 +84,33 @@ export function useProjectGraphMotion<Node extends PositionedNode>(
   }, [target, commit, stop]);
   useEffect(animateLayout, [animateLayout]);
 
+  const advancePhysics = useCallback(
+    (steps: number) => {
+      for (let index = 0; index < steps; index++)
+        bodies.current = stepProjectGraphPhysics(bodies.current, anchors, links, pinned.current);
+      commit(
+        current.current.map((node, index) => ({
+          ...node,
+          x: bodies.current[index]!.x,
+          y: bodies.current[index]!.y,
+        })),
+      );
+    },
+    [anchors, links, commit],
+  );
+
   const settle = useCallback(() => {
     lastInteractionAt.current = performance.now();
     if (physicsActive.current) return;
     stop();
     if (reducedMotion() || bodies.current.length !== current.current.length) return;
     physicsActive.current = true;
-    const anchors = new Map(target.map((node) => [node.id, node]));
     let lastStepAt = performance.now();
     const step = (now: number) => {
       const steps = Math.min(6, Math.floor((now - lastStepAt) / PHYSICS_STEP_MS));
-      for (let index = 0; index < steps; index++)
-        bodies.current = stepProjectGraphPhysics(bodies.current, anchors, links, pinned.current);
       if (steps > 0) {
         lastStepAt = now - ((now - lastStepAt) % PHYSICS_STEP_MS);
-        commit(
-          current.current.map((node, index) => ({
-            ...node,
-            x: bodies.current[index]!.x,
-            y: bodies.current[index]!.y,
-          })),
-        );
+        advancePhysics(steps);
       }
       const moving = bodies.current.some((body) => Math.hypot(body.vx, body.vy) > SETTLED_SPEED);
       frame.current =
@@ -112,7 +120,7 @@ export function useProjectGraphMotion<Node extends PositionedNode>(
       physicsActive.current = frame.current !== null;
     };
     frame.current = window.requestAnimationFrame(step);
-  }, [target, links, stop, commit]);
+  }, [stop, advancePhysics]);
 
   const moveNode = useCallback(
     (id: string, point: GraphPoint) => {
@@ -128,9 +136,10 @@ export function useProjectGraphMotion<Node extends PositionedNode>(
         vx: previous.get(node.id)?.vx ?? 0,
         vy: previous.get(node.id)?.vy ?? 0,
       }));
+      advancePhysics(DIRECT_MANIPULATION_STEPS);
       settle();
     },
-    [commit, settle, stop],
+    [advancePhysics, commit, settle, stop],
   );
 
   return {
