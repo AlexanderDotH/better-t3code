@@ -143,7 +143,7 @@ export function UsagePaceBar({
       />
       {pace.catchUpRemainingPercent > 0 ? (
         <div
-          className={`min-w-0 rounded-r-full opacity-50 ${color}`}
+          className={`min-w-0 rounded-full opacity-50 ${color}`}
           style={{ flex: catchUpShare }}
         />
       ) : null}
