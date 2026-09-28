@@ -3,7 +3,6 @@ import {
   OPENROUTER_MODEL_CONTEXT_THRESHOLDS,
   OPENROUTER_MODEL_SORT_DEFINITIONS,
   countActiveOpenRouterModelCatalogFilters,
-  isDefaultOpenRouterModelCatalogFilterState,
   type OpenRouterModelCatalogFilterState,
   type OpenRouterModelCatalogView,
   type OpenRouterModelCatalogSort,
@@ -38,6 +37,7 @@ import {
 
 export interface OpenRouterCatalogFilterPanelProps {
   readonly state: OpenRouterModelCatalogFilterState;
+  readonly defaultState?: OpenRouterModelCatalogFilterState;
   readonly view: Pick<
     OpenRouterModelCatalogView,
     "totalCount" | "matchingCount" | "favoriteCount" | "filterFacets" | "authorFacets"
@@ -48,6 +48,23 @@ export interface OpenRouterCatalogFilterPanelProps {
 }
 
 const QUICK_CONTEXT_THRESHOLD: OpenRouterModelContextThreshold = "128k";
+
+function setsEqual(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
+  return left.size === right.size && [...left].every((value) => right.has(value));
+}
+
+function catalogFilterStatesEqual(
+  left: OpenRouterModelCatalogFilterState,
+  right: OpenRouterModelCatalogFilterState,
+): boolean {
+  return (
+    setsEqual(left.featureFilters, right.featureFilters) &&
+    setsEqual(left.authors, right.authors) &&
+    left.contextThreshold === right.contextThreshold &&
+    left.favoritesOnly === right.favoritesOnly &&
+    left.sort === right.sort
+  );
+}
 
 function replaceFeatureFilter(
   state: OpenRouterModelCatalogFilterState,
@@ -136,8 +153,9 @@ function FacetMenuTrigger(props: {
 export function OpenRouterCatalogFilterPanel(props: OpenRouterCatalogFilterPanelProps) {
   const translator = useInterfaceTranslator();
   const translate = translator.message;
+  const defaultState = props.defaultState ?? DEFAULT_OPENROUTER_MODEL_CATALOG_FILTER_STATE;
   const activeFilterCount = countActiveOpenRouterModelCatalogFilters(props.state);
-  const isDefaultState = isDefaultOpenRouterModelCatalogFilterState(props.state);
+  const isDefaultState = catalogFilterStatesEqual(props.state, defaultState);
   const selectedAuthorCount = props.state.authors.size;
   const quickContextSelected = props.state.contextThreshold === QUICK_CONTEXT_THRESHOLD;
   const quickContextFacet = props.view.filterFacets.find((facet) => facet.id === "128k");
@@ -188,7 +206,7 @@ export function OpenRouterCatalogFilterPanel(props: OpenRouterCatalogFilterPanel
           )}
           disabled={isDefaultState}
           aria-label={translate("chat.catalog.resetFilters")}
-          onClick={() => props.onChange(DEFAULT_OPENROUTER_MODEL_CATALOG_FILTER_STATE)}
+          onClick={() => props.onChange(defaultState)}
         >
           <RotateCcwIcon className="size-3" />
           <span>{translate("chat.catalog.reset")}</span>
@@ -339,7 +357,7 @@ export function OpenRouterCatalogFilterPanel(props: OpenRouterCatalogFilterPanel
               label={translate("chat.catalog.sortPrefix", {
                 label: sortLabel(props.state.sort),
               })}
-              active={props.state.sort !== DEFAULT_OPENROUTER_MODEL_CATALOG_FILTER_STATE.sort}
+              active={props.state.sort !== defaultState.sort}
             />
             <MenuPopup align="end" side="bottom" className="min-w-40">
               <MenuGroup>

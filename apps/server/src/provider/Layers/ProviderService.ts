@@ -104,6 +104,7 @@ import { McpRuntimeRegistry } from "../../mcp/McpRuntimeRegistry.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { modelSelectionPurposeViolation } from "../ModelSelectionPurposePolicy.ts";
 const isModelSelection = Schema.is(ModelSelection);
 const encodePromptJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -543,12 +544,25 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const checkUsageBudget = yield* makeUsageHardBudgetCheck;
-  const usageProviders = yield* Effect.serviceOption(ProviderRegistry);
+  const providerRegistry = yield* Effect.serviceOption(ProviderRegistry);
   const requireUsageBudget = Effect.fn("ProviderService.requireUsageBudget")(function* (
     instanceId: ProviderInstanceId,
   ) {
     const reason = yield* checkUsageBudget(instanceId);
     if (reason) return yield* toValidationError("ProviderService.usageHardBudget", reason);
+  });
+  const requireAgentModel = Effect.fn("ProviderService.requireAgentModel")(function* (
+    operation: string,
+    modelSelection: ModelSelection,
+  ) {
+    if (Option.isNone(providerRegistry)) return;
+    const providers = yield* providerRegistry.value.getProviders;
+    const violation = modelSelectionPurposeViolation({
+      providers,
+      selection: modelSelection,
+      purpose: "agent",
+    });
+    if (violation) return yield* toValidationError(operation, violation);
   });
   const projectionQuery = yield* Effect.serviceOption(
     ProjectionSnapshotQuery.ProjectionSnapshotQuery,
@@ -1826,6 +1840,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         "ProviderService.startSession",
         parsed,
       );
+      if (parsed.modelSelection !== undefined) {
+        yield* requireAgentModel("ProviderService.startSession", parsed.modelSelection);
+      }
       let metricProvider = parsed.provider ?? String(resolvedInstanceId);
       yield* Effect.annotateCurrentSpan({
         "provider.operation": "start-session",
@@ -2022,6 +2039,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       "ProviderService.forkSession",
       parsed,
     );
+    if (parsed.modelSelection !== undefined) {
+      yield* requireAgentModel("ProviderService.forkSession", parsed.modelSelection);
+    }
     const sourceBinding = Option.getOrUndefined(yield* directory.getBinding(input.sourceThreadId));
     if (sourceBinding?.providerInstanceId !== destinationInstanceId) {
       return yield* toValidationError(
@@ -2170,6 +2190,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         "Transient worker model selection must belong to the selected provider instance.",
       );
     }
+    yield* requireAgentModel("ProviderService.startTransientSession", parsed.modelSelection);
     if ((yield* Ref.get(transientBindings)).has(threadId)) {
       return yield* toValidationError(
         "ProviderService.startTransientSession",
@@ -2272,6 +2293,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       schema: ProviderSendTurnInput,
       payload: rawInput,
     });
+    if (parsed.modelSelection !== undefined) {
+      yield* requireAgentModel("ProviderService.sendTurn", parsed.modelSelection);
+    }
 
     const { transcriptHandoff, ...currentTurn } = parsed;
     const currentAttachments = currentTurn.attachments ?? [];
@@ -2501,6 +2525,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const compactThreadWithModel: ProviderServiceMethod<"compactThread"> = Effect.fn("compactThread")(
     function* (threadId, selection, requestId) {
       const modelSelection = typeof selection === "string" ? undefined : selection;
+      if (modelSelection !== undefined) {
+        yield* requireAgentModel("ProviderService.compactThread", modelSelection);
+      }
       const routed = yield* resolveRoutableSession({
         threadId,
         operation: "ProviderService.compactThread",
@@ -3255,8 +3282,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   yield* Effect.addFinalizer(() => runtimeEventBroadcast.shutdown);
 
   const budgetSettingsChanges = yield* serverSettings.subscribeChanges;
-  const budgetChanges = Option.isSome(usageProviders)
-    ? Stream.merge(budgetSettingsChanges, usageProviders.value.streamChanges)
+  const budgetChanges = Option.isSome(providerRegistry)
+    ? Stream.merge(budgetSettingsChanges, providerRegistry.value.streamChanges)
     : budgetSettingsChanges;
   yield* budgetChanges.pipe(
     Stream.runForEach(() => enforceRunningUsageBudgets),

@@ -75,7 +75,6 @@ import {
   resolveMobileBetterT3Destination,
   resolveMobileBetterT3EnvironmentTarget,
   resolveMobileBetterT3ProjectSelection,
-  supportsMobileAutoReasoningModelOption,
   type MobilePreparedStatusInput,
   type MobileBetterT3Control,
 } from "./better-t3-settings";
@@ -1004,6 +1003,7 @@ export function SettingsBetterT3RouteScreen() {
                 : stripAutoReasoning(autoReasoningModelSelection)
             }
             defaultLabel={translator.message("settings.betterT3.value.automatic")}
+            purpose="decision"
             onClose={() => setAutoReasoningModelPickerOpen(false)}
             onSelect={(selection: ModelSelection | null) =>
               void updateEnvironmentSettings(
@@ -1013,7 +1013,6 @@ export function SettingsBetterT3RouteScreen() {
                 }),
               )
             }
-            optionPredicate={supportsMobileAutoReasoningModelOption}
             visible={autoReasoningModelPickerOpen}
           />
         </>

@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -13,6 +14,12 @@ import {
   buildOpenRouterChatCompletionRequest,
   decodeOpenRouterChatCompletionSse,
 } from "./OpenRouterChatCompletions.ts";
+import {
+  decodeOpenRouterDecisionsRequestBody,
+  decodeOpenRouterDecisionsResponse,
+  type OpenRouterDecisionsRequest,
+  type OpenRouterDecisionsResponse,
+} from "./OpenRouterDecisions.ts";
 import {
   decodeOpenRouterModelCatalog,
   mergeOpenRouterCustomModels,
@@ -31,9 +38,12 @@ import {
 import { OpenRouterProtocolError } from "./OpenRouterSse.ts";
 
 export const OPENROUTER_API_ORIGIN = "https://openrouter.ai/api/v1";
+export const OPENROUTER_DECISIONS_ENDPOINT = "https://openrouter.ai/api/alpha/decisions";
 const OPENROUTER_ORIGIN = new URL(OPENROUTER_API_ORIGIN).origin;
 const OPENROUTER_API_PATH = new URL(OPENROUTER_API_ORIGIN).pathname;
+const OPENROUTER_DECISIONS_PATH = new URL(OPENROUTER_DECISIONS_ENDPOINT).pathname;
 const MAX_SAME_ORIGIN_REDIRECTS = 2;
+const DEFAULT_DECISIONS_TIMEOUT_MS = 180_000;
 const decodeUnknownJson = HttpClientResponse.schemaBodyJson(Schema.Unknown);
 const isProtocolError = Schema.is(OpenRouterProtocolError);
 
@@ -53,7 +63,7 @@ export class OpenRouterAuthenticationError extends Schema.TaggedError<OpenRouter
 export class OpenRouterHttpError extends Schema.TaggedError<OpenRouterHttpError>()(
   "OpenRouterHttpError",
   {
-    operation: Schema.Literals(["models", "chat-completions", "responses"]),
+    operation: Schema.Literals(["models", "chat-completions", "responses", "decisions"]),
     category: Schema.Literals([
       "credits",
       "forbidden",
@@ -90,6 +100,9 @@ export interface OpenRouterTransport {
   readonly streamRound: (
     request: OpenRouterRoundRequest,
   ) => Stream.Stream<OpenRouterRoundEvent, OpenRouterTransportError>;
+  readonly decide: (
+    request: OpenRouterDecisionsRequest,
+  ) => Effect.Effect<OpenRouterDecisionsResponse, OpenRouterTransportError>;
 }
 
 interface AuthorizedRequest {
@@ -105,16 +118,21 @@ const parseRetryAfterSeconds = (header: string | undefined): number | undefined 
   return Number.isSafeInteger(seconds) && seconds >= 0 ? seconds : undefined;
 };
 
+const isAllowedOpenRouterUrl = (url: URL): boolean =>
+  url.origin === OPENROUTER_ORIGIN &&
+  url.username === "" &&
+  url.password === "" &&
+  (url.pathname === OPENROUTER_DECISIONS_PATH ||
+    url.pathname === OPENROUTER_API_PATH ||
+    url.pathname.startsWith(`${OPENROUTER_API_PATH}/`));
+
 const requestUrl = Effect.fn("OpenRouterTransport.requestUrl")(function* (raw: string) {
   const url = yield* Effect.try({
     try: () => new URL(raw),
     catch: () =>
       new OpenRouterTransportSecurityError({ message: "OpenRouter endpoint URL is invalid" }),
   });
-  if (
-    url.origin !== OPENROUTER_ORIGIN ||
-    (url.pathname !== OPENROUTER_API_PATH && !url.pathname.startsWith(`${OPENROUTER_API_PATH}/`))
-  ) {
+  if (!isAllowedOpenRouterUrl(url)) {
     return yield* new OpenRouterTransportSecurityError({
       message: "OpenRouter request endpoint is outside the fixed API origin",
     });
@@ -133,7 +151,9 @@ const makeRequest = Effect.fn("OpenRouterTransport.makeRequest")(function* (
     HttpClientRequest.setHeader("user-agent", "t3code-openrouter"),
     HttpClientRequest.setHeader(
       "accept",
-      input.method === "GET" ? "application/json" : "text/event-stream",
+      input.method === "GET" || input.operation === "decisions"
+        ? "application/json"
+        : "text/event-stream",
     ),
   );
   if (input.body === undefined) return withHeaders;
@@ -176,7 +196,7 @@ const statusError = (
                 ? "OpenRouter model catalog endpoint was not found"
                 : "OpenRouter could not route the selected model with the required request capabilities",
             ] as const)
-          : status === 408
+          : status === 408 || status === 524
             ? (["timeout", "OpenRouter request timed out"] as const)
             : status === 413
               ? (["payload-too-large", "OpenRouter request exceeded the payload limit"] as const)
@@ -217,6 +237,7 @@ const abortSignalEffect = (signal: AbortSignal): Effect.Effect<void> =>
 
 export const makeOpenRouterTransport = Effect.fn("makeOpenRouterTransport")(function* (input: {
   readonly resolveApiKey: Effect.Effect<Redacted.Redacted<string>, OpenRouterAuthenticationError>;
+  readonly decisionsTimeoutMs?: number;
 }): Effect.fn.Return<OpenRouterTransport, never, HttpClient.HttpClient> {
   const httpClient = yield* HttpClient.HttpClient;
 
@@ -258,11 +279,7 @@ export const makeOpenRouterTransport = Effect.fn("makeOpenRouterTransport")(func
           message: "OpenRouter redirect URL is invalid",
         }),
     });
-    if (
-      redirectUrl.origin !== OPENROUTER_ORIGIN ||
-      (redirectUrl.pathname !== OPENROUTER_API_PATH &&
-        !redirectUrl.pathname.startsWith(`${OPENROUTER_API_PATH}/`))
-    ) {
+    if (!isAllowedOpenRouterUrl(redirectUrl)) {
       return yield* new OpenRouterTransportSecurityError({
         message: "OpenRouter cross-origin redirect was rejected",
       });
@@ -346,7 +363,79 @@ export const makeOpenRouterTransport = Effect.fn("makeOpenRouterTransport")(func
       : stream.pipe(Stream.interruptWhen(abortSignalEffect(round.signal)));
   };
 
-  return { listModels, streamRound };
+  const executeDecision = Effect.fn("OpenRouterTransport.executeDecision")(function* (
+    request: OpenRouterDecisionsRequest,
+  ): Effect.fn.Return<OpenRouterDecisionsResponse, OpenRouterTransportError> {
+    const body = yield* decodeOpenRouterDecisionsRequestBody({
+      model: request.model,
+      state: request.state,
+      questions: request.questions,
+    }).pipe(
+      Effect.mapError(
+        () =>
+          new OpenRouterHttpError({
+            operation: "decisions",
+            category: "invalid-request",
+            message: "OpenRouter Decisions request is invalid",
+          }),
+      ),
+    );
+    const response = yield* execute({
+      operation: "decisions",
+      method: "POST",
+      url: OPENROUTER_DECISIONS_ENDPOINT,
+      body,
+    });
+    const success = yield* requireSuccess("decisions", response);
+    const json = yield* decodeUnknownJson(success).pipe(
+      Effect.mapError(
+        () =>
+          new OpenRouterHttpError({
+            operation: "decisions",
+            category: "transport",
+            message: "OpenRouter Decisions response is not valid JSON",
+          }),
+      ),
+    );
+    return yield* decodeOpenRouterDecisionsResponse(json).pipe(
+      Effect.mapError(
+        () =>
+          new OpenRouterHttpError({
+            operation: "decisions",
+            category: "transport",
+            message: "OpenRouter Decisions response schema is invalid",
+          }),
+      ),
+    );
+  });
+
+  const decide: OpenRouterTransport["decide"] = (request) => {
+    if (request.signal?.aborted) return Effect.interrupt;
+    const timed = executeDecision(request).pipe(
+      Effect.timeoutOption(input.decisionsTimeoutMs ?? DEFAULT_DECISIONS_TIMEOUT_MS),
+      Effect.flatMap(
+        Option.match({
+          onNone: () =>
+            Effect.fail(
+              new OpenRouterHttpError({
+                operation: "decisions",
+                category: "timeout",
+                message: "OpenRouter Decisions request timed out",
+              }),
+            ),
+          onSome: Effect.succeed,
+        }),
+      ),
+    );
+    return request.signal === undefined
+      ? timed
+      : Effect.raceFirst(
+          timed,
+          abortSignalEffect(request.signal).pipe(Effect.flatMap(() => Effect.interrupt)),
+        );
+  };
+
+  return { listModels, streamRound, decide };
 });
 
 export const completeOpenRouterText = Effect.fn("completeOpenRouterText")(function* (

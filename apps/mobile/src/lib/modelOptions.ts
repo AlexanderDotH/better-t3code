@@ -2,7 +2,10 @@ import { isStartedThreadModelChangeAllowed } from "@t3tools/client-runtime/provi
 import {
   ProviderDriverKind,
   type ModelCapabilities,
+  type ModelDecisionSupport,
   type ModelSelection,
+  type ModelSelectionPurpose,
+  type ModelSelectionSupport,
   type ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
 import { normalizeClientModelSelection } from "@t3tools/client-runtime/model-options";
@@ -11,6 +14,8 @@ import {
   enableAutoReasoning,
   getProviderOptionDescriptors,
   isAutoReasoningEnabled,
+  resolveModelSelectionSupport,
+  supportsModelSelectionPurpose,
 } from "@t3tools/shared/model";
 
 export type ModelOption = {
@@ -25,11 +30,18 @@ export type ModelOption = {
   readonly isUnavailable?: boolean;
   readonly isSelectable: boolean;
   readonly unavailableReason: string | null;
+  readonly selectionSupport: ModelSelectionSupport;
   readonly continuationGroupKey: string | null;
   readonly requiresNewThreadForModelChange: boolean;
   readonly capabilities: ModelCapabilities | null;
   readonly selection: ModelSelection;
 };
+
+export function modelDecisionSupport(
+  option: Pick<ModelOption, "selectionSupport">,
+): ModelDecisionSupport {
+  return option.selectionSupport.decision;
+}
 
 export type ProviderGroup = {
   readonly providerKey: string;
@@ -127,7 +139,8 @@ export function resolveSelectableModelSelection(
     provider.enabled &&
     provider.installed &&
     provider.auth.status !== "unauthenticated" &&
-    model?.isSelectable !== false
+    (model === undefined ||
+      (supportsModelSelectionPurpose(model, "agent") && model.isSelectable !== false))
     ? selection
     : null;
 }
@@ -169,6 +182,7 @@ export function resolveNewTaskModelSelection(input: {
 export function buildModelOptions(
   config: T3ServerConfig | null | undefined,
   fallbackModelSelection: ModelSelection | null,
+  purpose: ModelSelectionPurpose = "agent",
 ): ReadonlyArray<ModelOption> {
   const options = new Map<string, ModelOption>();
 
@@ -184,6 +198,8 @@ export function buildModelOptions(
 
     const providerLabel = providerDisplayLabel(provider);
     for (const model of provider.models) {
+      const selectionSupport = resolveModelSelectionSupport(model);
+      if (!supportsModelSelectionPurpose(model, purpose)) continue;
       const key = `${provider.instanceId}:${model.slug}`;
       options.set(key, {
         key,
@@ -194,8 +210,9 @@ export function buildModelOptions(
         providerDriver: provider.driver,
         isDefault: model.isDefault === true,
         isLegacy: model.isLegacy === true,
-        isSelectable: model.isSelectable !== false,
-        unavailableReason: model.unavailableReason ?? null,
+        isSelectable: purpose === "agent" ? model.isSelectable !== false : true,
+        unavailableReason: purpose === "agent" ? (model.unavailableReason ?? null) : null,
+        selectionSupport,
         continuationGroupKey: provider.continuation?.groupKey ?? null,
         requiresNewThreadForModelChange: provider.requiresNewThreadForModelChange === true,
         capabilities: model.capabilities,
@@ -234,6 +251,10 @@ export function buildModelOptions(
       const model = provider?.models.find(
         (candidate) => candidate.slug === fallbackModelSelection.model,
       );
+      const selectionSupport = resolveModelSelectionSupport(model ?? {});
+      if (model && !supportsModelSelectionPurpose(model, purpose)) {
+        return [...options.values()];
+      }
       const providerDriver =
         provider?.driver ?? instanceConfig?.driver ?? fallbackModelSelection.instanceId;
       const providerLabel = providerDisplayLabel({
@@ -250,8 +271,9 @@ export function buildModelOptions(
         providerDriver,
         isDefault: false,
         isLegacy: model?.isLegacy === true,
-        isSelectable: model?.isSelectable !== false,
-        unavailableReason: model?.unavailableReason ?? null,
+        isSelectable: purpose === "agent" ? model?.isSelectable !== false : true,
+        unavailableReason: purpose === "agent" ? (model?.unavailableReason ?? null) : null,
+        selectionSupport,
         continuationGroupKey: provider?.continuation?.groupKey ?? null,
         requiresNewThreadForModelChange: provider?.requiresNewThreadForModelChange === true,
         ...(isModelSelectionUnavailable(config, fallbackModelSelection)

@@ -411,6 +411,7 @@ function MobileVoiceSettingsForm({
           config={config}
           current={draft.cleanupModelSelection}
           allowDefault={false}
+          purpose="text-generation"
           auxiliaryModels={modelOptions}
           selectedAuxiliaryModel={draft.cleanupModelSelection ? null : draft.cleanupModel}
           onSelectAuxiliaryModel={(model) => {

@@ -1,4 +1,5 @@
 import {
+  type ModelSelectionSupport,
   type OpenRouterSettings,
   type ProviderOptionDescriptor,
   type ServerProviderAuth,
@@ -58,6 +59,7 @@ export interface OpenRouterSnapshotCatalogModel {
     readonly parallelToolCalls: boolean;
     readonly toolChoice: boolean;
   };
+  readonly selectionSupport: ModelSelectionSupport;
   readonly incompatibilityReason?: string;
   readonly isCustom: boolean;
   readonly isVerified: boolean;
@@ -107,31 +109,34 @@ function modelCapabilities(model: OpenRouterSnapshotCatalogModel) {
             ...(model.defaultReasoningEffort ? { currentValue: model.defaultReasoningEffort } : {}),
           },
         ];
-  return createModelCapabilities({
-    optionDescriptors,
-    inputModalities: model.inputModalities,
-    outputModalities: model.outputModalities,
-    ...((model.promptPriceUsdPerMillion !== undefined ||
-      model.completionPriceUsdPerMillion !== undefined) && {
-      pricing: {
-        ...(model.promptPriceUsdPerMillion === undefined
-          ? {}
-          : { promptUsdPerMillion: model.promptPriceUsdPerMillion }),
-        ...(model.completionPriceUsdPerMillion === undefined
-          ? {}
-          : { completionUsdPerMillion: model.completionPriceUsdPerMillion }),
-      },
+  return {
+    ...createModelCapabilities({
+      optionDescriptors,
+      inputModalities: model.inputModalities,
+      outputModalities: model.outputModalities,
+      ...((model.promptPriceUsdPerMillion !== undefined ||
+        model.completionPriceUsdPerMillion !== undefined) && {
+        pricing: {
+          ...(model.promptPriceUsdPerMillion === undefined
+            ? {}
+            : { promptUsdPerMillion: model.promptPriceUsdPerMillion }),
+          ...(model.completionPriceUsdPerMillion === undefined
+            ? {}
+            : { completionUsdPerMillion: model.completionPriceUsdPerMillion }),
+        },
+      }),
+      toolSupport: model.toolCapabilities,
+      ...(model.contextWindowTokens
+        ? {
+            contextWindow: {
+              defaultTokens: model.contextWindowTokens,
+              maxTokens: model.contextWindowTokens,
+            },
+          }
+        : {}),
     }),
-    toolSupport: model.toolCapabilities,
-    ...(model.contextWindowTokens
-      ? {
-          contextWindow: {
-            defaultTokens: model.contextWindowTokens,
-            maxTokens: model.contextWindowTokens,
-          },
-        }
-      : {}),
-  });
+    selectionSupport: { ...model.selectionSupport },
+  };
 }
 
 export function openRouterModelsFromCatalog(

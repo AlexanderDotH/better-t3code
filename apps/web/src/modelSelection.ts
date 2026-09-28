@@ -4,6 +4,7 @@ import {
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
   type ModelSelection,
+  type ModelSelectionPurpose,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
@@ -15,6 +16,7 @@ import {
   normalizeCustomModelSlug,
   readCustomModelEntries,
   resolveSelectableModel,
+  supportsModelSelectionPurpose,
 } from "@t3tools/shared/model";
 import { getComposerProviderState } from "./components/chat/composerProviderState";
 import { UnifiedSettings } from "@t3tools/contracts/settings";
@@ -187,13 +189,14 @@ function getAppModelOptions(
   providers: ReadonlyArray<ServerProvider>,
   provider: ProviderDriverKind,
   selectedModel?: string | null,
+  purpose: ModelSelectionPurpose = "agent",
 ): AppModelOption[] {
   const rawModels = getProviderModels(providers, provider);
   // Server-reported custom rows mirror settings and can lag a removal, so
   // only built-ins are taken from the snapshot; custom rows are rebuilt from
   // settings below.
   const options: AppModelOption[] = rawModels
-    .filter((model) => !model.isCustom)
+    .filter((model) => !model.isCustom && supportsModelSelectionPurpose(model, purpose))
     .map(toAppModelOption);
   const seen = new Set(options.map((option) => option.slug));
   const builtInModelSlugs = new Set(
@@ -244,9 +247,10 @@ export function getAppModelOptionsForInstance(
   settings: UnifiedSettings,
   entry: ProviderInstanceEntry,
   selectedModel?: string | null,
+  purpose: ModelSelectionPurpose = "agent",
 ): AppModelOption[] {
   const options: AppModelOption[] = entry.models
-    .filter((model) => !model.isCustom)
+    .filter((model) => !model.isCustom && supportsModelSelectionPurpose(model, purpose))
     .map(toAppModelOption);
   const seen = new Set(options.map((option) => option.slug));
   const builtInModelSlugs = new Set(
@@ -337,6 +341,7 @@ export function getCustomModelOptionsByInstance(
   providers: ReadonlyArray<ServerProvider>,
   selectedInstanceId?: ProviderInstanceId | null,
   selectedModel?: string | null,
+  purpose: ModelSelectionPurpose = "agent",
 ): ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>> {
   const out = new Map<ProviderInstanceId, ReadonlyArray<ModelEsque>>();
   for (const entry of deriveProviderInstanceEntries(providers)) {
@@ -346,6 +351,7 @@ export function getCustomModelOptionsByInstance(
         settings,
         entry,
         entry.instanceId === selectedInstanceId ? selectedModel : null,
+        purpose,
       ),
     );
   }

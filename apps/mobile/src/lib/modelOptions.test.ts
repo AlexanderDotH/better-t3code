@@ -13,6 +13,100 @@ import {
 } from "./modelOptions";
 
 describe("mobile model options", () => {
+  it("filters native and prompted decision models by picker purpose", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "openrouter",
+          driver: "openrouter",
+          displayName: "OpenRouter",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [
+            {
+              slug: "native-decision",
+              name: "Native Decision",
+              isCustom: false,
+              isSelectable: false,
+              capabilities: {
+                selectionSupport: {
+                  agent: false,
+                  textGeneration: false,
+                  decision: "native",
+                },
+              },
+            },
+            {
+              slug: "prompted-decision",
+              name: "Prompted Decision",
+              isCustom: false,
+              isSelectable: false,
+              capabilities: {
+                selectionSupport: {
+                  agent: false,
+                  textGeneration: true,
+                  decision: "prompted",
+                },
+              },
+            },
+            {
+              slug: "agent-model",
+              name: "Agent Model",
+              isCustom: false,
+              capabilities: {
+                selectionSupport: {
+                  agent: true,
+                  textGeneration: true,
+                  decision: "prompted",
+                },
+              },
+            },
+            {
+              slug: "legacy-model",
+              name: "Legacy Model",
+              isCustom: false,
+              capabilities: null,
+            },
+            {
+              slug: "legacy-unavailable",
+              name: "Legacy Unavailable",
+              isCustom: false,
+              isSelectable: false,
+              capabilities: null,
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+    const modelSlugs = (purpose: "agent" | "text-generation" | "decision") =>
+      buildModelOptions(config, null, purpose).map((option) => option.selection.model);
+
+    expect(modelSlugs("agent")).toEqual(["agent-model", "legacy-model"]);
+    expect(modelSlugs("text-generation")).toEqual([
+      "prompted-decision",
+      "agent-model",
+      "legacy-model",
+    ]);
+    expect(modelSlugs("decision")).toEqual([
+      "native-decision",
+      "prompted-decision",
+      "agent-model",
+      "legacy-model",
+    ]);
+    expect(buildModelOptions(config, null, "decision")[0]).toMatchObject({
+      isSelectable: true,
+      unavailableReason: null,
+      selectionSupport: { decision: "native" },
+    });
+    expect(
+      buildModelOptions(config, {
+        instanceId: ProviderInstanceId.make("openrouter"),
+        model: "native-decision",
+      }),
+    ).toEqual(buildModelOptions(config, null));
+  });
+
   it("groups models by provider and flags legacy entries", () => {
     const config = {
       providers: [

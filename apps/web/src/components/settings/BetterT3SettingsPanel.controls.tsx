@@ -11,6 +11,7 @@ import {
   type ContextWindowSelector,
   type EnvironmentId,
   type ModelSelection,
+  type ModelSelectionPurpose,
   type ServerProvider,
   type ServerSettingsPatch,
   type SidebarProjectSortOrder,
@@ -20,7 +21,11 @@ import {
 } from "@t3tools/contracts";
 import { isFetchCapableProvider } from "@t3tools/shared/fetchMode";
 import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
-import { createModelSelection, stripAutoReasoning } from "@t3tools/shared/model";
+import {
+  createModelSelection,
+  stripAutoReasoning,
+  supportsModelSelectionPurpose,
+} from "@t3tools/shared/model";
 import { Link } from "@tanstack/react-router";
 import { useMemo, type ReactNode } from "react";
 
@@ -44,6 +49,7 @@ type Translate = InterfaceTranslator["message"];
 const WEB_BETTER_T3_PREPARED_CONTROL_IDS = [
   "agent.fetchModel",
   "agent.autoReasoningModel",
+  "knowledge.projectIndexingDecisionModel",
   "agent.parallelPlanReviewer",
   "agent.cavemanMode",
   "chat.presentation",
@@ -66,6 +72,7 @@ type BetterT3ScalarControlUpdate =
   | { readonly id: "voice.outputLanguage"; readonly value: VoiceInputOutputLanguage };
 
 const SETTLE_DAY_OPTIONS = [1, 3, 7, 14, 30, 90] as const;
+const acceptsAnyProvider = () => true;
 
 export function buildBetterT3ScalarControlPatch(
   update: BetterT3ScalarControlUpdate,
@@ -102,13 +109,17 @@ function selectableProviderEntries(
   settings: UnifiedSettings,
   providers: ReadonlyArray<ServerProvider>,
   predicate: (provider: ServerProvider) => boolean,
+  purpose: ModelSelectionPurpose,
 ): ReadonlyArray<ProviderInstanceEntry> {
   const filteredProviders = providers.filter(
     (provider) => provider.enabled && provider.models.length > 0 && predicate(provider),
   );
   return sortProviderInstanceEntries(
     applyProviderInstanceSettings(deriveProviderInstanceEntries(filteredProviders), settings),
-  ).filter((entry) => entry.enabled && entry.models.some((model) => model.isSelectable !== false));
+  ).filter(
+    (entry) =>
+      entry.enabled && entry.models.some((model) => supportsModelSelectionPurpose(model, purpose)),
+  );
 }
 
 const AUTO_REASONING_EVALUATION_DRIVER_KINDS: ReadonlySet<string> = new Set([
@@ -137,10 +148,23 @@ export function buildAutoReasoningModelSelectionPatch(
   };
 }
 
-function firstSelectableModel(entry: ProviderInstanceEntry): string | null {
+export function buildProjectIndexingDecisionModelSelectionPatch(
+  selection: ModelSelection | null,
+): ServerSettingsPatch {
+  return {
+    projectIndexingDecisionModelSelection:
+      selection === null ? null : stripAutoReasoning(selection),
+  };
+}
+
+function firstSelectableModel(
+  entry: ProviderInstanceEntry,
+  purpose: ModelSelectionPurpose,
+): string | null {
   return (
-    entry.models.find((model) => model.isDefault && model.isSelectable !== false)?.slug ??
-    entry.models.find((model) => model.isSelectable !== false)?.slug ??
+    entry.models.find((model) => model.isDefault && supportsModelSelectionPurpose(model, purpose))
+      ?.slug ??
+    entry.models.find((model) => supportsModelSelectionPurpose(model, purpose))?.slug ??
     null
   );
 }
@@ -148,6 +172,7 @@ function firstSelectableModel(entry: ProviderInstanceEntry): string | null {
 export function resolveBetterT3ModelSelection(
   entries: ReadonlyArray<ProviderInstanceEntry>,
   preferred: ModelSelection | null,
+  purpose: ModelSelectionPurpose = "agent",
 ): ModelSelection | null {
   const preferredModel = preferred?.model ?? null;
   const preferredEntry = preferred
@@ -155,17 +180,17 @@ export function resolveBetterT3ModelSelection(
     : undefined;
   if (preferredEntry) {
     const selectedModel = preferredEntry.models.find(
-      (model) => model.slug === preferredModel && model.isSelectable !== false,
+      (model) => model.slug === preferredModel && supportsModelSelectionPurpose(model, purpose),
     );
     if (selectedModel && preferred) return stripAutoReasoning(preferred);
-    const fallbackModel = firstSelectableModel(preferredEntry);
+    const fallbackModel = firstSelectableModel(preferredEntry, purpose);
     if (fallbackModel) {
       return createModelSelection(preferredEntry.instanceId, fallbackModel);
     }
   }
   const fallbackEntry = entries[0];
   if (!fallbackEntry) return null;
-  const fallbackModel = firstSelectableModel(fallbackEntry);
+  const fallbackModel = firstSelectableModel(fallbackEntry, purpose);
   return fallbackModel ? createModelSelection(fallbackEntry.instanceId, fallbackModel) : null;
 }
 
@@ -176,18 +201,22 @@ function BetterT3ModelSelectionControl(props: {
   readonly selection: ModelSelection | null;
   readonly fallbackSelection: ModelSelection | null;
   readonly allowAutomatic: boolean;
+  readonly automaticLabel?: string;
+  readonly purpose: ModelSelectionPurpose;
   readonly disabled: boolean;
   readonly predicate: (provider: ServerProvider) => boolean;
   readonly translate: Translate;
   readonly onChange: (selection: ModelSelection | null) => void;
 }) {
   const entries = useMemo(
-    () => selectableProviderEntries(props.settings, props.providers, props.predicate),
-    [props.predicate, props.providers, props.settings],
+    () =>
+      selectableProviderEntries(props.settings, props.providers, props.predicate, props.purpose),
+    [props.predicate, props.providers, props.purpose, props.settings],
   );
   const resolvedSelection = resolveBetterT3ModelSelection(
     entries,
     props.selection ?? props.fallbackSelection,
+    props.purpose,
   );
   if (!resolvedSelection) {
     return (
@@ -208,7 +237,7 @@ function BetterT3ModelSelectionControl(props: {
           variant={props.selection === null ? "secondary" : "outline"}
           onClick={() => props.onChange(null)}
         >
-          {props.translate("settings.betterT3.value.automatic")}
+          {props.automaticLabel ?? props.translate("settings.betterT3.value.automatic")}
         </Button>
       ) : null}
       {resolvedSelection ? (
@@ -222,7 +251,9 @@ function BetterT3ModelSelectionControl(props: {
             props.providers,
             resolvedSelection.instanceId,
             resolvedSelection.model,
+            props.purpose,
           )}
+          modelSelectionPurpose={props.purpose}
           disabled={props.disabled}
           triggerVariant="outline"
           triggerClassName="min-w-0 max-w-56 shrink-0 text-foreground/90 hover:text-foreground"
@@ -412,6 +443,7 @@ export function useBetterT3PreparedControls(input: {
         selection={input.settings.fetchModelSelection}
         fallbackSelection={input.settings.textGenerationModelSelection}
         allowAutomatic
+        purpose="text-generation"
         disabled={scalarControlDisabled("agent.fetchModel")}
         predicate={isFetchCapableProvider}
         translate={input.translate}
@@ -426,11 +458,32 @@ export function useBetterT3PreparedControls(input: {
         selection={input.settings.autoReasoningModelSelection}
         fallbackSelection={input.settings.textGenerationModelSelection}
         allowAutomatic
+        purpose="decision"
         disabled={scalarControlDisabled("agent.autoReasoningModel")}
-        predicate={supportsAutoReasoningEvaluationProvider}
+        predicate={acceptsAnyProvider}
         translate={input.translate}
         onChange={(autoReasoningModelSelection) =>
           input.updateSettings(buildAutoReasoningModelSelectionPatch(autoReasoningModelSelection))
+        }
+      />
+    ),
+    "knowledge.projectIndexingDecisionModel": (
+      <BetterT3ModelSelectionControl
+        featureId="knowledge.projectIndexingDecisionModel"
+        settings={input.settings}
+        providers={input.providers}
+        selection={input.settings.projectIndexingDecisionModelSelection ?? null}
+        fallbackSelection={input.settings.textGenerationModelSelection}
+        allowAutomatic
+        automaticLabel={input.translate("settings.betterT3.value.projectIndexDecisionOff")}
+        purpose="decision"
+        disabled={scalarControlDisabled("knowledge.projectIndexingDecisionModel")}
+        predicate={acceptsAnyProvider}
+        translate={input.translate}
+        onChange={(projectIndexingDecisionModelSelection) =>
+          input.updateSettings(
+            buildProjectIndexingDecisionModelSelectionPatch(projectIndexingDecisionModelSelection),
+          )
         }
       />
     ),
@@ -442,6 +495,7 @@ export function useBetterT3PreparedControls(input: {
         selection={input.settings.parallelPlanReviewModelSelection}
         fallbackSelection={input.settings.parallelPlanReviewModelSelection}
         allowAutomatic={false}
+        purpose="text-generation"
         disabled={scalarControlDisabled("agent.parallelPlanReviewer")}
         predicate={supportsAutoReasoningEvaluationProvider}
         translate={input.translate}

@@ -11,9 +11,14 @@ import { serverEnvironment } from "../../state/server";
 import { environmentSession } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "../settings/components/SettingsSection";
+import { SettingsRow } from "../settings/components/SettingsRow";
 import { SettingsSwitchRow } from "../settings/components/SettingsSwitchRow";
+import { ModelSelectionModal, modelSelectionLabel } from "../settings/ModelSelectionModal";
 import { mobileProjectIndexPermissions } from "./mobile-project-indexing";
-import { supportsMobileStaticProjectIndex } from "./mobile-project-index-settings";
+import {
+  supportsMobileDecisionModels,
+  supportsMobileStaticProjectIndex,
+} from "./mobile-project-index-settings";
 
 export function ProjectIndexingDefaultsCard(props: {
   readonly environmentId: EnvironmentId;
@@ -31,9 +36,18 @@ export function ProjectIndexingDefaultsCard(props: {
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [decisionModelPickerOpen, setDecisionModelPickerOpen] = useState(false);
   const disabled = busy || !permissions.canOperate || !supported;
+  const decisionModelsSupported = supportsMobileDecisionModels(
+    config?.environment.capabilities.decisionModelsVersion,
+  );
 
-  const save = async (patch: Pick<ServerSettingsPatch, "projectIndexingEnabled">) => {
+  const save = async (
+    patch: Pick<
+      ServerSettingsPatch,
+      "projectIndexingEnabled" | "projectIndexingDecisionModelSelection"
+    >,
+  ) => {
     if (disabled) return;
     setBusy(true);
     setError(null);
@@ -76,6 +90,27 @@ export function ProjectIndexingDefaultsCard(props: {
               void save({ projectIndexingEnabled });
             }}
           />
+          {decisionModelsSupported ? (
+            <>
+              <SettingsRow
+                disabled={disabled}
+                icon="sparkles"
+                label={translator.message("betterT3.knowledge.projectIndexingDecisionModel.label")}
+                value={
+                  config.settings.projectIndexingDecisionModelSelection === null
+                    ? translator.message("settings.betterT3.value.projectIndexDecisionOff")
+                    : modelSelectionLabel(
+                        config,
+                        config.settings.projectIndexingDecisionModelSelection,
+                      )
+                }
+                onPress={() => setDecisionModelPickerOpen(true)}
+              />
+              <Text className="px-4 pb-4 text-sm text-foreground-muted">
+                {translator.message("betterT3.knowledge.projectIndexingDecisionModel.description")}
+              </Text>
+            </>
+          ) : null}
           {!permissions.canOperate ? (
             <Text className="px-4 pb-4 text-sm text-foreground-muted">
               {translator.message("projectIndexing.readOnly")}
@@ -87,6 +122,19 @@ export function ProjectIndexingDefaultsCard(props: {
         <Text accessibilityRole="alert" className="p-4 text-sm text-danger-foreground">
           {session.error ?? error}
         </Text>
+      ) : null}
+      {config && decisionModelsSupported ? (
+        <ModelSelectionModal
+          config={config}
+          current={config.settings.projectIndexingDecisionModelSelection}
+          defaultLabel={translator.message("settings.betterT3.value.projectIndexDecisionOff")}
+          purpose="decision"
+          visible={decisionModelPickerOpen}
+          onClose={() => setDecisionModelPickerOpen(false)}
+          onSelect={(projectIndexingDecisionModelSelection) => {
+            void save({ projectIndexingDecisionModelSelection });
+          }}
+        />
       ) : null}
     </SettingsSection>
   );

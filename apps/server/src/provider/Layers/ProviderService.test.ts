@@ -4811,6 +4811,78 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
   );
 });
 
+const nativeDecisionSelection = createModelSelection(codexInstanceId, "labs/system-one");
+const nativeDecisionProvider: ServerProvider = {
+  instanceId: codexInstanceId,
+  driver: CODEX_DRIVER,
+  status: "ready",
+  enabled: true,
+  installed: true,
+  auth: { status: "authenticated" },
+  checkedAt: "2026-09-28T00:00:00.000Z",
+  version: "1.0.0",
+  models: [
+    {
+      slug: nativeDecisionSelection.model,
+      name: "System One",
+      isCustom: false,
+      isSelectable: false,
+      capabilities: {
+        selectionSupport: { agent: false, textGeneration: false, decision: "native" },
+      },
+    },
+  ],
+  slashCommands: [],
+  skills: [],
+};
+const purposeValidation = makeProviderServiceLayer({
+  usageProviders: makeProviderRegistryLayer([nativeDecisionProvider]),
+});
+purposeValidation.layer("ProviderServiceLive model purpose validation", (it) => {
+  it.effect("rejects native decision models before agent session and turn dispatch", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const rejectedThreadId = asThreadId("thread-native-decision-start");
+
+      purposeValidation.codex.startSession.mockClear();
+      const startFailure = yield* provider
+        .startSession(rejectedThreadId, {
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          threadId: rejectedThreadId,
+          runtimeMode: "full-access",
+          modelSelection: nativeDecisionSelection,
+        })
+        .pipe(Effect.flip);
+
+      assert.instanceOf(startFailure, ProviderValidationError);
+      assert.include(startFailure.issue, "does not support the 'agent' selection purpose");
+      assert.equal(purposeValidation.codex.startSession.mock.calls.length, 0);
+
+      const runningThreadId = asThreadId("thread-native-decision-turn");
+      yield* provider.startSession(runningThreadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId: runningThreadId,
+        runtimeMode: "full-access",
+      });
+      purposeValidation.codex.sendTurn.mockClear();
+
+      const turnFailure = yield* provider
+        .sendTurn({
+          threadId: runningThreadId,
+          input: "Do not dispatch this.",
+          modelSelection: nativeDecisionSelection,
+        })
+        .pipe(Effect.flip);
+
+      assert.instanceOf(turnFailure, ProviderValidationError);
+      assert.include(turnFailure.issue, "does not support the 'agent' selection purpose");
+      assert.equal(purposeValidation.codex.sendTurn.mock.calls.length, 0);
+    }),
+  );
+});
+
 const validation = makeProviderServiceLayer();
 validation.layer("ProviderServiceLive validation", (it) => {
   it.effect("rejects citation-expanded input over the provider character limit", () =>

@@ -220,7 +220,8 @@ export function resolveMobileBetterT3Destination(
   if (featureId === "knowledge.progress") return null;
   if (
     featureId === "knowledge.projectIndexingMaster" ||
-    featureId === "knowledge.projectIndexingDefaultModel"
+    featureId === "knowledge.projectIndexingDefaultModel" ||
+    featureId === "knowledge.projectIndexingDecisionModel"
   )
     return "SettingsProjectIndexing";
   if (featureId.startsWith("knowledge.projectIndexing")) return "SettingsProjects";
@@ -290,28 +291,6 @@ export function createMobileBetterT3EnvironmentControlPatch(
           update.value === null ? null : stripAutoReasoning(update.value),
       };
   }
-}
-
-const MOBILE_AUTO_REASONING_EVALUATION_DRIVER_KINDS: ReadonlySet<string> = new Set([
-  "codex",
-  "antigravity",
-  "claudeAgent",
-  "cursor",
-  "grok",
-  "opencode",
-  "gemini",
-  "chatgpt",
-  "openrouter",
-  "openai",
-]);
-
-export function supportsMobileAutoReasoningModelOption(option: {
-  readonly providerDriver: string;
-  readonly isSelectable: boolean;
-}): boolean {
-  return (
-    MOBILE_AUTO_REASONING_EVALUATION_DRIVER_KINDS.has(option.providerDriver) && option.isSelectable
-  );
 }
 
 export interface MobileTranscriptPortabilityThread {

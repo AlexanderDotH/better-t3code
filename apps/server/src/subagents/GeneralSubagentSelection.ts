@@ -17,6 +17,7 @@ import {
   getCodexServiceTierOptionValue,
   normalizeCodexModelSelectionServiceTier,
 } from "../codexModelOptions.ts";
+import { modelSupportsSelectionPurpose } from "../provider/ModelSelectionPurposePolicy.ts";
 
 const REASONING_OPTION_IDS = ["reasoningEffort", "effort"] as const;
 
@@ -65,9 +66,11 @@ function isGeneralSubagentProviderAvailable(provider: ServerProvider): boolean {
     provider.status !== "error" &&
     provider.status !== "disabled" &&
     provider.auth.status !== "unauthenticated" &&
-    provider.models.some((model) => model.isSelectable !== false) &&
+    provider.models.some((model) => modelSupportsSelectionPurpose(model, "agent")) &&
     (provider.status !== "warning" ||
-      provider.models.some((model) => model.isDefault === true && model.isSelectable !== false))
+      provider.models.some(
+        (model) => model.isDefault === true && modelSupportsSelectionPurpose(model, "agent"),
+      ))
   );
 }
 
@@ -91,8 +94,9 @@ function unavailable(
 
 function defaultModel(provider: ServerProvider): ServerProviderModel | undefined {
   return (
-    provider.models.find((candidate) => candidate.isDefault && candidate.isSelectable !== false) ??
-    provider.models.find((candidate) => candidate.isSelectable !== false)
+    provider.models.find(
+      (candidate) => candidate.isDefault && modelSupportsSelectionPurpose(candidate, "agent"),
+    ) ?? provider.models.find((candidate) => modelSupportsSelectionPurpose(candidate, "agent"))
   );
 }
 
@@ -107,7 +111,8 @@ function resolveModel(input: {
       ? input.parentModelSelection.model
       : defaultModel(input.provider)?.slug);
   return input.provider.models.find(
-    (candidate) => candidate.slug === modelSlug && candidate.isSelectable !== false,
+    (candidate) =>
+      candidate.slug === modelSlug && modelSupportsSelectionPurpose(candidate, "agent"),
   );
 }
 
@@ -231,7 +236,7 @@ export function listGeneralSubagentModels(input: {
       displayName: provider.displayName ?? provider.driver,
       current: provider.instanceId === input.callerProviderInstanceId,
       models: provider.models
-        .filter((model) => model.isSelectable !== false)
+        .filter((model) => modelSupportsSelectionPurpose(model, "agent"))
         .map((model) => ({
           slug: model.slug,
           name: model.name,

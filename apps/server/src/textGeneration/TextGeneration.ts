@@ -6,6 +6,8 @@ import { TextGenerationError } from "@t3tools/contracts";
 
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
+import type { DecisionGenerationProvider } from "../decisionGeneration/DecisionGenerationProvider.ts";
+import { modelSelectionPurposeViolation } from "../provider/ModelSelectionPurposePolicy.ts";
 import { makeUsageHardBudgetCheck } from "../provider/usageHardBudget.ts";
 import type { TextGenerationPolicy } from "./TextGenerationPolicy.ts";
 import type { AutoReasoningMessage } from "./AutoReasoning.ts";
@@ -178,6 +180,7 @@ export interface AutoReasoningGenerationResult {
 export class TextGeneration extends Context.Service<
   TextGeneration,
   {
+    readonly decisionGeneration?: DecisionGenerationProvider;
     readonly decideAutoReasoning: (
       input: AutoReasoningGenerationInput,
     ) => Effect.Effect<AutoReasoningGenerationResult, TextGenerationError>;
@@ -246,16 +249,27 @@ type TextGenerationOp =
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
   operation: TextGenerationOp,
-  instanceId: ProviderInstanceId,
+  modelSelection: ModelSelection,
 ): Effect.Effect<ProviderInstance["textGeneration"], TextGenerationError> =>
-  registry.getInstance(instanceId).pipe(
+  registry.getInstance(modelSelection.instanceId).pipe(
     Effect.flatMap((instance) =>
       instance
-        ? Effect.succeed(instance.textGeneration)
+        ? instance.snapshot.getSnapshot.pipe(
+            Effect.flatMap((provider) => {
+              const violation = modelSelectionPurposeViolation({
+                providers: [provider],
+                selection: modelSelection,
+                purpose: "text-generation",
+              });
+              return violation
+                ? Effect.fail(new TextGenerationError({ operation, detail: violation }))
+                : Effect.succeed(instance.textGeneration);
+            }),
+          )
         : Effect.fail(
             new TextGenerationError({
               operation,
-              detail: `No provider instance registered for id '${instanceId}'.`,
+              detail: `No provider instance registered for id '${modelSelection.instanceId}'.`,
             }),
           ),
     ),
@@ -265,53 +279,53 @@ export const makeTextGenerationFromRegistry = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
   checkBudget: (instanceId: ProviderInstanceId) => Effect.Effect<string | null>,
 ): TextGeneration["Service"] => {
-  const resolve = (operation: TextGenerationOp, instanceId: ProviderInstanceId) =>
-    checkBudget(instanceId).pipe(
+  const resolve = (operation: TextGenerationOp, modelSelection: ModelSelection) =>
+    checkBudget(modelSelection.instanceId).pipe(
       Effect.flatMap((reason) =>
         reason
           ? Effect.fail(new TextGenerationError({ operation, detail: reason }))
-          : resolveInstance(registry, operation, instanceId),
+          : resolveInstance(registry, operation, modelSelection),
       ),
     );
   return TextGeneration.of({
     decideAutoReasoning: (input) =>
-      resolve("decideAutoReasoning", input.modelSelection.instanceId).pipe(
+      resolve("decideAutoReasoning", input.modelSelection).pipe(
         Effect.flatMap((textGeneration) => textGeneration.decideAutoReasoning(input)),
       ),
     generateCommitMessage: (input) =>
-      resolve("generateCommitMessage", input.modelSelection.instanceId).pipe(
+      resolve("generateCommitMessage", input.modelSelection).pipe(
         Effect.flatMap((textGeneration) => textGeneration.generateCommitMessage(input)),
       ),
     generatePrContent: (input) =>
-      resolve("generatePrContent", input.modelSelection.instanceId).pipe(
+      resolve("generatePrContent", input.modelSelection).pipe(
         Effect.flatMap((textGeneration) => textGeneration.generatePrContent(input)),
       ),
     generateBranchName: (input) =>
-      resolve("generateBranchName", input.modelSelection.instanceId).pipe(
+      resolve("generateBranchName", input.modelSelection).pipe(
         Effect.flatMap((textGeneration) => textGeneration.generateBranchName(input)),
       ),
     generateThreadMetadata: (input) =>
-      resolve("generateThreadMetadata", input.modelSelection.instanceId).pipe(
+      resolve("generateThreadMetadata", input.modelSelection).pipe(
         Effect.flatMap((textGeneration) => textGeneration.generateThreadMetadata(input)),
       ),
     generateThreadTitle: (input) =>
-      resolve("generateThreadTitle", input.modelSelection.instanceId).pipe(
+      resolve("generateThreadTitle", input.modelSelection).pipe(
         Effect.flatMap((textGeneration) => textGeneration.generateThreadTitle(input)),
       ),
     translateTranscriptToEnglish: (input) =>
-      resolve("translateTranscriptToEnglish", input.modelSelection.instanceId).pipe(
+      resolve("translateTranscriptToEnglish", input.modelSelection).pipe(
         Effect.flatMap((textGeneration) => textGeneration.translateTranscriptToEnglish(input)),
       ),
     improvePrompt: (input) =>
-      resolve("improvePrompt", input.modelSelection.instanceId).pipe(
+      resolve("improvePrompt", input.modelSelection).pipe(
         Effect.flatMap((textGeneration) => textGeneration.improvePrompt(input)),
       ),
     reviewPlanParallelism: (input) =>
-      resolve("reviewPlanParallelism", input.modelSelection.instanceId).pipe(
+      resolve("reviewPlanParallelism", input.modelSelection).pipe(
         Effect.flatMap((textGeneration) => textGeneration.reviewPlanParallelism(input)),
       ),
     planFetchExploration: (input) =>
-      resolve("planFetchExploration", input.modelSelection.instanceId).pipe(
+      resolve("planFetchExploration", input.modelSelection).pipe(
         Effect.flatMap((textGeneration) => textGeneration.planFetchExploration(input)),
       ),
   });

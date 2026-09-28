@@ -77,8 +77,20 @@ const makeManualProviderMaintenanceCapabilities = (provider: ProviderDriverKind)
     packageName: null,
   });
 
-const hasModelCapabilities = (model: ServerProvider["models"][number]): boolean =>
+const hasModelOptionDescriptors = (model: ServerProvider["models"][number]): boolean =>
   (model.capabilities?.optionDescriptors?.length ?? 0) > 0;
+
+const preservePreviousOptionDescriptors = (
+  previousModel: ServerProvider["models"][number],
+  nextModel: ServerProvider["models"][number],
+): ServerProvider["models"][number] => ({
+  ...nextModel,
+  capabilities: {
+    ...previousModel.capabilities,
+    ...nextModel.capabilities,
+    optionDescriptors: previousModel.capabilities?.optionDescriptors,
+  },
+});
 
 const MAX_WORKSPACE_SNAPSHOTS_PER_PROVIDER = 16;
 
@@ -150,13 +162,14 @@ const mergeProviderModels = (
   const previousBySlug = new Map(previousModels.map((model) => [model.slug, model] as const));
   const mergedModels = nextModels.map((model) => {
     const previousModel = previousBySlug.get(model.slug);
-    if (!previousModel || hasModelCapabilities(model) || !hasModelCapabilities(previousModel)) {
+    if (
+      !previousModel ||
+      hasModelOptionDescriptors(model) ||
+      !hasModelOptionDescriptors(previousModel)
+    ) {
       return model;
     }
-    return {
-      ...model,
-      capabilities: previousModel.capabilities,
-    };
+    return preservePreviousOptionDescriptors(previousModel, model);
   });
   const nextSlugs = new Set(nextModels.map((model) => model.slug));
   return shouldRetainMissingModels

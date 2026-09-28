@@ -254,6 +254,7 @@ export const make = Effect.gen(function* () {
       knowledgeGraphVersion: 2,
       projectIndexingVersion: 3,
       projectIndexingDefaultsVersion: 1,
+      decisionModelsVersion: 1,
       resourceProtectionVersion: 1,
       resourceDiagnosticsVersion: 1,
       midChatProviderSwitching: true,

@@ -1,4 +1,8 @@
-import { type ModelSelection, type ServerConfig } from "@t3tools/contracts";
+import {
+  type ModelSelection,
+  type ModelSelectionPurpose,
+  type ServerConfig,
+} from "@t3tools/contracts";
 import { useMemo } from "react";
 import { Modal, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -6,7 +10,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
 import { cn } from "../../lib/cn";
-import { buildModelOptions, type ModelOption } from "../../lib/modelOptions";
+import { buildModelOptions, modelDecisionSupport, type ModelOption } from "../../lib/modelOptions";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function modelSelectionLabel(
@@ -26,6 +30,7 @@ export function ModelSelectionModal(props: {
   readonly current: ModelSelection | null;
   readonly defaultLabel?: string;
   readonly allowDefault?: boolean;
+  readonly purpose?: ModelSelectionPurpose;
   readonly visible: boolean;
   readonly optionPredicate?: (option: ModelOption) => boolean;
   readonly auxiliaryModels?: ReadonlyArray<{ readonly id: string; readonly name: string }>;
@@ -36,10 +41,11 @@ export function ModelSelectionModal(props: {
 }) {
   const translator = useMobileInterfaceTranslator();
   const insets = useSafeAreaInsets();
+  const purpose = props.purpose ?? "agent";
   const options = useMemo(() => {
-    const available = buildModelOptions(props.config, props.current);
+    const available = buildModelOptions(props.config, props.current, purpose);
     return props.optionPredicate ? available.filter(props.optionPredicate) : available;
-  }, [props.config, props.current, props.optionPredicate]);
+  }, [props.config, props.current, props.optionPredicate, purpose]);
   const selectedKey = props.current
     ? `${props.current.instanceId}:${props.current.model}`
     : "default";
@@ -66,11 +72,22 @@ export function ModelSelectionModal(props: {
         }}
       >
         <View className="min-w-0 flex-1 gap-0.5">
-          <Text className="text-base text-foreground">
-            {option?.label ??
-              props.defaultLabel ??
-              translator.message("mobile.settings.agents.defaultTextModel")}
-          </Text>
+          <View className="flex-row items-center gap-2">
+            <Text className="min-w-0 shrink text-base text-foreground">
+              {option?.label ??
+                props.defaultLabel ??
+                translator.message("mobile.settings.agents.defaultTextModel")}
+            </Text>
+            {option && purpose === "decision" ? (
+              <Text className="rounded-full bg-subtle px-2 py-0.5 text-xs font-t3-medium text-foreground-muted">
+                {translator.message(
+                  modelDecisionSupport(option) === "native"
+                    ? "chat.model.decision.native"
+                    : "chat.model.decision.prompted",
+                )}
+              </Text>
+            ) : null}
+          </View>
           {option ? (
             <Text className="text-sm text-foreground-muted">
               {option.unavailableReason ?? option.providerLabel}

@@ -11,6 +11,7 @@ import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shar
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
 import { TextGenerationError } from "@t3tools/contracts";
+import { makePromptedDecisionProviderFromStructuredOutput } from "../decisionGeneration/PromptedDecisionGeneration.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
@@ -60,6 +61,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
     environmentOverride,
   }: {
     operation:
+      | "decisionGeneration"
       | "decideAutoReasoning"
       | "generateCommitMessage"
       | "generatePrContent"
@@ -220,6 +222,32 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         Effect.scoped,
       );
     });
+
+  const decisionGeneration = makePromptedDecisionProviderFromStructuredOutput((input) =>
+    Effect.gen(function* () {
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-decision-cursor-cwd-",
+      });
+      const configHome = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-decision-cursor-config-",
+      });
+      return yield* runCursorJson({
+        operation: "decisionGeneration",
+        cwd,
+        prompt: input.prompt,
+        outputSchemaJson: input.outputSchema,
+        modelSelection: input.modelSelection,
+        environmentOverride: {
+          ...resolvedEnvironment,
+          HOME: configHome,
+          USERPROFILE: configHome,
+          XDG_CONFIG_HOME: configHome,
+          APPDATA: configHome,
+          LOCALAPPDATA: configHome,
+        },
+      });
+    }).pipe(Effect.scoped),
+  );
 
   const generateCommitMessage: TextGeneration.TextGeneration["Service"]["generateCommitMessage"] =
     Effect.fn("CursorTextGeneration.generateCommitMessage")(function* (input) {
@@ -387,6 +415,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
     });
 
   return {
+    decisionGeneration,
     decideAutoReasoning,
     generateCommitMessage,
     generatePrContent,

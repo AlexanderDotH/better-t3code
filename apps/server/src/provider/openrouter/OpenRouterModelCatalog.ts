@@ -1,10 +1,52 @@
-import * as Generated from "@effect/ai-openrouter/Generated";
+import type { ModelSelectionSupport } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import type { OpenRouterReasoningEffort } from "./OpenRouterProtocol.ts";
 
-const decodeGeneratedCatalog = Schema.decodeUnknownEffect(Generated.ModelsListResponse);
+const ALL_REASONING_EFFORTS = [
+  "max",
+  "xhigh",
+  "high",
+  "medium",
+  "low",
+  "minimal",
+  "none",
+] as const satisfies ReadonlyArray<OpenRouterReasoningEffort>;
+
+const OpenRouterReasoningEffortSchema = Schema.Literals(ALL_REASONING_EFFORTS);
+const isOpenRouterReasoningEffort = Schema.is(OpenRouterReasoningEffortSchema);
+const OpenRouterCatalogEntry = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  description: Schema.optionalKey(Schema.String),
+  context_length: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  architecture: Schema.Struct({
+    input_modalities: Schema.Array(Schema.String),
+    output_modalities: Schema.Array(Schema.String),
+  }),
+  pricing: Schema.Struct({
+    prompt: Schema.optionalKey(Schema.String),
+    completion: Schema.optionalKey(Schema.String),
+  }),
+  supported_parameters: Schema.Array(Schema.String),
+  reasoning: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Struct({
+        supported_efforts: Schema.optionalKey(
+          Schema.NullOr(Schema.Array(Schema.NullOr(OpenRouterReasoningEffortSchema))),
+        ),
+        default_effort: Schema.optionalKey(Schema.NullOr(OpenRouterReasoningEffortSchema)),
+      }),
+    ),
+  ),
+});
+type OpenRouterCatalogEntry = typeof OpenRouterCatalogEntry.Type;
+
+const OpenRouterCatalogResponse = Schema.Struct({
+  data: Schema.Array(OpenRouterCatalogEntry),
+});
+const decodeCatalog = Schema.decodeUnknownEffect(OpenRouterCatalogResponse);
 
 export interface OpenRouterCatalogModel {
   readonly id: string;
@@ -22,6 +64,7 @@ export interface OpenRouterCatalogModel {
     readonly parallelToolCalls: boolean;
     readonly toolChoice: boolean;
   };
+  readonly selectionSupport: ModelSelectionSupport;
   readonly incompatibilityReason?: string;
   readonly isCustom: boolean;
   readonly isVerified: boolean;
@@ -38,23 +81,10 @@ const perMillion = (value: string | undefined): number | undefined => {
   return Number.isFinite(number) && number >= 0 ? number * 1_000_000 : undefined;
 };
 
-const outputIncludesText = (raw: Generated.Model): boolean =>
-  raw.architecture.output_modalities.includes("text");
-
-const supportsTools = (raw: Generated.Model): boolean =>
+const supportsTools = (raw: OpenRouterCatalogEntry): boolean =>
   raw.supported_parameters.some((parameter) => parameter.trim().toLowerCase() === "tools");
 
-const ALL_REASONING_EFFORTS = [
-  "max",
-  "xhigh",
-  "high",
-  "medium",
-  "low",
-  "minimal",
-  "none",
-] as const satisfies ReadonlyArray<OpenRouterReasoningEffort>;
-
-const normalizeModel = (raw: Generated.Model): OpenRouterCatalogModel | undefined => {
+const normalizeModel = (raw: OpenRouterCatalogEntry): OpenRouterCatalogModel | undefined => {
   const id = raw.id.trim();
   if (!id) return undefined;
   const contextWindowTokens = raw.context_length;
@@ -73,13 +103,25 @@ const normalizeModel = (raw: Generated.Model): OpenRouterCatalogModel | undefine
   const parameters = new Set(
     raw.supported_parameters.map((parameter) => parameter.trim().toLowerCase()),
   );
-  const hasTextOutput = outputIncludesText(raw);
+  const hasTextOutput = outputModalities.includes("text");
+  const hasNativeDecisionOutput = outputModalities.includes("decisions");
   const hasTools = supportsTools(raw);
-  const incompatibilityReason = !hasTextOutput
-    ? "This model does not produce text responses required by T3 Code."
-    : !hasTools
-      ? "This model does not support the tool calling required by T3 Code."
-      : undefined;
+  const selectionSupport = hasNativeDecisionOutput
+    ? { agent: false, textGeneration: false, decision: "native" as const }
+    : hasTextOutput
+      ? {
+          agent: hasTools,
+          textGeneration: true,
+          decision: "prompted" as const,
+        }
+      : { agent: false, textGeneration: false, decision: "none" as const };
+  const incompatibilityReason = hasNativeDecisionOutput
+    ? "Only available for decision features."
+    : !hasTextOutput
+      ? "This model does not produce text responses required by T3 Code."
+      : !hasTools
+        ? "This model does not support the tool calling required by T3 Code."
+        : undefined;
   return {
     id,
     name: raw.name.trim() || id,
@@ -95,12 +137,15 @@ const normalizeModel = (raw: Generated.Model): OpenRouterCatalogModel | undefine
     ...(promptPriceUsdPerMillion === undefined ? {} : { promptPriceUsdPerMillion }),
     ...(completionPriceUsdPerMillion === undefined ? {} : { completionPriceUsdPerMillion }),
     reasoningEfforts,
-    ...(defaultReasoningEffort == null ? {} : { defaultReasoningEffort }),
+    ...(defaultReasoningEffort == null || !isOpenRouterReasoningEffort(defaultReasoningEffort)
+      ? {}
+      : { defaultReasoningEffort }),
     toolCapabilities: {
       tools: hasTools,
       parallelToolCalls: parameters.has("parallel_tool_calls"),
       toolChoice: parameters.has("tool_choice"),
     },
+    selectionSupport,
     ...(incompatibilityReason ? { incompatibilityReason } : {}),
     isCustom: false,
     isVerified: true,
@@ -110,7 +155,7 @@ const normalizeModel = (raw: Generated.Model): OpenRouterCatalogModel | undefine
 export const decodeOpenRouterModelCatalog = Effect.fn("decodeOpenRouterModelCatalog")(function* (
   input: unknown,
 ) {
-  const catalog = yield* decodeGeneratedCatalog(input, { onExcessProperty: "ignore" }).pipe(
+  const catalog = yield* decodeCatalog(input, { onExcessProperty: "ignore" }).pipe(
     Effect.mapError(
       () =>
         new OpenRouterModelCatalogError({
@@ -146,6 +191,7 @@ export const mergeOpenRouterCustomModels = (
       outputModalities: ["text"],
       reasoningEfforts: [],
       toolCapabilities: { tools: true, parallelToolCalls: false, toolChoice: false },
+      selectionSupport: { agent: true, textGeneration: true, decision: "prompted" },
       isCustom: true,
       isVerified: false,
     });

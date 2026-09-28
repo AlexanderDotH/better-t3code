@@ -24,6 +24,7 @@ import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shar
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import { TextGenerationError } from "@t3tools/contracts";
+import { makePromptedDecisionProviderFromStructuredOutput } from "../decisionGeneration/PromptedDecisionGeneration.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
@@ -122,6 +123,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
 
   const encodeJsonForOperation = (
     operation:
+      | "decisionGeneration"
       | "decideAutoReasoning"
       | "generateCommitMessage"
       | "generatePrContent"
@@ -159,6 +161,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     environmentOverride,
   }: {
     operation:
+      | "decisionGeneration"
       | "decideAutoReasoning"
       | "generateCommitMessage"
       | "generatePrContent"
@@ -398,6 +401,33 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       );
     });
 
+  const decisionGeneration = makePromptedDecisionProviderFromStructuredOutput((input) =>
+    Effect.gen(function* () {
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-decision-claude-cwd-",
+      });
+      const configDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-decision-claude-config-",
+      });
+      const credentialsSource = path.join(claudeConfigDir, ".credentials.json");
+      if (yield* fileSystem.exists(credentialsSource).pipe(Effect.orElseSucceed(() => false))) {
+        yield* fileSystem.copyFile(credentialsSource, path.join(configDir, ".credentials.json"));
+      }
+      return yield* runClaudeJson({
+        operation: "decisionGeneration",
+        cwd,
+        prompt: input.prompt,
+        outputSchemaJson: input.outputSchema,
+        modelSelection: input.modelSelection,
+        environmentOverride: {
+          ...claudeEnvironment,
+          CLAUDE_CONFIG_DIR: configDir,
+          ENABLE_CLAUDEAI_MCP_SERVERS: "false",
+        },
+      });
+    }).pipe(Effect.scoped),
+  );
+
   const generateCommitMessage: TextGeneration.TextGeneration["Service"]["generateCommitMessage"] =
     Effect.fn("ClaudeTextGeneration.generateCommitMessage")(function* (input) {
       const { prompt, outputSchema } = buildCommitMessagePrompt({
@@ -564,6 +594,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     });
 
   return {
+    decisionGeneration,
     decideAutoReasoning,
     generateCommitMessage,
     generatePrContent,

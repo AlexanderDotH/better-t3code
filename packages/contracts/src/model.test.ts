@@ -10,13 +10,16 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   GEMINI_DRIVER_KIND,
   GROK_DRIVER_KIND,
+  LEGACY_MODEL_SELECTION_SUPPORT,
   ModelCapabilities,
+  ModelSelectionPurpose,
   OPENCODE_DRIVER_KIND,
   PROVIDER_DISPLAY_NAMES,
 } from "./model.ts";
 
 const decodeAgentReasoningEffort = Schema.decodeUnknownSync(AgentReasoningEffort);
 const decodeModelCapabilities = Schema.decodeUnknownSync(ModelCapabilities);
+const decodeModelSelectionPurpose = Schema.decodeUnknownSync(ModelSelectionPurpose);
 
 describe("multi-provider model contracts", () => {
   it("defines defaults for exactly the native provider drivers", () => {
@@ -111,5 +114,40 @@ describe("multi-provider model contracts", () => {
       pricing: { promptUsdPerMillion: 2, completionUsdPerMillion: 10 },
       toolSupport: { tools: true, parallelToolCalls: true, toolChoice: true },
     });
+  });
+
+  it("decodes explicit selection roles while leaving legacy capabilities unmodified", () => {
+    expect(
+      decodeModelCapabilities({
+        selectionSupport: {
+          agent: false,
+          textGeneration: false,
+          decision: "native",
+        },
+      }),
+    ).toEqual({
+      selectionSupport: {
+        agent: false,
+        textGeneration: false,
+        decision: "native",
+      },
+    });
+    expect(decodeModelCapabilities({})).toEqual({});
+    expect(LEGACY_MODEL_SELECTION_SUPPORT).toEqual({
+      agent: true,
+      textGeneration: true,
+      decision: "prompted",
+    });
+    expect(decodeModelSelectionPurpose("text-generation")).toBe("text-generation");
+    expect(() => decodeModelSelectionPurpose("review")).toThrow();
+    expect(() =>
+      decodeModelCapabilities({
+        selectionSupport: {
+          agent: false,
+          textGeneration: false,
+          decision: "system-one",
+        },
+      }),
+    ).toThrow();
   });
 });

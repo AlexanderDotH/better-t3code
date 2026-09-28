@@ -631,6 +631,7 @@ const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "sourceControlWriterModelSelection",
   "textGenerationModelSelection",
   "autoReasoningModelSelection",
+  "projectIndexingDecisionModelSelection",
   "voiceTranslationModelSelection",
   "parallelPlanReviewModelSelection",
   // Voice validation needs both pause limits even when they equal their defaults.

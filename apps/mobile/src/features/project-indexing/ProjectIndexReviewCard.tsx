@@ -206,6 +206,7 @@ export function ProjectIndexReviewCard(props: {
         current={props.status.settings.modelSelection}
         allowDefault={props.status.defaults !== undefined}
         defaultLabel={translator.message("projectIndexing.useDefaultModel")}
+        purpose="text-generation"
         visible={modelPickerOpen}
         onClose={() => setModelPickerOpen(false)}
         onSelect={(selection) => props.onUpdate({ modelSelection: selection })}

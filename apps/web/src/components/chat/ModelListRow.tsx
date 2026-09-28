@@ -99,12 +99,14 @@ export const ModelListRow = memo(function ModelListRow(props: {
   preferShortName?: boolean;
   useTriggerLabel?: boolean;
   showNewBadge?: boolean;
+  decisionSupport?: "native" | "prompted";
   unavailable?: boolean;
   jumpLabel?: string | null;
   disabledReason?: string | null;
   presentation?: "compact" | "catalog";
   onToggleFavorite: () => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[props.driverKind] ?? null;
   const providerLabel = props.model.subProvider
     ? props.presentation === "catalog"
@@ -143,6 +145,11 @@ export const ModelListRow = memo(function ModelListRow(props: {
             >
               New
             </span>
+          ) : null}
+          {props.decisionSupport ? (
+            <Badge variant="outline" size="sm">
+              {translate(`chat.model.decision.${props.decisionSupport}`)}
+            </Badge>
           ) : null}
           {props.unavailable ? (
             <Badge variant="outline" size="sm">

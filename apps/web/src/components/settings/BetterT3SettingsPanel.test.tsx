@@ -137,6 +137,39 @@ it("keeps all three reasoning choices visible and switches display and compatibi
   }
 });
 
+it("keeps the Project Index decision selector beside the dedicated Project Index settings", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  let renderer: ReactTestRenderer | undefined;
+  try {
+    await act(() => {
+      renderer = create(
+        <BetterT3SettingsContent
+          features={features}
+          translate={translate}
+          controls={{
+            "knowledge.projectIndexingDecisionModel": <button>Decision model</button>,
+          }}
+          projectIndexingSettings={<span>Project Index settings</span>}
+          onSwitchChange={vi.fn()}
+        />,
+      );
+    });
+
+    expect(
+      renderer!.root.findAll(
+        (node) =>
+          typeof node.type === "string" &&
+          node.props["data-better-t3-feature"] === "knowledge.projectIndexingDecisionModel",
+      ),
+    ).toHaveLength(1);
+    expect(renderer!.root.findByProps({ children: "Decision model" })).toBeDefined();
+    expect(renderer!.root.findByProps({ children: "Project Index settings" })).toBeDefined();
+  } finally {
+    await act(() => renderer?.unmount());
+    vi.unstubAllGlobals();
+  }
+});
+
 it("keeps every setting mounted across category jumps and search jumps to former advanced settings", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", { matchMedia: () => ({ matches: true }) });

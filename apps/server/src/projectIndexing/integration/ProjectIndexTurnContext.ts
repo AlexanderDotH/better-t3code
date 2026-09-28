@@ -1,3 +1,5 @@
+import * as NodeCrypto from "node:crypto";
+
 import { type ProjectIndexQueryResultV1, type ProjectIndexScopeInput } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as References from "effect/References";
@@ -5,8 +7,8 @@ import * as References from "effect/References";
 import type { ProjectContextQuery } from "../query/ProjectContextQuery.ts";
 import { estimateProjectIndexTokens } from "../semantic/ProjectIndexContextBudget.ts";
 
-const TASK_SEARCH_MAX_CHARACTERS = 8_000;
-const AUTOMATIC_CONTEXT_MAX_TOKENS = 2_000;
+export const PROJECT_INDEX_TASK_MAX_CHARACTERS = 8_000;
+export const PROJECT_INDEX_AUTOMATIC_CONTEXT_MAX_TOKENS = 2_000;
 const CONTEXT_PREFIX = [
   "<t3_project_knowledge>",
   "Static source facts follow. Read original code and applicable AGENTS.md before editing.",
@@ -22,14 +24,34 @@ function compactText(value: string, maximumLength: number): string {
     : normalized;
 }
 
-export function formatProjectIndexTurnContext(
+export interface ProjectIndexTurnContextFingerprint {
+  readonly indexRevision: number;
+  readonly candidateHash: string;
+}
+
+export interface ProjectIndexTurnContextCandidate {
+  readonly context: string;
+  readonly hitCount: number;
+  readonly fingerprint: ProjectIndexTurnContextFingerprint;
+}
+
+interface FormattedProjectIndexTurnContext {
+  readonly context: string;
+  readonly hitCount: number;
+}
+
+interface RetrievedProjectIndexTurnContext extends FormattedProjectIndexTurnContext {
+  readonly indexRevision: number;
+}
+
+function renderProjectIndexTurnContext(
   result: ProjectIndexQueryResultV1,
-): string | undefined {
+): FormattedProjectIndexTurnContext | undefined {
   const lines: string[] = [];
   const fits = (line: string) =>
     estimateProjectIndexTokens(
       `${CONTEXT_PREFIX}\n${[...lines, line].join("\n")}\n${CONTEXT_SUFFIX}`,
-    ) <= AUTOMATIC_CONTEXT_MAX_TOKENS;
+    ) <= PROJECT_INDEX_AUTOMATIC_CONTEXT_MAX_TOKENS;
   const add = (line: string) => {
     if (!fits(line)) return false;
     lines.push(line);
@@ -73,21 +95,63 @@ export function formatProjectIndexTurnContext(
       `Static call ${call.filePath}:${call.range.startLine} ${compactText(call.expression, 120)} → ${call.targetEntityIds[0]}`,
     );
   }
-  return lines.length > 1 ? `${CONTEXT_PREFIX}\n${lines.join("\n")}\n${CONTEXT_SUFFIX}` : undefined;
+  if (lines.length <= 1) return undefined;
+  return {
+    context: `${CONTEXT_PREFIX}\n${lines.join("\n")}\n${CONTEXT_SUFFIX}`,
+    hitCount: lines.length - 1,
+  };
 }
 
-export const prepareProjectIndexTurnContext = Effect.fnUntraced(
+export function formatProjectIndexTurnContext(
+  result: ProjectIndexQueryResultV1,
+): string | undefined {
+  return renderProjectIndexTurnContext(result)?.context;
+}
+
+const retrieveProjectIndexTurnContext = Effect.fnUntraced(
   function* (query: ProjectContextQuery["Service"], scope: ProjectIndexScopeInput, task: string) {
     if (task.trim().length === 0 || task.trimStart().startsWith("/")) return undefined;
     const result = yield* query
       .query({
         ...scope,
         operation: "task",
-        text: task.slice(0, TASK_SEARCH_MAX_CHARACTERS),
+        text: task.slice(0, PROJECT_INDEX_TASK_MAX_CHARACTERS),
       })
       .pipe(Effect.option);
     if (result._tag === "None" || result.value.revision === 0) return undefined;
-    return formatProjectIndexTurnContext(result.value);
+    const formatted = renderProjectIndexTurnContext(result.value);
+    if (formatted === undefined) return undefined;
+    return {
+      ...formatted,
+      indexRevision: result.value.revision,
+    } satisfies RetrievedProjectIndexTurnContext;
+  },
+  Effect.provideService(References.TracerEnabled, false),
+);
+
+export const retrieveProjectIndexTurnContextCandidate = Effect.fnUntraced(
+  function* (query: ProjectContextQuery["Service"], scope: ProjectIndexScopeInput, task: string) {
+    const retrieved = yield* retrieveProjectIndexTurnContext(query, scope, task);
+    if (retrieved === undefined) return undefined;
+    const candidateHash = yield* Effect.sync(() =>
+      NodeCrypto.createHash("sha256").update(retrieved.context).digest("hex"),
+    );
+    return {
+      context: retrieved.context,
+      hitCount: retrieved.hitCount,
+      fingerprint: {
+        indexRevision: retrieved.indexRevision,
+        candidateHash,
+      },
+    } satisfies ProjectIndexTurnContextCandidate;
+  },
+  Effect.provideService(References.TracerEnabled, false),
+);
+
+export const prepareProjectIndexTurnContext = Effect.fnUntraced(
+  function* (query: ProjectContextQuery["Service"], scope: ProjectIndexScopeInput, task: string) {
+    const retrieved = yield* retrieveProjectIndexTurnContext(query, scope, task);
+    return retrieved?.context;
   },
   Effect.provideService(References.TracerEnabled, false),
 );

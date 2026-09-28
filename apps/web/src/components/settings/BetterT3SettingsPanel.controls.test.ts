@@ -5,6 +5,7 @@ import type { ProviderInstanceEntry } from "../../providerInstances";
 import {
   buildAutoReasoningModelSelectionPatch,
   buildBetterT3ScalarControlPatch,
+  buildProjectIndexingDecisionModelSelectionPatch,
   resolveBetterT3ModelSelection,
   supportsAutoReasoningEvaluationProvider,
 } from "./BetterT3SettingsPanel.controls";
@@ -12,7 +13,16 @@ import {
 const codexId = ProviderInstanceId.make("codex");
 
 function entry(
-  models: ReadonlyArray<{ slug: string; isDefault?: boolean; isSelectable?: boolean }>,
+  models: ReadonlyArray<{
+    slug: string;
+    isDefault?: boolean;
+    isSelectable?: boolean;
+    selectionSupport?: {
+      readonly agent: boolean;
+      readonly textGeneration: boolean;
+      readonly decision: "none" | "prompted" | "native";
+    };
+  }>,
 ) {
   return {
     instanceId: codexId,
@@ -28,7 +38,7 @@ function entry(
       slug: model.slug,
       name: model.slug,
       isCustom: false,
-      capabilities: null,
+      capabilities: model.selectionSupport ? { selectionSupport: model.selectionSupport } : null,
       ...(model.isDefault === undefined ? {} : { isDefault: model.isDefault }),
       ...(model.isSelectable === undefined ? {} : { isSelectable: model.isSelectable }),
     })),
@@ -64,6 +74,30 @@ describe("resolveBetterT3ModelSelection", () => {
       instanceId: codexId,
       model: "current",
       options: [{ id: "reasoningEffort", value: "high" }],
+    });
+  });
+
+  it("resolves native models only for decision selectors", () => {
+    const available = entry([
+      {
+        slug: "agent",
+        isDefault: true,
+        selectionSupport: { agent: true, textGeneration: true, decision: "prompted" },
+      },
+      {
+        slug: "native",
+        isSelectable: false,
+        selectionSupport: { agent: false, textGeneration: false, decision: "native" },
+      },
+    ]);
+    const nativeSelection = { instanceId: codexId, model: "native" };
+
+    expect(resolveBetterT3ModelSelection([available], nativeSelection, "decision")).toEqual(
+      nativeSelection,
+    );
+    expect(resolveBetterT3ModelSelection([available], nativeSelection, "agent")).toEqual({
+      instanceId: codexId,
+      model: "agent",
     });
   });
 });
@@ -111,6 +145,16 @@ describe("Auto Reasoning evaluation model settings", () => {
     });
     expect(buildAutoReasoningModelSelectionPatch(null)).toEqual({
       autoReasoningModelSelection: null,
+    });
+    expect(buildProjectIndexingDecisionModelSelectionPatch(selected)).toEqual({
+      projectIndexingDecisionModelSelection: {
+        instanceId: codexId,
+        model: "gpt-5.6-luna",
+        options: [{ id: "reasoningEffort", value: "low" }],
+      },
+    });
+    expect(buildProjectIndexingDecisionModelSelectionPatch(null)).toEqual({
+      projectIndexingDecisionModelSelection: null,
     });
   });
 });

@@ -426,11 +426,18 @@ export function VoiceInputSettings({
     serverProviders,
     voiceTranslationModelSelection.instanceId,
     voiceTranslationModelSelection.model,
+    "text-generation",
   );
   const cleanupModelPicker = {
     fallbackSelection: defaultModelSelection,
     instanceEntries: modelInstanceEntries,
-    optionsByInstance: getCustomModelOptionsByInstance(settings, serverProviders),
+    optionsByInstance: getCustomModelOptionsByInstance(
+      settings,
+      serverProviders,
+      undefined,
+      undefined,
+      "text-generation",
+    ),
   };
   const [profileStateByEnvironment, setProfileStateByEnvironment] = useState<
     ReadonlyMap<EnvironmentId, EnvironmentProfileState>
@@ -650,6 +657,7 @@ export function VoiceInputSettings({
               lockedProvider={null}
               instanceEntries={modelInstanceEntries}
               modelOptionsByInstance={modelOptionsByInstance}
+              modelSelectionPurpose="text-generation"
               triggerVariant="outline"
               triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
               triggerAriaLabel={translate("settings.voice.model.title")}

@@ -173,6 +173,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   knowledgeGraphVersion: Schema.optionalKey(PositiveInt),
   projectIndexingVersion: Schema.optionalKey(PositiveInt),
   projectIndexingDefaultsVersion: Schema.optionalKey(PositiveInt),
+  decisionModelsVersion: Schema.optionalKey(PositiveInt),
   /** Versioned adaptive admission and provider-process suspension policies.
       Missing on older servers, so clients do not expose policy switches that
       the environment cannot enforce. */

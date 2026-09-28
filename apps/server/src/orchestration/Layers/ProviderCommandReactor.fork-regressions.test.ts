@@ -7,6 +7,7 @@ import * as NodePath from "node:path";
 
 import {
   type ChatAttachment,
+  EMPTY_PROJECT_INDEX_COVERAGE,
   ModelSelection,
   type OrchestrationSession,
   type OrchestrationSubagentSummary,
@@ -45,7 +46,7 @@ import { it as effectIt } from "@effect/vitest";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { deriveServerPaths, ServerConfig } from "../../config.ts";
-import { TextGenerationError } from "@t3tools/contracts";
+import { DecisionGenerationError, TextGenerationError } from "@t3tools/contracts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
@@ -56,6 +57,8 @@ import {
 } from "../../provider/Services/ProviderService.ts";
 import { makeProviderRegistryLayer } from "../../provider/testUtils/providerRegistryMock.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
+import { DecisionGeneration } from "../../decisionGeneration/DecisionGeneration.ts";
+import { makeDecisionGenerationTestLayer } from "../../decisionGeneration/testUtils.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
@@ -80,6 +83,7 @@ import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
 import { NoOpSkillEngineLayer } from "../../skills/testUtils/NoOpSkillEngine.ts";
 import { PROJECT_AGENT_COORDINATION_INSTRUCTIONS } from "../../projectAgent/ProjectAgentInstructions.ts";
 import { ProjectMemoryStore } from "../../projectMemory/ProjectMemoryStore.ts";
+import { ProjectContextQuery } from "../../projectIndexing/query/ProjectContextQuery.ts";
 import {
   FetchWorkerCoordinator,
   type FetchRunInput,
@@ -346,7 +350,9 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
       execution: number,
     ) => Effect.Effect<ProviderTurnStartResult, ProviderAdapterRequestError>;
     readonly projectMemoryRead?: ProjectMemoryReadResponse;
-    readonly decideAutoReasoningEffect?: TextGeneration["Service"]["decideAutoReasoning"];
+    readonly decideAutoReasoningEffect?: DecisionGeneration["Service"]["decide"];
+    readonly decideManyEffect?: DecisionGeneration["Service"]["decideMany"];
+    readonly projectContext?: ProjectContextQuery["Service"];
   }) {
     const now = "2026-01-01T00:00:00.000Z";
     const baseDir =
@@ -517,15 +523,20 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
         }),
       ),
     );
-    const decideAutoReasoning = vi.fn<TextGeneration["Service"]["decideAutoReasoning"]>(
+    const decideAutoReasoning = vi.fn<DecisionGeneration["Service"]["decide"]>(
       (request) =>
         input?.decideAutoReasoningEffect?.(request) ??
         Effect.fail(
-          new TextGenerationError({
-            operation: "decideAutoReasoning",
+          new DecisionGenerationError({
+            operation: "decide",
+            reason: "provider-failed",
             detail: "disabled in test harness",
           }),
         ),
+    );
+    const decideMany = vi.fn<DecisionGeneration["Service"]["decideMany"]>(
+      (requests) =>
+        input?.decideManyEffect?.(requests) ?? Effect.forEach(requests, decideAutoReasoning),
     );
     const defaultDriver = ProviderDriverKind.make(
       String(modelSelection.instanceId).startsWith("claude")
@@ -724,6 +735,11 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
       }),
     ).pipe(Layer.provide(orchestrationLayer));
     const layer = ProviderCommandReactorLive.pipe(
+      Layer.provide(
+        input?.projectContext === undefined
+          ? Layer.empty
+          : Layer.succeed(ProjectContextQuery, input.projectContext),
+      ),
       Layer.provideMerge(reactorOrchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
@@ -764,11 +780,13 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
       ),
       Layer.provideMerge(
         Layer.mock(TextGeneration, {
-          decideAutoReasoning,
           generateBranchName,
           generateThreadMetadata,
           generateThreadTitle,
         }),
+      ),
+      Layer.provideMerge(
+        makeDecisionGenerationTestLayer({ decide: decideAutoReasoning, decideMany }),
       ),
       Layer.provideMerge(NoOpSkillEngineLayer),
       Layer.provideMerge(Layer.mock(ProjectMemoryStore)({ read: readProjectMemory })),
@@ -1151,6 +1169,7 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
       generateThreadMetadata,
       generateThreadTitle,
       decideAutoReasoning,
+      decideMany,
       readProjectMemory,
       serverSettings,
       runtimeSessions,
@@ -3049,16 +3068,17 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
       providerSnapshots: [codexAutoReasoningProviderFixture(model)],
       serverSettings: { autoReasoningModelSelection: routerSelection },
       decideAutoReasoningEffect: () =>
-        Effect.sync(() =>
-          ++decisionCount === 1
-            ? {
-                effort: "high",
-                usage: { inputTokens: 120, outputTokens: 4, totalTokens: 124 },
-              }
-            : decisionCount === 2
-              ? { effort: "xhigh" }
-              : { effort: "low" },
-        ),
+        Effect.sync(() => {
+          decisionCount += 1;
+          const effort = decisionCount === 1 ? "high" : decisionCount === 2 ? "xhigh" : "low";
+          return {
+            model: "gpt-5.6-luna",
+            answers: { autoReasoning: { choice: effort } },
+            ...(decisionCount === 1
+              ? { usage: { inputTokens: 120, outputTokens: 4, totalTokens: 124 } }
+              : {}),
+          };
+        }),
     });
     const completeMainPrompt = `${"implement carefully ".repeat(2_500)}MAIN_PROMPT_TAIL`;
     const now = "2026-01-01T00:00:00.000Z";
@@ -3135,27 +3155,28 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
     expect(harness.decideAutoReasoning).toHaveBeenCalledTimes(1);
     expect(harness.decideAutoReasoning.mock.calls[0]?.[0]).toMatchObject({
-      userPrompt: completeMainPrompt,
-      interactionMode: "plan",
-      allowedEfforts: ["low", "medium", "high", "xhigh"],
-      attachments: [
-        {
-          type: "image",
-          name: "architecture.png",
-          mimeType: "image/png",
-          sizeBytes: 42,
-        },
-      ],
       modelSelection: {
         instanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5.6-luna",
         options: [{ id: "reasoningEffort", value: "low" }],
       },
-      conversation: [
-        { role: "user", text: "Original work items: contract and server wiring" },
-        { role: "assistant", text: "Contract and server wiring are complete." },
-      ],
+      questions: {
+        autoReasoning: {
+          criteria: {
+            low: expect.any(String),
+            medium: expect.any(String),
+            high: expect.any(String),
+            xhigh: expect.any(String),
+          },
+        },
+      },
     });
+    const firstDecisionState = harness.decideAutoReasoning.mock.calls[0]?.[0].state ?? "";
+    expect(firstDecisionState).toContain("Interaction mode: plan");
+    expect(firstDecisionState).toContain("architecture.png");
+    expect(firstDecisionState).toContain("Original work items: contract and server wiring");
+    expect(firstDecisionState).toContain("Contract and server wiring are complete.");
+    expect(firstDecisionState).toContain("MAIN_PROMPT_TAIL");
     expect(harness.decideAutoReasoning.mock.invocationCallOrder[0]).toBeLessThan(
       harness.startSession.mock.invocationCallOrder[0]!,
     );
@@ -3213,14 +3234,11 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     await waitFor(() => harness.sendTurn.mock.calls.length === 2);
     expect(harness.decideAutoReasoning).toHaveBeenCalledTimes(2);
     expect(harness.startSession).toHaveBeenCalledTimes(1);
-    expect(harness.decideAutoReasoning.mock.calls[1]?.[0].userPrompt).toBe(
-      "Follow up without changing sessions",
-    );
-    expect(harness.decideAutoReasoning.mock.calls[1]?.[0].conversation).toEqual([
-      { role: "assistant", text: "Contract and server wiring are complete." },
-      { role: "user", text: completeMainPrompt },
-      { role: "assistant", text: "Previous assistant result" },
-    ]);
+    const secondDecisionState = harness.decideAutoReasoning.mock.calls[1]?.[0].state ?? "";
+    expect(secondDecisionState).toContain("Follow up without changing sessions");
+    expect(secondDecisionState).toContain("Contract and server wiring are complete.");
+    expect(secondDecisionState).toContain("MAIN_PROMPT_TAIL");
+    expect(secondDecisionState).toContain("Previous assistant result");
     expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({
       input: "Follow up without changing sessions",
       modelSelection: {
@@ -3340,6 +3358,143 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     });
   });
 
+  it("batches Auto Reasoning and Project Index questions for the same decision model", async () => {
+    const model = "gpt-5.6-sol";
+    const autoSelection = createModelSelection(ProviderInstanceId.make("codex"), model, [
+      { id: "reasoningEffort", value: "low" },
+      { id: "t3AutoReasoning", value: true },
+    ]);
+    const decisionModelSelection = createModelSelection(
+      ProviderInstanceId.make("codex"),
+      "gpt-5.6-luna",
+      [{ id: "reasoningEffort", value: "low" }],
+    );
+    const decideManyEffect = vi.fn<DecisionGeneration["Service"]["decideMany"]>((requests) =>
+      Effect.succeed(
+        requests.map((request) =>
+          Object.hasOwn(request.questions, "autoReasoning")
+            ? {
+                model: decisionModelSelection.model,
+                answers: { autoReasoning: { choice: "high" } },
+              }
+            : {
+                model: decisionModelSelection.model,
+                answers: { "project-index-context": { choice: "include" } },
+              },
+        ),
+      ),
+    );
+    const harness = await createHarness({
+      threadModelSelection: autoSelection,
+      providerSnapshots: [codexAutoReasoningProviderFixture(model)],
+      serverSettings: {
+        autoReasoningModelSelection: decisionModelSelection,
+        projectIndexingDecisionModelSelection: decisionModelSelection,
+      },
+      decideManyEffect,
+      projectContext: {
+        query: (input) =>
+          Effect.succeed({
+            version: 1,
+            scope: {
+              projectId: input.projectId,
+              ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
+              scopeId: "batched-index",
+              workspaceFingerprint: "batched-workspace",
+            },
+            revision: 4,
+            operation: input.operation,
+            summary: "Batched decision context",
+            entities: [],
+            callsites: [],
+            modules: [],
+            behaviors: [],
+            flows: [],
+            rules: [
+              {
+                id: "batched-rule",
+                name: "Batched source rule",
+                description: "Use the repository-specific batched fact.",
+                severity: "info",
+                source: "explicit",
+                appliesToEntityIds: [],
+                evidenceIds: ["batched-rule-source"],
+                provenance: "parser",
+                freshness: "current",
+              },
+            ],
+            evidence: [
+              {
+                id: "batched-rule-source",
+                filePath: "AGENTS.md",
+                sourceHash: "batched-source-hash",
+                range: { startLine: 1, startColumn: 1, endLine: 1, endColumn: 20 },
+                provenance: "parser",
+              },
+            ],
+            gaps: [],
+            coverage: EMPTY_PROJECT_INDEX_COVERAGE,
+            nextCursor: null,
+            truncated: false,
+            estimatedTokens: 500,
+          }),
+      },
+    });
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-batched-decisions"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-batched-decisions"),
+          role: "user",
+          text: "Apply the indexed repository rule",
+          attachments: [],
+        },
+        modelSelection: autoSelection,
+        interactionMode: "default",
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await harness.drain();
+    expect(harness.decideMany).toHaveBeenCalledTimes(1);
+    expect(decideManyEffect).toHaveBeenCalledTimes(1);
+    const requests = decideManyEffect.mock.calls[0]?.[0] ?? [];
+    expect(requests).toHaveLength(2);
+    expect(requests.map((request) => request.modelSelection)).toEqual([
+      decisionModelSelection,
+      decisionModelSelection,
+    ]);
+    expect(requests.map((request) => Object.keys(request.questions))).toEqual([
+      ["autoReasoning"],
+      ["project-index-context"],
+    ]);
+    expect(harness.decideMany.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.startSession.mock.invocationCallOrder[0]!,
+    );
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      modelSelection: {
+        options: [
+          { id: "reasoningEffort", value: "high" },
+          { id: "serviceTier", value: "default" },
+        ],
+      },
+      transcriptHandoff: {
+        text: expect.stringContaining("repository-specific batched fact"),
+      },
+    });
+    const activities = (await harness.readModel()).threads
+      .find((thread) => thread.id === ThreadId.make("thread-1"))
+      ?.activities.map((activity) => activity.kind);
+    expect(activities).toEqual(
+      expect.arrayContaining(["auto-reasoning.resolved", "project-index.context-decision"]),
+    );
+  });
+
   it("bypasses Auto Reasoning for manual Codex effort selections", async () => {
     const model = "gpt-5.6-sol";
     const manualSelection = createModelSelection(ProviderInstanceId.make("codex"), model, [
@@ -3390,7 +3545,11 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     const harness = await createHarness({
       threadModelSelection: autoSelection,
       providerSnapshots: [codexAutoReasoningProviderFixture(model)],
-      decideAutoReasoningEffect: () => Effect.succeed({ effort: "unsupported" }),
+      decideAutoReasoningEffect: () =>
+        Effect.succeed({
+          model: "gpt-5.6-luna",
+          answers: { autoReasoning: { choice: "unsupported" } },
+        }),
     });
 
     await Effect.runPromise(
@@ -3433,8 +3592,9 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
       providerSnapshots: [codexAutoReasoningProviderFixture(model)],
       decideAutoReasoningEffect: () =>
         Effect.fail(
-          new TextGenerationError({
-            operation: "decideAutoReasoning",
+          new DecisionGenerationError({
+            operation: "decide",
+            reason: "provider-failed",
             detail: "router unavailable",
           }),
         ),

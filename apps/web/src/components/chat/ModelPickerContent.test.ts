@@ -8,10 +8,33 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
+  decisionSupportBadge,
+  defaultOpenRouterCatalogFilters,
   resolveModelPickerSelectedModel,
   shouldIncludeModelPickerOption,
   shouldOfferModelPickerSetup,
 } from "./ModelPickerContent";
+
+describe("purpose-aware picker presentation", () => {
+  it("keeps Agent ready as the agent default without hiding non-agent models elsewhere", () => {
+    expect(defaultOpenRouterCatalogFilters("agent").featureFilters).toEqual(
+      new Set(["agent-ready"]),
+    );
+    expect(defaultOpenRouterCatalogFilters("text-generation").featureFilters).toEqual(new Set());
+    expect(defaultOpenRouterCatalogFilters("decision").featureFilters).toEqual(new Set());
+  });
+
+  it("labels native and prompted choices only in decision pickers", () => {
+    const native = {
+      capabilities: {
+        selectionSupport: { agent: false, textGeneration: false, decision: "native" as const },
+      },
+    };
+    expect(decisionSupportBadge(native, "decision")).toBe("native");
+    expect(decisionSupportBadge({}, "decision")).toBe("prompted");
+    expect(decisionSupportBadge(native, "agent")).toBeUndefined();
+  });
+});
 
 function entry(status: ServerProvider["status"], driver = "opencode") {
   return deriveProviderInstanceEntries([

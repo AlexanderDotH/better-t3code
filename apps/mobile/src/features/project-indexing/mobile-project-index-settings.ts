@@ -17,6 +17,10 @@ export function supportsMobileStaticProjectIndex(version: number | undefined): b
   return (version ?? 0) >= 3;
 }
 
+export function supportsMobileDecisionModels(version: number | undefined): boolean {
+  return (version ?? 0) >= 1;
+}
+
 export function findMobileProjectIndexProject<
   Project extends { readonly environmentId: EnvironmentId; readonly id: ProjectId },
 >(

@@ -419,7 +419,8 @@ export function BetterT3SettingsContent(props: BetterT3SettingsPanelViewProps) {
       if (props.voiceSettings && feature.descriptor.id === "voice.credentials") return null;
       if (
         props.projectIndexingSettings &&
-        feature.descriptor.id.startsWith("knowledge.projectIndexing")
+        feature.descriptor.id.startsWith("knowledge.projectIndexing") &&
+        feature.descriptor.id !== "knowledge.projectIndexingDecisionModel"
       )
         return null;
       if (feature.descriptor.id === "agent.reasoningWorkingOverlay") return null;

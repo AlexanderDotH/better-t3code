@@ -7,6 +7,7 @@ import {
   type EnvironmentId,
   type McpServerDefinition,
   type ModelSelection,
+  type ModelSelectionPurpose,
   type ServerConfig,
   type ServerProvider,
   type ServerSettingsPatch,
@@ -81,6 +82,7 @@ function ModelSelectionSetting(props: {
   readonly icon: "sparkles" | "arrow.triangle.branch" | "mic" | "text.bubble";
   readonly label: string;
   readonly selection: ModelSelection | null;
+  readonly purpose: ModelSelectionPurpose;
   readonly allowDefault?: boolean;
   readonly defaultLabel?: string;
   readonly onSelect: (selection: ModelSelection | null) => void;
@@ -103,6 +105,7 @@ function ModelSelectionSetting(props: {
         current={props.selection}
         allowDefault={props.allowDefault}
         defaultLabel={props.defaultLabel}
+        purpose={props.purpose}
         visible={open}
         onClose={() => setOpen(false)}
         onSelect={props.onSelect}
@@ -992,6 +995,7 @@ function EnvironmentAgentSettings(props: {
           config={config}
           icon="text.bubble"
           label={translator.message("mobile.settings.agents.textGeneration")}
+          purpose="text-generation"
           selection={settings.textGenerationModelSelection}
           onSelect={(selection) => {
             if (selection)
@@ -1003,6 +1007,7 @@ function EnvironmentAgentSettings(props: {
           defaultLabel={translator.message("mobile.settings.agents.automatic")}
           icon="sparkles"
           label={translator.message("mobile.settings.agents.fetchWorkers")}
+          purpose="agent"
           selection={settings.fetchModelSelection}
           onSelect={(selection) =>
             void updateSettings({ fetchModelSelection: selection }, "Fetch model")
@@ -1013,6 +1018,7 @@ function EnvironmentAgentSettings(props: {
           config={config}
           icon="arrow.triangle.branch"
           label={translator.message("mobile.settings.agents.parallelReview")}
+          purpose="text-generation"
           selection={settings.parallelPlanReviewModelSelection}
           onSelect={(selection) => {
             if (selection)
@@ -1027,6 +1033,7 @@ function EnvironmentAgentSettings(props: {
           defaultLabel={translator.message("mobile.settings.agents.textGenerationModel")}
           icon="mic"
           label={translator.message("mobile.settings.agents.voiceTranslation")}
+          purpose="text-generation"
           selection={settings.voiceTranslationModelSelection}
           onSelect={(selection) =>
             void updateSettings({ voiceTranslationModelSelection: selection }, "voice model")

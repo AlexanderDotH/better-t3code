@@ -19,6 +19,86 @@ import {
   withoutPlanAgentSelection,
 } from "./modelSelection";
 
+describe("model selection purposes", () => {
+  const selectionSupport = {
+    agent: {
+      agent: true,
+      textGeneration: true,
+      decision: "prompted" as const,
+    },
+    text: {
+      agent: false,
+      textGeneration: true,
+      decision: "prompted" as const,
+    },
+    native: {
+      agent: false,
+      textGeneration: false,
+      decision: "native" as const,
+    },
+  };
+
+  const purposeProvider: ServerProvider = {
+    ...provider({ instanceId: "codex", models: [] }),
+    models: [
+      {
+        slug: "agent-model",
+        name: "Agent model",
+        isCustom: false,
+        isSelectable: true,
+        capabilities: { selectionSupport: selectionSupport.agent },
+      },
+      {
+        slug: "text-model",
+        name: "Text model",
+        isCustom: false,
+        isSelectable: false,
+        capabilities: { selectionSupport: selectionSupport.text },
+      },
+      {
+        slug: "native-decision-model",
+        name: "Native decision model",
+        isCustom: false,
+        isSelectable: false,
+        capabilities: { selectionSupport: selectionSupport.native },
+      },
+      {
+        slug: "legacy-model",
+        name: "Legacy model",
+        isCustom: false,
+        capabilities: {},
+      },
+      {
+        slug: "legacy-unavailable-model",
+        name: "Legacy unavailable model",
+        isCustom: false,
+        isSelectable: false,
+        capabilities: {},
+      },
+    ],
+  };
+  const entry = deriveProviderInstanceEntries([purposeProvider])[0]!;
+
+  it("keeps native decisions exclusive to decision selection", () => {
+    expect(
+      getAppModelOptionsForInstance(DEFAULT_UNIFIED_SETTINGS, entry).map((model) => model.slug),
+    ).toEqual(["agent-model", "legacy-model"]);
+    expect(
+      getAppModelOptionsForInstance(
+        DEFAULT_UNIFIED_SETTINGS,
+        entry,
+        undefined,
+        "text-generation",
+      ).map((model) => model.slug),
+    ).toEqual(["agent-model", "text-model", "legacy-model"]);
+    expect(
+      getAppModelOptionsForInstance(DEFAULT_UNIFIED_SETTINGS, entry, undefined, "decision").map(
+        (model) => model.slug,
+      ),
+    ).toEqual(["agent-model", "text-model", "native-decision-model", "legacy-model"]);
+  });
+});
+
 function provider(input: {
   provider?: ProviderDriverKind;
   instanceId: string;

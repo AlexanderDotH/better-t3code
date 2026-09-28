@@ -10,7 +10,7 @@ const catalogModel = (input: {
   readonly id: string;
   readonly name: string;
   readonly inputModalities?: ReadonlyArray<"text" | "image">;
-  readonly outputModalities: ReadonlyArray<"text" | "image">;
+  readonly outputModalities: ReadonlyArray<"text" | "image" | "decisions">;
   readonly supportedParameters: ReadonlyArray<
     "tools" | "reasoning" | "temperature" | "parallel_tool_calls" | "tool_choice"
   >;
@@ -102,6 +102,11 @@ describe("OpenRouter model catalog", () => {
             parallelToolCalls: true,
             toolChoice: true,
           },
+          selectionSupport: {
+            agent: true,
+            textGeneration: true,
+            decision: "prompted",
+          },
           isCustom: false,
           isVerified: true,
         },
@@ -109,14 +114,50 @@ describe("OpenRouter model catalog", () => {
           id: "image/only",
           outputModalities: ["image"],
           toolCapabilities: expect.objectContaining({ tools: true }),
+          selectionSupport: { agent: false, textGeneration: false, decision: "none" },
           incompatibilityReason: "This model does not produce text responses required by T3 Code.",
         }),
         expect.objectContaining({
           id: "chat/no-tools",
           outputModalities: ["text"],
           toolCapabilities: expect.objectContaining({ tools: false }),
+          selectionSupport: { agent: false, textGeneration: true, decision: "prompted" },
           incompatibilityReason:
             "This model does not support the tool calling required by T3 Code.",
+        }),
+      ]);
+    }),
+  );
+
+  it.effect("classifies native decision output from metadata without model slug heuristics", () =>
+    Effect.gen(function* () {
+      const models = yield* decodeOpenRouterModelCatalog(
+        catalog([
+          catalogModel({
+            id: "research/future-system-one",
+            name: "Future System One",
+            outputModalities: ["decisions"],
+            supportedParameters: [],
+          }),
+          catalogModel({
+            id: "typesafe/router-with-an-unrelated-name",
+            name: "Text router",
+            outputModalities: ["text"],
+            supportedParameters: ["tools"],
+          }),
+        ]),
+      );
+
+      expect(models).toEqual([
+        expect.objectContaining({
+          id: "research/future-system-one",
+          outputModalities: ["decisions"],
+          selectionSupport: { agent: false, textGeneration: false, decision: "native" },
+          incompatibilityReason: "Only available for decision features.",
+        }),
+        expect.objectContaining({
+          id: "typesafe/router-with-an-unrelated-name",
+          selectionSupport: { agent: true, textGeneration: true, decision: "prompted" },
         }),
       ]);
     }),
@@ -180,6 +221,7 @@ describe("OpenRouter model catalog", () => {
           outputModalities: ["text"],
           reasoningEfforts: [],
           toolCapabilities: { tools: true, parallelToolCalls: false, toolChoice: false },
+          selectionSupport: { agent: true, textGeneration: true, decision: "prompted" },
           isCustom: true,
           isVerified: false,
         },
@@ -190,6 +232,7 @@ describe("OpenRouter model catalog", () => {
           outputModalities: ["text"],
           reasoningEfforts: [],
           toolCapabilities: { tools: true, parallelToolCalls: false, toolChoice: false },
+          selectionSupport: { agent: true, textGeneration: true, decision: "prompted" },
           isCustom: true,
           isVerified: false,
         },

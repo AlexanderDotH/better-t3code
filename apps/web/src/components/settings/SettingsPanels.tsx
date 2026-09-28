@@ -2010,6 +2010,7 @@ export function GeneralSettingsPanel() {
     textGenerationProviders,
     textGenInstanceId,
     textGenModel,
+    "text-generation",
   );
   const isTextGenerationModelDirty = !Equal.equals(
     settings.textGenerationModelSelection ?? null,
@@ -2702,6 +2703,7 @@ export function GeneralSettingsPanel() {
                   lockedProvider={null}
                   instanceEntries={textGenerationModelInstanceEntries}
                   modelOptionsByInstance={textGenerationModelOptionsByInstance}
+                  modelSelectionPurpose="text-generation"
                   triggerVariant="outline"
                   triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                   {...(environmentId

@@ -20,6 +20,7 @@ function model(input: {
   readonly isDefault?: boolean;
   readonly reasoningEfforts?: ReadonlyArray<string>;
   readonly isSelectable?: boolean;
+  readonly selectionSupport?: NonNullable<ServerProviderModel["capabilities"]>["selectionSupport"];
 }): ServerProviderModel {
   return {
     slug: input.slug,
@@ -28,32 +29,39 @@ function model(input: {
     ...(input.isDefault ? { isDefault: true } : {}),
     ...(input.isSelectable === undefined ? {} : { isSelectable: input.isSelectable }),
     capabilities:
-      input.reasoningEfforts === undefined
+      input.reasoningEfforts === undefined && input.selectionSupport === undefined
         ? null
         : {
-            optionDescriptors: [
-              {
-                id: "reasoningEffort",
-                label: "Reasoning effort",
-                type: "select",
-                options: input.reasoningEfforts.map((effort) => ({
-                  id: effort,
-                  label: effort,
-                  ...(effort === "medium" ? { isDefault: true } : {}),
-                })),
-                currentValue: "medium",
-              },
-              {
-                id: "serviceTier",
-                label: "Service Tier",
-                type: "select",
-                options: [
-                  { id: "default", label: "Standard", isDefault: true },
-                  { id: "priority", label: "Fast" },
-                ],
-                currentValue: "default",
-              },
-            ],
+            ...(input.selectionSupport === undefined
+              ? {}
+              : { selectionSupport: input.selectionSupport }),
+            ...(input.reasoningEfforts === undefined
+              ? {}
+              : {
+                  optionDescriptors: [
+                    {
+                      id: "reasoningEffort",
+                      label: "Reasoning effort",
+                      type: "select",
+                      options: input.reasoningEfforts.map((effort) => ({
+                        id: effort,
+                        label: effort,
+                        ...(effort === "medium" ? { isDefault: true } : {}),
+                      })),
+                      currentValue: "medium",
+                    },
+                    {
+                      id: "serviceTier",
+                      label: "Service Tier",
+                      type: "select",
+                      options: [
+                        { id: "default", label: "Standard", isDefault: true },
+                        { id: "priority", label: "Fast" },
+                      ],
+                      currentValue: "default",
+                    },
+                  ],
+                }),
           },
   };
 }
@@ -303,6 +311,42 @@ describe("general subagent selection", () => {
       resolveGeneralSubagentSelection({
         ...input,
         request: { model: "openai/no-tools" },
+      }),
+    ).toMatchObject({ status: "unavailable", reason: "model-unavailable" });
+    expect(listGeneralSubagentModels(input)[0]?.models.map((candidate) => candidate.slug)).toEqual([
+      "openai/gpt-agent",
+    ]);
+  });
+
+  it("rejects and omits native decision models from general subagents", () => {
+    const openRouter = provider({
+      instanceId: "openrouter-decisions",
+      driver: "openrouter",
+      models: [
+        model({
+          slug: "openai/gpt-agent",
+          isDefault: true,
+          selectionSupport: { agent: true, textGeneration: true, decision: "prompted" },
+        }),
+        model({
+          slug: "labs/system-one",
+          selectionSupport: { agent: false, textGeneration: false, decision: "native" },
+        }),
+      ],
+    });
+    const input = {
+      providers: [openRouter],
+      callerProviderInstanceId: openRouter.instanceId,
+      parentModelSelection: {
+        instanceId: openRouter.instanceId,
+        model: "openai/gpt-agent",
+      },
+    } as const;
+
+    expect(
+      resolveGeneralSubagentSelection({
+        ...input,
+        request: { model: "labs/system-one" },
       }),
     ).toMatchObject({ status: "unavailable", reason: "model-unavailable" });
     expect(listGeneralSubagentModels(input)[0]?.models.map((candidate) => candidate.slug)).toEqual([

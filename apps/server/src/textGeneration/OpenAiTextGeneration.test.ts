@@ -13,6 +13,42 @@ const selection = {
 } as const;
 
 describe("OpenAiTextGeneration", () => {
+  it.effect("uses the selected model for prompted choice decisions", () =>
+    Effect.gen(function* () {
+      const requests: Array<Parameters<OpenAiTextCompletion>[0]> = [];
+      const complete: OpenAiTextCompletion = (request) =>
+        Effect.sync(() => {
+          requests.push(request);
+          return {
+            text: '{"answers":{"relevance":{"choice":"skip","confidence":0.75}}}',
+          };
+        });
+      const textGeneration = makeOpenAiTextGeneration({ enabled: true }, complete);
+
+      const result = yield* textGeneration.decisionGeneration!.decide({
+        cwd: "/workspace",
+        modelSelection: selection,
+        state: "Unrelated project context",
+        questions: {
+          relevance: {
+            instructions: "Decide whether the context helps.",
+            criteria: { include: "It helps", skip: "It does not help" },
+          },
+        },
+      });
+
+      expect(result).toEqual({
+        model: selection.model,
+        answers: { relevance: { choice: "skip", confidence: 0.75 } },
+      });
+      expect(requests[0]).toMatchObject({
+        model: selection.model,
+        responseFormat: { name: "decision_generation", schema: expect.any(Object) },
+      });
+      expect(requests[0]?.prompt).toContain("<t3code_decision_call>");
+    }),
+  );
+
   it.effect("uses the selected live model for strict structured generation", () =>
     Effect.gen(function* () {
       const requests: Array<Parameters<OpenAiTextCompletion>[0]> = [];

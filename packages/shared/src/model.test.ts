@@ -14,6 +14,8 @@ import {
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,
   readCustomModelEntries,
+  resolveModelSelectionSupport,
+  supportsModelSelectionPurpose,
   toCustomModelSetting,
   getProviderOptionBooleanSelectionValue,
   getProviderOptionStringSelectionValue,
@@ -461,6 +463,57 @@ describe("readCustomModelEntries", () => {
       slug: "x",
       name: "X",
       capabilities,
+    });
+    const decisionCapabilities = createModelCapabilities({
+      selectionSupport: { agent: false, textGeneration: false, decision: "native" },
+      optionDescriptors: [],
+    });
+    expect(
+      toCustomModelSetting({
+        slug: "decision",
+        name: "decision",
+        capabilities: decisionCapabilities,
+      }),
+    ).toEqual({ slug: "decision", capabilities: decisionCapabilities });
+    expect(
+      readCustomModelEntries([{ slug: "decision", capabilities: decisionCapabilities }])[0]
+        ?.capabilities?.selectionSupport,
+    ).toEqual({ agent: false, textGeneration: false, decision: "native" });
+  });
+});
+
+describe("model selection purposes", () => {
+  it("keeps legacy selectable models available for every non-native role", () => {
+    const legacyModel = { isSelectable: true, capabilities: null };
+    expect(resolveModelSelectionSupport(legacyModel)).toEqual({
+      agent: true,
+      textGeneration: true,
+      decision: "prompted",
+    });
+    expect(supportsModelSelectionPurpose(legacyModel, "agent")).toBe(true);
+    expect(supportsModelSelectionPurpose(legacyModel, "text-generation")).toBe(true);
+    expect(supportsModelSelectionPurpose(legacyModel, "decision")).toBe(true);
+  });
+
+  it("uses advertised native decision support even when legacy selection is disabled", () => {
+    const nativeDecisionModel = {
+      isSelectable: false,
+      capabilities: createModelCapabilities({
+        selectionSupport: { agent: false, textGeneration: false, decision: "native" },
+        optionDescriptors: [],
+      }),
+    };
+    expect(supportsModelSelectionPurpose(nativeDecisionModel, "decision")).toBe(true);
+    expect(supportsModelSelectionPurpose(nativeDecisionModel, "agent")).toBe(false);
+    expect(supportsModelSelectionPurpose(nativeDecisionModel, "text-generation")).toBe(false);
+  });
+
+  it("keeps legacy unavailable models unavailable without explicit role metadata", () => {
+    const unavailableModel = { isSelectable: false, capabilities: null };
+    expect(resolveModelSelectionSupport(unavailableModel)).toEqual({
+      agent: false,
+      textGeneration: false,
+      decision: "none",
     });
   });
 });
