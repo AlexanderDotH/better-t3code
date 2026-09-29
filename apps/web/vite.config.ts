@@ -202,7 +202,6 @@ export default defineConfig(() => {
     ],
     optimizeDeps: {
       include: [
-        "@clerk/clerk-js",
         "@clerk/react/internal",
         "@pierre/diffs",
         "@pierre/diffs/editor",
