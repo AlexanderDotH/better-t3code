@@ -27,6 +27,9 @@ apps/*
 !apps/server/**
 !apps/web
 !apps/web/**
+!apps/desktop
+apps/desktop/**
+!apps/desktop/package.json
 apps/server/dist
 apps/server/node_modules
 apps/server/.vite-plus
@@ -45,6 +48,9 @@ userdata
 worktrees
 oxlint-plugin-t3code
 native/*
+!native/libghostty-vt
+native/libghostty-vt/**
+!native/libghostty-vt/LICENSE
 !native/project-indexer-dotnet
 !native/project-indexer-dotnet/Program.cs
 !native/project-indexer-dotnet/ProjectIndexer.csproj
