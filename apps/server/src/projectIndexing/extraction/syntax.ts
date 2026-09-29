@@ -15,11 +15,12 @@ import {
   projectIndexSyntaxGrammar,
 } from "@t3tools/shared/projectIndexLanguages";
 
+import { indexerModuleUrl, resolveFilesystemAsset } from "./assets.ts";
 import { coverageGap, sourceLanguage, supportsSyntax, type ExtractionGap } from "./inventory.ts";
 import { rangeFromOffsets, sourceHash, stableId } from "./source.ts";
 import { syntaxModuleSpecifiers } from "./syntaxModules.ts";
 
-const require = NodeModule.createRequire(import.meta.url);
+const require = NodeModule.createRequire(indexerModuleUrl(import.meta.url));
 const projectIndexerAssets = {
   runtime: "web-tree-sitter/tree-sitter.wasm",
   grammars: PROJECT_INDEX_SYNTAX_GRAMMARS.map(
@@ -33,11 +34,15 @@ let parserReady: Promise<void> | undefined;
 const grammarCache = new Map<string, Promise<Language>>();
 
 async function loadGrammar(grammar: string) {
-  parserReady ??= Parser.init({ locateFile: () => require.resolve(projectIndexerAssets.runtime) });
+  parserReady ??= Parser.init({
+    locateFile: () => resolveFilesystemAsset(require.resolve(projectIndexerAssets.runtime)),
+  });
   await parserReady;
   let pending = grammarCache.get(grammar);
   if (!pending) {
-    pending = Language.load(require.resolve(`tree-sitter-wasms/out/tree-sitter-${grammar}.wasm`));
+    pending = Language.load(
+      resolveFilesystemAsset(require.resolve(`tree-sitter-wasms/out/tree-sitter-${grammar}.wasm`)),
+    );
     grammarCache.set(grammar, pending);
     void pending.catch(() => grammarCache.delete(grammar));
   }

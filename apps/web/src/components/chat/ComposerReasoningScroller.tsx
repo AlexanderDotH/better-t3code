@@ -4,8 +4,7 @@ import { memo, useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { workEntryIsProviderReasoning, type WorkLogEntry } from "../../session-logic";
 import ChatMarkdown from "../ChatMarkdown";
-
-import "./ComposerReasoningScroller.css";
+import type { ChatMessage } from "../../types";
 
 const VISIBLE_REASONING_ENTRIES = 3;
 
@@ -27,8 +26,53 @@ export function latestReasoningEntries(entries: readonly WorkLogEntry[], turnId:
   return recent.toReversed();
 }
 
+interface ReasoningTrace {
+  readonly id: string;
+  readonly detail: string;
+  readonly createdAt: string;
+  readonly streaming: boolean;
+}
+
+export function latestReasoningTraces(
+  entries: readonly WorkLogEntry[],
+  messages: readonly ChatMessage[],
+  turnId: TurnId | null,
+): ReasoningTrace[] {
+  if (turnId === null) return [];
+  const canonical: ChatMessage[] = [];
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]!;
+    if (message.role === "reasoning" && message.turnId === turnId && message.text.trim()) {
+      canonical.unshift(message);
+      if (canonical.length === VISIBLE_REASONING_ENTRIES) break;
+    }
+  }
+  const canonicalText = new Set(canonical.map((message) => message.text.trim()));
+  const legacy = latestReasoningEntries(entries, turnId)
+    .filter((entry) => !canonicalText.has(entry.detail!.trim()))
+    .map((entry) => ({
+      id: entry.id,
+      detail: entry.detail!,
+      createdAt: entry.createdAt,
+      streaming: true,
+    }));
+  return [
+    ...legacy,
+    ...canonical.map((message) => ({
+      id: message.id,
+      detail: message.text,
+      createdAt: message.createdAt,
+      streaming: message.streaming,
+    })),
+  ]
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+    .slice(-VISIBLE_REASONING_ENTRIES);
+}
+
 export const ComposerReasoningScroller = memo(function ComposerReasoningScroller(props: {
   readonly entries: readonly WorkLogEntry[];
+  readonly messages?: readonly ChatMessage[];
+  readonly active?: boolean;
   readonly turnId: TurnId | null;
   readonly threadRef: ScopedThreadRef;
   readonly environmentId: EnvironmentId;
@@ -36,21 +80,23 @@ export const ComposerReasoningScroller = memo(function ComposerReasoningScroller
   readonly streamingMotionEnabled: boolean;
 }) {
   const entries = useMemo(
-    () => latestReasoningEntries(props.entries, props.turnId),
-    [props.entries, props.turnId],
+    () => latestReasoningTraces(props.entries, props.messages ?? [], props.turnId),
+    [props.entries, props.messages, props.turnId],
   );
   if (entries.length === 0) return null;
   return (
     <ReasoningLyrics
       {...props}
       entries={entries}
+      active={props.active ?? true}
       key={`${props.environmentId}:${props.threadRef.threadId}:${props.turnId}`}
     />
   );
 });
 
 function ReasoningLyrics(props: {
-  readonly entries: readonly WorkLogEntry[];
+  readonly entries: readonly ReasoningTrace[];
+  readonly active: boolean;
   readonly threadRef: ScopedThreadRef;
   readonly environmentId: EnvironmentId;
   readonly cwd: string | undefined;
@@ -97,14 +143,14 @@ function ReasoningLyrics(props: {
             cwd={props.cwd}
             threadRef={props.threadRef}
             environmentId={props.environmentId}
-            isStreaming={index === props.entries.length - 1}
+            isStreaming={props.active && entry.streaming && index === props.entries.length - 1}
             streamId={`${props.environmentId}:${props.threadRef.threadId}:reasoning:${entry.id}`}
-            animateInitialStreamChunk
+            animateInitialStreamChunk={props.active && entry.streaming}
             streamingMotionEnabled={props.streamingMotionEnabled}
             className={
               index === props.entries.length - 1
-                ? "text-[11px] text-foreground/85"
-                : "text-[11px] text-muted-foreground/55"
+                ? "text-2xs text-foreground/85"
+                : "text-2xs text-muted-foreground/55"
             }
             lineBreaks
           />

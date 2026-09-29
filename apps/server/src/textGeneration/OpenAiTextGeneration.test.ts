@@ -55,7 +55,7 @@ describe("OpenAiTextGeneration", () => {
       const complete: OpenAiTextCompletion = (request) =>
         Effect.sync(() => {
           requests.push(request);
-          return { text: '{"title":"  Direct Responses  "}' };
+          return { text: '{"title":"  Direct Responses  ","needsRefinement":true}' };
         });
       const textGeneration = makeOpenAiTextGeneration({ enabled: true }, complete, {
         isModelAvailable: () => Effect.succeed(true),
@@ -64,11 +64,12 @@ describe("OpenAiTextGeneration", () => {
       const result = yield* textGeneration.generateThreadTitle({
         cwd: "/workspace",
         message: "Implement OpenAI Responses",
+        linkedContext: "The linked issue requests direct Responses transport.",
         attachments: [],
         modelSelection: selection,
       });
 
-      expect(result).toEqual({ title: "Direct Responses" });
+      expect(result).toEqual({ title: "Direct Responses", needsRefinement: true });
       expect(requests).toHaveLength(1);
       expect(requests[0]).toMatchObject({
         model: "gpt-5.6-sol",
@@ -76,6 +77,9 @@ describe("OpenAiTextGeneration", () => {
         responseFormat: { name: "thread_title", schema: expect.any(Object) },
       });
       expect(requests[0]?.instructions).toContain("exactly one JSON object");
+      expect(requests[0]?.prompt).toContain(
+        "The linked issue requests direct Responses transport.",
+      );
     }),
   );
 

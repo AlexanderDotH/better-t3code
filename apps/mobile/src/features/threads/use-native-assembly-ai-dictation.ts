@@ -17,10 +17,13 @@ import {
   createNativeServerSpeechSession,
   type NativeServerSpeechSession,
 } from "./native-server-speech-transport";
-import { shouldDeactivateNativeAssemblyAiDictation } from "./native-assembly-ai-dictation-policy";
+import {
+  type NativeVoiceDictationState,
+  shouldDeactivateNativeAssemblyAiDictation,
+} from "./native-assembly-ai-dictation-policy";
 import { createNativeDictationDraft, processNativeDictation } from "./native-dictation-draft";
 
-export type NativeVoiceDictationState = "idle" | "starting" | "recording" | "stopping";
+export type { NativeVoiceDictationState } from "./native-assembly-ai-dictation-policy";
 
 const EMPTY_WAVEFORM = Object.freeze(Array.from({ length: 14 }, () => 0));
 

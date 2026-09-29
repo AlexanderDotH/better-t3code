@@ -55,6 +55,8 @@ export interface CodexAdapterSessionContext {
   readonly builtInMcpExpected: boolean;
   readonly subagentMetadata: CodexSubagentRuntimeMetadata;
   readonly turnTokenUsage: CodexTurnTokenUsageState;
+  readonly startInput: Parameters<CodexAdapterShape["startSession"]>[0];
+  readonly runtimeRevision?: string;
   stopped: boolean;
 }
 

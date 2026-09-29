@@ -45,6 +45,15 @@ userdata
 worktrees
 oxlint-plugin-t3code
 native/*
+!native/project-indexer-dotnet
+!native/project-indexer-dotnet/Program.cs
+!native/project-indexer-dotnet/ProjectIndexer.csproj
+!native/project-indexer-java
+!native/project-indexer-java/pom.xml
+!native/project-indexer-java/src
+!native/project-indexer-java/src/**
+!native/project-indexer-cache
+!native/project-indexer-cache/**
 !native/resource-monitor
 !native/resource-monitor/Cargo.toml
 !native/resource-monitor/Cargo.lock

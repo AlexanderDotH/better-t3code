@@ -25,8 +25,8 @@ import { useAtomCommand } from "./use-atom-command";
 import { showGitActionResult } from "./use-vcs-action-state";
 import { useThreadSelection } from "./use-thread-selection";
 import { useSelectedThreadWorktree } from "./use-selected-thread-worktree";
-import { mobileGitWorkbenchCanActivate } from "../features/threads/git/mobile-git-workbench";
-import { useMobileGitWorkbenchAvailability } from "../features/threads/git/use-mobile-git-workbench";
+import { mobileGitWorkbenchCanActivate } from "./git-workbench-availability";
+import { useMobileGitWorkbenchAvailability } from "./use-git-workbench-availability";
 
 export function useSelectedThreadGitActions() {
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
@@ -340,6 +340,8 @@ export function useSelectedThreadGitActions() {
             ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
             ...(input.featureBranch ? { featureBranch: input.featureBranch } : {}),
             ...(input.filePaths?.length ? { filePaths: [...input.filePaths] } : {}),
+            // A pull request the action opens is linked to the thread it ran beside.
+            threadId: thread.id,
           });
           if (AsyncResult.isFailure(result)) {
             return result;

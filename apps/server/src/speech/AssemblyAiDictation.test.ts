@@ -1,3 +1,4 @@
+import * as ByteSize from "effect/ByteSize";
 import { describe, expect, it, vi } from "@effect/vitest";
 import {
   DEFAULT_ASSEMBLY_AI_VOICE_SETTINGS,
@@ -88,7 +89,7 @@ const fileInfo: FileSystem.File.Info = {
   uid: Option.none(),
   gid: Option.none(),
   rdev: Option.none(),
-  size: FileSystem.Size(10),
+  size: ByteSize.bytes(10),
   blksize: Option.none(),
   blocks: Option.none(),
 };

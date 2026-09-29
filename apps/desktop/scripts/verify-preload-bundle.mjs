@@ -9,6 +9,7 @@ import { parse } from "acorn";
 const expectedDesktopBridgeApis = [
   "getClientPlatform",
   "getLocalEnvironmentBootstraps",
+  "getPathForFile",
   "pickFolder",
 ];
 const clerkPasskeysGlobal = "__clerk_internal_electron_passkeys";
@@ -68,6 +69,9 @@ const createSandboxModules = (exposedGlobals) => {
       exposeInMainWorld: (name, api) => exposedGlobals.set(name, api),
     },
     ipcRenderer,
+    webUtils: {
+      getPathForFile: () => "",
+    },
   };
 
   return new Map([
@@ -112,10 +116,9 @@ const executeBundle = (source, sandboxModules) => {
   );
 };
 
-export const verifyPreloadBundle = (source) => {
+export const verifySandboxPreloadImports = (source) => {
   const runtimeImports = inspectBundle(source);
-  const exposedGlobals = new Map();
-  const sandboxModules = createSandboxModules(exposedGlobals);
+  const sandboxModules = createSandboxModules(new Map());
   const unsupportedImports = [...new Set(runtimeImports)]
     .filter((moduleName) => !sandboxModules.has(moduleName))
     .toSorted();
@@ -125,6 +128,12 @@ export const verifyPreloadBundle = (source) => {
       `Desktop preload bundle contains unsupported sandbox imports: ${unsupportedImports.join(", ")}`,
     );
   }
+};
+
+export const verifyPreloadBundle = (source) => {
+  verifySandboxPreloadImports(source);
+  const exposedGlobals = new Map();
+  const sandboxModules = createSandboxModules(exposedGlobals);
 
   executeBundle(source, sandboxModules);
 

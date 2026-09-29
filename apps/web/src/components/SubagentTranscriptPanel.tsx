@@ -112,7 +112,7 @@ export const SubagentTranscriptPanel = memo(function SubagentTranscriptPanel({
   if (isLoading && !subagent) {
     return (
       <PanelState className={className}>
-        <Spinner className="size-4 text-muted-foreground" />
+        <Spinner className="size-4" />
         <span>{translate("chat.agent.transcript.loading")}</span>
       </PanelState>
     );
@@ -232,7 +232,7 @@ function SubagentTranscriptHeader({
             </Badge>
           </div>
           {metadata.length > 0 ? (
-            <p className="mt-0.5 text-pretty text-[11px] text-muted-foreground">
+            <p className="mt-0.5 text-pretty text-2xs text-muted-foreground">
               {metadata.join(" · ")}
             </p>
           ) : null}
@@ -246,18 +246,18 @@ function SubagentTranscriptHeader({
       >
         <p className="text-xs font-medium text-foreground/90">{status.activity}</p>
         {status.detail ? (
-          <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">{status.detail}</p>
+          <p className="mt-0.5 text-2xs leading-4 text-muted-foreground">{status.detail}</p>
         ) : null}
       </div>
 
       {subagent.task ? (
-        <p className="mt-2 line-clamp-2 text-[11px] leading-4 text-muted-foreground">
+        <p className="mt-2 line-clamp-2 text-2xs leading-4 text-muted-foreground">
           {subagent.task}
         </p>
       ) : null}
 
       {errorMessage ? (
-        <p className="mt-2 flex items-start gap-1.5 text-[11px] text-destructive">
+        <p className="mt-2 flex items-start gap-1.5 text-2xs text-destructive">
           <CircleAlertIcon aria-hidden="true" className="mt-0.5 size-3 shrink-0" />
           <span>{errorMessage}</span>
         </p>
@@ -416,15 +416,15 @@ function TranscriptActivity({
         createdAt={activity.createdAt}
         timestampFormat={timestampFormat}
       />
-      <p className="mt-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/65">
+      <p className="mt-1 text-3xs font-medium uppercase tracking-wide text-muted-foreground/65">
         {activity.kind}
       </p>
       {serializedPayload ? (
-        <details className="mt-2 text-[11px] text-muted-foreground">
+        <details className="mt-2 text-2xs text-muted-foreground">
           <summary className="cursor-pointer select-none outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
             {translate("chat.agent.transcript.eventDetails")}
           </summary>
-          <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-background/80 p-2.5 font-mono text-[10px] leading-4 text-foreground/75">
+          <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-background/80 p-2.5 font-mono text-3xs leading-4 text-foreground/75">
             {serializedPayload}
           </pre>
         </details>
@@ -451,7 +451,7 @@ function EntryHeading({
       {icon}
       <span className="min-w-0 flex-1 truncate font-medium text-foreground/85">{label}</span>
       {trailing}
-      <time className="shrink-0 text-[10px] tabular-nums" dateTime={createdAt}>
+      <time className="shrink-0 text-3xs tabular-nums" dateTime={createdAt}>
         {formatShortTimestamp(createdAt, timestampFormat)}
       </time>
     </div>

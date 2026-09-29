@@ -4,6 +4,8 @@ import {
   resolveProviderInstanceEnabled,
   type ModelSelection,
   type ProjectId,
+  type ProjectScopedServerSettingKey,
+  type ProjectSettingsOverrides,
   type ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProvider,
@@ -25,22 +27,33 @@ import {
 const ServerSettingsJson = fromLenientJson(ServerSettings);
 const decodeServerSettingsJson = Schema.decodeUnknownOption(ServerSettingsJson);
 
+/** @deprecated Read `resolveProjectSettings(...).settings.enableAgentBrowserAccess`. */
 export function resolveProjectAgentBrowserAccess(
-  settings: Pick<ServerSettings, "enableAgentBrowserAccess" | "projectAgentBrowserAccessOverrides">,
+  settings: Pick<
+    ServerSettings,
+    "enableAgentBrowserAccess" | "projectAgentBrowserAccessOverrides" | "projectSettingsOverrides"
+  >,
   projectId: ProjectId,
 ): boolean {
   return (
-    settings.projectAgentBrowserAccessOverrides[projectId] ?? settings.enableAgentBrowserAccess
+    settings.projectSettingsOverrides[projectId]?.enableAgentBrowserAccess ??
+    settings.projectAgentBrowserAccessOverrides[projectId] ??
+    settings.enableAgentBrowserAccess
   );
 }
 
+/** @deprecated Read `resolveProjectSettings(...).settings.defaultAutoPull`. */
 export function resolveProjectAutoPull(
-  settings: Pick<ServerSettings, "defaultAutoPull" | "projectAutoPullOverrides">,
+  settings: Pick<
+    ServerSettings,
+    "defaultAutoPull" | "projectAutoPullOverrides" | "projectSettingsOverrides"
+  >,
   projectId: ProjectId,
   legacyAutoPull: boolean | undefined,
 ): boolean {
   // Existing opt-ins stay enabled until explicitly overridden or reset.
   return (
+    settings.projectSettingsOverrides[projectId]?.defaultAutoPull ??
     settings.projectAutoPullOverrides[projectId] ??
     (legacyAutoPull === true || settings.defaultAutoPull)
   );
@@ -118,6 +131,7 @@ export function resolveVoiceTranslationModelSelection(
 export interface PersistedServerObservabilitySettings {
   readonly otlpTracesUrl: string | undefined;
   readonly otlpMetricsUrl: string | undefined;
+  readonly otlpLogsUrl: string | undefined;
 }
 
 function normalizePersistedServerSettingString(
@@ -131,11 +145,13 @@ function extractPersistedServerObservabilitySettings(input: {
   readonly observability?: {
     readonly otlpTracesUrl?: string;
     readonly otlpMetricsUrl?: string;
+    readonly otlpLogsUrl?: string;
   };
 }): PersistedServerObservabilitySettings {
   return {
     otlpTracesUrl: normalizePersistedServerSettingString(input.observability?.otlpTracesUrl),
     otlpMetricsUrl: normalizePersistedServerSettingString(input.observability?.otlpMetricsUrl),
+    otlpLogsUrl: normalizePersistedServerSettingString(input.observability?.otlpLogsUrl),
   };
 }
 
@@ -146,7 +162,7 @@ export function parsePersistedServerObservabilitySettings(
   if (Option.isSome(decoded)) {
     return extractPersistedServerObservabilitySettings(decoded.value);
   }
-  return { otlpTracesUrl: undefined, otlpMetricsUrl: undefined };
+  return { otlpTracesUrl: undefined, otlpMetricsUrl: undefined, otlpLogsUrl: undefined };
 }
 
 type ModelSelectionPatch = NonNullable<ServerSettingsPatch["textGenerationModelSelection"]>;
@@ -273,10 +289,97 @@ function resolveInterfaceLocalePatch(
   };
 }
 
+/**
+ * Derived views of `projectSettingsOverrides` for clients that still read
+ * the legacy per-key maps. Recomputed on every patch and load so they
+ * cannot drift from the generic record.
+ */
+export function deriveLegacyProjectOverrides(
+  settings: Pick<ServerSettings, "projectSettingsOverrides">,
+): Pick<
+  ServerSettings,
+  "projectAgentBrowserAccessOverrides" | "projectAutoPullOverrides" | "projectScriptOverrides"
+> {
+  const projectAgentBrowserAccessOverrides: Record<string, boolean> = {};
+  const projectAutoPullOverrides: Record<string, boolean> = {};
+  const projectScriptOverrides: Record<string, ServerSettings["defaultProjectScripts"] | null> = {};
+  for (const [projectId, entry] of Object.entries(settings.projectSettingsOverrides)) {
+    if (entry.enableAgentBrowserAccess !== undefined) {
+      projectAgentBrowserAccessOverrides[projectId] = entry.enableAgentBrowserAccess;
+    }
+    if (entry.defaultAutoPull !== undefined) {
+      projectAutoPullOverrides[projectId] = entry.defaultAutoPull;
+    }
+    if (entry.defaultProjectScripts !== undefined) {
+      projectScriptOverrides[projectId] = entry.defaultProjectScripts;
+    }
+  }
+  return { projectAgentBrowserAccessOverrides, projectAutoPullOverrides, projectScriptOverrides };
+}
+
+/**
+ * Rewrite a patch that still uses the legacy per-key project maps into
+ * entries of `projectSettingsOverrides`, so older clients keep editing the
+ * values the server actually reads. `null` in a legacy map clears that one
+ * override.
+ */
+function translateLegacyProjectOverridePatch(
+  current: Pick<ServerSettings, "projectSettingsOverrides">,
+  patch: ServerSettingsPatch,
+): ServerSettingsPatch {
+  const {
+    projectAgentBrowserAccessOverrides,
+    projectAutoPullOverrides,
+    projectScriptOverrides,
+    ...rest
+  } = patch;
+  if (
+    projectAgentBrowserAccessOverrides === undefined &&
+    projectAutoPullOverrides === undefined &&
+    projectScriptOverrides === undefined
+  ) {
+    return patch;
+  }
+  const currentEntries: Readonly<Record<string, ProjectSettingsOverrides>> =
+    current.projectSettingsOverrides;
+  const entries = new Map<string, ProjectSettingsOverrides | null>(
+    Object.entries(rest.projectSettingsOverrides ?? {}),
+  );
+  // A canonical entry in the same patch is the newer representation; a legacy
+  // map must not resurrect a key that entry deliberately omits.
+  const canonicalProjectIds = new Set(Object.keys(rest.projectSettingsOverrides ?? {}));
+  const applyKey = <K extends ProjectScopedServerSettingKey>(
+    map: Readonly<Record<string, ProjectSettingsOverrides[K] | null>> | undefined,
+    key: K,
+  ) => {
+    if (map === undefined) return;
+    for (const [projectId, value] of Object.entries(map)) {
+      if (canonicalProjectIds.has(projectId)) continue;
+      const entry: ProjectSettingsOverrides = {
+        ...(entries.get(projectId) ?? currentEntries[projectId]),
+      };
+      if (value === null || value === undefined) {
+        delete entry[key];
+      } else {
+        entry[key] = value;
+      }
+      entries.set(projectId, Object.keys(entry).length === 0 ? null : entry);
+    }
+  };
+  applyKey(projectAgentBrowserAccessOverrides, "enableAgentBrowserAccess");
+  applyKey(projectAutoPullOverrides, "defaultAutoPull");
+  applyKey(projectScriptOverrides, "defaultProjectScripts");
+  return {
+    ...rest,
+    projectSettingsOverrides: Object.fromEntries(entries),
+  } as ServerSettingsPatch;
+}
+
 export function applyServerSettingsPatch(
   current: ServerSettings,
-  patch: ServerSettingsPatch,
+  rawPatch: ServerSettingsPatch,
 ): ServerSettings {
+  const patch = translateLegacyProjectOverridePatch(current, rawPatch);
   const textGenerationSelectionPatch = patch.textGenerationModelSelection;
   const fetchModelSelectionPatch = patch.fetchModelSelection;
   const voiceTranslationSelectionPatch = patch.voiceTranslationModelSelection;
@@ -289,17 +392,18 @@ export function applyServerSettingsPatch(
   const {
     betterT3Environment,
     enableAssistantStreaming,
+    enableLegacyTokenStreaming,
+    responseStreamingMode,
     interfaceLanguageSyncRecord,
     interfaceLocaleSyncRecordV1,
     automaticGitFetchInterval,
     providerHealthRefreshInterval,
     backgroundActivityProfile,
     backgroundActivity,
+    worktreeCleanup: worktreeCleanupPatch,
     // Merged per entry below; its `null` removals must not reach deepMerge.
     usageLimitSources: usageLimitSourcesPatch,
     usagePriceOverrides: usagePriceOverridesPatch,
-    projectAgentBrowserAccessOverrides: projectAgentBrowserAccessOverridesPatch,
-    projectAutoPullOverrides: projectAutoPullOverridesPatch,
     speechTranscription: speechTranscriptionPatch,
     textGenerationModelSelection: _textGenerationModelSelection,
     fetchModelSelection: _fetchModelSelection,
@@ -307,6 +411,13 @@ export function applyServerSettingsPatch(
     knowledgeGraphModelSelection: _knowledgeGraphModelSelection,
     projectIndexingDefaultModelSelection: _projectIndexingDefaultModelSelection,
     parallelPlanReviewModelSelection: _parallelPlanReviewModelSelection,
+    // Entry replacement: deepMerge would keep keys the client meant to clear.
+    projectSettingsOverrides: projectSettingsOverridesPatch,
+    // Already translated into `projectSettingsOverrides` above; the legacy
+    // maps are derived views and must never be merged directly.
+    projectAgentBrowserAccessOverrides: _legacyBrowserAccess,
+    projectAutoPullOverrides: _legacyAutoPull,
+    projectScriptOverrides: _legacyScripts,
     ...patchForMerge
   } = patch;
   const currentBackgroundActivity = normalizeServerBackgroundActivitySettings(current);
@@ -344,11 +455,18 @@ export function applyServerSettingsPatch(
             },
           }
         : undefined;
-  const next = deepMerge(current, {
+  const {
+    enableAssistantStreaming: _formerAssistantStreaming,
+    enableLegacyTokenStreaming: _formerTokenStreaming,
+    ...currentForMerge
+  } = current;
+  const legacyStreamingChoice = enableLegacyTokenStreaming ?? enableAssistantStreaming;
+  const nextStreamingMode =
+    responseStreamingMode ??
+    (legacyStreamingChoice === undefined ? undefined : legacyStreamingChoice ? "token" : "turn");
+  const next = deepMerge(currentForMerge, {
     ...patchForMerge,
-    ...(enableAssistantStreaming !== undefined && patch.enableLegacyTokenStreaming === undefined
-      ? { enableLegacyTokenStreaming: enableAssistantStreaming }
-      : {}),
+    ...(nextStreamingMode === undefined ? {} : { responseStreamingMode: nextStreamingMode }),
   });
   const nextWithReplacementsBase = {
     ...next,
@@ -400,6 +518,26 @@ export function applyServerSettingsPatch(
       interfaceLanguageSyncRecord,
       interfaceLocaleSyncRecordV1,
     }),
+    ...(worktreeCleanupPatch === undefined
+      ? {}
+      : {
+          worktreeCleanup:
+            worktreeCleanupPatch?.mode === "custom"
+              ? {
+                  mode: "custom" as const,
+                  rules: {
+                    worktreeAfterDays: next.storageCleanup.worktreeAfterDays,
+                    worktreeOnMerge: next.storageCleanup.worktreeOnMerge,
+                    worktreeOnDelete: next.storageCleanup.worktreeOnDelete,
+                    worktreeUnchanged: next.storageCleanup.worktreeUnchanged,
+                    ...(current.worktreeCleanup?.mode === "custom"
+                      ? current.worktreeCleanup.rules
+                      : {}),
+                    ...worktreeCleanupPatch.rules,
+                  },
+                }
+              : worktreeCleanupPatch,
+        }),
     ...(backgroundActivity !== undefined
       ? {
           backgroundActivity: {
@@ -416,19 +554,12 @@ export function applyServerSettingsPatch(
     ...(patch.providerInstances !== undefined
       ? { providerInstances: patch.providerInstances }
       : {}),
-    ...(projectAgentBrowserAccessOverridesPatch !== undefined
+    ...(projectSettingsOverridesPatch !== undefined
       ? {
-          projectAgentBrowserAccessOverrides: mergeSettingsEntries(
-            current.projectAgentBrowserAccessOverrides,
-            projectAgentBrowserAccessOverridesPatch,
-          ),
-        }
-      : {}),
-    ...(projectAutoPullOverridesPatch !== undefined
-      ? {
-          projectAutoPullOverrides: mergeSettingsEntries(
-            current.projectAutoPullOverrides,
-            projectAutoPullOverridesPatch,
+          projectSettingsOverrides: Object.fromEntries(
+            Object.entries(
+              mergeSettingsEntries(current.projectSettingsOverrides, projectSettingsOverridesPatch),
+            ).filter(([, entry]) => Object.keys(entry).length > 0),
           ),
         }
       : {}),
@@ -437,14 +568,6 @@ export function applyServerSettingsPatch(
       : {}),
     ...(patch.defaultProjectScripts !== undefined
       ? { defaultProjectScripts: patch.defaultProjectScripts }
-      : {}),
-    ...(patch.projectScriptOverrides !== undefined
-      ? {
-          projectScriptOverrides: {
-            ...current.projectScriptOverrides,
-            ...patch.projectScriptOverrides,
-          },
-        }
       : {}),
     ...(usageLimitSourcesPatch !== undefined
       ? {
@@ -494,6 +617,7 @@ export function applyServerSettingsPatch(
   );
   const nextWithReplacements = {
     ...nextWithReplacementsBase,
+    ...deriveLegacyProjectOverrides(nextWithReplacementsBase),
     backgroundActivity: normalizedBackgroundActivity,
     automaticGitFetchInterval: resolvedBackgroundActivity.automaticGitFetchInterval,
     providerHealthRefreshInterval: resolvedBackgroundActivity.providerHealthRefreshInterval,

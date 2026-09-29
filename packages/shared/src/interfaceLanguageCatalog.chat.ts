@@ -366,6 +366,11 @@ export const chatInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Échec de la connexion. Reconnexion...",
   ],
   "chat.environment.status.connected": ["Connected", "Verbunden", "Connecté"],
+  "chat.environment.status.unsupported": [
+    "Client not supported",
+    "Client nicht unterstützt",
+    "Client non pris en charge",
+  ],
   "chat.environment.status.failed": [
     "Connection failed",
     "Verbindung fehlgeschlagen",

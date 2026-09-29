@@ -45,6 +45,7 @@ function environment(
           wsBaseUrl: "wss://environment.example.test",
         }),
       ),
+      enabled: true,
     },
     connection: {
       phase,

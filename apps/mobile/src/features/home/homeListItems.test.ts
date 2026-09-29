@@ -53,6 +53,7 @@ function makeThread(id: string, projectId: ProjectId): EnvironmentThreadShell {
     runtimeMode: "full-access",
     interactionMode: "default",
     branch: null,
+    pullRequests: [],
     worktreePath: null,
     latestTurn: null,
     createdAt: "2026-06-01T00:00:00.000Z",

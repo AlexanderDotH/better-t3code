@@ -127,6 +127,8 @@ function roleLabel(role: OrchestrationThread["messages"][number]["role"]): strin
       return "Assistant";
     case "system":
       return "System";
+    case "reasoning":
+      return "Reasoning";
   }
 }
 

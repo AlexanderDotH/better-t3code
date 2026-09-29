@@ -1,4 +1,4 @@
-import type { CodexSettings } from "@t3tools/contracts";
+import type { CodexSettings, ProviderSetupError } from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as CodexClient from "effect-codex-app-server/client";
 import type * as CodexErrors from "effect-codex-app-server/errors";
@@ -13,6 +14,8 @@ import type * as CodexRpc from "effect-codex-app-server/rpc";
 import type * as CodexSchema from "effect-codex-app-server/schema";
 
 import { expandHomePath } from "../../pathExpansion.ts";
+import type { CodexEffectiveRuntime } from "../CodexManagedRuntime.ts";
+import { readCodexThreadTurns } from "../Layers/CodexSessionRuntime.ts";
 import { buildCodexInitializeParams } from "../Layers/CodexProvider.ts";
 import { codexSessionAppServerArgs } from "../Layers/codexLaunchArgs.ts";
 import { resolveCodexLaunchArgs } from "../Layers/codexLaunchArgs.ts";
@@ -169,6 +172,7 @@ function codexAttachment(
   switch (input.type) {
     case "image":
     case "audio": {
+      if (!("url" in input)) return undefined;
       const type = input.type;
       const mimeType = inferMimeType(input.url, type);
       return {
@@ -347,9 +351,13 @@ export const makeLiveCodexHistorySyncAdapter = Effect.fn("makeLiveCodexHistorySy
     readonly config: Pick<CodexSettings, "binaryPath" | "homePath" | "launchArgs">;
     readonly environment: NodeJS.ProcessEnv;
     readonly cwd: string;
+    readonly resolveRuntime?: Effect.Effect<CodexEffectiveRuntime, ProviderSetupError, Scope.Scope>;
   }): Effect.fn.Return<ProviderHistorySyncAdapter, never, ChildProcessSpawner.ChildProcessSpawner> {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    type LiveHistoryError = CodexErrors.CodexAppServerError | PlatformError.PlatformError;
+    type LiveHistoryError =
+      | CodexErrors.CodexAppServerError
+      | PlatformError.PlatformError
+      | ProviderSetupError;
     const withClient = <A>(
       use: (
         client: CodexClient.CodexAppServerClient["Service"],
@@ -357,18 +365,20 @@ export const makeLiveCodexHistorySyncAdapter = Effect.fn("makeLiveCodexHistorySy
     ): Effect.Effect<A, LiveHistoryError> =>
       Effect.scoped(
         Effect.gen(function* () {
-          const resolvedHomePath = input.config.homePath.trim()
-            ? expandHomePath(input.config.homePath)
+          const resolved = input.resolveRuntime ? yield* input.resolveRuntime : undefined;
+          const config = resolved?.config ?? input.config;
+          const resolvedHomePath = config.homePath.trim()
+            ? expandHomePath(config.homePath)
             : undefined;
           const environment = {
-            ...input.environment,
+            ...(resolved?.environment ?? input.environment),
             ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
           };
           const appServerArgs = codexSessionAppServerArgs(
             codexManagedFeatureArgs(),
-            resolveCodexLaunchArgs(input.config.launchArgs, environment),
+            resolveCodexLaunchArgs(config.launchArgs, environment),
           );
-          const spawnCommand = yield* resolveSpawnCommand(input.config.binaryPath, appServerArgs, {
+          const spawnCommand = yield* resolveSpawnCommand(config.binaryPath, appServerArgs, {
             env: environment,
             extendEnv: false,
           });
@@ -394,7 +404,18 @@ export const makeLiveCodexHistorySyncAdapter = Effect.fn("makeLiveCodexHistorySy
     return makeCodexHistorySyncAdapter({
       sourceId: input.sourceId,
       listThreads: (request) => withClient((client) => client.request("thread/list", request)),
-      readThread: (request) => withClient((client) => client.request("thread/read", request)),
+      readThread: (request) =>
+        withClient((client) =>
+          Effect.gen(function* () {
+            const response = yield* client.request("thread/read", {
+              ...request,
+              includeTurns: false,
+            });
+            if (!request.includeTurns) return response;
+            const turns = yield* readCodexThreadTurns(client, request.threadId);
+            return { ...response, thread: { ...response.thread, turns } };
+          }),
+        ),
     });
   },
 );

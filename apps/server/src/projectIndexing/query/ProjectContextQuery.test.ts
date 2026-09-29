@@ -350,6 +350,26 @@ function query(
   });
 }
 
+it.effect("rejects unexpected context fields before reading the authenticated index", () =>
+  Effect.gen(function* () {
+    const { reader } = makeReader();
+    const guardedReader: ProjectContextReader = {
+      ...reader,
+      getState: () => Effect.die("An invalid context request must not read the index."),
+    };
+    const invalidInputs = [
+      { operation: "overview", projectId: ProjectId.make("another-project") },
+      { operation: "overview", workspaceRoot: "/another-workspace" },
+      { operation: "overview", unexpected: true },
+    ] as const;
+
+    for (const input of invalidInputs) {
+      const failure = yield* query(input, guardedReader).pipe(Effect.flip);
+      expect(failure).toMatchObject({ code: "invalid-request", retryable: false });
+    }
+  }),
+);
+
 it.effect("maps all 5,000 indexed files independently of the symbol context budget", () =>
   Effect.gen(function* () {
     const files = Array.from({ length: 5_000 }, (_, index): ProjectSourceFileV1 => ({

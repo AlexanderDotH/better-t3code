@@ -1,3 +1,4 @@
+import { StandalonePage, StandalonePageHeader } from "../ui/standalone-page";
 import type { AuthSessionState } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
@@ -19,25 +20,13 @@ import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 export function PairingPendingSurface() {
   const translator = useInterfaceTranslator();
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-10 text-foreground sm:px-6">
-      <div className="pointer-events-none absolute inset-0 opacity-80">
-        <div className="absolute inset-x-0 top-0 h-44 bg-[radial-gradient(44rem_16rem_at_top,color-mix(in_srgb,var(--color-emerald-500)_14%,transparent),transparent)]" />
-        <div className="absolute inset-y-0 left-0 w-72 bg-[radial-gradient(28rem_18rem_at_left,color-mix(in_srgb,var(--color-sky-500)_10%,transparent),transparent)]" />
-        <div className="absolute inset-0 bg-[linear-gradient(145deg,color-mix(in_srgb,var(--background)_90%,var(--color-black))_0%,var(--background)_55%)]" />
-      </div>
-
-      <section className="relative w-full max-w-xl rounded-2xl border border-border/80 bg-card/90 p-6 shadow-2xl shadow-black/20 backdrop-blur-md sm:p-8">
-        <p className="text-[11px] font-semibold tracking-[0.18em] text-muted-foreground uppercase">
-          {APP_DISPLAY_NAME}
-        </p>
-        <h1 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">
-          {translator.message("pairing.pending.title")}
-        </h1>
-        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-          {translator.message("pairing.pending.description")}
-        </p>
-      </section>
-    </div>
+    <StandalonePage tone="pairing">
+      <StandalonePageHeader
+        eyebrow={APP_DISPLAY_NAME}
+        title={<>{translator.message("pairing.pending.title")}</>}
+        description={<>{translator.message("pairing.pending.description")}</>}
+      />
+    </StandalonePage>
   );
 }
 
@@ -101,71 +90,59 @@ export function PairingRouteSurface({
   }, [submitCredential]);
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-10 text-foreground sm:px-6">
-      <div className="pointer-events-none absolute inset-0 opacity-80">
-        <div className="absolute inset-x-0 top-0 h-44 bg-[radial-gradient(44rem_16rem_at_top,color-mix(in_srgb,var(--color-emerald-500)_14%,transparent),transparent)]" />
-        <div className="absolute inset-y-0 left-0 w-72 bg-[radial-gradient(28rem_18rem_at_left,color-mix(in_srgb,var(--color-sky-500)_10%,transparent),transparent)]" />
-        <div className="absolute inset-0 bg-[linear-gradient(145deg,color-mix(in_srgb,var(--background)_90%,var(--color-black))_0%,var(--background)_55%)]" />
-      </div>
+    <StandalonePage tone="pairing">
+      <StandalonePageHeader
+        eyebrow={APP_DISPLAY_NAME}
+        title={<>{translator.message("pairing.title")}</>}
+        description={<>{translator.message(authGateMessageId(auth.bootstrapMethods))}</>}
+      />
 
-      <section className="relative w-full max-w-xl rounded-2xl border border-border/80 bg-card/90 p-6 shadow-2xl shadow-black/20 backdrop-blur-md sm:p-8">
-        <p className="text-[11px] font-semibold tracking-[0.18em] text-muted-foreground uppercase">
-          {APP_DISPLAY_NAME}
-        </p>
-        <h1 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">
-          {translator.message("pairing.title")}
-        </h1>
-        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-          {translator.message(authGateMessageId(auth.bootstrapMethods))}
-        </p>
-
-        <form className="mt-6 space-y-4" onSubmit={(event) => void handleSubmit(event)}>
-          <div className="space-y-2">
-            <label className="text-sm font-medium" htmlFor="pairing-token">
-              {translator.message("pairing.token.label")}
-            </label>
-            <Input
-              id="pairing-token"
-              autoCapitalize="none"
-              autoComplete="off"
-              autoCorrect="off"
-              disabled={isSubmitting}
-              nativeInput
-              onChange={(event) => setCredential(event.currentTarget.value)}
-              placeholder={translator.message("pairing.token.placeholder")}
-              spellCheck={false}
-              value={credential}
-            />
-          </div>
-
-          {errorMessage ? (
-            <div className="rounded-lg border border-destructive/30 bg-destructive/6 px-3 py-2 text-sm text-destructive">
-              {errorMessage}
-            </div>
-          ) : null}
-
-          <div className="flex flex-wrap gap-2">
-            <Button disabled={isSubmitting} size="sm" type="submit">
-              {isSubmitting
-                ? translator.message("pairing.action.pairing")
-                : translator.message("cloud.action.continue")}
-            </Button>
-            <Button
-              disabled={isSubmitting}
-              onClick={() => window.location.reload()}
-              size="sm"
-              variant="outline"
-            >
-              {translator.message("cloud.action.reloadApp")}
-            </Button>
-          </div>
-        </form>
-
-        <div className="mt-6 rounded-lg border border-border/70 bg-background/55 px-3 py-3 text-xs leading-relaxed text-muted-foreground">
-          {translator.message(supportedMethodsMessageId(auth.bootstrapMethods))}
+      <form className="mt-6 space-y-4" onSubmit={(event) => void handleSubmit(event)}>
+        <div className="space-y-2">
+          <label className="text-sm font-medium" htmlFor="pairing-token">
+            {translator.message("pairing.token.label")}
+          </label>
+          <Input
+            id="pairing-token"
+            autoCapitalize="none"
+            autoComplete="off"
+            autoCorrect="off"
+            disabled={isSubmitting}
+            nativeInput
+            onChange={(event) => setCredential(event.currentTarget.value)}
+            placeholder={translator.message("pairing.token.placeholder")}
+            spellCheck={false}
+            value={credential}
+          />
         </div>
-      </section>
-    </div>
+
+        {errorMessage ? (
+          <div className="rounded-lg border border-destructive/30 bg-destructive/6 px-3 py-2 text-sm text-destructive">
+            {errorMessage}
+          </div>
+        ) : null}
+
+        <div className="flex flex-wrap gap-2">
+          <Button disabled={isSubmitting} size="sm" type="submit">
+            {isSubmitting
+              ? translator.message("pairing.action.pairing")
+              : translator.message("cloud.action.continue")}
+          </Button>
+          <Button
+            disabled={isSubmitting}
+            onClick={() => window.location.reload()}
+            size="sm"
+            variant="outline"
+          >
+            {translator.message("cloud.action.reloadApp")}
+          </Button>
+        </div>
+      </form>
+
+      <div className="mt-6 rounded-lg border border-border/70 bg-background/55 px-3 py-3 text-xs leading-relaxed text-muted-foreground">
+        {translator.message(supportedMethodsMessageId(auth.bootstrapMethods))}
+      </div>
+    </StandalonePage>
   );
 }
 
@@ -251,61 +228,53 @@ export function HostedPairingRouteSurface() {
   const request = hostedPairingRequestRef.current;
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-10 text-foreground sm:px-6">
-      <div className="pointer-events-none absolute inset-0 opacity-80">
-        <div className="absolute inset-x-0 top-0 h-44 bg-[radial-gradient(44rem_16rem_at_top,color-mix(in_srgb,var(--color-emerald-500)_14%,transparent),transparent)]" />
-        <div className="absolute inset-y-0 left-0 w-72 bg-[radial-gradient(28rem_18rem_at_left,color-mix(in_srgb,var(--color-sky-500)_10%,transparent),transparent)]" />
-        <div className="absolute inset-0 bg-[linear-gradient(145deg,color-mix(in_srgb,var(--background)_90%,var(--color-black))_0%,var(--background)_55%)]" />
-      </div>
+    <StandalonePage tone="pairing">
+      <StandalonePageHeader
+        eyebrow={APP_DISPLAY_NAME}
+        title={
+          <>
+            {translator.message(
+              status === "paired"
+                ? "pairing.hosted.title.paired"
+                : status === "error"
+                  ? "pairing.hosted.title.failed"
+                  : "pairing.hosted.title.pairing",
+            )}
+          </>
+        }
+        description={<>{translator.message(message.key, message.values)}</>}
+      />
 
-      <section className="relative w-full max-w-xl rounded-2xl border border-border/80 bg-card/90 p-6 shadow-2xl shadow-black/20 backdrop-blur-md sm:p-8">
-        <p className="text-[11px] font-semibold tracking-[0.18em] text-muted-foreground uppercase">
-          {APP_DISPLAY_NAME}
-        </p>
-        <h1 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">
-          {translator.message(
-            status === "paired"
-              ? "pairing.hosted.title.paired"
-              : status === "error"
-                ? "pairing.hosted.title.failed"
-                : "pairing.hosted.title.pairing",
-          )}
-        </h1>
-        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-          {translator.message(message.key, message.values)}
-        </p>
-
-        {request ? (
-          <div className="mt-5 rounded-lg border border-border/70 bg-background/55 px-3 py-3 text-xs leading-relaxed text-muted-foreground">
-            {translator.message("pairing.hosted.hostLabel")}:{" "}
-            <span className="font-mono text-foreground/80">{request.host}</span>
-          </div>
-        ) : null}
-
-        {status === "error" ? (
-          <div className="mt-5 rounded-lg border border-destructive/30 bg-destructive/6 px-3 py-2 text-sm text-destructive">
-            {translator.message("pairing.hosted.corsGuidance")}
-          </div>
-        ) : null}
-
-        <div className="mt-6 flex flex-wrap gap-2">
-          {status === "pairing" ? (
-            <Button disabled size="sm">
-              {translator.message("pairing.action.pairing")}
-            </Button>
-          ) : canRetry ? (
-            <Button size="sm" onClick={() => void submitHostedPairingRequest()}>
-              {translator.message("cloud.action.tryAgain")}
-            </Button>
-          ) : null}
-          {status === "paired" ? (
-            <Button size="sm" variant="outline" onClick={() => (window.location.href = "/")}>
-              {translator.message("cloud.action.openApp")}
-            </Button>
-          ) : null}
+      {request ? (
+        <div className="mt-5 rounded-lg border border-border/70 bg-background/55 px-3 py-3 text-xs leading-relaxed text-muted-foreground">
+          {translator.message("pairing.hosted.hostLabel")}:{" "}
+          <span className="font-mono text-foreground/80">{request.host}</span>
         </div>
-      </section>
-    </div>
+      ) : null}
+
+      {status === "error" ? (
+        <div className="mt-5 rounded-lg border border-destructive/30 bg-destructive/6 px-3 py-2 text-sm text-destructive">
+          {translator.message("pairing.hosted.corsGuidance")}
+        </div>
+      ) : null}
+
+      <div className="mt-6 flex flex-wrap gap-2">
+        {status === "pairing" ? (
+          <Button disabled size="sm">
+            {translator.message("pairing.action.pairing")}
+          </Button>
+        ) : canRetry ? (
+          <Button size="sm" onClick={() => void submitHostedPairingRequest()}>
+            {translator.message("cloud.action.tryAgain")}
+          </Button>
+        ) : null}
+        {status === "paired" ? (
+          <Button size="sm" variant="outline" onClick={() => (window.location.href = "/")}>
+            {translator.message("cloud.action.openApp")}
+          </Button>
+        ) : null}
+      </div>
+    </StandalonePage>
   );
 }
 

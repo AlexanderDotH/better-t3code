@@ -64,9 +64,9 @@ export const desktopInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Les mises à jour automatiques sont désactivées par le réglage T3CODE_DISABLE_AUTO_UPDATE.",
   ],
   "desktop.update.disabled.linuxPackage": [
-    "Automatic updates on Linux require running the AppImage build.",
-    "Automatische Updates unter Linux erfordern den AppImage-Build.",
-    "Sous Linux, les mises à jour automatiques nécessitent la version AppImage.",
+    "Automatic updates on Linux require the AppImage or the .deb package.",
+    "Automatische Updates unter Linux erfordern ein AppImage oder ein .deb-Paket.",
+    "Sous Linux, les mises à jour automatiques nécessitent la version AppImage ou le paquet .deb.",
   ],
   "desktop.startup.failedTitle": [
     "T3 Code failed to start",

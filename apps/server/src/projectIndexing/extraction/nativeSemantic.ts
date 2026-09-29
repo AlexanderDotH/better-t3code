@@ -6,7 +6,7 @@ import * as NodeURL from "node:url";
 
 import * as Schema from "effect/Schema";
 
-import { resolveFilesystemAsset } from "./assets.ts";
+import { indexerModuleUrl, resolveFilesystemAsset } from "./assets.ts";
 import { coverageGap } from "./inventory.ts";
 import {
   declarationTarget,
@@ -48,7 +48,7 @@ export async function resolveAnalysisHelper(
   language: "csharp" | "java",
   moduleUrl = import.meta.url,
 ): Promise<string | undefined> {
-  const here = NodePath.dirname(NodeURL.fileURLToPath(moduleUrl));
+  const here = NodePath.dirname(NodeURL.fileURLToPath(indexerModuleUrl(moduleUrl)));
   const name = language === "csharp" ? "ProjectIndexer.dll" : "project-indexer-java.jar";
   // Packaged entrypoints and shared chunks all live in dist; source tests use development helper output.
   const candidates = [

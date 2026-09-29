@@ -6,7 +6,7 @@ import { desktopSmokeIsReady, evaluateDesktopSmokeResult } from "./smoke-test-lo
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const desktopDir = NodePath.resolve(__dirname, "..");
-const mainJs = NodePath.resolve(desktopDir, "dist-electron/main.cjs");
+const mainJs = NodePath.resolve(desktopDir, "dist-electron/boot.cjs");
 
 console.log("\nLaunching Electron smoke test...");
 

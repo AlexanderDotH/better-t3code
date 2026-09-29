@@ -45,7 +45,9 @@ import { readProjectIndexGraphOverview } from "./ProjectIndexGraphOverview.ts";
 
 const MAX_CANDIDATES_PER_QUERY = 100;
 const DEFAULT_PRIMARY_RECORDS = 20;
-const decodeContextInput = Schema.decodeEffect(ProjectContextInput);
+const decodeContextInput = Schema.decodeEffect(ProjectContextInput, {
+  onExcessProperty: "error",
+});
 const isProjectIndexOperationError = Schema.is(ProjectIndexOperationError);
 const CONTEXT_GUIDANCE =
   "Indexed source facts guide original-source reads. AGENTS instructions take precedence. Confirmed static calls and resolved imports do not prove runtime execution; candidate or unresolved relationships remain gaps. This query did not run tests, checks, or a code review.";

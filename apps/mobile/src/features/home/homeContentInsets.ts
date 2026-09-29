@@ -23,9 +23,12 @@ export function getHomeContentBottomPadding(props: {
   readonly safeAreaBottom: number;
   readonly iosBottomToolbarClearance: number;
   readonly surface: HomeContentSurface;
+  readonly androidFabClearance?: number;
 }): number {
   if (props.platform === "android") {
-    return getAndroidHomeFabLayout(props.safeAreaBottom).contentBottomPadding;
+    return props.androidFabClearance === undefined
+      ? getAndroidHomeFabLayout(props.safeAreaBottom).contentBottomPadding
+      : Math.max(props.safeAreaBottom, ANDROID_HOME_FAB_EDGE_GAP) + props.androidFabClearance;
   }
 
   const safeBottom = Math.max(props.safeAreaBottom, 24);

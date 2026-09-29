@@ -58,7 +58,7 @@ const assertCurrent = Effect.gen(function* () {
   assert.deepStrictEqual(yield* sql`PRAGMA foreign_key_check`, []);
   assert.deepStrictEqual(
     yield* sql`SELECT MAX(migration_id) AS id FROM ${sql(upstreamMigrationTable)}`,
-    [{ id: 49 }],
+    [{ id: 54 }],
   );
   assert.deepStrictEqual(yield* sql`SELECT migration_id, name FROM ${sql(forkMigrationTable)}`, [
     { migration_id: 61, name: "IndependentMigrationLedgers" },
@@ -98,7 +98,7 @@ const assertCurrent = Effect.gen(function* () {
   assert.deepStrictEqual(yield* readSchema, before);
 });
 
-for (const source of ["fresh", "upstream49", "fork60", "collision33"] as const) {
+for (const source of ["fresh", "upstream49", "upstream54", "fork60", "collision33"] as const) {
   it.effect(`converges ${source} without rewriting its history and is a no-op on restart`, () =>
     Effect.gen(function* () {
       const directory = yield* isolatedDatabase;
@@ -107,6 +107,7 @@ for (const source of ["fresh", "upstream49", "fork60", "collision33"] as const) 
       yield* Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         if (source === "upstream49") yield* runMigrations({ toMigrationInclusive: 49 });
+        if (source === "upstream54") yield* runMigrations({ toMigrationInclusive: 54 });
         if (source === "fork60") yield* runLegacyForkMigrations();
         if (source === "collision33") {
           yield* runLegacyForkMigrations({ toMigrationInclusive: 32 });
@@ -226,7 +227,7 @@ it.effect(
 );
 
 it.effect(
-  "executes a future upstream50 despite fork61 and rolls back failed future migrations",
+  "executes a future upstream55 despite fork61 and rolls back failed future migrations",
   () =>
     Effect.gen(function* () {
       const directory = yield* isolatedDatabase;
@@ -235,18 +236,18 @@ it.effect(
         yield* runMigrations();
         const migrate = Migrator.make({});
         const future = Migrator.fromRecord({
-          "50_FutureUpstream": sql`CREATE TABLE future_upstream (value TEXT)`,
+          "55_FutureUpstream": sql`CREATE TABLE future_upstream (value TEXT)`,
         });
         const loader = Effect.map(
           Effect.all([makeMigrationLoader(), future]),
           ([current, next]) => [...current, ...next],
         );
         assert.deepStrictEqual(yield* migrate({ table: upstreamMigrationTable, loader }), [
-          [50, "FutureUpstream"],
+          [55, "FutureUpstream"],
         ]);
         assert.deepStrictEqual(yield* migrate({ table: upstreamMigrationTable, loader }), []);
         const broken = Migrator.fromRecord({
-          "51_BrokenUpstream": Effect.gen(function* () {
+          "56_BrokenUpstream": Effect.gen(function* () {
             yield* sql`CREATE TABLE rolled_back (value TEXT)`;
             yield* sql`INSERT INTO nonexistent_table VALUES (1)`;
           }),
@@ -262,7 +263,7 @@ it.effect(
         );
         assert.deepStrictEqual(
           yield* sql`SELECT MAX(migration_id) AS id FROM ${sql(upstreamMigrationTable)}`,
-          [{ id: 50 }],
+          [{ id: 55 }],
         );
         assert.deepStrictEqual(
           yield* sql`SELECT MAX(migration_id) AS id FROM ${sql(forkMigrationTable)}`,

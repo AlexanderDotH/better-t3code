@@ -26,7 +26,6 @@ export function resolveSidebarDraftPreview(composer: ComposerThreadDraftState): 
     Math.max(composer.images.length, composer.persistedAttachments.length) +
     composer.files.length +
     composer.terminalContexts.length +
-    composer.elementContexts.length +
     composer.previewAnnotations.length +
     composer.reviewComments.length;
   return `${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}`;

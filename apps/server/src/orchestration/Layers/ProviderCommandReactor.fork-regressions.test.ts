@@ -1,3 +1,4 @@
+import { TerminalManager } from "../../terminal/Manager.ts";
 import type { OrchestrationEvent } from "@t3tools/contracts";
 import { ProviderAuthService } from "../../provider/Services/ProviderAuthService.ts";
 // @effect-diagnostics nodeBuiltinImport:off
@@ -299,6 +300,7 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
   });
 
   async function createHarness(input?: {
+    readonly initialTitle?: string;
     readonly baseDir?: string;
     readonly threadModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
@@ -735,6 +737,7 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
       }),
     ).pipe(Layer.provide(orchestrationLayer));
     const layer = ProviderCommandReactorLive.pipe(
+      Layer.provide(Layer.mock(TerminalManager)({ closeIdle: () => Effect.void })),
       Layer.provide(
         input?.projectContext === undefined
           ? Layer.empty
@@ -948,7 +951,7 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
           commandId: CommandId.make("cmd-thread-create"),
           threadId: ThreadId.make("thread-1"),
           projectId: asProjectId("project-1"),
-          title: "Thread",
+          title: input?.initialTitle ?? "Thread",
           modelSelection: modelSelection,
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
           runtimeMode: "approval-required",
@@ -2386,20 +2389,12 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
   });
 
   it("retries an interrupted result-less turn with the existing user message", async () => {
-    const harness = await createHarness();
+    const harness = await createHarness({ initialTitle: "New thread" });
     const threadId = ThreadId.make("thread-1");
     const messageId = asMessageId("user-message-result-only-retry");
     const turnId = asTurnId("turn-1");
     const runtimeSessionId = RuntimeSessionId.make("runtime-result-only-retry");
 
-    await harness.runEffect(
-      harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.make("cmd-title-before-result-only-retry"),
-        threadId,
-        title: "New thread",
-      }),
-    );
     await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.turn.start",
@@ -2960,6 +2955,7 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
 
   it("generates first-turn title and worktree branch in one metadata call", async () => {
     const harness = await createHarness({
+      initialTitle: "Add a safer reconnect backoff.",
       threadModelSelection: {
         instanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5.6",
@@ -2983,7 +2979,6 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
         type: "thread.meta.update",
         commandId: CommandId.make("cmd-thread-branch"),
         threadId: ThreadId.make("thread-1"),
-        title: "Add a safer reconnect backoff.",
         branch: "t3code/1234abcd",
         worktreePath: "/tmp/provider-project-worktree",
       }),
@@ -3033,6 +3028,7 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
         ],
       },
     });
+    await harness.drain();
     expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
       modelSelection: {
         model: "gpt-5.6",

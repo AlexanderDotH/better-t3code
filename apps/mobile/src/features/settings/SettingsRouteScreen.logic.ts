@@ -1,11 +1,8 @@
 export function resolveAgentAwarenessPlatformPresentation(platform: string): {
   readonly supported: boolean;
-  readonly subtitleMessageKey: "mobile.settings.notifications.iosOnly" | undefined;
+  readonly subtitle: string | undefined;
 } {
-  return platform === "ios"
-    ? { supported: true, subtitleMessageKey: undefined }
-    : {
-        supported: false,
-        subtitleMessageKey: "mobile.settings.notifications.iosOnly",
-      };
+  return platform === "ios" || platform === "android"
+    ? { supported: true, subtitle: undefined }
+    : { supported: false, subtitle: "Unavailable on this platform" };
 }

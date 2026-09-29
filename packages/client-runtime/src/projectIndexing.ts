@@ -34,7 +34,9 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
-const decodeProjectContext = Schema.decodeUnknownSync(ProjectContextInput);
+const decodeProjectContext = Schema.decodeUnknownSync(ProjectContextInput, {
+  onExcessProperty: "error",
+});
 
 export interface ProjectIndexClientApi {
   readonly getSettings: (input: ProjectIndexGetSettingsInput) => Promise<ProjectIndexSettings>;

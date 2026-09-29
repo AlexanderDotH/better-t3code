@@ -237,8 +237,8 @@ describe("Android native config plugins", () => {
     expect(
       findStyleItem(findStyle(lightResources, "AppAlertDialog"), "android:windowBackground"),
     ).toBe("@drawable/alert_dialog_background");
-    expect(findColor(lightResources, "alert_dialog_background")).toBe("#FFFFFF");
-    expect(findColor(nightResources, "alert_dialog_background")).toBe("#171717");
+    expect(findColor(lightResources, "alert_dialog_background")?.toUpperCase()).toBe("#FFFFFF");
+    expect(findColor(nightResources, "alert_dialog_background")?.toUpperCase()).toBe("#111111");
     expect(alertDialogPlugin.drawables["alert_dialog_background.xml"]).toContain(
       "@color/alert_dialog_background",
     );

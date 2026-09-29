@@ -177,7 +177,7 @@ export function BrowserDeviceToolbar({
       }}
     >
       {width >= 560 ? (
-        <span className="mr-0.5 shrink-0 text-[11px] font-medium text-muted-foreground">
+        <span className="mr-0.5 shrink-0 text-2xs font-medium text-muted-foreground">
           {translate("browser.device.dimensions")}
         </span>
       ) : null}
@@ -191,10 +191,7 @@ export function BrowserDeviceToolbar({
         <SelectTrigger
           variant="ghost"
           size="xs"
-          className={cn(
-            "shrink-0 justify-between px-1.5 font-medium",
-            width >= 440 ? "w-36" : "w-24",
-          )}
+          className={cn("shrink-0 justify-between", width >= 440 ? "w-36" : "w-24")}
           aria-label={translate("browser.device.preset")}
         >
           <SelectValue />
@@ -229,7 +226,8 @@ export function BrowserDeviceToolbar({
           nativeInput
           type="number"
           inputMode="numeric"
-          size="sm"
+          size="compact"
+          font="mono"
           min={PREVIEW_VIEWPORT_MIN_DIMENSION}
           max={PREVIEW_VIEWPORT_MAX_DIMENSION}
           value={presentedSize.width}
@@ -246,17 +244,15 @@ export function BrowserDeviceToolbar({
           onChange={(event) => updateCustomDimension("width", event.target.value)}
           aria-label={translate("browser.device.viewportWidth")}
           aria-invalid={!customValid}
-          className={cn(
-            "h-6 rounded-md text-center tabular-nums [&_[data-slot=input]]:h-full [&_[data-slot=input]]:px-1 [&_[data-slot=input]]:text-xs [&_[data-slot=input]]:leading-none [&_[data-slot=input]::-webkit-inner-spin-button]:appearance-none [&_[data-slot=input]]:[appearance:textfield]",
-            width >= 360 ? "w-14" : "w-11",
-          )}
+          className={width >= 360 ? "w-14" : "w-13"}
         />
         <span className="text-xs text-muted-foreground">×</span>
         <Input
           nativeInput
           type="number"
           inputMode="numeric"
-          size="sm"
+          size="compact"
+          font="mono"
           min={PREVIEW_VIEWPORT_MIN_DIMENSION}
           max={PREVIEW_VIEWPORT_MAX_DIMENSION}
           value={presentedSize.height}
@@ -273,10 +269,7 @@ export function BrowserDeviceToolbar({
           onChange={(event) => updateCustomDimension("height", event.target.value)}
           aria-label={translate("browser.device.viewportHeight")}
           aria-invalid={!customValid}
-          className={cn(
-            "h-6 rounded-md text-center tabular-nums [&_[data-slot=input]]:h-full [&_[data-slot=input]]:px-1 [&_[data-slot=input]]:text-xs [&_[data-slot=input]]:leading-none [&_[data-slot=input]::-webkit-inner-spin-button]:appearance-none [&_[data-slot=input]]:[appearance:textfield]",
-            width >= 360 ? "w-14" : "w-11",
-          )}
+          className={width >= 360 ? "w-14" : "w-13"}
         />
       </form>
 
@@ -284,7 +277,7 @@ export function BrowserDeviceToolbar({
         <TooltipTrigger
           render={
             <Button
-              variant="ghost"
+              variant={aspectRatio === null ? "ghost" : "secondary"}
               size="icon-xs"
               type="button"
               aria-label={
@@ -293,7 +286,6 @@ export function BrowserDeviceToolbar({
                   : translate("browser.device.unlockViewportAspectRatio")
               }
               aria-pressed={aspectRatio !== null}
-              className={cn(aspectRatio !== null && "bg-accent text-foreground")}
               disabled={pending || !customValid}
               onPointerDown={(event) => event.preventDefault()}
               onClick={toggleAspectRatio}
@@ -322,19 +314,21 @@ export function BrowserDeviceToolbar({
       >
         <ScreenRotationIcon />
       </Button>
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        type="button"
-        aria-label={translate("browser.device.closeToolbar")}
-        className="sticky right-0 ml-auto bg-background/95"
-        disabled={pending}
-        onClick={() => {
-          apply({ _tag: "fill" }, null);
-        }}
-      >
-        <X />
-      </Button>
+      {/* Sticky backing so scrolled controls do not show through the close action. */}
+      <span className="sticky right-0 ml-auto flex bg-background/95">
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          type="button"
+          aria-label={translate("browser.device.closeToolbar")}
+          disabled={pending}
+          onClick={() => {
+            apply({ _tag: "fill" }, null);
+          }}
+        >
+          <X />
+        </Button>
+      </span>
     </div>
   );
 }

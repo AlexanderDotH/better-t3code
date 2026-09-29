@@ -5,6 +5,7 @@ import config, { IOS_APP_TRANSPORT_SECURITY, MOBILE_IOS_DEPLOYMENT_TARGET } from
 const ANDROID_CONFIG_PLUGINS = [
   "./plugins/withAndroidCleartextTraffic.cjs",
   "./plugins/withAndroidGradleHeap.cjs",
+  "./plugins/withAndroidInputBackground.cjs",
   "./plugins/withAndroidModernPopupMenu.cjs",
   "./plugins/withAndroidModernAlertDialog.cjs",
   "./plugins/withAndroidPredictiveBackCompat.cjs",

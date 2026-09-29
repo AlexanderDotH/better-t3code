@@ -29,6 +29,7 @@ export function EnvironmentManagerContent(props: {
     connectedEnvironments,
     onChangeConnectionPairingUrl,
     onReconnectEnvironment,
+    onSetEnvironmentEnabled,
     onRemoveEnvironmentPress,
     onUpdateEnvironment,
   } = useRemoteConnections();
@@ -118,6 +119,7 @@ export function EnvironmentManagerContent(props: {
                   environment={environment}
                   expanded={expandedId === environment.environmentId}
                   onToggle={() => handleToggle(environment.environmentId)}
+                  onSetEnabled={onSetEnvironmentEnabled}
                   onReconnect={onReconnectEnvironment}
                   onRemove={onRemoveEnvironmentPress}
                   onPairAgain={handlePairAgain}

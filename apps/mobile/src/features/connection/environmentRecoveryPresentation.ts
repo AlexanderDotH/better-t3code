@@ -50,6 +50,8 @@ export function connectionNoticeDetail(
     case "available":
     case "error":
       return `Reconnect the environment to load the ${resourceName}.`;
+    case "unsupported":
+      return connection.error ?? `Update this client before loading the ${resourceName}.`;
     case "connected":
       return "";
   }
@@ -59,7 +61,12 @@ export function connectionNoticeSupportsRetryNow(connection: {
   readonly phase: EnvironmentConnectionPresentation["phase"];
   readonly retry?: EnvironmentConnectionRetry;
 }): boolean {
-  if (connection.phase === "offline" || connection.phase === "connected") return false;
+  if (
+    connection.phase === "offline" ||
+    connection.phase === "connected" ||
+    connection.phase === "unsupported"
+  )
+    return false;
   if (connection.retry?.mode === "automatic") return connection.retry.at !== null;
   if (connection.retry?.mode === "manual") return false;
   return connection.phase !== "connecting" && connection.phase !== "reconnecting";

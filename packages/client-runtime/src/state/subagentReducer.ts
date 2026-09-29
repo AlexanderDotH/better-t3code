@@ -194,6 +194,10 @@ function mergeMessage(
           ...(incoming.turnId !== undefined ? { turnId: incoming.turnId } : {}),
           ...(incoming.streaming ? {} : { updatedAt: incoming.updatedAt }),
           ...(incoming.attachments !== undefined ? { attachments: incoming.attachments } : {}),
+          ...(incoming.context !== undefined ? { context: incoming.context } : {}),
+          ...(incoming.historyOrigin !== undefined
+            ? { historyOrigin: incoming.historyOrigin }
+            : {}),
         },
   );
 }
@@ -287,6 +291,10 @@ export function applySubagentDetailEvent(
         ...(event.payload.attachments === undefined
           ? {}
           : { attachments: event.payload.attachments }),
+        ...(event.payload.context === undefined ? {} : { context: event.payload.context }),
+        ...(event.payload.historyOrigin === undefined
+          ? {}
+          : { historyOrigin: event.payload.historyOrigin }),
         turnId: event.payload.turnId,
         streaming: event.payload.streaming,
         createdAt: event.payload.createdAt,

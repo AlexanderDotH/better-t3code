@@ -66,6 +66,37 @@ const event = (
   }) as OrchestrationEvent;
 
 describe("applySubagentDetailEvent", () => {
+  it("keeps subagent reasoning and inherited provenance in the selected transcript", () => {
+    const historyOrigin = {
+      sourceThreadId: ThreadId.make("source-thread"),
+      sourceId: "source-reasoning",
+      ordinal: 0,
+    };
+    const result = applySubagentDetailEvent(
+      detail,
+      event("thread.message-sent", 1, {
+        threadId,
+        subagentId,
+        messageId: MessageId.make("child-reasoning"),
+        role: "reasoning",
+        text: "Reasoning remains separate from the answer.",
+        turnId: null,
+        streaming: false,
+        createdAt,
+        updatedAt: createdAt,
+        historyOrigin,
+      }),
+    );
+    expect(result).toMatchObject({
+      kind: "updated",
+      subagent: {
+        status: "running",
+        messages: [{ role: "reasoning", historyOrigin }],
+        latestTurn: null,
+      },
+    });
+  });
+
   it("merges an enriched summary without dropping transcript collections", () => {
     const result = applySubagentDetailEvent(
       {

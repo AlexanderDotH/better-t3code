@@ -2,7 +2,11 @@ import type { EnvironmentId, ServerConfig } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
-import { AVAILABLE_CONNECTION_STATE, type SupervisorConnectionState } from "../connection/model.ts";
+import {
+  AVAILABLE_CONNECTION_STATE,
+  ConnectionBlockedError,
+  type SupervisorConnectionState,
+} from "../connection/model.ts";
 import {
   presentEnvironmentConnection,
   type EnvironmentPresentation,
@@ -41,7 +45,17 @@ export function createEnvironmentPresentationAtoms<E>(input: {
       );
       return {
         entry,
-        connection: presentEnvironmentConnection(state),
+        connection:
+          entry.unsupportedReason === undefined
+            ? presentEnvironmentConnection(state)
+            : presentEnvironmentConnection({
+                ...state,
+                phase: "blocked",
+                lastFailure: new ConnectionBlockedError({
+                  reason: "unsupported",
+                  detail: entry.unsupportedReason,
+                }),
+              }),
         serverConfig: get(input.serverConfigValueAtom(environmentId)),
       } satisfies EnvironmentPresentation;
     }).pipe(Atom.withLabel(`environment-presentation:${environmentId}`)),

@@ -7,7 +7,6 @@ import {
   useState,
 } from "react";
 
-import { isElectron } from "~/env";
 import { useResizableWidth } from "~/hooks/useResizableWidth";
 import { cn } from "~/lib/utils";
 import {
@@ -67,7 +66,6 @@ export function PreviewPanelShell(props: {
   windowExpansionRevealDirection?: "left" | "right";
   children: ReactNode;
 }) {
-  const useDragRegion = isElectron && props.mode !== "sheet" && props.mode !== "embedded";
   const isInline = props.mode === "inline";
   const collapsible = isInline && props.open !== undefined;
   const open = props.open ?? true;
@@ -134,7 +132,7 @@ export function PreviewPanelShell(props: {
           : "w-full",
         collapsible &&
           !windowExpansionRevealDirection &&
-          "[[data-panel-animations=true]_&]:transition-[width] [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
+          "[[data-panel-animations=true]_&]:transition-[width] [[data-panel-animations=true]_&]:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:ease-out",
         collapsible &&
           open &&
           !windowExpansionRevealDirection &&
@@ -159,7 +157,6 @@ export function PreviewPanelShell(props: {
           className="flex h-full min-h-0 min-w-0 flex-col"
           style={collapsible && !maximized ? { width: `calc(${width}px - 1px)` } : undefined}
         >
-          {useDragRegion ? <div className="electron-drag-region h-0 w-full" aria-hidden /> : null}
           {props.children}
         </div>
       </div>

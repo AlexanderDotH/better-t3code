@@ -41,6 +41,15 @@ describe("mobile client presentation", () => {
     );
   });
 
+  it("labels Android devices without displaying an iOS version", () => {
+    expect(
+      mobileClientPlatformLabel(
+        device({ platform: "android", iosMajorVersion: null, androidApiLevel: 36 }),
+        english,
+      ),
+    ).toBe("Android · T3 Code 1.2.3");
+  });
+
   it("distinguishes disabled notifications from an empty event selection", () => {
     expect(
       mobileClientNotificationDetail(
@@ -66,6 +75,12 @@ describe("mobile client presentation", () => {
 
   it("handles missing app versions and invalid update timestamps", () => {
     expect(mobileClientPlatformLabel(device({ appVersion: null }), english)).toBe("iOS 18");
+    expect(
+      mobileClientPlatformLabel(device({ platform: "android", iosMajorVersion: null }), english),
+    ).toBe("Android · T3 Code 1.2.3");
+    expect(mobileClientPlatformLabel(device({ iosMajorVersion: null }), english)).toBe(
+      "iOS · T3 Code 1.2.3",
+    );
     expect(mobileClientUpdatedAtLabel("not-a-date", english)).toBe("Update time unavailable");
   });
 

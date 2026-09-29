@@ -51,6 +51,7 @@ function catalogState(environmentIds: readonly EnvironmentId[]): EnvironmentCata
                   label: environmentId,
                 }),
           profile: Option.none(),
+          enabled: true,
         },
       ]),
     ),
@@ -120,6 +121,22 @@ describe("project snapshot readiness", () => {
     expect(registry.get(ready)).toBe(false);
     registry.set(shells(REMOTE), shellState("live"));
     expect(registry.get(ready)).toBe(true);
+    registry.dispose();
+  });
+
+  it("ignores a disabled local environment and waits for enabled remote snapshots", () => {
+    const { catalog, shells, ready, registry } = makeHarness();
+    const state = catalogState([LOCAL, REMOTE]);
+    const local = state.entries.get(LOCAL)!;
+    const entries = new Map(state.entries);
+    entries.set(LOCAL, { ...local, enabled: false });
+    registry.set(catalog, { ...state, entries });
+    expect(registry.get(ready)).toBe(false);
+    registry.set(shells(REMOTE), shellState("live"));
+    expect(registry.get(ready)).toBe(true);
+    entries.set(LOCAL, { ...local, enabled: true });
+    registry.set(catalog, { ...state, entries: new Map(entries) });
+    expect(registry.get(ready)).toBe(false);
     registry.dispose();
   });
 

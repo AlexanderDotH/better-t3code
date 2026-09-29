@@ -1,4 +1,9 @@
-import { MessageId, OrchestrationProposedPlanId } from "@t3tools/contracts";
+import {
+  MessageId,
+  OrchestrationProposedPlanId,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -58,7 +63,10 @@ describe("thread fork presentation", () => {
         remainingAttachmentCount: 3,
         completedAt: null,
       }),
-    ).toEqual({ remainingInputChars: 120_000, remainingAttachmentCount: 8 });
+    ).toEqual({
+      remainingInputChars: PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+      remainingAttachmentCount: PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+    });
     expect(
       resolveFirstTurnForkBudget({
         status: "completed",

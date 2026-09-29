@@ -4,10 +4,12 @@ import {
   type ProviderApprovalOption,
 } from "@t3tools/contracts";
 import { memo } from "react";
-import { TriangleAlertIcon } from "lucide-react";
+import { EllipsisIcon, TriangleAlertIcon } from "lucide-react";
 import { Button } from "../ui/button";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
+import { composerFloatingLayerProps } from "./composerEventScope";
 
 interface ComposerPendingApprovalActionsProps {
   requestId: ApprovalRequestId;
@@ -19,7 +21,6 @@ interface ComposerPendingApprovalActionsProps {
   ) => Promise<unknown>;
 }
 
-const APPROVAL_ACTION_CLASS_NAME = "font-normal";
 export const ComposerPendingApprovalActions = memo(function ComposerPendingApprovalActions({
   requestId,
   isResponding,
@@ -38,23 +39,21 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
       },
       { decision: "accept", label: translate("chat.approval.approve") },
     ] satisfies ReadonlyArray<ProviderApprovalOption>);
+  const primaryOptions = presentedOptions.filter(
+    (option) => option.decision === "decline" || option.decision === "accept",
+  );
+  const moreOptions = presentedOptions.filter(
+    (option) => option.decision !== "decline" && option.decision !== "accept",
+  );
+
   return (
     <>
-      {presentedOptions.map((option) => {
+      {primaryOptions.map((option) => {
         const button = (
           <Button
             key={option.decision}
-            size="micro"
-            variant="ghost-muted"
-            className={`${APPROVAL_ACTION_CLASS_NAME}${
-              option.decision === "decline"
-                ? " text-destructive-foreground [:hover,[data-pressed]]:text-destructive-foreground"
-                : option.decision === "accept"
-                  ? " text-foreground"
-                  : option.warning
-                    ? " text-warning"
-                    : ""
-            }`}
+            size="xs"
+            variant={option.decision === "accept" ? "default" : "outline"}
             disabled={isResponding}
             aria-description={option.warning}
             onClick={() => void onRespondToApproval(requestId, option.decision)}
@@ -63,19 +62,50 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
             <span className="max-w-40 truncate">{option.label}</span>
           </Button>
         );
-        // A provider caution, such as a prompt injection warning on "allow
-        // always", rides along as a tooltip so the row stays one line.
         return option.warning ? (
           <Tooltip key={option.decision}>
             <TooltipTrigger render={button} />
-            <TooltipPopup side="top" className="max-w-72 text-xs leading-snug">
-              {option.warning}
-            </TooltipPopup>
+            <TooltipPopup side="top">{option.warning}</TooltipPopup>
           </Tooltip>
         ) : (
           button
         );
       })}
+      {moreOptions.length > 0 ? (
+        <Menu>
+          <MenuTrigger
+            disabled={isResponding}
+            render={<Button size="icon-xs" variant="outline" aria-label="More approval options" />}
+          >
+            <EllipsisIcon />
+          </MenuTrigger>
+          <MenuPopup {...composerFloatingLayerProps} side="top" align="end">
+            {moreOptions.map((option) => {
+              const item = (
+                <MenuItem
+                  key={option.decision}
+                  disabled={isResponding}
+                  aria-description={option.warning}
+                  onClick={() => void onRespondToApproval(requestId, option.decision)}
+                  variant="ghost"
+                  className="mb-1 last:mb-0"
+                >
+                  {option.warning ? <TriangleAlertIcon className="size-3 text-warning" /> : null}
+                  <span className="min-w-0 whitespace-normal wrap-break-word">{option.label}</span>
+                </MenuItem>
+              );
+              return option.warning ? (
+                <Tooltip key={option.decision}>
+                  <TooltipTrigger render={item} />
+                  <TooltipPopup side="top">{option.warning}</TooltipPopup>
+                </Tooltip>
+              ) : (
+                item
+              );
+            })}
+          </MenuPopup>
+        </Menu>
+      ) : null}
     </>
   );
 });

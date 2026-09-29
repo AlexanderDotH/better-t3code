@@ -49,6 +49,8 @@ const isPlanParallelismReviewError = Schema.is(PlanParallelismReviewError);
 
 function makeThread(overrides: Partial<OrchestrationThread> = {}): OrchestrationThread {
   return {
+    pullRequests: [],
+
     id: threadId,
     projectId,
     title: "Review this plan",

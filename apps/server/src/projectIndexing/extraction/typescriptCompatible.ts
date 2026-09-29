@@ -6,7 +6,7 @@ import * as NodeURL from "node:url";
 import { ProjectCallsiteV1, ProjectIndexGapV1 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
-import { resolveFilesystemAsset, resolveIndexerPackage } from "./assets.ts";
+import { indexerModuleUrl, resolveFilesystemAsset, resolveIndexerPackage } from "./assets.ts";
 import { type SemanticInput, type SemanticResult } from "./semantic.ts";
 
 const Result = Schema.Struct({
@@ -21,7 +21,9 @@ export function resolveCompatibleWorker(moduleUrl = import.meta.url) {
     ? "./typescriptCompatibleWorker.ts"
     : "./project-indexer-typescript-compatible.mjs";
   const entry = NodeURL.pathToFileURL(
-    resolveFilesystemAsset(NodeURL.fileURLToPath(new URL(relativeEntry, moduleUrl))),
+    resolveFilesystemAsset(
+      NodeURL.fileURLToPath(new URL(relativeEntry, indexerModuleUrl(moduleUrl))),
+    ),
   );
   resolveIndexerPackage(entry.href, "@typescript/typescript6");
   return { entry, sourceMode };

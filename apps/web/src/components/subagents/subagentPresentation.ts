@@ -217,13 +217,15 @@ function formatServiceTier(value: string | null | undefined): string | null {
 }
 
 export function deriveSubagentTranscriptEntries(
-  detail: Pick<OrchestrationSubagentDetail, "messages" | "proposedPlans" | "activities">,
+  detail: Pick<OrchestrationSubagentDetail, "status" | "messages" | "proposedPlans" | "activities">,
 ): SubagentTranscriptEntry[] {
+  const active = isSubagentActiveStatus(detail.status);
   const messages: SubagentTranscriptEntry[] = detail.messages.map((message) => ({
     kind: "message",
     id: message.id,
     createdAt: message.createdAt,
-    message,
+    // A crashed provider may leave a streaming snapshot in the persisted transcript.
+    message: !active && message.streaming ? { ...message, streaming: false } : message,
   }));
   const proposedPlans: SubagentTranscriptEntry[] = detail.proposedPlans.map((proposedPlan) => ({
     kind: "proposed-plan",

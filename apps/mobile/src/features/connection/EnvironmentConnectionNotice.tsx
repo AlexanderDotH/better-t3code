@@ -42,6 +42,8 @@ function noticeTitle(
       return translator.message("mobile.connection.disconnectedTitle", {
         environment: environmentLabel,
       });
+    case "unsupported":
+      return translator.message("cloud.connection.unsupported");
     case "connected":
       return "";
   }

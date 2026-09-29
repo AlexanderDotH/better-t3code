@@ -284,7 +284,7 @@ function ContextWindowRangeSlider({
 
 function ContextWindowRangeEndpoints({ descriptor }: { readonly descriptor: SelectDescriptor }) {
   return (
-    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+    <div className="flex items-center justify-between text-2xs text-muted-foreground">
       <span>{descriptor.options[0]?.label}</span>
       <span>{descriptor.options.at(-1)?.label}</span>
     </div>
@@ -355,8 +355,8 @@ export const ContextWindowPicker = memo(function ContextWindowPicker(
         align="start"
         side="top"
         {...(props.isComposerOwned ? composerFloatingLayerProps : {})}
-        className="w-80 max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-xl"
-        viewportClassName="p-0"
+        className="w-80 max-w-[calc(100vw-1.5rem)] overflow-hidden"
+        padding="none"
       >
         <div className="flex flex-col gap-3.5 p-4">
           <div className="flex items-start gap-3">
@@ -380,7 +380,7 @@ export const ContextWindowPicker = memo(function ContextWindowPicker(
               >
                 {selection.slider.currentLabel}
               </output>
-              <span className="rounded-md border border-border/60 bg-background/55 px-2 py-1 font-medium text-[10px] uppercase tracking-wide text-muted-foreground">
+              <span className="rounded-md border border-border/60 bg-background/55 px-2 py-1 font-medium text-3xs uppercase tracking-wide text-muted-foreground">
                 {selection.visibleDescriptor.options[selection.slider.currentIndex]?.isDefault
                   ? translate("chat.contextWindow.modelDefault")
                   : translate("chat.contextWindow.custom")}

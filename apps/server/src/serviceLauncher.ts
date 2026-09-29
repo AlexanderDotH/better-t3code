@@ -1,13 +1,16 @@
 // @effect-diagnostics nodeBuiltinImport:off
 // @effect-diagnostics globalTimers:off
-// This file is shipped as a standalone bundle and copied to a stable path by
-// `t3 service update`. Keep runtime imports limited to Node built-ins.
+// The launcher supervises the server child for the boot service and must keep
+// working across server versions, so it stays on Node built-ins with no Effect
+// runtime: it is the one part of the executable that cannot depend on the
+// rest of it being loadable.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeSea from "node:sea";
 
 import type {
   PendingServiceUpdate,
@@ -29,12 +32,12 @@ import {
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
   SERVICE_STOP_ACK_FILE,
+  SERVICE_RESTART_PENDING_FILE,
   SERVICE_STOP_MARKER_FILE,
   SERVICE_STOP_PROTOCOL,
   SERVICE_STOP_REQUEST_FILE,
   SERVICE_WINDOWS_TASK_NAME,
 } from "./cloud/serviceProtocol.ts";
-import { isEntrypoint } from "./entrypoint.ts";
 
 const HANDOFF_DELAY_MS = 2_000;
 const PREPARED_TIMEOUT_MS = 120_000;
@@ -58,14 +61,30 @@ export interface LauncherOptions {
   readonly stopRequestCheckMs?: number;
 }
 
+// Mirrors pinnedRuntimePaths: a runtime is an unpacked release archive whose
+// executable runs on its own. Kept inline so this file stays on Node
+// built-ins only.
 const runtimePaths = (baseDir: string, version: string) => {
   const versionDir = NodePath.join(baseDir, "runtime", "versions", version);
+  const executableName = HOST_PLATFORM === "win32" ? "t3.exe" : "t3";
+  const executablePath = NodePath.join(versionDir, executableName);
+  const legacyEntryPath = NodePath.join(versionDir, "node_modules", "t3", "dist", "bin.mjs");
+  // Direct Node launchers can still supervise previously pinned npm trees.
+  // A SEA launcher needs an executable because its runtime embeds the CLI.
+  const legacyNodeRuntime =
+    !NodeSea.isSea() && !NodeFS.existsSync(executablePath) && NodeFS.existsSync(legacyEntryPath);
   return {
     versionDir,
-    entryPath: NodePath.join(versionDir, "node_modules", "t3", "dist", "bin.mjs"),
+    entryPath: legacyNodeRuntime ? legacyEntryPath : executablePath,
+    legacyNodeRuntime,
     sentinelPath: NodePath.join(versionDir, ".install-complete"),
   };
 };
+
+const runtimeSpawnArguments = (paths: ReturnType<typeof runtimePaths>) =>
+  paths.legacyNodeRuntime
+    ? { command: process.execPath, args: [paths.entryPath, "serve"] }
+    : { command: paths.entryPath, args: ["serve"] };
 
 /** SQLite persists across the main file plus its WAL and shared-memory sidecars. */
 const DB_FILE_SUFFIXES = ["", "-wal", "-shm"] as const;
@@ -337,6 +356,8 @@ async function writeStopAcknowledgement(
     `${JSON.stringify(acknowledgement, null, 2)}\n`,
   );
 }
+const restartPendingPath = (baseDir: string) =>
+  NodePath.join(baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
 
 export class Launcher {
   readonly #baseDir: string;
@@ -521,8 +542,17 @@ export class Launcher {
   async #recover(): Promise<void> {
     // A fresh launcher means servers are running again: any stop marker from
     // a previous explicit stop is stale and must not make a future update
-    // handoff release its tunnel.
+    // handoff release its tunnel. A restart deferred by `t3 update` is done
+    // no matter who restarted the service, but only once this launcher is
+    // the version the marker waits for: a launcher that came up between the
+    // CLI writing the marker and writing the new state still runs the old
+    // version, and the marker has to outlive it.
     await NodeFSP.rm(stopMarkerPath(this.#baseDir), { force: true }).catch(() => undefined);
+    const restartPending = restartPendingPath(this.#baseDir);
+    const awaitedVersion = await NodeFSP.readFile(restartPending, "utf8").catch(() => undefined);
+    if (awaitedVersion?.trim() === this.#state.activeVersion) {
+      await NodeFSP.rm(restartPending, { force: true }).catch(() => undefined);
+    }
     const update = this.#state.update;
     if (update?.status !== "pending") {
       if (update !== undefined) {
@@ -569,7 +599,8 @@ export class Launcher {
       childVersion: version,
       ...(update === undefined ? {} : { update }),
     };
-    const child = NodeChildProcess.spawn(process.execPath, [paths.entryPath, "serve"], {
+    const spawnArguments = runtimeSpawnArguments(paths);
+    const child = NodeChildProcess.spawn(spawnArguments.command, spawnArguments.args, {
       env: {
         ...process.env,
         T3CODE_HOME: this.#baseDir,
@@ -810,8 +841,8 @@ export function parseServiceLauncherArguments(
   return { baseDir, ...(logPath === undefined ? {} : { logPath }) };
 }
 
-async function main(): Promise<void> {
-  const options = parseServiceLauncherArguments(process.argv.slice(2), process.env);
+export async function main(args: ReadonlyArray<string> = process.argv.slice(2)): Promise<void> {
+  const options = parseServiceLauncherArguments(args, process.env);
   const { baseDir } = options;
   const statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
   const state = await readServiceState(statePath);
@@ -821,18 +852,4 @@ async function main(): Promise<void> {
       ? {}
       : { serviceUnit: process.env.T3_BOOT_SERVICE_UNIT }),
   }).run();
-}
-
-if (
-  isEntrypoint({
-    moduleUrl: import.meta.url,
-    entryPath: process.argv[1],
-    runtimeMain: import.meta.main,
-  })
-) {
-  main().catch((cause: unknown) => {
-    const error = cause instanceof Error ? cause : new Error(String(cause));
-    process.stderr.write(`[service-launcher] ${error.message}\n`);
-    process.exitCode = 1;
-  });
 }

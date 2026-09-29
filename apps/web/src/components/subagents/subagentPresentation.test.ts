@@ -199,6 +199,30 @@ describe("subagent presentation", () => {
 });
 
 describe("deriveSubagentTranscriptEntries", () => {
+  it.each(["completed", "error", "interrupted", "unavailable"] as const)(
+    "displays stranded streaming snapshots as history for a %s subagent",
+    (status) => {
+      const message = {
+        id: MessageId.make("stranded-message"),
+        role: "assistant" as const,
+        text: "Partial output before the provider stopped.",
+        turnId: null,
+        streaming: true,
+        createdAt: STARTED_AT,
+        updatedAt: STARTED_AT,
+      };
+      const detail = { status, messages: [message], proposedPlans: [], activities: [] };
+      const [entry] = deriveSubagentTranscriptEntries(detail);
+      expect(entry).toMatchObject({
+        kind: "message",
+        message: { text: message.text, streaming: false },
+      });
+      expect(message.streaming).toBe(true);
+      const [liveEntry] = deriveSubagentTranscriptEntries({ ...detail, status: "running" });
+      expect(liveEntry).toMatchObject({ kind: "message", message: { streaming: true } });
+    },
+  );
+
   it("keeps every message, plan, and activity in chronological order", () => {
     const detail: OrchestrationSubagentDetail = {
       ...makeSubagent("transcript", "completed"),

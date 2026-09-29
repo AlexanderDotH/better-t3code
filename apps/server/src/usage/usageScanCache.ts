@@ -15,15 +15,13 @@
  * @module usageScanCache
  */
 // @effect-diagnostics nodeBuiltinImport:off
-import * as NodePath from "node:path";
-
 import type { UsageCallKind, UsageContextDiagnostics, UsageProviderKind } from "@t3tools/contracts";
 
 import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptReader.ts";
 import type { CodexScanState, ClaudeScanState, UsageRecord } from "./usageTranscripts.ts";
 
 // Reducer state and diagnostics must travel with incremental parse offsets.
-const USAGE_SCAN_CACHE_VERSION = 6 as const;
+const USAGE_SCAN_CACHE_VERSION = 7 as const;
 
 export interface CachedFile {
   readonly size: number;
@@ -60,6 +58,7 @@ type SerializedRecord = readonly [
   reportedCostUsd: number | null,
   callKind: UsageCallKind,
   diagnostics: SerializedDiagnostics | null,
+  fast: 0 | 1,
 ];
 
 type SerializedDiagnostics = readonly [
@@ -146,6 +145,7 @@ export function encodeScanCache(cache: ScanCache): SerializedCache {
           record.diagnostics.toolDigestChars ?? 0,
           record.diagnostics.autoRoutingChars ?? 0,
         ],
+    record.fast ? 1 : 0,
   ];
 
   const files: Record<string, SerializedFile> = {};
@@ -209,7 +209,7 @@ export function decodeScanCache(document: unknown): ScanCache {
   ): UsageRecord[] | null => {
     const records: UsageRecord[] = [];
     for (const row of rows) {
-      if (!isRecordArray(row) || row.length < 12) return null;
+      if (!isRecordArray(row) || row.length < 13) return null;
       const [
         timestampMs,
         modelIndex,
@@ -223,6 +223,7 @@ export function decodeScanCache(document: unknown): ScanCache {
         reportedCostUsd,
         callKind,
         serializedDiagnostics,
+        fast,
       ] = row as SerializedRecord;
 
       const model = typeof modelIndex === "number" ? models[modelIndex] : undefined;
@@ -239,7 +240,8 @@ export function decodeScanCache(document: unknown): ScanCache {
           callKind !== "subagent" &&
           callKind !== "metadata" &&
           callKind !== "auto-reasoning" &&
-          callKind !== "unknown")
+          callKind !== "unknown") ||
+        (fast !== 0 && fast !== 1)
       ) {
         return null;
       }
@@ -298,6 +300,7 @@ export function decodeScanCache(document: unknown): ScanCache {
         callKind,
         ...(diagnostics === undefined ? {} : { diagnostics }),
         reportedCostUsd: typeof reportedCostUsd === "number" ? reportedCostUsd : null,
+        fast: fast === 1,
         dedupeKey: typeof dedupeKey === "string" ? dedupeKey : null,
       });
     }
@@ -434,47 +437,11 @@ function decodeClaudeState(value: unknown): ClaudeScanState | undefined {
     : undefined;
 }
 
-export interface PruneOptions {
-  /** Files the walk just saw. Only meaningful inside the walked window. */
-  readonly livePaths: ReadonlySet<string>;
-  /**
-   * Roots the walk actually completed. Absence from `livePaths` only proves a
-   * file is gone when its root was walked: a provider whose directory failed to
-   * resolve this pass must not have its warm entries purged.
-   */
-  readonly walkedRoots: readonly string[];
-  /** Start of the walked window; entries older than this were not looked for. */
-  readonly windowStartMs: number;
-  /** Entries older than this are dropped regardless. */
-  readonly retentionCutoffMs: number;
-}
-
-/**
- * Drops aged-out entries, and entries for files that have disappeared.
- *
- * The walk only covers the requested window, so absence from `livePaths` only
- * proves deletion for entries *inside* that window. Pruning everything the walk
- * missed would evict the 30-day entries every time someone looked at 7 days.
- *
- * Replaces an earlier record cap that cleared the whole cache once exceeded,
- * which meant a large enough window never warmed up at all.
- */
-export function pruneScanCache(cache: ScanCache, options: PruneOptions): number {
+/** Keeps saved usage after transcript cleanup, until the reporting retention expires. */
+export function pruneScanCache(cache: ScanCache, retentionCutoffMs: number): number {
   let removed = 0;
   for (const [path, entry] of cache) {
-    const agedOut = entry.mtimeMs < options.retentionCutoffMs;
-    const underWalkedRoot = options.walkedRoots.some((root) => {
-      const relative = NodePath.relative(root, path);
-      return (
-        relative === "" ||
-        (relative !== ".." &&
-          !relative.startsWith(`..${NodePath.sep}`) &&
-          !NodePath.isAbsolute(relative))
-      );
-    });
-    const deleted =
-      underWalkedRoot && entry.mtimeMs >= options.windowStartMs && !options.livePaths.has(path);
-    if (agedOut || deleted) {
+    if (entry.mtimeMs < retentionCutoffMs) {
       cache.delete(path);
       removed += 1;
     }

@@ -10,7 +10,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as ProjectSpeechProfileStore from "./ProjectSpeechProfileStore.ts";
 
 const migratedSqlite = Layer.effectDiscard(runMigrations()).pipe(
-  Layer.provideMerge(NodeSqliteClient.layerMemory()),
+  Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
 );
 
 const layer = it.layer(ProjectSpeechProfileStore.layer.pipe(Layer.provideMerge(migratedSqlite)));

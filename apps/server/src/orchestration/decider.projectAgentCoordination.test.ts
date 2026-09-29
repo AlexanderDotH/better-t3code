@@ -23,6 +23,8 @@ const secondTurnId = TurnId.make("turn-second");
 
 function activeThread(threadId: ThreadId, turnId: TurnId, title: string) {
   return {
+    pullRequests: [],
+
     id: threadId,
     projectId,
     title,

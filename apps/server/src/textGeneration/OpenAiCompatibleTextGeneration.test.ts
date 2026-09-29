@@ -102,14 +102,17 @@ describe("OpenAiCompatibleTextGeneration", () => {
             instanceId: INSTANCE,
             transport: makeTransport(
               [
-                '{"title":"  First title  "}',
+                '{"title":"  First title  ","needsRefinement":true}',
                 '{"title":"Second title"}',
                 '{"title":"Own default"}',
               ],
               requests,
             ),
           });
-          expect(yield* service.generateThreadTitle(INPUT)).toEqual({ title: "First title" });
+          expect(yield* service.generateThreadTitle(INPUT)).toEqual({
+            title: "First title",
+            needsRefinement: true,
+          });
           expect(
             yield* service.generateThreadTitle({
               ...INPUT,

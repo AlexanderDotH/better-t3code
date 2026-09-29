@@ -1,85 +1,13 @@
-import { MenuView } from "@react-native-menu/menu";
-import * as Haptics from "expo-haptics";
-import {
-  cloneElement,
-  isValidElement,
-  type ComponentProps,
-  type ReactElement,
-  type ReactNode,
-  useMemo,
-  useRef,
-} from "react";
-import {
-  Platform,
-  Pressable,
-  View,
-  type ColorValue,
-  type PressableProps,
-  type AccessibilityProps,
-} from "react-native";
-import { withUniwind } from "uniwind";
-import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
-import { useMobileInterfaceTranslator } from "../localization/useMobileInterfaceTranslator";
-
+import { type ComponentProps, type ReactNode, useRef } from "react";
+import { Platform, Pressable, View } from "react-native";
 import { cn } from "../lib/cn";
-import { withMenuActionIconColors } from "../lib/menu-action-colors";
-import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu";
 import { SymbolView } from "./AppSymbol";
 import { AppText as Text } from "./AppText";
-import { createControlPillMenuPressController } from "./control-pill-menu-press";
+import { MaterialIconButton } from "./MaterialIconButton";
+import { MaterialButton } from "./MaterialButton";
+import { useAndroidControlSizing } from "./useAndroidControlSizing";
 
-type AndroidLongPressMenuChildProps = {
-  readonly accessibilityActions?: ComponentProps<typeof Pressable>["accessibilityActions"];
-  readonly accessibilityHint?: string;
-  readonly accessibilityState?: ComponentProps<typeof Pressable>["accessibilityState"];
-  readonly onAccessibilityAction?: ComponentProps<typeof Pressable>["onAccessibilityAction"];
-  readonly onLongPress?: () => void;
-};
-
-type MenuAnchorChildProps = {
-  readonly accessibilityLabel?: string;
-  readonly label?: string;
-};
-
-function getMenuAnchorAccessibilityLabel(
-  children: ReactNode,
-  menuTitle: string | undefined,
-  fallback: string,
-): string {
-  if (!isValidElement(children)) {
-    return menuTitle ?? fallback;
-  }
-  const child = children as ReactElement<MenuAnchorChildProps>;
-  return child.props.accessibilityLabel ?? child.props.label ?? menuTitle ?? fallback;
-}
-
-const ThemedMenuView = withUniwind(
-  function NativeMenuView({
-    iconColor,
-    destructiveIconColor,
-    ...props
-  }: ComponentProps<typeof MenuView> & {
-    readonly iconColor?: ColorValue;
-    readonly destructiveIconColor?: ColorValue;
-  }) {
-    const actions = useMemo(
-      () =>
-        withMenuActionIconColors(props.actions, {
-          icon: iconColor,
-          destructiveIcon: destructiveIconColor,
-        }),
-      [props.actions, iconColor, destructiveIconColor],
-    );
-    return <MenuView {...props} actions={actions} />;
-  },
-  {
-    iconColor: { fromClassName: "iconColorClassName", styleProperty: "accentColor" },
-    destructiveIconColor: {
-      fromClassName: "destructiveIconColorClassName",
-      styleProperty: "accentColor",
-    },
-  },
-);
+export { ControlPillMenu } from "./ControlPillMenu";
 
 export function ControlPill(props: {
   readonly icon?: ComponentProps<typeof SymbolView>["name"];
@@ -93,6 +21,7 @@ export function ControlPill(props: {
   readonly className?: string;
 }) {
   const variant = props.variant ?? "circle";
+  const { smallIconSize } = useAndroidControlSizing();
   const activatedOnPressInRef = useRef(false);
 
   const handlePressIn = () => {
@@ -145,8 +74,51 @@ export function ControlPill(props: {
       ? props.disabled
         ? "text-foreground-muted"
         : "text-primary-foreground"
-      : "",
+      : variant === "danger"
+        ? "text-danger-foreground"
+        : "text-foreground",
   );
+
+  if (
+    Platform.OS === "android" &&
+    (variant === "pill" || variant === "primary") &&
+    props.label &&
+    props.onPress &&
+    !props.icon &&
+    !props.iconNode &&
+    !props.className &&
+    !props.activateOnPressIn &&
+    (!props.accessibilityLabel || props.accessibilityLabel === props.label)
+  ) {
+    return (
+      <MaterialButton
+        label={props.label}
+        onPress={props.onPress}
+        disabled={props.disabled}
+        tone={variant === "primary" ? "primary" : "secondary"}
+      />
+    );
+  }
+
+  if (
+    Platform.OS === "android" &&
+    props.accessibilityLabel &&
+    props.icon &&
+    !props.iconNode &&
+    !props.label &&
+    !props.className &&
+    !props.activateOnPressIn
+  ) {
+    return (
+      <MaterialIconButton
+        accessibilityLabel={props.accessibilityLabel}
+        icon={props.icon}
+        onPress={props.onPress}
+        disabled={props.disabled}
+        variant={variant === "primary" ? "primary" : variant === "danger" ? "danger" : "tonal"}
+      />
+    );
+  }
 
   return (
     <Pressable
@@ -164,146 +136,12 @@ export function ControlPill(props: {
       ) : props.icon ? (
         <SymbolView
           name={props.icon}
-          size={16}
+          size={smallIconSize}
           tintColorClassName={iconTintClassName}
           type="monochrome"
         />
       ) : null}
       {props.label ? <Text className={labelClassName}>{props.label}</Text> : null}
     </Pressable>
-  );
-}
-
-// iOS renders the native UIMenu (standard checkmark for `state: "on"`);
-// Android renders the token-styled AndroidAnchoredMenu, since the native
-// AppCompat popup can't be themed past its stock animation, metrics, and
-// submenu chrome.
-export function ControlPillMenu(
-  props: Omit<ComponentProps<typeof MenuView>, "children" | "themeVariant"> &
-    Pick<AccessibilityProps, "accessible" | "accessibilityLabel" | "accessibilityRole"> & {
-      readonly children: ReactNode;
-      readonly className?: string;
-    },
-) {
-  const { themeAppearance } = useAppearancePreferences();
-  const translator = useMobileInterfaceTranslator();
-  const isDarkMode = themeAppearance === "dark";
-  const menuPress = useRef(createControlPillMenuPressController());
-
-  if (Platform.OS === "android") {
-    // Long-press menus keep their child interactive: the child element gets
-    // an injected onLongPress (mirroring the iOS context-menu interaction)
-    // so its own tap handling still works.
-    if (props.shouldOpenOnLongPress && isValidElement(props.children)) {
-      const child = props.children as ReactElement<AndroidLongPressMenuChildProps>;
-      return (
-        <AndroidAnchoredMenu
-          actions={props.actions}
-          className={props.className}
-          title={props.title}
-          style={props.style}
-          onPressAction={props.onPressAction}
-        >
-          {(open, expanded) => {
-            const existingActions = child.props.accessibilityActions ?? [];
-            const accessibilityActions = existingActions.some(
-              (action) => action.name === "longpress",
-            )
-              ? existingActions
-              : [
-                  ...existingActions,
-                  {
-                    name: "longpress",
-                    label: translator.message("mobile.accessibility.openMenu"),
-                  },
-                ];
-            const openWithFeedback = () => {
-              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-              open();
-            };
-            return cloneElement(child, {
-              accessibilityActions,
-              accessibilityHint:
-                child.props.accessibilityHint ??
-                translator.message("mobile.accessibility.longPressMenu"),
-              accessibilityState: { ...child.props.accessibilityState, expanded },
-              onAccessibilityAction: (event) => {
-                child.props.onAccessibilityAction?.(event);
-                if (event.nativeEvent.actionName === "longpress") {
-                  openWithFeedback();
-                }
-              },
-              onLongPress: openWithFeedback,
-            });
-          }}
-        </AndroidAnchoredMenu>
-      );
-    }
-    return (
-      <AndroidAnchoredMenu
-        actions={props.actions}
-        anchorAccessibilityLabel={getMenuAnchorAccessibilityLabel(
-          props.children,
-          props.title,
-          translator.message("mobile.accessibility.openMenu"),
-        )}
-        className={props.className}
-        title={props.title}
-        style={props.style}
-        onPressAction={props.onPressAction}
-      >
-        {props.children}
-      </AndroidAnchoredMenu>
-    );
-  }
-
-  const { className: _className, ...menuProps } = props;
-  let children = menuProps.children;
-  if (props.shouldOpenOnLongPress && isValidElement(children)) {
-    const child = children as ReactElement<Pick<PressableProps, "onTouchStart" | "onPress">>;
-    children = cloneElement(child, {
-      onTouchStart: (event) => {
-        // Reset for a new touch, not onPressIn, which also fires when a
-        // finger moves out of the row and back during the same gesture.
-        menuPress.current.onTouchStart();
-        child.props.onTouchStart?.(event);
-      },
-      onPress: (event) => {
-        // Accessibility clicks have no touch identifier and must not inherit
-        // cancellation from a previous physical gesture.
-        const isTouch = typeof event.nativeEvent.identifier === "number";
-        menuPress.current.onPress({
-          isTouch,
-          invoke: () => child.props.onPress?.(event),
-          persist: () => event.persist(),
-        });
-      },
-    });
-    menuProps.onMenuInteractionStart = () => {
-      menuPress.current.onMenuInteractionStart();
-      props.onMenuInteractionStart?.();
-    };
-    menuProps.onOpenMenu = () => {
-      menuPress.current.onMenuOpen();
-      props.onOpenMenu?.();
-    };
-    menuProps.onCloseMenu = () => {
-      // Keep this gesture cancelled even if dismissal precedes finger-up.
-      // A separate JS long-press timer would also swallow holds that never
-      // open the native menu.
-      const pendingPress = menuPress.current.onMenuClose();
-      props.onCloseMenu?.();
-      pendingPress?.();
-    };
-  }
-  return (
-    <ThemedMenuView
-      {...menuProps}
-      iconColorClassName="accent-icon"
-      destructiveIconColorClassName="accent-danger-foreground"
-      themeVariant={isDarkMode ? "dark" : "light"}
-    >
-      {children}
-    </ThemedMenuView>
   );
 }

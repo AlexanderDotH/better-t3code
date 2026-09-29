@@ -251,7 +251,10 @@ export const makeChatGptTextGeneration = (
         outputSchema,
         modelSelection: input.modelSelection,
       });
-      return { title: sanitizeThreadTitle(generated.title) };
+      return {
+        title: sanitizeThreadTitle(generated.title),
+        ...(generated.needsRefinement ? { needsRefinement: true } : {}),
+      };
     }),
     generateThreadMetadata: Effect.fn("ChatGptTextGeneration.generateThreadMetadata")(
       function* (input) {

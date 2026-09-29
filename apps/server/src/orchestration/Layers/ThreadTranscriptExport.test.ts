@@ -19,6 +19,8 @@ const threadId = ThreadId.make("thread-export-service");
 const projectId = ProjectId.make("project-export-service");
 
 const thread: OrchestrationThread = {
+  pullRequests: [],
+
   subagents: [],
   id: threadId,
   projectId,

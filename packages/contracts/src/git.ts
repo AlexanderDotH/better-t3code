@@ -132,6 +132,8 @@ export const GitRunStackedActionInput = Schema.Struct({
       }),
     ]),
   ),
+  /** The thread the action runs beside; a pull request it creates is linked to it. */
+  threadId: Schema.optional(ThreadId),
 });
 export type GitRunStackedActionInput = typeof GitRunStackedActionInput.Type;
 

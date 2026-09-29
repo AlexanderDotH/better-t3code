@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
   [string]$ServerEntry = "apps/server/dist/bin.mjs",
+  [string]$RuntimeArchive = "",
   [string]$WorkRoot = ""
 )
 
@@ -28,6 +29,7 @@ $versionRoot = Join-Path $runtimeRoot "versions\$version"
 $runtimeNodeModules = Join-Path $versionRoot "node_modules"
 $runtimePackage = Join-Path $runtimeNodeModules "t3"
 $runtimeSentinel = Join-Path $versionRoot ".install-complete"
+$runtimeExecutable = Join-Path $versionRoot "t3.exe"
 $launcherPath = Join-Path $runtimeRoot "service-launcher.mjs"
 $taskXmlPath = Join-Path $runtimeRoot "t3code-task.xml"
 $serviceLogPath = Join-Path $baseDir "userdata\logs\boot-service.log"
@@ -39,7 +41,12 @@ $trackedProcessTrees = @()
 function Invoke-ServiceCommand {
   param([Parameter(Mandatory = $true)][string]$Command)
 
-  & node.exe $resolvedServerEntry service $Command --base-dir $baseDir
+  if ([string]::IsNullOrWhiteSpace($RuntimeArchive)) {
+    & node.exe $resolvedServerEntry service $Command --base-dir $baseDir
+  }
+  else {
+    & $runtimeExecutable service $Command --base-dir $baseDir
+  }
   if ($LASTEXITCODE -ne 0) {
     throw "t3 service $Command failed with exit code $LASTEXITCODE."
   }
@@ -90,16 +97,17 @@ function Test-CommandLineContains {
     $CommandLine.IndexOf($Value, [StringComparison]::OrdinalIgnoreCase) -ge 0
 }
 
-function Get-ManagedNodeProcesses {
+function Get-ManagedRuntimeProcesses {
   return @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
-      $_.Name -ieq "node.exe" -and
+      ($_.Name -ieq "node.exe" -or $_.Name -ieq "t3.exe") -and
       (Test-CommandLineContains -CommandLine $_.CommandLine -Value $baseDir)
     })
 }
 
 function Get-ServiceLauncherProcesses {
-  return @(Get-ManagedNodeProcesses | Where-Object {
-      Test-CommandLineContains -CommandLine $_.CommandLine -Value $launcherPath
+  return @(Get-ManagedRuntimeProcesses | Where-Object {
+      (Test-CommandLineContains -CommandLine $_.CommandLine -Value $launcherPath) -or
+      (Test-CommandLineContains -CommandLine $_.CommandLine -Value "__service-launcher")
     })
 }
 
@@ -145,14 +153,31 @@ function Assert-ProcessTreeExited {
 }
 
 function Remove-SmokeTaskAndProcesses {
-  foreach ($process in Get-ManagedNodeProcesses) {
+  foreach ($process in Get-ManagedRuntimeProcesses) {
     & taskkill.exe /PID $process.ProcessId /T /F | Out-Null
   }
   & schtasks.exe /Delete /TN $taskName /F 2>$null | Out-Null
 }
 
-New-Item -ItemType Directory -Path $runtimeNodeModules -Force | Out-Null
-New-Item -ItemType Junction -Path $runtimePackage -Target $serverRoot | Out-Null
+if ([string]::IsNullOrWhiteSpace($RuntimeArchive)) {
+  New-Item -ItemType Directory -Path $runtimeNodeModules -Force | Out-Null
+  New-Item -ItemType Junction -Path $runtimePackage -Target $serverRoot | Out-Null
+}
+else {
+  $resolvedArchive = (Resolve-Path -LiteralPath $RuntimeArchive).Path
+  $archiveStage = Join-Path $WorkRoot "archive"
+  Expand-Archive -LiteralPath $resolvedArchive -DestinationPath $archiveStage
+  $archiveRoots = @(Get-ChildItem -LiteralPath $archiveStage -Directory)
+  if ($archiveRoots.Count -ne 1) {
+    throw "Expected exactly one top-level CLI archive directory."
+  }
+  New-Item -ItemType Directory -Path $versionRoot -Force | Out-Null
+  Get-ChildItem -LiteralPath $archiveRoots[0].FullName -Force |
+    Copy-Item -Destination $versionRoot -Recurse -Force
+  if (-not (Test-Path -LiteralPath $runtimeExecutable -PathType Leaf)) {
+    throw "The Windows CLI archive does not contain t3.exe."
+  }
+}
 Set-Content -LiteralPath $runtimeSentinel -Value $version -Encoding utf8NoBOM
 
 try {
@@ -198,7 +223,7 @@ try {
     -Condition { (Get-ReadyCount) -gt $readyBeforeCrash }
   Assert-ProcessTreeExited -Snapshot $crashedTree -Description "Launcher crash recovery"
 
-  $managedAfterCrash = @(Get-ManagedNodeProcesses)
+  $managedAfterCrash = @(Get-ManagedRuntimeProcesses)
   if ($managedAfterCrash.Count -ne 2) {
     throw "Launcher crash recovery left an unexpected managed process count: $($managedAfterCrash.Count)."
   }
@@ -234,7 +259,7 @@ try {
   Invoke-ServiceCommand -Command "uninstall"
   $installed = $false
   Wait-Until -Description "all managed service processes to exit" -Condition {
-    @(Get-ManagedNodeProcesses).Count -eq 0
+    @(Get-ManagedRuntimeProcesses).Count -eq 0
   }
   Assert-ProcessTreeExited -Snapshot $uninstalledTree -Description "Service uninstall"
   & schtasks.exe /Query /TN $taskName 2>$null | Out-Null

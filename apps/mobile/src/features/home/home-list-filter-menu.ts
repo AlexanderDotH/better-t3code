@@ -65,12 +65,12 @@ export function buildHomeListFilterMenu(props: {
   readonly projects: ReadonlyArray<HomeListFilterMenuProject>;
   readonly selectedEnvironmentId: EnvironmentId | null;
   readonly selectedProjectKey: string | null;
-  readonly projectSortOrder: HomeProjectSortOrder;
-  readonly threadSortOrder: SidebarThreadSortOrder;
   readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
   readonly onProjectChange: (projectKey: string | null) => void;
-  readonly onProjectSortOrderChange: (sortOrder: HomeProjectSortOrder) => void;
-  readonly onThreadSortOrderChange: (sortOrder: SidebarThreadSortOrder) => void;
+  readonly projectSortOrder?: HomeProjectSortOrder;
+  readonly threadSortOrder?: SidebarThreadSortOrder;
+  readonly onProjectSortOrderChange?: (sortOrder: HomeProjectSortOrder) => void;
+  readonly onThreadSortOrderChange?: (sortOrder: SidebarThreadSortOrder) => void;
   /** False hides the sort/group submenus. Thread List v2 uses a fixed
       creation-order layout, so offering those controls while it silently
       ignores them would be a lie; the environment filter still applies. */
@@ -134,7 +134,7 @@ export function buildHomeListFilterMenu(props: {
           type: "action",
           title: option.value === "updated_at" ? copy.lastUserMessage : copy.createdAt,
           state: props.projectSortOrder === option.value ? "on" : "off",
-          onPress: () => props.onProjectSortOrderChange(option.value),
+          onPress: () => props.onProjectSortOrderChange?.(option.value),
         })),
       },
       {
@@ -144,7 +144,7 @@ export function buildHomeListFilterMenu(props: {
           type: "action",
           title: option.value === "updated_at" ? copy.lastUserMessage : copy.createdAt,
           state: props.threadSortOrder === option.value ? "on" : "off",
-          onPress: () => props.onThreadSortOrderChange(option.value),
+          onPress: () => props.onThreadSortOrderChange?.(option.value),
         })),
       },
     );

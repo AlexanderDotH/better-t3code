@@ -19,13 +19,13 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { isProviderInstanceEnabled } from "@t3tools/shared/serverSettings";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Alert, Linking, Modal, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
+
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { uuidv4 } from "../../lib/uuid";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
@@ -68,6 +68,10 @@ import {
   EnvironmentChatImportSettings,
   EnvironmentSpeechProfileSettings,
 } from "./SettingsEnvironmentDataSections";
+import {
+  mobileResponseStreamingMode,
+  mobileResponseStreamingSettingsPatch,
+} from "./response-streaming-settings";
 
 function failureMessage(
   result: Parameters<typeof squashAtomCommandFailure>[0],
@@ -974,10 +978,14 @@ function EnvironmentAgentSettings(props: {
         <SettingsSwitchRow
           icon="text.bubble"
           label={translator.message("mobile.settings.agents.legacyStreaming")}
-          value={settings.enableLegacyTokenStreaming}
-          onValueChange={(value) =>
-            void updateSettings({ enableLegacyTokenStreaming: value }, "token streaming")
-          }
+          value={mobileResponseStreamingMode(settings, config.environment.capabilities) === "token"}
+          onValueChange={(value) => {
+            const patch = mobileResponseStreamingSettingsPatch(
+              value ? "token" : "turn",
+              config.environment.capabilities,
+            );
+            if (patch !== null) void updateSettings(patch, "token streaming");
+          }}
         />
         <SettingsSwitchRow
           icon="arrow.triangle.branch"

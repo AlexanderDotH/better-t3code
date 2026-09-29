@@ -31,7 +31,7 @@ const decodeScope = Schema.decodeUnknownSync(KnowledgeGraphScopeV1);
 const encodeEdgeJson = Schema.encodeSync(Schema.fromJsonString(KnowledgeGraphEdgeV1));
 
 const migratedSqlite = Layer.effectDiscard(Migration0059).pipe(
-  Layer.provideMerge(NodeSqliteClient.layerMemory()),
+  Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
 );
 const repositoryTestLayer = KnowledgeGraphRepositoryLive.pipe(Layer.provideMerge(migratedSqlite));
 const testLayer = layer.pipe(Layer.provideMerge(repositoryTestLayer));

@@ -1,4 +1,4 @@
-import { memo, useState, useId } from "react";
+import { memo, useState, useId, type CSSProperties } from "react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -158,23 +158,26 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   return (
     <div
       className={cn(
-        "rounded-[24px] border p-4 sm:p-5",
+        "rounded-3xl border p-4 sm:p-5",
         bluePlanBubble ? "border-primary/35 bg-primary/10" : "border-border/80 bg-card/70",
       )}
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
-          <Badge variant="secondary" className={cn(bluePlanBubble && "bg-primary/10 text-primary")}>
+          <Badge
+            variant={bluePlanBubble ? "label" : "secondary"}
+            style={bluePlanBubble ? ({ "--label": "var(--primary)" } as CSSProperties) : undefined}
+          >
             {translate("chat.plan.label")}
           </Badge>
-          <p
+          <h3
             className={cn(
               "truncate text-sm font-medium",
               bluePlanBubble ? "text-primary" : "text-foreground",
             )}
           >
             {title}
-          </p>
+          </h3>
         </div>
         <Menu>
           <MenuTrigger
@@ -214,6 +217,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               cwd={cwd}
               threadRef={threadRef}
               isStreaming={false}
+              headingLevelOffset={3}
             />
           ) : (
             <ChatMarkdown
@@ -221,6 +225,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               cwd={cwd}
               threadRef={threadRef}
               isStreaming={false}
+              headingLevelOffset={3}
             />
           )}
         </div>
@@ -255,7 +260,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               })}
             </DialogDescription>
           </DialogHeader>
-          <DialogPanel className="space-y-3">
+          <DialogPanel>
             <label htmlFor={savePathInputId} className="grid gap-1.5">
               <span className="text-xs font-medium text-foreground">
                 {translate("chat.plan.workspacePath")}

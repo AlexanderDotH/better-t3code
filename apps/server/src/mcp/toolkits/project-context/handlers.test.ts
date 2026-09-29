@@ -133,7 +133,7 @@ it.effect("preserves typed query failures for callers to fall back to source too
 });
 
 it("rejects external scope, absolute roots and undersized budgets at the public boundary", () => {
-  const decode = Schema.decodeUnknownSync(ProjectContextInput);
+  const decode = Schema.decodeUnknownSync(ProjectContextInput, { onExcessProperty: "error" });
   for (const extra of [
     { projectId },
     { threadId },

@@ -18,7 +18,7 @@ import { requireEnvironmentScope } from "../../auth/http.ts";
 import { requiredScopeForRpcMethod } from "../../auth/RpcAuthorization.ts";
 const decodeCapabilities = Schema.decodeSync(ExecutionEnvironmentCapabilities);
 const decodeSettings = Schema.decodeSync(ProjectIndexSettings);
-const decodeScope = Schema.decodeUnknownSync(ProjectIndexScopeInput);
+const decodeScope = Schema.decodeUnknownSync(ProjectIndexScopeInput, { onExcessProperty: "error" });
 const { projectIndexingVersion: _newField, ...legacyFields } =
   ExecutionEnvironmentCapabilities.fields;
 const decodeLegacyCapabilities = Schema.decodeSync(Schema.Struct(legacyFields));

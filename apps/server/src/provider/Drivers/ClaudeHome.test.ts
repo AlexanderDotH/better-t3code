@@ -16,15 +16,15 @@ import {
 
 it.layer(NodeServices.layer)("ClaudeHome", (it) => {
   describe("Claude home resolution", () => {
-    it.effect("uses the process home when no Claude home override is configured", () =>
+    it.effect("treats empty, ~/.claude, and the expanded default as the same Claude home", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
-        const resolved = path.resolve(NodeOS.homedir());
+        const resolved = path.resolve(path.join(NodeOS.homedir(), ".claude"));
         const environment = yield* makeClaudeEnvironment({ homePath: "" }, { HOME: resolved });
         const configDir = yield* resolveClaudeConfigDir({ homePath: "" });
 
         expect(yield* resolveClaudeHomePath({ homePath: "" })).toBe(resolved);
-        expect(configDir).toBe(path.join(resolved, ".claude"));
+        expect(configDir).toBe(resolved);
         expect(environment).toEqual({
           HOME: resolved,
           CLAUDE_CODE_MAX_OUTPUT_TOKENS: "128000",
@@ -60,6 +60,24 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       }),
     );
 
+    it.effect("uses inherited CLAUDE_CONFIG_DIR when homePath is empty", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const inherited = path.resolve("/tmp/claude-inherited");
+        const environment = { CLAUDE_CONFIG_DIR: inherited };
+
+        expect(yield* resolveClaudeHomePath({ homePath: "" }, environment)).toBe(inherited);
+        expect(yield* makeClaudeContinuationGroupKey({ homePath: "" }, environment)).toBe(
+          `claude:home:${inherited}`,
+        );
+
+        const explicit = path.resolve(NodeOS.homedir(), ".claude-work");
+        expect(yield* resolveClaudeHomePath({ homePath: "~/.claude-work" }, environment)).toBe(
+          explicit,
+        );
+      }),
+    );
+
     it("points the signed-out hint at the configured Claude home", () => {
       expect(claudeSignedOutMessage({ configDir: undefined, cwd: "/synthetic" })).toContain(
         "run `claude auth login`",
@@ -77,17 +95,6 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
         const first = yield* makeClaudeCapabilitiesCacheKey(config, "/repo-a");
         const second = yield* makeClaudeCapabilitiesCacheKey(config, "/repo-b");
         expect(first).not.toBe(second);
-      }),
-    );
-
-    it.effect("keeps continuation compatible across instances with the same Claude HOME", () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const resolved = path.resolve(NodeOS.homedir());
-
-        expect(yield* makeClaudeContinuationGroupKey({ homePath: "" })).toBe(
-          `claude:home:${resolved}`,
-        );
       }),
     );
   });

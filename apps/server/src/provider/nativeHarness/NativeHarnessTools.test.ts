@@ -98,21 +98,24 @@ describe("NativeHarnessTools", () => {
     );
 
     expect(workspaceFind?.inputSchema).toEqual(
-      Schema.toJsonSchemaDocument(WorkspaceFindInput).schema,
+      Schema.toJsonSchemaDocument(WorkspaceFindInput, { onExcessProperty: "error" }).schema,
     );
     expect(workspaceFind?.description).toContain(`up to ${WORKSPACE_CONTEXT_MAX_QUERIES}`);
     expect(workspaceFind?.description).toContain(
       `above ${WORKSPACE_CONTEXT_MAX_RESULTS_PER_QUERY}`,
     );
     expect(workspaceRead?.inputSchema).toEqual(
-      Schema.toJsonSchemaDocument(WorkspaceReadInput).schema,
+      Schema.toJsonSchemaDocument(WorkspaceReadInput, { onExcessProperty: "error" }).schema,
     );
     expect(workspaceRead?.description).toContain(`up to ${WORKSPACE_CONTEXT_MAX_READS}`);
     expect(workspaceContext?.description).toContain("mixed workspace searches");
     expect(workspaceEdit?.description).toContain("create requires a missing file");
     expect(workspaceEdit?.inputSchema).toEqual(
-      Schema.toJsonSchemaDocument(WorkspaceEditInput).schema,
+      Schema.toJsonSchemaDocument(WorkspaceEditInput, { onExcessProperty: "error" }).schema,
     );
+    for (const declaration of [workspaceFind, workspaceRead, workspaceContext, workspaceEdit]) {
+      expect(declaration?.inputSchema).toHaveProperty("additionalProperties", false);
+    }
     expect(declarations.map(({ name }) => name)).not.toContain("write_file");
     expect(declarations.map(({ name }) => name)).not.toContain("replace_text");
     expect(declarations.map(({ name }) => name)).not.toContain("apply_patch");
@@ -156,6 +159,86 @@ describe("NativeHarnessTools", () => {
       expect(requests).toEqual(calls.map(([, input]) => ({ workspaceRoot: "/workspace", input })));
       expect(titles).toEqual(["Workspace find", "Workspace read", "Workspace context"]);
     }),
+  );
+
+  it.effect(
+    "rejects scope injection and nested unknown fields before accessing the workspace",
+    () =>
+      Effect.gen(function* () {
+        const execute = makeNativeHarnessWorkspaceToolExecutor(
+          {
+            execute: () => Effect.die("Invalid arguments must not reach workspace reads"),
+          },
+          {
+            readFile: () => Effect.die("Invalid arguments must not reach filesystem reads"),
+            writeFile: () => Effect.die("Invalid arguments must not reach filesystem writes"),
+            editFiles: () => Effect.die("Invalid arguments must not reach workspace edits"),
+          },
+        );
+        const calls = [
+          [NATIVE_HARNESS_WORKSPACE_FIND_TOOL, { queries: [{ text: "tools.ts" }] }],
+          [NATIVE_HARNESS_WORKSPACE_READ_TOOL, { reads: [{ path: "README.md" }] }],
+          [NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL, { reads: [{ path: "README.md" }] }],
+          [
+            NATIVE_HARNESS_WORKSPACE_EDIT_TOOL,
+            {
+              changes: [{ path: "src/a.ts", edits: [{ type: "delete" }] }],
+            },
+          ],
+        ] as const;
+        for (const [name, args] of calls) {
+          for (const injection of [
+            { cwd: "/other-workspace" },
+            { workspaceRoot: "/other-workspace" },
+            { scope: { kind: "project", projectId: "other-project" } },
+          ]) {
+            const error = yield* execute({
+              name,
+              args: { ...args, ...injection },
+              cwd: "/workspace",
+              environment: {},
+            }).pipe(Effect.flip);
+            expect(Schema.isSchemaError(error)).toBe(true);
+          }
+        }
+        const nestedCalls = [
+          [
+            NATIVE_HARNESS_WORKSPACE_FIND_TOOL,
+            {
+              queries: [{ text: "tools.ts", workspaceRoot: "/other-workspace" }],
+            },
+          ],
+          [
+            NATIVE_HARNESS_WORKSPACE_READ_TOOL,
+            {
+              reads: [{ path: "README.md", workspaceRoot: "/other-workspace" }],
+            },
+          ],
+          [
+            NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL,
+            {
+              reads: [{ path: "README.md", workspaceRoot: "/other-workspace" }],
+            },
+          ],
+          [
+            NATIVE_HARNESS_WORKSPACE_EDIT_TOOL,
+            {
+              changes: [
+                {
+                  path: "src/a.ts",
+                  edits: [{ type: "delete", workspaceRoot: "/other-workspace" }],
+                },
+              ],
+            },
+          ],
+        ] as const;
+        for (const [name, args] of nestedCalls) {
+          const error = yield* execute({ name, args, cwd: "/workspace", environment: {} }).pipe(
+            Effect.flip,
+          );
+          expect(Schema.isSchemaError(error)).toBe(true);
+        }
+      }),
   );
 
   it.effect("delegates one mixed workspace_edit batch and returns only compact summaries", () =>

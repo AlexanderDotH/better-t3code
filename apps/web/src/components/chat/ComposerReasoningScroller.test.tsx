@@ -1,10 +1,14 @@
-import { EnvironmentId, ThreadId, TurnId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
 import { act } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { expect, it, vi } from "vite-plus/test";
 
 import type { WorkLogEntry } from "../../session-logic";
-import { ComposerReasoningScroller, latestReasoningEntries } from "./ComposerReasoningScroller";
+import {
+  ComposerReasoningScroller,
+  latestReasoningEntries,
+  latestReasoningTraces,
+} from "./ComposerReasoningScroller";
 
 vi.mock("../ChatMarkdown", () => ({ default: ({ text }: { text: string }) => <p>{text}</p> }));
 
@@ -28,6 +32,21 @@ it("keeps only recent, nonempty provider reasoning from the active turn", () => 
   expect(latestReasoningEntries([...entries, ...otherEntries], turnId)).toEqual(entries.slice(-3));
   expect(latestReasoningEntries(entries, null)).toEqual([]);
   expect(latestReasoningEntries(entries, TurnId.make("new-turn"))).toEqual([]);
+});
+
+it("prefers canonical messages over duplicated legacy traces and retains completion state", () => {
+  const message = {
+    id: MessageId.make("canonical-thought"),
+    role: "reasoning" as const,
+    turnId,
+    text: "Thought 4",
+    createdAt: "2026-09-15T10:00:01Z",
+    updatedAt: "2026-09-15T10:00:02Z",
+    streaming: false,
+  };
+  const traces = latestReasoningTraces(entries, [message], turnId);
+  expect(traces.map((trace) => trace.detail)).toEqual(["Thought 2", "Thought 3", "Thought 4"]);
+  expect(traces.at(-1)).toMatchObject({ id: message.id, streaming: false });
 });
 
 it("follows trace updates of unchanged height while hovered or focused and clears on a new turn", async () => {

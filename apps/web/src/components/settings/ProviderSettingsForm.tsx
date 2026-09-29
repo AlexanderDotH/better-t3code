@@ -202,7 +202,7 @@ function ProviderSettingsFieldControl({
   return variant === "dialog" ? (
     <Input
       id={id}
-      className="bg-background"
+
       type={type}
       autoComplete={autoComplete}
       value={text}

@@ -1,3 +1,4 @@
+import { ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -286,16 +287,19 @@ describe("sanitizeMobilePreferences", () => {
     expect(
       sanitizeMobilePreferences({
         modelFavorites: [
-          { provider: "openrouter", model: "openai/gpt-5.5" },
-          { provider: "openrouter", model: "openai/gpt-5.5" },
-          { provider: "openrouter_work", model: "anthropic/claude-sonnet" },
+          { provider: ProviderInstanceId.make("openrouter"), model: "openai/gpt-5.5" },
+          { provider: ProviderInstanceId.make("openrouter"), model: "openai/gpt-5.5" },
+          {
+            provider: ProviderInstanceId.make("openrouter_work"),
+            model: "anthropic/claude-sonnet",
+          },
           { provider: "", model: "bad" },
-          { provider: "openrouter", model: "" },
+          { provider: ProviderInstanceId.make("openrouter"), model: "" },
         ],
       }),
     ).toEqual({
       modelFavorites: [
-        { provider: "openrouter", model: "openai/gpt-5.5" },
+        { provider: ProviderInstanceId.make("openrouter"), model: "openai/gpt-5.5" },
         { provider: "openrouter_work", model: "anthropic/claude-sonnet" },
       ],
     });

@@ -1,3 +1,4 @@
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -7,6 +8,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  DEFAULT_SERVER_SETTINGS,
   ProjectReadFileResult,
   ServerConfig,
   T3_PROJECT_FILE_NAME,
@@ -14,7 +16,6 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
-import { isDefaultThreadEnvModeSettled } from "@t3tools/shared/threadEnvMode";
 import * as Haptics from "expo-haptics";
 import { useCallback, useMemo, useState } from "react";
 import { Alert } from "react-native";
@@ -49,27 +50,34 @@ export function useThreadForkAction(input: {
       : null,
   );
   const projectFileData = projectFileQuery.data as ProjectReadFileResult | null;
-  const projectFileDefault = useMemo(() => {
+  const projectFile = useMemo(() => {
     if (projectFileData === null || projectFileData.truncated) return null;
-    return parseT3ProjectFile(projectFileData.contents)?.defaultThreadEnvMode ?? null;
+    return parseT3ProjectFile(projectFileData.contents);
   }, [projectFileData]);
+  const projectSettings = useMemo(
+    () =>
+      resolveProjectSettings(
+        input.serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
+        input.project?.id ?? null,
+        input.project,
+        projectFile,
+      ),
+    [input.serverConfig?.settings, input.project, projectFile],
+  );
   const branchState = useBranches({
     environmentId: input.supported ? (input.project?.environmentId ?? null) : null,
     cwd: input.supported ? input.project?.workspaceRoot || null : null,
   });
   const workspace = resolveForkWorkspace({
-    projectSetting: input.project?.defaultThreadEnvMode,
-    projectFile: projectFileDefault,
-    globalDefault: input.serverConfig?.settings.defaultThreadEnvMode ?? "local",
-    startFromOrigin: input.serverConfig?.settings.newWorktreesStartFromOrigin ?? true,
+    projectSetting: projectSettings.settings.defaultThreadEnvMode,
+    projectFile: null,
+    globalDefault: null,
+    startFromOrigin: projectSettings.settings.newWorktreesStartFromOrigin,
     refs: branchState.data?.refs ?? [],
     isGitRepository: branchState.data?.isRepo ?? true,
   });
-  const defaultsSettled = isDefaultThreadEnvModeSettled({
-    explicitMode: undefined,
-    projectSetting: input.project?.defaultThreadEnvMode,
-    projectFilePending: projectFileQuery.isPending,
-  });
+  const defaultsSettled =
+    projectSettings.sources.defaultThreadEnvMode !== "environment" || !projectFileQuery.isPending;
   const enabled =
     input.supported &&
     input.connected &&

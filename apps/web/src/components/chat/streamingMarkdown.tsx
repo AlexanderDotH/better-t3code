@@ -1,5 +1,5 @@
 import type { ServerProviderSkill } from "@t3tools/contracts";
-import type { ShikiTransformer } from "@pierre/diffs";
+import type { DiffsHighlighter, ShikiTransformer } from "@pierre/diffs";
 import React, {
   Children,
   cloneElement,
@@ -509,6 +509,135 @@ export function nodeToPlainText(node: ReactNode): string {
   return "";
 }
 
+type HighlightedRoot = ReturnType<DiffsHighlighter["codeToHast"]>;
+type HighlightedElement = Extract<HighlightedRoot["children"][number], { type: "element" }>;
+type CodeNode = HighlightedElement["children"][number];
+
+const highlightedTextLengths = new WeakMap<HighlightedElement, number>();
+
+function highlightedTextLength(node: CodeNode): number {
+  if (node.type === "text") return node.value.length;
+  if (node.type !== "element") return 0;
+  const cached = highlightedTextLengths.get(node);
+  if (cached !== undefined) return cached;
+  const length = node.children.reduce((sum, child) => sum + highlightedTextLength(child), 0);
+  highlightedTextLengths.set(node, length);
+  return length;
+}
+
+interface StreamingCodeMotion {
+  readonly animationTimeMs: number;
+  readonly codeSourceStart: number;
+  readonly frames: readonly StreamingTextMotionFrame[];
+  readonly source: string;
+}
+
+function streamingCodeTextChildren(
+  { animationTimeMs, codeSourceStart, frames, source }: StreamingCodeMotion,
+  text: string,
+  offset: number,
+): CodeNode[] | null {
+  const tokenSourceStart = codeSourceStart + offset;
+  const tokenSourceEnd = tokenSourceStart + text.length;
+  const ranges: FramedRenderedStreamingTextRange[] = [];
+  for (const frame of frames) {
+    if (frame.sourceEnd <= tokenSourceStart) continue;
+    if (frame.sourceStart >= tokenSourceEnd) break;
+    const range = mapSourceFrameToRenderedText({
+      frame,
+      source,
+      sourceStart: tokenSourceStart,
+      sourceEnd: tokenSourceEnd,
+      renderedText: text,
+    });
+    if (range !== null) ranges.push({ ...range, frame });
+  }
+  ranges.sort((left, right) => left.renderedStart - right.renderedStart);
+  if (ranges.length === 0) {
+    return null;
+  }
+
+  const children: CodeNode[] = [];
+  let renderedOffset = 0;
+  for (const range of ranges) {
+    if (range.renderedStart < renderedOffset) continue;
+    const prefix = text.slice(renderedOffset, range.renderedStart);
+    if (prefix.length > 0) {
+      children.push({ type: "text", value: prefix });
+    }
+    for (const grapheme of range.graphemes) {
+      const animationTiming = getStreamingTextMotionAnimationTiming(
+        range.frame,
+        grapheme.index,
+        animationTimeMs,
+      );
+      children.push({
+        type: "element",
+        tagName: "span",
+        properties: {
+          "data-stream-character": "",
+          "data-stream-generation": String(range.frame.generation),
+          "data-stream-source-offset": String(grapheme.sourceOffset),
+          style: `--stream-character-delay:${animationTiming.delayMs}ms;--stream-character-duration:${animationTiming.durationMs}ms`,
+        },
+        children: [{ type: "text", value: grapheme.text }],
+      });
+    }
+    renderedOffset = range.renderedEnd;
+  }
+  const suffix = text.slice(renderedOffset);
+  if (suffix.length > 0) {
+    children.push({ type: "text", value: suffix });
+  }
+  return children;
+}
+
+/** Add motion to active tokens without changing cached, completed highlight lines. */
+export function applyStreamingCodeMotion(root: HighlightedRoot, motion: StreamingCodeMotion) {
+  const pre = root.children.find((node) => node.type === "element" && node.tagName === "pre");
+  if (pre?.type !== "element") return root;
+  const code = pre.children.find((node) => node.type === "element" && node.tagName === "code");
+  if (code?.type !== "element") return root;
+  let offset = 0;
+  const visit = (node: CodeNode): CodeNode => {
+    const length = highlightedTextLength(node);
+    const sourceStart = motion.codeSourceStart + offset;
+    if (
+      motion.frames.every(
+        (frame) => frame.sourceEnd <= sourceStart || frame.sourceStart >= sourceStart + length,
+      )
+    ) {
+      offset += length;
+      return node;
+    }
+    if (node.type === "text") {
+      offset += node.value.length;
+      return node;
+    }
+    if (node.type !== "element") return node;
+    if (node.tagName === "span" && node.children.every((child) => child.type === "text")) {
+      const text = node.children
+        .map((child) => (child.type === "text" ? child.value : ""))
+        .join("");
+      const children = streamingCodeTextChildren(motion, text, offset);
+      offset += text.length;
+      return children ? { ...node, children } : node;
+    }
+    const children = node.children.map(visit);
+    return children.some((child, index) => child !== node.children[index])
+      ? { ...node, children }
+      : node;
+  };
+  const children = code.children.map(visit);
+  if (children.every((child, index) => child === code.children[index])) return root;
+  const animatedCode = { ...code, children };
+  const animatedPre = {
+    ...pre,
+    children: pre.children.map((node) => (node === code ? animatedCode : node)),
+  };
+  return { ...root, children: root.children.map((node) => (node === pre ? animatedPre : node)) };
+}
+
 export function createStreamingCodeTransformer({
   animationTimeMs,
   codeSourceStart,
@@ -523,59 +652,17 @@ export function createStreamingCodeTransformer({
   return {
     name: "t3-streaming-text-motion",
     span(hast, _line, _column, _lineElement, token) {
-      const tokenSourceStart = codeSourceStart + token.offset;
-      const tokenSourceEnd = tokenSourceStart + token.content.length;
-      const ranges: FramedRenderedStreamingTextRange[] = [];
-      for (const frame of frames) {
-        if (frame.sourceEnd <= tokenSourceStart) continue;
-        if (frame.sourceStart >= tokenSourceEnd) break;
-        const range = mapSourceFrameToRenderedText({
-          frame,
+      const children = streamingCodeTextChildren(
+        {
+          animationTimeMs,
+          codeSourceStart,
+          frames,
           source,
-          sourceStart: tokenSourceStart,
-          sourceEnd: tokenSourceEnd,
-          renderedText: token.content,
-        });
-        if (range !== null) ranges.push({ ...range, frame });
-      }
-      ranges.sort((left, right) => left.renderedStart - right.renderedStart);
-      if (ranges.length === 0) {
-        return;
-      }
-
-      const children: typeof hast.children = [];
-      let renderedOffset = 0;
-      for (const range of ranges) {
-        if (range.renderedStart < renderedOffset) continue;
-        const prefix = token.content.slice(renderedOffset, range.renderedStart);
-        if (prefix.length > 0) {
-          children.push({ type: "text", value: prefix });
-        }
-        for (const grapheme of range.graphemes) {
-          const animationTiming = getStreamingTextMotionAnimationTiming(
-            range.frame,
-            grapheme.index,
-            animationTimeMs,
-          );
-          children.push({
-            type: "element",
-            tagName: "span",
-            properties: {
-              "data-stream-character": "",
-              "data-stream-generation": String(range.frame.generation),
-              "data-stream-source-offset": String(grapheme.sourceOffset),
-              style: `--stream-character-delay:${animationTiming.delayMs}ms;--stream-character-duration:${animationTiming.durationMs}ms`,
-            },
-            children: [{ type: "text", value: grapheme.text }],
-          });
-        }
-        renderedOffset = range.renderedEnd;
-      }
-      const suffix = token.content.slice(renderedOffset);
-      if (suffix.length > 0) {
-        children.push({ type: "text", value: suffix });
-      }
-      hast.children = children;
+        },
+        token.content,
+        token.offset,
+      );
+      if (children) hast.children = children;
     },
   };
 }

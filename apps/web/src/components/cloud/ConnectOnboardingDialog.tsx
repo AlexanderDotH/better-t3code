@@ -16,18 +16,10 @@ import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { CloudEnvironmentConnectRows } from "./CloudEnvironmentConnectList";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
-import {
-  Dialog,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogPanel,
-  DialogPopup,
-  DialogTitle,
-} from "../ui/dialog";
+import { Dialog } from "../ui/dialog";
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
-import { WizardSteps } from "../ui/wizard-steps";
+import { WizardSteps, WizardPopup, WizardHeader, WizardPanel, WizardFooter } from "../ui/wizard";
 
 /**
  * Post-sign-in onboarding wizard for T3 Connect. Opens on every in-session
@@ -218,22 +210,24 @@ function ConfiguredConnectOnboardingDialog() {
         if (!open && !isApplying) complete();
       }}
     >
-      <DialogPopup className="max-w-xl">
-        <DialogHeader>
-          <DialogTitle>{translator.message("connectOnboarding.title")}</DialogTitle>
-          <DialogDescription>
-            {translator.message("connectOnboarding.description")}
-          </DialogDescription>
+      <WizardPopup>
+        <WizardHeader
+          title={translator.message("connectOnboarding.title")}
+          description={translator.message("connectOnboarding.description")}
+        >
           {steps.length > 1 ? (
             <WizardSteps
-              steps={steps.map((id) => ({ id, label: translator.message(STEP_LABELS[id]) }))}
-              currentStep={step}
-              disabled={isApplying}
-              onStepSelect={setStep}
+              steps={steps.map((id) => translator.message(STEP_LABELS[id]))}
+              currentStep={steps.indexOf(step)}
+              isStepDisabled={() => isApplying}
+              onStepChange={(index) => {
+                const next = steps[index];
+                if (next) setStep(next);
+              }}
             />
           ) : null}
-        </DialogHeader>
-        <DialogPanel>
+        </WizardHeader>
+        <WizardPanel>
           {step === "publish" ? (
             <PublishStep
               exposeEnvironment={exposeEnvironment}
@@ -246,40 +240,37 @@ function ConfiguredConnectOnboardingDialog() {
           ) : (
             <DevicesStep />
           )}
-        </DialogPanel>
-        <DialogFooter variant="bare" className="sm:justify-between">
-          <label className="flex cursor-pointer items-center gap-2 self-start text-xs text-muted-foreground sm:self-center">
-            <Checkbox
-              checked={dontShowAgain}
-              onCheckedChange={(checked) => setDontShowAgain(checked === true)}
-            />
-            {translator.message("connectOnboarding.dontShowAgain")}
-          </label>
-          <div className="flex flex-col-reverse gap-2 sm:flex-row">
-            {step === "publish" ? (
-              <>
-                <Button variant="ghost" disabled={isApplying} onClick={() => setStep("devices")}>
-                  {translator.message("cloud.action.notNow")}
-                </Button>
-                <Button
-                  disabled={
-                    isApplying || (controller.linkState.isPending && linkStateData === null)
-                  }
-                  onClick={() => void applyPublishSelection()}
-                >
-                  {translator.message(
-                    isApplying ? "connectOnboarding.enabling" : "cloud.action.continue",
-                  )}
-                </Button>
-              </>
-            ) : (
-              <Button disabled={isApplying} onClick={complete}>
-                {translator.message("cloud.action.done")}
+        </WizardPanel>
+        <WizardFooter
+          leading={
+            <label className="flex cursor-pointer items-center gap-2 self-start text-xs text-muted-foreground sm:self-center">
+              <Checkbox
+                checked={dontShowAgain}
+                onCheckedChange={(checked) => setDontShowAgain(checked === true)}
+              />
+              {translator.message("connectOnboarding.dontShowAgain")}
+            </label>
+          }
+        >
+          {step === "publish" ? (
+            <>
+              <Button variant="ghost" disabled={isApplying} onClick={() => setStep("devices")}>
+                {translator.message("cloud.action.notNow")}
               </Button>
-            )}
-          </div>
-        </DialogFooter>
-      </DialogPopup>
+              <Button
+                disabled={isApplying || (controller.linkState.isPending && linkStateData === null)}
+                onClick={() => void applyPublishSelection()}
+              >
+                {isApplying ? "Enabling…" : "Continue"}
+              </Button>
+            </>
+          ) : (
+            <Button disabled={isApplying} onClick={complete}>
+              Done
+            </Button>
+          )}
+        </WizardFooter>
+      </WizardPopup>
     </Dialog>
   );
 }

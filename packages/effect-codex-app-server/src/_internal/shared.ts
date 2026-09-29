@@ -17,6 +17,40 @@ export const JsonRpcResponseEnvelope = Schema.Struct({
   error: Schema.optional(JsonRpcError),
 });
 
+const threadPayloadMethods = new Set([
+  "thread/start",
+  "thread/resume",
+  "thread/fork",
+  "thread/metadata/update",
+  "thread/unarchive",
+  "thread/revert",
+  "thread/read",
+  "thread/started",
+]);
+
+function withLegacyThreadProjectId(thread: unknown): unknown {
+  if (
+    typeof thread !== "object" ||
+    thread === null ||
+    Array.isArray(thread) ||
+    Object.hasOwn(thread, "projectId")
+  ) {
+    return thread;
+  }
+  // Native CLIs before 0.159 omit this nullable assignment field.
+  return { ...thread, projectId: null };
+}
+
+function normalizeLegacyThreadPayload(method: string, raw: unknown): unknown {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return raw;
+  if (method === "thread/list") {
+    const data = Reflect.get(raw, "data");
+    return Array.isArray(data) ? { ...raw, data: data.map(withLegacyThreadProjectId) } : raw;
+  }
+  if (!threadPayloadMethods.has(method)) return raw;
+  return { ...raw, thread: withLegacyThreadProjectId(Reflect.get(raw, "thread")) };
+}
+
 export const decodeOptionalPayload = <A, I>(
   method: string,
   schema: Schema.Codec<A, I> | undefined,
@@ -31,7 +65,7 @@ export const decodeOptionalPayload = <A, I>(
     );
   }
 
-  return Schema.decodeUnknownEffect(schema)(raw).pipe(
+  return Schema.decodeUnknownEffect(schema)(normalizeLegacyThreadPayload(method, raw)).pipe(
     Effect.mapError((error) =>
       CodexError.CodexAppServerRequestError.invalidPayload(method, "decode-payload", error),
     ),
@@ -45,7 +79,7 @@ export const encodeOptionalPayload = <A, I>(
 ): Effect.Effect<I | undefined, CodexError.CodexAppServerRequestError> => {
   if (!schema) {
     if (payload === undefined) {
-      return Effect.sync(() => undefined);
+      return Effect.undefined;
     }
     return Effect.fail(
       CodexError.CodexAppServerRequestError.unexpectedPayload(method, "encode-payload", payload),
