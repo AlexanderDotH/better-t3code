@@ -1,6 +1,49 @@
 import { defineLocalizedInterfaceCatalog } from "./interfaceLanguageCatalog.types.ts";
 
 export const settingsApplicationInterfaceCatalog = defineLocalizedInterfaceCatalog({
+  "settings.application.scope.applyingFor": [
+    "Applying settings for",
+    "Einstellungen anwenden für",
+    "Appliquer les réglages pour",
+  ],
+  "settings.application.scope.on": ["on", "auf", "sur"],
+  "settings.application.scope.across": ["across", "auf", "dans"],
+  "settings.application.scope.selectionAria": [
+    "{{scope}}: {{label}}",
+    "{{scope}}: {{label}}",
+    "{{scope}} : {{label}}",
+  ],
+  "settings.application.scope.environmentAria": [
+    "Environment scope",
+    "Umgebungsauswahl",
+    "Portée des environnements",
+  ],
+  "settings.application.scope.projectAria": [
+    "Project scope",
+    "Projektauswahl",
+    "Portée des projets",
+  ],
+  "settings.application.scope.unavailableEnvironment": [
+    "Unavailable environment",
+    "Umgebung nicht verfügbar",
+    "Environnement indisponible",
+  ],
+  "settings.application.scope.noEnvironments": [
+    "No environments",
+    "Keine Umgebungen",
+    "Aucun environnement",
+  ],
+  "settings.application.scope.allEnvironments": [
+    "All environments",
+    "Alle Umgebungen",
+    "Tous les environnements",
+  ],
+  "settings.application.scope.unavailableProject": [
+    "Unavailable project",
+    "Projekt nicht verfügbar",
+    "Projet indisponible",
+  ],
+  "settings.application.scope.allProjects": ["All projects", "Alle Projekte", "Tous les projets"],
   "settings.application.section.general": ["General", "Allgemein", "Général"],
   "settings.application.section.projects": ["Projects", "Projekte", "Projets"],
   "settings.application.section.appearance": ["Appearance", "Darstellung", "Apparence"],
