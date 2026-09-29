@@ -24,6 +24,10 @@ worktree**, each background submission creates its own worktree.
 
 Pin a thread from its menu to keep it above your active work.
 
+In the Classic Sidebar on web and desktop, use a thread's star to keep it at the top
+of its project, including when the project's list is shortened. Click the star again
+to unpin it. These favorites use the same saved pins as the standard sidebar.
+
 On web and desktop, you can also drag files from your computer onto any thread row:
 the thread opens and the files are attached in its composer, ready for
 your next message. The same per-message file limits apply as when attaching
