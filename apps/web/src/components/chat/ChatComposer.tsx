@@ -1727,7 +1727,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 threadRef={routeThreadRef}
                 environmentId={environmentId}
                 cwd={gitCwd ?? undefined}
-                streamingMotionEnabled={settings.enableLegacyTokenStreaming ?? false}
+                streamingMotionEnabled={settings.responseStreamingMode !== "turn"}
               />
             ) : null,
         }
