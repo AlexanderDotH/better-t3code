@@ -392,6 +392,28 @@ describe("BetterT3SettingsV1", () => {
 });
 
 describe("BetterT3SettingsBootstrapInputV1", () => {
+  it.each([true, false])(
+    "preserves the Classic Sidebar choice (%s) through migration and reload",
+    (enabled) => {
+      const migrated = bootstrapBetterT3SettingsV1({
+        version: 1,
+        initialization: "existing-install-migration",
+        persistedSettings: null,
+        compatibilityFlags: [{ featureId: "chat.classicSidebar", enabled }],
+      });
+      const reloaded = decodeSettings(encodeSettings(migrated));
+      const upgraded = bootstrapBetterT3SettingsV1({
+        version: 1,
+        initialization: "existing-install-migration",
+        persistedSettings: reloaded,
+        compatibilityFlags: [{ featureId: "chat.classicSidebar", enabled: !enabled }],
+      });
+
+      expect(resolveBetterT3FeatureFlag(reloaded, "chat.classicSidebar")).toBe(enabled);
+      expect(resolveBetterT3FeatureFlag(upgraded, "chat.classicSidebar")).toBe(enabled);
+    },
+  );
+
   it("seeds only missing flags from persisted compatibility mirrors", () => {
     const input = decodeBootstrapInput({
       version: 1,

@@ -57,6 +57,16 @@ export const sidebarInterfaceCatalog = defineLocalizedInterfaceCatalog({
   "sidebar.thread.discardDraft": ["Discard draft", "Entwurf verwerfen", "Supprimer le brouillon"],
   "sidebar.thread.unpin": ["Unpin thread", "Chat lösen", "Désépingler la discussion"],
   "sidebar.thread.pinned": ["Pinned", "Angeheftet", "Épinglé"],
+  "sidebar.classic.addFavorite": [
+    "Add chat to favorites",
+    "Chat zu Favoriten hinzufügen",
+    "Ajouter la discussion aux favoris",
+  ],
+  "sidebar.classic.removeFavorite": [
+    "Remove chat from favorites",
+    "Chat aus Favoriten entfernen",
+    "Retirer la discussion des favoris",
+  ],
   "sidebar.thread.dismissWoke": [
     "Dismiss Woke notification",
     "Aufgewacht-Hinweis schließen",

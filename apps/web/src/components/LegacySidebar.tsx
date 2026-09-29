@@ -11,6 +11,7 @@ import {
   SearchIcon,
   SettingsIcon,
   SquarePenIcon,
+  StarIcon,
   TerminalIcon,
   TriangleAlertIcon,
 } from "lucide-react";
@@ -199,10 +200,10 @@ import {
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
   useSidebarRowSubscriptionLease,
-  sortThreadsForSidebar,
   useThreadJumpHintVisibility,
   ThreadStatusPill,
 } from "./Sidebar.logic";
+import { sortClassicProjectThreads } from "./sidebar/sortClassicProjectThreads";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useIsMobile } from "~/hooks/useMediaQuery";
@@ -443,6 +444,7 @@ interface SidebarThreadRowProps {
   ) => Promise<void>;
   cancelRename: () => void;
   attemptArchiveThread: (threadRef: ScopedThreadRef) => Promise<void>;
+  toggleFavoriteThread: (threadRef: ScopedThreadRef, isPinned: boolean) => Promise<void>;
   openPrLink: (
     event: React.MouseEvent<HTMLElement>,
     prUrl: string,
@@ -478,6 +480,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     commitRename,
     cancelRename,
     attemptArchiveThread,
+    toggleFavoriteThread,
     openPrLink,
 
     slotRef,
@@ -486,6 +489,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   } = props;
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
+  const isFavorite = thread.pinnedAt != null;
+  const [favoritePending, setFavoritePending] = useState(false);
   const [isFileDragOver, setIsFileDragOver] = useState(false);
   const fileDropHandlers = useMemo(
     () =>
@@ -526,6 +531,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     reportFailure: false,
   });
   const environment = useEnvironment(thread.environmentId);
+  const pinningSupported =
+    environment?.serverConfig?.environment.capabilities.threadPinning === true;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   // No primary (the hosted app) means every thread is remote, and the machine
   // glyph is what tells the environments apart.
@@ -636,6 +643,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   );
   const handleRowKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
+      if (event.target !== event.currentTarget) return;
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
       navigateToThread(threadRef);
@@ -805,6 +813,16 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     },
     [attemptArchiveThread, threadRef],
   );
+  const handleFavoriteClick = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (favoritePending) return;
+      setFavoritePending(true);
+      void toggleFavoriteThread(threadRef, isFavorite).finally(() => setFavoritePending(false));
+    },
+    [favoritePending, isFavorite, threadRef, toggleFavoriteThread],
+  );
   const rowButtonRender = useMemo(() => <div role="button" tabIndex={0} />, []);
 
   return (
@@ -935,7 +953,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             </Tooltip>
           )}
           <div
-            className={`flex min-w-12 justify-end ${
+            className={`flex min-w-12 items-center justify-end gap-1.5 ${
               isRemoteThread ? "max-sm:min-w-24" : "max-sm:min-w-20"
             }`}
           >
@@ -948,7 +966,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 aria-label={props.translator.message("sidebar.classic.confirmArchive", {
                   title: thread.title,
                 })}
-                className="absolute top-1/2 right-1 inline-flex h-5 -translate-y-1/2 cursor-pointer items-center rounded-md bg-destructive/12 px-2 text-[10px] font-medium text-destructive transition-colors hover:bg-destructive/18 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-destructive/40"
+                className={`absolute top-1/2 inline-flex h-5 -translate-y-1/2 cursor-pointer items-center rounded-md bg-destructive/12 px-2 text-[10px] font-medium text-destructive transition-colors hover:bg-destructive/18 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-destructive/40 ${pinningSupported ? "right-8" : "right-1"}`}
                 onPointerDown={stopPropagationOnPointerDown}
                 onClick={handleConfirmArchiveClick}
               >
@@ -956,7 +974,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               </button>
             ) : !isThreadRunning ? (
               appSettingsConfirmThreadArchive ? (
-                <div className="pointer-events-none absolute top-1/2 right-0.5 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/menu-sub-item:pointer-events-auto group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:pointer-events-auto group-focus-within/menu-sub-item:opacity-100">
+                <div
+                  className={`pointer-events-none absolute top-1/2 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/menu-sub-item:pointer-events-auto group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:pointer-events-auto group-focus-within/menu-sub-item:opacity-100 ${pinningSupported ? "right-8" : "right-0.5"}`}
+                >
                   <button
                     type="button"
                     data-thread-selection-safe
@@ -975,7 +995,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 <Tooltip>
                   <TooltipTrigger
                     render={
-                      <div className="pointer-events-none absolute top-1/2 right-0.5 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/menu-sub-item:pointer-events-auto group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:pointer-events-auto group-focus-within/menu-sub-item:opacity-100">
+                      <div
+                        className={`pointer-events-none absolute top-1/2 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/menu-sub-item:pointer-events-auto group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:pointer-events-auto group-focus-within/menu-sub-item:opacity-100 ${pinningSupported ? "right-8" : "right-0.5"}`}
+                      >
                         <button
                           type="button"
                           data-thread-selection-safe
@@ -998,7 +1020,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 </Tooltip>
               )
             ) : null}
-            <span className={threadMetaClassName}>
+            <span className={`flex items-center ${threadMetaClassName}`}>
               <span className="inline-flex items-center gap-1">
                 {isRemoteThread && !isDesktopLocalThread && (
                   <Tooltip>
@@ -1048,6 +1070,27 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 )}
               </span>
             </span>
+            {pinningSupported ? (
+              <button
+                type="button"
+                data-thread-selection-safe
+                data-testid={`thread-favorite-${thread.id}`}
+                aria-label={props.translator.message(
+                  isFavorite ? "sidebar.classic.removeFavorite" : "sidebar.classic.addFavorite",
+                )}
+                aria-pressed={isFavorite}
+                disabled={favoritePending}
+                className={`relative z-10 inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm outline-hidden transition-[color,opacity] duration-150 focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default ${
+                  isFavorite
+                    ? "text-amber-500 hover:text-amber-600 dark:text-amber-400"
+                    : "pointer-events-none text-secondary-label opacity-0 group-hover/menu-sub-item:pointer-events-auto group-hover/menu-sub-item:opacity-100 hover:text-amber-500 focus-visible:pointer-events-auto focus-visible:opacity-100"
+                }`}
+                onPointerDown={stopPropagationOnPointerDown}
+                onClick={handleFavoriteClick}
+              >
+                <StarIcon className={`size-3.5 ${isFavorite ? "fill-current" : ""}`} />
+              </button>
+            ) : null}
           </div>
         </div>
       </SidebarMenuSubButton>
@@ -1107,6 +1150,7 @@ interface SidebarProjectThreadListProps {
   ) => Promise<void>;
   cancelRename: () => void;
   attemptArchiveThread: (threadRef: ScopedThreadRef) => Promise<void>;
+  toggleFavoriteThread: (threadRef: ScopedThreadRef, isPinned: boolean) => Promise<void>;
   openPrLink: (
     event: React.MouseEvent<HTMLElement>,
     prUrl: string,
@@ -1163,6 +1207,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     commitRename,
     cancelRename,
     attemptArchiveThread,
+    toggleFavoriteThread,
     openPrLink,
 
     expandThreadListForProject,
@@ -1278,6 +1323,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
               commitRename={commitRename}
               cancelRename={cancelRename}
               attemptArchiveThread={attemptArchiveThread}
+              toggleFavoriteThread={toggleFavoriteThread}
               openPrLink={openPrLink}
 
               translator={props.translator}
@@ -1371,6 +1417,7 @@ interface SidebarProjectItemProps {
   handleNewThread: ReturnType<typeof useNewThreadHandler>;
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
+  toggleFavoriteThread: (threadRef: ScopedThreadRef, isPinned: boolean) => Promise<void>;
   threadJumpLabelByKey: ReadonlyMap<string, string>;
   attachThreadListAutoAnimateRef: (node: HTMLElement | null, enabled?: boolean) => void;
   isProjectThreadSettled: (thread: SidebarThreadSummary) => boolean;
@@ -1399,6 +1446,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     handleNewThread,
     archiveThread,
     deleteThread,
+    toggleFavoriteThread,
     threadJumpLabelByKey,
     attachThreadListAutoAnimateRef,
     isProjectThreadSettled,
@@ -1578,7 +1626,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         threadLastVisitedAts[index] ?? null,
       ]),
     );
-    const visibleProjectThreads = sortThreadsForSidebar(
+    const visibleProjectThreads = sortClassicProjectThreads(
       projectThreads.filter((thread) => thread.archivedAt === null),
       threadSortOrder,
     );
@@ -1631,6 +1679,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       showSettled: false,
       isSettled: isProjectThreadSettled,
       alwaysVisible: (thread) =>
+        thread.pinnedAt != null ||
         isThreadStatusAlwaysVisibleInProjectPreview(
           threadStatusByKey.get(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))) ??
             null,
@@ -2914,6 +2963,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         commitRename={commitRename}
         cancelRename={cancelRename}
         attemptArchiveThread={attemptArchiveThread}
+        toggleFavoriteThread={toggleFavoriteThread}
         openPrLink={openPrLink}
 
         expandThreadListForProject={expandThreadListForProject}
@@ -3305,6 +3355,7 @@ interface SidebarProjectsContentProps {
   handleNewThread: ReturnType<typeof useNewThreadHandler>;
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
+  toggleFavoriteThread: (threadRef: ScopedThreadRef, isPinned: boolean) => Promise<void>;
   recentProjects: readonly SidebarProjectSnapshot[];
   olderProjects: readonly SidebarProjectSnapshot[];
   olderProjectsExpanded: boolean;
@@ -3343,6 +3394,7 @@ interface SidebarProjectListProps {
   handleNewThread: ReturnType<typeof useNewThreadHandler>;
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
+  toggleFavoriteThread: (threadRef: ScopedThreadRef, isPinned: boolean) => Promise<void>;
   expandedThreadListsByProject: ReadonlySet<string>;
   settledThreadListsByProject: ReadonlySet<string>;
   activeRouteProjectKey: string | null;
@@ -3376,6 +3428,7 @@ const SidebarProjectList = memo(function SidebarProjectList(props: SidebarProjec
     handleNewThread,
     archiveThread,
     deleteThread,
+    toggleFavoriteThread,
     expandedThreadListsByProject,
     settledThreadListsByProject,
     activeRouteProjectKey,
@@ -3434,6 +3487,7 @@ const SidebarProjectList = memo(function SidebarProjectList(props: SidebarProjec
                     handleNewThread={handleNewThread}
                     archiveThread={archiveThread}
                     deleteThread={deleteThread}
+                    toggleFavoriteThread={toggleFavoriteThread}
                     threadJumpLabelByKey={threadJumpLabelByKey}
                     attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
                     isProjectThreadSettled={isProjectThreadSettled}
@@ -3474,6 +3528,7 @@ const SidebarProjectList = memo(function SidebarProjectList(props: SidebarProjec
           handleNewThread={handleNewThread}
           archiveThread={archiveThread}
           deleteThread={deleteThread}
+          toggleFavoriteThread={toggleFavoriteThread}
           threadJumpLabelByKey={threadJumpLabelByKey}
           attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
           isProjectThreadSettled={isProjectThreadSettled}
@@ -3520,6 +3575,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     handleNewThread,
     archiveThread,
     deleteThread,
+    toggleFavoriteThread,
     recentProjects,
     olderProjects,
     olderProjectsExpanded,
@@ -3575,6 +3631,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     handleNewThread,
     archiveThread,
     deleteThread,
+    toggleFavoriteThread,
     expandedThreadListsByProject,
     settledThreadListsByProject,
     activeRouteProjectKey,
@@ -3738,7 +3795,28 @@ export default function LegacySidebar() {
     useProjectThreadPreviewCount();
   const updateSettings = useUpdateClientSettings();
   const handleNewThread = useNewThreadHandler();
-  const { archiveThread, deleteThread } = useThreadActions();
+  const { archiveThread, deleteThread, pinThread, unpinThread } = useThreadActions();
+  const toggleFavoriteThread = useCallback(
+    async (threadRef: ScopedThreadRef, isPinned: boolean) => {
+      const result = await (isPinned ? unpinThread(threadRef) : pinThread(threadRef));
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: translator.message(
+              isPinned ? "sidebar.thread.unpinFailed" : "sidebar.thread.pinFailed",
+            ),
+            description:
+              error instanceof Error
+                ? error.message
+                : translator.message("sidebar.error.unexpected"),
+          }),
+        );
+      }
+    },
+    [pinThread, translator, unpinThread],
+  );
   const { isMobile, setOpenMobile } = useSidebar();
   const routeTarget = useParams({
     strict: false,
@@ -4182,7 +4260,7 @@ export default function LegacySidebar() {
           projectExpanded,
           pinnedCollapsedThreadId: pinnedCollapsedThreadKey,
           resolveExpandedThreadIds: () => {
-            const projectThreads = sortThreadsForSidebar(
+            const projectThreads = sortClassicProjectThreads(
               rawProjectThreads.filter((thread) => thread.archivedAt === null),
               sidebarThreadSortOrder,
             );
@@ -4200,13 +4278,16 @@ export default function LegacySidebar() {
               isSettled: isProjectThreadSettled,
               alwaysVisible: (thread) => {
                 const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-                return isThreadStatusAlwaysVisibleInProjectPreview(
-                  resolveThreadStatusPill({
-                    thread: {
-                      ...thread,
-                      lastVisitedAt: threadLastVisitedAtById[threadKey],
-                    },
-                  }),
+                return (
+                  thread.pinnedAt != null ||
+                  isThreadStatusAlwaysVisibleInProjectPreview(
+                    resolveThreadStatusPill({
+                      thread: {
+                        ...thread,
+                        lastVisitedAt: threadLastVisitedAtById[threadKey],
+                      },
+                    }),
+                  )
                 );
               },
               keepSettledVisible: (thread) =>
@@ -4581,6 +4662,7 @@ export default function LegacySidebar() {
         handleNewThread={handleNewThread}
         archiveThread={archiveThread}
         deleteThread={deleteThread}
+        toggleFavoriteThread={toggleFavoriteThread}
         recentProjects={recentProjects}
         olderProjects={olderProjects}
         olderProjectsExpanded={olderProjectsExpanded}
