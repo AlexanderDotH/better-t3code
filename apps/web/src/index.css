@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./components/chat/ComposerFloatingBubble.css";
 @import "./components/chat/ComposerReasoningScroller.css";
 
 @custom-variant dark (&:is(.dark, .dark *));

@@ -1,8 +1,6 @@
 import type { Ref } from "react";
 import { useBetterT3DeviceFeature } from "~/hooks/useBetterT3Feature";
 
-import "./ComposerFloatingBubble.css";
-
 export function ComposerFloatingBubble({
   active,
   hostRef,
