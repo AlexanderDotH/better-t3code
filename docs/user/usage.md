@@ -113,12 +113,15 @@ limits. Usage reporting and cancellation can lag, so in-flight work may exceed t
 The setting only controls requests made through this environment; it cannot stop other apps
 using the same account.
 
-Pick `/usage-limits` from the composer's command menu, or send it as a message, to check the
-current model's limits without leaving the conversation. The result opens above the composer and
-stays pinned across chats and new messages until you dismiss it. It follows the current chat's
-provider and updates with **Usage → Limits**, keeping the last known limits and matching usage
-history when a refresh cannot read them. Opening it does not run the agent or trigger a refresh.
-The command is offered only for providers that appear under **Usage → Limits**.
+Use `/usage-limits` from the composer's command menu, or send it as a message, to toggle the
+limits widget above the composer. Its visibility is saved on this client across chats and
+restarts. Close it or invoke the command again to hide it.
+
+The widget follows the current chat's environment and provider and updates with **Usage → Limits**.
+If a refresh fails, the last known limits and matching usage history for that selection remain
+visible. If no limits are available for that selection, it stays hidden without changing your
+saved visibility preference. Opening it does not run the agent or trigger a refresh. The command
+is offered only for providers that appear under **Usage → Limits**.
 
 OpenCode Go reports its session, weekly, and monthly allowance when OpenCode runs locally in
 the environment. T3 cannot report limits for external OpenCode servers because their credentials
