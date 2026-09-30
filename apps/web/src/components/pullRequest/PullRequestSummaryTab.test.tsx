@@ -1,5 +1,5 @@
 import { EnvironmentId, ProjectId, type PullRequestDetailView } from "@t3tools/contracts";
-import { act, type ReactNode } from "react";
+import { act, cloneElement, type ReactElement, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
@@ -11,7 +11,13 @@ vi.mock("./PullRequestMarkdown", () => ({
 }));
 vi.mock("../ui/tooltip", () => ({
   Tooltip: ({ children }: { children: ReactNode }) => children,
-  TooltipTrigger: ({ children }: { children: ReactNode }) => children,
+  TooltipTrigger: ({
+    children,
+    render,
+  }: {
+    children?: ReactNode;
+    render?: ReactElement<{ children?: ReactNode }>;
+  }) => (render ? cloneElement(render, undefined, children ?? render.props.children) : children),
   TooltipPopup: () => null,
 }));
 

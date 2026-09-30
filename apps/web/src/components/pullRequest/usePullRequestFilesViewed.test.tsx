@@ -76,7 +76,8 @@ async function reads(state: "unviewed" | "viewed" | "dismissed") {
 }
 
 beforeEach(async () => {
-  vi.useFakeTimers();
+  // Keep React’s async act scheduler real while controlling the write-batching delay.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   host.data = answer("unviewed");
   host.refresh.mockReset();
@@ -100,7 +101,7 @@ afterEach(async () => {
 
 describe("a mark whose file was pushed to before the read that followed it", () => {
   it("gives way to the host and shows the file as changed", async () => {
-    view().setViewed("a.ts", true);
+    act(() => view().setViewed("a.ts", true));
     await act(async () => vi.advanceTimersByTimeAsync(500));
     expect(setFilesViewed).toHaveBeenCalledExactlyOnceWith({
       environmentId,
@@ -118,7 +119,7 @@ describe("a mark whose file was pushed to before the read that followed it", () 
   });
 
   it("stays given way to on every later read, having nothing left to recover", async () => {
-    view().setViewed("a.ts", true);
+    act(() => view().setViewed("a.ts", true));
     await act(async () => vi.advanceTimersByTimeAsync(500));
     await reads("dismissed");
 
@@ -135,7 +136,7 @@ describe("a mark the host has not answered for yet", () => {
     let land = (_result: unknown) => {};
     setFilesViewed.mockReturnValueOnce(new Promise((resolve) => (land = resolve)));
 
-    view().setViewed("a.ts", true);
+    act(() => view().setViewed("a.ts", true));
     await act(async () => vi.advanceTimersByTimeAsync(500));
 
     // An answer already on its way when the box was ticked must not put it back.
@@ -147,12 +148,12 @@ describe("a mark the host has not answered for yet", () => {
   });
 
   it("holds a press made since the read that would otherwise answer for it", async () => {
-    view().setViewed("a.ts", true);
+    act(() => view().setViewed("a.ts", true));
     await act(async () => vi.advanceTimersByTimeAsync(500));
 
     // Pressed again before the post-write read came back. That press is the one on screen, and
     // the read that answers for the first one says nothing about it.
-    view().setViewed("a.ts", true);
+    act(() => view().setViewed("a.ts", true));
     await reads("dismissed");
 
     expect(view().isViewed("a.ts")).toBe(true);
