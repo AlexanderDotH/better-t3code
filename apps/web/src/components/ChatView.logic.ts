@@ -683,7 +683,7 @@ export function reconcileMountedTerminalThreadIds(input: {
   });
 }
 
-export function reconcileRetainedMountedThreadIds(input: {
+function reconcileRetainedMountedThreadIds(input: {
   currentThreadIds: ReadonlyArray<string>;
   openThreadIds: ReadonlyArray<string>;
   activeThreadId: string | null;

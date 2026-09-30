@@ -1,5 +1,5 @@
 import type { ServerProviderSkill } from "@t3tools/contracts";
-import type { DiffsHighlighter, ShikiTransformer } from "@pierre/diffs";
+import type { DiffsHighlighter } from "@pierre/diffs";
 import React, {
   Children,
   cloneElement,
@@ -636,35 +636,6 @@ export function applyStreamingCodeMotion(root: HighlightedRoot, motion: Streamin
     children: pre.children.map((node) => (node === code ? animatedCode : node)),
   };
   return { ...root, children: root.children.map((node) => (node === pre ? animatedPre : node)) };
-}
-
-export function createStreamingCodeTransformer({
-  animationTimeMs,
-  codeSourceStart,
-  frames,
-  source,
-}: {
-  readonly animationTimeMs: number;
-  readonly codeSourceStart: number;
-  readonly frames: readonly StreamingTextMotionFrame[];
-  readonly source: string;
-}): ShikiTransformer {
-  return {
-    name: "t3-streaming-text-motion",
-    span(hast, _line, _column, _lineElement, token) {
-      const children = streamingCodeTextChildren(
-        {
-          animationTimeMs,
-          codeSourceStart,
-          frames,
-          source,
-        },
-        token.content,
-        token.offset,
-      );
-      if (children) hast.children = children;
-    },
-  };
 }
 
 export function resolveFencedCodeSourceStart(
