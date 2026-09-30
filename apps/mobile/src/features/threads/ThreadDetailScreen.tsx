@@ -74,8 +74,9 @@ import { useMobileInterfaceTranslator } from "../../localization/useMobileInterf
 import { useWorkspaceContentWidth } from "../layout/workspace-content-width";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { collectProviderUsageLimits } from "@t3tools/shared/usageLimits";
-import { useAtom } from "@effect/atom-react";
-import { usageLimitsOpenedAtAtom } from "@t3tools/client-runtime/state/usage";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/unstable/reactivity";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import type { StatusTone } from "../../components/StatusPill";
 import type { DraftComposerAttachment } from "../../lib/composerImages";
@@ -488,10 +489,13 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const [collapsedUserInputRequestId, setCollapsedUserInputRequestId] =
     useState<ApprovalRequestId | null>(null);
   const activeUserInputRequestId = props.activePendingUserInput?.requestId ?? null;
-  const [usageLimitsOpenedAt, setUsageLimitsOpenedAt] = useAtom(usageLimitsOpenedAtAtom);
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const usageLimitsVisible =
+    AsyncResult.isSuccess(preferences) && preferences.value.composerUsageLimitsVisible === true;
   const usageLimitsReport = useMemo(
     () =>
-      usageLimitsOpenedAt !== null
+      usageLimitsVisible
         ? collectProviderUsageLimits(
             props.selectedThread.modelSelection.instanceId,
             props.serverConfig?.providers ?? [],
@@ -499,17 +503,23 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             Date.now(),
           )
         : null,
-    [props.selectedThread.modelSelection.instanceId, props.serverConfig, usageLimitsOpenedAt],
+    [props.selectedThread.modelSelection.instanceId, props.serverConfig, usageLimitsVisible],
   );
-  const showUsageLimits = useCallback(
+  const toggleUsageLimits = useCallback(
     (report: UsageLimitsReport | null) => {
-      if (report) setUsageLimitsOpenedAt(Date.parse(report.createdAt));
+      if (report) {
+        savePreferences({
+          transform: (current) => ({
+            composerUsageLimitsVisible: current.composerUsageLimitsVisible !== true,
+          }),
+        });
+      }
     },
-    [setUsageLimitsOpenedAt],
+    [savePreferences],
   );
   const dismissUsageLimits = useCallback(
-    () => setUsageLimitsOpenedAt(null),
-    [setUsageLimitsOpenedAt],
+    () => savePreferences({ composerUsageLimitsVisible: false }),
+    [savePreferences],
   );
   const userInputCollapsed =
     activeUserInputRequestId !== null && collapsedUserInputRequestId === activeUserInputRequestId;
@@ -1219,7 +1229,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   onRemoveDraftImage={props.onRemoveDraftImage}
                   onStopThread={props.onStopThread}
                   onSendMessage={handleSendMessage}
-                  onShowUsageLimits={showUsageLimits}
+                  onShowUsageLimits={toggleUsageLimits}
                   onUpdateModelSelection={props.onUpdateThreadModelSelection}
                   onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
                   onUpdateInteractionMode={props.onUpdateThreadInteractionMode}

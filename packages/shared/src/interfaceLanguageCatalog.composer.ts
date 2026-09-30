@@ -1,6 +1,16 @@
 import { defineLocalizedInterfaceCatalog } from "./interfaceLanguageCatalog.types.ts";
 
 export const composerInterfaceCatalog = defineLocalizedInterfaceCatalog({
+  "chat.composer.usageLimits.unavailable": [
+    "Usage limits are unavailable for this provider",
+    "Nutzungslimits sind für diesen Anbieter nicht verfügbar",
+    "Les limites d’utilisation ne sont pas disponibles pour ce fournisseur",
+  ],
+  "chat.composer.usageLimits.visibilitySaveFailed": [
+    "Unable to save usage limits visibility",
+    "Die Sichtbarkeit der Nutzungslimits konnte nicht gespeichert werden",
+    "Impossible d’enregistrer la visibilité des limites d’utilisation",
+  ],
   "chat.composer.sync.loadingMessages": [
     "Loading messages...",
     "Nachrichten werden geladen...",

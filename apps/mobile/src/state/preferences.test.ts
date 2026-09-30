@@ -201,6 +201,63 @@ describe("mobile preferences state", () => {
     }),
   );
 
+  it.effect("retains usage-widget visibility across chat consumers and queued toggles", () =>
+    Effect.gen(function* () {
+      let persisted: Preferences = { composerUsageLimitsVisible: true, baseFontSize: 18 };
+      const load = vi.fn(() => persisted);
+      const state = makePreferencesState({
+        load: Effect.sync(load),
+        savePatch: (patch) =>
+          Effect.sync(() => {
+            persisted = { ...persisted, ...patch };
+            return persisted;
+          }),
+        update: (transform) =>
+          Effect.sync(() => {
+            persisted = { ...persisted, ...transform(persisted) };
+            return persisted;
+          }),
+      });
+      const registry = AtomRegistry.make();
+      const unmountFirstChat = registry.mount(state.preferencesAtom);
+      const unmountUpdate = registry.mount(state.updatePreferencesAtom);
+      expect(
+        yield* AtomRegistry.getResult(registry, state.preferencesAtom, { suspendOnWaiting: true }),
+      ).toEqual(persisted);
+
+      unmountFirstChat();
+      const unmountSecondChat = registry.mount(state.preferencesAtom);
+      expect(
+        yield* AtomRegistry.getResult(registry, state.preferencesAtom, { suspendOnWaiting: true }),
+      ).toEqual(persisted);
+      expect(load).toHaveBeenCalledTimes(1);
+
+      const toggle = {
+        transform: (current: Preferences) => ({
+          composerUsageLimitsVisible: current.composerUsageLimitsVisible !== true,
+        }),
+      };
+      registry.set(state.updatePreferencesAtom, toggle);
+      registry.set(state.updatePreferencesAtom, toggle);
+      yield* AtomRegistry.getResult(registry, state.updatePreferencesAtom, {
+        suspendOnWaiting: true,
+      });
+      expect(persisted).toEqual({ composerUsageLimitsVisible: true, baseFontSize: 18 });
+
+      registry.set(state.updatePreferencesAtom, { composerUsageLimitsVisible: false });
+      yield* AtomRegistry.getResult(registry, state.updatePreferencesAtom, {
+        suspendOnWaiting: true,
+      });
+      expect(
+        yield* AtomRegistry.getResult(registry, state.preferencesAtom, { suspendOnWaiting: true }),
+      ).toEqual({ composerUsageLimitsVisible: false, baseFontSize: 18 });
+
+      unmountSecondChat();
+      unmountUpdate();
+      registry.dispose();
+    }),
+  );
+
   it.effect("falls back to empty preferences when secure storage cannot be read", () =>
     Effect.gen(function* () {
       const state = makePreferencesState({

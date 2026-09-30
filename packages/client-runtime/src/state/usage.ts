@@ -5,7 +5,7 @@ import type {
   UsageSummaryInput,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Atom, type AtomRegistry } from "effect/unstable/reactivity";
+import type { AtomRegistry } from "effect/unstable/reactivity";
 
 import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
 import type { createEnvironmentPresentationAtoms } from "./presentation.ts";
@@ -13,9 +13,6 @@ import { executeAtomQuery, runAtomCommand, squashAtomCommandFailure } from "./ru
 import type { createServerEnvironmentAtoms } from "./server.ts";
 
 const isEnvironmentRpcUnavailable = Schema.is(EnvironmentRpcUnavailableError);
-
-// The opening survives chat unmounts; each chat still reads its own provider's live limits.
-export const usageLimitsOpenedAtAtom = Atom.make<number | null>(null).pipe(Atom.keepAlive);
 
 /** Offer the Cursor Keychain prompt only where a working Cursor provider could use it. */
 export function needsCursorKeychainAccess(
