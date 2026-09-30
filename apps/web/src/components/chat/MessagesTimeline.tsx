@@ -120,9 +120,12 @@ import {
 } from "../../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown, { ChatMarkdownAssetImage } from "../ChatMarkdown";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import type { Root, RootContent } from "mdast";
+import { reasoningTitleMarkdown } from "@t3tools/client-runtime/work-log/reasoning";
+import {
+  ReasoningTitle,
+  WorkingReasoningLog,
+  type WorkingReasoningTrace,
+} from "./WorkingReasoningDialog";
 import { T3Wordmark } from "../T3Wordmark";
 import {
   BotIcon,
@@ -318,6 +321,7 @@ export interface TimelineForkProvenance {
 interface TimelineRowSharedState {
   chatVisualMode: ChatVisualMode;
   showReasoning: boolean;
+  showWorkingReasoning: boolean;
   streamingMotionEnabled: boolean;
   forkDividerAfterRowId: string | null;
   forkActions: TimelineForkActions | null;
@@ -693,6 +697,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       settings.showReasoning &&
       !resolveBetterT3FeatureFlag(settings.betterT3Device, "agent.reasoningWorkingOverlay"),
   );
+  const showWorkingReasoning = useClientSettings(
+    (settings) =>
+      settings.showReasoning &&
+      resolveBetterT3FeatureFlag(settings.betterT3Device, "agent.reasoningWorkingOverlay"),
+  );
   const citationThreadRef = useMemo(() => parseScopedThreadKey(routeThreadKey), [routeThreadKey]);
   const openPullRequest = useOpenPrLink(citationThreadRef ?? undefined);
   const expandCitedTurn = useCallback((turnId: TurnId) => {
@@ -892,6 +901,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       {
         chatVisualMode,
         showReasoning,
+        showWorkingReasoning,
         composerPlanTurnId,
         timelineEntries,
         latestTurn,
@@ -916,6 +926,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     rowsProjectionRef,
     chatVisualMode,
     showReasoning,
+    showWorkingReasoning,
     composerPlanTurnId,
     routeThreadKey,
     listIdentityKey,
@@ -1273,6 +1284,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     () => ({
       chatVisualMode,
       showReasoning,
+      showWorkingReasoning,
       citationRequest: readyCitationRequest,
       listRef,
       timestampFormat,
@@ -1318,6 +1330,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     [
       chatVisualMode,
       showReasoning,
+      showWorkingReasoning,
       readyCitationRequest,
       listRef,
       timestampFormat,
@@ -3063,19 +3076,52 @@ function ActivityGroupTimelineRow({
   const ctx = use(TimelineRowCtx);
   const work = omitSupersededLifecycleMarkers(
     row.entries.flatMap((entry) =>
-      entry.kind === "work" && workEntryIsVisibleInGroup(entry.entry, row.active)
+      entry.kind === "work" &&
+      !workEntryIsProviderReasoning(entry.entry) &&
+      workEntryIsVisibleInGroup(entry.entry, row.active)
         ? [entry.entry]
         : [],
     ),
     (entry) => entry,
   );
+  if (ctx.showWorkingReasoning && work.length === 0) {
+    return (
+      <TimelineWorkingReasoningLog
+        traces={row.entries.flatMap<WorkingReasoningTrace>((entry) =>
+          entry.kind === "message"
+            ? [
+                {
+                  id: entry.message.id,
+                  detail: entry.message.text,
+                  streaming: entry.message.streaming,
+                  turnId: entry.message.turnId,
+                  createdAt: entry.message.createdAt,
+                },
+              ]
+            : workEntryIsProviderReasoning(entry.entry)
+              ? [
+                  {
+                    id: entry.id,
+                    detail: entry.entry.detail ?? "",
+                    streaming: true,
+                    turnId: entry.entry.turnId ?? null,
+                    createdAt: entry.createdAt,
+                  },
+                ]
+              : [],
+        )}
+      />
+    );
+  }
   const thoughtCount = row.entries.filter((entry) => entry.kind === "message").length;
   const lastThoughtIndex = row.entries.findLastIndex((entry) => entry.kind === "message");
   const trailingWork = omitSupersededLifecycleMarkers(
     row.entries
       .slice(lastThoughtIndex + 1)
       .flatMap((entry) =>
-        entry.kind === "work" && workEntryIsVisibleInGroup(entry.entry, row.active)
+        entry.kind === "work" &&
+        !workEntryIsProviderReasoning(entry.entry) &&
+        workEntryIsVisibleInGroup(entry.entry, row.active)
           ? [entry.entry]
           : [],
       ),
@@ -3099,8 +3145,14 @@ function ActivityGroupTimelineRow({
       if (entry.kind === "work") {
         const entries = [entry.entry];
         while (row.entries[index + 1]?.kind === "work") {
-          const next = row.entries[++index]!;
-          if (next.kind === "work") entries.push(next.entry);
+          const next = row.entries[index + 1]!;
+          if (
+            next.kind !== "work" ||
+            workEntryIsProviderReasoning(next.entry) !== workEntryIsProviderReasoning(entry.entry)
+          )
+            break;
+          entries.push(next.entry);
+          index += 1;
         }
         details.push(
           <WorkGroupSection
@@ -3164,28 +3216,6 @@ function ThinkingTimelineRow() {
   );
 }
 
-function remarkThoughtPreview(fallback: string) {
-  return (tree: Root) => {
-    const plainText = (node: Root | RootContent): string => {
-      if (node.type === "html" || node.type === "definition") return "";
-      if ("alt" in node) return node.alt ?? "";
-      if ("value" in node) return node.value;
-      if ("children" in node) {
-        const separator = ["root", "blockquote", "list", "listItem", "table", "tableRow"].includes(
-          node.type,
-        )
-          ? " "
-          : "";
-        return node.children.map(plainText).join(separator);
-      }
-      return node.type === "break" ? " " : "";
-    };
-    tree.children = [
-      { type: "text", value: plainText(tree).replace(/\s+/g, " ").trim() || fallback },
-    ];
-  };
-}
-
 /**
  * Thinking inside a tool group has its own disclosure, preserved across recycling.
  * A group whose row already reads "Thought" (no visible tool) skips the header.
@@ -3217,14 +3247,28 @@ function ReasoningTraceBlock({
   ) {
     return null;
   }
+  if (ctx.showWorkingReasoning) {
+    return (
+      <TimelineWorkingReasoningLog
+        traces={messages.map((message) => ({
+          id: message.id,
+          detail: message.text,
+          streaming: message.streaming,
+          turnId: message.turnId,
+          createdAt: message.createdAt,
+        }))}
+      />
+    );
+  }
   const label = streaming ? "Thinking" : "Thought";
   const collapsedPreview = messages.find((message) => message.text.trim().length > 0)?.text.trim();
   const headerText = expanded ? (
     label
   ) : (
-    <ReactMarkdown remarkPlugins={[remarkGfm, [remarkThoughtPreview, label]]}>
-      {collapsedPreview ?? label}
-    </ReactMarkdown>
+    <ReasoningTitle
+      title={reasoningTitleMarkdown(collapsedPreview ?? "", label)}
+      fallback={label}
+    />
   );
   return (
     <div className="flex flex-col">
@@ -3369,7 +3413,8 @@ const WorkGroupSection = memo(function WorkGroupSection({
   isExpandedToolGroup: boolean;
   displayLabel?: string | undefined;
 }) {
-  const { workspaceRoot, routeThreadKey, onToggleWorkEntry, showReasoning } = use(TimelineRowCtx);
+  const { workspaceRoot, routeThreadKey, onToggleWorkEntry, showReasoning, showWorkingReasoning } =
+    use(TimelineRowCtx);
   const onToggleStandaloneEntry = useCallback(
     (collapsed: boolean) => onToggleWorkEntry(disclosureAnchorKey, collapsed),
     [disclosureAnchorKey, onToggleWorkEntry],
@@ -3378,10 +3423,10 @@ const WorkGroupSection = memo(function WorkGroupSection({
     () =>
       groupedEntries.filter((entry) =>
         workEntryIsProviderReasoning(entry)
-          ? showReasoning
+          ? showReasoning || showWorkingReasoning
           : workEntryIsVisibleInGroup(entry, isExpandedToolGroup),
       ),
-    [groupedEntries, isExpandedToolGroup, showReasoning],
+    [groupedEntries, isExpandedToolGroup, showReasoning, showWorkingReasoning],
   );
 
   if (nonEmptyEntries.length === 0) return null;
@@ -5203,6 +5248,19 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
 function ReasoningWorkEntryRow({ workEntries }: { workEntries: ReadonlyArray<TimelineWorkEntry> }) {
   const ctx = use(TimelineRowCtx);
   const { isWorking, unsettledTurnId } = use(TimelineRowActivityCtx);
+  if (ctx.showWorkingReasoning) {
+    return (
+      <TimelineWorkingReasoningLog
+        traces={workEntries.map((entry) => ({
+          id: entry.id,
+          detail: entry.detail ?? "",
+          streaming: entry.turnId !== null && entry.turnId === unsettledTurnId,
+          turnId: entry.turnId ?? null,
+          createdAt: entry.createdAt,
+        }))}
+      />
+    );
+  }
   return (
     <div
       className="flex min-w-0 select-text flex-col gap-2 px-1 py-0.5 text-secondary-label"
@@ -5231,6 +5289,10 @@ function ReasoningWorkEntryRow({ workEntries }: { workEntries: ReadonlyArray<Tim
       })}
     </div>
   );
+}
+
+function TimelineWorkingReasoningLog({ traces }: { traces: readonly WorkingReasoningTrace[] }) {
+  return <WorkingReasoningLog traces={traces} />;
 }
 
 const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {

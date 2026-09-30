@@ -355,7 +355,7 @@ export type MessagesTimelineRow =
       kind: "activity-group";
       id: string;
       createdAt: string;
-      turnId: TurnId;
+      turnId: TurnId | null;
       groupId: string;
       entries: ActivityEntry[];
       expanded: boolean;
@@ -982,6 +982,8 @@ export function deriveMessagesTimelineRows(input: {
   composerPlanTurnId?: TurnId | null;
   /** Explicit preferences show full traces or hide them; other callers retain compact activity groups. */
   showReasoning?: boolean;
+  /** Working-only traces stay in activity groups and open their full text in a dialog. */
+  showWorkingReasoning?: boolean;
   timelineEntries: ReadonlyArray<TimelineEntry>;
   latestTurn?: TimelineLatestTurn | null;
   runningTurnId?: TurnId | null;
@@ -1188,16 +1190,17 @@ export function deriveMessagesTimelineRows(input: {
     if (
       timelineEntry.kind === "message" &&
       timelineEntry.message.role === "reasoning" &&
-      input.showReasoning === false
+      input.showReasoning === false &&
+      !input.showWorkingReasoning
     ) {
       continue;
     }
 
     const activityTurnId = timelineEntryTurnId(timelineEntry);
     if (
-      input.showReasoning === undefined &&
+      (input.showReasoning === undefined || input.showWorkingReasoning) &&
       index > scannedActivityThrough &&
-      activityTurnId &&
+      (activityTurnId || (input.showWorkingReasoning && timelineEntry.kind === "message")) &&
       isActivityEntry(timelineEntry)
     ) {
       const entries = [timelineEntry];
@@ -1218,6 +1221,7 @@ export function deriveMessagesTimelineRows(input: {
       if (entries.some((entry) => entry.kind === "message")) {
         const active =
           input.isWorking &&
+          activityTurnId !== null &&
           activityTurnId === unsettledTurnId &&
           cursor === input.timelineEntries.length &&
           !latestToolFailed &&
@@ -1261,7 +1265,10 @@ export function deriveMessagesTimelineRows(input: {
 
     if (timelineEntry.kind === "work") {
       if (workEntryIsProviderReasoning(timelineEntry.entry)) {
-        if (input.showReasoning && timelineEntry.entry.detail?.trim()) {
+        if (
+          (input.showReasoning || input.showWorkingReasoning) &&
+          timelineEntry.entry.detail?.trim()
+        ) {
           const previousRow = nextRows.at(-1);
           const firstEntry =
             previousRow?.kind === "work" ? previousRow.groupedEntries[0] : undefined;

@@ -252,6 +252,8 @@ import { ThreadPullRequestsPanel } from "./pullRequest/ThreadPullRequestsPanel";
 import { useDeviceState } from "~/state/device";
 import { DeviceSetup } from "./device/DeviceSetup";
 import { Dialog } from "./ui/dialog";
+import { WorkingReasoningDialogProvider } from "./chat/WorkingReasoningDialog";
+import { deriveUnsettledTurnId } from "./chat/MessagesTimeline.logic";
 import { WizardPopup } from "./ui/wizard";
 import {
   deriveAgentPanelModel,
@@ -10496,7 +10498,7 @@ export default function ChatView(props: ChatViewProps) {
     }
   }
 
-  return (
+  const chatContent = (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden window-surface bg-background">
       {routeKind === "draft" && draftId && activeProject && !threadHasStarted(activeThread) ? (
         <ProjectSpeechSetup
@@ -11327,5 +11329,31 @@ export default function ChatView(props: ChatViewProps) {
         />
       )}
     </div>
+  );
+
+  return (
+    <WorkingReasoningDialogProvider
+      enabled={
+        settings.showReasoning &&
+        resolveBetterT3FeatureFlag(settings.betterT3Device, "agent.reasoningWorkingOverlay")
+      }
+      entries={workLogEntries}
+      messages={timelineMessages}
+      activeTurnId={deriveUnsettledTurnId(activeLatestTurn, activeRunningTurnId)}
+      isWorking={isWorking}
+      streamIdPrefix={routeThreadKey}
+      streamingMotionEnabled={settings.responseStreamingMode !== "turn"}
+      markdownOptions={{
+        cwd: gitCwd ?? undefined,
+        threadRef: activeThreadRef ?? undefined,
+        environmentId,
+        skills: activeProviderStatus
+          ? resolveProviderSkillsForCwd(activeProviderStatus, gitCwd)
+          : EMPTY_PROVIDER_SKILLS,
+        onImageExpand: onExpandTimelineImage,
+      }}
+    >
+      {chatContent}
+    </WorkingReasoningDialogProvider>
   );
 }

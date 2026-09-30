@@ -48,6 +48,123 @@ import { isImageAttachment, type ChatMessage, type TurnDiffSummary } from "../..
 
 describe("canonical thinking display", () => {
   it.each(["classic", "current"] as const)(
+    "keeps Working-only traces inside %s activity groups across settlement and preference changes",
+    (chatVisualMode) => {
+      const turnId = TurnId.make("working-only");
+      const reasoning: ChatMessage = {
+        id: MessageId.make("working-only-thought"),
+        role: "reasoning",
+        text: "**Inspecting the change**\n\nFull multiline body\nAnother line",
+        turnId,
+        createdAt: "2026-09-30T10:00:00Z",
+        updatedAt: "2026-09-30T10:00:01Z",
+        streaming: true,
+      };
+      const legacy: WorkLogEntry = {
+        id: "working-only-legacy",
+        turnId,
+        createdAt: "2026-09-30T10:00:02Z",
+        tone: "thinking",
+        sourceActivityKind: "reasoning.summary",
+        label: "Thinking",
+        detail: "# Checking another path\n\nFull legacy body",
+      };
+      const input = {
+        chatVisualMode,
+        timelineEntries: deriveTimelineEntries([reasoning], [], [legacy]),
+        showReasoning: false,
+        showWorkingReasoning: true,
+        latestTurn: {
+          turnId,
+          state: "running" as const,
+          startedAt: reasoning.createdAt,
+          completedAt: null,
+        },
+        isWorking: true,
+        activeTurnStartedAt: reasoning.createdAt,
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      };
+      const working = deriveMessagesTimelineRowsWithState(input);
+      expect(working.rows.some((row) => row.kind === "message")).toBe(false);
+      const activity = working.rows.find((row) => row.kind === "activity-group");
+      expect(activity).toMatchObject({
+        active: true,
+        entries: [
+          { kind: "message", message: { text: reasoning.text } },
+          { kind: "work", entry: { detail: legacy.detail } },
+        ],
+      });
+      expect(working.rows.filter((row) => row.kind === "thinking")).toHaveLength(0);
+      const settledInput = {
+        ...input,
+        isWorking: false,
+        latestTurn: {
+          ...input.latestTurn,
+          state: "completed" as const,
+          completedAt: "2026-09-30T10:00:03Z",
+        },
+      };
+      const folded = deriveMessagesTimelineRowsWithState(settledInput, working);
+      expect(folded.rows.some((row) => row.kind === "turn-fold")).toBe(true);
+      const settled = deriveMessagesTimelineRowsWithState(
+        { ...settledInput, expandedTurnIds: new Set([turnId]) },
+        folded,
+      );
+      expect(settled.rows.find((row) => row.kind === "activity-group")).toMatchObject({
+        active: false,
+      });
+      const hidden = deriveMessagesTimelineRowsWithState(
+        { ...input, showWorkingReasoning: false },
+        settled,
+      );
+      expect(
+        hidden.rows.some(
+          (row) => row.kind === "activity-group" || row.kind === "message" || row.kind === "work",
+        ),
+      ).toBe(false);
+      const inChat = deriveMessagesTimelineRowsWithState(
+        { ...input, showReasoning: true, showWorkingReasoning: false },
+        hidden,
+      );
+      expect(inChat.rows.find((row) => row.kind === "message")).toMatchObject({
+        message: { text: reasoning.text },
+      });
+      expect(inChat.rows.find((row) => row.kind === "work")).toMatchObject({
+        groupedEntries: [{ detail: legacy.detail }],
+      });
+      expect(reasoning.text).toContain("Full multiline body");
+    },
+  );
+
+  it("retains unassigned canonical traces in the Working log without treating them as live chat messages", () => {
+    const reasoning: ChatMessage = {
+      id: MessageId.make("unassigned-thought"),
+      role: "reasoning",
+      text: "A native summary\n\nFull body",
+      turnId: null,
+      createdAt: "2026-09-30T10:00:00Z",
+      updatedAt: "2026-09-30T10:00:00Z",
+      streaming: true,
+    };
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: deriveTimelineEntries([reasoning], [], []),
+      showReasoning: false,
+      showWorkingReasoning: true,
+      isWorking: true,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(rows.some((row) => row.kind === "message")).toBe(false);
+    expect(rows.find((row) => row.kind === "activity-group")).toMatchObject({
+      turnId: null,
+      active: false,
+      entries: [{ message: reasoning }],
+    });
+  });
+
+  it.each(["classic", "current"] as const)(
     "keeps every reasoning message visible after settlement in the %s layout and hides them by preference",
     (chatVisualMode) => {
       const turnId = TurnId.make("canonical-reasoning-turn");
