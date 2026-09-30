@@ -317,6 +317,11 @@ jobs:
       - name: Verify Windows preload bundle output
         run: node apps/desktop/scripts/verify-preload-bundle.mjs
 
+      - name: Setup Node 26 for CLI executable build
+        uses: actions/setup-node@v4
+        with:
+          node-version: 26.8.2
+
       - name: Build checkout Windows CLI archive for service smoke
         shell: pwsh
         run: |
