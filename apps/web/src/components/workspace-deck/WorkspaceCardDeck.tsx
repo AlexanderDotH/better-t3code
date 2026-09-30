@@ -18,7 +18,6 @@ import { useWorkspaceCardDeckActivation } from "./useWorkspaceCardDeckActivation
 import { useWorkspaceCardDeckMeasurements } from "./useWorkspaceCardDeckMeasurements";
 import { useWorkspaceCardDeckMorphLifecycle } from "./useWorkspaceCardDeckMorphLifecycle";
 import { useWorkspaceCardDeckNavigation } from "./useWorkspaceCardDeckNavigation";
-import "./WorkspaceCardDeck.css";
 
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 

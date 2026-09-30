@@ -73,7 +73,7 @@
   margin-bottom: 0.25rem;
 }
 
-.chat-agent-floating-layer {
+@utility chat-agent-floating-layer {
   pointer-events: none;
   position: absolute;
   top: 2rem;
