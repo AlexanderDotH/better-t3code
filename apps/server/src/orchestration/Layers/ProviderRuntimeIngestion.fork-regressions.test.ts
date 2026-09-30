@@ -21,7 +21,6 @@ import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
-  MessageId,
   type OrchestrationCommand,
   ProjectId,
   ProviderItemId,
@@ -39,7 +38,6 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { it as effectIt } from "@effect/vitest";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
@@ -60,7 +58,6 @@ import {
   PROVIDER_RUNTIME_INGESTION_MEMORY_LIMITS,
   ProviderRuntimeIngestionLive,
 } from "./ProviderRuntimeIngestion.ts";
-import { DEFAULT_THREAD_TITLE } from "../threadTitles.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -79,7 +76,6 @@ function makeTestServerSettingsLayer(overrides: Partial<ServerSettings> = {}) {
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asItemId = (value: string): ProviderItemId => ProviderItemId.make(value);
 const asEventId = (value: string): EventId => EventId.make(value);
-const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 const asSubagentId = (value: string): SubagentId => SubagentId.make(value);
@@ -229,9 +225,7 @@ function createProviderServiceHarness(options?: {
 type ProviderRuntimeTestReadModel = OrchestrationReadModel;
 type ProviderRuntimeTestThread = ProviderRuntimeTestReadModel["threads"][number];
 type ProviderRuntimeTestMessage = ProviderRuntimeTestThread["messages"][number];
-type ProviderRuntimeTestProposedPlan = ProviderRuntimeTestThread["proposedPlans"][number];
 type ProviderRuntimeTestActivity = ProviderRuntimeTestThread["activities"][number];
-type ProviderRuntimeTestCheckpoint = ProviderRuntimeTestThread["checkpoints"][number];
 
 async function waitForThread(
   readModel: () => Promise<ProviderRuntimeTestReadModel>,
@@ -818,7 +812,7 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
       payload: { reason: "interrupted" },
     });
 
-    const thread = await waitForThread(
+    await waitForThread(
       harness.readModel,
       (entry) =>
         entry.messages.some(
@@ -910,7 +904,7 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
     });
     await harness.drain();
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.turn.abort.settle",
         commandId: CommandId.make("cmd-settle-forced-abort"),
