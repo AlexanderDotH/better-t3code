@@ -134,13 +134,13 @@ export function ProjectIndexReview({
           <ul className="space-y-3">
             {result.findings.map((finding) => (
               <li key={finding.id} className="space-y-1 rounded-md bg-muted/35 p-3">
-                <p className="text-[11px] font-medium text-muted-foreground">
+                <p className="text-2xs font-medium text-muted-foreground">
                   {message(`projectIndexing.severity.${finding.severity}`)} ·{" "}
                   {message(`projectIndexing.reviewCategory.${finding.category}`)}
                 </p>
                 <p className="text-sm leading-relaxed">{finding.message}</p>
                 {finding.sourceSide ? (
-                  <p className="text-[11px] text-muted-foreground">
+                  <p className="text-2xs text-muted-foreground">
                     {message(`projectIndexing.reviewSource.${finding.sourceSide}`)}
                   </p>
                 ) : null}
@@ -157,7 +157,7 @@ export function ProjectIndexReview({
                 )}
                 {finding.diffExcerpt ? (
                   <div className="space-y-1">
-                    <p className="text-[11px] text-muted-foreground">
+                    <p className="text-2xs text-muted-foreground">
                       {message("projectIndexing.reviewSource.excerpt")}
                     </p>
                     <pre className="max-h-40 overflow-auto rounded-md bg-muted/50 p-2 text-xs whitespace-pre-wrap">

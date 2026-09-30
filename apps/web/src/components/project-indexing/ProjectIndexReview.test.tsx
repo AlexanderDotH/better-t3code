@@ -15,6 +15,7 @@ vi.mock("../../hooks/useInterfaceTranslator", async () => {
   return { useInterfaceTranslator: () => translator };
 });
 vi.mock("../ui/button", () => ({
+  InlineButton: (props: ComponentProps<"button">) => <button type="button" {...props} />,
   Button: ({
     size: _size,
     variant: _variant,

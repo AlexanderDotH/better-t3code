@@ -3,7 +3,6 @@ import { deriveProjectIndexStage } from "@t3tools/client-runtime/project-indexin
 import { TriangleAlertIcon } from "lucide-react";
 
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
-import "./ProjectIndexProgress.css";
 
 const VISIBLE_GAPS = 12;
 

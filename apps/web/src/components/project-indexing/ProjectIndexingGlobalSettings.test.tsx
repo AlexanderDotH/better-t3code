@@ -60,7 +60,13 @@ vi.mock("../../state/query", () => ({
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: () => ({ status: "live", error: Option.none() }),
 }));
-vi.mock("../../state/shell", () => ({ environmentShell: { stateValueAtom: (id: string) => id } }));
+vi.mock("../../state/shell", async () => {
+  const { Atom } = await import("effect/unstable/reactivity");
+  return {
+    environmentShell: { stateValueAtom: (id: string) => id },
+    environmentSnapshotAtom: Atom.family((_id: string) => Atom.make(null)),
+  };
+});
 vi.mock("../../state/environments", () => ({
   useEnvironment: () => environment(),
   useEnvironments: () => ({ environments: [environment()] }),

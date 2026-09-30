@@ -19,7 +19,6 @@ import {
   type ProjectMapNode,
 } from "./projectIndexOverviewLayout";
 import { useProjectGraphMotion } from "./useProjectGraphMotion";
-import "./ProjectIndexGraph.css";
 
 const EMPTY_IMPORTS: ReadonlyArray<ProjectImportV1> = [];
 const DRAG_THRESHOLD_PX = 5;

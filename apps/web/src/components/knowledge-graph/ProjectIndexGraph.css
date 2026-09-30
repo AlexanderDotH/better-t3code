@@ -1,4 +1,4 @@
-.project-index-graph {
+@utility project-index-graph {
   --graph-space: var(--background);
   --graph-panel: color-mix(in srgb, var(--card) 75%, transparent);
   --graph-line: var(--border);
@@ -14,7 +14,8 @@
   background: var(--graph-space);
   isolation: isolate;
 }
-.project-index-graph-toolbar {
+
+@utility project-index-graph-toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -23,32 +24,36 @@
   padding: 14px 16px;
   border-bottom: 1px solid var(--graph-line);
   background: var(--graph-panel);
+  & button {
+    color: var(--graph-text);
+    --control-icon-color: var(--graph-muted);
+  }
+  & button:hover {
+    background: var(--graph-line);
+  }
 }
-.project-index-graph-toolbar button {
-  color: var(--graph-text);
-  --control-icon-color: var(--graph-muted);
-}
-.project-index-graph-toolbar button:hover {
-  background: var(--graph-line);
-}
-.project-index-graph-eyebrow {
+
+@utility project-index-graph-eyebrow {
   font-size: 12px;
   font-weight: 500;
   color: var(--graph-text);
 }
-.project-index-graph-count {
+
+@utility project-index-graph-count {
   margin-top: 4px;
   font-size: 12px;
   color: var(--graph-muted);
   font-variant-numeric: tabular-nums;
 }
-.project-index-graph-scale {
+
+@utility project-index-graph-scale {
   width: 38px;
   text-align: center;
   font: 10px var(--font-mono);
   color: var(--graph-muted);
 }
-.project-index-graph-canvas {
+
+@utility project-index-graph-canvas {
   display: block;
   width: 100%;
   height: clamp(320px, 48vh, 560px);
@@ -59,59 +64,75 @@
     color-mix(in srgb, var(--graph-symbol) 4%, transparent),
     transparent 64%
   );
+  &:active {
+    cursor: grabbing;
+  }
+  &:focus-visible {
+    outline: 2px solid var(--graph-symbol);
+    outline-offset: -3px;
+  }
 }
-.project-index-graph-canvas:active {
-  cursor: grabbing;
-}
-.project-index-graph-canvas:focus-visible {
-  outline: 2px solid var(--graph-symbol);
-  outline-offset: -3px;
-}
-.project-index-graph-grid {
+
+@utility project-index-graph-grid {
   stroke: var(--graph-line);
   stroke-width: 1;
+  @media (forced-colors: active) {
+    stroke: CanvasText;
+  }
 }
-.project-index-graph-cluster {
+
+@utility project-index-graph-cluster {
   pointer-events: none;
+  & text {
+    fill: var(--graph-muted);
+    font: 10px var(--font-mono);
+    letter-spacing: 0.03em;
+  }
+  @media (forced-colors: active) {
+    & text {
+      fill: CanvasText;
+    }
+  }
 }
-.project-index-graph-cluster text {
-  fill: var(--graph-muted);
-  font: 10px var(--font-mono);
-  letter-spacing: 0.03em;
-}
-.project-index-graph-edge {
+
+@utility project-index-graph-edge {
   stroke: var(--graph-symbol);
   stroke-width: 1;
   opacity: 0.35;
   pointer-events: none;
+  &[data-kind="contains"] {
+    stroke: var(--graph-muted);
+    stroke-dasharray: 2 4;
+    opacity: 0.45;
+  }
+  &[data-kind="candidate"] {
+    stroke: var(--graph-type);
+    stroke-dasharray: 5 5;
+  }
+  &[data-kind="imports"] {
+    stroke: var(--graph-file);
+  }
+  &[data-highlighted="true"] {
+    stroke-width: 1.8;
+    opacity: 1;
+  }
+  &[data-dimmed="true"] {
+    opacity: 0.12;
+  }
+  @media (forced-colors: active) {
+    stroke: CanvasText;
+  }
 }
-.project-index-graph-edge[data-kind="contains"] {
-  stroke: var(--graph-muted);
-  stroke-dasharray: 2 4;
-  opacity: 0.45;
-}
-.project-index-graph-edge[data-kind="candidate"] {
-  stroke: var(--graph-type);
-  stroke-dasharray: 5 5;
-}
-.project-index-graph-edge[data-kind="imports"] {
-  stroke: var(--graph-file);
-}
-.project-index-graph-edge[data-highlighted="true"] {
-  stroke-width: 1.8;
-  opacity: 1;
-}
-.project-index-graph-edge[data-dimmed="true"] {
-  opacity: 0.12;
-}
-.project-index-graph-node-wrap {
+
+@utility project-index-graph-node-wrap {
   overflow: visible;
   pointer-events: none;
+  &[data-dimmed="true"] {
+    opacity: 0.28;
+  }
 }
-.project-index-graph-node-wrap[data-dimmed="true"] {
-  opacity: 0.28;
-}
-.project-index-graph-node {
+
+@utility project-index-graph-node {
   --node-color: var(--graph-symbol);
   display: flex;
   flex-direction: column;
@@ -127,14 +148,69 @@
   user-select: none;
   pointer-events: auto;
   outline: none;
+  &[data-kind="file"] {
+    --node-color: var(--graph-file);
+  }
+  &[data-kind="type"] {
+    --node-color: var(--graph-type);
+  }
+  &[data-expanded="true"] .project-index-graph-node-dot {
+    box-shadow:
+      0 0 0 1px var(--node-color),
+      0 0 20px color-mix(in srgb, var(--node-color) 24%, transparent);
+  }
+  &[data-loading="true"] .project-index-graph-node-dot {
+    outline: 1px dashed var(--node-color);
+    outline-offset: 4px;
+  }
+  &[data-kind="file"] .project-index-graph-node-dot {
+    border-radius: 7px;
+  }
+  &[data-kind="type"] .project-index-graph-node-dot {
+    border-radius: 5px;
+    transform: rotate(45deg);
+  }
+  &[data-stale="true"] .project-index-graph-node-dot {
+    background: var(--graph-space);
+    border: 2px dashed var(--node-color);
+  }
+  &:hover .project-index-graph-node-dot,
+  &:focus-visible .project-index-graph-node-dot,
+  &[aria-pressed="true"] .project-index-graph-node-dot {
+    box-shadow:
+      0 0 0 3px var(--graph-space),
+      0 0 0 4px var(--node-color),
+      0 0 22px color-mix(in srgb, var(--node-color) 40%, transparent);
+  }
+  &:hover .project-index-graph-node-label,
+  &:focus-visible .project-index-graph-node-label,
+  &[aria-pressed="true"] .project-index-graph-node-label {
+    color: var(--node-color);
+  }
+  @media (forced-colors: active) {
+    &[aria-pressed="true"] .project-index-graph-node-label {
+      outline: 1px solid Highlight;
+    }
+  }
+  &[data-show-label="false"] .project-index-graph-node-label {
+    visibility: hidden;
+  }
+  &:focus-visible .project-index-graph-node-label,
+  &:hover .project-index-graph-node-label {
+    visibility: visible;
+  }
+  &[data-kind="directory"] .project-index-graph-node-dot {
+    width: 28px;
+    height: 28px;
+    border-radius: 9px;
+    border-width: 7px;
+  }
+  &[data-dragging="true"] {
+    cursor: grabbing;
+  }
 }
-.project-index-graph-node[data-kind="file"] {
-  --node-color: var(--graph-file);
-}
-.project-index-graph-node[data-kind="type"] {
-  --node-color: var(--graph-type);
-}
-.project-index-graph-node-dot {
+
+@utility project-index-graph-node-dot {
   display: grid;
   place-items: center;
   width: 22px;
@@ -146,34 +222,18 @@
     0 0 0 1px color-mix(in srgb, var(--node-color) 28%, transparent),
     0 0 12px color-mix(in srgb, var(--node-color) 12%, transparent);
   pointer-events: auto;
+  & svg {
+    width: 12px;
+    height: 12px;
+    color: var(--graph-space);
+    stroke-width: 2.5;
+  }
+  @media (forced-colors: active) {
+    border: 2px solid ButtonText;
+  }
 }
-.project-index-graph-node-dot svg {
-  width: 12px;
-  height: 12px;
-  color: var(--graph-space);
-  stroke-width: 2.5;
-}
-.project-index-graph-node[data-expanded="true"] .project-index-graph-node-dot {
-  box-shadow:
-    0 0 0 1px var(--node-color),
-    0 0 20px color-mix(in srgb, var(--node-color) 24%, transparent);
-}
-.project-index-graph-node[data-loading="true"] .project-index-graph-node-dot {
-  outline: 1px dashed var(--node-color);
-  outline-offset: 4px;
-}
-.project-index-graph-node[data-kind="file"] .project-index-graph-node-dot {
-  border-radius: 7px;
-}
-.project-index-graph-node[data-kind="type"] .project-index-graph-node-dot {
-  border-radius: 5px;
-  transform: rotate(45deg);
-}
-.project-index-graph-node[data-stale="true"] .project-index-graph-node-dot {
-  background: var(--graph-space);
-  border: 2px dashed var(--node-color);
-}
-.project-index-graph-node-label {
+
+@utility project-index-graph-node-label {
   max-width: 132px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -186,20 +246,8 @@
   font-weight: 500;
   pointer-events: auto;
 }
-.project-index-graph-node:hover .project-index-graph-node-dot,
-.project-index-graph-node:focus-visible .project-index-graph-node-dot,
-.project-index-graph-node[aria-pressed="true"] .project-index-graph-node-dot {
-  box-shadow:
-    0 0 0 3px var(--graph-space),
-    0 0 0 4px var(--node-color),
-    0 0 22px color-mix(in srgb, var(--node-color) 40%, transparent);
-}
-.project-index-graph-node:hover .project-index-graph-node-label,
-.project-index-graph-node:focus-visible .project-index-graph-node-label,
-.project-index-graph-node[aria-pressed="true"] .project-index-graph-node-label {
-  color: var(--node-color);
-}
-.project-index-graph-footer {
+
+@utility project-index-graph-footer {
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
@@ -210,90 +258,59 @@
   font-size: 10px;
   color: var(--graph-muted);
 }
-.project-index-graph-legend {
+
+@utility project-index-graph-legend {
   display: flex;
   gap: 14px;
+  & span {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  & span::before {
+    content: "";
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--graph-symbol);
+  }
+  & [data-kind="file"]::before {
+    background: var(--graph-file);
+    border-radius: 1px;
+  }
+  & [data-kind="contains"]::before {
+    width: 12px;
+    height: 0;
+    border-top: 1px dashed var(--graph-muted);
+    background: none;
+  }
+  & [data-kind="type"]::before {
+    background: var(--graph-type);
+    border-radius: 1px;
+    transform: rotate(45deg);
+  }
+  & [data-kind="directory"]::before {
+    background: var(--graph-symbol);
+    border-radius: 2px;
+  }
 }
-.project-index-graph-legend span {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.project-index-graph-legend span::before {
-  content: "";
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--graph-symbol);
-}
-.project-index-graph-legend [data-kind="file"]::before {
-  background: var(--graph-file);
-  border-radius: 1px;
-}
-.project-index-graph-legend [data-kind="contains"]::before {
-  width: 12px;
-  height: 0;
-  border-top: 1px dashed var(--graph-muted);
-  background: none;
-}
-.project-index-graph-legend [data-kind="type"]::before {
-  background: var(--graph-type);
-  border-radius: 1px;
-  transform: rotate(45deg);
-}
-.project-index-graph-notes {
+
+@utility project-index-graph-notes {
   padding: 0 16px 12px;
   font-size: 10px;
   line-height: 1.6;
   color: var(--graph-muted);
-}
-.project-index-graph-notes summary {
-  cursor: pointer;
-}
-.project-index-graph-notes p {
-  margin-top: 6px;
-}
-@media (forced-colors: active) {
-  .project-index-graph-node-dot {
-    border: 2px solid ButtonText;
+  & summary {
+    cursor: pointer;
   }
-  .project-index-graph-node[aria-pressed="true"] .project-index-graph-node-label {
-    outline: 1px solid Highlight;
-  }
-  .project-index-graph-edge,
-  .project-index-graph-grid {
-    stroke: CanvasText;
-  }
-  .project-index-graph-cluster text {
-    fill: CanvasText;
+  & p {
+    margin-top: 6px;
   }
 }
 
-.project-index-graph-node[data-show-label="false"] .project-index-graph-node-label {
-  visibility: hidden;
-}
-.project-index-graph-node:focus-visible .project-index-graph-node-label,
-.project-index-graph-node:hover .project-index-graph-node-label {
-  visibility: visible;
-}
-
-.project-index-graph-node[data-kind="directory"] .project-index-graph-node-dot {
-  width: 28px;
-  height: 28px;
-  border-radius: 9px;
-  border-width: 7px;
-}
-.project-index-graph-node-count {
+@utility project-index-graph-node-count {
   color: var(--graph-muted);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
   pointer-events: auto;
-}
-.project-index-graph-legend [data-kind="directory"]::before {
-  background: var(--graph-symbol);
-  border-radius: 2px;
-}
-
-.project-index-graph-node[data-dragging="true"] {
-  cursor: grabbing;
 }

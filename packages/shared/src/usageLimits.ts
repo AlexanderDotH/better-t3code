@@ -261,7 +261,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
             ...window,
             usageHistorySource: "codex" as const,
             usageHistory: [...samples.values()]
-              .toSorted((a, b) => Date.parse(a.at) - Date.parse(b.at))
+              .sort((a, b) => Date.parse(a.at) - Date.parse(b.at))
               .slice(-MAX_USAGE_PACE_SAMPLES),
           };
         }),

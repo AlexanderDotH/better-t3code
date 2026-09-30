@@ -122,7 +122,7 @@ function KnowledgeGraphNodeContent(props: {
       {content.excerpts.map((excerpt) => (
         <pre
           key={`${excerpt.source.path}:${excerpt.source.startLine ?? 0}`}
-          className="max-h-40 overflow-auto rounded-md bg-muted/55 p-2 text-[11px] whitespace-pre-wrap"
+          className="max-h-40 overflow-auto rounded-md bg-muted/55 p-2 text-2xs whitespace-pre-wrap"
         >
           {excerpt.excerpt}
         </pre>

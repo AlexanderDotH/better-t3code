@@ -59,7 +59,7 @@ function ProjectCallsites({
               <li key={callsite.id} className="space-y-1.5 p-3">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                   <code className="min-w-0 break-all text-xs">{callsite.expression}</code>
-                  <span className="text-[11px] text-muted-foreground">
+                  <span className="text-2xs text-muted-foreground">
                     {message(`projectIndexing.resolution.${callsite.resolution}`)} ·{" "}
                     {message(`projectIndexing.freshness.${callsite.freshness}`)}
                   </span>
@@ -192,7 +192,7 @@ export function ProjectIndexEntityDetail({
           <Button
             size="xs"
             variant="link"
-            className="max-w-full px-0"
+            className="max-w-full"
             onClick={() => onSelectEntity(containerId)}
           >
             <span className="truncate">
