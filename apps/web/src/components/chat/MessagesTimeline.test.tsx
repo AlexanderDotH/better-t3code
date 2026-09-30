@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import {
   ApprovalRequestId,
   DEFAULT_CLIENT_SETTINGS,
@@ -5,11 +7,21 @@ import {
   EnvironmentId,
   MessageId,
   makeBetterT3SettingsV1,
+  resolveBetterT3FeatureFlag,
   TurnId,
   type ComposerContextRecord,
 } from "@t3tools/contracts";
-import { act, createRef, useLayoutEffect, useState, type ReactNode, type Ref } from "react";
+import {
+  act,
+  createRef,
+  useLayoutEffect,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+  type Ref,
+} from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { createRoot } from "react-dom/client";
 import { create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef, MaintainScrollAtEndOptions } from "@legendapp/list/react";
@@ -145,66 +157,73 @@ vi.mock("../DiffWorkerPoolProvider", () => ({
 function matchMedia() {
   return {
     matches: false,
+    media: "",
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
     addEventListener: () => {},
     removeEventListener: () => {},
+    dispatchEvent: () => false,
   };
 }
 
 let MessagesTimeline: typeof import("./MessagesTimeline").MessagesTimeline;
+let WorkingReasoningDialogProvider: typeof import("./WorkingReasoningDialog").WorkingReasoningDialogProvider;
+let deriveUnsettledTurnId: typeof import("./MessagesTimeline.logic").deriveUnsettledTurnId;
+let useClientSettings: typeof import("../../hooks/useSettings").useClientSettings;
 let resolvePreviewAnnotationImage: typeof import("./MessagesTimeline").resolvePreviewAnnotationImage;
 
-const ElementStub = class ElementStub {};
-
-function stubDomGlobals() {
-  const classList = {
-    add: () => {},
-    remove: () => {},
-    toggle: () => {},
-    contains: () => false,
-  };
-
-  vi.stubGlobal("Element", ElementStub);
+function configureTestDom() {
+  window.matchMedia = matchMedia;
   vi.stubGlobal("localStorage", {
     getItem: () => null,
     setItem: () => {},
     removeItem: () => {},
     clear: () => {},
   });
-  vi.stubGlobal("window", {
-    Element: ElementStub,
-    localStorage: globalThis.localStorage,
-    matchMedia,
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    requestAnimationFrame: (callback: FrameRequestCallback) => {
-      callback(0);
-      return 0;
-    },
-    cancelAnimationFrame: () => {},
-    desktopBridge: undefined,
-  });
-  vi.stubGlobal("document", {
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    documentElement: {
-      classList,
-      offsetHeight: 0,
-    },
-  });
 }
 
 beforeAll(async () => {
-  stubDomGlobals();
+  configureTestDom();
   ({ MessagesTimeline, resolvePreviewAnnotationImage } = await import("./MessagesTimeline"));
+  ({ WorkingReasoningDialogProvider } = await import("./WorkingReasoningDialog"));
+  ({ deriveUnsettledTurnId } = await import("./MessagesTimeline.logic"));
+  ({ useClientSettings } = await import("../../hooks/useSettings"));
   ({ InlineMessageEditor } = await import("./InlineMessageEditor"));
 }, 30_000);
 
-// The scroll-settling test clears every global stub; mounted timeline rows
-// still touch `window` through the tooltip's focus handling.
-beforeEach(stubDomGlobals);
+beforeEach(configureTestDom);
 
 const ACTIVE_THREAD_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const MESSAGE_CREATED_AT = "2026-03-17T19:12:28.000Z";
+
+function ReasoningTimelineFixture({
+  children,
+  ...props
+}: ComponentProps<typeof MessagesTimeline> & { children?: ReactNode }) {
+  const settings = useClientSettings();
+  return (
+    <WorkingReasoningDialogProvider
+      entries={props.timelineEntries.flatMap((entry) =>
+        entry.kind === "work" ? [entry.entry] : [],
+      )}
+      messages={props.timelineEntries.flatMap((entry) =>
+        entry.kind === "message" ? [entry.message] : [],
+      )}
+      activeTurnId={deriveUnsettledTurnId(props.latestTurn ?? null, props.runningTurnId ?? null)}
+      isWorking={props.isWorking}
+      enabled={
+        settings.showReasoning &&
+        resolveBetterT3FeatureFlag(settings.betterT3Device, "agent.reasoningWorkingOverlay")
+      }
+      streamIdPrefix={props.routeThreadKey}
+      streamingMotionEnabled={props.streamingMotionEnabled ?? false}
+      markdownOptions={{ cwd: props.markdownCwd, environmentId: props.activeThreadEnvironmentId }}
+    >
+      {children ?? <MessagesTimeline {...props} />}
+    </WorkingReasoningDialogProvider>
+  );
+}
 
 function buildProps() {
   return {
@@ -688,14 +707,16 @@ it.each(["classic", "current"] as const)(
     let renderer: ReactTestRenderer | undefined;
     try {
       await act(() => {
-        renderer = create(<MessagesTimeline {...props} timelineEntries={traces.slice(0, 1)} />);
+        renderer = create(
+          <ReasoningTimelineFixture {...props} timelineEntries={traces.slice(0, 1)} />,
+        );
       });
       const reasoning = renderer!.root.findByProps({ "data-reasoning-output": "true" });
       await flushFrames();
       expect(reasoning.findAllByProps({ "data-stream-character": "" }).length).toBeGreaterThan(0);
       expect(reasoning.findAllByType("p").map(renderedText)).toEqual(["First trace"]);
       await act(() => {
-        renderer!.update(<MessagesTimeline {...props} timelineEntries={traces} />);
+        renderer!.update(<ReasoningTimelineFixture {...props} timelineEntries={traces} />);
       });
       await flushFrames();
       expect(renderer!.root.findByProps({ "data-reasoning-output": "true" })).toBe(reasoning);
@@ -709,7 +730,7 @@ it.each(["classic", "current"] as const)(
           : trace,
       );
       await act(() => {
-        renderer!.update(<MessagesTimeline {...props} timelineEntries={updatedTraces} />);
+        renderer!.update(<ReasoningTimelineFixture {...props} timelineEntries={updatedTraces} />);
       });
       await flushFrames();
       expect(renderer!.root.findByProps({ "data-reasoning-output": "true" })).toBe(reasoning);
@@ -722,7 +743,7 @@ it.each(["classic", "current"] as const)(
       ).toContain("completed");
       await act(() => {
         renderer!.update(
-          <MessagesTimeline {...props} isWorking={false} timelineEntries={updatedTraces} />,
+          <ReasoningTimelineFixture {...props} isWorking={false} timelineEntries={updatedTraces} />,
         );
       });
       expect(reasoning.findAllByProps({ "data-stream-character": "" })).toHaveLength(0);
@@ -738,32 +759,35 @@ it.each(["classic", "current"] as const)(
             },
           },
         });
-        renderer!.update(<MessagesTimeline {...props} timelineEntries={updatedTraces} />);
+        renderer!.update(<ReasoningTimelineFixture {...props} timelineEntries={updatedTraces} />);
       });
       expect(renderer!.root.findAllByProps({ "data-reasoning-output": "true" })).toHaveLength(0);
       const { ComposerReasoningScroller } = await import("./ComposerReasoningScroller");
       const { ThreadId } = await import("@t3tools/contracts");
       await act(() =>
         renderer!.update(
-          <ComposerReasoningScroller
-            entries={updatedTraces.map(({ entry }) => entry)}
-            turnId={TurnId.make("reasoning-turn")}
-            threadRef={{
-              environmentId: EnvironmentId.make("environment-1"),
-              threadId: ThreadId.make("thread-1"),
-            }}
-            environmentId={EnvironmentId.make("environment-1")}
-            cwd={undefined}
-            streamingMotionEnabled
-          />,
+          <ReasoningTimelineFixture {...props} timelineEntries={updatedTraces}>
+            <ComposerReasoningScroller
+              entries={updatedTraces.map(({ entry }) => entry)}
+              turnId={TurnId.make("reasoning-turn")}
+              threadRef={{
+                environmentId: EnvironmentId.make("environment-1"),
+                threadId: ThreadId.make("thread-1"),
+              }}
+              environmentId={EnvironmentId.make("environment-1")}
+              cwd={undefined}
+              streamingMotionEnabled
+            />
+          </ReasoningTimelineFixture>,
         ),
       );
       await flushFrames();
       const lyrics = renderer!.root.findByProps({ "data-composer-reasoning": "true" });
-      expect(lyrics.findAllByType("p").map(renderedText)).toEqual(
+      expect(lyrics.findAllByProps({ "data-reasoning-log": "true" }).map(renderedText)).toEqual(
         updatedTraces.map(({ entry }) => entry.detail),
       );
-      expect(lyrics.findAllByProps({ "data-stream-character": "" }).length).toBeGreaterThan(0);
+      expect(lyrics.findAllByType("p")).toHaveLength(0);
+      expect(lyrics.findAllByProps({ "data-stream-character": "" })).toHaveLength(0);
     } finally {
       await act(() => renderer?.unmount());
       requestFrame.mockRestore();
@@ -2353,7 +2377,7 @@ describe("MessagesTimeline", () => {
       };
     });
     const render = (isWorking: boolean) => (
-      <MessagesTimeline
+      <ReasoningTimelineFixture
         {...buildProps()}
         isWorking={isWorking}
         runningTurnId={isWorking ? turnId : null}
@@ -2407,6 +2431,97 @@ describe("MessagesTimeline", () => {
       __setClientSettingsForTests(originalSettings);
     }
   });
+
+  it.each(["classic", "current"] as const)(
+    "opens full Working thinking in the real dialog and retains it at completion in the %s layout",
+    async (mode) => {
+      const { __setClientSettingsForTests, getClientSettings } =
+        await import("../../hooks/useSettings");
+      const originalSettings = getClientSettings();
+      __setClientSettingsForTests({
+        ...DEFAULT_CLIENT_SETTINGS,
+        showReasoning: true,
+        betterT3Device: {
+          ...makeBetterT3SettingsV1("existing-install-migration"),
+          flags: { "agent.reasoningWorkingOverlay": true },
+        },
+      });
+      visualPreference.mode = mode;
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      vi.stubGlobal("requestAnimationFrame", () => 0);
+      vi.stubGlobal("cancelAnimationFrame", () => {});
+      vi.stubGlobal(
+        "ResizeObserver",
+        class {
+          observe() {}
+          disconnect() {}
+        },
+      );
+      const container = document.createElement("div");
+      document.body.append(container);
+      const root = createRoot(container);
+      const turnId = TurnId.make("working-dialog-dom");
+      const base = buildAssistantTimelineEntry(
+        "## Inspecting the change\n\nDetailed Thinking body\nSecond line",
+      );
+      const entry = {
+        ...base,
+        id: "working-dialog-dom",
+        message: {
+          ...base.message,
+          id: MessageId.make("working-dialog-dom"),
+          role: "reasoning" as const,
+          turnId,
+          streaming: true,
+        },
+      };
+      const render = (message = entry.message, isWorking = true) => (
+        <ReasoningTimelineFixture
+          {...buildProps()}
+          isWorking={isWorking}
+          runningTurnId={isWorking ? turnId : null}
+          streamingMotionEnabled={false}
+          timelineEntries={[{ ...entry, message }]}
+        />
+      );
+      try {
+        await act(() => root.render(render()));
+        const trigger = container.querySelector<HTMLButtonElement>("button[data-reasoning-log]");
+        expect(trigger?.textContent).toBe("Inspecting the change");
+        expect(container.textContent).not.toContain("Detailed Thinking body");
+        expect(container.querySelector("[data-reasoning-output]")).toBeNull();
+        expect(document.querySelector("[data-working-reasoning-content]")).toBeNull();
+        await act(() => trigger!.click());
+        const dialog = document.querySelector('[role="dialog"]');
+        const content = dialog?.querySelector("[data-working-reasoning-content]");
+        expect(content?.textContent).toContain("Detailed Thinking body");
+        expect(content?.textContent).toContain("Second line");
+        expect(content?.querySelector("[data-streaming]")).not.toBeNull();
+        const completed = {
+          ...entry.message,
+          text: `${entry.message.text}\nFinal retained line`,
+          streaming: false,
+        };
+        await act(() => root.render(render(completed, false)));
+        expect(document.querySelector("[data-working-reasoning-content]")).toBe(content);
+        expect(content?.textContent).toContain("Final retained line");
+        expect(content?.querySelector("[data-streaming]")).toBeNull();
+        await act(() => {
+          __setClientSettingsForTests({ ...getClientSettings(), showReasoning: false });
+          root.render(render(completed, false));
+        });
+        expect(document.querySelector("[data-working-reasoning-content]")).toBeNull();
+        expect(entry.message.text).toBe(
+          "## Inspecting the change\n\nDetailed Thinking body\nSecond line",
+        );
+      } finally {
+        await act(() => root.unmount());
+        container.remove();
+        __setClientSettingsForTests(originalSettings);
+        visualPreference.mode = "current";
+      }
+    },
+  );
 
   it("renders initial thinking as the shared live activity row", () => {
     const turnId = TurnId.make("turn-live");
