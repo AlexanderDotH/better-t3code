@@ -1,6 +1,16 @@
 @import "tailwindcss";
 @import "./components/chat/ComposerFloatingBubble.css";
 @import "./components/chat/ComposerReasoningScroller.css";
+@import "./components/git-workbench/GitWorkspaceDeck.css";
+@import "./components/knowledge-graph/ProjectIndexGraph.css";
+@import "./components/mcp-workspace/ExtensionStore.css";
+@import "./components/mcp-workspace/McpWorkspaceCard.css";
+@import "./components/project-indexing/ProjectIndexProgress.css";
+@import "./components/settings/BetterT3SettingsPreview.css";
+@import "./components/settings/settingsFeatureStyles.css";
+@import "./components/subagents/subagents.css";
+@import "./components/usage/UsagePaceDetails.css";
+@import "./components/workspace-deck/WorkspaceCardDeck.css";
 
 @custom-variant dark (&:is(.dark, .dark *));
 @custom-variant light (&:not(.dark, .dark *));
@@ -187,6 +197,16 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 
 @theme inline {
+  --radius-control: var(--control-radius);
+  --spacing-control-compact-inline: calc(var(--spacing) * 2 - 1px);
+  --radius-catalog-chip: 4px;
+  --text-catalog-tag: 9px;
+  --tracking-catalog-tag: 0.08em;
+  --color-voice-recording: var(--color-rose-500);
+  --color-voice-recording-hover: var(--color-rose-600);
+  --shadow-voice-recording: 0 0 0 3px rgb(244 63 94 / 15%);
+  --color-openrouter-light: #7624f4;
+  --color-openrouter-dark: #c8ff00;
   /* Two steps below Tailwind's text-xs (12px) for dense UI: metadata rows,
      badges, counters, keyboard hints and diagnostics tables. 2xs is 11px,
      3xs is 10px. Provider icon overlays use 4xs (8px) and 5xs (7px) to fit
