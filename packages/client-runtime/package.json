@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./work-log/reasoning": {
+      "types": "./src/work-log/reasoning.ts",
+      "default": "./src/work-log/reasoning.ts"
+    },
     "./project-indexing": {
       "types": "./src/projectIndexing.ts",
       "default": "./src/projectIndexing.ts"
