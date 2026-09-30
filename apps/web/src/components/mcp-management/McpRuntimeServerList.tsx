@@ -128,7 +128,7 @@ export function McpRuntimeServerList({
       <div className="flex items-start justify-between gap-3 border-b border-border/55 px-3.5 py-3">
         <div className="min-w-0">
           <div className="truncate font-medium text-sm">{providerDisplayName}</div>
-          <div className="mt-0.5 text-[11px] text-muted-foreground">{aggregateLabel}</div>
+          <div className="mt-0.5 text-2xs text-muted-foreground">{aggregateLabel}</div>
         </div>
         <span
           aria-hidden="true"
@@ -155,7 +155,7 @@ export function McpRuntimeServerList({
                 <Fragment key={server.providerKey}>
                   {orderedServers[index - 1]?.source !== server.source ? (
                     <li className="bg-muted/20 px-3.5 py-1.5">
-                      <h3 className="font-medium text-[10px] text-muted-foreground uppercase tracking-wide">
+                      <h3 className="font-medium text-3xs text-muted-foreground uppercase tracking-wide">
                         {translate(
                           server.source === "t3-managed"
                             ? "settings.mcp.runtime.source.t3Managed"
@@ -194,7 +194,7 @@ export function McpRuntimeServerList({
                               : server.name}
                           </span>
                         </span>
-                        <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[11px] text-muted-foreground">
+                        <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-2xs text-muted-foreground">
                           <span>{translate(`settings.mcp.runtime.state.${server.state}`)}</span>
                           {server.toolCount !== undefined ? (
                             <>
@@ -245,7 +245,7 @@ export function McpRuntimeServerList({
                       </div>
                     ) : null}
                     {readOnly && !isBuiltIn && server.availableActions.length > 0 ? (
-                      <p className="mt-2 pl-3.5 text-muted-foreground text-[11px]">
+                      <p className="mt-2 pl-3.5 text-muted-foreground text-2xs">
                         {translate("settings.mcp.runtime.operateRequired")}
                       </p>
                     ) : null}
@@ -253,13 +253,13 @@ export function McpRuntimeServerList({
                     !isBuiltIn &&
                     server.state === "auth-required" &&
                     server.availableActions.includes("authorize") ? (
-                      <p className="mt-2 pl-3.5 text-warning-foreground text-[11px]">
+                      <p className="mt-2 pl-3.5 text-warning-foreground text-2xs">
                         {translate("settings.mcp.runtime.authorizeOnHost")}
                       </p>
                     ) : null}
 
                     {expanded ? (
-                      <div className="mt-2.5 rounded-md border border-border/50 bg-muted/25 p-2.5 text-[11px]">
+                      <div className="mt-2.5 rounded-md border border-border/50 bg-muted/25 p-2.5 text-2xs">
                         {server.serverInfo?.version ||
                         server.resourceCount !== undefined ||
                         server.templateCount !== undefined ? (
@@ -314,7 +314,7 @@ export function McpRuntimeServerList({
                       </div>
                     ) : null}
                     {actionErrorByProviderKey[server.providerKey] ? (
-                      <p role="alert" className="mt-2 pl-3.5 text-destructive text-[11px]">
+                      <p role="alert" className="mt-2 pl-3.5 text-destructive text-2xs">
                         {actionErrorByProviderKey[server.providerKey]}
                       </p>
                     ) : null}
@@ -330,8 +330,8 @@ export function McpRuntimeServerList({
         <Button
           type="button"
           variant="ghost"
-          size="sm"
-          className="w-full justify-between text-xs"
+          size="compact"
+          className="w-full justify-between"
           onClick={() => onOpenSettings()}
         >
           <span>{translate("settings.mcp.runtime.manage")}</span>
@@ -410,14 +410,14 @@ function McpRuntimeInventoryDetails({
                 />
                 <span className="truncate">{resource.title ?? resource.name}</span>
               </div>
-              <p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">
+              <p className="mt-0.5 truncate font-mono text-3xs text-muted-foreground">
                 {resource.uri}
               </p>
               {resource.description ? (
                 <p className="mt-0.5 line-clamp-2 text-muted-foreground">{resource.description}</p>
               ) : null}
               {resource.mimeType ? (
-                <p className="mt-0.5 text-[10px] text-muted-foreground">{resource.mimeType}</p>
+                <p className="mt-0.5 text-3xs text-muted-foreground">{resource.mimeType}</p>
               ) : null}
             </li>
           ))}
@@ -440,14 +440,14 @@ function McpRuntimeInventoryDetails({
                 <BracesIcon aria-hidden="true" className="size-3 shrink-0 text-muted-foreground" />
                 <span className="truncate">{template.title ?? template.name}</span>
               </div>
-              <p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">
+              <p className="mt-0.5 truncate font-mono text-3xs text-muted-foreground">
                 {template.uriTemplate}
               </p>
               {template.description ? (
                 <p className="mt-0.5 line-clamp-2 text-muted-foreground">{template.description}</p>
               ) : null}
               {template.mimeType ? (
-                <p className="mt-0.5 text-[10px] text-muted-foreground">{template.mimeType}</p>
+                <p className="mt-0.5 text-3xs text-muted-foreground">{template.mimeType}</p>
               ) : null}
             </li>
           ))}
@@ -473,7 +473,7 @@ function InventorySection({
   const translate = useInterfaceTranslator().message;
   return (
     <section>
-      <h4 className="mb-1.5 font-medium text-muted-foreground text-[10px] uppercase tracking-wide">
+      <h4 className="mb-1.5 font-medium text-muted-foreground text-3xs uppercase tracking-wide">
         {title}
       </h4>
       <ul className="space-y-2" aria-label={ariaLabel}>
@@ -502,10 +502,7 @@ function ToolAnnotations({ tool }: { readonly tool: McpRuntimeTool }) {
   return (
     <div className="mt-1 flex flex-wrap gap-1">
       {labels.map((label) => (
-        <span
-          key={label}
-          className="rounded bg-muted px-1 py-0.5 text-[10px] text-muted-foreground"
-        >
+        <span key={label} className="rounded bg-muted px-1 py-0.5 text-3xs text-muted-foreground">
           {label}
         </span>
       ))}

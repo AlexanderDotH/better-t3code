@@ -149,9 +149,11 @@ export function ExtensionSourceDialog(props: {
       }}
     >
       <DialogPopup className="h-[85dvh] max-w-5xl">
-        <DialogHeader className="shrink-0 pr-12">
-          <DialogTitle>{props.entry.name}</DialogTitle>
-          <DialogDescription className="break-all">{props.entry.sourceUrl}</DialogDescription>
+        <DialogHeader className="shrink-0">
+          <div className="flex flex-col gap-2 pr-6">
+            <DialogTitle>{props.entry.name}</DialogTitle>
+            <DialogDescription className="break-all">{props.entry.sourceUrl}</DialogDescription>
+          </div>
         </DialogHeader>
         {previewBridge && sourceUrl ? (
           <ExtensionSourcePage environmentId={props.environmentId} url={sourceUrl} />

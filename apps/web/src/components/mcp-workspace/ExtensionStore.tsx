@@ -11,7 +11,6 @@ import { Input } from "../ui/input";
 import { Dialog, DialogHeader, DialogPopup, DialogTitle } from "../ui/dialog";
 import { ExtensionInstallDialog } from "./ExtensionInstallDialog";
 import { ExtensionSourceDialog } from "./ExtensionSourceDialog";
-import "./ExtensionStore.css";
 
 interface ExtensionStoreProps {
   environmentId: EnvironmentId;

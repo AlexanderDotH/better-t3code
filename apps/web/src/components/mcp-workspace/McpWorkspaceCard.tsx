@@ -9,8 +9,6 @@ import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { McpWorkspaceSummary } from "./mcpWorkspace.logic";
 
-import "./McpWorkspaceCard.css";
-
 export interface McpWorkspaceCardProps {
   readonly providerDisplayName: string;
   readonly providerDriver: ProviderDriverKind | null;
@@ -50,7 +48,7 @@ export function McpWorkspaceCard({
       }
     >
       <div
-        className="workspace-card-deck__card-content mcp-workspace-card__content"
+        className="mcp-workspace-card__content"
         data-workspace-card-compact-content="true"
         hidden={expanded}
       >
@@ -70,7 +68,7 @@ export function McpWorkspaceCard({
             )}
             <div className="min-w-0">
               <strong className="block truncate font-medium text-sm">{providerDisplayName}</strong>
-              <span className="block truncate text-muted-foreground text-[11px]">
+              <span className="block truncate text-muted-foreground text-2xs">
                 {summary.freshnessLabel}
               </span>
             </div>

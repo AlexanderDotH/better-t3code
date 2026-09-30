@@ -384,7 +384,7 @@ function McpExactRuntimePanel(props: RuntimePanelProps) {
   );
 
   return (
-    <div className="mcp-workspace-runtime" data-mcp-runtime-session={props.runtimeSessionId}>
+    <div data-mcp-runtime-session={props.runtimeSessionId}>
       <McpRuntimeServerList
         actionErrorByProviderKey={actionErrorByProviderKey}
         pendingAction={pendingAction}
