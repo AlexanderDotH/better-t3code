@@ -160,6 +160,7 @@ export default mergeConfig(
         // A separate build prevents shared chunks from making that copy unloadable.
         entry: { "service-launcher": "src/service-launcher.ts" },
         outDir: "dist",
+        clean: false,
         sourcemap: !packExecutable,
         ...(packExecutable
           ? {
