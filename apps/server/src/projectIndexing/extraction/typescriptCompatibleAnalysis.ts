@@ -1,9 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off - The synchronous compiler host runs only in the bounded compatibility worker.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
-import ts from "@typescript/typescript6";
+import type { CompilerOptions, Node as CompilerNode } from "@typescript/typescript6";
 import type { ProjectSourceFileV1 } from "@t3tools/contracts";
 
+import { createFileBackedRequire } from "../../process/fileBackedModules.ts";
 import { coverageGap } from "./inventory.ts";
 import {
   declarationTarget,
@@ -14,6 +15,10 @@ import {
 } from "./semantic.ts";
 import { isWithinRoot, portablePath, sourceHash } from "./source.ts";
 import type { CompilerCall, CompilerGap, SemanticDeclaration } from "./streamingTypes.ts";
+
+const ts: typeof import("@typescript/typescript6") = createFileBackedRequire(import.meta.url)(
+  "@typescript/typescript6",
+);
 
 export async function analyzeTypeScriptDeclarations(
   input: { root: string; files: readonly ProjectSourceFileV1[]; signal?: AbortSignal },
@@ -58,7 +63,7 @@ export async function analyzeTypeScriptDeclarations(
         filePath: configPath,
       });
     for (const gap of configGaps) await emit.gap(gap);
-    const options: ts.CompilerOptions = {
+    const options: CompilerOptions = {
       ...(parsed?.options ?? {
         allowJs: true,
         checkJs: true,
@@ -118,7 +123,7 @@ export async function analyzeTypeScriptDeclarations(
           filePath,
           message: `TypeScript reported ${errors.length + parseErrors.length} diagnostics; invalid calls remain candidates or unresolved.`,
         });
-      const stack: ts.Node[] = [source];
+      const stack: CompilerNode[] = [source];
       while (stack.length > 0) {
         input.signal?.throwIfAborted();
         const node = stack.pop()!;

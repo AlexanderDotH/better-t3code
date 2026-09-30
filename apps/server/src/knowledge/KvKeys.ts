@@ -1,10 +1,15 @@
-import { RocksDatabase, type Transaction } from "@harperfast/rocksdb-js";
+import type { RocksDatabase, Transaction } from "@harperfast/rocksdb-js";
+
+import { createFileBackedRequire } from "../process/fileBackedModules.ts";
+
+const { RocksDatabase: KnowledgeDatabase }: typeof import("@harperfast/rocksdb-js") =
+  createFileBackedRequire(import.meta.url)("@harperfast/rocksdb-js");
 
 const SEPARATOR = "\0";
 const NEXT_SEPARATOR = "\u0001";
 
 export function openKnowledgeKvDatabase(path: string, options?: { readonly readOnly?: boolean }) {
-  return RocksDatabase.open(path, { keyEncoding: "binary", ...options });
+  return KnowledgeDatabase.open(path, { keyEncoding: "binary", ...options });
 }
 
 export function kvKeyText(key: unknown): string {

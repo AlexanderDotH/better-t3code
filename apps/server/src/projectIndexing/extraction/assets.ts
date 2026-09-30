@@ -2,17 +2,14 @@
 import * as NodeFS from "node:fs";
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
-import * as NodeSea from "node:sea";
 import * as NodeURL from "node:url";
 
-export function indexerModuleUrl(moduleUrl: string): string {
-  return NodeSea.isSea() ? NodeURL.pathToFileURL(process.execPath).href : moduleUrl;
-}
+import {
+  runtimeModuleUrl as indexerModuleUrl,
+  unpackedFilePath as unpackedAssetPath,
+} from "../../process/fileBackedModules.ts";
 
-/** ASAR is an Electron filesystem abstraction, not an operating-system directory. */
-export function unpackedAssetPath(filePath: string): string {
-  return filePath.replace(/(^|[\\/])([^\\/]+\.asar)(?=[\\/]|$)/i, "$1$2.unpacked");
-}
+export { indexerModuleUrl, unpackedAssetPath };
 
 export function resolveFilesystemAsset(filePath: string): string {
   const unpacked = unpackedAssetPath(filePath);

@@ -3,13 +3,18 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
-import ts from "@typescript/typescript6";
+import type { CompilerOptions, MapLike, ModuleResolutionHost } from "@typescript/typescript6";
 import type { ProjectImportV1, ProjectSourceFileV1 } from "@t3tools/contracts";
 
+import { createFileBackedRequire } from "../../process/fileBackedModules.ts";
 import { isSafeProjectSourcePath } from "../privacy/WorkspacePrivacy.ts";
 import { createGitIgnoreFilter } from "./gitIgnore.ts";
 import { excludedPathReason } from "./inventory.ts";
 import { isWithinRoot, portablePath } from "./source.ts";
+
+const ts: typeof import("@typescript/typescript6") = createFileBackedRequire(import.meta.url)(
+  "@typescript/typescript6",
+);
 
 interface ResolutionInput {
   readonly root: string;
@@ -35,7 +40,7 @@ function admittedPath(root: string, absolute: string): string | undefined {
   return relative;
 }
 
-function compilerHost(root: string): ts.ModuleResolutionHost {
+function compilerHost(root: string): ModuleResolutionHost {
   const admitted = new Map<string, string | undefined>();
   const relativePath = (absolute: string) => {
     let path = admitted.get(absolute);
@@ -89,7 +94,7 @@ function closestCompilerConfig(file: ProjectSourceFileV1): string | undefined {
     })[0];
 }
 
-function compilerOptions(root: string, file: ProjectSourceFileV1): ts.CompilerOptions {
+function compilerOptions(root: string, file: ProjectSourceFileV1): CompilerOptions {
   const configPath = closestCompilerConfig(file);
   if (configPath) {
     const allowed = new Set(file.configDependencies);
@@ -129,10 +134,7 @@ function compilerOptions(root: string, file: ProjectSourceFileV1): ts.CompilerOp
   };
 }
 
-function matchesConfiguredAlias(
-  specifier: string,
-  paths: ts.MapLike<string[]> | undefined,
-): boolean {
+function matchesConfiguredAlias(specifier: string, paths: MapLike<string[]> | undefined): boolean {
   for (const pattern of Object.keys(paths ?? {})) {
     const wildcard = pattern.indexOf("*");
     if (wildcard < 0 && specifier === pattern) return true;

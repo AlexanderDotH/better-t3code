@@ -7,6 +7,7 @@ import type { ProjectIndexGapV1, ProjectSourceFileV1 } from "@t3tools/contracts"
 import * as Schema from "effect/Schema";
 import { PROJECT_INDEX_SYNTAX_LANGUAGES } from "@t3tools/shared/projectIndexLanguages";
 
+import { createFileBackedRequire } from "../../process/fileBackedModules.ts";
 import { isSafeProjectSourcePath } from "../privacy/WorkspacePrivacy.ts";
 import { projectArtifactPathReason } from "../privacy/ProjectArtifactPathPolicy.ts";
 import { createGitIgnoreFilter, GIT_IGNORE_BATCH_SIZE, type GitIgnoredPath } from "./gitIgnore.ts";
@@ -132,6 +133,7 @@ const TypeScriptConfigLinks = Schema.Struct({
   references: Schema.optionalKey(Schema.Array(Schema.Struct({ path: Schema.String }))),
 });
 const decodeConfigLinks = Schema.decodeUnknownSync(TypeScriptConfigLinks);
+const requireForCompiler = createFileBackedRequire(import.meta.url);
 
 async function addConfigDependencies(
   root: string,
@@ -143,7 +145,9 @@ async function addConfigDependencies(
     /(?:^|\/)(?:ts|js)config[^/]*\.json$/.test(dependency),
   );
   if (pending.length === 0) return;
-  const { default: compiler } = await import("@typescript/typescript6");
+  const compiler: typeof import("@typescript/typescript6") = await Promise.resolve().then(() =>
+    requireForCompiler("@typescript/typescript6"),
+  );
   const visited = new Set<string>();
   while (pending.length > 0) {
     const dependency = pending.pop()!;
