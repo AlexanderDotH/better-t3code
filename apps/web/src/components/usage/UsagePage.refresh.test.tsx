@@ -1,4 +1,5 @@
 import { EnvironmentId, ProviderInstanceId, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
+import { DEFAULT_CLIENT_SETTINGS, type ClientSettings } from "@t3tools/contracts/settings";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
 import { StrictMode, act } from "react";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
@@ -27,7 +28,11 @@ vi.mock("../../state/server", () => ({
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => state.refreshProviders }));
 vi.mock("../../env", () => ({ isElectron: false }));
-vi.mock("../../hooks/useSettings", () => ({ usePrimarySettings: () => "24h" }));
+vi.mock("../../hooks/useSettings", () => ({
+  usePrimarySettings: () => "24h",
+  useClientSettings: (selector?: (settings: ClientSettings) => unknown) =>
+    selector ? selector(DEFAULT_CLIENT_SETTINGS) : DEFAULT_CLIENT_SETTINGS,
+}));
 vi.mock("../../state/usage", () => ({
   useUsage: () => ({
     merged: mergeUsage([], USAGE_CONTRACT_VERSION),

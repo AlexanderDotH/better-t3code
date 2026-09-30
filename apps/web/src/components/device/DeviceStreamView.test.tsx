@@ -43,7 +43,8 @@ afterEach(async () => {
 });
 
 async function setup() {
-  vi.useFakeTimers();
+  // React's async act needs the real setImmediate queue to finish flushing.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("fetch", () => {
     primes++;
