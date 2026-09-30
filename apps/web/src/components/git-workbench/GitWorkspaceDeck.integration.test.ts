@@ -250,7 +250,7 @@ describe("Git workspace deck presentation integration", () => {
     });
     expect(rendered.drawer).toMatchObject({
       activeTab: "overview",
-      className: "workspace-card-deck__card-content git-workbench-drawer--embedded",
+      className: "git-workbench-drawer--embedded",
       onActiveTabChange,
       onOpenChange: onExpandedChange,
       open: true,
