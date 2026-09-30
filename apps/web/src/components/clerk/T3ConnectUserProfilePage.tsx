@@ -55,10 +55,10 @@ export function T3ConnectEnvironmentRow(props: {
       <Collapsible open={props.confirmationOpen} onOpenChange={props.onConfirmationChange}>
         <div className="flex items-start gap-4">
           <div className="min-w-0 flex-1">
-            <h3 className="truncate text-[0.8125rem] leading-[1.125rem] font-medium text-foreground">
+            <h3 className="truncate text-sm leading-4.5 font-medium text-foreground">
               {environment.label}
             </h3>
-            <p className="mt-1 text-xs leading-[1.125rem] text-muted-foreground">
+            <p className="mt-1 text-xs leading-4.5 text-muted-foreground">
               {linkedAtLabel(environment.linkedAt, translator)} ·{" "}
               {endpointLabel(environment, translator)}
             </p>
@@ -68,7 +68,7 @@ export function T3ConnectEnvironmentRow(props: {
               <Button
                 size="sm"
                 variant="destructive-outline"
-                className="text-[0.8125rem]"
+
                 disabled={props.mutationPending}
               >
                 {translator.message("t3Connect.deregister.action")}
@@ -86,22 +86,21 @@ export function T3ConnectEnvironmentRow(props: {
                 environment: environment.label,
               })}
             >
-              <h4 className="text-[0.8125rem] leading-[1.125rem] font-semibold text-foreground">
+              <h4 className="text-xs leading-4.5 font-semibold text-foreground">
                 {translator.message("t3Connect.deregister.title")}
               </h4>
-              <p className="mt-1 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
+              <p className="mt-1 text-xs leading-4.5 text-muted-foreground">
                 {translator.message("t3Connect.deregister.confirmDescription", {
                   environment: environment.label,
                 })}
               </p>
-              <p className="mt-4 max-w-xl text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
+              <p className="mt-4 max-w-xl text-xs leading-4.5 text-muted-foreground">
                 {translator.message("t3Connect.deregister.consequences")}
               </p>
               <div className="mt-4 flex justify-end gap-2">
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="text-[0.8125rem]"
                   disabled={props.mutationPending}
                   onClick={() => props.onConfirmationChange(false)}
                 >
@@ -110,7 +109,6 @@ export function T3ConnectEnvironmentRow(props: {
                 <Button
                   size="sm"
                   variant="destructive"
-                  className="text-[0.8125rem]"
                   disabled={props.mutationPending}
                   onClick={() => props.onDeregister(environment)}
                 >
@@ -228,7 +226,7 @@ export function T3ConnectUserProfilePage() {
     >
       <div>
         {environmentsState.error ? (
-          <div className="mb-4 border-t border-destructive/35 py-3 text-[0.8125rem]" role="alert">
+          <div className="mb-4 border-t border-destructive/35 py-3 text-xs" role="alert">
             <p className="font-medium text-destructive-foreground">
               {translator.message("t3Connect.loadFailed")}
             </p>
@@ -237,7 +235,7 @@ export function T3ConnectUserProfilePage() {
         ) : null}
 
         {isInitialLoad ? (
-          <p className="border-t py-4 text-[0.8125rem] text-muted-foreground" role="status">
+          <p className="border-t py-4 text-xs text-muted-foreground" role="status">
             {translator.message("t3Connect.loading")}
           </p>
         ) : environments.length > 0 ? (
@@ -256,19 +254,19 @@ export function T3ConnectUserProfilePage() {
             ))}
           </ul>
         ) : environmentsState.error ? null : (
-          <Empty className="min-h-64 gap-4 border-t px-6 py-10 md:p-10">
-            <EmptyMedia className="mb-0" variant="icon">
-              <ServerIcon />
-            </EmptyMedia>
-            <EmptyHeader>
-              <EmptyTitle className="text-[1.0625rem] leading-6">
-                {translator.message("t3Connect.empty.title")}
-              </EmptyTitle>
-              <EmptyDescription className="text-[0.8125rem] leading-[1.125rem]">
-                {translator.message("t3Connect.empty.description")}
-              </EmptyDescription>
-            </EmptyHeader>
-          </Empty>
+          <div className="border-t">
+            <Empty size="compact">
+              <EmptyMedia className="mb-0" variant="icon">
+                <ServerIcon />
+              </EmptyMedia>
+              <EmptyHeader>
+                <EmptyTitle>{translator.message("t3Connect.empty.title")}</EmptyTitle>
+                <EmptyDescription>
+                  {translator.message("t3Connect.empty.description")}
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          </div>
         )}
       </div>
     </ClerkUserProfilePage>

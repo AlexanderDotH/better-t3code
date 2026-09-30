@@ -40,7 +40,7 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../ui/dialog";
-import { Input } from "../ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Switch } from "../ui/switch";
 import {
   clearHarnessChatSelection,
@@ -322,7 +322,7 @@ function ChatRow({
         {chat.preview ? (
           <span className="block truncate text-xs text-muted-foreground">{chat.preview}</span>
         ) : null}
-        <span className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground/75">
+        <span className="flex flex-wrap gap-x-3 gap-y-1 text-2xs text-muted-foreground/75">
           <span className="max-w-full truncate font-mono">
             {chat.cwd ?? translator.message("settings.harness.noWorkingDirectory")}
           </span>
@@ -444,20 +444,22 @@ function HarnessChatSyncSourceView({
       ) : (
         <>
           <div className="grid gap-2 border-t border-border/50 bg-muted/15 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-            <label className="relative min-w-0">
-              <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
+            <InputGroup className="min-w-0">
+              <InputGroupAddon>
+                <SearchIcon aria-hidden className="size-3.5" />
+              </InputGroupAddon>
+              <InputGroupInput
                 type="search"
                 size="compact"
-                className="w-full [&_input]:pl-8"
                 inputMode="search"
+                aria-label={translator.message("settings.harness.searchPlaceholder")}
                 placeholder={translator.message("settings.harness.searchPlaceholder")}
                 value={searchQuery}
                 onChange={(event: ChangeEvent<HTMLInputElement>) =>
                   onSearchChange(event.currentTarget.value)
                 }
               />
-            </label>
+            </InputGroup>
             <label className="flex min-h-7 items-center gap-2 text-xs text-muted-foreground">
               <Switch
                 checked={includeArchived}
@@ -725,9 +727,7 @@ function HarnessChatSyncSourceTabs({
             onClick={() => onSourceChange(source.id)}
           >
             <span className="min-w-0 truncate">{source.label}</span>
-            <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
-              {source.driver}
-            </span>
+            <span className="ml-auto shrink-0 text-3xs text-muted-foreground">{source.driver}</span>
           </Button>
         );
       })}
@@ -1037,13 +1037,18 @@ function supportsHarnessChatSync(config: ServerConfig | undefined): boolean {
   return (config?.environment.capabilities.harnessChatSyncVersion ?? 0) >= 1;
 }
 
-export function HarnessChatSyncSettings() {
+export function HarnessChatSyncSettings({
+  environmentId = null,
+}: {
+  environmentId?: EnvironmentId | null;
+}) {
   const translator = useInterfaceTranslator();
   const { environments } = useEnvironments();
   const serverConfigs = useServerConfigs();
   const projects = useProjects();
   const capableEnvironments = environments.filter(
     (environment) =>
+      (environmentId === null || environment.environmentId === environmentId) &&
       environment.connection.phase === "connected" &&
       supportsHarnessChatSync(serverConfigs.get(environment.environmentId)),
   );

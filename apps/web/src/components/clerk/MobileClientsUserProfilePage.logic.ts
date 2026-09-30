@@ -14,12 +14,18 @@ export function mobileClientPlatformLabel(
   device: RelayClientDeviceRecord,
   translator: InterfaceTranslator,
 ): string {
+  const platform =
+    device.platform === "android"
+      ? "Android"
+      : device.iosMajorVersion === null
+        ? "iOS"
+        : `iOS ${device.iosMajorVersion}`;
   return translator.message(
     device.appVersion
-      ? "mobileClients.platform.withVersion"
-      : "mobileClients.platform.withoutVersion",
+      ? "mobileClients.platform.withAppVersion"
+      : "mobileClients.platform.withoutAppVersion",
     {
-      iosVersion: device.iosMajorVersion,
+      platform,
       ...(device.appVersion ? { appVersion: device.appVersion } : {}),
     },
   );

@@ -1,3 +1,4 @@
+import { ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -227,6 +228,46 @@ describe("sanitizeMobilePreferences", () => {
     expect(oldPageWriteAgain.betterT3Device.flags["chat.classicSidebar"]).toBe(true);
   });
 
+  it.effect("restores usage-widget visibility after restart and persists dismissal", () => {
+    const dependencies = makeMemoryPreferenceDependencies();
+    return Effect.gen(function* () {
+      const firstLaunch = yield* make();
+      expect((yield* firstLaunch.load).composerUsageLimitsVisible === true).toBe(false);
+      yield* firstLaunch.savePatch({ composerUsageLimitsVisible: true, baseFontSize: 18 });
+
+      const secondLaunch = yield* make();
+      const restored = yield* secondLaunch.load;
+      expect(restored.composerUsageLimitsVisible).toBe(true);
+      expect(restored.baseFontSize).toBe(18);
+      yield* secondLaunch.savePatch({ composerUsageLimitsVisible: false });
+
+      const thirdLaunch = yield* make();
+      const dismissed = yield* thirdLaunch.load;
+      expect(dismissed.composerUsageLimitsVisible).toBe(false);
+      expect(dismissed.baseFontSize).toBe(18);
+    }).pipe(
+      Effect.provideService(MobileDatabase, dependencies.database),
+      Effect.provideService(MobileSecureStorage, dependencies.secureStorage),
+    );
+  });
+
+  it.effect("does not enable the widget from a malformed saved visibility value", () => {
+    const dependencies = makeMemoryPreferenceDependencies();
+    return Effect.gen(function* () {
+      yield* dependencies.database.savePreferencesJson(
+        JSON.stringify({ composerUsageLimitsVisible: "true", baseFontSize: 18 }),
+        Date.now(),
+      );
+      const store = yield* make();
+      const restored = yield* store.load;
+      expect(restored.composerUsageLimitsVisible === true).toBe(false);
+      expect(restored.baseFontSize).toBe(18);
+    }).pipe(
+      Effect.provideService(MobileDatabase, dependencies.database),
+      Effect.provideService(MobileSecureStorage, dependencies.secureStorage),
+    );
+  });
+
   it.effect("applies the mirror repair through sequential savePatch calls", () => {
     const dependencies = makeMemoryPreferenceDependencies();
     return Effect.gen(function* () {
@@ -286,16 +327,19 @@ describe("sanitizeMobilePreferences", () => {
     expect(
       sanitizeMobilePreferences({
         modelFavorites: [
-          { provider: "openrouter", model: "openai/gpt-5.5" },
-          { provider: "openrouter", model: "openai/gpt-5.5" },
-          { provider: "openrouter_work", model: "anthropic/claude-sonnet" },
+          { provider: ProviderInstanceId.make("openrouter"), model: "openai/gpt-5.5" },
+          { provider: ProviderInstanceId.make("openrouter"), model: "openai/gpt-5.5" },
+          {
+            provider: ProviderInstanceId.make("openrouter_work"),
+            model: "anthropic/claude-sonnet",
+          },
           { provider: "", model: "bad" },
-          { provider: "openrouter", model: "" },
+          { provider: ProviderInstanceId.make("openrouter"), model: "" },
         ],
       }),
     ).toEqual({
       modelFavorites: [
-        { provider: "openrouter", model: "openai/gpt-5.5" },
+        { provider: ProviderInstanceId.make("openrouter"), model: "openai/gpt-5.5" },
         { provider: "openrouter_work", model: "anthropic/claude-sonnet" },
       ],
     });

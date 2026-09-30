@@ -15,6 +15,7 @@ import {
   findWorkspaceDeckExpandedSurface,
 } from "../workspace-deck/useWorkspaceCardDeckMeasurements";
 import { GitWorkbenchDrawerShell } from "./GitWorkbenchDrawerShell";
+import { workspaceDeckCssPolicySource } from "./workspaceDeckCssPolicy";
 
 const workspaceCardDeckCssPath = decodeURIComponent(
   new URL("../workspace-deck/WorkspaceCardDeck.css", import.meta.url).pathname,
@@ -26,7 +27,10 @@ const readDrawerCss = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const workspaceCardDeckCssSource = yield* fileSystem.readFileString(workspaceCardDeckCssPath);
   const gitWorkspaceDeckCssSource = yield* fileSystem.readFileString(gitWorkspaceDeckCssPath);
-  return { gitWorkspaceDeckCssSource, workspaceCardDeckCssSource };
+  return {
+    gitWorkspaceDeckCssSource: workspaceDeckCssPolicySource(gitWorkspaceDeckCssSource),
+    workspaceCardDeckCssSource: workspaceDeckCssPolicySource(workspaceCardDeckCssSource),
+  };
 }).pipe(Effect.provide(NodeServices.layer));
 
 function renderGitDrawer(availableHeight: number): string {

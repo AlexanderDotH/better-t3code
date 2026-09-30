@@ -4,10 +4,12 @@ import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
-/** ASAR is an Electron filesystem abstraction, not an operating-system directory. */
-export function unpackedAssetPath(filePath: string): string {
-  return filePath.replace(/(^|[\\/])([^\\/]+\.asar)(?=[\\/]|$)/i, "$1$2.unpacked");
-}
+import {
+  runtimeModuleUrl as indexerModuleUrl,
+  unpackedFilePath as unpackedAssetPath,
+} from "../../process/fileBackedModules.ts";
+
+export { indexerModuleUrl, unpackedAssetPath };
 
 export function resolveFilesystemAsset(filePath: string): string {
   const unpacked = unpackedAssetPath(filePath);
@@ -25,12 +27,14 @@ export function resolveFilesystemAsset(filePath: string): string {
 }
 
 function filesystemModuleUrl(moduleUrl: string): URL {
-  return NodeURL.pathToFileURL(resolveFilesystemAsset(NodeURL.fileURLToPath(moduleUrl)));
+  return NodeURL.pathToFileURL(
+    resolveFilesystemAsset(NodeURL.fileURLToPath(indexerModuleUrl(moduleUrl))),
+  );
 }
 
 /** Resolve from the unpacked module tree; a host's unrelated node_modules must not hide an incomplete package. */
 export function resolveIndexerPackage(moduleUrl: string, packageName: string): string {
-  const modulePath = NodeURL.fileURLToPath(moduleUrl);
+  const modulePath = NodeURL.fileURLToPath(indexerModuleUrl(moduleUrl));
   const require = NodeModule.createRequire(filesystemModuleUrl(moduleUrl));
   const packagePath = resolveFilesystemAsset(require.resolve(`${packageName}/package.json`));
   const archiveRoot = /^(.*?\.asar(?:\.unpacked)?)(?=[\\/]|$)/i.exec(modulePath)?.[1];

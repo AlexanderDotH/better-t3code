@@ -31,7 +31,7 @@ export function ChatWidthPreview(props: {
       </div>
       <div aria-hidden="true" className="rounded-xl border border-border/60 bg-background/60 p-4">
         <div
-          className="mx-auto flex h-4 items-center gap-2 border-x border-border text-[10px] text-muted-foreground"
+          className="mx-auto flex h-4 items-center gap-2 border-x border-border text-3xs text-muted-foreground"
           style={{ width: `${DEFAULT_CHAT_PREVIEW_WIDTH_PERCENT}%` }}
         >
           <span className="h-px min-w-0 flex-1 bg-border" />

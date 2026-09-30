@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   EnvironmentId,
   MessageId,
   ProjectId,
@@ -143,7 +145,7 @@ describe("mobile thread fork presentation", () => {
         isGitRepository: true,
         projectSetting: null,
         projectFile: "local",
-        globalDefault: "worktree",
+        globalDefault: null,
         startFromOrigin: false,
         refs: [],
       }),
@@ -200,8 +202,8 @@ describe("mobile thread fork presentation", () => {
           remainingInputChars: 10,
           remainingAttachmentCount: 1,
         },
-        draftMessage: "x".repeat(120_001),
-        draftAttachmentCount: 9,
+        draftMessage: "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS + 1),
+        draftAttachmentCount: PROVIDER_SEND_TURN_MAX_ATTACHMENTS + 1,
       }),
     ).toEqual({
       active: true,

@@ -1,8 +1,10 @@
+import { SettingsScreen } from "./components/SettingsScreen";
+import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { type EnvironmentMachineKind, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useMemo } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, View } from "react-native";
+import { ActivityIndicator, Alert, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
@@ -15,6 +17,7 @@ import {
 } from "../../state/client-cache-state";
 import { useServerConfigs } from "../../state/entities";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
+
 import { SettingsSection } from "./components/SettingsSection";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
@@ -75,7 +78,7 @@ export function SettingsClientStorageRouteScreen() {
   };
 
   return (
-    <View collapsable={false} className="flex-1 bg-sheet">
+    <SettingsScreen title="Client Storage">
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentInset={{ bottom: Math.max(insets.bottom, 18) }}
@@ -89,7 +92,7 @@ export function SettingsClientStorageRouteScreen() {
               <SymbolView
                 name="exclamationmark.triangle"
                 size={28}
-                tintColorClassName={"accent-danger-foreground"}
+                tintColorClassName="accent-danger-foreground"
                 type="monochrome"
                 weight="regular"
               />
@@ -129,7 +132,7 @@ export function SettingsClientStorageRouteScreen() {
               <SymbolView
                 name="checkmark.circle"
                 size={28}
-                tintColorClassName={"accent-icon"}
+                tintColorClassName="accent-icon"
                 type="monochrome"
                 weight="regular"
               />
@@ -180,7 +183,7 @@ export function SettingsClientStorageRouteScreen() {
           ) : null}
         </View>
       </ScrollView>
-    </View>
+    </SettingsScreen>
   );
 }
 

@@ -48,7 +48,7 @@ export function ProjectIndexStatusChip(props: {
             role="img"
             aria-label={accessibleLabel}
             data-toolbar-status=""
-            className="inline-flex h-7 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-[var(--control-radius)] border border-input bg-popover px-[calc(--spacing(2)-1px)] text-xs font-medium text-foreground shadow-xs/5 dark:bg-input/32"
+            className="inline-flex h-7 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-control border border-input bg-popover px-control-compact-inline text-xs font-medium text-foreground shadow-xs/5 dark:bg-input/32"
           />
         }
       >

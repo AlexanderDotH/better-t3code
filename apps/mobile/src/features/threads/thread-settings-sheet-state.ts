@@ -5,6 +5,40 @@ import {
 import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
 
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
+import type { ProviderInstanceId } from "@t3tools/contracts";
+
+export type ModelFavorite = {
+  readonly provider: ProviderInstanceId;
+  readonly model: string;
+};
+
+export function modelFavoriteKey(provider: ProviderInstanceId, model: string): string {
+  return `${provider}:${model}`;
+}
+
+export function toggleModelFavorite(
+  favorites: ReadonlyArray<ModelFavorite>,
+  option: ModelOption,
+): ReadonlyArray<ModelFavorite> {
+  const provider = option.selection.instanceId;
+  const model = option.selection.model;
+  return favorites.some((favorite) => favorite.provider === provider && favorite.model === model)
+    ? favorites.filter((favorite) => favorite.provider !== provider || favorite.model !== model)
+    : [...favorites, { provider, model }];
+}
+
+/** Keep catalog order within each group when favorites move to the front. */
+export function favoritesFirst(
+  models: ReadonlyArray<ModelOption>,
+  favoriteKeys: ReadonlySet<string>,
+): ReadonlyArray<ModelOption> {
+  const favorites: ModelOption[] = [];
+  const others: ModelOption[] = [];
+  for (const model of models) {
+    (favoriteKeys.has(model.key) ? favorites : others).push(model);
+  }
+  return [...favorites, ...others];
+}
 
 export const MOBILE_MODEL_FILTER_MIN_TOUCH_TARGET = 44;
 

@@ -1,13 +1,38 @@
 # Usage and limits
 
+Open **Usage** from the sidebar or the command palette, or press `mod+u` on web and
+desktop when the terminal is not focused. Customize `usage.open` in
+**Settings → Keybindings**.
+
 ## Understand your usage
 
-**Usage** combines Codex, Claude Code, and Grok Build session history from your connected
+**Usage** combines Codex, Claude Code, Grok Build, OpenCode, Antigravity, and Cursor history from your connected
 environments. It shows token use, cache savings, model breakdowns, and estimated API-equivalent
 cost. These estimates are not your subscription bill.
 
 Totals depend on the history available on each server. Grok turns without a saved completed-turn
 record are missing from the totals.
+
+OpenCode reads its SQLite database and older JSON history. Antigravity reads local conversation
+databases, including T3-managed profiles. Set `OPENCODE_DATA_DIR` or `ANTIGRAVITY_DATA_DIR` on the
+server to read a different data directory; comma-separated paths read multiple directories.
+
+Cursor reads account usage from Cursor's dashboard API using the CLI login saved on the server.
+This includes headless T3 sessions and desktop usage across machines; the same account counts
+once across connected environments. Without an accessible CLI login, T3 shows a
+notice instead of incomplete local totals. T3 does not estimate missing tokens from conversation text.
+On macOS, choose **Enable Cursor usage** on Usage to allow T3 to read your existing CLI login
+from Keychain. You can turn it off in **Settings → Providers → Usage providers**. macOS may ask
+you to allow access on the server Mac.
+
+Usage includes each configured account's history, including disabled accounts. Custom homes follow
+the account's home setting or its `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, or `GROK_HOME` environment
+variable. Use absolute paths or `~/` paths in the account's environment settings; relative
+environment paths depend on each project's working directory and cannot be reliably discovered
+by Usage. Accounts sharing a history directory count once.
+
+When your app and server support different providers, usage totals may cover only the providers
+your app understands. Update the app to include newly supported providers.
 
 On web and desktop, use the environment dropdown to filter costs, tokens, and limits. All
 environments are selected by default. The dropdown shows which environments are still scanning;
@@ -47,14 +72,18 @@ first, or by the first available window when no account reports a 5-hour limit. 
 account does not report that window. When the provider reports reset times, the card also says
 when the next reset lands and how much it hands back. The hatched
 part of a segment is what that reset restores. Tap a segment or account row for the account's plan,
-where it is signed in, and its reset time. On web, you can hover too. Codex accounts with banked
-reset credits show a ticket count and the **Use reset** action in the account details. On narrow screens, numbered rows below
+where it is signed in, and its reset time. On web, you can hover too. Codex and Claude accounts
+with banked reset credits show a ticket count and the **Use reset** action in the account details.
+Claude resets are not available when the server runs on macOS, where Claude keeps its login in the
+Keychain. On narrow screens, numbered rows below
 the bar show each account's quota, countdown, and credits. Tap a row to open its details.
 
 The same account signed in on more than one environment, or reported by a hub as well, counts once.
 Filter with the environment dropdown to see what a single machine has.
 
-If a window looks stale, refresh Limits to re-check every provider and hub.
+Opening Limits checks the selected connected environments automatically. Each client waits at
+least five minutes between automatic checks of an environment, including after a failed check.
+If a window still looks stale, refresh Limits to re-check every provider and hub.
 
 Enable **Show usage pace** in **Settings → Better T3 → Usage → Usage limits and pacing**
 (on mobile, **Settings → Better T3**). Unused daily shares from earlier days in the current weekly
@@ -84,12 +113,27 @@ limits. Usage reporting and cancellation can lag, so in-flight work may exceed t
 The setting only controls requests made through this environment; it cannot stop other apps
 using the same account.
 
-Pick `/usage-limits` from the composer's command menu, or send it as a message, to check the
-current model's limits without leaving the conversation. The result opens above the composer and
-stays pinned across chats and new messages until you dismiss it. It follows the current chat's
-provider and updates with **Usage → Limits**, keeping the last known limits and matching usage
-history when a refresh cannot read them. Opening it does not run the agent or trigger a refresh.
-The command is offered only for providers that appear under **Usage → Limits**.
+Use `/usage-limits` from the composer's command menu, or send it as a message, to toggle the
+limits widget above the composer. Its visibility is saved on this client across chats and
+restarts. Close it or invoke the command again to hide it.
+
+The widget follows the current chat's environment and provider and updates with **Usage → Limits**.
+If a refresh fails, the last known limits and matching usage history for that selection remain
+visible. If no limits are available for that selection, it stays hidden without changing your
+saved visibility preference. Opening it does not run the agent or trigger a refresh. The command
+is offered only for providers that appear under **Usage → Limits**.
+
+OpenCode Go reports its session, weekly, and monthly allowance when OpenCode runs locally in
+the environment. T3 cannot report limits for external OpenCode servers because their credentials
+belong to the remote server. Cursor reports
+its monthly allowance, including separate Auto and API usage, using the CLI login or
+`CURSOR_AUTH_TOKEN`. On macOS, this includes the default Keychain login after you enable Cursor
+usage. Keychain login is used for limits only with Cursor's default API endpoint. If you configure
+a custom Cursor endpoint, use an explicit token or file-based CLI login for limits.
+
+Grok reports the remaining subscription allowance and reset time for its current billing period
+after signing in with `grok login`. Explicit `XAI_API_KEY` connections and custom authentication
+or endpoint configurations do not report subscription limits.
 
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.
@@ -105,3 +149,19 @@ account and choose **Use reset** to redeem one. No hub plugin is required.
 This connection supplies usage information; configure
 the provider separately to send agent requests through the hub. Remove the hub from the same
 settings section when you no longer need it.
+
+## Subscription usage widget
+
+Add **Subscription usage** from your iOS or Android widget gallery to see remaining Codex and
+Claude quotas. Tap it to open **Usage → Limits**. On iOS, use **Edit Widget** to choose Session,
+Weekly, or both for each provider. Reopen T3 to refresh expired readings. The Android widget
+requires Android 12L or later.
+
+## Keyboard shortcuts
+
+On web and desktop, open Usage from the command palette. While on Usage,
+press `C`, `T`, or `L` for Cost, Tokens, or Limits while not typing in a field.
+Use `Ctrl+Shift+1/2/3/4` (`Cmd+Shift+1/2/3/4` on macOS) for the past
+24 hours, 7 days, 30 days, or 90 days. Period shortcuts do nothing on Limits.
+Press `Escape` to return to the previous page. Customize these shortcuts in
+**Settings → Keybindings**.

@@ -293,7 +293,7 @@ describe("GitCompactCard", () => {
     expect(html).toContain("Commit staged");
     expect(html).toContain('data-workspace-card-compact-surface="true"');
     expect(html).toContain(
-      'class="workspace-card-deck__card-content git-compact-card__content" data-workspace-card-compact-content="true"',
+      'class="git-compact-card__content" data-workspace-card-compact-content="true"',
     );
     expect(html).not.toContain("Recent activity");
     expect(html).not.toContain("Top contributors");
@@ -318,7 +318,7 @@ describe("GitCompactCard", () => {
           <GitWorkbenchDrawerShell
             open
             activeTab="overview"
-            className="workspace-card-deck__card-content git-workbench-drawer--embedded"
+            className="git-workbench-drawer--embedded"
             onActiveTabChange={vi.fn()}
             onOpenChange={vi.fn()}
           >
@@ -336,7 +336,7 @@ describe("GitCompactCard", () => {
     expect(html).toContain('data-expanded="true"');
     expect(html).toContain("Embedded repository workbench");
     expect(html).toContain(
-      'class="workspace-card-deck__card-content git-compact-card__content" data-workspace-card-compact-content="true" hidden=""',
+      'class="git-compact-card__content" data-workspace-card-compact-content="true" hidden=""',
     );
     expect(drawerStart).toBeGreaterThan(cardStart);
     expect(drawerStart).toBeLessThan(cardEnd);

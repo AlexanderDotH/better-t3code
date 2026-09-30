@@ -637,9 +637,11 @@ function fakeElement(options?: {
 }): HTMLElement {
   return {
     dataset: {},
-    closest: () => options?.ancestorHost ?? null,
+    closest: (selector: string) =>
+      selector === '[data-slot="composer-host"]' ? (options?.ancestorHost ?? null) : null,
     getBoundingClientRect: () => ({ left: 0, top: 0, width: 400, height: 200 }),
-    querySelector: () => options?.descendantHost ?? null,
+    querySelector: (selector: string) =>
+      selector === '[data-slot="composer-host"]' ? (options?.descendantHost ?? null) : null,
   } as unknown as HTMLElement;
 }
 

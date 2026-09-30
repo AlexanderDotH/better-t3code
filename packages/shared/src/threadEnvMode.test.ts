@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { isDefaultThreadEnvModeSettled, resolveDefaultThreadEnvMode } from "./threadEnvMode.ts";
 
 describe("resolveDefaultThreadEnvMode", () => {
-  it("prefers the project setting over t3.json over the global default", () => {
+  it("prefers the project setting over an explicit environment value over t3.json", () => {
     expect(
       resolveDefaultThreadEnvMode({
         projectSetting: "local",
@@ -17,7 +17,14 @@ describe("resolveDefaultThreadEnvMode", () => {
         projectFile: "local",
         globalDefault: "worktree",
       }),
-    ).toBe("local");
+    ).toBe("worktree");
+    expect(
+      resolveDefaultThreadEnvMode({
+        projectSetting: null,
+        projectFile: "worktree",
+        globalDefault: null,
+      }),
+    ).toBe("worktree");
     expect(
       resolveDefaultThreadEnvMode({
         projectSetting: undefined,
@@ -25,6 +32,16 @@ describe("resolveDefaultThreadEnvMode", () => {
         globalDefault: "worktree",
       }),
     ).toBe("worktree");
+  });
+
+  it("uses the built-in local mode when every tier is unset", () => {
+    expect(
+      resolveDefaultThreadEnvMode({
+        projectSetting: null,
+        projectFile: null,
+        globalDefault: null,
+      }),
+    ).toBe("local");
   });
 });
 
@@ -41,6 +58,14 @@ describe("isDefaultThreadEnvModeSettled", () => {
       isDefaultThreadEnvModeSettled({
         explicitMode: undefined,
         projectSetting: "worktree",
+        projectFilePending: true,
+      }),
+    ).toBe(true);
+    expect(
+      isDefaultThreadEnvModeSettled({
+        explicitMode: undefined,
+        projectSetting: null,
+        globalDefault: "worktree",
         projectFilePending: true,
       }),
     ).toBe(true);

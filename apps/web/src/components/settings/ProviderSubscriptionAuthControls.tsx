@@ -87,7 +87,7 @@ function ConnectDialogPanel({
         <p className="text-sm text-muted-foreground">
           {translate("settings.providers.auth.deviceDescription")}
         </p>
-        <code className="w-fit rounded-lg border border-border bg-muted px-3 py-2 text-base font-semibold tracking-[0.16em] text-foreground">
+        <code className="provider-auth-device-code w-fit rounded-lg border border-border bg-muted px-3 py-2 text-base font-semibold text-foreground">
           {state.userCode}
         </code>
         <a
@@ -409,24 +409,26 @@ function ProviderSubscriptionAuthControlsView({
                 {translate("settings.providers.auth.credentialDescription")}
               </DialogDescription>
             </DialogHeader>
-            <DialogPanel className="grid gap-2">
-              <label className="grid gap-1.5">
-                <span className="text-xs font-medium text-foreground">
-                  {presentation.credential.label}
-                </span>
-                <Input
-                  type="password"
-                  autoComplete="off"
-                  value={dialog.value}
-                  disabled={credentialSaving}
-                  placeholder={presentation.credential.placeholder}
-                  aria-label={`${presentation.providerName} ${presentation.credential.label}`}
-                  onChange={(changeEvent) => onCredentialChange(changeEvent.currentTarget.value)}
-                />
-              </label>
-              {dialog.state === "failed" ? (
-                <p className="text-sm text-destructive">{dialog.message}</p>
-              ) : null}
+            <DialogPanel>
+              <div className="grid gap-2">
+                <label className="grid gap-1.5">
+                  <span className="text-xs font-medium text-foreground">
+                    {presentation.credential.label}
+                  </span>
+                  <Input
+                    type="password"
+                    autoComplete="off"
+                    value={dialog.value}
+                    disabled={credentialSaving}
+                    placeholder={presentation.credential.placeholder}
+                    aria-label={`${presentation.providerName} ${presentation.credential.label}`}
+                    onChange={(changeEvent) => onCredentialChange(changeEvent.currentTarget.value)}
+                  />
+                </label>
+                {dialog.state === "failed" ? (
+                  <p className="text-sm text-destructive">{dialog.message}</p>
+                ) : null}
+              </div>
             </DialogPanel>
             <DialogFooter>
               <Button variant="outline" disabled={credentialSaving} onClick={onClose}>

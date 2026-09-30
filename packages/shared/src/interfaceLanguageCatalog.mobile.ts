@@ -1292,6 +1292,11 @@ export const mobileInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Kopiert die Trace-ID",
     "Copie l’identifiant de trace",
   ],
+  "mobile.connection.copyTraceLongPressHint": [
+    "Long press to copy the trace ID",
+    "Zum Kopieren der Trace-ID lange drücken",
+    "Appuyez longuement pour copier l’identifiant de trace",
+  ],
   "mobile.connection.copyTrace": [
     "Copy trace ID",
     "Trace-ID kopieren",

@@ -1,4 +1,4 @@
-.project-index-progress {
+@utility project-index-progress {
   --index-progress-track: color-mix(in srgb, var(--foreground) 8%, transparent);
   --index-progress-fill: linear-gradient(
     90deg,
@@ -8,25 +8,19 @@
   appearance: none;
   border: 0;
   background: var(--index-progress-track);
-}
-
-.project-index-progress::-webkit-progress-bar {
-  border-radius: inherit;
-  background: var(--index-progress-track);
-}
-
-.project-index-progress::-webkit-progress-value {
-  border-radius: inherit;
-  background: var(--index-progress-fill);
-}
-
-.project-index-progress::-moz-progress-bar {
-  border-radius: inherit;
-  background: var(--index-progress-fill);
-}
-
-@media (forced-colors: active) {
-  .project-index-progress {
+  &::-webkit-progress-bar {
+    border-radius: inherit;
+    background: var(--index-progress-track);
+  }
+  &::-webkit-progress-value {
+    border-radius: inherit;
+    background: var(--index-progress-fill);
+  }
+  &::-moz-progress-bar {
+    border-radius: inherit;
+    background: var(--index-progress-fill);
+  }
+  @media (forced-colors: active) {
     --index-progress-track: Canvas;
     --index-progress-fill: Highlight;
     border: 1px solid CanvasText;

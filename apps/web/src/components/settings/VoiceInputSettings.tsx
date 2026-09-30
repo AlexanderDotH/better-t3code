@@ -159,7 +159,7 @@ function ProfilePayload({ profile }: { readonly profile: ProjectSpeechProfile })
         </p>
       ) : null}
 
-      <p className="text-[11px] text-muted-foreground">
+      <p className="text-2xs text-muted-foreground">
         {translate("settings.voice.profile.updated")}{" "}
         <time dateTime={profile.updatedAt}>
           {formatUpdatedAt(profile.updatedAt, (date) =>
@@ -213,13 +213,11 @@ function ProjectSpeechProfileRow({
         >
           <div className="min-w-0 flex-1 space-y-1">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <span className="truncate text-[13px] font-semibold tracking-[-0.01em] text-foreground">
+              <span className="voice-input-project-title truncate font-semibold text-foreground">
                 {project.title}
               </span>
               <ProfileStatusBadge status={status} />
-              {environmentState?.status === "loading" ? (
-                <Spinner className="size-3.5 text-muted-foreground" />
-              ) : null}
+              {environmentState?.status === "loading" ? <Spinner className="size-3.5" /> : null}
             </div>
             <p className="truncate text-xs text-muted-foreground/80">{project.workspaceRoot}</p>
           </div>
@@ -741,10 +739,10 @@ export function VoiceInputSettings({
             return (
               <div key={group.environmentId} className="border-t border-border/60 first:border-t-0">
                 <div className="flex items-center justify-between gap-3 bg-muted/20 px-4 py-2.5 sm:px-5">
-                  <h3 className="truncate text-[11px] font-semibold uppercase tracking-[0.08em] text-foreground/60">
+                  <h3 className="voice-input-environment-title truncate text-2xs font-semibold uppercase text-foreground/60">
                     {group.label}
                   </h3>
-                  <span className="shrink-0 text-[11px] text-muted-foreground">
+                  <span className="shrink-0 text-2xs text-muted-foreground">
                     {translate("settings.voice.context.projectCount", {
                       count: group.projects.length,
                     })}

@@ -155,7 +155,7 @@ export function ChatImportSettingsPanel() {
       </SettingsSection>
 
       {lastResult ? (
-        <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/8 px-4 py-3 text-sm text-emerald-700 dark:text-emerald-300">
+        <div className="rounded-xl border border-success/25 bg-success/8 px-4 py-3 text-sm text-success-foreground">
           {importSummary(lastResult, translator)}
         </div>
       ) : null}

@@ -8,7 +8,10 @@ import {
   createShellEnvironmentAtoms,
   type EnvironmentShellState,
 } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentCatalogState } from "@t3tools/client-runtime/state/connections";
+import {
+  type EnvironmentCatalogState,
+  enabledEnvironmentIds,
+} from "@t3tools/client-runtime/state/connections";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -37,7 +40,8 @@ function hasReadyEnvironmentCatalog(
 export const allEnvironmentShellsBootstrappedAtom = Atom.make((get) => {
   const catalog = get(environmentCatalog.catalogValueAtom);
   if (!hasReadyEnvironmentCatalog(catalog, !isHostedStaticApp())) return false;
-  for (const [environmentId, entry] of catalog.entries) {
+  for (const environmentId of enabledEnvironmentIds(catalog)) {
+    const entry = catalog.entries.get(environmentId)!;
     if (Option.isSome(get(environmentShell.stateValueAtom(environmentId)).snapshot)) {
       continue;
     }
@@ -71,7 +75,7 @@ export function createAllEnvironmentProjectSnapshotsReadyAtom(input: {
     // The persisted catalog can emit before platform discovery registers the
     // primary environment. Neither that gap nor an empty catalog proves absence.
     if (!hasReadyEnvironmentCatalog(catalog, input.requiresPrimaryEnvironment)) return false;
-    for (const environmentId of catalog.entries.keys()) {
+    for (const environmentId of enabledEnvironmentIds(catalog)) {
       const shell = get(input.shellStateValueAtom(environmentId));
       if (shell.status !== "live" || Option.isNone(shell.snapshot)) return false;
     }

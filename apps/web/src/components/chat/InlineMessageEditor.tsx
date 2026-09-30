@@ -68,7 +68,7 @@ export function InlineMessageEditor({
           setDraft(event.target.value);
         }}
         disabled={pending}
-        className="text-sm [&_textarea]:min-h-28 [&_textarea]:max-h-[50vh] [&_textarea]:resize-y"
+        className="[&_textarea]:min-h-28 [&_textarea]:max-h-[50vh] [&_textarea]:resize-y"
       />
       {!available && (
         <p role="status" className="text-sm text-muted-foreground">

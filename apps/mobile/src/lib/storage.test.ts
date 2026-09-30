@@ -212,6 +212,35 @@ describe("mobile connection storage", () => {
     });
   });
 
+  it("persists Material You independently for each appearance", async () => {
+    const themes = { lightThemeId: "material-you", darkThemeId: "ocean" } as const;
+    await savePreferencesPatch(themes);
+    await expect(loadPreferences()).resolves.toEqual({
+      ...themes,
+      betterT3Device: cleanBetterT3Settings,
+    });
+    await savePreferencesPatch({ lightThemeId: "t3-chat" });
+    await expect(loadPreferences()).resolves.toEqual({
+      ...themes,
+      lightThemeId: "t3-chat",
+      betterT3Device: cleanBetterT3Settings,
+    });
+  });
+
+  it.each([true, false])("drops the removed Android layout preference (%s)", async (enabled) => {
+    mocks.setPreferencesJson(
+      JSON.stringify({
+        materialYouStyleLayoutEnabled: enabled,
+        lightThemeId: "t3-chat",
+      }),
+      10,
+    );
+    await expect(loadPreferences()).resolves.toEqual({
+      lightThemeId: "t3-chat",
+      betterT3Device: migratedBetterT3Settings,
+    });
+  });
+
   it("drops the removed theme transition preference", async () => {
     mocks.setPreferencesJson(JSON.stringify({ themeTransition: "circle-bottom-left" }), 10);
 

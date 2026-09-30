@@ -64,6 +64,7 @@ function populatedThread(
     runtimeMode: "full-access",
     interactionMode: "default",
     branch: "main",
+    pullRequests: [],
     worktreePath: "/workspace/mobile-smoke",
     latestTurn: {
       turnId: TURN_ID,

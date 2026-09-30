@@ -21,7 +21,6 @@ import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
-  MessageId,
   type OrchestrationCommand,
   ProjectId,
   ProviderItemId,
@@ -31,13 +30,14 @@ import {
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Option from "effect/Option";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { it as effectIt } from "@effect/vitest";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
@@ -58,7 +58,6 @@ import {
   PROVIDER_RUNTIME_INGESTION_MEMORY_LIMITS,
   ProviderRuntimeIngestionLive,
 } from "./ProviderRuntimeIngestion.ts";
-import { DEFAULT_THREAD_TITLE } from "../threadTitles.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -77,7 +76,6 @@ function makeTestServerSettingsLayer(overrides: Partial<ServerSettings> = {}) {
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asItemId = (value: string): ProviderItemId => ProviderItemId.make(value);
 const asEventId = (value: string): EventId => EventId.make(value);
-const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 const asSubagentId = (value: string): SubagentId => SubagentId.make(value);
@@ -116,7 +114,12 @@ function createProviderServiceHarness(options?: {
   readonly manualCompaction?: boolean;
   readonly compactThreadEffect?: ProviderServiceShape["compactThread"];
 }) {
-  const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
+  const runtimeEventPubSub = Effect.runSync(
+    PubSub.unbounded<{
+      readonly events: ReadonlyArray<ProviderRuntimeEvent>;
+      readonly enqueued?: Deferred.Deferred<void>;
+    }>(),
+  );
   const runtimeSessions: ProviderSession[] = [];
 
   const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
@@ -163,7 +166,16 @@ function createProviderServiceHarness(options?: {
     rollbackConversation: () => unsupported(),
     uploadFeedback: () => unsupported(),
     get streamEvents() {
-      return Stream.fromPubSub(runtimeEventPubSub);
+      return Stream.fromPubSub(runtimeEventPubSub).pipe(
+        Stream.flatMap(({ events, enqueued }) =>
+          Stream.concat(
+            Stream.fromIterable(events),
+            enqueued
+              ? Stream.fromEffect(Deferred.succeed(enqueued, undefined)).pipe(Stream.drain)
+              : Stream.empty,
+          ),
+        ),
+      );
     },
   };
 
@@ -192,12 +204,19 @@ function createProviderServiceHarness(options?: {
   };
 
   const emit = (event: LegacyProviderRuntimeEvent): void => {
-    Effect.runSync(PubSub.publish(runtimeEventPubSub, normalizeLegacyEvent(event)));
+    Effect.runSync(PubSub.publish(runtimeEventPubSub, { events: [normalizeLegacyEvent(event)] }));
   };
+
+  const awaitEnqueue = Effect.fnUntraced(function* () {
+    const enqueued = yield* Deferred.make<void>();
+    yield* PubSub.publish(runtimeEventPubSub, { events: [], enqueued });
+    yield* Deferred.await(enqueued);
+  });
 
   return {
     service,
     emit,
+    awaitEnqueue,
     setSession,
     compactThread,
   };
@@ -206,9 +225,7 @@ function createProviderServiceHarness(options?: {
 type ProviderRuntimeTestReadModel = OrchestrationReadModel;
 type ProviderRuntimeTestThread = ProviderRuntimeTestReadModel["threads"][number];
 type ProviderRuntimeTestMessage = ProviderRuntimeTestThread["messages"][number];
-type ProviderRuntimeTestProposedPlan = ProviderRuntimeTestThread["proposedPlans"][number];
 type ProviderRuntimeTestActivity = ProviderRuntimeTestThread["activities"][number];
-type ProviderRuntimeTestCheckpoint = ProviderRuntimeTestThread["checkpoints"][number];
 
 async function waitForThread(
   readModel: () => Promise<ProviderRuntimeTestReadModel>,
@@ -325,7 +342,8 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
     const ingestion = await runtime.runPromise(Effect.service(ProviderRuntimeIngestionService));
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(ingestion.start().pipe(Scope.provide(scope)));
-    const drain = () => Effect.runPromise(ingestion.drain);
+    const drain = () =>
+      Effect.runPromise(provider.awaitEnqueue().pipe(Effect.andThen(ingestion.drain)));
     const runEffect = <A, E>(effect: Effect.Effect<A, E, never>) => runtime!.runPromise(effect);
     const dispatch = (command: OrchestrationCommand) => Effect.runPromise(engine.dispatch(command));
 
@@ -389,6 +407,8 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
       dispatch,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       readShell: () => Effect.runPromise(snapshotQuery.getShellSnapshot()),
+      readSubagent: (subagentId: SubagentId) =>
+        Effect.runPromise(snapshotQuery.getSubagentDetailById(asThreadId("thread-1"), subagentId)),
       readEvents: () =>
         Effect.runPromise(
           Stream.runCollect(engine.readEvents(0)).pipe(Effect.map((chunk) => Array.from(chunk))),
@@ -462,7 +482,7 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
   });
 
   it("hard-drops replacement runtime events while starting if a previous runtimeSessionId remains projected", async () => {
-    const harness = await createHarness({ serverSettings: { enableLegacyTokenStreaming: true } });
+    const harness = await createHarness({ serverSettings: { responseStreamingMode: "token" } });
     const threadId = asThreadId("thread-1");
     const oldRuntimeSessionId = RuntimeSessionId.make("runtime-old-pinned");
     const newRuntimeSessionId = RuntimeSessionId.make("runtime-new-dropped");
@@ -533,7 +553,7 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
   });
 
   it("adopts a replacement runtime generation while starting when projected runtimeSessionId is null", async () => {
-    const harness = await createHarness({ serverSettings: { enableLegacyTokenStreaming: true } });
+    const harness = await createHarness({ serverSettings: { responseStreamingMode: "token" } });
     const threadId = asThreadId("thread-1");
     const turnId = asTurnId("turn-replacement-runtime");
     const newRuntimeSessionId = RuntimeSessionId.make("runtime-new");
@@ -611,7 +631,7 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
   });
 
   it("drops stale runtime events while starting once a replacement generation is bound", async () => {
-    const harness = await createHarness({ serverSettings: { enableLegacyTokenStreaming: true } });
+    const harness = await createHarness({ serverSettings: { responseStreamingMode: "token" } });
     const threadId = asThreadId("thread-1");
     const turnId = asTurnId("turn-bound-runtime");
     const boundRuntimeSessionId = RuntimeSessionId.make("runtime-bound");
@@ -720,7 +740,7 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
 
   it("finalizes buffered output and settles an exact abort terminal cooperatively", async () => {
     const harness = await createHarness({
-      serverSettings: { enableLegacyTokenStreaming: false },
+      serverSettings: { responseStreamingMode: "turn" },
     });
     const threadId = asThreadId("thread-1");
     const turnId = asTurnId("turn-cooperative-abort");
@@ -792,7 +812,7 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
       payload: { reason: "interrupted" },
     });
 
-    const thread = await waitForThread(
+    await waitForThread(
       harness.readModel,
       (entry) =>
         entry.messages.some(
@@ -801,21 +821,12 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
             message.text === "Partial answer before the provider stopped." &&
             !message.streaming,
         ) &&
-        entry.activities.some(
-          (activity) =>
-            activity.kind === "reasoning.text" &&
-            (activity.payload as Record<string, unknown>).text ===
-              "Buffered reasoning before abort.",
+        entry.messages.some(
+          (message) =>
+            message.role === "reasoning" &&
+            message.text === "Buffered reasoning before abort." &&
+            !message.streaming,
         ),
-    );
-    const reasoningActivity = thread.activities.find(
-      (activity) => activity.kind === "reasoning.text",
-    );
-    if (!reasoningActivity) {
-      throw new Error("Expected buffered reasoning activity.");
-    }
-    expect((reasoningActivity.payload as Record<string, unknown>).flushReason).toBe(
-      "thread.turn-abort-settled",
     );
     expect(harness.abortSettlements).toEqual([
       {
@@ -829,7 +840,7 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
 
   it("finalizes buffered output when a forced abort settles without a runtime terminal", async () => {
     const harness = await createHarness({
-      serverSettings: { enableLegacyTokenStreaming: false },
+      serverSettings: { responseStreamingMode: "turn" },
     });
     const threadId = asThreadId("thread-1");
     const turnId = asTurnId("turn-forced-abort");
@@ -893,7 +904,7 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
     });
     await harness.drain();
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.turn.abort.settle",
         commandId: CommandId.make("cmd-settle-forced-abort"),
@@ -989,22 +1000,66 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
       payload: { itemType: "reasoning", status: "completed" },
     });
 
-    const thread = await waitForThread(harness.readModel, (entry) =>
-      entry.activities.some((activity) => activity.kind === "reasoning.text"),
+    await harness.drain();
+    const thread = (await harness.readModel()).threads.find(
+      (entry) => entry.id === asThreadId("thread-1"),
     );
-    const activity = thread.activities.find((entry) => entry.kind === "reasoning.text");
-    const payload = activity?.payload as Record<string, unknown> | undefined;
+    expect(thread?.messages).toContainEqual(
+      expect.objectContaining({
+        role: "reasoning",
+        text: "Inspect the full payload with secret=dummy-secret.",
+        streaming: false,
+      }),
+    );
+  });
 
-    expect(payload?.text).toBe("Inspect the full payload with secret=dummy-secret.");
-    expect(payload?.streamKind).toBe("reasoning_text");
-    expect(payload?.contentIndex).toBe(2);
-    expect(payload?.provider).toBe("codex");
-    expect(payload?.providerInstanceId).toBe("codex-personal");
-    expect(payload?.itemId).toBe("item-reasoning");
-    expect(payload?.providerRefs).toEqual({
-      providerTurnId: "provider-turn-7",
-      providerItemId: "provider-item-8",
-    });
+  it("keeps paragraph-delivered reasoning separate for root and native child streams", async () => {
+    const harness = await createHarness();
+    const subagentId = asSubagentId("child-reasoning");
+    const turnId = asTurnId("shared-reasoning-turn");
+    const itemId = asItemId("shared-reasoning-item");
+    const base = {
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId,
+      createdAt: "2026-01-01T00:00:01.000Z",
+    };
+    for (const [scope, label] of [
+      [undefined, "Root"],
+      [subagentId, "Child"],
+    ] as const) {
+      const target = scope === undefined ? {} : { subagentId: scope };
+      harness.emit({
+        ...base,
+        ...target,
+        type: "content.delta",
+        eventId: asEventId(`${label}-reasoning-delta`),
+        payload: { streamKind: "reasoning_text", delta: `${label} paragraph.\n\n${label} tail.` },
+      });
+      harness.emit({
+        ...base,
+        ...target,
+        type: "item.completed",
+        eventId: asEventId(`${label}-reasoning-complete`),
+        payload: {
+          itemType: "reasoning",
+          status: "completed",
+          detail: `${label} paragraph.\n\n${label} tail.`,
+        },
+      });
+    }
+    await harness.drain();
+    const root = (await harness.readModel()).threads.find(
+      (thread) => thread.id === asThreadId("thread-1"),
+    );
+    const child = Option.getOrThrow(await harness.readSubagent(subagentId));
+    expect(root?.messages.filter((message) => message.role === "reasoning")).toEqual([
+      expect.objectContaining({ text: "Root paragraph.\n\nRoot tail.", streaming: false }),
+    ]);
+    expect(child.messages.filter((message) => message.role === "reasoning")).toEqual([
+      expect.objectContaining({ text: "Child paragraph.\n\nChild tail.", streaming: false }),
+    ]);
   });
 
   it("flushes non-assistant output on interruption without truncating it", async () => {
@@ -1900,19 +1955,13 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
     });
     await harness.drain();
 
-    const activitiesAfterExit = (await harness.readEvents()).filter(
-      (
-        event,
-      ): event is Extract<OrchestrationEvent, { readonly type: "thread.activity-appended" }> =>
-        event.type === "thread.activity-appended" &&
-        event.payload.subagentId === subagentId &&
-        event.payload.activity.kind === "reasoning.text",
-    );
-    expect(activitiesAfterExit).toHaveLength(1);
-    expect(activitiesAfterExit[0]?.payload.activity.payload).toMatchObject({
-      text: "Buffered child reasoning before the provider disappeared.",
-      flushReason: "session.exited",
-    });
+    const childAfterExit = Option.getOrThrow(await harness.readSubagent(subagentId));
+    expect(childAfterExit.messages.filter((message) => message.role === "reasoning")).toEqual([
+      expect.objectContaining({
+        text: "Buffered child reasoning before the provider disappeared.",
+        streaming: false,
+      }),
+    ]);
 
     harness.emit({
       type: "item.completed",
@@ -1927,15 +1976,8 @@ describe("ProviderRuntimeIngestion.test.ts fork regressions", () => {
     });
     await harness.drain();
 
-    const activitiesAfterLateCompletion = (await harness.readEvents()).filter(
-      (
-        event,
-      ): event is Extract<OrchestrationEvent, { readonly type: "thread.activity-appended" }> =>
-        event.type === "thread.activity-appended" &&
-        event.payload.subagentId === subagentId &&
-        event.payload.activity.kind === "reasoning.text",
-    );
-    expect(activitiesAfterLateCompletion).toHaveLength(1);
+    const childAfterLateCompletion = Option.getOrThrow(await harness.readSubagent(subagentId));
+    expect(childAfterLateCompletion.messages).toEqual(childAfterExit.messages);
   });
 
   it("routes child assistant, plan, and activity events to namespaced subagent commands", async () => {

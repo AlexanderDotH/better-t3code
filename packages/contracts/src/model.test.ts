@@ -25,8 +25,8 @@ describe("multi-provider model contracts", () => {
   it("defines defaults for exactly the native provider drivers", () => {
     expect(DEFAULT_MODEL_BY_PROVIDER).toEqual({
       antigravity: "antigravity-default",
-      [CODEX_DRIVER_KIND]: "gpt-5.6-sol",
-      [CLAUDE_DRIVER_KIND]: "claude-sonnet-5",
+      [CODEX_DRIVER_KIND]: "gpt-6-astra",
+      [CLAUDE_DRIVER_KIND]: "claude-fable-5-1",
       [CURSOR_DRIVER_KIND]: "auto",
       [GROK_DRIVER_KIND]: "grok-build",
       [OPENCODE_DRIVER_KIND]: "openai/gpt-5",

@@ -165,6 +165,28 @@ const cursorAdapterTestLayer = it.layer(
 );
 
 cursorAdapterTestLayer("CursorAdapterLive", (it) => {
+  it.effect("rejects rollback without discarding the provider conversation", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-unsupported-rollback");
+      const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      yield* adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId, input: "Remember this turn", attachments: [] });
+      const originalTurns = [...(yield* adapter.readThread(threadId)).turns];
+      assert.isFalse(adapter.capabilities.supportsConversationRollback);
+      const error = yield* adapter.rollbackThread(threadId, 1).pipe(Effect.flip);
+      assert.equal(error._tag, "ProviderAdapterRequestError");
+      assert.deepStrictEqual((yield* adapter.readThread(threadId)).turns, originalTurns);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("rejects a Cursor transport error returned as a successful assistant answer", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
@@ -290,7 +312,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
-  it.effect("sends selected project skills in Cursor's native slash form", () =>
+  it.effect("sends skills in Cursor's native form and preserves exact slash command input", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
       const settings = yield* ServerSettingsService;
@@ -335,6 +357,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
           ],
         ],
       );
+      yield* adapter.sendTurn({ threadId, input: "/copy-request-id" });
       yield* adapter.stopSession(threadId);
 
       const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
@@ -348,6 +371,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
             { type: "text", text: "please /review this" },
             { type: "text", text: buildRuntimeInstructions({ harness: "Cursor" }) },
           ],
+          [{ type: "text", text: "/copy-request-id" }],
         ],
       );
     }),
@@ -526,6 +550,49 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         .pipe(Effect.result);
 
       assert.equal(result._tag, "Failure");
+    }),
+  );
+
+  it.effect("surfaces cursor-agent cli.json schema stderr instead of a closed-session error", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const workspace = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-cli-json-")),
+      );
+      const wrapperPath = writeFakeCli({
+        directory: workspace,
+        name: "fake-cursor-agent",
+        source: [
+          "process.stderr.write(`Invalid project config at ${process.cwd()}/.cursor/cli.json: schema validation failed. [`",
+          "  + JSON.stringify({",
+          '      code: "unrecognized_keys",',
+          '      keys: ["approvalMode", "sandbox"],',
+          "      path: [],",
+          "      message: \"Unrecognized key(s) in object: 'approvalMode', 'sandbox'\",",
+          '    }) + "]\\n");',
+          "process.exit(1);",
+        ].join("\n"),
+      });
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      const error = yield* adapter
+        .startSession({
+          threadId: ThreadId.make("cursor-cli-json-schema"),
+          provider: ProviderDriverKind.make("cursor"),
+          cwd: workspace,
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error._tag, "ProviderAdapterProcessError");
+      assert.include(error.message, "cli.json");
+      assert.include(error.message, "Unrecognized key");
+      assert.notInclude(error.message, "adapter thread is closed");
+      if (error._tag === "ProviderAdapterProcessError") {
+        assert.include(error.detail, "approvalMode");
+        assert.include(error.detail, "sandbox");
+      }
     }),
   );
 
@@ -1589,6 +1656,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       });
       yield* Effect.sync(() =>
         McpProviderSession.setMcpProviderSession({
+          capabilities: new Set(["preview", "workspace", "workspace-write", "coordination"]),
           environmentId: EnvironmentId.make("environment-mcp-coexistence"),
           threadId,
           providerSessionId: "provider-session-mcp-coexistence",
@@ -1710,6 +1778,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       yield* serverSettings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
       yield* Effect.sync(() =>
         McpProviderSession.setMcpProviderSession({
+          capabilities: new Set(["preview", "workspace", "workspace-write", "coordination"]),
           environmentId: EnvironmentId.make("environment-cursor-fetch"),
           threadId,
           providerSessionId: "provider-session-cursor-fetch",

@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import {
   ApprovalRequestId,
   DEFAULT_CLIENT_SETTINGS,
@@ -5,12 +7,23 @@ import {
   EnvironmentId,
   MessageId,
   makeBetterT3SettingsV1,
+  resolveBetterT3FeatureFlag,
   TurnId,
+  type ComposerContextRecord,
 } from "@t3tools/contracts";
-import { act, createRef, useLayoutEffect, useState, type ReactNode, type Ref } from "react";
+import {
+  act,
+  createRef,
+  useLayoutEffect,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+  type Ref,
+} from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { createRoot } from "react-dom/client";
 import { create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
-import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef, MaintainScrollAtEndOptions } from "@legendapp/list/react";
 import { shouldUseRestingComposerLayout } from "../composerFooterLayout";
 import { useComposerFocusState } from "./useComposerFocusState";
@@ -144,51 +157,73 @@ vi.mock("../DiffWorkerPoolProvider", () => ({
 function matchMedia() {
   return {
     matches: false,
+    media: "",
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
     addEventListener: () => {},
     removeEventListener: () => {},
+    dispatchEvent: () => false,
   };
 }
 
 let MessagesTimeline: typeof import("./MessagesTimeline").MessagesTimeline;
+let WorkingReasoningDialogProvider: typeof import("./WorkingReasoningDialog").WorkingReasoningDialogProvider;
+let deriveUnsettledTurnId: typeof import("./MessagesTimeline.logic").deriveUnsettledTurnId;
+let useClientSettings: typeof import("../../hooks/useSettings").useClientSettings;
+let resolvePreviewAnnotationImage: typeof import("./MessagesTimeline").resolvePreviewAnnotationImage;
 
-beforeAll(async () => {
-  const classList = {
-    add: () => {},
-    remove: () => {},
-    toggle: () => {},
-    contains: () => false,
-  };
-
+function configureTestDom() {
+  window.matchMedia = matchMedia;
   vi.stubGlobal("localStorage", {
     getItem: () => null,
     setItem: () => {},
     removeItem: () => {},
     clear: () => {},
   });
-  vi.stubGlobal("window", {
-    matchMedia,
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    requestAnimationFrame: (callback: FrameRequestCallback) => {
-      callback(0);
-      return 0;
-    },
-    cancelAnimationFrame: () => {},
-    desktopBridge: undefined,
-  });
-  vi.stubGlobal("document", {
-    documentElement: {
-      classList,
-      offsetHeight: 0,
-    },
-  });
+}
 
-  ({ MessagesTimeline } = await import("./MessagesTimeline"));
+beforeAll(async () => {
+  configureTestDom();
+  ({ MessagesTimeline, resolvePreviewAnnotationImage } = await import("./MessagesTimeline"));
+  ({ WorkingReasoningDialogProvider } = await import("./WorkingReasoningDialog"));
+  ({ deriveUnsettledTurnId } = await import("./MessagesTimeline.logic"));
+  ({ useClientSettings } = await import("../../hooks/useSettings"));
   ({ InlineMessageEditor } = await import("./InlineMessageEditor"));
 }, 30_000);
 
+beforeEach(configureTestDom);
+
 const ACTIVE_THREAD_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const MESSAGE_CREATED_AT = "2026-03-17T19:12:28.000Z";
+
+function ReasoningTimelineFixture({
+  children,
+  ...props
+}: ComponentProps<typeof MessagesTimeline> & { children?: ReactNode }) {
+  const settings = useClientSettings();
+  return (
+    <WorkingReasoningDialogProvider
+      entries={props.timelineEntries.flatMap((entry) =>
+        entry.kind === "work" ? [entry.entry] : [],
+      )}
+      messages={props.timelineEntries.flatMap((entry) =>
+        entry.kind === "message" ? [entry.message] : [],
+      )}
+      activeTurnId={deriveUnsettledTurnId(props.latestTurn ?? null, props.runningTurnId ?? null)}
+      isWorking={props.isWorking}
+      enabled={
+        settings.showReasoning &&
+        resolveBetterT3FeatureFlag(settings.betterT3Device, "agent.reasoningWorkingOverlay")
+      }
+      streamIdPrefix={props.routeThreadKey}
+      streamingMotionEnabled={props.streamingMotionEnabled ?? false}
+      markdownOptions={{ cwd: props.markdownCwd, environmentId: props.activeThreadEnvironmentId }}
+    >
+      {children ?? <MessagesTimeline {...props} />}
+    </WorkingReasoningDialogProvider>
+  );
+}
 
 function buildProps() {
   return {
@@ -477,6 +512,145 @@ it("moves the active plan between the composer and native timeline", async () =>
   }
 });
 
+it.each([false, true])(
+  "animates only the live assistant and clears motion on turn completion (characters %s)",
+  async (characters) => {
+    const { __setClientSettingsForTests, getClientSettings } =
+      await import("../../hooks/useSettings");
+    const originalSettings = getClientSettings();
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      betterT3Device: {
+        ...makeBetterT3SettingsV1("existing-install-migration"),
+        flags: {
+          ...makeBetterT3SettingsV1("existing-install-migration").flags,
+          "chat.characterStreamingMotion": characters,
+        },
+      },
+    });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const currentTurnId = TurnId.make("live-animation");
+    const historicalBase = buildAssistantTimelineEntry("Historical text");
+    const historical = {
+      ...historicalBase,
+      id: "historical-animation",
+      message: {
+        ...historicalBase.message,
+        id: MessageId.make("historical-animation"),
+        turnId: TurnId.make("historical-turn"),
+        streaming: true,
+      },
+    };
+    const liveBase = buildAssistantTimelineEntry("Live text");
+    const live = {
+      ...liveBase,
+      message: {
+        ...liveBase.message,
+        id: MessageId.make("live-animation"),
+        turnId: currentTurnId,
+        streaming: true,
+      },
+    };
+    const render = (text: string, isWorking = true) => (
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking={isWorking}
+        runningTurnId={isWorking ? currentTurnId : null}
+        latestTurn={{
+          turnId: currentTurnId,
+          state: isWorking ? "running" : "completed",
+          startedAt: MESSAGE_CREATED_AT,
+          completedAt: isWorking ? null : MESSAGE_CREATED_AT,
+        }}
+        streamingMotionEnabled
+        timelineEntries={[historical, { ...live, message: { ...live.message, text } }]}
+      />
+    );
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(() => {
+        renderer = create(render("Live text"));
+      });
+      const views = () =>
+        renderer!.root.findAll(
+          (node) =>
+            node.type === "div" &&
+            typeof node.props.className === "string" &&
+            node.props.className.startsWith("chat-markdown "),
+        );
+      expect(views()[0]!.props["data-streaming"]).toBeUndefined();
+      expect(views()[1]!.props["data-streaming"]).toBe(characters ? undefined : "");
+      await act(() => {
+        renderer!.update(render("Live text appended"));
+      });
+      expect(views()[0]!.findAllByProps({ "data-stream-character": "" })).toHaveLength(0);
+      expect(views()[1]!.findAllByProps({ "data-stream-character": "" }).length > 0).toBe(
+        characters,
+      );
+      await act(() => {
+        renderer!.update(render("Live text appended", false));
+      });
+      for (const view of views()) {
+        expect(view.props["data-streaming"]).toBeUndefined();
+        expect(view.findAllByProps({ "data-stream-character": "" })).toHaveLength(0);
+      }
+    } finally {
+      await act(() => renderer?.unmount());
+      __setClientSettingsForTests(originalSettings);
+    }
+  },
+);
+
+it("keeps voice-file candidates out of the bubble and preserves them on the clipboard", async () => {
+  const { appendVoiceFileContext } = await import("@t3tools/shared/voiceFileContext");
+  const prompt = appendVoiceFileContext("Change [index.ts](src/index.ts)", [
+    {
+      label: "index.ts",
+      previewPath: "src/index.ts",
+      candidates: [
+        { path: "src/index.ts", symbols: [] },
+        { path: "other/index.ts", symbols: [] },
+      ],
+      truncated: false,
+    },
+  ]);
+  const writeText = vi.fn(async (_text: string) => {});
+  vi.stubGlobal("navigator", { clipboard: { writeText } });
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("requestAnimationFrame", () => 0);
+  vi.stubGlobal("cancelAnimationFrame", () => {});
+  let renderer: ReactTestRenderer | undefined;
+  try {
+    await act(() => {
+      renderer = create(
+        <MessagesTimeline {...buildProps()} timelineEntries={[buildUserTimelineEntry(prompt)]} />,
+      );
+    });
+    const renderedText = (node: ReactTestInstance | string): string =>
+      typeof node === "string" ? node : node.children.map(renderedText).join("");
+    const body = renderer!.root.findByProps({ "data-user-message-body": "true" });
+    expect(renderedText(body)).toContain("index.ts");
+    expect(renderedText(body)).not.toContain("voice_file_context");
+    expect(renderedText(body)).not.toContain("other/index.ts");
+    const copy = renderer!.root
+      .findAllByType("button")
+      .find((button) => button.props["aria-label"] === "Copy to clipboard");
+    expect(copy).toBeDefined();
+    await act(async () => {
+      await copy!.props.onClick({
+        nativeEvent: new Event("click"),
+        preventDefault: () => {},
+        stopPropagation: () => {},
+      });
+    });
+    expect(writeText).toHaveBeenCalledExactlyOnceWith(prompt);
+  } finally {
+    await act(() => renderer?.unmount());
+  }
+});
+
 it.each(["classic", "current"] as const)(
   "keeps %s reasoning directly visible as traces arrive and update",
   async (mode) => {
@@ -533,14 +707,16 @@ it.each(["classic", "current"] as const)(
     let renderer: ReactTestRenderer | undefined;
     try {
       await act(() => {
-        renderer = create(<MessagesTimeline {...props} timelineEntries={traces.slice(0, 1)} />);
+        renderer = create(
+          <ReasoningTimelineFixture {...props} timelineEntries={traces.slice(0, 1)} />,
+        );
       });
       const reasoning = renderer!.root.findByProps({ "data-reasoning-output": "true" });
       await flushFrames();
       expect(reasoning.findAllByProps({ "data-stream-character": "" }).length).toBeGreaterThan(0);
       expect(reasoning.findAllByType("p").map(renderedText)).toEqual(["First trace"]);
       await act(() => {
-        renderer!.update(<MessagesTimeline {...props} timelineEntries={traces} />);
+        renderer!.update(<ReasoningTimelineFixture {...props} timelineEntries={traces} />);
       });
       await flushFrames();
       expect(renderer!.root.findByProps({ "data-reasoning-output": "true" })).toBe(reasoning);
@@ -554,7 +730,7 @@ it.each(["classic", "current"] as const)(
           : trace,
       );
       await act(() => {
-        renderer!.update(<MessagesTimeline {...props} timelineEntries={updatedTraces} />);
+        renderer!.update(<ReasoningTimelineFixture {...props} timelineEntries={updatedTraces} />);
       });
       await flushFrames();
       expect(renderer!.root.findByProps({ "data-reasoning-output": "true" })).toBe(reasoning);
@@ -567,7 +743,7 @@ it.each(["classic", "current"] as const)(
       ).toContain("completed");
       await act(() => {
         renderer!.update(
-          <MessagesTimeline {...props} isWorking={false} timelineEntries={updatedTraces} />,
+          <ReasoningTimelineFixture {...props} isWorking={false} timelineEntries={updatedTraces} />,
         );
       });
       expect(reasoning.findAllByProps({ "data-stream-character": "" })).toHaveLength(0);
@@ -583,32 +759,35 @@ it.each(["classic", "current"] as const)(
             },
           },
         });
-        renderer!.update(<MessagesTimeline {...props} timelineEntries={updatedTraces} />);
+        renderer!.update(<ReasoningTimelineFixture {...props} timelineEntries={updatedTraces} />);
       });
       expect(renderer!.root.findAllByProps({ "data-reasoning-output": "true" })).toHaveLength(0);
       const { ComposerReasoningScroller } = await import("./ComposerReasoningScroller");
       const { ThreadId } = await import("@t3tools/contracts");
       await act(() =>
         renderer!.update(
-          <ComposerReasoningScroller
-            entries={updatedTraces.map(({ entry }) => entry)}
-            turnId={TurnId.make("reasoning-turn")}
-            threadRef={{
-              environmentId: EnvironmentId.make("environment-1"),
-              threadId: ThreadId.make("thread-1"),
-            }}
-            environmentId={EnvironmentId.make("environment-1")}
-            cwd={undefined}
-            streamingMotionEnabled
-          />,
+          <ReasoningTimelineFixture {...props} timelineEntries={updatedTraces}>
+            <ComposerReasoningScroller
+              entries={updatedTraces.map(({ entry }) => entry)}
+              turnId={TurnId.make("reasoning-turn")}
+              threadRef={{
+                environmentId: EnvironmentId.make("environment-1"),
+                threadId: ThreadId.make("thread-1"),
+              }}
+              environmentId={EnvironmentId.make("environment-1")}
+              cwd={undefined}
+              streamingMotionEnabled
+            />
+          </ReasoningTimelineFixture>,
         ),
       );
       await flushFrames();
       const lyrics = renderer!.root.findByProps({ "data-composer-reasoning": "true" });
-      expect(lyrics.findAllByType("p").map(renderedText)).toEqual(
+      expect(lyrics.findAllByProps({ "data-reasoning-log": "true" }).map(renderedText)).toEqual(
         updatedTraces.map(({ entry }) => entry.detail),
       );
-      expect(lyrics.findAllByProps({ "data-stream-character": "" }).length).toBeGreaterThan(0);
+      expect(lyrics.findAllByType("p")).toHaveLength(0);
+      expect(lyrics.findAllByProps({ "data-stream-character": "" })).toHaveLength(0);
     } finally {
       await act(() => renderer?.unmount());
       requestFrame.mockRestore();
@@ -693,14 +872,24 @@ describe("MessagesTimeline", () => {
             />,
           );
         });
-        const toggle = renderer!.root.findByProps({ "aria-expanded": false });
-        await act(() => toggle.props.onClick());
+        const questionToggle = renderer!.root.find(
+          (node) =>
+            node.props["aria-label"]?.startsWith("Question answer submitted:") &&
+            node.props["aria-expanded"] === false,
+        );
+        expect(questionToggle.props["aria-label"]).toContain(
+          Object.values(answers)[0] ?? "spec.txt",
+        );
+        expect(JSON.stringify(renderer!.toJSON())).not.toContain("Provide a spec");
+        await act(() => questionToggle.props.onClick());
         const markup = JSON.stringify(renderer!.toJSON());
         expect(markup.match(/Provide a spec/g)).toHaveLength(1);
-        expect(markup.match(/spec\.txt/g)).toHaveLength(1);
+        expect(markup).toContain("spec.txt");
         expect(markup).toContain("Provide a screenshot");
         expect(markup).toContain("shot.png");
         for (const answer of Object.values(answers)) expect(markup).toContain(answer);
+        await act(() => questionToggle.props.onClick());
+        expect(JSON.stringify(renderer!.toJSON())).not.toContain("Provide a spec");
       } finally {
         await act(() => renderer?.unmount());
       }
@@ -895,6 +1084,7 @@ describe("MessagesTimeline", () => {
       resolveTimelineMinimapHitStripWidth,
       resolveTimelineMinimapIndexFromPointer,
       resolveTimelineMinimapInteractiveWidth,
+      resolveTimelineMinimapNavigationInteractive,
       resolveTimelineMinimapTopPercent,
     } = await import("./MessagesTimeline.logic");
 
@@ -979,22 +1169,39 @@ describe("MessagesTimeline", () => {
         itemBounds: [{ top: 80, height: 20 }],
       }),
     ).toBeNull();
-    expect(resolveTimelineMinimapHasPersistentGutter(832)).toBe(false);
-    expect(resolveTimelineMinimapHasPersistentGutter(863)).toBe(false);
-    expect(resolveTimelineMinimapHasPersistentGutter(864)).toBe(true);
+    // Comfortable width: the column is capped at 768px.
+    expect(resolveTimelineMinimapHasPersistentGutter(832, 768)).toBe(false);
+    expect(resolveTimelineMinimapHasPersistentGutter(863, 768)).toBe(false);
+    expect(resolveTimelineMinimapHasPersistentGutter(864, 768)).toBe(true);
+    // Wider Chat width settings consume the gutter the minimap relies on.
+    expect(resolveTimelineMinimapHasPersistentGutter(1400, 1152)).toBe(true);
+    expect(resolveTimelineMinimapHasPersistentGutter(1200, 1152)).toBe(false);
+    expect(resolveTimelineMinimapHasPersistentGutter(2560, 2560)).toBe(false);
 
     // No usable gutter (zoomed in / narrow pane): the strip must go inert
     // instead of overlaying the centered content column.
-    expect(resolveTimelineMinimapHitStripWidth(768)).toBe(0);
-    expect(resolveTimelineMinimapHitStripWidth(792)).toBe(0);
+    expect(resolveTimelineMinimapHitStripWidth(768, 768)).toBe(0);
+    expect(resolveTimelineMinimapHitStripWidth(792, 768)).toBe(0);
     // Partial gutter: strip shrinks to what fits between the viewport edge
     // and the content column.
-    expect(resolveTimelineMinimapHitStripWidth(820)).toBe(14);
+    expect(resolveTimelineMinimapHitStripWidth(820, 768)).toBe(14);
     // Full gutter: unchanged 40px-wide strip.
-    expect(resolveTimelineMinimapHitStripWidth(872)).toBe(40);
-    expect(resolveTimelineMinimapHitStripWidth(1400)).toBe(40);
-    expect(resolveTimelineMinimapHitStripWidth(0)).toBe(0);
-    expect(resolveTimelineMinimapHitStripWidth(Number.NaN)).toBe(0);
+    expect(resolveTimelineMinimapHitStripWidth(872, 768)).toBe(40);
+    expect(resolveTimelineMinimapHitStripWidth(1400, 768)).toBe(40);
+    // Full Chat width: the column spans the viewport, so the strip is inert
+    // however wide the window gets.
+    expect(resolveTimelineMinimapHitStripWidth(2560, 2560)).toBe(0);
+    // Wide Chat width on a window just wider than the column: partial strip.
+    expect(resolveTimelineMinimapHitStripWidth(1204, 1152)).toBe(14);
+    expect(resolveTimelineMinimapHitStripWidth(0, 0)).toBe(0);
+    expect(resolveTimelineMinimapHitStripWidth(Number.NaN, 768)).toBe(0);
+
+    // Prev/next buttons reach 14px past the strip's left edge; a narrower
+    // strip means they would sit on the content column.
+    expect(resolveTimelineMinimapNavigationInteractive(40)).toBe(true);
+    expect(resolveTimelineMinimapNavigationInteractive(14)).toBe(true);
+    expect(resolveTimelineMinimapNavigationInteractive(8)).toBe(false);
+    expect(resolveTimelineMinimapNavigationInteractive(0)).toBe(false);
 
     // The collapsed target stays narrow, but an open preview keeps its full
     // 20rem width plus the 2rem offset from the minimap rail interactive.
@@ -1033,7 +1240,6 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("t3code — Tests");
     expect(markup).toContain('src="data:image/png;base64,aWNvbg=="');
     expect(markup).toContain("h-28 w-52 max-w-full");
-    expect(markup).not.toContain("col-span-2");
     expect(onAnchorReady).toHaveBeenCalledOnce();
     expect(onAnchorReady).toHaveBeenCalledWith(firstEntry.message.id, 0);
   });
@@ -1127,7 +1333,6 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("<video");
     expect(markup).toContain('aria-label="demo.mp4"');
-    expect(markup).toContain('controls=""');
     expect(markup).not.toContain("Expand demo.mp4");
   });
 
@@ -1156,7 +1361,7 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("<video");
     expect(markup).toContain(">pending-demo.mp4</div>");
   });
-  it("renders an ordinary file download button without creating its URL in advance", () => {
+  it("renders an ordinary file with preview and download controls without creating its URL in advance", () => {
     const entry = {
       ...buildUserTimelineEntry("Read the report."),
       message: {
@@ -1177,9 +1382,8 @@ describe("MessagesTimeline", () => {
       <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
     );
 
-    expect(markup).toContain(
-      '<button type="button" aria-label="Download archive.zip" class="flex min-w-0 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70">',
-    );
+    expect(markup).toContain('aria-label="Preview archive.zip"');
+    expect(markup).toContain('aria-label="Download archive.zip"');
     expect(markup).not.toContain("<a href=");
   });
 
@@ -1236,6 +1440,93 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('aria-label="Download voice-memo.ogg"');
     expect(markup).not.toContain('alt="voice-memo.ogg"');
     expect(markup).not.toContain("<a href=");
+  });
+
+  it("glides to the end while a turn is running and snaps otherwise", () => {
+    const entries = [buildUserTimelineEntry("Hello")];
+    const working = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} isWorking timelineEntries={entries} />,
+    );
+    expect(working).toContain('data-maintain-scroll-at-end-animated="true"');
+
+    const idle = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={entries} />,
+    );
+    expect(idle).toContain('data-maintain-scroll-at-end-animated="false"');
+  });
+
+  it("snaps to the end while a thread switch settles, even mid-turn", async () => {
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextFrame = 0;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.set(++nextFrame, callback);
+      return nextFrame;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (frame: number) => frames.delete(frame));
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const flushFrame = () =>
+      act(() => {
+        const callbacks = [...frames.values()];
+        frames.clear();
+        callbacks.forEach((callback) => callback(0));
+      });
+    // A work entry renders without the DOM globals that message rows need
+    // under react-test-renderer.
+    const entries = [
+      {
+        id: "entry-settle-work",
+        kind: "work" as const,
+        createdAt: MESSAGE_CREATED_AT,
+        entry: {
+          id: "work-settle",
+          createdAt: MESSAGE_CREATED_AT,
+          toolCallId: "call-settle",
+          label: "Run lint",
+          tone: "tool" as const,
+          itemType: "command_execution" as const,
+          command: "pnpm lint",
+          toolLifecycleStatus: "completed" as const,
+        },
+      },
+    ];
+    const animatedAttr = (renderer: ReactTestRenderer) =>
+      renderer.root.findByProps({ "data-testid": "legend-list" }).props[
+        "data-maintain-scroll-at-end-animated"
+      ];
+    let renderer!: ReactTestRenderer;
+    try {
+      act(() => {
+        renderer = create(
+          <MessagesTimeline
+            {...buildProps()}
+            isWorking
+            routeThreadKey="env-1:thread-a"
+            timelineEntries={entries}
+          />,
+        );
+      });
+      expect(animatedAttr(renderer)).toBe(true);
+
+      act(() => {
+        renderer.update(
+          <MessagesTimeline
+            {...buildProps()}
+            isWorking
+            routeThreadKey="env-1:thread-b"
+            timelineEntries={entries}
+          />,
+        );
+      });
+      expect(animatedAttr(renderer)).toBe(false);
+
+      // Two frames later the switch has settled and gliding resumes.
+      flushFrame();
+      flushFrame();
+      expect(animatedAttr(renderer)).toBe(true);
+    } finally {
+      act(() => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
   });
 
   it("keeps reserved end space when tool work starts while reading history", () => {
@@ -1642,8 +1933,8 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Terminal 1 lines 1-5");
     expect(markup).toContain("lucide-terminal");
-    expect(markup).toContain("yoo what&#x27;s</p>");
-    expect(markup).toContain('<span aria-hidden="true"> </span>');
+    expect(markup).toContain("yoo what&#x27;s");
+    expect(markup).not.toContain("terminal_context");
     expect(markup).toContain("Show full message");
   }, 20_000);
 
@@ -2058,6 +2349,180 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("tool call failed");
   });
 
+  it("keeps canonical thinking fully visible through completion and display-mode changes", async () => {
+    const { __setClientSettingsForTests, getClientSettings } =
+      await import("../../hooks/useSettings");
+    const originalSettings = getClientSettings();
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      showReasoning: true,
+      betterT3Device: makeBetterT3SettingsV1("existing-install-migration"),
+    });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const turnId = TurnId.make("canonical-thinking");
+    const entries = ["**First thought**", "Second thought"].map((text, index) => {
+      const entry = buildAssistantTimelineEntry(text);
+      return {
+        ...entry,
+        id: `canonical-thinking-${index}`,
+        message: {
+          ...entry.message,
+          id: MessageId.make(`canonical-thinking-${index}`),
+          role: "reasoning" as const,
+          turnId,
+          streaming: index === 1,
+        },
+      };
+    });
+    const render = (isWorking: boolean) => (
+      <ReasoningTimelineFixture
+        {...buildProps()}
+        isWorking={isWorking}
+        runningTurnId={isWorking ? turnId : null}
+        timelineEntries={entries}
+      />
+    );
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(() => {
+        renderer = create(render(true));
+      });
+      const traces = () => renderer!.root.findAllByProps({ "data-reasoning-output": "true" });
+      expect(traces()).toHaveLength(2);
+      const firstTrace = traces()[0]!;
+      expect(firstTrace.findAllByType("strong")).toHaveLength(1);
+      expect(traces().flatMap((trace) => trace.findAllByType("button"))).toHaveLength(0);
+      await act(() => {
+        renderer!.update(render(false));
+      });
+      expect(traces()[0]).toBe(firstTrace);
+      expect(traces()).toHaveLength(2);
+      for (const mode of ["none", "working-dialog"] as const) {
+        await act(() => {
+          __setClientSettingsForTests({
+            ...getClientSettings(),
+            showReasoning: mode !== "none",
+            betterT3Device: {
+              ...getClientSettings().betterT3Device,
+              flags: {
+                ...getClientSettings().betterT3Device.flags,
+                "agent.reasoningWorkingOverlay": mode === "working-dialog",
+              },
+            },
+          });
+          renderer!.update(render(false));
+        });
+        expect(traces()).toHaveLength(0);
+      }
+      await act(() => {
+        __setClientSettingsForTests({
+          ...getClientSettings(),
+          showReasoning: true,
+          betterT3Device: makeBetterT3SettingsV1("existing-install-migration"),
+        });
+        renderer!.update(render(false));
+      });
+      expect(traces()).toHaveLength(2);
+      expect(traces()[0]!.findAllByType("strong")).toHaveLength(1);
+    } finally {
+      await act(() => renderer?.unmount());
+      __setClientSettingsForTests(originalSettings);
+    }
+  });
+
+  it.each(["classic", "current"] as const)(
+    "opens full Working thinking in the real dialog and retains it at completion in the %s layout",
+    async (mode) => {
+      const { __setClientSettingsForTests, getClientSettings } =
+        await import("../../hooks/useSettings");
+      const originalSettings = getClientSettings();
+      __setClientSettingsForTests({
+        ...DEFAULT_CLIENT_SETTINGS,
+        showReasoning: true,
+        betterT3Device: {
+          ...makeBetterT3SettingsV1("existing-install-migration"),
+          flags: { "agent.reasoningWorkingOverlay": true },
+        },
+      });
+      visualPreference.mode = mode;
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      vi.stubGlobal("requestAnimationFrame", () => 0);
+      vi.stubGlobal("cancelAnimationFrame", () => {});
+      vi.stubGlobal(
+        "ResizeObserver",
+        class {
+          observe() {}
+          disconnect() {}
+        },
+      );
+      const container = document.createElement("div");
+      document.body.append(container);
+      const root = createRoot(container);
+      const turnId = TurnId.make("working-dialog-dom");
+      const base = buildAssistantTimelineEntry(
+        "## Inspecting the change\n\nDetailed Thinking body\nSecond line",
+      );
+      const entry = {
+        ...base,
+        id: "working-dialog-dom",
+        message: {
+          ...base.message,
+          id: MessageId.make("working-dialog-dom"),
+          role: "reasoning" as const,
+          turnId,
+          streaming: true,
+        },
+      };
+      const render = (message = entry.message, isWorking = true) => (
+        <ReasoningTimelineFixture
+          {...buildProps()}
+          isWorking={isWorking}
+          runningTurnId={isWorking ? turnId : null}
+          streamingMotionEnabled={false}
+          timelineEntries={[{ ...entry, message }]}
+        />
+      );
+      try {
+        await act(() => root.render(render()));
+        const trigger = container.querySelector<HTMLButtonElement>("button[data-reasoning-log]");
+        expect(trigger?.textContent).toBe("Inspecting the change");
+        expect(container.textContent).not.toContain("Detailed Thinking body");
+        expect(container.querySelector("[data-reasoning-output]")).toBeNull();
+        expect(document.querySelector("[data-working-reasoning-content]")).toBeNull();
+        await act(() => trigger!.click());
+        const dialog = document.querySelector('[role="dialog"]');
+        const content = dialog?.querySelector("[data-working-reasoning-content]");
+        expect(content?.textContent).toContain("Detailed Thinking body");
+        expect(content?.textContent).toContain("Second line");
+        expect(content?.querySelector("[data-streaming]")).not.toBeNull();
+        const completed = {
+          ...entry.message,
+          text: `${entry.message.text}\nFinal retained line`,
+          streaming: false,
+        };
+        await act(() => root.render(render(completed, false)));
+        expect(document.querySelector("[data-working-reasoning-content]")).toBe(content);
+        expect(content?.textContent).toContain("Final retained line");
+        expect(content?.querySelector("[data-streaming]")).toBeNull();
+        await act(() => {
+          __setClientSettingsForTests({ ...getClientSettings(), showReasoning: false });
+          root.render(render(completed, false));
+        });
+        expect(document.querySelector("[data-working-reasoning-content]")).toBeNull();
+        expect(entry.message.text).toBe(
+          "## Inspecting the change\n\nDetailed Thinking body\nSecond line",
+        );
+      } finally {
+        await act(() => root.unmount());
+        container.remove();
+        __setClientSettingsForTests(originalSettings);
+        visualPreference.mode = "current";
+      }
+    },
+  );
+
   it("renders initial thinking as the shared live activity row", () => {
     const turnId = TurnId.make("turn-live");
     const markup = renderToStaticMarkup(
@@ -2155,9 +2620,8 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("contextWindow.test.ts");
-    expect(markup).toContain("Wadduo");
-    expect(markup).toContain('data-testid="file-diff"');
+    expect(markup).toContain("contextWindow.test.ts +47 to +58");
+    expect(markup).toContain("lucide-message-circle");
     expect(markup).not.toContain(">Review comment<");
     expect(markup).not.toContain("&lt;review_comment");
     expect(markup).not.toContain("&lt;/review_comment&gt;");
@@ -2194,10 +2658,210 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("plan.md");
-    expect(markup).toContain("Clarify this.");
-    expect(markup).toContain("# Plan");
+    expect(markup).toContain("plan.md L1 to L2");
+    expect(markup).not.toContain("review_comment");
     expect(markup).not.toContain('data-testid="file-diff"');
+  });
+
+  it("renders attachment chips bound to server ids and hides their file rows", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-attachments",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            message: {
+              id: MessageId.make("message-attachments"),
+              role: "user",
+              text: "See ![shot.png](t3-context://v1/image/img-1) and [notes.txt](t3-context://v1/file/file-1).",
+              attachments: [
+                {
+                  type: "image",
+                  id: "thread-1-aaa",
+                  name: "shot.png",
+                  mimeType: "image/png",
+                  sizeBytes: 3,
+                },
+                {
+                  type: "file",
+                  id: "thread-1-bbb",
+                  name: "notes.txt",
+                  mimeType: "text/plain",
+                  sizeBytes: 3,
+                },
+                {
+                  type: "file",
+                  id: "thread-1-ccc",
+                  name: "legacy.txt",
+                  mimeType: "text/plain",
+                  sizeBytes: 3,
+                },
+              ],
+              context: {
+                version: 1,
+                records: [
+                  {
+                    version: 1,
+                    contextId: "img-1" as never,
+                    kind: "image",
+                    label: "shot.png",
+                    attachmentId: "thread-1-aaa",
+                    name: "shot.png",
+                    mimeType: "image/png",
+                    sizeBytes: 3,
+                  },
+                  {
+                    version: 1,
+                    contextId: "file-1" as never,
+                    kind: "file",
+                    label: "notes.txt",
+                    attachmentId: "thread-1-bbb",
+                    name: "notes.txt",
+                    mimeType: "text/plain",
+                    sizeBytes: 3,
+                  },
+                ],
+              },
+              turnId: null,
+              createdAt: "2026-03-17T19:12:28.000Z",
+              updatedAt: "2026-03-17T19:12:28.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    // Images report their size like every other attachment chip.
+    expect(markup).toContain('aria-label="Image attachment, shot.png, 1 KB"');
+    // Selection copy re-emits chips as their canonical links.
+    expect(markup).toContain('data-markdown-copy="![shot.png](t3-context://v1/image/img-1)"');
+    expect(markup).toContain('aria-label="File attachment, notes.txt, 1 KB"');
+    expect(markup).toContain(">1 KB</span>");
+    expect(markup).not.toContain('aria-label="Download notes.txt"');
+    expect(markup).toContain("legacy.txt");
+    expect(markup).not.toContain('href="t3-context://');
+    // A picture keeps its tile even though it also has a chip: the chip names it, the tile is
+    // the only way to see it. A plain file's row is what a chip replaces.
+    expect(markup).toContain("grid-cols-2");
+  });
+
+  it("resolves an annotation screenshot through its image context record", () => {
+    const image = {
+      type: "image" as const,
+      id: "thread-1-screenshot",
+      name: "capture.png",
+      mimeType: "image/png",
+      sizeBytes: 42,
+    };
+    const annotation = {
+      version: 1 as const,
+      contextId: "annotation-1" as never,
+      kind: "preview-annotation" as const,
+      label: "Checkout button",
+      annotationId: "producer-id",
+      pageUrl: "https://example.test/checkout",
+      pageTitle: "Checkout",
+      comment: "This changed after clicking",
+      targetSummary: "1 selected element",
+      styleChanges: [],
+      screenshotContextId: "screenshot-1" as never,
+    };
+    const screenshotRecord = {
+      version: 1 as const,
+      contextId: "screenshot-1" as never,
+      kind: "image" as const,
+      label: "capture.png",
+      attachmentId: image.id,
+      name: image.name,
+      mimeType: image.mimeType,
+      sizeBytes: image.sizeBytes,
+    };
+
+    expect(
+      resolvePreviewAnnotationImage({
+        record: annotation,
+        recordsById: new Map<string, ComposerContextRecord>([
+          [annotation.contextId, annotation],
+          [screenshotRecord.contextId, screenshotRecord],
+        ]),
+        userImages: [image],
+        previewImages: [],
+        annotationRecordIds: [annotation.contextId],
+      }),
+    ).toBe(image);
+  });
+
+  it("returns no annotation screenshot when its binding cannot be resolved", () => {
+    expect(
+      resolvePreviewAnnotationImage({
+        record: {
+          version: 1,
+          contextId: "annotation-1" as never,
+          kind: "preview-annotation",
+          label: "Google",
+          annotationId: "producer-id",
+          pageUrl: "https://google.com",
+          pageTitle: "Google",
+          comment: "What is this?",
+          targetSummary: "8 drawings",
+          styleChanges: [],
+          screenshotContextId: "missing-image" as never,
+        },
+        recordsById: new Map(),
+        userImages: [],
+        previewImages: [],
+        annotationRecordIds: ["annotation-1"],
+      }),
+    ).toBeNull();
+  });
+
+  it("renders structured context records as chips without reparsing text", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-structured",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            message: {
+              id: MessageId.make("message-structured"),
+              role: "user",
+              text: "Compare [Terminal 1 line 4](t3-context://v1/terminal/ctx-t) with [gone](t3-context://v1/future/ctx-x).",
+              context: {
+                version: 1,
+                records: [
+                  {
+                    version: 1,
+                    contextId: "ctx-t" as never,
+                    kind: "terminal",
+                    label: "Terminal 1 line 4",
+                    terminalId: "default",
+                    terminalLabel: "Terminal 1",
+                    lineStart: 4,
+                    lineEnd: 4,
+                    text: "boom",
+                  },
+                ],
+              },
+              turnId: null,
+              createdAt: "2026-03-17T19:12:28.000Z",
+              updatedAt: "2026-03-17T19:12:28.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("lucide-terminal");
+    expect(markup).toContain("Terminal 1 line 4");
+    expect(markup).toContain('data-context-unresolved="true"');
+    expect(markup).toContain(">gone<");
+    expect(markup).not.toContain('href="t3-context://');
   });
 
   it("keeps failed lifecycle entries discoverable in mixed activity summaries", () => {
@@ -2272,6 +2936,55 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("lucide-circle-alert");
     expect(markup).toContain("text-destructive");
+  });
+
+  it("only withholds an expanded tool-call label click while text is selected", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(() => {
+        renderer = create(
+          <MessagesTimeline
+            {...buildProps()}
+            timelineEntries={[
+              {
+                id: "entry-standalone",
+                kind: "work",
+                createdAt: MESSAGE_CREATED_AT,
+                entry: {
+                  id: "work-standalone",
+                  createdAt: MESSAGE_CREATED_AT,
+                  toolCallId: "call-standalone",
+                  label: "Run lint",
+                  tone: "tool",
+                  itemType: "command_execution",
+                  command: "pnpm lint",
+                  toolLifecycleStatus: "completed",
+                },
+              },
+            ]}
+          />,
+        );
+      });
+      await act(() => renderer!.root.findByProps({ "aria-expanded": false }).props.onClick());
+      const label = renderer!.root.findAll(
+        (node) => node.type === "span" && String(node.props.className).includes("select-text"),
+      )[0];
+      const stopPropagation = vi.fn();
+      // Only the click that ends a selection may be withheld from the row
+      // toggle; the plain click has to reach it so the label can collapse.
+      for (const isCollapsed of [false, true]) {
+        label!.props.onClick({
+          currentTarget: { ownerDocument: { getSelection: () => ({ isCollapsed }) } },
+          stopPropagation,
+        });
+      }
+      expect(stopPropagation).toHaveBeenCalledTimes(1);
+    } finally {
+      await act(() => renderer?.unmount());
+    }
   });
 });
 

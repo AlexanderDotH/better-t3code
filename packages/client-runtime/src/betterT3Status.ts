@@ -28,10 +28,12 @@ interface PreparedStatusBase {
 
 function unavailableConnectionState(
   connectionPhase: EnvironmentConnectionPhase,
-): "unavailable" | "unknown" | null {
+): "unavailable" | "unknown" | "unsupported" | null {
   switch (connectionPhase) {
     case "connected":
       return null;
+    case "unsupported":
+      return "unsupported";
     case "connecting":
     case "reconnecting":
       return "unknown";

@@ -24,8 +24,9 @@ import {
   type SidebarProjectSortOrder,
   type SidebarThreadSortOrder,
 } from "@t3tools/contracts";
+import { ProviderInstanceId } from "@t3tools/contracts";
+import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
 import { MOBILE_THEME_IDS, type MobileThemeId, type MobileThemeMode } from "../lib/mobileTheme";
-
 import * as MobileDatabase from "./mobile-database";
 import * as MobileSecureStorage from "./mobile-secure-storage";
 import { MobileStorageDecodeError, MobileStorageEncodeError } from "./mobile-storage";
@@ -49,6 +50,7 @@ const MOBILE_BETTER_T3_BOOLEAN_MIRRORS = [
 ] as const satisfies ReadonlyArray<readonly [keyof Preferences, string]>;
 
 export interface Preferences {
+  readonly composerUsageLimitsVisible?: boolean;
   readonly usagePacingEnabled?: boolean;
   readonly usagePacingWorkdayHours?: 8 | 24;
   /** Device-local Better T3 registry values, including clean/existing migration provenance. */
@@ -69,6 +71,7 @@ export interface Preferences {
   readonly codeWordBreak?: boolean;
   readonly connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
   readonly collapsedProjectGroups?: readonly string[];
+  readonly composerEnterBehavior?: ComposerEnterBehavior;
   readonly olderProjectsExpanded?: boolean;
   /** Offline mirror of the newest synchronized per-project Classic preview limit. */
   readonly projectThreadPreviewSyncRecord?: ProjectThreadPreviewSyncRecordType;
@@ -98,13 +101,14 @@ export interface Preferences {
   readonly legacyThreadListEnabled?: boolean;
   /** Device-local counterpart of desktop's `planModeEnabled` legacy flag. */
   readonly planModeEnabled?: boolean;
+  /** Model favorites belong to this device, like the web client setting. */
+  readonly modelFavorites?: ReadonlyArray<{
+    readonly provider: ProviderInstanceId;
+    readonly model: string;
+  }>;
   /** Fresh keys reset both shelves to collapsed when users update. */
   readonly threadListSettledShelfExpanded?: boolean;
   readonly threadListSnoozedShelfExpanded?: boolean;
-  readonly modelFavorites?: ReadonlyArray<{
-    readonly provider: string;
-    readonly model: string;
-  }>;
   /** Undefined preserves the default expanded Settled shelf. */
   readonly threadListV2SettledShelfExpanded?: boolean;
   /** Undefined preserves the default collapsed Snoozed shelf. */
@@ -148,8 +152,13 @@ export class MobilePreferencesStore extends Context.Service<
   }
 >()("@t3tools/mobile/persistence/MobilePreferencesStore") {}
 
-export function sanitizeMobilePreferences(parsed: Preferences): Preferences {
+export function sanitizeMobilePreferences(
+  parsed: Omit<Preferences, "modelFavorites"> & {
+    readonly modelFavorites?: ReadonlyArray<unknown>;
+  },
+): Preferences {
   const preferences: {
+    composerUsageLimitsVisible?: boolean;
     usagePacingEnabled?: boolean;
     usagePacingWorkdayHours?: 8 | 24;
     betterT3Device?: BetterT3SettingsV1Type;
@@ -175,10 +184,12 @@ export function sanitizeMobilePreferences(parsed: Preferences): Preferences {
     interfaceLanguageSyncRecord?: InterfaceLanguageSyncRecordType;
     interfaceLocaleSyncRecordV1?: InterfaceLocaleSyncRecordV1Type;
     projectThreadPreviewMigrationVersion?: 1;
+    composerEnterBehavior?: ComposerEnterBehavior;
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
     legacyThreadListEnabled?: boolean;
     planModeEnabled?: boolean;
+    modelFavorites?: Preferences["modelFavorites"];
     threadListSettledShelfExpanded?: boolean;
     threadListSnoozedShelfExpanded?: boolean;
     sidebarProjectSortOrder?: Exclude<SidebarProjectSortOrder, "manual">;
@@ -186,11 +197,13 @@ export function sanitizeMobilePreferences(parsed: Preferences): Preferences {
     sidebarAutoSettleAfterDays?: number | null;
     sidebarAutoSettleOnMerge?: boolean;
     autoSettleOnMerge?: boolean;
-    modelFavorites?: ReadonlyArray<{ readonly provider: string; readonly model: string }>;
     threadListV2SettledShelfExpanded?: boolean;
     threadListV2SnoozedShelfExpanded?: boolean;
   } = {};
 
+  if (typeof parsed.composerUsageLimitsVisible === "boolean") {
+    preferences.composerUsageLimitsVisible = parsed.composerUsageLimitsVisible;
+  }
   if (typeof parsed.usagePacingEnabled === "boolean") {
     preferences.usagePacingEnabled = parsed.usagePacingEnabled;
   }
@@ -296,6 +309,9 @@ export function sanitizeMobilePreferences(parsed: Preferences): Preferences {
   if (parsed.projectThreadPreviewMigrationVersion === 1) {
     preferences.projectThreadPreviewMigrationVersion = 1;
   }
+  if (parsed.composerEnterBehavior === "send" || parsed.composerEnterBehavior === "newline") {
+    preferences.composerEnterBehavior = parsed.composerEnterBehavior;
+  }
   if (typeof parsed.projectGroupingEnabled === "boolean") {
     preferences.projectGroupingEnabled = parsed.projectGroupingEnabled;
   }
@@ -347,8 +363,8 @@ export function sanitizeMobilePreferences(parsed: Preferences): Preferences {
   }
   if (Array.isArray(parsed.modelFavorites)) {
     const seen = new Set<string>();
-    const modelFavorites: Array<{ provider: string; model: string }> = [];
-    for (const favorite of parsed.modelFavorites as ReadonlyArray<unknown>) {
+    const modelFavorites: Array<{ provider: ProviderInstanceId; model: string }> = [];
+    for (const favorite of parsed.modelFavorites) {
       if (
         typeof favorite !== "object" ||
         favorite === null ||
@@ -364,7 +380,7 @@ export function sanitizeMobilePreferences(parsed: Preferences): Preferences {
       const key = `${provider}\u0000${model}`;
       if (!provider || !model || seen.has(key)) continue;
       seen.add(key);
-      modelFavorites.push({ provider, model });
+      modelFavorites.push({ provider: ProviderInstanceId.make(provider), model });
     }
     if (modelFavorites.length > 0) preferences.modelFavorites = modelFavorites;
   }

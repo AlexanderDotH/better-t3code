@@ -14,7 +14,8 @@ const deckCssPath = decodeURIComponent(
 );
 const readDeckCss = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
-  return yield* fileSystem.readFileString(deckCssPath);
+  const css = yield* fileSystem.readFileString(deckCssPath);
+  return css.replace(/^@utility ([\w-]+)(?=\s*\{)/gm, ".$1");
 }).pipe(Effect.provide(NodeServices.layer));
 
 describe("workspace card deck motion behavior", () => {

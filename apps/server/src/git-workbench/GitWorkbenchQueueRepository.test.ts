@@ -12,7 +12,7 @@ import {
 import type { GitWorkbenchQueuedWorkflow } from "./GitWorkbenchQueueModel.ts";
 
 const migratedSqlite = Layer.effectDiscard(Migration0042).pipe(
-  Layer.provideMerge(NodeSqliteClient.layerMemory()),
+  Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
 );
 
 const layer = it.layer(GitWorkbenchQueueRepositoryLive.pipe(Layer.provideMerge(migratedSqlite)));

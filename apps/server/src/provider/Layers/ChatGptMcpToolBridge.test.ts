@@ -44,6 +44,7 @@ describe("ChatGptMcpToolBridge", () => {
         const threadId = ThreadId.make("chatgpt-mcp-thread");
         const instanceId = ProviderInstanceId.make("chatgpt_personal");
         McpProviderSession.setMcpProviderSession({
+          capabilities: new Set(["preview", "workspace", "workspace-write", "coordination"]),
           environmentId: EnvironmentId.make("local"),
           threadId,
           providerSessionId: "provider-session",
@@ -169,6 +170,7 @@ describe("ChatGptMcpToolBridge", () => {
       Effect.gen(function* () {
         const threadId = ThreadId.make("native-mcp-retry-after-failure-thread");
         McpProviderSession.setMcpProviderSession({
+          capabilities: new Set(["preview", "workspace", "workspace-write", "coordination"]),
           environmentId: EnvironmentId.make("local"),
           threadId,
           providerSessionId: "provider-session-retry",

@@ -1,8 +1,14 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Observe the fake child's native startup notification in this standalone Node fixture.
+import * as NodeFS from "node:fs";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+
+const encodeJsString = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 
 import {
   Launcher,
@@ -19,6 +25,7 @@ import {
   isExactServiceVersion,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STOP_ACK_FILE,
+  SERVICE_RESTART_PENDING_FILE,
   SERVICE_STOP_MARKER_FILE,
   SERVICE_STOP_PROTOCOL,
   SERVICE_STOP_REQUEST_FILE,
@@ -136,6 +143,33 @@ it("rejects contradictory service state", () => {
   );
 });
 
+// A pinned runtime is an executable at <versionDir>/t3. The tests stand one up
+// as a Node shebang script so the launcher spawns it the way it spawns the
+// real single-executable, IPC channel included.
+const writeFakeRuntime = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  versionDir: string,
+  childSource: string,
+) =>
+  Effect.gen(function* () {
+    const windows = (yield* HostProcessPlatform) === "win32";
+    const entryPath = windows
+      ? path.join(versionDir, "node_modules", "t3", "dist", "bin.mjs")
+      : path.join(versionDir, "t3");
+    yield* fs.makeDirectory(path.dirname(entryPath), { recursive: true });
+    yield* fs.writeFileString(
+      entryPath,
+      windows ? childSource : `#!${process.execPath}\n${childSource}`,
+    );
+    if (!windows) yield* fs.chmod(entryPath, 0o755);
+    yield* fs.writeFileString(
+      path.join(versionDir, ".install-complete"),
+      `${path.basename(versionDir)}\n`,
+    );
+    return entryPath;
+  });
+
 it.layer(NodeServices.layer)("service state persistence", (it) => {
   it.effect("durably replaces and strictly reads one state document", () =>
     Effect.gen(function* () {
@@ -153,17 +187,83 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
     }),
   );
 
+  it.effect("a fresh launcher clears a restart deferred by t3 update", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-restart-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const restartPending = path.join(root, "runtime", SERVICE_RESTART_PENDING_FILE);
+      const childReadyPath = path.join(root, "child-ready");
+      yield* writeFakeRuntime(
+        fs,
+        path,
+        path.join(root, "runtime", "versions", "1.0.0"),
+        `import { writeFileSync } from 'node:fs';
+writeFileSync(${encodeJsString(childReadyPath)}, 'ready');
+setInterval(() => {}, 1_000);\n`,
+      );
+      yield* Effect.promise(() =>
+        writeServiceState(statePath, {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.0.0",
+        }),
+      );
+      const run = () =>
+        Effect.gen(function* () {
+          const launcher = new Launcher(
+            root,
+            yield* Effect.promise(() => readServiceState(statePath)),
+          );
+          yield* fs.remove(childReadyPath, { force: true });
+          yield* Effect.promise(async () => {
+            const started = Promise.withResolvers<void>();
+            const watcher = NodeFS.watch(root, (_event, name) => {
+              if (String(name) === "child-ready") started.resolve();
+            });
+            const running = launcher.run();
+            try {
+              await Promise.race([
+                started.promise,
+                running.then(() => {
+                  throw new Error("Launcher ended before its child started");
+                }),
+              ]);
+              await launcher.stop("SIGTERM");
+              await running;
+            } finally {
+              watcher.close();
+              await launcher.stop("SIGTERM");
+            }
+          });
+        });
+
+      // A launcher that is still the old version leaves a marker that waits
+      // for a newer one.
+      yield* fs.writeFileString(restartPending, "1.0.1\n");
+      yield* run();
+      assert.isTrue(yield* fs.exists(restartPending));
+
+      // Whoever restarted the service, the launcher now runs what the unit
+      // names, so the deferred-restart marker is gone.
+      yield* fs.writeFileString(restartPending, "1.0.0\n");
+      yield* run();
+      assert.isFalse(yield* fs.exists(restartPending));
+    }),
+  );
+
   it.effect("serializes shutdown with launcher recovery", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-stop-" });
       const statePath = path.join(root, "runtime", "service-state.json");
-      const versionDir = path.join(root, "runtime", "versions", "1.0.0");
-      const entryPath = path.join(versionDir, "node_modules", "t3", "dist", "bin.mjs");
-      yield* fs.makeDirectory(path.dirname(entryPath), { recursive: true });
-      yield* fs.writeFileString(entryPath, "setInterval(() => {}, 1_000);\n");
-      yield* fs.writeFileString(path.join(versionDir, ".install-complete"), "1.0.0\n");
+      yield* writeFakeRuntime(
+        fs,
+        path,
+        path.join(root, "runtime", "versions", "1.0.0"),
+        "setInterval(() => {}, 1_000);\n",
+      );
       yield* Effect.promise(() =>
         writeServiceState(statePath, {
           protocol: SERVICE_LAUNCHER_PROTOCOL,
@@ -287,11 +387,12 @@ if (context.update?.status === "pending") {
 }
 `;
       for (const version of ["1.0.0", "1.1.0"]) {
-        const versionDir = path.join(root, "runtime", "versions", version);
-        const entryPath = path.join(versionDir, "node_modules", "t3", "dist", "bin.mjs");
-        yield* fs.makeDirectory(path.dirname(entryPath), { recursive: true });
-        yield* fs.writeFileString(entryPath, childSource);
-        yield* fs.writeFileString(path.join(versionDir, ".install-complete"), `${version}\n`);
+        yield* writeFakeRuntime(
+          fs,
+          path,
+          path.join(root, "runtime", "versions", version),
+          childSource,
+        );
       }
       yield* Effect.promise(() =>
         writeServiceState(statePath, {
@@ -337,11 +438,12 @@ if (context.update?.status === "pending") {
 }
 `;
       for (const version of ["1.0.0", "1.1.0"]) {
-        const versionDir = path.join(root, "runtime", "versions", version);
-        const entryPath = path.join(versionDir, "node_modules", "t3", "dist", "bin.mjs");
-        yield* fs.makeDirectory(path.dirname(entryPath), { recursive: true });
-        yield* fs.writeFileString(entryPath, childSource);
-        yield* fs.writeFileString(path.join(versionDir, ".install-complete"), `${version}\n`);
+        yield* writeFakeRuntime(
+          fs,
+          path,
+          path.join(root, "runtime", "versions", version),
+          childSource,
+        );
       }
       yield* Effect.promise(() =>
         writeServiceState(statePath, {
@@ -396,11 +498,12 @@ if (context.update?.status === "pending") {
 }
 `;
       for (const version of ["1.0.0", "1.1.0"]) {
-        const versionDir = path.join(root, "runtime", "versions", version);
-        const entryPath = path.join(versionDir, "node_modules", "t3", "dist", "bin.mjs");
-        yield* fs.makeDirectory(path.dirname(entryPath), { recursive: true });
-        yield* fs.writeFileString(entryPath, childSource);
-        yield* fs.writeFileString(path.join(versionDir, ".install-complete"), `${version}\n`);
+        yield* writeFakeRuntime(
+          fs,
+          path,
+          path.join(root, "runtime", "versions", version),
+          childSource,
+        );
       }
       yield* Effect.promise(() =>
         writeServiceState(statePath, {

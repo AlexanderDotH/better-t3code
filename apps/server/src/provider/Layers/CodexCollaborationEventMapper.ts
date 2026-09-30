@@ -7,6 +7,7 @@ import {
   type SubagentId,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import { makeCodexSubagentId } from "./CodexSessionRuntime.ts";
@@ -211,7 +212,20 @@ export function mapCollabAgentEvents(
   return events;
 }
 
-function threadSpawnMetadata(thread: EffectCodexSchema.V2ThreadStartedNotification["thread"]): {
+// Read only the stable fields needed for the roster; new required thread fields
+// such as projectId must not hide metadata from older installed Codex versions.
+const ChildThreadStartPayload = Schema.Struct({
+  thread: Schema.Struct({
+    preview: Schema.String,
+    source: EffectCodexSchema.V2ThreadStartedNotification__SessionSource,
+    status: EffectCodexSchema.V2ThreadStartedNotification__ThreadStatus,
+    agentNickname: Schema.optionalKey(Schema.NullOr(Schema.String)),
+    agentRole: Schema.optionalKey(Schema.NullOr(Schema.String)),
+    parentThreadId: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  }),
+});
+
+function threadSpawnMetadata(thread: typeof ChildThreadStartPayload.Type.thread): {
   readonly agentPath?: string;
   readonly nickname?: string;
   readonly role?: string;
@@ -249,7 +263,7 @@ export function mapChildThreadEvents(
   }
 
   if (event.method === "thread/started") {
-    const payload = readPayload(EffectCodexSchema.V2ThreadStartedNotification, event.payload);
+    const payload = readPayload(ChildThreadStartPayload, event.payload);
     if (!payload) {
       return [];
     }

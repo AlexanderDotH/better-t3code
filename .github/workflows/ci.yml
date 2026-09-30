@@ -116,6 +116,9 @@ jobs:
           sudo sed -i 's|http://|https://|g' /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
           sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
 
+      - name: Test preview artifact validation
+        run: python3 -B .github/scripts/stage-preview-bundle.test.py
+
       - name: Test nightly release checks
         run: node --test .github/scripts/check-nightly-release.test.cjs
 
@@ -314,10 +317,35 @@ jobs:
       - name: Verify Windows preload bundle output
         run: node apps/desktop/scripts/verify-preload-bundle.mjs
 
+      - name: Setup Node 26 for CLI executable build
+        uses: actions/setup-node@v4
+        with:
+          node-version: 26.8.2
+
+      - name: Build checkout Windows CLI archive for service smoke
+        shell: pwsh
+        run: |
+          node apps/server/scripts/cli.ts build-exe --target win-x64
+          if ($LASTEXITCODE -ne 0) { throw "Windows CLI executable build failed." }
+          cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw "Resource monitor release build failed." }
+          $monitorRoot = Join-Path $env:RUNNER_TEMP "t3-task-smoke-resource-monitor"
+          $monitorTarget = Join-Path $monitorRoot "win32-x64"
+          New-Item -ItemType Directory -Path $monitorTarget -Force | Out-Null
+          Copy-Item -LiteralPath native/resource-monitor/target/release/t3-resource-monitor.exe `
+            -Destination $monitorTarget
+          $version = node -p "require('./apps/server/package.json').version"
+          node scripts/build-cli-archive.ts --platform win --arch x64 --version $version `
+            --output-dir windows-cli-runtime --resource-monitor-dir $monitorRoot
+          if ($LASTEXITCODE -ne 0) { throw "Windows CLI archive build failed." }
+
       - name: Exercise installed per-user Task Scheduler service
         shell: pwsh
         run: |
+          $archives = @(Get-ChildItem -LiteralPath windows-cli-runtime -Filter "*.zip" -File)
+          if ($archives.Count -ne 1) { throw "Expected exactly one checkout Windows CLI archive." }
           ./scripts/windows-task-scheduler-service-smoke.ps1 `
+            -RuntimeArchive $archives[0].FullName `
             -WorkRoot (Join-Path $env:RUNNER_TEMP "t3-task-scheduler-service-smoke")
 
   # The static analysis below needs a macOS runner, which bills ~6.7x a Linux

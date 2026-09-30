@@ -4,7 +4,7 @@
   outline-offset: 2px;
 }
 
-.git-compact-card {
+@utility git-compact-card {
   position: relative;
   container-name: git-compact-card;
   container-type: inline-size;
@@ -23,7 +23,7 @@
   padding: 0;
 }
 
-.git-compact-card__content {
+@utility git-compact-card__content {
   display: grid;
   min-width: 0;
   grid-template-rows: auto minmax(0, 1fr) auto;
@@ -36,18 +36,56 @@
   overflow: hidden;
 }
 
-.git-compact-card__header,
-.git-compact-card__footer,
-.git-compact-card__branch-row,
-.git-compact-card__freshness,
-.git-compact-card__last-commit,
-.git-compact-card__header-actions {
+@utility git-compact-card__header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+@utility git-compact-card__footer {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+@utility git-compact-card__branch-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+@utility git-compact-card__freshness {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.25rem;
+  margin-block-start: 0.125rem;
+  color: var(--muted-foreground);
+  font-size: 0.6875rem;
+}
+
+@utility git-compact-card__last-commit {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex: 1;
+  gap: 0.375rem;
+  overflow: hidden;
+  font-size: 0.6875rem;
+}
+
+@utility git-compact-card__header-actions {
   display: flex;
   min-width: 0;
   align-items: center;
 }
 
-.git-compact-card__pull-handle {
+@utility git-compact-card__pull-handle {
   position: absolute;
   z-index: 2;
   inset-block-start: 0.125rem;
@@ -89,24 +127,7 @@
   background: color-mix(in srgb, var(--muted-foreground) 24%, transparent);
 }
 
-.git-compact-card__header,
-.git-compact-card__footer {
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.git-compact-card__branch-row {
-  gap: 0.375rem;
-}
-
-.git-compact-card__freshness {
-  gap: 0.25rem;
-  margin-block-start: 0.125rem;
-  color: var(--muted-foreground);
-  font-size: 0.6875rem;
-}
-
-.git-compact-card__state {
+@utility git-compact-card__state {
   overflow: hidden;
   border-radius: 999px;
   background: var(--secondary);
@@ -130,8 +151,21 @@
   color: var(--destructive);
 }
 
-.git-compact-card__header-action,
-.git-workbench-drawer__collapse {
+@utility git-compact-card__header-action {
+  display: inline-flex;
+  width: 1.75rem;
+  height: 1.75rem;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+
+@utility git-workbench-drawer__collapse {
   display: inline-flex;
   width: 1.75rem;
   height: 1.75rem;
@@ -162,7 +196,7 @@
   height: 1rem;
 }
 
-.git-compact-card__summary {
+@utility git-compact-card__summary {
   display: grid;
   min-width: 0;
   align-items: center;
@@ -175,7 +209,7 @@
   font-size: 0.6875rem;
 }
 
-.git-compact-card__change-total {
+@utility git-compact-card__change-total {
   grid-area: total;
   overflow: hidden;
   color: var(--foreground);
@@ -184,41 +218,35 @@
   white-space: nowrap;
 }
 
-.git-compact-card__diff-stat,
-.git-compact-card__summary-groups,
-.git-compact-card__summary-pending {
+@utility git-compact-card__diff-stat {
   display: flex;
   min-width: 0;
   align-items: center;
-}
-
-.git-compact-card__diff-stat {
   grid-area: diff;
   gap: 0.5rem;
 }
 
-.git-compact-card__summary-groups {
+@utility git-compact-card__summary-groups {
+  display: flex;
+  min-width: 0;
+  align-items: center;
   grid-area: groups;
   gap: 0.75rem;
   overflow: hidden;
   white-space: nowrap;
 }
 
-.git-compact-card__summary-pending {
+@utility git-compact-card__summary-pending {
+  display: flex;
+  min-width: 0;
+  align-items: center;
   grid-area: groups;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.git-compact-card__last-commit {
-  flex: 1;
-  gap: 0.375rem;
-  overflow: hidden;
-  font-size: 0.6875rem;
-}
-
-.git-compact-card__quick-action {
+@utility git-compact-card__quick-action {
   min-height: 1.75rem;
   flex: none;
   max-width: 42%;
@@ -244,7 +272,7 @@
   opacity: 0.55;
 }
 
-.git-workspace-card-trigger {
+@utility git-workspace-card-trigger {
   position: absolute;
   z-index: 1;
   inset: 0;
@@ -263,7 +291,7 @@
   cursor: not-allowed;
 }
 
-.git-workspace-changes-indicator__dot {
+@utility git-workspace-changes-indicator__dot {
   display: inline-block;
   width: 0.25rem;
   height: 0.25rem;
@@ -272,26 +300,26 @@
   background: var(--muted-foreground);
 }
 
-.git-workspace-changes-indicator[data-repository-state="clean"]
+[data-git-workspace-changes-indicator][data-repository-state="clean"]
   .git-workspace-changes-indicator__dot {
   background: var(--success);
 }
 
-.git-workspace-changes-indicator[data-repository-state="changed"]
+[data-git-workspace-changes-indicator][data-repository-state="changed"]
   .git-workspace-changes-indicator__dot {
   background: var(--foreground);
 }
 
-.git-workspace-changes-indicator[data-repository-state="conflicted"]
+[data-git-workspace-changes-indicator][data-repository-state="conflicted"]
   .git-workspace-changes-indicator__dot,
-.git-workspace-changes-indicator[data-repository-state="disconnected"]
+[data-git-workspace-changes-indicator][data-repository-state="disconnected"]
   .git-workspace-changes-indicator__dot,
-.git-workspace-changes-indicator[data-repository-state="unavailable"]
+[data-git-workspace-changes-indicator][data-repository-state="unavailable"]
   .git-workspace-changes-indicator__dot {
   background: var(--destructive);
 }
 
-.git-workbench-drawer {
+@utility git-workbench-drawer {
   display: flex;
   width: 100%;
   min-height: 0;
@@ -305,7 +333,7 @@
   box-shadow: 0 -18px 38px -34px rgb(0 0 0 / 80%);
 }
 
-.git-workbench-drawer--embedded {
+@utility git-workbench-drawer--embedded {
   border-block-start: 0;
   border-radius: inherit;
   background: transparent;
@@ -320,7 +348,7 @@
   background: transparent;
 }
 
-.git-workbench-drawer__header {
+@utility git-workbench-drawer__header {
   display: flex;
   min-height: 2.5rem;
   flex: none;
@@ -330,14 +358,14 @@
   padding-inline: 0.75rem;
 }
 
-.git-workbench-drawer__header-actions {
+@utility git-workbench-drawer__header-actions {
   display: flex;
   flex: none;
   align-items: center;
   gap: 0.25rem;
 }
 
-.git-workbench-drawer__tabs {
+@utility git-workbench-drawer__tabs {
   display: flex;
   min-width: 0;
   flex: none;
@@ -378,7 +406,7 @@
   content: "";
 }
 
-.git-workbench-drawer__content {
+@utility git-workbench-drawer__content {
   display: flex;
   min-width: 0;
   min-height: 0;
@@ -417,4 +445,8 @@
   .git-compact-card {
     background: var(--card);
   }
+}
+
+@utility git-activity-day {
+  border-radius: 3px;
 }

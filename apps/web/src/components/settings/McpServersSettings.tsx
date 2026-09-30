@@ -564,7 +564,7 @@ function McpServerEditorDialog(props: {
           </DialogTitle>
           <DialogDescription>{translate("settings.mcp.editor.description")}</DialogDescription>
         </DialogHeader>
-        <DialogPanel className="space-y-4">
+        <DialogPanel>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="grid gap-2">
               <Label>{translate("settings.mcp.editor.name")}</Label>
@@ -765,7 +765,9 @@ function McpServerEditorDialog(props: {
               <div className="grid gap-2">
                 <Label>{translate("settings.mcp.editor.arguments")}</Label>
                 <Textarea
-                  className="[&_textarea]:min-h-24 font-mono text-xs"
+                  className="[&_textarea]:min-h-24"
+                  variant="code"
+                  size="sm"
                   value={props.draft.argsText}
                   placeholder={translate("settings.mcp.editor.argumentsPlaceholder")}
                   onChange={(event) =>
@@ -916,7 +918,7 @@ function McpImportDialog(props: {
           <DialogTitle>{translate("settings.mcp.import.title")}</DialogTitle>
           <DialogDescription>{translate("settings.mcp.import.description")}</DialogDescription>
         </DialogHeader>
-        <DialogPanel className="space-y-4">
+        <DialogPanel>
           <ImportSourceRows
             sources={props.sources}
             selectedSourceIds={props.selectedSourceIds}
@@ -1068,7 +1070,7 @@ function CursorExportDialog(props: {
           <DialogTitle>{translate("settings.mcp.export.title")}</DialogTitle>
           <DialogDescription>{translate("settings.mcp.export.description")}</DialogDescription>
         </DialogHeader>
-        <DialogPanel className="space-y-4">
+        <DialogPanel>
           <p className="rounded-md bg-muted/40 px-3 py-2 text-muted-foreground text-xs">
             {translate("settings.mcp.export.assignmentWarning")}
           </p>
@@ -1128,7 +1130,9 @@ function CursorExportDialog(props: {
           </label>
           <Textarea
             readOnly
-            className="[&_textarea]:min-h-64 font-mono text-xs"
+            className="[&_textarea]:min-h-64"
+            variant="code"
+            size="sm"
             value={props.json}
           />
           {props.error ? <p className="text-destructive text-xs">{props.error}</p> : null}

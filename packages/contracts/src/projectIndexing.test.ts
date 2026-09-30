@@ -28,16 +28,22 @@ import {
 } from "./projectIndexing.ts";
 
 const decodeModelSelection = Schema.decodeUnknownSync(ProjectIndexModelSelection);
-const decodeContext = Schema.decodeUnknownSync(ProjectContextInput);
+const decodeContext = Schema.decodeUnknownSync(ProjectContextInput, { onExcessProperty: "error" });
 const decodePath = Schema.decodeUnknownSync(ProjectIndexPath);
-const decodeKnowledge = Schema.decodeUnknownSync(ProjectKnowledgeV1);
+const decodeKnowledge = Schema.decodeUnknownSync(ProjectKnowledgeV1, { onExcessProperty: "error" });
 const decodeQueryResult = Schema.decodeUnknownSync(ProjectIndexQueryResultV1);
 const decodeVerification = Schema.decodeUnknownSync(ProjectIndexQueryVerificationV1);
 const decodeReviewFinding = Schema.decodeUnknownSync(ProjectIndexReviewFindingV1);
 const decodeAnalysisMetadata = Schema.decodeUnknownSync(ProjectAnalysisMetadataV1);
-const decodeModelCheck = Schema.decodeUnknownSync(ProjectIndexModelCheckInput);
-const decodeProjectSettings = Schema.decodeUnknownSync(ProjectIndexSettings);
-const decodeControlInput = Schema.decodeUnknownSync(ProjectIndexControlInput);
+const decodeModelCheck = Schema.decodeUnknownSync(ProjectIndexModelCheckInput, {
+  onExcessProperty: "error",
+});
+const decodeProjectSettings = Schema.decodeUnknownSync(ProjectIndexSettings, {
+  onExcessProperty: "error",
+});
+const decodeControlInput = Schema.decodeUnknownSync(ProjectIndexControlInput, {
+  onExcessProperty: "error",
+});
 
 const range = { startLine: 1, startColumn: 1, endLine: 2, endColumn: 1 };
 const scope = { scopeId: "scope-a", projectId: "project-a", workspaceFingerprint: "workspace-a" };
@@ -161,7 +167,7 @@ describe("project indexing opt-in contracts", () => {
   });
 
   it("defaults only initial indexing off and keeps later refresh preference independent", () => {
-    const decode = Schema.decodeUnknownSync(ProjectIndexSettings);
+    const decode = Schema.decodeUnknownSync(ProjectIndexSettings, { onExcessProperty: "error" });
     expect(decode({})).toEqual(DEFAULT_PROJECT_INDEX_SETTINGS);
     expect(decode({ enabled: true })).toEqual({ ...DEFAULT_PROJECT_INDEX_SETTINGS, enabled: true });
     expect(decode({ enabled: false, autoRefresh: false, reviewEnabled: true })).toEqual({
@@ -173,7 +179,9 @@ describe("project indexing opt-in contracts", () => {
   });
 
   it("rejects unknown write fields and noncanonical model routing", () => {
-    const decodePatch = Schema.decodeUnknownSync(ProjectIndexSettingsPatch);
+    const decodePatch = Schema.decodeUnknownSync(ProjectIndexSettingsPatch, {
+      onExcessProperty: "error",
+    });
     expect(() => decodePatch({ enabled: true, root: "/private" })).toThrow();
     expect(() => decodePatch({ enabled: "true" })).toThrow();
     expect(() =>
@@ -186,7 +194,7 @@ describe("project indexing opt-in contracts", () => {
   });
 
   it("accepts project/thread selectors and rejects client workspace roots", () => {
-    const decode = Schema.decodeUnknownSync(ProjectIndexScopeInput);
+    const decode = Schema.decodeUnknownSync(ProjectIndexScopeInput, { onExcessProperty: "error" });
     expect(decode({ projectId: "project-a", threadId: "thread-a" })).toEqual({
       projectId: "project-a",
       threadId: "thread-a",
@@ -201,12 +209,16 @@ describe("project indexing opt-in contracts", () => {
   });
 
   it("requires reversible known lifecycle actions and server-resolved review selections", () => {
-    const decodeControl = Schema.decodeUnknownSync(ProjectIndexControlInput);
+    const decodeControl = Schema.decodeUnknownSync(ProjectIndexControlInput, {
+      onExcessProperty: "error",
+    });
     for (const action of ["pause", "resume", "cancel", "clear"]) {
       expect(decodeControl({ projectId: "project-a", action }).action).toBe(action);
     }
     expect(() => decodeControl({ projectId: "project-a", action: "delete-project" })).toThrow();
-    const decodeReview = Schema.decodeUnknownSync(ProjectIndexReviewInput);
+    const decodeReview = Schema.decodeUnknownSync(ProjectIndexReviewInput, {
+      onExcessProperty: "error",
+    });
     expect(decodeReview({ projectId: "project-a", selection: "staged" }).selection).toBe("staged");
     expect(() => decodeReview({ projectId: "project-a", diff: "untrusted" })).toThrow();
     expect(() => decodeReview({ projectId: "project-a", baseRef: "HEAD" })).toThrow();

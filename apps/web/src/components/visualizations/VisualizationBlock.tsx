@@ -482,7 +482,7 @@ function VisualizationContent({
   };
   return (
     <section
-      className="not-prose my-3 overflow-hidden rounded-lg border border-border bg-background text-foreground"
+      className="my-3 overflow-hidden rounded-lg border border-border bg-background text-foreground"
       aria-label={labels.title}
     >
       <div className="flex flex-wrap items-center gap-1 border-b border-border bg-muted/40 px-3 py-2">
@@ -568,29 +568,31 @@ function VisualizationContent({
       </div>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogPopup
-          className="flex h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-none flex-col gap-3 p-4"
+          className="h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-none"
           bottomStickOnMobile={false}
           showCloseButton={false}
         >
-          <div className="flex items-center justify-between gap-4">
-            <DialogTitle className="text-base">
-              {labels.title} · {format}
-            </DialogTitle>
-            <DialogClose render={<Button variant="outline" size="compact" />}>
-              {labels.close}
-            </DialogClose>
+          <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
+            <div className="flex items-center justify-between gap-4">
+              <DialogTitle size="sm">
+                {labels.title} · {format}
+              </DialogTitle>
+              <DialogClose render={<Button variant="outline" size="compact" />}>
+                {labels.close}
+              </DialogClose>
+            </div>
+            <DialogDescription className="sr-only">
+              {parsed.document?.metadata.summary || labels.interactive}
+            </DialogDescription>
+            {open && parsed.document && (
+              <FullscreenDiagram
+                document={parsed.document}
+                theme={theme}
+                labels={labels}
+                onAction={ask}
+              />
+            )}
           </div>
-          <DialogDescription className="sr-only">
-            {parsed.document?.metadata.summary || labels.interactive}
-          </DialogDescription>
-          {open && parsed.document && (
-            <FullscreenDiagram
-              document={parsed.document}
-              theme={theme}
-              labels={labels}
-              onAction={ask}
-            />
-          )}
         </DialogPopup>
       </Dialog>
     </section>

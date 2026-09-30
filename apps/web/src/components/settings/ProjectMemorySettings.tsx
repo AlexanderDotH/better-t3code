@@ -131,7 +131,8 @@ export function ProjectMemorySettings(props: ProjectMemorySettingsProps) {
           <div className="space-y-3 pt-3">
             <Textarea
               aria-label={translator.message("settings.projects.memory.content")}
-              className="min-h-52 font-mono text-sm"
+              className="min-h-52"
+              variant="code"
               disabled={!editable}
               value={content}
               onChange={(event) => setContent(event.currentTarget.value)}

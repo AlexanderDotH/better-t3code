@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  KNOWLEDGE_GRAPH_MAX_QUERY_OPERATIONS,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -8,10 +9,12 @@ import {
   type KnowledgeGraphQueryResultV1,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as KnowledgeGraphRuntime from "../../../knowledge-graph/runtime/KnowledgeGraphRuntime.ts";
-import { invokeKnowledgeGraphQuery } from "./handlers.ts";
+import { invokeKnowledgeGraphQuery, KnowledgeGraphToolkitHandlersLive } from "./handlers.ts";
+import { KnowledgeGraphToolkit } from "./tools.ts";
 
 const threadId = ThreadId.make("thread-knowledge-graph");
 const query = { queries: [{ id: "overview", type: "overview" as const }] };
@@ -76,5 +79,44 @@ it.effect("rejects a provider credential without workspace capability", () =>
       invocation(new Set(["preview"])),
     ),
     Effect.provideService(KnowledgeGraphRuntime.KnowledgeGraphRuntime, runtime),
+  ),
+);
+
+it.effect("rejects scope overrides and oversized traversal before reading graph data", () =>
+  Effect.gen(function* () {
+    const toolkit = yield* KnowledgeGraphToolkit;
+    const invalidInputs = [
+      { ...query, workspaceRoot: "/outside/workspace" },
+      { ...query, scope: { projectId: "another-project" } },
+      { ...query, mutation: "clear" },
+      { queries: [{ ...query.queries[0]!, workspaceRoot: "/outside/workspace" }] },
+      {
+        queries: Array.from({ length: KNOWLEDGE_GRAPH_MAX_QUERY_OPERATIONS + 1 }, (_, index) => ({
+          id: `overview-${index}`,
+          type: "overview" as const,
+        })),
+      },
+      { queries: [{ id: "neighbors", type: "neighbors", nodeId: "node-1", depth: 3 }] },
+    ] as const;
+
+    for (const input of invalidInputs) {
+      const error = yield* toolkit
+        .handle("knowledge_graph_query", input)
+        .pipe(Effect.flatMap(Stream.runCollect), Effect.flip);
+      expect(error).toMatchObject({ reason: { _tag: "ToolParameterValidationError" } });
+    }
+  }).pipe(
+    Effect.provide(KnowledgeGraphToolkitHandlersLive),
+    Effect.provideService(
+      McpInvocationContext.McpInvocationContext,
+      invocation(new Set(["workspace"])),
+    ),
+    Effect.provideService(
+      KnowledgeGraphRuntime.KnowledgeGraphRuntime,
+      KnowledgeGraphRuntime.KnowledgeGraphRuntime.of({
+        ...runtime,
+        queryForThread: () => Effect.die("Invalid query parameters must not read graph data."),
+      }),
+    ),
   ),
 );

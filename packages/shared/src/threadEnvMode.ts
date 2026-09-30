@@ -1,8 +1,8 @@
-import type { ThreadEnvMode } from "@t3tools/contracts";
+import { PROJECT_FILE_BACKED_SETTINGS, type ThreadEnvMode } from "@t3tools/contracts";
 
 /**
  * Canonical priority order for a project's default thread env mode:
- * per-project setting > checked-in t3.json > global server setting.
+ * per-project setting > explicit environment value > checked-in t3.json > built-in default.
  *
  * An explicit composer pick outranks all of these; callers apply it before
  * consulting the defaults. Web resolves the sources imperatively at draft
@@ -12,9 +12,14 @@ import type { ThreadEnvMode } from "@t3tools/contracts";
 export function resolveDefaultThreadEnvMode(sources: {
   readonly projectSetting: ThreadEnvMode | null | undefined;
   readonly projectFile: ThreadEnvMode | null | undefined;
-  readonly globalDefault: ThreadEnvMode;
+  readonly globalDefault: ThreadEnvMode | null | undefined;
 }): ThreadEnvMode {
-  return sources.projectSetting ?? sources.projectFile ?? sources.globalDefault;
+  return (
+    sources.projectSetting ??
+    sources.globalDefault ??
+    sources.projectFile ??
+    PROJECT_FILE_BACKED_SETTINGS.defaultThreadEnvMode.builtIn
+  );
 }
 
 /**
@@ -26,11 +31,13 @@ export function resolveDefaultThreadEnvMode(sources: {
 export function isDefaultThreadEnvModeSettled(sources: {
   readonly explicitMode: ThreadEnvMode | undefined;
   readonly projectSetting: ThreadEnvMode | null | undefined;
+  readonly globalDefault?: ThreadEnvMode | null | undefined;
   readonly projectFilePending: boolean;
 }): boolean {
   return (
     sources.explicitMode !== undefined ||
     sources.projectSetting != null ||
+    sources.globalDefault != null ||
     !sources.projectFilePending
   );
 }

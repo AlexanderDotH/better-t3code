@@ -16,6 +16,8 @@
       // CLI options and PowerShell launch these helpers by filename, not source imports.
       "entry": [
         "knip-schemas.ts",
+        "mobile-native-client.ts",
+        "setup-worktree.ts",
         "windows-assert-authenticode.mjs",
         "windows-desktop-smoke-driver.mjs",
         "wsl-runtime-probe.cjs",
@@ -26,13 +28,23 @@
       "entry": [
         "src/bin.ts!",
         "src/service-launcher.ts!",
+        "src/serviceLauncher.ts!",
+        "src/claude-history-worker.ts!",
         "src/projectIndexing/extraction/typescriptCompatibleWorker.ts!",
         "scripts/cli.ts",
+        "scripts/evaluate-thread-titles.ts",
+        "scripts/measure-pr-preview.ts",
         "scripts/verify-service-launcher-bundle.mjs",
         "src/provider/testFixtures/*.mjs",
       ],
       // Bundled Effect imports msgpackr externally; its native acceleration and WASM grammars load dynamically.
-      "ignoreDependencies": ["msgpackr", "msgpackr-extract", "@t3tools/web", "tree-sitter-wasms"],
+      "ignoreDependencies": [
+        "@effect/platform-node-shared",
+        "msgpackr",
+        "msgpackr-extract",
+        "@t3tools/web",
+        "tree-sitter-wasms",
+      ],
     },
     "apps/desktop": {
       // Electron loads these bundles by filename rather than importing them.
@@ -42,10 +54,13 @@
         "src/snapShot/GlobalShiftShortcutWorker.ts!",
         "src/snapShot/RegionSnapShotWorker.ts!",
         "src/snapShot/SnapShotAccessibilityWorker.ts!",
+        "src/boot.ts!",
+        "src/compileCache.ts!",
         "src/main.ts!",
         "src/preload.ts!",
         "src/preview-pick-preload.ts!",
         "src/preview-pip-preload.ts!",
+        "src/mac-permission-preload.ts!",
         "src/preview/Annotation.css!",
       ],
       // The injected runtime resolves Playwright by string; release tooling runs
@@ -53,7 +68,9 @@
       "ignoreDependencies": ["playwright-core", "electron-builder"],
     },
     "apps/web": {
-      // Worktree setup invokes this directly from t3.json.
+      // Vitest loads this through the per-file @vitest-environment directive.
+      "ignoreDependencies": ["jsdom"],
+      // Worktree setup (scripts/setup-worktree.ts) runs this directly.
       "entry": ["scripts/warm-dep-cache.ts"],
       // UI component modules are copied and adapted as cohesive sets. Keep their
       // named subcomponents even before they have callers; the file audit still
@@ -61,8 +78,13 @@
       "ignoreIssues": { "src/components/ui/*.tsx": ["exports", "nsExports", "duplicates"] },
     },
     "apps/mobile": {
-      // Expo loads local config plugins by string; Metro handles platform variants.
-      "entry": ["index.ts!", "plugins/*.cjs"],
+      // Expo loads plugins by string; Metro embeds the browser entry in the native WebView.
+      "entry": [
+        "index.ts!",
+        "plugins/*.cjs",
+        "scripts/generate-device-stream.mts",
+        "src/features/devices/device-stream.browser.ts!",
+      ],
       // Fonts are configured as asset paths; Expo autolinks the native packages.
       "ignoreDependencies": [
         "@expo-google-fonts/dm-sans",

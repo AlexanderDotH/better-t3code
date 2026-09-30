@@ -301,7 +301,10 @@ export function makeOpenAiTextGeneration(
         outputSchema,
         modelSelection: input.modelSelection,
       });
-      return { title: sanitizeThreadTitle(generated.title) };
+      return {
+        title: sanitizeThreadTitle(generated.title),
+        ...(generated.needsRefinement ? { needsRefinement: true } : {}),
+      };
     }),
     generateThreadMetadata: Effect.fn("OpenAiTextGeneration.generateThreadMetadata")(
       function* (input) {

@@ -1,4 +1,4 @@
-.composer-floating-bubble-region {
+@utility composer-floating-bubble-region {
   position: relative;
   z-index: 30;
   width: 100%;
@@ -22,7 +22,7 @@
   display: none;
 }
 
-.composer-floating-bubble-host {
+@utility composer-floating-bubble-host {
   display: grid;
   width: calc(100% - 2.75rem);
   margin-inline: auto;

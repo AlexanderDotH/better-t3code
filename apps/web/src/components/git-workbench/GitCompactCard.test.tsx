@@ -26,7 +26,7 @@ describe("GitCompactCard", () => {
     expect(html).toContain('aria-label="Expand Git workbench"');
     expect(html).not.toContain('aria-label="Return to chat"');
     expect(html).toContain('class="git-compact-card h-full"');
-    expect(html).toContain('class="workspace-card-deck__card-content git-compact-card__content"');
+    expect(html).toContain('class="git-compact-card__content"');
   });
 
   it("lets the expanded drawer define its measured height", () => {

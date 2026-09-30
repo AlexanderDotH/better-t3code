@@ -69,54 +69,56 @@ export function ProjectSpeechPreindexDialog({
           <DialogDescription>{translate("chat.speechIndex.description")}</DialogDescription>
         </DialogHeader>
 
-        <DialogPanel className="space-y-3" scrollFade={false}>
-          {state === "idle" ? (
-            <div
-              aria-label={translate("chat.speechIndex.privacy")}
-              className="rounded-xl border border-border/70 bg-muted/32 p-3 text-sm"
-              data-testid="project-speech-preindex-privacy"
-            >
-              {translate("chat.speechIndex.privacyPrefix")}{" "}
-              <span className="font-medium">{translate("chat.speechIndex.terminology")}</span>{" "}
-              {translate("chat.speechIndex.privacySuffix")}
-            </div>
-          ) : null}
-
-          {isBusy ? (
-            <div
-              aria-label={translate("chat.speechIndex.progress")}
-              aria-live="polite"
-              className="flex items-start gap-2 rounded-xl border border-border/70 bg-muted/32 p-3 text-sm"
-              data-testid="project-speech-preindex-status"
-              role="status"
-            >
-              <Spinner aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-              <span>
-                {isCreatingBasic
-                  ? translate("chat.speechIndex.creatingBasic")
-                  : translate("chat.speechIndex.indexing")}
-              </span>
-            </div>
-          ) : null}
-
-          {state === "basic" ? (
-            <p className="rounded-xl border border-border/70 bg-muted/32 p-3 text-sm">
-              {translate("chat.speechIndex.basicReady")}
-            </p>
-          ) : null}
-
-          {state === "error" ? (
-            <div className="space-y-2 rounded-xl border border-border/70 bg-muted/32 p-3 text-sm">
-              <p
-                className="text-destructive"
-                data-testid="project-speech-preindex-error"
-                role="alert"
+        <DialogPanel scrollFade={false}>
+          <div className="space-y-3">
+            {state === "idle" ? (
+              <div
+                aria-label={translate("chat.speechIndex.privacy")}
+                className="rounded-xl border border-border/70 bg-muted/32 p-3 text-sm"
+                data-testid="project-speech-preindex-privacy"
               >
-                {errorMessage ?? translate("chat.speechIndex.failed")}
+                {translate("chat.speechIndex.privacyPrefix")}{" "}
+                <span className="font-medium">{translate("chat.speechIndex.terminology")}</span>{" "}
+                {translate("chat.speechIndex.privacySuffix")}
+              </div>
+            ) : null}
+
+            {isBusy ? (
+              <div
+                aria-label={translate("chat.speechIndex.progress")}
+                aria-live="polite"
+                className="flex items-start gap-2 rounded-xl border border-border/70 bg-muted/32 p-3 text-sm"
+                data-testid="project-speech-preindex-status"
+                role="status"
+              >
+                <Spinner aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+                <span>
+                  {isCreatingBasic
+                    ? translate("chat.speechIndex.creatingBasic")
+                    : translate("chat.speechIndex.indexing")}
+                </span>
+              </div>
+            ) : null}
+
+            {state === "basic" ? (
+              <p className="rounded-xl border border-border/70 bg-muted/32 p-3 text-sm">
+                {translate("chat.speechIndex.basicReady")}
               </p>
-              <p>{translate("chat.speechIndex.basicFallback")}</p>
-            </div>
-          ) : null}
+            ) : null}
+
+            {state === "error" ? (
+              <div className="space-y-2 rounded-xl border border-border/70 bg-muted/32 p-3 text-sm">
+                <p
+                  className="text-destructive"
+                  data-testid="project-speech-preindex-error"
+                  role="alert"
+                >
+                  {errorMessage ?? translate("chat.speechIndex.failed")}
+                </p>
+                <p>{translate("chat.speechIndex.basicFallback")}</p>
+              </div>
+            ) : null}
+          </div>
         </DialogPanel>
 
         <DialogFooter>

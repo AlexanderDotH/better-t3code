@@ -96,7 +96,7 @@ export function GitHistoryPanel(props: GitHistoryPanelProps) {
             value={props.pathFilter ?? ""}
           />
           {props.history.snapshotOid ? (
-            <p className="truncate px-1 font-mono text-muted-foreground text-[11px]">
+            <p className="truncate px-1 font-mono text-muted-foreground text-2xs">
               {translate("git.history.snapshot", { id: props.history.snapshotOid.slice(0, 12) })}
             </p>
           ) : null}

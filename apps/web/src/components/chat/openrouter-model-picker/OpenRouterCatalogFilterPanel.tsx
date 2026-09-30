@@ -17,7 +17,7 @@ import {
   StarIcon,
   UsersIcon,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
@@ -95,6 +95,36 @@ function sortLabel(value: OpenRouterModelCatalogSort): string {
   return OPENROUTER_MODEL_SORT_DEFINITIONS.find((sort) => sort.id === value)?.label ?? value;
 }
 
+function CatalogFilterButton({
+  active = false,
+  appearance = "toggle",
+  className,
+  ...props
+}: ComponentProps<"button"> & {
+  readonly active?: boolean;
+  readonly appearance?: "toggle" | "facet" | "reset" | "favorite";
+}) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        "relative inline-flex h-6 shrink-0 cursor-pointer items-center justify-center gap-1 whitespace-nowrap rounded-md border border-transparent px-2 text-3xs font-medium text-muted-foreground outline-none transition-[box-shadow,scale] [&:active:not([aria-haspopup])]:scale-97 [&_svg]:-mx-0.5 [&_svg]:pointer-events-none [&_svg]:shrink-0 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-64 pointer-coarse:h-11 pointer-coarse:px-3",
+        appearance === "reset"
+          ? "px-1.5 hover:bg-accent hover:text-foreground"
+          : "hover:border-border/60 hover:bg-background/60 hover:text-foreground",
+        active &&
+          (appearance === "reset"
+            ? "bg-foreground/[0.045] text-foreground"
+            : "border-border/70 bg-background text-foreground"),
+        active && appearance === "toggle" && "shadow-xs shadow-foreground/8",
+        active && appearance === "facet" && "shadow-xs",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
 function FilterToggle(props: {
   readonly label: string;
   readonly count: number;
@@ -102,24 +132,17 @@ function FilterToggle(props: {
   readonly onPressedChange: () => void;
 }) {
   return (
-    <Button
-      size="micro"
-      variant={props.pressed ? "secondary" : "ghost-muted"}
-      className={cn(
-        "h-6 rounded-md border border-transparent px-2 text-[10px] shadow-none pointer-coarse:h-11 pointer-coarse:px-3",
-        "hover:border-border/60 hover:bg-background/60",
-        props.pressed &&
-          "border-border/70 bg-background text-foreground shadow-[0_1px_2px_color-mix(in_srgb,var(--foreground)_8%,transparent)]",
-      )}
+    <CatalogFilterButton
+      active={props.pressed}
       aria-label={props.label}
       aria-pressed={props.pressed}
       onClick={props.onPressedChange}
     >
       {props.label}
-      <span className="rounded-[4px] bg-foreground/[0.055] px-1 py-px tabular-nums opacity-65">
+      <span className="rounded-catalog-chip bg-foreground/[0.055] px-1 py-px tabular-nums opacity-65">
         {props.count.toLocaleString()}
       </span>
-    </Button>
+    </CatalogFilterButton>
   );
 }
 
@@ -130,17 +153,7 @@ function FacetMenuTrigger(props: {
 }) {
   return (
     <MenuTrigger
-      render={
-        <Button
-          size="micro"
-          variant={props.active ? "secondary" : "ghost-muted"}
-          className={cn(
-            "h-6 rounded-md border border-transparent px-2 text-[10px] shadow-none pointer-coarse:h-11 pointer-coarse:px-3",
-            "hover:border-border/60 hover:bg-background/60",
-            props.active && "border-border/70 bg-background text-foreground shadow-xs",
-          )}
-        />
-      }
+      render={<CatalogFilterButton active={props.active ?? false} appearance="facet" />}
       aria-label={props.label}
     >
       {props.icon}
@@ -181,13 +194,13 @@ export function OpenRouterCatalogFilterPanel(props: OpenRouterCatalogFilterPanel
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-center gap-1.5">
-            <span className="truncate text-[11px] font-semibold">{instanceDisplayName}</span>
-            <span className="shrink-0 rounded-[4px] bg-foreground/[0.055] px-1 py-0.5 text-[9px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+            <span className="truncate text-2xs font-semibold">{instanceDisplayName}</span>
+            <span className="shrink-0 rounded-catalog-chip bg-foreground/[0.055] px-1 py-0.5 text-catalog-tag font-medium uppercase tracking-catalog-tag text-muted-foreground">
               {translate("chat.catalog.badge")}
             </span>
           </span>
           <span
-            className="mt-0.5 block text-[10px] leading-none tabular-nums text-muted-foreground/75"
+            className="mt-0.5 block text-3xs leading-none tabular-nums text-muted-foreground/75"
             aria-live="polite"
           >
             {translate("chat.catalog.modelCount", {
@@ -197,13 +210,9 @@ export function OpenRouterCatalogFilterPanel(props: OpenRouterCatalogFilterPanel
             })}
           </span>
         </span>
-        <Button
-          size="micro"
-          variant="ghost-muted"
-          className={cn(
-            "h-6 rounded-md px-1.5 text-[10px] pointer-coarse:h-11 pointer-coarse:px-3",
-            !isDefaultState && "bg-foreground/[0.045] text-foreground",
-          )}
+        <CatalogFilterButton
+          active={!isDefaultState}
+          appearance="reset"
           disabled={isDefaultState}
           aria-label={translate("chat.catalog.resetFilters")}
           onClick={() => props.onChange(defaultState)}
@@ -213,7 +222,7 @@ export function OpenRouterCatalogFilterPanel(props: OpenRouterCatalogFilterPanel
           {!isDefaultState && activeFilterCount > 0 ? (
             <span className="tabular-nums opacity-60">{activeFilterCount}</span>
           ) : null}
-        </Button>
+        </CatalogFilterButton>
       </div>
 
       <div className="mt-2 min-w-0 space-y-1.5">
@@ -328,14 +337,9 @@ export function OpenRouterCatalogFilterPanel(props: OpenRouterCatalogFilterPanel
           ) : null}
 
           {props.view.favoriteCount > 0 ? (
-            <Button
-              size="micro"
-              variant={props.state.favoritesOnly ? "secondary" : "ghost-muted"}
-              className={cn(
-                "h-6 rounded-md border border-transparent px-2 text-[10px] shadow-none pointer-coarse:h-11 pointer-coarse:px-3",
-                "hover:border-border/60 hover:bg-background/60",
-                props.state.favoritesOnly && "border-border/70 bg-background text-foreground",
-              )}
+            <CatalogFilterButton
+              active={props.state.favoritesOnly}
+              appearance="favorite"
               aria-label={translate("chat.composer.favorites")}
               aria-pressed={props.state.favoritesOnly}
               onClick={() =>
@@ -343,13 +347,10 @@ export function OpenRouterCatalogFilterPanel(props: OpenRouterCatalogFilterPanel
               }
             >
               <StarIcon
-                className={cn(
-                  "size-3",
-                  props.state.favoritesOnly && "fill-current text-yellow-500",
-                )}
+                className={cn("size-3", props.state.favoritesOnly && "fill-current text-warning")}
               />
               {props.view.favoriteCount.toLocaleString()}
-            </Button>
+            </CatalogFilterButton>
           ) : null}
 
           <Menu>

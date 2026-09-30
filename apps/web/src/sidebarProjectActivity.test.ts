@@ -81,6 +81,7 @@ function makeThread(overrides: Partial<SidebarThreadSummary> = {}): SidebarThrea
     branch: null,
     worktreePath: null,
     latestTurn: null,
+    pullRequests: [],
     createdAt: timestampAtAge(0),
     updatedAt: timestampAtAge(0),
     archivedAt: null,

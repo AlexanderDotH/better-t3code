@@ -7,7 +7,7 @@ import { SubagentTranscriptPanel } from "./SubagentTranscriptPanel";
 import { Dialog, DialogPopup, DialogTitle } from "./ui/dialog";
 
 const SUBAGENT_TRANSCRIPT_DIALOG_CLASS_NAME =
-  "h-[min(82dvh,52rem)] max-w-[min(64rem,calc(100dvw-2rem))] overflow-hidden bg-background p-0 shadow-2xl/20";
+  "h-[min(82dvh,52rem)] max-w-[min(64rem,calc(100dvw-2rem))] overflow-hidden";
 
 export interface SubagentTranscriptDialogProps {
   readonly open: boolean;
@@ -81,6 +81,7 @@ export const SubagentTranscriptDialog = memo(function SubagentTranscriptDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPopup
+        variant="panel"
         data-subagent-transcript-dialog="true"
         bottomStickOnMobile={false}
         className={SUBAGENT_TRANSCRIPT_DIALOG_CLASS_NAME}

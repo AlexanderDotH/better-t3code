@@ -37,6 +37,8 @@ function makeProject(): OrchestrationProject {
 
 function makeThread(overrides: Partial<OrchestrationThread> = {}): OrchestrationThread {
   return {
+    pullRequests: [],
+
     subagents: [],
     id: threadId,
     projectId,
@@ -68,6 +70,8 @@ function makeThread(overrides: Partial<OrchestrationThread> = {}): Orchestration
 describe("renderThreadTranscriptMarkdown", () => {
   it("renders readable messages, reasoning, complete MCP payloads, plans, and checkpoints", () => {
     const thread = makeThread({
+      subagents: [],
+
       messages: [
         {
           id: MessageId.make("message-user"),

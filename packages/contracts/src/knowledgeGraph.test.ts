@@ -34,8 +34,12 @@ const decodeNodeContent = Schema.decodeUnknownSync(KnowledgeGraphNodeContentResu
 const decodeStreamEvent = Schema.decodeUnknownSync(KnowledgeGraphStreamEvent);
 const decodeSemanticEnqueue = Schema.decodeUnknownSync(KnowledgeGraphSemanticEnqueueV1);
 const decodeSemanticClaim = Schema.decodeUnknownSync(KnowledgeGraphSemanticClaimV1);
-const decodeSemanticModelRequest = Schema.decodeUnknownSync(KnowledgeGraphSemanticModelRequestV1);
-const decodeSemanticModelOutput = Schema.decodeUnknownSync(KnowledgeGraphSemanticModelOutputV1);
+const decodeSemanticModelRequest = Schema.decodeUnknownSync(KnowledgeGraphSemanticModelRequestV1, {
+  onExcessProperty: "error",
+});
+const decodeSemanticModelOutput = Schema.decodeUnknownSync(KnowledgeGraphSemanticModelOutputV1, {
+  onExcessProperty: "error",
+});
 const decodeQueryResult = Schema.decodeUnknownSync(KnowledgeGraphQueryOperationResultV1);
 
 const scope = {

@@ -108,7 +108,7 @@ function serviceLayer(options: {
   readonly vocabulary?: ProjectSpeechVocabulary["Service"];
 }) {
   const migratedSqlite = Layer.effectDiscard(runMigrations()).pipe(
-    Layer.provideMerge(NodeSqliteClient.layerMemory()),
+    Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
   );
   const storeLayer = ProjectSpeechProfileStore.layer.pipe(Layer.provideMerge(migratedSqlite));
   const dependencies = Layer.mergeAll(

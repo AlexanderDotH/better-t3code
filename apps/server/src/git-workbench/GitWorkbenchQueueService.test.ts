@@ -101,7 +101,7 @@ function runtimeHarness(): RuntimeHarness {
 
 function queueLayer(runtime: RuntimeHarness) {
   const migratedSqlite = Layer.effectDiscard(Migration0042).pipe(
-    Layer.provideMerge(NodeSqliteClient.layerMemory()),
+    Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
   );
   const repository = GitWorkbenchQueueRepositoryLive.pipe(Layer.provideMerge(migratedSqlite));
   return GitWorkbenchQueueLive.pipe(Layer.provideMerge(repository), Layer.provide(runtime.layer));

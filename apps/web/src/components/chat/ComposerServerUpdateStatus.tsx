@@ -5,6 +5,7 @@ import { useId, useState } from "react";
 
 import { serverUpdateStageLabel } from "../ServerUpdateAction";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useNotificationSuppression } from "../ui/notificationSuppression";
 import { ComposerBanner } from "./ComposerBanner";
 
 export function ComposerServerUpdateIcon({
@@ -31,6 +32,8 @@ export function ComposerServerUpdateStatus({
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const triggerId = useId();
+  const suppressErrorsAndWarnings = useNotificationSuppression();
+  if (state.status === "failed" && suppressErrorsAndWarnings) return null;
   const title = `${state.status === "failed" ? "Could not update" : "Updating"} ${serverLabel}`;
   const detail = state.status === "failed" ? state.message : serverUpdateStageLabel(state.stage);
   return (
@@ -56,7 +59,7 @@ export function ComposerServerUpdateStatus({
             </button>
           }
         />
-        <TooltipPopup side="top" className="max-w-80">
+        <TooltipPopup side="top">
           {title}: {detail}
         </TooltipPopup>
       </Tooltip>

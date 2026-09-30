@@ -36,7 +36,7 @@ export function BetterT3SettingsNavigation({
   return (
     <div
       ref={measureNavigation}
-      className="sticky top-0 z-20 pt-[var(--workspace-titlebar-scroll-fade-height)] pb-3"
+      className="sticky top-0 z-20 pt-(--workspace-titlebar-scroll-fade-height) pb-3"
       data-better-t3-navigation
     >
       <div className="better-t3-settings-navigation min-w-0 overflow-hidden rounded-2xl border border-border/60 p-1.5">

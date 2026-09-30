@@ -193,7 +193,7 @@ export function McpServerRowControls(props: McpServerRowControlsProps) {
       ) : null}
 
       {props.providerAssignment ? (
-        <label className="inline-flex h-7 items-center gap-1.5 rounded-md px-1.5 text-[11px] text-muted-foreground">
+        <label className="inline-flex h-7 items-center gap-1.5 rounded-md px-1.5 text-2xs text-muted-foreground">
           <span>{translate("settings.mcp.action.enabled")}</span>
           <Switch
             checked={props.providerAssignment.enabled}

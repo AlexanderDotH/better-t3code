@@ -1,11 +1,11 @@
-import { SearchIcon } from "lucide-react";
+import { Autocomplete as AutocompletePrimitive } from "@base-ui/react/autocomplete";
+import { SearchIcon, XIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import {
   Autocomplete,
   AutocompleteEmpty,
-  AutocompleteInput,
   AutocompleteItem,
   AutocompleteList,
   AutocompletePopup,
@@ -99,19 +99,31 @@ export function BetterT3SettingsSearch() {
       openOnInputClick
       value={query}
     >
-      <AutocompleteInput
-        ref={inputRef}
-        aria-label={label}
-        className="h-10 items-center rounded-lg border-border/60 bg-background/50 shadow-none hover:bg-background/70 focus-within:bg-background [&_input]:h-full [&_input]:ps-9 [&_input]:pe-9 [&_input]:py-0 [&_input]:leading-normal"
-        onFocus={() => {
-          refreshItems();
-          if (query.trim()) setOpen(true);
-        }}
-        placeholder={label}
-        showClear={query.length > 0}
-        spellCheck={false}
-        startAddon={<SearchIcon className="size-4 text-icon-muted" />}
-      />
+      <div className="relative flex h-10 items-center rounded-lg border border-border/60 bg-background/50 ring-ring/24 transition-colors hover:bg-background/70 focus-within:border-ring focus-within:bg-background focus-within:ring-3">
+        <SearchIcon
+          aria-hidden
+          className="pointer-events-none absolute start-3 size-4 text-icon-muted"
+        />
+        <AutocompletePrimitive.Input
+          ref={inputRef}
+          aria-label={label}
+          className="h-full w-full min-w-0 rounded-[inherit] bg-transparent ps-9 pe-9 text-sm leading-normal outline-none placeholder:text-placeholder"
+          onFocus={() => {
+            refreshItems();
+            if (query.trim()) setOpen(true);
+          }}
+          placeholder={label}
+          spellCheck={false}
+        />
+        {query.length > 0 ? (
+          <AutocompletePrimitive.Clear
+            aria-label={translate("settings.application.search.clearAria")}
+            className="absolute end-1 inline-flex size-8 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <XIcon aria-hidden className="size-4" />
+          </AutocompletePrimitive.Clear>
+        ) : null}
+      </div>
       {query.trim() ? (
         <AutocompletePopup aria-label={label} className="w-(--anchor-width) overflow-hidden">
           {results.length > 0 ? (
@@ -120,8 +132,8 @@ export function BetterT3SettingsSearch() {
               className="max-h-72"
             >
               {results.map((item) => (
-                <AutocompleteItem key={item.id} value={item} className="items-start py-2">
-                  <span className="min-w-0">
+                <AutocompleteItem key={item.id} value={item} className="items-start">
+                  <span className="min-w-0 py-1">
                     <span className="block truncate font-medium">{item.title}</span>
                     {item.category ? (
                       <span className="block truncate text-xs text-muted-foreground">
@@ -133,8 +145,8 @@ export function BetterT3SettingsSearch() {
               ))}
             </AutocompleteList>
           ) : (
-            <AutocompleteEmpty className="p-6">
-              {translate("settings.application.search.empty")}
+            <AutocompleteEmpty>
+              <div className="p-4">{translate("settings.application.search.empty")}</div>
             </AutocompleteEmpty>
           )}
         </AutocompletePopup>

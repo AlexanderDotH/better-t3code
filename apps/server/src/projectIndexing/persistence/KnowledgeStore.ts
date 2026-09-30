@@ -75,10 +75,7 @@ const openSql = Effect.fn("KnowledgeStore.openSql")(function* (
   readonly: boolean,
 ) {
   const driver = yield* Effect.tryPromise({
-    try: (): Promise<SqlLoader> =>
-      process.versions.bun !== undefined
-        ? import("@effect/sql-sqlite-bun/SqliteClient")
-        : import("@t3tools/shared/nodeSqliteClient"),
+    try: (): Promise<SqlLoader> => import("@t3tools/shared/nodeSqliteClient"),
     catch: asStoreError("load SQLite"),
   });
   const context = yield* Layer.build(driver.layer({ filename, readonly }));

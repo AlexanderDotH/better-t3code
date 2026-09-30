@@ -243,6 +243,7 @@ export const makeGeminiTextGeneration = Effect.fn("makeGeminiTextGeneration")((
       const { prompt, outputSchema } = buildThreadTitlePrompt({
         message: input.message,
         previousTitle: input.previousTitle,
+        linkedContext: input.linkedContext,
         attachments: input.attachments,
       });
       const generated = yield* runGeminiJson({
@@ -252,7 +253,10 @@ export const makeGeminiTextGeneration = Effect.fn("makeGeminiTextGeneration")((
         outputSchemaJson: outputSchema,
         modelSelection: input.modelSelection,
       });
-      return { title: sanitizeThreadTitle(generated.title) };
+      return {
+        title: sanitizeThreadTitle(generated.title),
+        ...(generated.needsRefinement ? { needsRefinement: true } : {}),
+      };
     });
 
   const generateThreadMetadata: TextGeneration.TextGeneration["Service"]["generateThreadMetadata"] =

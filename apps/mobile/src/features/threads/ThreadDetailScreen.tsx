@@ -1,3 +1,5 @@
+import type { WorktreeSetupCardProps } from "./worktree-setup-card";
+import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import {
   appendCodexArtifactTemplateUsePrompt,
@@ -12,6 +14,7 @@ import { useKeyboardChatComposerInset, useKeyboardScrollToEnd } from "@legendapp
 import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
 import type { LegendListRef } from "@legendapp/list/react-native";
 import { HeaderHeightContext } from "@react-navigation/elements";
+import { useNavigation } from "@react-navigation/native";
 import type {
   ApprovalRequestId,
   EnvironmentId,
@@ -61,24 +64,32 @@ import Animated, {
   FadeOut,
   ReduceMotion,
   useAnimatedReaction,
+  useAnimatedStyle,
   useSharedValue,
   withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
+import { useWorkspaceContentWidth } from "../layout/workspace-content-width";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { collectProviderUsageLimits } from "@t3tools/shared/usageLimits";
-import { useAtom } from "@effect/atom-react";
-import { usageLimitsOpenedAtAtom } from "@t3tools/client-runtime/state/usage";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/unstable/reactivity";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import type { StatusTone } from "../../components/StatusPill";
 import type { DraftComposerAttachment } from "../../lib/composerImages";
+import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
 import { CHAT_CONTENT_MAX_WIDTH, type LayoutVariant } from "../../lib/layout";
 import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { editPendingThreadMessage } from "../../state/edit-pending-thread-message";
+import { deviceEnvironment } from "../../state/device";
+import { useEnvironmentQuery } from "../../state/query";
+import { threadDevicePreviews } from "../devices/threadDevicePreviews";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { useDelayedStatus } from "../../lib/useDelayedStatus";
 import type {
   PendingApproval,
   PendingUserInput,
@@ -115,6 +126,8 @@ import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 import { resolveForkComposerBudget } from "./thread-fork";
 
 export interface ThreadDetailScreenProps {
+  readonly worktreeSetup?: WorktreeSetupCardProps | null;
+  readonly setupWorkingStartedAt?: string | null;
   readonly selectedThread: OrchestrationThreadShell;
   readonly contentPresentation: ThreadContentPresentation;
   readonly screenTone: StatusTone;
@@ -170,6 +183,7 @@ export interface ThreadDetailScreenProps {
   readonly onPickDraftMedia: () => Promise<void>;
   readonly onPickDraftFiles: () => Promise<void>;
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
+  readonly onNativePasteText: (paste: ComposerTextPaste) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
   readonly onSendMessage: () => Promise<MessageId | null>;
@@ -293,6 +307,21 @@ const USER_INPUT_TOGGLE_TIMING = {
 
 export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: ThreadDetailScreenProps) {
   const translator = useMobileInterfaceTranslator();
+  const navigation = useNavigation();
+  const deviceState = useEnvironmentQuery(
+    deviceEnvironment.state({ environmentId: props.environmentId, input: {} }),
+  );
+  const devicePreviews = useMemo(
+    () => threadDevicePreviews(deviceState.data, props.selectedThread.id),
+    [deviceState.data, props.selectedThread.id],
+  );
+  const openDevicePreview = useCallback(() => {
+    Keyboard.dismiss();
+    navigation.navigate("ThreadDevicePreview", {
+      environmentId: props.environmentId,
+      threadId: props.selectedThread.id,
+    });
+  }, [navigation, props.environmentId, props.selectedThread.id]);
   const insets = useSafeAreaInsets();
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const liveKeyboardHeight = useKeyboardState((state) => state.height);
@@ -369,7 +398,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   // The raw sync status enters "synchronizing" on every full fetch, cached or
   // not. Whether messages are already on screen decides the pill label: no
   // data yet → "Loading messages", cached data reconciling → "Syncing".
-  const threadSyncLabel = (() => {
+  const realThreadSyncLabel = (() => {
     switch (props.threadSyncStatus) {
       case "empty":
       case "cached":
@@ -382,6 +411,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
         return null;
     }
   })();
+  // Opening a running thread resyncs for a few frames. The pill shows the
+  // sync label only when the sync lasts, so it does not flash before the timer.
+  const threadSyncLabel = useDelayedStatus(selectedThreadKey, realThreadSyncLabel);
   // One floating pill above the composer: it reads the connection phase while
   // disconnected, the sync state while messages load, then the working timer
   // once the feed is settled.
@@ -399,6 +431,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       return null;
     }
     if (props.creationState?.kind === "preparing") {
+      // The setup header already reports progress in the feed.
+      if (props.worktreeSetup) return null;
       return {
         kind: "preparing",
         label: props.creationState.preparingWorktree ? "Setting up worktree…" : "Starting…",
@@ -423,6 +457,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   // stable when reconnecting hands off to syncing and then to a running turn.
   const showFloatingStatus =
     showWorkingControl ||
+    devicePreviews.length > 0 ||
     props.connectionStateLabel !== "connected" ||
     props.queuedMessages.length > 0 ||
     props.selectedThreadFeed.some(
@@ -454,10 +489,13 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const [collapsedUserInputRequestId, setCollapsedUserInputRequestId] =
     useState<ApprovalRequestId | null>(null);
   const activeUserInputRequestId = props.activePendingUserInput?.requestId ?? null;
-  const [usageLimitsOpenedAt, setUsageLimitsOpenedAt] = useAtom(usageLimitsOpenedAtAtom);
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const usageLimitsVisible =
+    AsyncResult.isSuccess(preferences) && preferences.value.composerUsageLimitsVisible === true;
   const usageLimitsReport = useMemo(
     () =>
-      usageLimitsOpenedAt !== null
+      usageLimitsVisible
         ? collectProviderUsageLimits(
             props.selectedThread.modelSelection.instanceId,
             props.serverConfig?.providers ?? [],
@@ -465,17 +503,23 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             Date.now(),
           )
         : null,
-    [props.selectedThread.modelSelection.instanceId, props.serverConfig, usageLimitsOpenedAt],
+    [props.selectedThread.modelSelection.instanceId, props.serverConfig, usageLimitsVisible],
   );
-  const showUsageLimits = useCallback(
+  const toggleUsageLimits = useCallback(
     (report: UsageLimitsReport | null) => {
-      if (report) setUsageLimitsOpenedAt(Date.parse(report.createdAt));
+      if (report) {
+        savePreferences({
+          transform: (current) => ({
+            composerUsageLimitsVisible: current.composerUsageLimitsVisible !== true,
+          }),
+        });
+      }
     },
-    [setUsageLimitsOpenedAt],
+    [savePreferences],
   );
   const dismissUsageLimits = useCallback(
-    () => setUsageLimitsOpenedAt(null),
-    [setUsageLimitsOpenedAt],
+    () => savePreferences({ composerUsageLimitsVisible: false }),
+    [savePreferences],
   );
   const userInputCollapsed =
     activeUserInputRequestId !== null && collapsedUserInputRequestId === activeUserInputRequestId;
@@ -652,6 +696,14 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const layoutVariant = props.layoutVariant ?? "compact";
   const isSplitLayout = layoutVariant === "split";
   const contentMaxWidth = isSplitLayout ? CHAT_CONTENT_MAX_WIDTH : undefined;
+  const workspaceContentWidth = useWorkspaceContentWidth();
+  // Clearing animated width can retain the unfolded width after Android resumes folded.
+  // Assign both layouts explicitly so the dock always follows its current parent.
+  const composerWidthStyle = useAnimatedStyle(() =>
+    isSplitLayout && workspaceContentWidth !== null
+      ? { width: workspaceContentWidth.value }
+      : { width: "100%" },
+  );
   const selectedInstanceId = props.selectedThread.modelSelection.instanceId;
   useStreamingHaptics(props.selectedThread.id, props.selectedThreadFeed);
   const selectedProviderSkills = useMemo(() => {
@@ -923,56 +975,78 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     <View className="flex-1">
       {showContent ? (
         <View
-          className="flex-1"
+          style={{ flex: 1 }}
           onTouchStart={handleFeedTouchStart}
           onTouchMove={handleFeedTouchMove}
           onTouchEnd={handleFeedTouchEnd}
           onTouchCancel={handleFeedTouchCancel}
         >
-          <ThreadFeed
-            key={selectedThreadKey}
-            environmentId={props.environmentId}
-            threadId={props.selectedThread.id}
-            workspaceRoot={props.threadCwd}
-            feed={props.selectedThreadFeed}
-            queuedMessages={props.queuedMessages}
-            dispatchingMessageId={props.dispatchingMessageId}
-            onEditPendingMessage={handleEditPendingMessage}
-            contentPresentation={props.contentPresentation}
-            agentLabel={agentLabel}
-            latestTurn={props.selectedThread.latestTurn}
-            activeWorkStartedAt={props.activeWorkStartedAt}
-            listRef={listRef}
-            freeze={freeze}
-            anchorMessageId={anchorMessageId}
-            submittedMessageId={submittedMessageId}
-            contentInsetEndAdjustment={combinedContentInsetEndAdjustment}
-            contentTopInset={0}
-            contentBottomInset={
-              estimatedOverlayHeight + (showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0)
+          <View
+            pointerEvents="none"
+            className={
+              Platform.OS === "android"
+                ? "absolute inset-0 bg-thread-canvas"
+                : "absolute inset-0 bg-screen"
             }
-            contentMaxWidth={contentMaxWidth}
-            layoutVariant={layoutVariant}
-            usesAutomaticContentInsets={props.usesAutomaticContentInsets}
-            onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
-            onEndFollowEnabledChange={setEndFollowEnabled}
-            skills={selectedProviderSkills}
-            onUseArtifactTemplate={handleUseArtifactTemplate}
-            onVisualizationAction={handleVisualizationAction}
-            planImplementationProvider={selectedProvider}
-            parallelPlanImplementationEnabled={props.parallelPlanImplementationEnabled}
-            reviewedPlanSubagentCounts={reviewedPlanSubagentCounts}
-            onImplementPlan={workflowActionsSupported ? handleImplementPlan : undefined}
-            forkActionSupported={props.forkActionSupported}
-            forkActionEnabled={props.forkActionEnabled}
-            pendingForkBoundaryKey={props.pendingForkBoundaryKey}
-            onFork={props.onFork}
-            forkProvenance={props.selectedThread.fork?.provenance ?? null}
-            forkSourceAvailable={props.forkSourceAvailable}
-            onOpenForkSource={props.onOpenForkSource}
-            retryAction={props.retryAction}
-            loadEarlier={props.loadEarlier ?? null}
           />
+          <RenderErrorBoundary
+            key={selectedThreadKey}
+            resetKeys={[props.threadCwd]}
+            renderFallback={(fallback) => (
+              <RenderFailureView
+                {...fallback}
+                title="The conversation couldn't be displayed"
+                bottomInset={estimatedOverlayHeight}
+              />
+            )}
+          >
+            <ThreadFeed
+              environmentId={props.environmentId}
+              threadId={props.selectedThread.id}
+              workspaceRoot={props.threadCwd}
+              feed={props.selectedThreadFeed}
+              worktreeSetup={props.worktreeSetup}
+              setupWorkingStartedAt={props.setupWorkingStartedAt}
+              queuedMessages={props.queuedMessages}
+              dispatchingMessageId={props.dispatchingMessageId}
+              onEditPendingMessage={handleEditPendingMessage}
+              contentPresentation={props.contentPresentation}
+              agentLabel={agentLabel}
+              latestTurn={props.selectedThread.latestTurn}
+              activeWorkStartedAt={props.activeWorkStartedAt}
+              listRef={listRef}
+              freeze={freeze}
+              anchorMessageId={anchorMessageId}
+              submittedMessageId={submittedMessageId}
+              contentInsetEndAdjustment={combinedContentInsetEndAdjustment}
+              contentTopInset={0}
+              contentBottomInset={
+                estimatedOverlayHeight +
+                (showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0)
+              }
+              contentMaxWidth={contentMaxWidth}
+              layoutVariant={layoutVariant}
+              usesAutomaticContentInsets={props.usesAutomaticContentInsets}
+              onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
+              onEndFollowEnabledChange={setEndFollowEnabled}
+              skills={selectedProviderSkills}
+              onUseArtifactTemplate={handleUseArtifactTemplate}
+              onVisualizationAction={handleVisualizationAction}
+              planImplementationProvider={selectedProvider}
+              parallelPlanImplementationEnabled={props.parallelPlanImplementationEnabled}
+              reviewedPlanSubagentCounts={reviewedPlanSubagentCounts}
+              onImplementPlan={workflowActionsSupported ? handleImplementPlan : undefined}
+              forkActionSupported={props.forkActionSupported}
+              forkActionEnabled={props.forkActionEnabled}
+              pendingForkBoundaryKey={props.pendingForkBoundaryKey}
+              onFork={props.onFork}
+              forkProvenance={props.selectedThread.fork?.provenance ?? null}
+              forkSourceAvailable={props.forkSourceAvailable}
+              onOpenForkSource={props.onOpenForkSource}
+              retryAction={props.retryAction}
+              loadEarlier={props.loadEarlier ?? null}
+            />
+          </RenderErrorBoundary>
         </View>
       ) : (
         <View className="flex-1" />
@@ -995,7 +1069,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           <Animated.View
             layout={COMPOSER_LAYOUT_TRANSITION}
             pointerEvents="box-none"
-            style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
+            style={[{ position: "absolute", bottom: 0, left: 0 }, composerWidthStyle]}
           >
             {/* No paddingTop here: the overlay's measured height becomes the
                 list's bottom inset, so any padding above the pill/composer
@@ -1004,6 +1078,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               <FloatingWorkingControl
                 colorScheme={isDarkMode ? "dark" : "light"}
                 status={floatingStatus}
+                devicePreview={
+                  devicePreviews.length > 0
+                    ? { count: devicePreviews.length, onPress: openDevicePreview }
+                    : null
+                }
                 showScrollToEnd={showScrollToEndButton}
                 onScrollToEnd={handleScrollToEnd}
               />
@@ -1146,10 +1225,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   onPickDraftMedia={props.onPickDraftMedia}
                   onPickDraftFiles={props.onPickDraftFiles}
                   onNativePasteImages={props.onNativePasteImages}
+                  onNativePasteText={props.onNativePasteText}
                   onRemoveDraftImage={props.onRemoveDraftImage}
                   onStopThread={props.onStopThread}
                   onSendMessage={handleSendMessage}
-                  onShowUsageLimits={showUsageLimits}
+                  onShowUsageLimits={toggleUsageLimits}
                   onUpdateModelSelection={props.onUpdateThreadModelSelection}
                   onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
                   onUpdateInteractionMode={props.onUpdateThreadInteractionMode}

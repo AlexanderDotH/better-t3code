@@ -729,7 +729,9 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
             <PullRequestIcon
               size={compact ? 13 : 11}
               color={
-                selected ? String(selectedForegroundColor) : pullRequestTintColor(pr, colorScheme)
+                selected
+                  ? String(selectedForegroundColor)
+                  : (pullRequestTintColor(pr, colorScheme) ?? "currentColor")
               }
             />
             <Text

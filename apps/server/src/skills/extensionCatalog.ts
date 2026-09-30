@@ -1,3 +1,4 @@
+import * as ByteSize from "effect/ByteSize";
 import * as NodeCrypto from "node:crypto";
 import {
   SkillEngineError,
@@ -8,7 +9,6 @@ import {
   type SkillRegistryPreviewResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpIncomingMessage } from "effect/unstable/http";
 import { isValidSkillName, parseSkillFile } from "./skillFile.ts";
@@ -79,7 +79,7 @@ function catalogJson(url: string) {
     }
     return yield* decodeCatalogJson(text);
   }).pipe(
-    Effect.provideService(HttpIncomingMessage.MaxBodySize, FileSystem.Size(MAX_DOWNLOAD_BYTES)),
+    Effect.provideService(HttpIncomingMessage.MaxBodySize, ByteSize.bytes(MAX_DOWNLOAD_BYTES)),
     Effect.timeout("20 seconds"),
     Effect.mapError((cause) =>
       isSkillEngineError(cause)

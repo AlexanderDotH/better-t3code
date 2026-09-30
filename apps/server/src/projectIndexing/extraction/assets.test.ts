@@ -2,15 +2,18 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeSea from "node:sea";
 import * as NodeURL from "node:url";
 import * as NodeWorkerThreads from "node:worker_threads";
 
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { resolveFilesystemAsset, resolveIndexerPackage, unpackedAssetPath } from "./assets.ts";
 import { resolveAnalysisHelper } from "./nativeSemantic.ts";
 import { resolveCompatibleWorker } from "./typescriptCompatible.ts";
 import { typescriptNativeExecutable } from "./typescriptNative.ts";
+
+vi.mock("node:sea", () => ({ isSea: vi.fn(() => false) }));
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -153,6 +156,34 @@ describe("project indexer filesystem assets", () => {
     });
     await NodeFSP.rm(NodePath.join(fixture.unpacked, "apps/server/dist/shared-compiler.mjs"));
     await expect(runWorker(resolved.entry)).rejects.toThrow("shared-compiler.mjs");
+  });
+
+  it("resolves self-contained CLI assets beside its executable", async () => {
+    const fixture = await archiveFixture();
+    await addTypeScript6(fixture);
+    const executable = await fixture.write("apps/server/dist/t3", "executable fixture");
+    const helper = await fixture.write(
+      "apps/server/dist/project-indexer/ProjectIndexer.dll",
+      "helper fixture",
+    );
+    const worker = await fixture.write(
+      "apps/server/dist/project-indexer-typescript-compatible.mjs",
+      "export {};\n",
+    );
+    const originalExecutable = process.execPath;
+    process.execPath = executable;
+    vi.mocked(NodeSea.isSea).mockReturnValue(true);
+    try {
+      expect(await resolveAnalysisHelper("csharp", "sea://embedded/main")).toBe(
+        await NodeFSP.realpath(helper),
+      );
+      expect(NodeURL.fileURLToPath(resolveCompatibleWorker("sea://embedded/main").entry)).toBe(
+        await NodeFSP.realpath(worker),
+      );
+    } finally {
+      process.execPath = originalExecutable;
+      vi.mocked(NodeSea.isSea).mockReturnValue(false);
+    }
   });
 
   it("rejects an ambient compiler package outside the unpacked application", async () => {

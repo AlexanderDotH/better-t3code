@@ -1,0 +1,37 @@
+@utility better-t3-preview-label {
+  font-size: 9px;
+}
+
+@utility better-t3-settings-introduction {
+  box-shadow: 0 18px 60px -46px rgb(0 0 0 / 75%);
+}
+
+@utility better-t3-settings-introduction-header {
+  background-image: radial-gradient(
+    circle at top right,
+    color-mix(in srgb, var(--primary) 10%, transparent),
+    transparent 58%
+  );
+}
+
+@utility voice-input-project-title {
+  font-size: 13px;
+  letter-spacing: -0.01em;
+}
+
+@utility voice-input-environment-title {
+  letter-spacing: 0.08em;
+}
+
+@utility provider-auth-device-code {
+  letter-spacing: 0.16em;
+}
+
+@utility mcp-provider-accent-border {
+  border-color: var(--mcp-provider-accent, var(--border));
+}
+
+@utility mcp-provider-active-tab {
+  border-color: var(--mcp-provider-accent, var(--border));
+  background-color: color-mix(in oklab, var(--mcp-provider-accent, var(--muted)) 10%, transparent);
+}

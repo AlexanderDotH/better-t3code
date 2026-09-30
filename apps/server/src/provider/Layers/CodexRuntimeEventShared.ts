@@ -213,6 +213,8 @@ export function toRequestTypeFromMethod(method: string): CanonicalRequestType {
       return "file_change_approval";
     case "mcpServer/elicitation/request":
       return "mcp_elicitation_approval";
+    case "item/permissions/requestApproval":
+      return "permission_approval";
     case "applyPatchApproval":
       return "apply_patch_approval";
     case "execCommandApproval":
@@ -236,6 +238,8 @@ export function toRequestTypeFromKind(kind: ProviderRequestKind | undefined): Ca
       return "file_read_approval";
     case "file-change":
       return "file_change_approval";
+    case "permission":
+      return "permission_approval";
     case "mcp-elicitation":
       return "mcp_elicitation_approval";
     default:

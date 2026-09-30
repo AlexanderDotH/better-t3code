@@ -16,7 +16,7 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { useNotificationSuppression } from "../ui/notificationSuppression";
-import { Input } from "../ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { resolveKnowledgeGraphZeroNodeState } from "./knowledgeGraphPanelState";
 
 export type KnowledgeGraphTranslate = (
@@ -90,18 +90,21 @@ const clampZoom = (zoom: number): number => Math.min(2.5, Math.max(0.5, zoom));
 function GraphToolbar(props: KnowledgeGraphPanelViewProps) {
   return (
     <div className="flex flex-col gap-2 border-b border-border/70 p-3">
-      <label className="relative block">
+      <label className="block">
         <span className="sr-only">{props.translate("knowledgeGraph.search.label")}</span>
-        <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          nativeInput
-          type="search"
-          value={props.query}
-          onChange={(event) => props.onQueryChange(event.currentTarget.value)}
-          aria-label={props.translate("knowledgeGraph.search.label")}
-          placeholder={props.translate("knowledgeGraph.search.placeholder")}
-          className="w-full [&_[data-slot=input]]:pl-8"
-        />
+        <InputGroup>
+          <InputGroupAddon>
+            <SearchIcon aria-hidden className="size-3.5 text-muted-foreground" />
+          </InputGroupAddon>
+          <InputGroupInput
+            nativeInput
+            type="search"
+            value={props.query}
+            onChange={(event) => props.onQueryChange(event.currentTarget.value)}
+            aria-label={props.translate("knowledgeGraph.search.label")}
+            placeholder={props.translate("knowledgeGraph.search.placeholder")}
+          />
+        </InputGroup>
       </label>
       <div
         className="flex flex-wrap items-center gap-1"

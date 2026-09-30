@@ -618,11 +618,11 @@ export function ProjectIndexEntityBrowser({
                               <span className="block break-all text-xs font-medium">
                                 {entity.qualifiedName}
                               </span>
-                              <span className="block break-all font-mono text-[11px] text-muted-foreground">
+                              <span className="block break-all font-mono text-2xs text-muted-foreground">
                                 {entity.filePath}:{entity.range.startLine}
                               </span>
                             </span>
-                            <span className="text-[11px] text-muted-foreground">
+                            <span className="text-2xs text-muted-foreground">
                               {message(`projectIndexing.kind.${entity.kind}`)} ·{" "}
                               {message(`projectIndexing.freshness.${entity.freshness}`)}
                             </span>

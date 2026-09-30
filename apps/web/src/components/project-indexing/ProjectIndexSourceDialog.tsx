@@ -39,15 +39,19 @@ export function ProjectIndexSourceDialog(props: {
       }}
     >
       <DialogPopup className="max-w-4xl overflow-hidden">
-        <DialogHeader className="pe-12">
-          <DialogTitle className="break-all font-mono text-sm">
-            {props.path}
-            {props.line ? `:${props.line}` : ""}
-          </DialogTitle>
-          <DialogDescription>
-            {props.environmentLabel} · {props.workspaceRoot}
-          </DialogDescription>
-        </DialogHeader>
+        <div className="pe-6">
+          <DialogHeader>
+            <DialogTitle>
+              <code className="block break-all font-mono text-sm">
+                {props.path}
+                {props.line ? `:${props.line}` : ""}
+              </code>
+            </DialogTitle>
+            <DialogDescription>
+              {props.environmentLabel} · {props.workspaceRoot}
+            </DialogDescription>
+          </DialogHeader>
+        </div>
         <div className="space-y-3 px-6 pb-6">
           {file.error ? (
             <p role="alert" className="break-words text-sm text-destructive">

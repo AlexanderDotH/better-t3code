@@ -1,4 +1,4 @@
-import type { NativeVoiceDictationState } from "./use-native-assembly-ai-dictation";
+export type NativeVoiceDictationState = "idle" | "starting" | "recording" | "stopping";
 
 export function shouldDeactivateNativeAssemblyAiDictation(
   configured: boolean,

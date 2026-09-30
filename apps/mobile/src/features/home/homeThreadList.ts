@@ -1,7 +1,9 @@
+import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
+import * as Option from "effect/Option";
 import {
-  buildProjectGroups,
   derivePhysicalProjectKey,
   deriveProjectGroupLabel,
+  buildProjectGroups,
 } from "@t3tools/client-runtime/state/project-grouping";
 import type {
   EnvironmentProject,
@@ -12,7 +14,6 @@ import {
   sortThreads,
   toSortableTimestamp,
 } from "@t3tools/client-runtime/state/thread-sort";
-import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import type {
   EnvironmentId,
   ScopedProjectRef,
@@ -21,7 +22,6 @@ import type {
   SidebarThreadSortOrder,
 } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
-import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";

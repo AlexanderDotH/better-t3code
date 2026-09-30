@@ -76,6 +76,11 @@ export const cloudInterfaceCatalog = defineLocalizedInterfaceCatalog({
   "cloud.environment.connect": ["Connect", "Verbinden", "Connecter"],
   "cloud.environment.connecting": ["Connecting…", "Verbindung…", "Connexion…"],
   "cloud.connection.connected": ["Connected", "Verbunden", "Connecté"],
+  "cloud.connection.unsupported": [
+    "Client not supported",
+    "Client nicht unterstützt",
+    "Client non pris en charge",
+  ],
   "cloud.connection.connecting": ["Connecting…", "Verbindung…", "Connexion…"],
   "cloud.connection.reconnecting": ["Reconnecting…", "Erneute Verbindung…", "Reconnexion…"],
   "cloud.connection.failed": [
@@ -329,6 +334,12 @@ export const cloudInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "iOS {{iosVersion}}",
     "iOS {{iosVersion}}",
   ],
+  "mobileClients.platform.withAppVersion": [
+    "{{platform}} · T3 Code {{appVersion}}",
+    "{{platform}} · T3 Code {{appVersion}}",
+    "{{platform}} · T3 Code {{appVersion}}",
+  ],
+  "mobileClients.platform.withoutAppVersion": ["{{platform}}", "{{platform}}", "{{platform}}"],
   "mobileClients.updated.unavailable": [
     "Update time unavailable",
     "Aktualisierungszeit nicht verfügbar",

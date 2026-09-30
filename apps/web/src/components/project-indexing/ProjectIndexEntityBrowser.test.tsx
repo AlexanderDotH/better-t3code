@@ -35,6 +35,7 @@ vi.mock("../ui/checkbox", () => ({
   ),
 }));
 vi.mock("../ui/button", () => ({
+  InlineButton: (props: ComponentProps<"button">) => <button type="button" {...props} />,
   Button: ({
     size: _size,
     variant: _variant,

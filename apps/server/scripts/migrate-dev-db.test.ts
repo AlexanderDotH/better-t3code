@@ -106,7 +106,7 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
             SELECT COUNT(*) AS count FROM auth_sessions`;
             assert.deepStrictEqual(
               yield* sql`SELECT MAX(migration_id) AS id FROM ${sql(upstreamMigrationTable)}`,
-              [{ id: 49 }],
+              [{ id: 54 }],
             );
             assert.deepStrictEqual(
               yield* sql`SELECT MAX(migration_id) AS id FROM ${sql(forkMigrationTable)}`,

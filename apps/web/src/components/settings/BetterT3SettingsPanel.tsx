@@ -315,7 +315,7 @@ function BetterT3ChatWidthSettings(props: {
             />
             <div
               aria-hidden="true"
-              className="flex justify-between px-0.5 font-mono text-[10px] tabular-nums text-muted-foreground/70"
+              className="flex justify-between px-0.5 font-mono text-3xs tabular-nums text-muted-foreground/70"
             >
               <span>−100%</span>
               <span>0%</span>
@@ -742,10 +742,10 @@ function BetterT3SettingsIntroduction(props: {
   return (
     <div
       data-better-t3-introduction
-      className="overflow-hidden rounded-2xl border border-border/60 bg-card/45 shadow-[0_18px_60px_-46px_rgb(0_0_0/75%)]"
+      className="better-t3-settings-introduction overflow-hidden rounded-2xl border border-border/60 bg-card/45"
     >
-      <div className="space-y-1.5 bg-[radial-gradient(circle_at_top_right,color-mix(in_srgb,var(--primary)_10%,transparent),transparent_58%)] p-4 sm:p-5">
-        <h1 className="text-xl font-semibold tracking-[-0.025em]">
+      <div className="better-t3-settings-introduction-header space-y-1.5 p-4 sm:p-5">
+        <h1 className="text-xl font-semibold tracking-tight">
           {props.translate("settings.betterT3.title")}
         </h1>
         <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
@@ -765,7 +765,7 @@ function BetterT3SettingsIntroduction(props: {
           >
             <SelectTrigger
               size="sm"
-              className="w-full max-w-72 bg-background/70"
+              className="w-full max-w-72"
               aria-label={props.translate("settings.betterT3.selectEnvironment")}
             >
               <SelectValue>{selectedEnvironment.label}</SelectValue>
@@ -783,7 +783,7 @@ function BetterT3SettingsIntroduction(props: {
             {props.translate("settings.betterT3.noEnvironment")}
           </p>
         )}
-        <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground sm:justify-end">
+        <div className="flex flex-wrap gap-2 text-2xs text-muted-foreground sm:justify-end">
           <span
             data-better-t3-scope="device"
             className="rounded-full border border-border/60 bg-background/65 px-2.5 py-1"

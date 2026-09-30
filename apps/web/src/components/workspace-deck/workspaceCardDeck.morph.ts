@@ -106,8 +106,8 @@ export function captureWorkspaceDeckSurface(
   const style = readStyle(element);
   const beforeStyle = readStyle(element, "::before");
   const glassHost =
-    element.querySelector<HTMLElement>(".chat-composer-glass-host") ??
-    element.closest<HTMLElement>(".chat-composer-glass-host");
+    element.querySelector<HTMLElement>('[data-slot="composer-host"]') ??
+    element.closest<HTMLElement>('[data-slot="composer-host"]');
   const hostStyle = glassHost ? readStyle(glassHost) : null;
   const hostOutlineStyle = glassHost ? readStyle(glassHost, "::after") : null;
   const frameStyle = firstPaintedFrameStyle(style, beforeStyle, hostStyle, hostOutlineStyle);
@@ -195,8 +195,8 @@ export function localizeWorkspaceDeckChromeKeyframes(
 
 export function markWorkspaceDeckMorphSurface(surface: HTMLElement): () => void {
   const marked = new Set<HTMLElement>([surface]);
-  const ancestorGlassHost = surface.closest<HTMLElement>(".chat-composer-glass-host");
-  const descendantGlassHost = surface.querySelector<HTMLElement>(".chat-composer-glass-host");
+  const ancestorGlassHost = surface.closest<HTMLElement>('[data-slot="composer-host"]');
+  const descendantGlassHost = surface.querySelector<HTMLElement>('[data-slot="composer-host"]');
   if (ancestorGlassHost) marked.add(ancestorGlassHost);
   if (descendantGlassHost) marked.add(descendantGlassHost);
   for (const element of marked) element.dataset.deckMorphSurface = "true";

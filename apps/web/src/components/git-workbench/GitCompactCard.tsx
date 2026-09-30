@@ -70,7 +70,7 @@ function Divergence({ ahead, behind }: { ahead: number; behind: number }) {
   if (ahead === 0 && behind === 0) return <span>{translate("git.workbench.upToDate")}</span>;
 
   return (
-    <span className="git-compact-card__divergence">
+    <span>
       {ahead > 0 ? translate("git.workbench.aheadCount", { count: ahead }) : null}
       {ahead > 0 && behind > 0 ? <span aria-hidden> · </span> : null}
       {behind > 0 ? translate("git.workbench.behindCount", { count: behind }) : null}
@@ -199,7 +199,7 @@ export function GitCompactCard(props: GitCompactCardProps) {
       }
     >
       <div
-        className="workspace-card-deck__card-content git-compact-card__content"
+        className="git-compact-card__content"
         data-workspace-card-compact-content="true"
         hidden={props.expanded}
       >

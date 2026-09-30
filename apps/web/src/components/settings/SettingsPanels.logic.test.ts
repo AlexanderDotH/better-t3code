@@ -11,6 +11,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   backgroundActivitySharedPolicySettings,
   buildProviderInstanceUpdatePatch,
+  chatWidthPresetSettingsPatch,
   formatDiagnosticsDescription,
   getChangedBrowserSettingLabels,
   getChangedTypographySettingLabels,
@@ -19,6 +20,24 @@ import {
   projectGroupingModeFromToggle,
   resolveBackgroundActivityProfileOption,
 } from "./SettingsPanels.logic";
+
+describe("chat width presets", () => {
+  it.each(["comfortable", "wide", "full"] as const)(
+    "activates %s and retains the saved percentage adjustment",
+    (chatWidth) => {
+      const settings = {
+        ...DEFAULT_UNIFIED_SETTINGS,
+        chatWidthCustomizationEnabled: true,
+        chatWidthAdjustmentPercent: 70,
+      };
+      expect({ ...settings, ...chatWidthPresetSettingsPatch(chatWidth) }).toMatchObject({
+        chatWidth,
+        chatWidthCustomizationEnabled: false,
+        chatWidthAdjustmentPercent: 70,
+      });
+    },
+  );
+});
 
 describe("typography settings restore", () => {
   it("detects family and size changes by font row", () => {
@@ -268,6 +287,8 @@ describe("getChangedBrowserSettingLabels", () => {
         browserDefaultZoomFactor: 1.5,
         browserDefaultAppearance: "dark",
         browserRecordingFrameRate: 60,
+        browserRecordingShowKeyPresses: true,
+        browserRecordingShowMousePresses: true,
         browserLinkTarget: "app",
         browserAutoShowFloatingPreview: !DEFAULT_UNIFIED_SETTINGS.browserAutoShowFloatingPreview,
       }),
@@ -276,6 +297,8 @@ describe("getChangedBrowserSettingLabels", () => {
       "Browser zoom",
       "Browser appearance",
       "Recording frame rate",
+      "Recording key presses",
+      "Recording mouse presses",
       "Open links in",
       "Floating preview",
     ]);

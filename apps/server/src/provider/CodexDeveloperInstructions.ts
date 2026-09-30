@@ -4,7 +4,15 @@ import {
   WORKSPACE_CONTEXT_MAX_READS,
 } from "@t3tools/contracts";
 
+import type { V2TurnStartParams__AdditionalContextEntry } from "effect-codex-app-server/schema";
+
+export interface T3CodeToolAvailability {
+  readonly browser: boolean;
+  readonly device: boolean;
+}
+
 export interface CodexT3ToolAvailability {
+  readonly device?: boolean;
   readonly preview: boolean;
   readonly workspace: boolean;
   readonly workspaceWrite: boolean;
@@ -35,12 +43,17 @@ const NO_T3_TOOLS: CodexT3ToolAvailability = {
   knowledgeGraph: false,
 };
 
-function availability(value: boolean | CodexT3ToolAvailability): CodexT3ToolAvailability {
-  return typeof value === "boolean" ? (value ? ALL_T3_TOOLS : NO_T3_TOOLS) : value;
+function availability(
+  value: boolean | CodexT3ToolAvailability | T3CodeToolAvailability,
+): CodexT3ToolAvailability {
+  if (typeof value === "boolean") return value ? ALL_T3_TOOLS : NO_T3_TOOLS;
+  return "browser" in value
+    ? { ...NO_T3_TOOLS, preview: value.browser, device: value.device }
+    : value;
 }
 
 function toolInstructions(
-  value: boolean | CodexT3ToolAvailability,
+  value: boolean | CodexT3ToolAvailability | T3CodeToolAvailability,
   workspaceEditAllowed: boolean,
 ): string {
   const tools = availability(value);
@@ -49,6 +62,11 @@ function toolInstructions(
       ? `## T3 browser
 
 Use the attached T3 preview tools for browser work. Start with \`preview_status\`, open a preview when needed, prefer snapshot locators, and retry actionable failures before switching browser systems.`
+      : "",
+    tools.device
+      ? `## T3 Code devices
+
+Use \`device_list\`, then \`device_open\` so the user can watch mobile verification. Drive the device with the \`agent-device\` CLI and keep the host config and session flags returned by \`device_open\` on every command. Prefer \`agent-device snapshot -i\` refs over coordinates and \`device_screenshot\` for screenshots. Use platform tools for builds, logs, and port forwarding. If \`device_list\` reports a platform as unavailable, say so.`
       : "",
     tools.workspace
       ? `## T3 workspace
@@ -69,16 +87,17 @@ Use \`project_memory\` only for verified durable facts or explicit requests. Nev
     .join("\n\n");
 }
 
-function delegationInstructions(value: boolean | CodexT3ToolAvailability): string {
+function delegationInstructions(
+  value: boolean | CodexT3ToolAvailability | T3CodeToolAvailability,
+): string {
   const tools = availability(value);
   return `## Delegation history
 
 Automatic delegation uses \`fork_turns: "none"\` and a self-contained brief. Use a positive fork_turns count only for necessary recent exchanges, and full history only when explicitly requested.${tools.threadContext ? " Retrieve exact older messages with `thread_context`." : ""} Do not impose an agent-count cap.`;
 }
 
-const codexPlanModeDeveloperInstructions = (
-  tools: boolean | CodexT3ToolAvailability,
-): string => `<collaboration_mode># Plan Mode (Conversational)
+const codexPlanModeDeveloperInstructions =
+  (): string => `<collaboration_mode># Plan Mode (Conversational)
 
 You work in 3 phases, and you should *chat your way* to a great plan before finalizing it. A great plan is very detailed-intent- and implementation-wise-so that it can be handed to another engineer or agent to be implemented right away. It must be **decision complete**, where the implementer does not need to make any decisions.
 
@@ -134,38 +153,44 @@ Plan Mode remains active until a developer message changes it. Explore with non-
 
 Resolve discoverable facts before asking. Ask only when a material product choice cannot be inferred safely. A final plan must be decision complete, concise by default, and wrapped once in \`<proposed_plan>\` and \`</proposed_plan>\`. A revision is a complete replacement of the prior plan.
 
-${toolInstructions(tools, false)}
 </collaboration_mode>`;
 
-const codexDefaultModeDeveloperInstructions = (
-  tools: boolean | CodexT3ToolAvailability,
-): string => `<collaboration_mode># Collaboration Mode: Default
+const codexDefaultModeDeveloperInstructions =
+  (): string => `<collaboration_mode># Collaboration Mode: Default
 
 Default mode remains active until a developer message changes it. Make safe in-scope assumptions and execute the request. Use \`request_user_input\` only when that tool is listed in the available tools and a material decision cannot be discovered or inferred safely.
 
-${toolInstructions(tools, true)}
 </collaboration_mode>`;
 
-export const CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS =
-  codexPlanModeDeveloperInstructions(ALL_T3_TOOLS);
-export const CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS =
-  codexDefaultModeDeveloperInstructions(ALL_T3_TOOLS);
+export const CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS = codexPlanModeDeveloperInstructions();
+export const CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS = codexDefaultModeDeveloperInstructions();
 
 export interface CodexRuntimeInfo {
   readonly model: string;
+  readonly modelName?: string | undefined;
   readonly reasoningEffort: string;
 }
 
-export function buildCodexDeveloperInstructions(
-  interactionMode: ProviderInteractionMode,
-  runtime: CodexRuntimeInfo,
-  tools: boolean | CodexT3ToolAvailability = ALL_T3_TOOLS,
-): string {
-  const base =
-    interactionMode === "plan"
-      ? codexPlanModeDeveloperInstructions(tools)
-      : codexDefaultModeDeveloperInstructions(tools);
-  return `${base}\n\n${delegationInstructions(tools)}
+/** The collaboration mode carries only mode rules; Codex may replace it with its own catalog text. */
+export function buildCodexDeveloperInstructions(interactionMode: ProviderInteractionMode): string {
+  return interactionMode === "plan"
+    ? CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS
+    : CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS;
+}
 
-${buildRuntimeInstructions({ harness: "Codex", ...runtime })}`;
+/** Keep application context separate so Codex retains it when models supply their own mode prompt. */
+export function buildCodexAdditionalContext(
+  runtime: CodexRuntimeInfo,
+  tools: boolean | CodexT3ToolAvailability | T3CodeToolAvailability = ALL_T3_TOOLS,
+  interactionMode: ProviderInteractionMode = "default",
+): Record<string, V2TurnStartParams__AdditionalContextEntry> {
+  const attachedTools = toolInstructions(tools, interactionMode !== "plan");
+  return {
+    t3_code_runtime: {
+      kind: "application",
+      value: buildRuntimeInstructions({ harness: "Codex", ...runtime }),
+    },
+    t3_code_delegation: { kind: "application", value: delegationInstructions(tools) },
+    ...(attachedTools ? { t3_code_tools: { kind: "application", value: attachedTools } } : {}),
+  };
 }

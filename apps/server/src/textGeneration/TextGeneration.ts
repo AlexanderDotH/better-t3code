@@ -9,6 +9,8 @@ import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 import type { DecisionGenerationProvider } from "../decisionGeneration/DecisionGenerationProvider.ts";
 import { modelSelectionPurposeViolation } from "../provider/ModelSelectionPurposePolicy.ts";
 import { makeUsageHardBudgetCheck } from "../provider/usageHardBudget.ts";
+import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
+import * as ThreadTitleLinks from "./ThreadTitleLinks.ts";
 import type { TextGenerationPolicy } from "./TextGenerationPolicy.ts";
 import type { AutoReasoningMessage } from "./AutoReasoning.ts";
 
@@ -85,6 +87,7 @@ export interface ThreadMetadataGenerationResult {
 }
 
 export interface ThreadTitleGenerationInput {
+  linkedContext?: string | undefined;
   cwd: string;
   message: string;
   /** Present when replacing an existing title from the current thread history. */
@@ -97,6 +100,7 @@ export interface ThreadTitleGenerationInput {
 
 export interface ThreadTitleGenerationResult {
   title: string;
+  needsRefinement?: boolean | undefined;
 }
 
 export interface TranscriptTranslationInput {
@@ -278,6 +282,9 @@ const resolveInstance = (
 export const makeTextGenerationFromRegistry = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
   checkBudget: (instanceId: ProviderInstanceId) => Effect.Effect<string | null>,
+  resolveTitleLinks: (
+    input: ThreadTitleGenerationInput,
+  ) => Effect.Effect<string | undefined> = () => Effect.succeed(undefined),
 ): TextGeneration["Service"] => {
   const resolve = (operation: TextGenerationOp, modelSelection: ModelSelection) =>
     checkBudget(modelSelection.instanceId).pipe(
@@ -310,7 +317,12 @@ export const makeTextGenerationFromRegistry = (
       ),
     generateThreadTitle: (input) =>
       resolve("generateThreadTitle", input.modelSelection).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.generateThreadTitle(input)),
+        Effect.flatMap((textGeneration) =>
+          Effect.gen(function* () {
+            const linkedContext = input.linkedContext ?? (yield* resolveTitleLinks(input));
+            return yield* textGeneration.generateThreadTitle({ ...input, linkedContext });
+          }),
+        ),
       ),
     translateTranscriptToEnglish: (input) =>
       resolve("translateTranscriptToEnglish", input.modelSelection).pipe(
@@ -335,7 +347,15 @@ export const makeTextGenerationFromRegistry = (
 export const make = Effect.gen(function* () {
   const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   const checkBudget = yield* makeUsageHardBudgetCheck;
-  return makeTextGenerationFromRegistry(registry, checkBudget);
+  const sourceControl = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
+  return makeTextGenerationFromRegistry(registry, checkBudget, (input) =>
+    ThreadTitleLinks.resolveThreadTitleLinks(input).pipe(
+      Effect.provideService(
+        SourceControlProviderRegistry.SourceControlProviderRegistry,
+        sourceControl,
+      ),
+    ),
+  );
 });
 
 export const layer = Layer.effect(TextGeneration, make);

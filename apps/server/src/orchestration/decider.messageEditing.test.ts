@@ -21,6 +21,8 @@ const messageId = MessageId.make("edited-message");
 const turnId = TurnId.make("completed-turn");
 function thread(role: "user" | "assistant"): OrchestrationThread {
   return {
+    pullRequests: [],
+
     id: threadId,
     projectId: ProjectId.make("project"),
     title: "Edit",

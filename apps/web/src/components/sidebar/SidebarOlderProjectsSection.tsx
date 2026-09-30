@@ -26,7 +26,7 @@ export function SidebarOlderProjectsSection(props: {
               type="button"
               title={tooltip}
               data-testid="sidebar-older-projects-trigger"
-              className="flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-left text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground data-panel-open:[&_svg]:rotate-90"
+              className="flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-left text-3xs font-medium uppercase tracking-wider text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground data-panel-open:[&_svg]:rotate-90"
             />
           }
         >

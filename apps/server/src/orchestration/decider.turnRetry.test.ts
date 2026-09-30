@@ -24,6 +24,8 @@ function makeThread(
   overrides: Partial<Pick<OrchestrationThread, "latestTurn" | "messages" | "session">> = {},
 ): OrchestrationThread {
   return {
+    pullRequests: [],
+
     id: THREAD_ID,
     projectId: ProjectId.make("project-1"),
     title: "Retry",

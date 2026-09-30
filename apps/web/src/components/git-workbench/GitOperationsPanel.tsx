@@ -1,5 +1,13 @@
 import type { GitQueuedWorkflowPlan } from "@t3tools/contracts";
-import { ArrowDown, ArrowUp, GitMerge, ListTodo, Play, ShieldAlert, Undo2 } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  MergeIcon as GitMerge,
+  ListTodo,
+  Play,
+  ShieldAlert,
+  Undo2,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { Badge } from "~/components/ui/badge";
@@ -178,6 +186,7 @@ function RebasePlanEditor({
             {translate("git.operation.interactiveRebase")}
           </h2>
           <p className="text-muted-foreground text-xs">
+            {" "}
             {translate("git.operation.rebaseTopology")}
           </p>
         </div>
@@ -586,7 +595,8 @@ function QueueTextField({
     <label className="block text-xs">
       {label}
       <Input
-        className="mt-1 font-mono"
+        className="mt-1"
+        font="mono"
         onChange={(event) => onChange(event.currentTarget.value)}
         value={value}
       />

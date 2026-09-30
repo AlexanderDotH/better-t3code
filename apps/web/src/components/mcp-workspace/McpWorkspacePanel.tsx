@@ -156,12 +156,14 @@ export function McpWorkspacePanel(props: McpWorkspacePanelProps) {
                     if (providerId) props.onProviderChange?.(providerId);
                   }}
                 >
-                  <SelectTrigger
-                    className="mcp-workspace-panel__context-trigger"
-                    aria-label={translate("settings.mcp.workspace.providers")}
-                  >
-                    <SelectValue>{selectedProvider?.label}</SelectValue>
-                  </SelectTrigger>
+                  <div className="min-w-0 w-full">
+                    <SelectTrigger
+                      size="lg"
+                      aria-label={translate("settings.mcp.workspace.providers")}
+                    >
+                      <SelectValue>{selectedProvider?.label}</SelectValue>
+                    </SelectTrigger>
+                  </div>
                   <SelectPopup align="start" alignItemWithTrigger={false}>
                     {props.providers.map((provider) => (
                       <SelectItem key={provider.id} value={provider.id}>
@@ -195,12 +197,14 @@ export function McpWorkspacePanel(props: McpWorkspacePanelProps) {
                   disabled={contextOptions.length === 0}
                   onValueChange={(contextId) => props.onContextChange?.(contextId ?? null)}
                 >
-                  <SelectTrigger
-                    className="mcp-workspace-panel__context-trigger"
-                    aria-label={translate("settings.mcp.workspace.runtimeSession")}
-                  >
-                    <SelectValue>{selectedContextLabel}</SelectValue>
-                  </SelectTrigger>
+                  <div className="min-w-0 w-full">
+                    <SelectTrigger
+                      size="lg"
+                      aria-label={translate("settings.mcp.workspace.runtimeSession")}
+                    >
+                      <SelectValue>{selectedContextLabel}</SelectValue>
+                    </SelectTrigger>
+                  </div>
                   <SelectPopup align="end" alignItemWithTrigger={false}>
                     {contextOptions.map((context) => (
                       <SelectItem key={context.id} value={context.id}>

@@ -8,8 +8,8 @@ import { sourceControlEnvironment } from "./sourceControl";
 import { useVcsActionState } from "./use-vcs-action-state";
 import { useThreadSelection } from "./use-thread-selection";
 import { useSelectedThreadWorktree } from "./use-selected-thread-worktree";
-import { mobileGitWorkbenchCanActivate } from "../features/threads/git/mobile-git-workbench";
-import { useMobileGitWorkbenchAvailability } from "../features/threads/git/use-mobile-git-workbench";
+import { mobileGitWorkbenchCanActivate } from "./git-workbench-availability";
+import { useMobileGitWorkbenchAvailability } from "./use-git-workbench-availability";
 
 export function useSelectedThreadGitState() {
   const { selectedThread, selectedThreadProject } = useThreadSelection();

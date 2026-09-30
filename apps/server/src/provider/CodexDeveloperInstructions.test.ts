@@ -1,7 +1,20 @@
 import { WORKSPACE_CONTEXT_MAX_QUERIES, WORKSPACE_CONTEXT_MAX_READS } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildCodexDeveloperInstructions } from "./CodexDeveloperInstructions.ts";
+import {
+  buildCodexAdditionalContext,
+  buildCodexDeveloperInstructions as buildModeInstructions,
+} from "./CodexDeveloperInstructions.ts";
+
+const buildCodexDeveloperInstructions = (
+  mode: Parameters<typeof buildModeInstructions>[0],
+  runtime: Parameters<typeof buildCodexAdditionalContext>[0],
+  tools?: Parameters<typeof buildCodexAdditionalContext>[1],
+) =>
+  [
+    buildModeInstructions(mode),
+    ...Object.values(buildCodexAdditionalContext(runtime, tools, mode)).map((entry) => entry.value),
+  ].join("\n\n");
 
 const preChangeDefaultFixture = {
   characters: 2_606,
@@ -33,10 +46,14 @@ describe("buildCodexDeveloperInstructions delegation history policy", () => {
       reasoningEffort: "high",
     });
 
-    expect(instructions.length).toBeLessThanOrEqual(
+    const forkPolicy = instructions.replace(
+      /<pull_request_linking>[\s\S]*?<\/pull_request_linking>/u,
+      "",
+    );
+    expect(forkPolicy.length).toBeLessThanOrEqual(
       Math.floor(preChangeDefaultFixture.characters * 0.7),
     );
-    expect(estimatedTokens(instructions)).toBeLessThanOrEqual(
+    expect(estimatedTokens(forkPolicy)).toBeLessThanOrEqual(
       Math.floor(preChangeDefaultFixture.estimatedTokens * 0.7),
     );
   });
@@ -159,11 +176,23 @@ describe("buildCodexDeveloperInstructions delegation history policy", () => {
     expect(instructions).toContain("verified durable facts");
     expect(instructions).toContain("Never store credentials");
     expect(instructions).not.toMatch(/## (?:Coordination|Knowledge graph|Workspace context)/);
-    expect(instructions.indexOf("<collaboration_mode>")).toBeLessThan(
-      instructions.indexOf("## Delegation history"),
+    const context = buildCodexAdditionalContext({ model: "gpt-5.6", reasoningEffort: "high" });
+    expect(context.t3_code_delegation?.value).toContain("## Delegation history");
+    expect(context.t3_code_runtime?.value).toContain("<runtime_info>");
+    expect(buildModeInstructions("default")).not.toContain("## Delegation history");
+  });
+});
+
+describe("Codex application context", () => {
+  it("preserves device guidance separately from collaboration-mode text", () => {
+    const context = buildCodexAdditionalContext(
+      { model: "gpt-5.6", reasoningEffort: "high" },
+      { browser: false, device: true },
     );
-    expect(instructions.indexOf("## Delegation history")).toBeLessThan(
-      instructions.indexOf("<runtime_info>"),
+    expect(context.t3_code_tools?.value).toContain("device_open");
+    expect(context.t3_code_tools?.value).not.toContain("preview_status");
+    expect(buildModeInstructions("default")).not.toMatch(
+      /device_open|workspace_find|fork_turns|runtime_info/,
     );
   });
 });

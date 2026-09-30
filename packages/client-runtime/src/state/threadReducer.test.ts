@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   CheckpointRef,
   CommandId,
+  ComposerContextId,
   EventId,
   MessageId,
   ProjectId,
@@ -40,6 +41,7 @@ const baseThread: OrchestrationThread = {
   archivedAt: null,
   settledOverride: null,
   settledAt: null,
+  pullRequests: [],
   deletedAt: null,
   messages: [],
   proposedPlans: [],
@@ -95,6 +97,111 @@ function makeAbortingThread(): OrchestrationThread {
 }
 
 describe("applyThreadDetailEvent", () => {
+  it("projects inherited fork history and settles its workspace and first-turn handoff", () => {
+    const timestamp = "2026-09-29T10:00:00.000Z";
+    const sourceThreadId = ThreadId.make("source-thread");
+    const message = {
+      id: MessageId.make("inherited-message"),
+      role: "reasoning" as const,
+      text: "Inherited reasoning",
+      turnId: TurnId.make("inherited-turn"),
+      streaming: false,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      historyOrigin: { sourceThreadId, sourceId: "original-message", ordinal: 0 },
+    };
+    const metadata = {
+      ...baseEventFields,
+      sequence: 1,
+      aggregateKind: "thread" as const,
+      aggregateId: baseThread.id,
+      occurredAt: timestamp,
+    };
+    const inherited = applyThreadDetailEvent(baseThread, {
+      ...metadata,
+      type: "thread.forked",
+      payload: {
+        threadId: baseThread.id,
+        fork: {
+          provenance: {
+            sourceThreadId,
+            sourceTitle: "Source thread",
+            boundary: { kind: "message", messageId: message.id },
+            forkedAt: timestamp,
+          },
+          workspace: {
+            spec: {
+              mode: "local",
+              baseBranch: null,
+              startFromOrigin: false,
+              runSetupScript: false,
+            },
+            status: "pending",
+            preparedAt: null,
+            lastError: null,
+          },
+          handoff: {
+            status: "pending",
+            historyInputChars: 10,
+            historyAttachmentCount: 0,
+            remainingInputChars: 1_000,
+            remainingAttachmentCount: 1,
+            completedAt: null,
+          },
+        },
+        history: {
+          messages: [message],
+          proposedPlans: [],
+          activities: [],
+          subagents: [],
+          turns: [],
+          checkpoints: [],
+        },
+      },
+    });
+    expect(inherited.kind).toBe("updated");
+    if (inherited.kind !== "updated") return;
+    expect(inherited.thread.messages).toEqual([message]);
+    expect(inherited.thread.messages[0]?.historyOrigin).toBe(message.historyOrigin);
+    const prepared = applyThreadDetailEvent(inherited.thread, {
+      ...metadata,
+      sequence: 2,
+      type: "thread.fork-workspace-updated",
+      payload: {
+        threadId: baseThread.id,
+        status: "ready",
+        preparedAt: timestamp,
+        lastError: null,
+        createdAt: timestamp,
+      },
+    });
+    expect(prepared.kind).toBe("updated");
+    if (prepared.kind !== "updated") return;
+    expect(prepared.thread.fork?.workspace.status).toBe("ready");
+    const completed = applyThreadDetailEvent(prepared.thread, {
+      ...metadata,
+      sequence: 3,
+      type: "thread.fork-handoff-completed",
+      payload: { threadId: baseThread.id, completedAt: timestamp },
+    });
+    expect(completed.kind).toBe("updated");
+    if (completed.kind !== "updated") return;
+    expect(completed.thread.fork?.handoff).toMatchObject({
+      status: "completed",
+      completedAt: timestamp,
+      remainingInputChars: 1_000,
+    });
+    expect(completed.thread.messages).toBe(inherited.thread.messages);
+    expect(
+      applyThreadDetailEvent(completed.thread, {
+        ...metadata,
+        sequence: 4,
+        type: "thread.fork-handoff-completed",
+        payload: { threadId: baseThread.id, completedAt: timestamp },
+      }),
+    ).toEqual({ kind: "unchanged" });
+  });
+
   it("updates an edited message without changing its role, attachments, turn or later messages", () => {
     const message = {
       id: MessageId.make("edit"),
@@ -384,6 +491,46 @@ describe("applyThreadDetailEvent", () => {
     });
   });
 
+  describe("thread.auto-settle-set", () => {
+    it("stores and clears autoSettleDisabledAt", () => {
+      const disabledAt = "2026-04-01T05:00:00.000Z";
+      const off = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 7,
+        occurredAt: disabledAt,
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.auto-settle-set",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          autoSettleDisabledAt: disabledAt,
+          updatedAt: disabledAt,
+        },
+      });
+      expect(off.kind).toBe("updated");
+      if (off.kind !== "updated") return;
+      expect(off.thread.autoSettleDisabledAt).toBe(disabledAt);
+
+      const on = applyThreadDetailEvent(off.thread, {
+        ...baseEventFields,
+        sequence: 8,
+        occurredAt: "2026-04-01T06:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.auto-settle-set",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          autoSettleDisabledAt: null,
+          updatedAt: "2026-04-01T06:00:00.000Z",
+        },
+      });
+      expect(on.kind).toBe("updated");
+      if (on.kind === "updated") {
+        expect(on.thread.autoSettleDisabledAt).toBeNull();
+      }
+    });
+  });
+
   describe("thread.meta-updated", () => {
     it.each(["f", null] as const)(
       "updates the active key to %s without activity",
@@ -502,7 +649,173 @@ describe("applyThreadDetailEvent", () => {
     );
   });
 
+  describe("thread pull request links", () => {
+    const link = {
+      host: "github.com",
+      repository: "pingdotgg/t3code",
+      number: 42,
+      url: "https://github.com/pingdotgg/t3code/pull/42",
+      source: "manual" as const,
+      linkedAt: "2026-04-01T05:00:00.000Z",
+      snapshot: null,
+      stack: null,
+    };
+    const key = { host: "github.com", repository: "pingdotgg/t3code", number: 42 };
+    const linkEvent = (sequence: number) =>
+      ({
+        ...baseEventFields,
+        sequence,
+        occurredAt: "2026-04-01T05:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.pull-request-linked",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          link,
+          updatedAt: "2026-04-01T05:00:00.000Z",
+        },
+      }) as const;
+
+    it("links without inventing a legacy route and replaces by key", () => {
+      const linked = applyThreadDetailEvent(baseThread, linkEvent(5));
+      expect(linked.kind).toBe("updated");
+      if (linked.kind !== "updated") return;
+      expect(linked.thread.pullRequests).toEqual([link]);
+      expect(linked.thread.linkedPullRequest).toBeNull();
+
+      const relinked = applyThreadDetailEvent(linked.thread, {
+        ...linkEvent(6),
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          link: { ...link, host: "GitHub.com", source: "agent" },
+          updatedAt: "2026-04-01T06:00:00.000Z",
+        },
+      });
+      if (relinked.kind !== "updated") throw new Error("expected update");
+      expect(relinked.thread.pullRequests).toHaveLength(1);
+      expect(relinked.thread.pullRequests[0]?.source).toBe("agent");
+    });
+
+    it("syncs snapshot and stack onto the matching link only", () => {
+      const linked = applyThreadDetailEvent(baseThread, linkEvent(5));
+      if (linked.kind !== "updated") throw new Error("expected update");
+      const snapshot = {
+        state: "merged" as const,
+        title: "Ship it",
+        headBranch: "feature",
+        baseBranch: "main",
+        isDraft: false,
+        updatedAt: "2026-04-02T00:00:00.000Z",
+        syncedAt: "2026-04-02T00:01:00.000Z",
+      };
+      const synced = applyThreadDetailEvent(linked.thread, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: "2026-04-02T00:01:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.pull-request-synced",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          ...key,
+          snapshot,
+          stack: null,
+          updatedAt: "2026-04-02T00:01:00.000Z",
+        },
+      });
+      if (synced.kind !== "updated") throw new Error("expected update");
+      expect(synced.thread.pullRequests[0]?.snapshot).toEqual(snapshot);
+
+      const unknown = applyThreadDetailEvent(synced.thread, {
+        ...baseEventFields,
+        sequence: 7,
+        occurredAt: "2026-04-02T00:02:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.pull-request-synced",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          ...key,
+          number: 99,
+          snapshot,
+          stack: null,
+          updatedAt: "2026-04-02T00:02:00.000Z",
+        },
+      });
+      expect(unknown.kind).toBe("unchanged");
+    });
+
+    it("unlinks and clears the compat field", () => {
+      const linked = applyThreadDetailEvent(baseThread, linkEvent(5));
+      if (linked.kind !== "updated") throw new Error("expected update");
+      const unlinked = applyThreadDetailEvent(linked.thread, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: "2026-04-01T06:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.pull-request-unlinked",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          ...key,
+          updatedAt: "2026-04-01T06:00:00.000Z",
+        },
+      });
+      if (unlinked.kind !== "updated") throw new Error("expected update");
+      expect(unlinked.thread.pullRequests).toEqual([]);
+      expect(unlinked.thread.linkedPullRequest).toBeNull();
+    });
+  });
+
   describe("thread.message-sent", () => {
+    it.each([
+      ["first", ["first+", "middle", "last"]],
+      ["middle", ["first", "middle+", "last"]],
+      ["last", ["first", "middle", "last+"]],
+      ["new", ["first", "middle", "last", "+"]],
+    ] as const)("applies a delta to %s without changing other messages", (id, texts) => {
+      const messages = Object.freeze(
+        ["first", "middle", "last"].map((name) =>
+          Object.freeze({
+            id: MessageId.make(name),
+            role: "assistant" as const,
+            text: name,
+            turnId: null,
+            streaming: false,
+            createdAt: baseThread.createdAt,
+            updatedAt: baseThread.updatedAt,
+          }),
+        ),
+      );
+      const result = applyThreadDetailEvent(
+        { ...baseThread, messages },
+        {
+          ...baseEventFields,
+          sequence: 6,
+          occurredAt: baseThread.updatedAt,
+          aggregateKind: "thread",
+          aggregateId: baseThread.id,
+          type: "thread.message-sent",
+          payload: {
+            threadId: baseThread.id,
+            messageId: MessageId.make(id),
+            role: "assistant",
+            text: "+",
+            turnId: null,
+            streaming: true,
+            createdAt: baseThread.createdAt,
+            updatedAt: baseThread.updatedAt,
+          },
+        },
+      );
+      expect(result.kind).toBe("updated");
+      if (result.kind !== "updated") return;
+      expect(result.thread.messages.map((message) => message.text)).toEqual(texts);
+      for (const [index, message] of messages.entries()) {
+        if (message.id !== id) expect(result.thread.messages[index]).toBe(message);
+      }
+    });
+
     it("appends a new message", () => {
       const result = applyThreadDetailEvent(baseThread, {
         ...baseEventFields,
@@ -562,6 +875,48 @@ describe("applyThreadDetailEvent", () => {
       expect(repeated.thread.messages).toEqual(imported.thread.messages);
       expect(repeated.thread.latestTurn).toBeNull();
       expect(repeated.thread.checkpoints).toBe(baseThread.checkpoints);
+    });
+
+    it("keeps structured context on a newly sent message", () => {
+      const context = {
+        version: 1 as const,
+        records: [
+          {
+            version: 1 as const,
+            contextId: ComposerContextId.make("video-1"),
+            kind: "file" as const,
+            label: "demo.mp4",
+            attachmentId: "attachment-video-1",
+            name: "demo.mp4",
+            mimeType: "video/mp4",
+            sizeBytes: 42,
+          },
+        ],
+      };
+      const result = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 7,
+        occurredAt: "2026-04-01T06:01:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.message-sent",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("msg-with-context"),
+          role: "user",
+          text: "Watch [demo.mp4](t3-context://v1/file/video-1).",
+          context,
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-04-01T06:01:00.000Z",
+          updatedAt: "2026-04-01T06:01:00.000Z",
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.messages[0]?.context).toEqual(context);
+      }
     });
 
     it("appends text for streaming messages", () => {

@@ -1,5 +1,5 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useVisualizationCodeBlock } from "../../native/useVisualizationCodeBlock";
+import { useVisualizationCodeBlock } from "../visualizations/useVisualizationCodeBlock";
 import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { getBrowseDirectoryPath } from "@t3tools/client-runtime/state/projects";
 import { useCallback, useMemo, useState } from "react";
@@ -196,10 +196,12 @@ function useMarkdownPreviewStyles(renderImage?: MarkdownImageRenderer): Markdown
 
 export function FileMarkdownPreview(props: {
   readonly cwd: string;
+  readonly captured?: boolean;
   readonly environmentId: EnvironmentId;
   readonly markdown: string;
   readonly relativePath: string;
-  readonly threadId: ThreadId;
+  /** Absent for a file opened from a project draft, which has no thread yet. */
+  readonly threadId: ThreadId | null;
   readonly onRefresh?: () => Promise<void> | void;
 }) {
   const navigation = useNavigation();
@@ -222,14 +224,19 @@ export function FileMarkdownPreview(props: {
   const renderImage = useCallback<MarkdownImageRenderer>(
     (image) => {
       const media = resolveMediaSource(image.href, {
-        threadId: props.threadId,
+        threadId: props.threadId ?? undefined,
         workspaceRoot: markdownDirectory,
         imageEmbed: true,
       });
       if (media?.access === "direct") {
         return null;
       }
-      if (media === null || media.kind !== "image" || media.access === "unavailable") {
+      if (
+        props.captured ||
+        media === null ||
+        media.kind !== "image" ||
+        media.access === "unavailable"
+      ) {
         return <ThreadMarkdownImageUnavailable alt={image.alt} />;
       }
       return (
@@ -242,11 +249,12 @@ export function FileMarkdownPreview(props: {
         />
       );
     },
-    [markdownDirectory, props.environmentId, props.threadId],
+    [markdownDirectory, props.environmentId, props.threadId, props.captured],
   );
   const styles = useMarkdownPreviewStyles(renderImage);
   const handleVisualizationAction = useCallback(
     (prompt: string) => {
+      if (props.threadId === null) return;
       const threadKey = scopedThreadKey(props.environmentId, props.threadId);
       const currentDraft = appAtomRegistry.get(composerDraftsAtom)[threadKey]?.text ?? "";
       setComposerDraftText(

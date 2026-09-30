@@ -10,6 +10,7 @@ import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
 import { SettingsPageContainer, SettingsRow } from "./settingsLayout";
+import { validateSettingsScopeSearch } from "./settingsScope";
 
 let renderer: ReactTestRenderer | undefined;
 afterEach(async () => {
@@ -23,7 +24,7 @@ it("keeps the project, machine, and checkout selected after scrolling to indexin
   const route = createRoute({
     getParentRoute: () => root,
     path: "/settings/projects",
-    validateSearch: (search: Record<string, unknown>) => search,
+    validateSearch: validateSettingsScopeSearch,
     component: () => (
       <SettingsPageContainer>
         <SettingsRow id="project-indexing-enabled" title="Enable indexing" />
@@ -34,7 +35,7 @@ it("keeps the project, machine, and checkout selected after scrolling to indexin
     routeTree: root.addChildren([route]),
     history: createMemoryHistory({
       initialEntries: [
-        "/settings/projects?project=repo-a&machine=remote-b&indexing=checkout-c#project-indexing-enabled",
+        "/settings/projects?project=repo-a&machine=remote-b&checkout=remote-b%3A%2Frepos%2Fcheckout-c#project-indexing-enabled",
       ],
     }),
   });
@@ -62,6 +63,6 @@ it("keeps the project, machine, and checkout selected after scrolling to indexin
   expect(router.state.location.search).toEqual({
     project: "repo-a",
     machine: "remote-b",
-    indexing: "checkout-c",
+    checkout: "remote-b:/repos/checkout-c",
   });
 });

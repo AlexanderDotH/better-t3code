@@ -2,6 +2,9 @@ import { defineLocalizedInterfaceCatalog } from "./interfaceLanguageCatalog.type
 
 export const desktopInterfaceCatalog = defineLocalizedInterfaceCatalog({
   "desktop.menu.file": ["File", "Datei", "Fichier"],
+  "desktop.menu.edit": ["Edit", "Bearbeiten", "Édition"],
+  "desktop.menu.pasteAsText": ["Paste as Text", "Als Text einfügen", "Coller en texte brut"],
+  "desktop.menu.speech": ["Speech", "Sprachausgabe", "Parole"],
   "desktop.menu.view": ["View", "Ansicht", "Affichage"],
   "desktop.menu.help": ["Help", "Hilfe", "Aide"],
   "desktop.menu.settings": ["Settings...", "Einstellungen...", "Réglages..."],
@@ -64,9 +67,55 @@ export const desktopInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Les mises à jour automatiques sont désactivées par le réglage T3CODE_DISABLE_AUTO_UPDATE.",
   ],
   "desktop.update.disabled.linuxPackage": [
-    "Automatic updates on Linux require running the AppImage build.",
-    "Automatische Updates unter Linux erfordern den AppImage-Build.",
-    "Sous Linux, les mises à jour automatiques nécessitent la version AppImage.",
+    "Automatic updates on Linux require the AppImage or the .deb package.",
+    "Automatische Updates unter Linux erfordern ein AppImage oder ein .deb-Paket.",
+    "Sous Linux, les mises à jour automatiques nécessitent la version AppImage ou le paquet .deb.",
+  ],
+  "desktop.providerAuth.hostedCallbackFailed": [
+    "Could not receive hosted web ChatGPT sign-in. Retry or use the redirect URL in the web app.",
+    "Die ChatGPT-Anmeldung aus der Web-App konnte nicht empfangen werden. Versuche es erneut oder verwende die Weiterleitungs-URL in der Web-App.",
+    "Impossible de recevoir la connexion ChatGPT depuis l’application web. Réessayez ou utilisez l’URL de redirection dans l’application web.",
+  ],
+  "desktop.providerAuth.callbackFailed": [
+    "Could not receive ChatGPT sign-in on this computer. Try again or paste the redirect URL.",
+    "Die ChatGPT-Anmeldung konnte auf diesem Computer nicht empfangen werden. Versuche es erneut oder füge die Weiterleitungs-URL ein.",
+    "Impossible de recevoir la connexion ChatGPT sur cet ordinateur. Réessayez ou collez l’URL de redirection.",
+  ],
+  "desktop.providerAuth.invalidRequest": [
+    "Invalid ChatGPT sign-in request.",
+    "Ungültige ChatGPT-Anmeldeanfrage.",
+    "Demande de connexion ChatGPT invalide.",
+  ],
+  "desktop.permission.screenRecording": [
+    "Screen Recording",
+    "Bildschirmaufnahme",
+    "Enregistrement de l’écran",
+  ],
+  "desktop.permission.accessibility": ["Accessibility", "Bedienungshilfen", "Accessibilité"],
+  "desktop.permission.fullDiskAccess": [
+    "Full Disk Access",
+    "Festplattenvollzugriff",
+    "Accès complet au disque",
+  ],
+  "desktop.permission.setupTitle": [
+    "Set up {{permission}}",
+    "{{permission}} einrichten",
+    "Configurer {{permission}}",
+  ],
+  "desktop.permission.closeHelper": [
+    "Close permission helper",
+    "Berechtigungshilfe schließen",
+    "Fermer l’aide aux autorisations",
+  ],
+  "desktop.permission.dragInstruction": [
+    "↑ Drag T3 Code into the list above",
+    "↑ Ziehe T3 Code in die Liste darüber",
+    "↑ Glissez T3 Code dans la liste ci-dessus",
+  ],
+  "desktop.permission.dragAppLabel": [
+    "Drag T3 Code to System Settings, or click to reveal in Finder",
+    "Ziehe T3 Code in die Systemeinstellungen oder klicke, um die App im Finder anzuzeigen",
+    "Glissez T3 Code dans Réglages Système, ou cliquez pour l’afficher dans le Finder",
   ],
   "desktop.startup.failedTitle": [
     "T3 Code failed to start",

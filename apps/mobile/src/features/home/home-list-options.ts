@@ -29,8 +29,8 @@ export { PROJECT_SORT_OPTIONS, THREAD_SORT_OPTIONS } from "./home-list-sort-opti
 
 export interface HomeListOptions {
   readonly selectedEnvironmentId: EnvironmentId | null;
-  readonly projectSortOrder: HomeProjectSortOrder;
   readonly threadSortOrder: SidebarThreadSortOrder;
+  readonly projectSortOrder: HomeProjectSortOrder;
 }
 
 export interface ResolvedHomeListOptions extends HomeListOptions {
@@ -40,11 +40,11 @@ export interface ResolvedHomeListOptions extends HomeListOptions {
 function defaultHomeListOptions(): HomeListOptions {
   return {
     selectedEnvironmentId: null,
+    threadSortOrder: DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
     projectSortOrder:
       DEFAULT_SIDEBAR_PROJECT_SORT_ORDER === "manual"
         ? "updated_at"
         : DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
-    threadSortOrder: DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
   };
 }
 

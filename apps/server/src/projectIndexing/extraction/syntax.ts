@@ -1,5 +1,4 @@
 // @effect-diagnostics nodeBuiltinImport:off - Tree-sitter's WASM loader resolves host filesystem assets.
-import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 
 import type {
@@ -9,17 +8,24 @@ import type {
   ProjectSourceRangeV1,
   ProjectEntityVisibility,
 } from "@t3tools/contracts";
-import { Language, Parser, type Node as SyntaxNode } from "web-tree-sitter";
+import type {
+  Language as SyntaxLanguage,
+  Node as SyntaxNode,
+  Parser as SyntaxParser,
+} from "web-tree-sitter";
 import {
   PROJECT_INDEX_SYNTAX_GRAMMARS,
   projectIndexSyntaxGrammar,
 } from "@t3tools/shared/projectIndexLanguages";
 
+import { createFileBackedRequire } from "../../process/fileBackedModules.ts";
+import { resolveFilesystemAsset } from "./assets.ts";
 import { coverageGap, sourceLanguage, supportsSyntax, type ExtractionGap } from "./inventory.ts";
 import { rangeFromOffsets, sourceHash, stableId } from "./source.ts";
 import { syntaxModuleSpecifiers } from "./syntaxModules.ts";
 
-const require = NodeModule.createRequire(import.meta.url);
+const require = createFileBackedRequire(import.meta.url);
+const { Language, Parser }: typeof import("web-tree-sitter") = require("web-tree-sitter");
 const projectIndexerAssets = {
   runtime: "web-tree-sitter/tree-sitter.wasm",
   grammars: PROJECT_INDEX_SYNTAX_GRAMMARS.map(
@@ -30,14 +36,18 @@ const projectIndexerAssets = {
 } as const;
 
 let parserReady: Promise<void> | undefined;
-const grammarCache = new Map<string, Promise<Language>>();
+const grammarCache = new Map<string, Promise<SyntaxLanguage>>();
 
 async function loadGrammar(grammar: string) {
-  parserReady ??= Parser.init({ locateFile: () => require.resolve(projectIndexerAssets.runtime) });
+  parserReady ??= Parser.init({
+    locateFile: () => resolveFilesystemAsset(require.resolve(projectIndexerAssets.runtime)),
+  });
   await parserReady;
   let pending = grammarCache.get(grammar);
   if (!pending) {
-    pending = Language.load(require.resolve(`tree-sitter-wasms/out/tree-sitter-${grammar}.wasm`));
+    pending = Language.load(
+      resolveFilesystemAsset(require.resolve(`tree-sitter-wasms/out/tree-sitter-${grammar}.wasm`)),
+    );
     grammarCache.set(grammar, pending);
     void pending.catch(() => grammarCache.delete(grammar));
   }
@@ -443,7 +453,7 @@ export async function extractSyntax(input: {
     language,
     NodePath.extname(input.filePath).toLowerCase(),
   )!;
-  let parser: Parser | undefined;
+  let parser: SyntaxParser | undefined;
   let tree;
   try {
     const loadedGrammar = await loadGrammar(grammar);

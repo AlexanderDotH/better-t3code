@@ -108,7 +108,7 @@ function RuntimeDetails({ server }: { readonly server: McpRuntimeServerView }) {
   const translate = useInterfaceTranslator().message;
   return (
     <div className="grid gap-3 border-t border-border/50 px-4 py-3 sm:px-5">
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-2xs text-muted-foreground">
         {server.version ? (
           <span>{translate("settings.mcp.runtime.version", { version: server.version })}</span>
         ) : null}
@@ -185,7 +185,7 @@ function RuntimeResourceList({
   const translate = useInterfaceTranslator().message;
   return (
     <section className="grid gap-2" aria-label={translate("settings.mcp.workspace.resourcesAria")}>
-      <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+      <h4 className="text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
         {translate("settings.mcp.runtime.resources")}
       </h4>
       {resources.slice(0, 100).map((resource) => (
@@ -194,9 +194,7 @@ function RuntimeResourceList({
             <FileTextIcon className="size-3.5 shrink-0 text-muted-foreground" />
             <span className="truncate">{resource.title ?? resource.name}</span>
           </div>
-          <p className="mt-1 truncate font-mono text-[10px] text-muted-foreground">
-            {resource.uri}
-          </p>
+          <p className="mt-1 truncate font-mono text-3xs text-muted-foreground">{resource.uri}</p>
           {resource.description ? (
             <p className="mt-1 line-clamp-2 text-muted-foreground text-xs">
               {resource.description}
@@ -226,7 +224,7 @@ function RuntimeResourceTemplateList({
       className="grid gap-2"
       aria-label={translate("settings.mcp.workspace.resourceTemplatesAria")}
     >
-      <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+      <h4 className="text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
         {translate("settings.mcp.runtime.resourceTemplates")}
       </h4>
       {templates.slice(0, 100).map((template) => (
@@ -235,7 +233,7 @@ function RuntimeResourceTemplateList({
             <BracesIcon className="size-3.5 shrink-0 text-muted-foreground" />
             <span className="truncate">{template.title ?? template.name}</span>
           </div>
-          <p className="mt-1 truncate font-mono text-[10px] text-muted-foreground">
+          <p className="mt-1 truncate font-mono text-3xs text-muted-foreground">
             {template.uriTemplate}
           </p>
           {template.description ? (
@@ -304,86 +302,87 @@ function RuntimeServerRow(props: {
   ]);
 
   return (
-    <Collapsible
-      open={open}
-      onOpenChange={(nextOpen) => {
-        setOpen(nextOpen);
-        if (nextOpen && hasDetails && !props.server.tools) onLoadDetails();
-      }}
-      className="mcp-runtime-server-row border-b border-border/50 last:border-b-0"
-    >
-      <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:px-5">
-        <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            {props.locked ? (
-              <LockKeyholeIcon className="size-4 text-muted-foreground" />
-            ) : (
-              <ServerIcon className="size-4 text-muted-foreground" />
-            )}
-            <span className="truncate text-sm font-medium">{props.server.name}</span>
-            <Badge size="sm" variant={TONE_BADGE[presentation.tone]}>
-              {translate(`settings.mcp.runtime.state.${props.server.state}`)}
-            </Badge>
-            {countLabel ? (
-              <span className="text-xs tabular-nums text-muted-foreground">{countLabel}</span>
-            ) : null}
-            {props.server.transport ? (
-              <Badge size="sm" variant="outline">
-                {props.server.transport}
+    <div className="mcp-runtime-server-row border-b border-border/50 last:border-b-0">
+      <Collapsible
+        open={open}
+        onOpenChange={(nextOpen) => {
+          setOpen(nextOpen);
+          if (nextOpen && hasDetails && !props.server.tools) onLoadDetails();
+        }}
+      >
+        <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:px-5">
+          <div className="min-w-0 flex-1 space-y-1">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              {props.locked ? (
+                <LockKeyholeIcon className="size-4 text-muted-foreground" />
+              ) : (
+                <ServerIcon className="size-4 text-muted-foreground" />
+              )}
+              <span className="truncate text-sm font-medium">{props.server.name}</span>
+              <Badge size="sm" variant={TONE_BADGE[presentation.tone]}>
+                {translate(`settings.mcp.runtime.state.${props.server.state}`)}
               </Badge>
+              {countLabel ? (
+                <span className="text-xs tabular-nums text-muted-foreground">{countLabel}</span>
+              ) : null}
+              {props.server.transport ? (
+                <Badge size="sm" variant="outline">
+                  {props.server.transport}
+                </Badge>
+              ) : null}
+              {props.server.drift ? (
+                <Badge size="sm" variant="warning">
+                  {props.server.drift === "pending-enable"
+                    ? translate("settings.mcp.provider.enableNext")
+                    : translate("settings.mcp.provider.disableNext")}
+                </Badge>
+              ) : null}
+            </div>
+            {props.server.authLabel ? (
+              <p className="text-warning-foreground text-xs">{props.server.authLabel}</p>
             ) : null}
-            {props.server.drift ? (
-              <Badge size="sm" variant="warning">
-                {props.server.drift === "pending-enable"
-                  ? translate("settings.mcp.provider.enableNext")
-                  : translate("settings.mcp.provider.disableNext")}
-              </Badge>
+            {props.server.configPath ? (
+              <p className="text-xs text-muted-foreground wrap-anywhere">
+                {translate("settings.mcp.provider.discoveredIn", { path: props.server.configPath })}
+              </p>
             ) : null}
           </div>
-          {props.server.authLabel ? (
-            <p className="text-warning-foreground text-xs">{props.server.authLabel}</p>
-          ) : null}
-          {props.server.configPath ? (
-            <p className="text-xs text-muted-foreground wrap-anywhere">
-              {translate("settings.mcp.provider.discoveredIn", { path: props.server.configPath })}
-            </p>
-          ) : null}
-        </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          {!props.locked ? (
-            <McpServerRowControls
-              serverKey={props.server.serverKey}
-              serverName={props.server.name}
-              state={props.server.state}
-              availableRuntimeActions={availableRuntimeActions(props.server)}
-              pendingAction={props.pendingRuntimeAction}
-              readOnly={props.readOnly === true}
-              onRuntimeAction={props.onAction}
-            />
-          ) : null}
-          {hasDetails ? (
-            <CollapsibleTrigger
-              className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-              aria-label={translate("settings.mcp.provider.detailsAria", {
-                action: translate(
-                  open ? "settings.mcp.provider.hide" : "settings.mcp.provider.show",
-                ),
-                server: props.server.name,
-              })}
-            >
-              <ChevronDownIcon
-                className={cn("size-4 transition-transform", open && "rotate-180")}
+          <div className="flex shrink-0 items-center gap-1.5">
+            {!props.locked ? (
+              <McpServerRowControls
+                serverKey={props.server.serverKey}
+                serverName={props.server.name}
+                state={props.server.state}
+                availableRuntimeActions={availableRuntimeActions(props.server)}
+                pendingAction={props.pendingRuntimeAction}
+                readOnly={props.readOnly === true}
+                onRuntimeAction={props.onAction}
               />
-            </CollapsibleTrigger>
-          ) : null}
+            ) : null}
+            {hasDetails ? (
+              <CollapsibleTrigger
+                className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                aria-label={translate("settings.mcp.provider.detailsAria", {
+                  action: translate(
+                    open ? "settings.mcp.provider.hide" : "settings.mcp.provider.show",
+                  ),
+                  server: props.server.name,
+                })}
+              >
+                <ChevronDownIcon
+                  className={cn("size-4 transition-transform", open && "rotate-180")}
+                />
+              </CollapsibleTrigger>
+            ) : null}
+          </div>
         </div>
-      </div>
-      {hasDetails ? (
-        <CollapsiblePanel>
-          <RuntimeDetails server={props.server} />
-        </CollapsiblePanel>
-      ) : null}
-    </Collapsible>
+        {hasDetails ? (
+          <CollapsiblePanel>
+            <RuntimeDetails server={props.server} />
+          </CollapsiblePanel>
+        ) : null}
+      </Collapsible>
+    </div>
   );
 }
 
@@ -437,7 +436,7 @@ function ProviderTabs(props: {
                     className={cn(
                       "relative flex h-9 max-w-64 items-center gap-2 rounded-lg border px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                       selected
-                        ? "border-[var(--mcp-provider-accent,var(--border))] bg-[color-mix(in_oklab,var(--mcp-provider-accent,var(--muted))_10%,transparent)] text-foreground"
+                        ? "mcp-provider-active-tab text-foreground"
                         : "border-transparent text-muted-foreground hover:border-border/60 hover:bg-muted/50 hover:text-foreground",
                       provider.disabled && "opacity-55",
                     )}
@@ -463,7 +462,7 @@ function ProviderTabs(props: {
                       })}
                     />
                     {selected && props.selectedRuntimeSummary ? (
-                      <span className="inline-flex items-center gap-1 text-[10px] tabular-nums text-muted-foreground">
+                      <span className="inline-flex items-center gap-1 text-3xs tabular-nums text-muted-foreground">
                         <span
                           className={cn(
                             "size-1.5 rounded-full",
@@ -554,112 +553,118 @@ function ConfiguredServerRow(props: {
   }, [hasDetails, props.focused, onLoadDetails, props.runtime]);
 
   return (
-    <Collapsible
-      open={open}
-      onOpenChange={(nextOpen) => {
-        setOpen(nextOpen);
-        if (nextOpen && props.runtime && !props.runtime.tools) onLoadDetails();
-      }}
+    <div
       className={cn("border-b border-border/50 last:border-b-0", props.focused && "bg-accent/25")}
     >
-      <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:px-5">
-        <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            {props.server.globalScope ? (
-              <Globe2Icon className="size-4 text-muted-foreground" />
-            ) : (
-              <ServerIcon className="size-4 text-muted-foreground" />
-            )}
-            <span
-              className={cn(
-                "truncate text-sm font-medium",
-                !props.server.enabledForProvider && "text-muted-foreground",
+      <Collapsible
+        open={open}
+        onOpenChange={(nextOpen) => {
+          setOpen(nextOpen);
+          if (nextOpen && props.runtime && !props.runtime.tools) onLoadDetails();
+        }}
+      >
+        <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:px-5">
+          <div className="min-w-0 flex-1 space-y-1">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              {props.server.globalScope ? (
+                <Globe2Icon className="size-4 text-muted-foreground" />
+              ) : (
+                <ServerIcon className="size-4 text-muted-foreground" />
               )}
-            >
-              {props.server.name}
-            </span>
-            <Badge size="sm" variant="outline">
-              {props.server.transport}
-            </Badge>
-            {runtimePresentation && props.server.enabledForProvider ? (
-              <Badge size="sm" variant={TONE_BADGE[runtimePresentation.tone]}>
-                {translate(`settings.mcp.runtime.state.${props.runtime!.state}`)}
+              <span
+                className={cn(
+                  "truncate text-sm font-medium",
+                  !props.server.enabledForProvider && "text-muted-foreground",
+                )}
+              >
+                {props.server.name}
+              </span>
+              <Badge size="sm" variant="outline">
+                {props.server.transport}
               </Badge>
-            ) : (
-              <Badge size="sm" variant={props.server.enabledForProvider ? "secondary" : "outline"}>
-                {props.server.enabledForProvider
-                  ? translate("settings.mcp.provider.configured")
-                  : translate("settings.mcp.provider.off")}
-              </Badge>
-            )}
-            {props.runtime?.toolCount !== undefined ? (
-              <Badge size="sm" variant="secondary">
-                {translate("settings.mcp.runtime.toolCount", {
-                  count: props.runtime.toolCount,
-                })}
-              </Badge>
-            ) : null}
-            {props.server.secretCount > 0 ? (
-              <Badge size="sm" variant="secondary">
-                {translate("settings.mcp.provider.valueCount", {
-                  count: props.server.secretCount,
-                })}
-              </Badge>
+              {runtimePresentation && props.server.enabledForProvider ? (
+                <Badge size="sm" variant={TONE_BADGE[runtimePresentation.tone]}>
+                  {translate(`settings.mcp.runtime.state.${props.runtime!.state}`)}
+                </Badge>
+              ) : (
+                <Badge
+                  size="sm"
+                  variant={props.server.enabledForProvider ? "secondary" : "outline"}
+                >
+                  {props.server.enabledForProvider
+                    ? translate("settings.mcp.provider.configured")
+                    : translate("settings.mcp.provider.off")}
+                </Badge>
+              )}
+              {props.runtime?.toolCount !== undefined ? (
+                <Badge size="sm" variant="secondary">
+                  {translate("settings.mcp.runtime.toolCount", {
+                    count: props.runtime.toolCount,
+                  })}
+                </Badge>
+              ) : null}
+              {props.server.secretCount > 0 ? (
+                <Badge size="sm" variant="secondary">
+                  {translate("settings.mcp.provider.valueCount", {
+                    count: props.server.secretCount,
+                  })}
+                </Badge>
+              ) : null}
+            </div>
+            <p className="truncate text-muted-foreground text-xs">{props.server.summary}</p>
+            <p className="text-2xs text-muted-foreground/70">
+              {props.server.scopeLabel} · {translate("settings.mcp.provider.t3Managed")}
+              {!props.hasLiveContext && props.server.enabledForProvider
+                ? ` · ${translate("settings.mcp.provider.configuredNewSessions")}`
+                : ""}
+            </p>
+            {props.runtime?.authLabel ? (
+              <p className="text-warning-foreground text-xs">{props.runtime.authLabel}</p>
             ) : null}
           </div>
-          <p className="truncate text-muted-foreground text-xs">{props.server.summary}</p>
-          <p className="text-[11px] text-muted-foreground/70">
-            {props.server.scopeLabel} · {translate("settings.mcp.provider.t3Managed")}
-            {!props.hasLiveContext && props.server.enabledForProvider
-              ? ` · ${translate("settings.mcp.provider.configuredNewSessions")}`
-              : ""}
-          </p>
-          {props.runtime?.authLabel ? (
-            <p className="text-warning-foreground text-xs">{props.runtime.authLabel}</p>
-          ) : null}
+          <div className="flex shrink-0 items-center gap-1.5">
+            <McpServerRowControls
+              serverKey={props.runtime?.serverKey ?? props.server.id}
+              serverName={props.server.name}
+              state={props.runtime?.state ?? "disabled"}
+              availableRuntimeActions={props.runtime ? availableRuntimeActions(props.runtime) : []}
+              pendingAction={props.pendingRuntimeAction}
+              readOnly={props.readOnly}
+              providerAssignment={{
+                enabled: props.server.enabledForProvider,
+                disabled: !props.server.globallyEnabled || !props.providerAssignmentsSupported,
+                pending: props.pending,
+                onChange: props.onToggle,
+              }}
+              onRuntimeAction={props.onRuntimeAction}
+              onEdit={props.onEdit}
+              onDuplicate={props.onDuplicate}
+              onDelete={props.onDelete}
+            />
+            {hasDetails ? (
+              <CollapsibleTrigger
+                className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                aria-label={translate("settings.mcp.provider.detailsAria", {
+                  action: translate(
+                    open ? "settings.mcp.provider.hide" : "settings.mcp.provider.show",
+                  ),
+                  server: props.server.name,
+                })}
+              >
+                <ChevronDownIcon
+                  className={cn("size-4 transition-transform", open && "rotate-180")}
+                />
+              </CollapsibleTrigger>
+            ) : null}
+          </div>
         </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          <McpServerRowControls
-            serverKey={props.runtime?.serverKey ?? props.server.id}
-            serverName={props.server.name}
-            state={props.runtime?.state ?? "disabled"}
-            availableRuntimeActions={props.runtime ? availableRuntimeActions(props.runtime) : []}
-            pendingAction={props.pendingRuntimeAction}
-            readOnly={props.readOnly}
-            providerAssignment={{
-              enabled: props.server.enabledForProvider,
-              disabled: !props.server.globallyEnabled || !props.providerAssignmentsSupported,
-              pending: props.pending,
-              onChange: props.onToggle,
-            }}
-            onRuntimeAction={props.onRuntimeAction}
-            onEdit={props.onEdit}
-            onDuplicate={props.onDuplicate}
-            onDelete={props.onDelete}
-          />
-          {hasDetails ? (
-            <CollapsibleTrigger
-              className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-              aria-label={translate("settings.mcp.provider.detailsAria", {
-                action: translate(
-                  open ? "settings.mcp.provider.hide" : "settings.mcp.provider.show",
-                ),
-                server: props.server.name,
-              })}
-            >
-              <ChevronDownIcon
-                className={cn("size-4 transition-transform", open && "rotate-180")}
-              />
-            </CollapsibleTrigger>
-          ) : null}
-        </div>
-      </div>
-      {hasDetails && props.runtime ? (
-        <CollapsiblePanel>
-          <RuntimeDetails server={props.runtime} />
-        </CollapsiblePanel>
-      ) : null}
-    </Collapsible>
+        {hasDetails && props.runtime ? (
+          <CollapsiblePanel>
+            <RuntimeDetails server={props.runtime} />
+          </CollapsiblePanel>
+        ) : null}
+      </Collapsible>
+    </div>
   );
 }
 
@@ -712,7 +717,7 @@ export function McpProviderWorkspace(props: McpProviderWorkspaceProps) {
         "overflow-hidden",
         props.embedded
           ? "border-y border-border/60 bg-transparent"
-          : "rounded-xl border border-[var(--mcp-provider-accent,var(--border))] bg-card/35 shadow-sm",
+          : "mcp-provider-accent-border rounded-xl border bg-card/35 shadow-sm",
       )}
       style={
         selectedProvider?.accentColor
@@ -805,7 +810,7 @@ export function McpProviderWorkspace(props: McpProviderWorkspaceProps) {
               <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 {translate("settings.mcp.runtime.source.t3Managed")}
               </h3>
-              <p className="mt-1 text-[11px] text-muted-foreground/80">
+              <p className="mt-1 text-2xs text-muted-foreground/80">
                 {translate("settings.mcp.provider.managedDescription")}
               </p>
             </div>

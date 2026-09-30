@@ -13,7 +13,7 @@ export interface SavedCloudEnvironmentConnectionPresentation {
  * it does not mean the connection attempt succeeded.
  */
 export function presentSavedCloudEnvironmentConnection(
-  connection: EnvironmentConnectionPresentation,
+  connection: Pick<EnvironmentConnectionPresentation, "phase" | "error">,
   translator: InterfaceTranslator,
 ): SavedCloudEnvironmentConnectionPresentation {
   switch (connection.phase) {
@@ -39,6 +39,13 @@ export function presentSavedCloudEnvironmentConnection(
                 error: connection.error,
               }),
         tone: "connecting",
+      };
+    // Not a failure: the machine is fine, this build just cannot talk to it.
+    case "unsupported":
+      return {
+        buttonLabel: translator.message("cloud.connection.unsupported"),
+        statusText: connection.error ?? translator.message("cloud.connection.unsupported"),
+        tone: "idle",
       };
     case "error":
       return {

@@ -39,6 +39,19 @@ describe("Android Home FAB layout", () => {
     expect(paddings).toEqual([122, 122, 122]);
   });
 
+  it("keeps both list modes above a native FAB enlarged by text preferences", () => {
+    const paddings = homeSurfaces.map((surface) =>
+      getHomeContentBottomPadding({
+        platform: "android",
+        safeAreaBottom: 34,
+        iosBottomToolbarClearance: 0,
+        androidFabClearance: 112,
+        surface,
+      }),
+    );
+    expect(paddings).toEqual([146, 146, 146]);
+  });
+
   it("preserves the existing iOS padding for each Home surface", () => {
     const paddings = homeSurfaces.map((surface) =>
       getHomeContentBottomPadding({

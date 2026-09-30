@@ -12,11 +12,12 @@ import type {
   ThreadForkBoundary,
   ThreadForkCommand,
 } from "@t3tools/contracts";
-import { resolveDefaultThreadEnvMode } from "@t3tools/shared/threadEnvMode";
+import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { waitForStartedServerThread } from "../components/ChatView.logic";
-import { readT3ProjectFileDefaultThreadEnvMode } from "../lib/t3ProjectFileDefaults";
+import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { newThreadId } from "../lib/utils";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -27,7 +28,8 @@ export function useThreadFork(input: {
   readonly thread: Thread | null;
   readonly project: Project | null;
   readonly available: boolean;
-  readonly settings: Pick<ServerSettings, "defaultThreadEnvMode" | "newWorktreesStartFromOrigin">;
+  readonly settings: Pick<ServerSettings, "defaultThreadEnvMode" | "newWorktreesStartFromOrigin"> &
+    Partial<Pick<ServerSettings, "projectSettingsOverrides" | "projectSettingsFolded">>;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly getModelSelection: () => ModelSelection | undefined;
@@ -57,18 +59,23 @@ export function useThreadFork(input: {
       setPendingBoundary(boundary);
       input.onError(thread.id, null);
       try {
+        const environmentSettings = { ...DEFAULT_SERVER_SETTINGS, ...input.settings };
+        const settingsTier = resolveProjectSettings(
+          environmentSettings,
+          project.id,
+          project,
+        ).settings;
         const projectFile =
-          project.defaultThreadEnvMode == null
-            ? await readT3ProjectFileDefaultThreadEnvMode(
-                project.environmentId,
-                project.workspaceRoot,
-              )
+          settingsTier.defaultThreadEnvMode === null
+            ? await readT3ProjectFile(project.environmentId, project.workspaceRoot)
             : null;
-        const defaultMode = resolveDefaultThreadEnvMode({
-          projectSetting: project.defaultThreadEnvMode,
+        const settings = resolveProjectSettings(
+          environmentSettings,
+          project.id,
+          project,
           projectFile,
-          globalDefault: input.settings.defaultThreadEnvMode,
-        });
+        ).settings;
+        const defaultMode = settings.defaultThreadEnvMode;
         const status = await readStatus({
           environmentId: project.environmentId,
           input: { cwd: project.workspaceRoot },
@@ -78,7 +85,7 @@ export function useThreadFork(input: {
           defaultMode,
           isGitRepository: status.value.isRepo,
           projectRootBranch: status.value.refName,
-          newWorktreesStartFromOrigin: input.settings.newWorktreesStartFromOrigin,
+          newWorktreesStartFromOrigin: settings.newWorktreesStartFromOrigin,
         });
         if (workspace.mode === "worktree" && workspace.baseBranch === null)
           throw new Error("Wait for the project's base branch before forking into a new worktree.");

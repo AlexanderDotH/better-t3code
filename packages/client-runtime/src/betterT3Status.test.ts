@@ -84,6 +84,14 @@ const graphStatus = (state: KnowledgeGraphStatusV1["state"]): KnowledgeGraphStat
   }) as KnowledgeGraphStatusV1;
 
 describe("Better T3 prepared statuses", () => {
+  it("keeps an incompatible connection visibly unsupported", () => {
+    expect(
+      prepareRemoteReadinessStatus({ connectionPhase: "unsupported", repositoryIdentity: true }),
+    ).toMatchObject({ state: "unsupported" });
+    expect(
+      prepareLifecycleStatus({ connectionPhase: "unsupported", receipt: "ready" }),
+    ).toMatchObject({ state: "unsupported" });
+  });
   it("does not call a disconnected or repository-limited environment remote-ready", () => {
     expect(
       prepareRemoteReadinessStatus({ connectionPhase: "offline", repositoryIdentity: true }),

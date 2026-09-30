@@ -25,7 +25,7 @@ import {
 } from "./KnowledgeGraphRepository.ts";
 
 const migratedSqlite = Layer.effectDiscard(Migration0059).pipe(
-  Layer.provideMerge(NodeSqliteClient.layerMemory()),
+  Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
 );
 const layer = KnowledgeGraphRepositoryLive.pipe(Layer.provideMerge(migratedSqlite));
 

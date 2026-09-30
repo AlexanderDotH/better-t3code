@@ -15,6 +15,7 @@ import {
 } from "../showcase/showcaseEnvironmentRows";
 import { CloudEnvironmentRows } from "./CloudEnvironmentRows";
 import { ConnectionEnvironmentRow } from "./ConnectionEnvironmentRow";
+import { GitHubRoutingSettings } from "./GitHubRoutingSettings";
 import { environmentPairingPrefill, splitEnvironmentSections } from "./environmentSections";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
@@ -29,6 +30,7 @@ export function EnvironmentManagerContent(props: {
     connectedEnvironments,
     onChangeConnectionPairingUrl,
     onReconnectEnvironment,
+    onSetEnvironmentEnabled,
     onRemoveEnvironmentPress,
     onUpdateEnvironment,
   } = useRemoteConnections();
@@ -118,6 +120,7 @@ export function EnvironmentManagerContent(props: {
                   environment={environment}
                   expanded={expandedId === environment.environmentId}
                   onToggle={() => handleToggle(environment.environmentId)}
+                  onSetEnabled={onSetEnvironmentEnabled}
                   onReconnect={onReconnectEnvironment}
                   onRemove={onRemoveEnvironmentPress}
                   onPairAgain={handlePairAgain}
@@ -156,6 +159,7 @@ export function EnvironmentManagerContent(props: {
             }
           : {})}
       />
+      <GitHubRoutingSettings />
     </ScrollView>
   );
 }

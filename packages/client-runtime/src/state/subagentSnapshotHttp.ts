@@ -45,6 +45,7 @@ const fetchEnvironmentSubagentSnapshot = Effect.fn(
 }) {
   return yield* executeAuthenticatedEnvironmentHttpRequest({
     ...input,
+    group: "orchestration",
     method: "GET",
     url: (httpBaseUrl) =>
       environmentEndpointUrl(
@@ -53,7 +54,7 @@ const fetchEnvironmentSubagentSnapshot = Effect.fn(
       ),
     timeoutMs: input.timeoutMs ?? DEFAULT_SUBAGENT_SNAPSHOT_TIMEOUT_MS,
     request: ({ client, headers }) =>
-      client.orchestration.subagentSnapshot({
+      client.subagentSnapshot({
         params: { threadId: input.threadId, subagentId: input.subagentId },
         payload: {
           ...(input.window !== undefined ? { activityLimit: input.window.activityLimit } : {}),

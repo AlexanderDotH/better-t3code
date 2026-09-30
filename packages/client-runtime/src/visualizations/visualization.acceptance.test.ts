@@ -26,9 +26,13 @@ beforeAll(() => {
       return (this.textContent?.length ?? 0) * 8;
     },
   });
-  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+  const canvasContext = {
     measureText: (text: string) => ({ width: text.length * 8 }),
-  } as CanvasRenderingContext2D);
+  } as CanvasRenderingContext2D;
+  const canvasPrototype = HTMLCanvasElement.prototype as {
+    getContext: (contextId: "2d") => CanvasRenderingContext2D | null;
+  };
+  vi.spyOn(canvasPrototype, "getContext").mockReturnValue(canvasContext);
   vi.stubGlobal(
     "fetch",
     vi.fn(() => {

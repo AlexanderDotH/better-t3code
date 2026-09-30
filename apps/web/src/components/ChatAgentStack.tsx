@@ -1,4 +1,3 @@
-import "./subagents/subagents.css";
 import type { OrchestrationSubagentSummary, SubagentId } from "@t3tools/contracts";
 import { ArchiveIcon, BotIcon, ChevronRightIcon } from "lucide-react";
 import {
@@ -101,7 +100,10 @@ export const ChatAgentStack = memo(function ChatAgentStack({
         className="subagent-stack-compact-trigger pointer-events-auto h-7 w-fit items-center gap-1.5 rounded-full border border-border/65 bg-background/92 px-2.5 text-xs font-medium text-foreground shadow-md/8 outline-none backdrop-blur-xl transition-[background-color,border-color,box-shadow] hover:border-border hover:bg-background hover:shadow-md/12 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
         onClick={() => setCompactOpen((current) => !current)}
       >
-        <BotIcon aria-hidden="true" className="size-3.5 text-sky-600 dark:text-sky-300/80" />
+        <BotIcon
+          aria-hidden="true"
+          className="size-3.5 text-info-foreground dark:text-info-foreground/80"
+        />
         <span>{translate("chat.agent.heading")}</span>
         <span className="tabular-nums">{subagents.length}</span>
         <ChevronRightIcon
@@ -295,7 +297,7 @@ function ArchivedAgentSection({
           className="size-3 transition-transform duration-200 group-data-panel-open:rotate-90"
         />
       </CollapsibleTrigger>
-      <CollapsiblePanel className="mt-1 w-full transition-[height,opacity] data-starting-style:opacity-0 data-ending-style:opacity-0">
+      <CollapsiblePanel className="mt-1 w-full">
         <ul className="w-full" role="list" aria-label={translate("chat.agent.archivedAria")}>
           {renderedAgents.map((agent) => (
             <li key={agent.id} className="mb-1 h-7">

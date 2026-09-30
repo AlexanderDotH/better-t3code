@@ -119,7 +119,7 @@ export function resolveForkActionPresentation(input: {
 export function resolveForkWorkspace(input: {
   readonly projectSetting: "local" | "worktree" | null | undefined;
   readonly projectFile: "local" | "worktree" | null | undefined;
-  readonly globalDefault: "local" | "worktree";
+  readonly globalDefault: "local" | "worktree" | null | undefined;
   readonly startFromOrigin: boolean;
   readonly isGitRepository: boolean;
   readonly refs: ReadonlyArray<

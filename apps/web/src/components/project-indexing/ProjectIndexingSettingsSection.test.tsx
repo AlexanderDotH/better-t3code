@@ -50,7 +50,13 @@ vi.mock("../../env", () => ({ isElectron: false }));
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: () => ({ status: fixture.shellLive ? "live" : "cached", error: Option.none() }),
 }));
-vi.mock("../../state/shell", () => ({ environmentShell: { stateValueAtom: (id: string) => id } }));
+vi.mock("../../state/shell", async () => {
+  const { Atom } = await import("effect/unstable/reactivity");
+  return {
+    environmentShell: { stateValueAtom: (id: string) => id },
+    environmentSnapshotAtom: Atom.family((_id: string) => Atom.make(null)),
+  };
+});
 vi.mock("../../hooks/useInterfaceTranslator", () => ({
   useInterfaceTranslator: () => ({ message: (key: string) => key }),
 }));
@@ -67,6 +73,7 @@ vi.mock("../../state/entities", () => ({
   useThreadShells: () => fixture.threads,
 }));
 vi.mock("../../state/projectIndexing", () => ({ bindProjectIndexApi: fixture.bind }));
+vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("../../state/session", () => ({
   environmentSession: { sessionStateAtom: (id: string) => id },
 }));
