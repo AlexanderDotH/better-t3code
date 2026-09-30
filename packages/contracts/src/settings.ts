@@ -394,6 +394,9 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed("red-green" as const)),
   ),
   chatWidth: ChatWidth.pipe(Schema.withDecodingDefault(Effect.succeed("comfortable" as const))),
+  composerUsageLimitsVisible: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   usagePacingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   usagePacingWorkdayHours: UsagePacingWorkdayHours.pipe(
     Schema.withDecodingDefault(Effect.succeed(8)),
@@ -2262,6 +2265,7 @@ export const ServerSettingsPatch = Schema.Struct({
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
 export const ClientSettingsPatch = Schema.Struct({
+  composerUsageLimitsVisible: Schema.optionalKey(Schema.Boolean),
   usagePacingEnabled: Schema.optionalKey(Schema.Boolean),
   usagePacingWorkdayHours: Schema.optionalKey(UsagePacingWorkdayHours),
   notificationMode: Schema.optionalKey(NotificationMode),

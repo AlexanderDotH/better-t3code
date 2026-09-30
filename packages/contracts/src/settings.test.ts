@@ -1907,3 +1907,27 @@ it("validates remote device hosts and rejects ambiguous host ids", () => {
   ).toThrow();
   expect(() => decodeDeviceHostSettings({ deviceHosts: [{ ...host, port: 0 }] })).toThrow();
 });
+
+describe("ClientSettings composer usage limits visibility", () => {
+  it("keeps older settings hidden and leaves absent patches unchanged", () => {
+    expect(decodeClientSettings({}).composerUsageLimitsVisible).toBe(false);
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("composerUsageLimitsVisible");
+  });
+
+  it.each([true, false])(
+    "persists the explicit visibility choice %s",
+    (composerUsageLimitsVisible) => {
+      const preference = { composerUsageLimitsVisible };
+      expect(encodeClientSettings(decodeClientSettings(preference))).toMatchObject(preference);
+      expect(decodeClientSettingsPatch(preference)).toEqual(preference);
+    },
+  );
+
+  it.each(["true", "false", 1, null])(
+    "rejects invalid visibility %s",
+    (composerUsageLimitsVisible) => {
+      expect(() => decodeClientSettings({ composerUsageLimitsVisible })).toThrow();
+      expect(() => decodeClientSettingsPatch({ composerUsageLimitsVisible })).toThrow();
+    },
+  );
+});
