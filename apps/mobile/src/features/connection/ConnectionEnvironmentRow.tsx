@@ -1,4 +1,3 @@
-import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { TextInput } from "react-native";
 
 import { SymbolView } from "../../components/AppSymbol";
@@ -22,6 +21,7 @@ import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-typ
 import { serverEnvironment } from "../../state/server";
 
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
+import { ConnectionTraceId } from "./ConnectionTraceId";
 import {
   environmentLastSyncedText,
   environmentRecoveryAction,
@@ -172,23 +172,11 @@ export function ConnectionEnvironmentRow(props: {
             >
               {statusLabel}
               {statusTraceId ? (
-                <>
-                  {translator.message("mobile.connection.traceId")}
-                  <Text
-                    accessibilityHint={translator.message("mobile.connection.copyTraceHint")}
-                    accessibilityLabel={translator.message("mobile.connection.copyTraceWithId", {
-                      traceId: statusTraceId,
-                    })}
-                    accessibilityRole="button"
-                    className="underline decoration-dotted"
-                    onPress={(event) => {
-                      event.stopPropagation();
-                      copyTextWithHaptic(statusTraceId, { target: "connection-trace-id" });
-                    }}
-                  >
-                    {statusTraceId}
-                  </Text>
-                </>
+                <ConnectionTraceId
+                  traceId={statusTraceId}
+                  tone={hasConnectionFailure ? "danger" : "muted"}
+                  activation={props.opensDetails ? "longPress" : "press"}
+                />
               ) : null}
             </Text>
           ) : null}

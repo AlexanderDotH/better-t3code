@@ -2,6 +2,7 @@ package expo.modules.t3composereditor
 
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import expo.modules.kotlin.views.ViewDefinitionBuilder
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -123,28 +124,32 @@ class T3ComposerEditorModule : Module() {
         view.setMaxInputChars(maxInputChars)
       }
 
-      Events(
-        "onComposerChange",
-        "onComposerSelectionChange",
-        "onComposerFocus",
-        "onComposerBlur",
-        "onComposerSubmit",
-        "onComposerPasteImages",
-        "onComposerContextPress",
-        "onComposerPasteContext",
-        "onComposerPasteText",
-        "onComposerContentSizeChange",
-      )
-
-      AsyncFunction("focus") { view: T3ComposerEditorView ->
-        view.focusEditor()
-      }
-      AsyncFunction("blur") { view: T3ComposerEditorView ->
-        view.blurEditor()
-      }
-      AsyncFunction("setSelection") { view: T3ComposerEditorView, start: Int, end: Int ->
-        view.setSelection(start, end)
-      }
+      registerEditorEventsAndCommands()
     }
+  }
+}
+
+private fun ViewDefinitionBuilder<T3ComposerEditorView>.registerEditorEventsAndCommands() {
+  Events(
+    "onComposerChange",
+    "onComposerSelectionChange",
+    "onComposerFocus",
+    "onComposerBlur",
+    "onComposerSubmit",
+    "onComposerPasteImages",
+    "onComposerContextPress",
+    "onComposerPasteContext",
+    "onComposerPasteText",
+    "onComposerContentSizeChange",
+  )
+
+  AsyncFunction("focus") { view: T3ComposerEditorView ->
+    view.focusEditor()
+  }
+  AsyncFunction("blur") { view: T3ComposerEditorView ->
+    view.blurEditor()
+  }
+  AsyncFunction("setSelection") { view: T3ComposerEditorView, start: Int, end: Int ->
+    view.setSelection(start, end)
   }
 }

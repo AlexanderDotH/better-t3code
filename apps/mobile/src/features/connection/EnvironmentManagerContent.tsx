@@ -15,6 +15,7 @@ import {
 } from "../showcase/showcaseEnvironmentRows";
 import { CloudEnvironmentRows } from "./CloudEnvironmentRows";
 import { ConnectionEnvironmentRow } from "./ConnectionEnvironmentRow";
+import { GitHubRoutingSettings } from "./GitHubRoutingSettings";
 import { environmentPairingPrefill, splitEnvironmentSections } from "./environmentSections";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
@@ -158,6 +159,7 @@ export function EnvironmentManagerContent(props: {
             }
           : {})}
       />
+      <GitHubRoutingSettings />
     </ScrollView>
   );
 }
