@@ -89,7 +89,7 @@ function TokenUsageSource(props: {
         <span className={`size-1.5 shrink-0 rounded-full ${props.className}`} aria-hidden />
         <span className="flex-1 font-medium">{props.label}</span>
         <span className="font-mono tabular-nums">{value === null ? "—" : number(value)}</span>
-        <span className="w-9 text-right text-[10px] text-muted-foreground tabular-nums">
+        <span className="w-9 text-right text-3xs text-muted-foreground tabular-nums">
           {value !== null && props.total > 0
             ? number(value / props.total, { style: "percent", maximumFractionDigits: 0 })
             : "—"}
@@ -103,7 +103,7 @@ function TokenUsageSource(props: {
           ]}
         />
       ) : null}
-      <div className="flex justify-between gap-3 text-[10px] leading-4 text-muted-foreground">
+      <div className="flex justify-between gap-3 text-3xs leading-4 text-muted-foreground">
         <span>
           {message(props.direction === "input" ? "chat.tokens.uncached" : "chat.tokens.response")}{" "}
           <span className="font-mono tabular-nums">
@@ -146,7 +146,7 @@ export function ComposerTokenUsageMetrics({ usage }: { readonly usage: ThreadTok
           delay={0}
           render={<span tabIndex={0} />}
           aria-label={`${label}: ${number(value)}${partial ? "+" : ""}`}
-          className="relative inline-flex cursor-help items-center gap-1 rounded-md bg-background/35 px-2 py-1 text-[10px] leading-4 text-muted-foreground tabular-nums transition-colors hover:bg-background/60 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+          className="relative inline-flex cursor-help items-center gap-1 rounded-md bg-background/35 px-2 py-1 text-3xs leading-4 text-muted-foreground tabular-nums transition-colors hover:bg-background/60 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
           data-composer-token-direction={direction}
         >
           {hasSubagents ? (
@@ -168,7 +168,7 @@ export function ComposerTokenUsageMetrics({ usage }: { readonly usage: ThreadTok
           side="top"
           align="end"
           sideOffset={8}
-          className="w-72 max-w-[calc(100vw-2rem)] duration-75"
+          className="w-72 max-w-[calc(100vw-2rem)]"
         >
           <div className="space-y-3 p-1.5 text-left">
             <div className="flex items-center justify-between gap-4">
@@ -176,7 +176,7 @@ export function ComposerTokenUsageMetrics({ usage }: { readonly usage: ThreadTok
                 <div className="font-medium">
                   {message("chat.tokens.title", { direction: label })}
                 </div>
-                <div className="mt-0.5 text-[10px] text-muted-foreground">
+                <div className="mt-0.5 text-3xs text-muted-foreground">
                   {message("chat.tokens.scope")}
                 </div>
               </div>

@@ -38,7 +38,7 @@ export function ModelCatalogMetadata(props: {
 
   return (
     <div
-      className="mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden text-[10px] leading-none text-muted-foreground/70"
+      className="mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden text-3xs leading-none text-muted-foreground/70"
       data-model-picker-catalog-metadata="true"
     >
       <span className="max-w-[38%] shrink-0 truncate font-medium text-muted-foreground">
@@ -59,17 +59,17 @@ export function ModelCatalogMetadata(props: {
       {hasFeatureBadges ? (
         <span className="flex min-w-0 items-center gap-1 overflow-hidden">
           {isFree ? (
-            <span className="shrink-0 rounded-[4px] bg-emerald-500/10 px-1 py-0.5 font-medium text-emerald-700 dark:text-emerald-300/90">
+            <span className="shrink-0 rounded-catalog-chip bg-success/10 px-1 py-0.5 font-medium text-success-foreground">
               {translate("chat.model.free")}
             </span>
           ) : null}
           {supportsVision ? (
-            <span className="shrink-0 rounded-[4px] bg-foreground/[0.045] px-1 py-0.5">
+            <span className="shrink-0 rounded-catalog-chip bg-foreground/[0.045] px-1 py-0.5">
               {translate("chat.model.vision")}
             </span>
           ) : null}
           {supportsReasoning ? (
-            <span className="shrink-0 rounded-[4px] bg-foreground/[0.045] px-1 py-0.5">
+            <span className="shrink-0 rounded-catalog-chip bg-foreground/[0.045] px-1 py-0.5">
               {translate("chat.model.reasoning")}
             </span>
           ) : null}
