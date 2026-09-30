@@ -25,7 +25,6 @@ import type {
   BetterT3SettingsPreviewModel,
 } from "./BetterT3SettingsPreview.logic";
 
-import "./BetterT3SettingsPreview.css";
 import type { ReasoningDisplayMode } from "./BetterT3SettingsPanel.logic";
 
 type Translate = InterfaceTranslator["message"];
@@ -87,11 +86,11 @@ function AgentPromptPreview(props: {
   return (
     <div className="flex h-full flex-col justify-between gap-2 rounded-lg border border-border/70 bg-card p-3 shadow-xs">
       <div className="flex items-center justify-between gap-2">
-        <span className="inline-flex min-w-0 items-center gap-1.5 truncate text-[10px] font-medium text-foreground">
+        <span className="inline-flex min-w-0 items-center gap-1.5 truncate text-3xs font-medium text-foreground">
           <MessageSquareIcon className="size-3 shrink-0 text-muted-foreground" />
           {props.translate("settings.betterT3.preview.agent.prompt")}
         </span>
-        <span className="rounded-md bg-primary/10 px-1.5 py-0.5 text-[9px] font-medium text-primary">
+        <span className="rounded-md bg-primary/10 px-1.5 py-0.5 better-t3-preview-label font-medium text-primary">
           {props.translate(
             props.model.planMode
               ? "settings.betterT3.preview.agent.plan"
@@ -105,7 +104,7 @@ function AgentPromptPreview(props: {
         <span className="better-t3-preview-reveal block h-1.5 w-[46%] rounded-full bg-foreground/12" />
       </div>
       {props.model.promptImprovement ? (
-        <span className="inline-flex w-fit items-center gap-1 rounded-full border border-primary/15 bg-primary/8 px-2 py-1 text-[9px] text-primary">
+        <span className="inline-flex w-fit items-center gap-1 rounded-full border border-primary/15 bg-primary/8 px-2 py-1 better-t3-preview-label text-primary">
           <SparklesIcon className="size-2.5" />
           {props.translate("settings.betterT3.preview.agent.improved")}
         </span>
@@ -125,7 +124,7 @@ function AgentWorkflowPreview(props: {
     : (["settings.betterT3.preview.agent.agent"] as const);
   return (
     <div className="flex h-full flex-col justify-center">
-      <div className="mb-1.5 flex items-center justify-between gap-1.5 text-[9px] text-muted-foreground">
+      <div className="mb-1.5 flex items-center justify-between gap-1.5 better-t3-preview-label text-muted-foreground">
         <span className="inline-flex items-center gap-1">
           <WorkflowIcon className="size-2.5" />
           {props.translate("settings.betterT3.preview.agent.workflow")}
@@ -151,7 +150,7 @@ function AgentWorkflowPreview(props: {
             >
               <BotIcon className="size-2.5" />
             </span>
-            <span className="min-w-0 flex-1 truncate text-[9px] font-medium text-foreground/85">
+            <span className="min-w-0 flex-1 truncate better-t3-preview-label font-medium text-foreground/85">
               {props.translate(messageId)}
             </span>
             <span className="size-1 rounded-full bg-success" />
@@ -180,7 +179,7 @@ function AgentReasoningPreview(props: {
           !props.model.reasoningVisibility && "opacity-40",
         )}
       >
-        <span className="text-[9px] font-medium text-muted-foreground">
+        <span className="better-t3-preview-label font-medium text-muted-foreground">
           {props.translate("settings.betterT3.preview.agent.reasoning")}
         </span>
         <div className="mt-1.5 space-y-1">
@@ -250,7 +249,7 @@ function SidebarLayoutPreview(props: {
     >
       {props.model.sidebarPosition === "left" ? sidebar : null}
       <div className="flex min-w-0 flex-col gap-2 p-2">
-        <span className="text-[9px] font-medium text-muted-foreground">
+        <span className="better-t3-preview-label font-medium text-muted-foreground">
           {props.translate(
             props.model.sidebarPosition === "left"
               ? "settings.betterT3.sidebarPosition.left"
@@ -287,7 +286,7 @@ function ChatPresentationPreview(props: {
       >
         <BotIcon className="mt-0.5 size-3 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1 space-y-1.5">
-          <div className="truncate text-[9px] leading-3 text-foreground/80">
+          <div className="truncate better-t3-preview-label leading-3 text-foreground/80">
             {props.translate("settings.betterT3.preview.chat.response")}
           </div>
           <div className="h-1 w-[88%] rounded-full bg-foreground/15" />
@@ -310,22 +309,22 @@ function WorkspaceCardDeckPreview(props: {
     >
       {props.model.workspaceCardDeck ? (
         <>
-          <div className="better-t3-preview-deck-top absolute inset-x-3 top-0 flex h-16 items-start gap-1.5 rounded-lg border border-border/80 bg-card px-2.5 pt-1.5 text-[9px] font-medium text-muted-foreground shadow-xs">
+          <div className="better-t3-preview-deck-top absolute inset-x-3 top-0 flex h-16 items-start gap-1.5 rounded-lg border border-border/80 bg-card px-2.5 pt-1.5 better-t3-preview-label font-medium text-muted-foreground shadow-xs">
             <PlugIcon className="size-3" />
             {props.translate("settings.betterT3.preview.chat.mcp")}
             <span className="ml-auto mt-1 size-1 rounded-full bg-success" />
           </div>
-          <div className="better-t3-preview-deck-bottom absolute inset-x-3 bottom-0 flex h-16 items-end gap-1.5 rounded-lg border border-border/80 bg-card px-2.5 pb-1.5 text-[9px] font-medium text-muted-foreground shadow-xs">
+          <div className="better-t3-preview-deck-bottom absolute inset-x-3 bottom-0 flex h-16 items-end gap-1.5 rounded-lg border border-border/80 bg-card px-2.5 pb-1.5 better-t3-preview-label font-medium text-muted-foreground shadow-xs">
             <GitBranchIcon className="size-3" />
             {props.translate("settings.betterT3.preview.chat.git")}
-            <span className="ml-auto font-mono text-[8px] text-success">
+            <span className="ml-auto font-mono text-4xs text-success">
               +12 <span className="text-muted-foreground">−3</span>
             </span>
           </div>
         </>
       ) : null}
       <div className="better-t3-preview-active-card relative z-10 flex h-16 w-full flex-col justify-between rounded-lg border border-border bg-background p-2.5 shadow-md shadow-black/8">
-        <span className="truncate text-[10px] text-muted-foreground">
+        <span className="truncate text-3xs text-muted-foreground">
           {props.translate("settings.betterT3.preview.chat.prompt")}
         </span>
         <div className="flex items-center justify-between">
@@ -346,14 +345,14 @@ function ContextWindowSelectorPreview(props: {
   return (
     <div className="flex h-full items-center justify-center">
       <div className="w-full max-w-64 rounded-lg border border-border/70 bg-card p-2.5 shadow-xs">
-        <div className="mb-2 flex min-w-0 items-center justify-between gap-2 text-[9px] font-medium text-muted-foreground">
+        <div className="mb-2 flex min-w-0 items-center justify-between gap-2 better-t3-preview-label font-medium text-muted-foreground">
           <span className="truncate">{props.translate("chat.contextWindow.title")}</span>
           <span className="inline-flex shrink-0 items-center gap-1 text-foreground">
             272K <ChevronDownIcon className="size-2.5" />
           </span>
         </div>
         {props.selector === "native" ? (
-          <div className="better-t3-preview-reveal space-y-1 text-[9px] tabular-nums">
+          <div className="better-t3-preview-reveal space-y-1 better-t3-preview-label tabular-nums">
             <div className="flex items-center justify-between rounded bg-primary/10 px-1.5 py-1 text-primary">
               <span>272K</span>
               <CheckIcon className="size-2.5" />
@@ -369,7 +368,7 @@ function ContextWindowSelectorPreview(props: {
                 <span className="absolute left-1/4 top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-primary/40 bg-background shadow-sm" />
               </span>
             </div>
-            <div className="mt-1.5 flex justify-between text-[8px] tabular-nums text-muted-foreground">
+            <div className="mt-1.5 flex justify-between text-4xs tabular-nums text-muted-foreground">
               <span>16K</span>
               <span>1M</span>
             </div>
@@ -573,22 +572,22 @@ function BetterT3FeatureVisual(props: {
           featureId={props.featureId}
         >
           <div className="flex h-full flex-col justify-between rounded-lg border border-border/70 bg-card p-3 shadow-xs">
-            <span className="text-[9px] text-muted-foreground">
+            <span className="better-t3-preview-label text-muted-foreground">
               {props.translate("settings.betterT3.preview.chat.prompt")}
             </span>
             <div className="flex items-center gap-1">
-              <span className="inline-flex h-5 items-center gap-1 rounded-md border border-border/70 bg-background px-1.5 text-[9px]">
+              <span className="inline-flex h-5 items-center gap-1 rounded-md border border-border/70 bg-background px-1.5 better-t3-preview-label">
                 <BotIcon className="size-2.5" />
                 <span className="h-1.5 w-5 rounded-full bg-current opacity-45" />
                 <ChevronDownIcon className="size-2.5 text-muted-foreground" />
               </span>
               {chat.expandedComposerControls ? (
                 <>
-                  <span className="inline-flex h-5 items-center gap-1 rounded-md border border-border/70 bg-background px-1.5 text-[9px]">
+                  <span className="inline-flex h-5 items-center gap-1 rounded-md border border-border/70 bg-background px-1.5 better-t3-preview-label">
                     <WorkflowIcon className="size-2.5" />
                     {props.translate("settings.betterT3.preview.agent.plan")}
                   </span>
-                  <span className="inline-flex h-5 items-center rounded-md border border-border/70 bg-background px-1.5 text-[9px]">
+                  <span className="inline-flex h-5 items-center rounded-md border border-border/70 bg-background px-1.5 better-t3-preview-label">
                     {props.translate("settings.betterT3.preview.agent.build")}
                   </span>
                 </>
@@ -619,7 +618,7 @@ function BetterT3FeatureVisual(props: {
                   : "border-border/60 bg-muted/30 text-foreground/75",
               )}
             >
-              <div className="mb-1.5 flex items-center gap-1.5 text-[9px] font-medium">
+              <div className="mb-1.5 flex items-center gap-1.5 better-t3-preview-label font-medium">
                 <CheckIcon className="size-3" />
                 {props.translate("settings.betterT3.preview.agent.plan")}
               </div>
@@ -661,10 +660,10 @@ function BetterT3FeatureVisual(props: {
           {agent.reasoningWorkingOverlay ? (
             <div className="flex h-full flex-col justify-end gap-2">
               <div className="flex items-center gap-2 rounded-xl border border-border/70 bg-card px-3 py-2 shadow-xs">
-                <span className="shrink-0 text-[9px] text-muted-foreground">
+                <span className="shrink-0 better-t3-preview-label text-muted-foreground">
                   {props.translate("chat.timeline.working")}
                 </span>
-                <span className="better-t3-preview-reveal min-w-0 flex-1 truncate text-center text-[9px] text-foreground">
+                <span className="better-t3-preview-reveal min-w-0 flex-1 truncate text-center better-t3-preview-label text-foreground">
                   {props.translate("settings.betterT3.preview.reasoning.current")}
                 </span>
                 <span aria-hidden className="flex shrink-0 gap-1">
@@ -707,11 +706,11 @@ function BetterT3FeatureVisual(props: {
             className="flex h-full flex-col justify-between rounded-lg border border-border/70 bg-card p-3 shadow-xs"
             data-streaming-motion={chat.characterStreamingMotion}
           >
-            <div className="flex items-center gap-1.5 text-[9px] font-medium text-muted-foreground">
+            <div className="flex items-center gap-1.5 better-t3-preview-label font-medium text-muted-foreground">
               <BotIcon className="size-3" />
               {props.translate("settings.betterT3.preview.live")}
             </div>
-            <div className="text-[11px] leading-5 text-foreground/90">
+            <div className="text-2xs leading-5 text-foreground/90">
               {chat.characterStreamingMotion ? (
                 <>
                   {keyedCharacters(props.translate("settings.betterT3.preview.chat.response")).map(
@@ -731,7 +730,7 @@ function BetterT3FeatureVisual(props: {
                 props.translate("settings.betterT3.preview.chat.response")
               )}
             </div>
-            <div className="text-[9px] text-muted-foreground">
+            <div className="better-t3-preview-label text-muted-foreground">
               {props.translate(
                 chat.characterStreamingMotion
                   ? "settings.betterT3.preview.chat.smooth"

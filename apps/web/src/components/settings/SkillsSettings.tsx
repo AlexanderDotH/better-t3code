@@ -104,7 +104,7 @@ function SkillImportSourceRows(props: {
             <span className="min-w-0 flex-1 space-y-1">
               <span className="flex min-w-0 items-center gap-2">
                 <span className="truncate text-sm font-medium">{source.label}</span>
-                <span className="rounded-sm border px-1.5 py-0.5 text-muted-foreground text-[10px] uppercase">
+                <span className="rounded-sm border px-1.5 py-0.5 text-muted-foreground text-3xs uppercase">
                   {source.tool}
                 </span>
               </span>
@@ -158,7 +158,7 @@ function SkillImportDialog(props: {
             })}
           </DialogDescription>
         </DialogHeader>
-        <DialogPanel className="space-y-4">
+        <DialogPanel>
           <SkillImportSourceRows
             sources={props.sources}
             selectedSourceIds={props.selectedSourceIds}
@@ -241,7 +241,7 @@ function SkillEditorDialog(props: {
         <DialogHeader>
           <DialogTitle>{props.title}</DialogTitle>
         </DialogHeader>
-        <DialogPanel className="space-y-4">
+        <DialogPanel>
           <div className="grid gap-2">
             <Label>{translator.message("settings.skills.name")}</Label>
             <Input
@@ -290,7 +290,8 @@ function SkillEditorDialog(props: {
           <div className="grid gap-2">
             <Label>{translator.message("settings.skills.instructions")}</Label>
             <Textarea
-              className="font-mono text-xs"
+              variant="code"
+              size="sm"
               value={props.draft.body}
               onChange={(event) =>
                 props.onDraftChange({ ...props.draft, body: event.currentTarget.value })
@@ -660,7 +661,7 @@ export function SkillsSettingsPanel(props: {
                   <div className="flex items-center gap-2">
                     <span className="truncate text-sm font-medium">{skill.name}</span>
                     {skill.readOnly ? (
-                      <span className="rounded-sm border px-1.5 py-0.5 text-muted-foreground text-[10px] uppercase">
+                      <span className="rounded-sm border px-1.5 py-0.5 text-muted-foreground text-3xs uppercase">
                         {translator.message("settings.skills.readOnly")}
                       </span>
                     ) : null}
