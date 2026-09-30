@@ -86,6 +86,8 @@ const makeFakeArchives = Effect.fn("test.makeFakeArchives")(function* () {
       `#!/bin/sh\necho "stub ${key} $*"\nexit 7\n`,
     );
     yield* fs.chmod(path.join(contentDir, "t3"), 0o755);
+    yield* fs.writeFileString(path.join(contentDir, "service-launcher"), `launcher ${key}\n`);
+    yield* fs.chmod(path.join(contentDir, "service-launcher"), 0o755);
     const exit = yield* run("tar", ["-czf", path.join(archivesDir, `${stem}.tar.gz`), stem], {
       cwd: stage,
     });
@@ -143,6 +145,8 @@ it.layer(NodeServices.layer)("build-npm-platform-packages", (it) => {
       assert.deepStrictEqual(linuxManifest.files, [
         "t3",
         "t3.exe",
+        "service-launcher",
+        "service-launcher.exe",
         "client",
         "resource-monitor",
         "project-indexer",
@@ -160,6 +164,14 @@ it.layer(NodeServices.layer)("build-npm-platform-packages", (it) => {
       assert.deepStrictEqual(linuxManifest.bundleDependencies, ["@ff-labs/fff-node", "node-pty"]);
       // Archive contents sit at the package root, not under the archive stem.
       assert.isTrue(yield* fs.exists(path.join(linuxDir, "client/index.html")));
+      assert.equal(
+        yield* fs.readFileString(path.join(linuxDir, "service-launcher")),
+        "launcher linux-x64\n",
+      );
+      assert.equal(
+        Number((yield* fs.stat(path.join(linuxDir, "service-launcher"))).mode) & 0o111,
+        0o111,
+      );
       assert.equal(
         yield* fs.readFileString(path.join(linuxDir, "project-indexer/ProjectIndexer.dll")),
         "compiler",
@@ -215,6 +227,10 @@ it.layer(NodeServices.layer)("build-npm-platform-packages", (it) => {
       const lines = listing.stdout.split("\n");
       assert.isTrue(lines.some((line) => line.endsWith(" package/node_modules/node-pty/")));
       assert.isTrue(lines.some((line) => line.endsWith(" package/package.json")));
+      assert.isTrue(
+        lines.some((line) => /^-rwxr-xr-x .* package\/service-launcher$/.test(line)),
+        listing.stdout,
+      );
       assert.isTrue(
         lines.some((line) => /^-rwxr-xr-x .* package\/t3$/.test(line)),
         listing.stdout,

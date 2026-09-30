@@ -6,11 +6,13 @@ import {
   HostProcessUserId,
 } from "@t3tools/shared/hostProcess";
 import * as NodeCrypto from "node:crypto";
+import * as NodeSea from "node:sea";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -747,6 +749,8 @@ export class BootService extends Context.Service<
 
 export interface BootServiceHost {
   readonly execPath: string;
+  readonly singleExecutable?: boolean;
+  readonly launcherSourcePath?: string;
   /** Test seam for the bounded Windows stop-request acknowledgement wait. */
   readonly stopAcknowledgementTimeout?: Duration.Input;
   /** Test seam invoked after the durable request exists and before acknowledgement wait. */
@@ -836,15 +840,47 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const stopAcknowledgementPath = path.join(input.baseDir, "runtime", SERVICE_STOP_ACK_FILE);
   const restartPendingPath = path.join(input.baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
   const runtimePaths = pinnedRuntimePaths(path, input.baseDir, input.cliVersion, platform);
-  const writeDurably = (filePath: string, contents: string | Uint8Array) =>
+  const singleExecutable = host.singleExecutable ?? NodeSea.isSea();
+  const launcherFileName = singleExecutable
+    ? platform === "win32"
+      ? "service-launcher.exe"
+      : "service-launcher"
+    : "service-launcher.mjs";
+  const launcherSourcePath =
+    host.launcherSourcePath ??
+    (singleExecutable
+      ? path.join(path.dirname(host.execPath), launcherFileName)
+      : yield* Effect.gen(function* () {
+          const bundledSource = yield* path.fromFileUrl(
+            new URL("./service-launcher.mjs", import.meta.url),
+          );
+          return (yield* fs.exists(bundledSource))
+            ? bundledSource
+            : yield* path.fromFileUrl(new URL("../../dist/service-launcher.mjs", import.meta.url));
+        }));
+  const launcherSource = yield* fs.readFile(launcherSourcePath).pipe(Effect.exit);
+  const launcherDigest = Exit.isSuccess(launcherSource)
+    ? NodeCrypto.createHash("sha256").update(launcherSource.value).digest("hex")
+    : "unavailable";
+  // Immutable paths let a deferred repair stage a new Windows executable
+  // without replacing the image that is still running.
+  const launcherPath = path.join(
+    input.baseDir,
+    "runtime",
+    "launchers",
+    launcherDigest,
+    launcherFileName,
+  );
+  const writeDurably = (filePath: string, contents: string | Uint8Array, mode = 0o600) =>
     Effect.scoped(
       Effect.gen(function* () {
         const directory = path.dirname(filePath);
         yield* fs.makeDirectory(directory, { recursive: true });
         const tempPath = yield* fs.makeTempFileScoped({ directory, prefix: ".service-write-" });
         yield* typeof contents === "string"
-          ? fs.writeFileString(tempPath, contents, { mode: 0o600 })
-          : fs.writeFile(tempPath, contents, { mode: 0o600 });
+          ? fs.writeFileString(tempPath, contents, { mode })
+          : fs.writeFile(tempPath, contents, { mode });
+        if (mode !== 0o600) yield* fs.chmod(tempPath, mode);
         yield* (yield* fs.open(tempPath, { flag: "r+" })).sync;
         yield* fs.rename(tempPath, filePath);
         if (platform !== "win32") {
@@ -852,12 +888,11 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         }
       }),
     ).pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-  // The executable hosts the launcher as a hidden subcommand of itself, so
-  // the unit runs the pinned runtime directly.
+  // Keep the installing fork's launcher independent from the selected server
+  // release. Published runtimes may predate its lifecycle protocol and CLI flags.
   const plan: BootServicePlan = {
     program: [
-      runtimePaths.entryPath,
-      "__service-launcher",
+      ...(singleExecutable ? [launcherPath] : [host.execPath, launcherPath]),
       "--base-dir",
       input.baseDir,
       "--log-path",
@@ -1109,6 +1144,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       platform,
       arch,
       releaseBaseUrl,
+      ...(singleExecutable ? {} : { nodeExecutablePath: host.execPath }),
       validate: (runtime) =>
         runner
           .run({
@@ -1151,6 +1187,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           : new BootServiceInstallError({ cause: error }),
       ),
     );
+    const launcherContents = yield* Effect.suspend(() => launcherSource).pipe(
+      Effect.mapError((cause) => new BootServiceInstallError({ cause })),
+    );
     const unitExists = yield* fs
       .exists(unitPath)
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
@@ -1192,6 +1231,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         // writes must not leave it looking current. The launcher removes the
         // marker when it starts, `restart` and a started install do too.
         yield* fs.writeFileString(restartPendingPath, `${input.cliVersion}\n`, { mode: 0o600 });
+      }
+      if (!(yield* fs.exists(launcherPath))) {
+        yield* writeDurably(launcherPath, launcherContents, singleExecutable ? 0o755 : 0o600);
       }
       yield* writeDurably(
         statePath,
@@ -1301,12 +1343,24 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     if (!unitExists || !registered) {
       return { supported: true, installed: false, current: false, unitPath, logPath };
     }
-    const [unit, runtimeEntryExists, runtimeSentinel, stateText] = yield* Effect.all([
-      readUnit(detectedManager),
-      fs.exists(runtimePaths.entryPath),
-      fs.readFileString(runtimePaths.sentinelPath).pipe(Effect.option),
-      fs.readFileString(statePath).pipe(Effect.option),
-    ]);
+    const [unit, launcherExists, runtimeEntryExists, runtimeSentinel, stateText] =
+      yield* Effect.all([
+        readUnit(detectedManager),
+        fs.exists(launcherPath),
+        fs
+          .exists(runtimePaths.entryPath)
+          .pipe(
+            Effect.flatMap((exists) =>
+              exists || singleExecutable
+                ? Effect.succeed(exists)
+                : fs.exists(
+                    path.join(runtimePaths.versionDir, "node_modules", "t3", "dist", "bin.mjs"),
+                  ),
+            ),
+          ),
+        fs.readFileString(runtimePaths.sentinelPath).pipe(Effect.option),
+        fs.readFileString(statePath).pipe(Effect.option),
+      ]);
     const state = Option.isSome(stateText) ? parseServiceState(stateText.value) : undefined;
     const installedVersion = Option.isSome(stateText)
       ? serviceStateActiveVersion(stateText.value)
@@ -1328,6 +1382,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       current:
         problems.length === 0 &&
         normalizeUnit(unit) === normalizeUnit(detectedManager.render(plan)) &&
+        Exit.isSuccess(launcherSource) &&
+        launcherExists &&
         runtimeEntryExists &&
         Option.isSome(runtimeSentinel) &&
         runtimeSentinel.value.trim() === input.cliVersion &&

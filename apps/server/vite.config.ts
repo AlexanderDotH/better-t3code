@@ -160,7 +160,17 @@ export default mergeConfig(
         // A separate build prevents shared chunks from making that copy unloadable.
         entry: { "service-launcher": "src/service-launcher.ts" },
         outDir: "dist",
-        sourcemap: true,
+        sourcemap: !packExecutable,
+        ...(packExecutable
+          ? {
+              exe: {
+                fileName: "service-launcher",
+                outDir: "dist-exe",
+                ...(packExecutableTargets ? { targets: packExecutableTargets } : {}),
+                seaConfig: { useCodeCache: false },
+              },
+            }
+          : {}),
         banner: { js: "#!/usr/bin/env node\n" },
         onSuccess: "node scripts/verify-service-launcher-bundle.mjs",
       },

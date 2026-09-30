@@ -1,3 +1,4 @@
+import * as NodeAssert from "node:assert/strict";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
@@ -41,6 +42,23 @@ it("imports the relocated standalone launcher without starting its CLI", async (
     );
     assert.equal(result.stdout, "");
     assert.equal(result.stderr, "");
+    await NodeAssert.rejects(
+      NodeUtil.promisify(NodeChildProcess.execFile)(
+        process.execPath,
+        [
+          NodeURL.fileURLToPath(launcherUrl),
+          "--base-dir",
+          NodePath.join(outputDirectory, "missing-home"),
+        ],
+        { cwd: outputDirectory, env: { ...process.env, T3CODE_HOME: "" } },
+      ),
+      (error) => {
+        assert.equal(error.code, 1);
+        assert.include(error.stderr, "service-state.json");
+        assert.notInclude(error.stderr, "Unknown service launcher argument");
+        return true;
+      },
+    );
   } finally {
     await NodeFSP.rm(outputDirectory, { recursive: true, force: true });
   }

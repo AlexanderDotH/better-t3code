@@ -63,6 +63,44 @@ const extractingRunner = (fs: FileSystem.FileSystem, path: Path.Path, commands: 
   });
 
 it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
+  it.effect("preserves a completed npm runtime and validates it through its Node host", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-npm-" });
+      const paths = pinnedRuntimePaths(path, baseDir, version, "win32");
+      const legacyEntry = path.join(paths.versionDir, "node_modules", "t3", "dist", "bin.mjs");
+      yield* fs.makeDirectory(path.dirname(legacyEntry), { recursive: true });
+      yield* fs.writeFileString(legacyEntry, "existing backend\n");
+      yield* fs.writeFileString(paths.sentinelPath, `${version}\n`);
+      const installed = yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version,
+        fs,
+        path,
+        platform: "win32",
+        arch: "x64",
+        nodeExecutablePath: "C:\\node\\node.exe",
+        runner: ProcessRunner.ProcessRunner.of({
+          run: () => Effect.die("No extraction is needed"),
+        }),
+        httpClient: HttpClient.make(() =>
+          Effect.die("Completed npm runtime must not be downloaded or deleted"),
+        ),
+        validate: (runtime) =>
+          Effect.sync(() =>
+            assert.deepEqual(pinnedRuntimeCommand(runtime), {
+              command: "C:\\node\\node.exe",
+              args: [legacyEntry],
+            }),
+          ),
+      });
+      assert.equal(installed.entryPath, legacyEntry);
+      assert.equal(yield* fs.readFileString(legacyEntry), "existing backend\n");
+      assert.isFalse(yield* fs.exists(paths.entryPath));
+    }),
+  );
+
   it.effect("installs the verified release archive as the runtime executable", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

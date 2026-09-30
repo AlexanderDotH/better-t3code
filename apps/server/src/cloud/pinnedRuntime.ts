@@ -25,10 +25,9 @@ import * as ProcessRunner from "../processRunner.ts";
  * <baseDir>/runtime/versions/<version>: the self-contained executable, the
  * web client, and the native packages beside it. The boot service points its
  * unit or launch agent at the executable, and server self-update installs the
- * target version here before switching over. The runtime never depends on a
- * Node or npm on the machine; the only npm involvement in T3 Code is the `t3`
- * package for people who prefer `npx t3` or `npm install -g t3`, and even a
- * CLI installed that way pins an archive when it sets up the service.
+ * target version here before switching over. New installs require no Node or
+ * npm on the machine. A Node-hosted launcher can also reuse a completed npm
+ * runtime from an older installation without deleting its version tree.
  */
 const PINNED_RUNTIME_DIR = "runtime";
 const PINNED_RUNTIME_INSTALL_TIMEOUT = Duration.minutes(10);
@@ -39,9 +38,10 @@ const pinnedRuntimeInstallLock = Semaphore.makeUnsafe(1);
 
 export interface PinnedRuntimePaths {
   readonly versionDir: string;
-  /** The executable. Its existence is what marks a runtime as present. */
+  /** The executable, or the entry script of a verified legacy npm runtime. */
   readonly entryPath: string;
   readonly sentinelPath: string;
+  readonly nodeExecutablePath?: string;
 }
 
 /** The exact command that runs a pinned runtime. */
@@ -49,7 +49,9 @@ export function pinnedRuntimeCommand(paths: PinnedRuntimePaths): {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
 } {
-  return { command: paths.entryPath, args: [] };
+  return paths.nodeExecutablePath === undefined
+    ? { command: paths.entryPath, args: [] }
+    : { command: paths.nodeExecutablePath, args: [paths.entryPath] };
 }
 
 export function pinnedRuntimeVersionsDir(path: Path.Path, baseDir: string): string {
@@ -125,6 +127,8 @@ interface PinnedRuntimeInstallInput {
   readonly arch: string;
   readonly httpClient: HttpClient.HttpClient;
   readonly releaseBaseUrl?: string | undefined;
+  /** Existing npm runtimes remain usable when the installing CLI has a Node host. */
+  readonly nodeExecutablePath?: string;
   readonly onProgress?: (progress: PinnedRuntimeProgress) => void;
 }
 
@@ -284,6 +288,28 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
     input.onProgress?.({ stage: "cached" });
     yield* input.validate(paths);
     return paths;
+  }
+  const legacyEntryPath = input.path.join(
+    paths.versionDir,
+    "node_modules",
+    "t3",
+    "dist",
+    "bin.mjs",
+  );
+  if (
+    input.nodeExecutablePath !== undefined &&
+    Option.isSome(sentinel) &&
+    sentinel.value.trim() === input.version &&
+    (yield* fs.exists(legacyEntryPath))
+  ) {
+    const legacyPaths = {
+      ...paths,
+      entryPath: legacyEntryPath,
+      nodeExecutablePath: input.nodeExecutablePath,
+    };
+    input.onProgress?.({ stage: "cached" });
+    yield* input.validate(legacyPaths);
+    return legacyPaths;
   }
   if (versionDirExists) {
     yield* fs.remove(paths.versionDir, { recursive: true, force: true }).pipe(

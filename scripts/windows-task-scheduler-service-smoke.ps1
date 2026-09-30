@@ -99,16 +99,48 @@ function Test-CommandLineContains {
 
 function Get-ManagedRuntimeProcesses {
   return @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
-      ($_.Name -ieq "node.exe" -or $_.Name -ieq "t3.exe") -and
+      ($_.Name -ieq "node.exe" -or $_.Name -ieq "t3.exe" -or $_.Name -ieq "service-launcher.exe") -and
       (Test-CommandLineContains -CommandLine $_.CommandLine -Value $baseDir)
     })
 }
 
 function Get-ServiceLauncherProcesses {
   return @(Get-ManagedRuntimeProcesses | Where-Object {
-      (Test-CommandLineContains -CommandLine $_.CommandLine -Value $launcherPath) -or
+      (Test-CommandLineContains -CommandLine $_.CommandLine -Value "service-launcher.mjs") -or
+      (Test-CommandLineContains -CommandLine $_.CommandLine -Value "service-launcher.exe") -or
       (Test-CommandLineContains -CommandLine $_.CommandLine -Value "__service-launcher")
     })
+}
+
+function Write-ServiceStartupDiagnostic {
+  Write-Host "Task Scheduler service startup diagnostics:"
+  & schtasks.exe /Query /TN $taskName /V /FO LIST 2>&1 |
+    ForEach-Object { Write-Host $_ }
+  if (Test-Path -LiteralPath $taskXmlPath -PathType Leaf) {
+    Write-Host "Installed task definition:"
+    Get-Content -LiteralPath $taskXmlPath | ForEach-Object { Write-Host $_ }
+  }
+  $statePath = Join-Path $runtimeRoot "service-state.json"
+  if (Test-Path -LiteralPath $statePath -PathType Leaf) {
+    Write-Host "Installed service state:"
+    Get-Content -LiteralPath $statePath | ForEach-Object { Write-Host $_ }
+  }
+  $identities = @($runtimeExecutable)
+  $launchersRoot = Join-Path $runtimeRoot "launchers"
+  if (Test-Path -LiteralPath $launchersRoot -PathType Container) {
+    $identities += @(Get-ChildItem -LiteralPath $launchersRoot -Recurse -File |
+      Where-Object { $_.Name -like "service-launcher*" } |
+      ForEach-Object { $_.FullName })
+  }
+  foreach ($identity in $identities) {
+    if (Test-Path -LiteralPath $identity -PathType Leaf) {
+      $file = Get-Item -LiteralPath $identity
+      $hash = Get-FileHash -LiteralPath $identity -Algorithm SHA256
+      Write-Host "Runtime file: $($file.FullName), bytes=$($file.Length), SHA256=$($hash.Hash)"
+    }
+  }
+  Get-ManagedRuntimeProcesses | Select-Object ProcessId, ParentProcessId, Name, CommandLine |
+    Format-List | Out-String | Write-Host
 }
 
 function Get-ProcessTreeSnapshot {
@@ -272,6 +304,8 @@ try {
 }
 finally {
   if (-not $completed) {
+    try { Write-ServiceStartupDiagnostic }
+    catch { Write-Warning "Service diagnostics failed: $($_.Exception.Message)" }
     if (Test-Path -LiteralPath $serviceLogPath -PathType Leaf) {
       Write-Host "Service startup log:"
       Get-Content -LiteralPath $serviceLogPath -Tail 100 | ForEach-Object { Write-Host $_ }

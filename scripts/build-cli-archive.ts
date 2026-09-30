@@ -333,7 +333,8 @@ const signMacArchiveContents = Effect.fn("signMacArchiveContents")(function* (in
         entry.endsWith(".node") ||
         entry.endsWith(".dylib") ||
         entry.endsWith("spawn-helper") ||
-        entry.endsWith("t3-resource-monitor"),
+        entry.endsWith("t3-resource-monitor") ||
+        entry === "service-launcher",
     )
     .map((entry) => path.join(input.contentDir, entry));
 
@@ -344,7 +345,9 @@ const signMacArchiveContents = Effect.fn("signMacArchiveContents")(function* (in
         "--sign",
         identity,
         ...(identity === "-" ? [] : ["--options", "runtime", "--timestamp"]),
-        ...(target === input.executablePath ? ["--entitlements", entitlements] : []),
+        ...(target === input.executablePath || path.basename(target) === "service-launcher"
+          ? ["--entitlements", entitlements]
+          : []),
         target,
       ]),
       `codesign ${path.relative(input.contentDir, target)}`,
@@ -364,11 +367,14 @@ const signMacArchiveContents = Effect.fn("signMacArchiveContents")(function* (in
     );
     return;
   }
-  // notarytool only accepts archives, and a bare executable cannot be stapled,
-  // so notarize a zip of the binary and rely on the online ticket lookup.
+  // Both standalone executables need tickets when the archive is downloaded.
+  const notarizeStage = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-notarize-" });
+  for (const name of ["t3", "service-launcher"]) {
+    yield* fs.copyFile(path.join(input.contentDir, name), path.join(notarizeStage, name));
+  }
   const notarizeZip = path.join(path.dirname(input.executablePath), ".notarize-t3.zip");
   yield* runCommand(
-    ChildProcess.make("ditto", ["-c", "-k", "--keepParent", input.executablePath, notarizeZip]),
+    ChildProcess.make("ditto", ["-c", "-k", "--keepParent", notarizeStage, notarizeZip]),
     "ditto (notarization zip)",
   );
   yield* runCommand(
@@ -505,6 +511,17 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
     : targetKey === hostKey
       ? path.join(serverDir, "dist-exe", executableName)
       : targetExecutable;
+  const launcherName = input.platform === "win" ? "service-launcher.exe" : "service-launcher";
+  const targetLauncher = path.join(
+    serverDir,
+    "dist-exe",
+    `service-launcher-${targetKey}${input.platform === "win" ? ".exe" : ""}`,
+  );
+  const builtLauncher = (yield* fs.exists(targetLauncher))
+    ? targetLauncher
+    : targetKey === hostKey
+      ? path.join(serverDir, "dist-exe", launcherName)
+      : targetLauncher;
   const webClient = path.join(serverDir, "dist/client");
   const resourceMonitorDir = Option.getOrElse(input.resourceMonitorDir, () =>
     path.join(serverDir, "dist/resource-monitor"),
@@ -513,6 +530,10 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
   yield* requireInput(
     builtExecutable,
     `Run \`node apps/server/scripts/cli.ts build-exe --target ${targetKey}\` first.`,
+  );
+  yield* requireInput(
+    builtLauncher,
+    `Run \`node apps/server/scripts/cli.ts build-exe --target ${targetKey}\` to build the standalone launcher.`,
   );
   yield* requireInput(path.join(webClient, "index.html"), "Run `vp run --filter t3 build` first.");
   yield* requireInput(
@@ -527,6 +548,7 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
 
   yield* Effect.log(`[cli-archive] Staging ${stem}...`);
   yield* fs.copyFile(builtExecutable, path.join(contentDir, executableName));
+  yield* fs.copyFile(builtLauncher, path.join(contentDir, launcherName));
   yield* stageWebClient(webClient, path.join(contentDir, "client"));
   yield* fs.copy(resourceMonitorDir, path.join(contentDir, "resource-monitor"));
   yield* stageCliRuntimeAssets({ serverDistDir: path.join(serverDir, "dist"), contentDir });
@@ -543,9 +565,11 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
     yield* signMacArchiveContents({ repoRoot, contentDir, executablePath });
   } else if (input.platform === "win") {
     yield* signWindowsExecutable(executablePath);
+    yield* signWindowsExecutable(path.join(contentDir, launcherName));
   }
   if (input.platform !== "win") {
     yield* fs.chmod(executablePath, 0o755);
+    yield* fs.chmod(path.join(contentDir, launcherName), 0o755);
   }
 
   yield* fs.makeDirectory(input.outputDir, { recursive: true });

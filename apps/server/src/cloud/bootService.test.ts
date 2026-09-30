@@ -1,3 +1,4 @@
+import * as NodeCrypto from "node:crypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - The synchronous stop-acknowledgement hook writes a temporary test fixture.
@@ -252,15 +253,34 @@ it("escapes XML in host paths", () => {
 const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   platform: NodeJS.Platform = "linux",
   installerPath = macInstallerPath,
+  singleExecutable = false,
+  legacyNpm = false,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-boot-service-test-" });
   const baseDir = path.join(home, ".t3");
   const statePath = path.join(baseDir, "runtime", "service-state.json");
+  const launcherFileName = singleExecutable
+    ? platform === "win32"
+      ? "service-launcher.exe"
+      : "service-launcher"
+    : "service-launcher.mjs";
+  const launcherSourcePath = path.join(home, launcherFileName);
+  const launcherDigest = NodeCrypto.createHash("sha256")
+    .update("fork-owned launcher\n")
+    .digest("hex");
+  const launcherPath = path.join(baseDir, "runtime", "launchers", launcherDigest, launcherFileName);
+  yield* fs.writeFileString(launcherSourcePath, "fork-owned launcher\n");
   // A complete pinned runtime is already present, so install only validates
   // it and never downloads a release archive.
-  const runtime = pinnedRuntimePaths(path, baseDir, "1.2.3", platform);
+  const canonicalRuntime = pinnedRuntimePaths(path, baseDir, "1.2.3", platform);
+  const runtime = legacyNpm
+    ? {
+        ...canonicalRuntime,
+        entryPath: path.join(canonicalRuntime.versionDir, "node_modules", "t3", "dist", "bin.mjs"),
+      }
+    : canonicalRuntime;
   yield* fs.makeDirectory(path.dirname(runtime.entryPath), { recursive: true });
   yield* fs.writeFileString(runtime.entryPath, "#!/bin/sh\n");
   yield* fs.writeFileString(runtime.sentinelPath, "1.2.3\n");
@@ -311,10 +331,10 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         stdout:
           input.command === "whoami.exe"
             ? '"WORKSTATION\\alex","S-1-5-21-111-222-333-1001"\n'
-            : input.args[0] === "--version"
+            : input.args.includes("--version")
               ? // The runtime under test reports the version of the directory it
                 // was launched from, like the real executable.
-                `t3 v${/versions\/([^/]+)\//.exec(input.command)?.[1] ?? "1.2.3"}\n`
+                `t3 v${/versions\/([^/]+)\//.exec(`${input.command} ${input.args.join(" ")}`)?.[1] ?? "1.2.3"}\n`
               : input.command === "loginctl" && input.args[0] === "show-user"
                 ? `${control.linger}\n`
                 : input.args[1] === "is-enabled"
@@ -342,7 +362,19 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     Effect.gen(function* () {
       // Every version the tests install is present and verified on disk, so
       // install never downloads.
-      const paths = pinnedRuntimePaths(path, serviceBaseDir, cliVersion, platform);
+      const canonicalPaths = pinnedRuntimePaths(path, serviceBaseDir, cliVersion, platform);
+      const paths = legacyNpm
+        ? {
+            ...canonicalPaths,
+            entryPath: path.join(
+              canonicalPaths.versionDir,
+              "node_modules",
+              "t3",
+              "dist",
+              "bin.mjs",
+            ),
+          }
+        : canonicalPaths;
       yield* fs.makeDirectory(path.dirname(paths.entryPath), { recursive: true });
       yield* fs.writeFileString(paths.entryPath, "#!/bin/sh\n");
       yield* fs.writeFileString(paths.sentinelPath, `${cliVersion}\n`);
@@ -351,7 +383,9 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         logsDir: path.join(serviceBaseDir, "userdata", "logs"),
         cliVersion,
         host: {
-          execPath: "/usr/bin/t3",
+          execPath: singleExecutable ? "/usr/bin/t3" : "/usr/bin/node",
+          singleExecutable,
+          launcherSourcePath,
           stopAcknowledgementTimeout: Duration.zero,
           onStopRequestWritten: (stopRequest) => control.acknowledgeStopRequest?.(stopRequest),
         },
@@ -399,10 +433,98 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     timeouts,
     control,
     runtime,
+    launcherPath,
+    launcherSourcePath,
   };
 });
 
 it.layer(NodeServices.layer)("boot service install", (it) => {
+  it.effect.each([
+    { platform: "linux", singleExecutable: false },
+    { platform: "darwin", singleExecutable: false },
+    { platform: "win32", singleExecutable: false },
+    { platform: "linux", singleExecutable: true },
+    { platform: "darwin", singleExecutable: true },
+    { platform: "win32", singleExecutable: true },
+  ] as const)(
+    "pins the fork launcher for $platform with SEA=$singleExecutable",
+    ({ platform, singleExecutable }) =>
+      Effect.gen(function* () {
+        const { service, fs, baseDir, runtime, launcherPath } = yield* makeHarness(
+          platform,
+          macInstallerPath,
+          singleExecutable,
+        );
+        const plan = yield* service.install();
+        expect(plan.program).toEqual([
+          ...(singleExecutable ? [launcherPath] : ["/usr/bin/node", launcherPath]),
+          "--base-dir",
+          baseDir,
+          "--log-path",
+          plan.logPath,
+        ]);
+        expect(plan.program).not.toContain("__service-launcher");
+        expect(plan.program).not.toContain(runtime.entryPath);
+        expect(yield* fs.readFileString(launcherPath)).toBe("fork-owned launcher\n");
+        expect(yield* fs.readFileString(runtime.entryPath)).toBe("#!/bin/sh\n");
+        expect((yield* service.status).current).toBe(true);
+      }),
+  );
+
+  it.effect.each(["linux", "darwin", "win32"] as const)(
+    "keeps a completed npm backend on its Node host for %s",
+    (platform) =>
+      Effect.gen(function* () {
+        const { service, fs, runtime, commands } = yield* makeHarness(
+          platform,
+          macInstallerPath,
+          false,
+          true,
+        );
+        yield* service.install();
+        expect(commands).toContain(`/usr/bin/node ${runtime.entryPath} --version`);
+        expect(yield* fs.readFileString(runtime.entryPath)).toBe("#!/bin/sh\n");
+        expect((yield* service.status).current).toBe(true);
+      }),
+  );
+
+  it.effect("stages changed SEA launcher code without replacing the running image", () =>
+    Effect.gen(function* () {
+      const { service, fs, makeService, launcherPath, launcherSourcePath, commands } =
+        yield* makeHarness("linux", macInstallerPath, true);
+      yield* service.install();
+      yield* fs.writeFileString(launcherSourcePath, "new fork launcher\n");
+      const updated = yield* makeService();
+      commands.length = 0;
+      const plan = yield* updated.install({ start: false });
+      expect(plan.program[0]).not.toBe(launcherPath);
+      expect(yield* fs.readFileString(launcherPath)).toBe("fork-owned launcher\n");
+      expect(yield* fs.readFileString(plan.program[0]!)).toBe("new fork launcher\n");
+      expect(commands).not.toContain("systemctl --user stop t3code.service");
+      expect(commands).not.toContain("systemctl --user restart t3code.service");
+      expect((yield* updated.status).problems).toContain("restart-pending");
+    }),
+  );
+
+  it.effect(
+    "does not stop the installed service when this fork's launcher payload is missing",
+    () =>
+      Effect.gen(function* () {
+        const { service, fs, makeService, launcherSourcePath, commands, statePath } =
+          yield* makeHarness();
+        yield* service.install();
+        const previousState = yield* fs.readFileString(statePath);
+        yield* fs.remove(launcherSourcePath);
+        const brokenInstaller = yield* makeService();
+        commands.length = 0;
+        expect((yield* brokenInstaller.install().pipe(Effect.flip))._tag).toBe(
+          "BootServiceInstallError",
+        );
+        expect(commands).not.toContain("systemctl --user stop t3code.service");
+        expect(yield* fs.readFileString(statePath)).toBe(previousState);
+      }),
+  );
+
   it.effect(
     "fails before installing files or validating a runtime when lingering needs an administrator",
     () =>
@@ -496,7 +618,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
 
   it.effect("installs, reports current state, and uninstalls", () =>
     Effect.gen(function* () {
-      const { service, fs, baseDir, statePath, timeouts, runtime } = yield* makeHarness();
+      const { service, fs, baseDir, statePath, timeouts, launcherPath } = yield* makeHarness();
       const plan = yield* service.install();
 
       expect(parseServiceState(yield* fs.readFileString(statePath))).toEqual({
@@ -504,15 +626,15 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         activeVersion: "1.2.3",
       });
       expect(plan.program).toEqual([
-        runtime.entryPath,
-        "__service-launcher",
+        "/usr/bin/node",
+        launcherPath,
         "--base-dir",
         baseDir,
         "--log-path",
         plan.logPath,
       ]);
       expect(yield* fs.readFileString(plan.unitPath)).toContain(
-        `ExecStart=${runtime.entryPath} __service-launcher`,
+        `ExecStart=/usr/bin/node ${launcherPath}`,
       );
       expect(yield* service.status).toMatchObject({
         current: true,
@@ -661,7 +783,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         protocol: SERVICE_LAUNCHER_PROTOCOL,
         activeVersion: "1.2.4",
       });
-      expect(yield* fs.readFileString(plan.unitPath)).toContain("versions/1.2.4/t3");
+      expect(yield* fs.readFileString(plan.unitPath)).toContain("service-launcher.mjs");
       expect(
         commands.filter(
           (command) => command.startsWith("systemctl ") && !command.includes("show-environment"),
@@ -922,7 +1044,8 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
 
   it.effect("installs, reports current state, and uninstalls on macOS", () =>
     Effect.gen(function* () {
-      const { service, fs, statePath, commands, timeouts, runtime } = yield* makeHarness("darwin");
+      const { service, fs, statePath, commands, timeouts, launcherPath } =
+        yield* makeHarness("darwin");
       const path = yield* Path.Path;
       const plan = yield* service.install();
 
@@ -942,7 +1065,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         activeVersion: "1.2.3",
       });
       expect(yield* fs.readFileString(plan.unitPath)).toContain(
-        `    <string>${runtime.entryPath}</string>\n    <string>__service-launcher</string>`,
+        `    <string>/usr/bin/node</string>\n    <string>${launcherPath}</string>`,
       );
       expect(yield* service.status).toMatchObject({
         current: true,

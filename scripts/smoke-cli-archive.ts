@@ -96,13 +96,33 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
   }
   const contentDir = path.join(scratch, root);
   const executable = path.join(contentDir, platform === "win32" ? "t3.exe" : "t3");
-  for (const required of [executable, path.join(contentDir, "client/index.html")]) {
+  const launcherName = platform === "win32" ? "service-launcher.exe" : "service-launcher";
+  const launcher = path.join(contentDir, launcherName);
+  for (const required of [executable, launcher, path.join(contentDir, "client/index.html")]) {
     if (!(yield* fs.exists(required))) {
       return yield* new CliArchiveSmokeError({
         step: "checking the archive layout",
         detail: `missing ${path.relative(contentDir, required)}`,
       });
     }
+  }
+
+  // Relocate only the launcher, with no sibling native packages or Node on PATH.
+  // A missing state file must be its first failure, before any server is started.
+  const launcherDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-launcher-smoke-" });
+  const isolatedLauncher = path.join(launcherDirectory, launcherName);
+  yield* fs.copyFile(launcher, isolatedLauncher);
+  if (platform !== "win32") yield* fs.chmod(isolatedLauncher, 0o755);
+  const launcherProbe = yield* runExecutable(
+    isolatedLauncher,
+    ["--base-dir", path.join(launcherDirectory, "missing-home")],
+    launcherDirectory,
+  );
+  if (launcherProbe.exitCode !== 1 || !launcherProbe.stderr.includes("service-state.json")) {
+    return yield* new CliArchiveSmokeError({
+      step: "checking the standalone service launcher",
+      detail: `expected the missing-state diagnostic, received exit ${launcherProbe.exitCode}: ${launcherProbe.stderr}`,
+    });
   }
 
   const version = yield* runExecutable(executable, ["--version"], contentDir);

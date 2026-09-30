@@ -115,6 +115,8 @@ export function npmPlatformPackageManifest(
     files: [
       "t3",
       "t3.exe",
+      "service-launcher",
+      "service-launcher.exe",
       "client",
       "resource-monitor",
       "project-indexer",

@@ -301,6 +301,13 @@ const findForegroundServer = Effect.fn("cli.update.find_foreground_server")(func
   return state.value;
 });
 
+export function isServiceLauncherCommand(command: string): boolean {
+  return (
+    /__service-launcher/.test(command) ||
+    /(?:^|[\\/])service-launcher(?:\.mjs|\.exe)?(?:["']?\s|$)/.test(command)
+  );
+}
+
 const belongsToBootService = Effect.fn("cli.update.belongs_to_boot_service")(function* (
   pid: number,
 ) {
@@ -328,7 +335,7 @@ const belongsToBootService = Effect.fn("cli.update.belongs_to_boot_service")(fun
         Effect.map((result) => (result.code === 0 ? result.stdout : "")),
         Effect.orElseSucceed(() => ""),
       );
-    return /__service-launcher/.test(command);
+    return isServiceLauncherCommand(command);
   }
   return false;
 });

@@ -11,7 +11,23 @@ import {
   HostProcessWorkingDirectory,
 } from "@t3tools/shared/hostProcess";
 
-import { repointLauncher, resolveLauncherPath } from "./update.ts";
+import { isServiceLauncherCommand, repointLauncher, resolveLauncherPath } from "./update.ts";
+
+it("recognizes standalone and historical service parents without matching other executables", () => {
+  for (const command of [
+    "/runtime/versions/0.0.43/t3 __service-launcher",
+    "/usr/bin/node /runtime/launchers/hash/service-launcher.mjs --base-dir /t3",
+    '"/runtime/launchers/hash/service-launcher" --base-dir "/t3 home"',
+    '"C:\\t3\\runtime\\launchers\\hash\\service-launcher.exe" --base-dir C:\\t3',
+  ])
+    assert.isTrue(isServiceLauncherCommand(command), command);
+  for (const command of [
+    "/usr/bin/node server.mjs",
+    "/runtime/service-launcher-helper",
+    "/runtime/my-service-launcher.mjs",
+  ])
+    assert.isFalse(isServiceLauncherCommand(command), command);
+});
 
 it.layer(NodeServices.layer)("t3 update launcher", (it) => {
   it.effect("repoints a symlink that lives in a runtime versions tree", () =>
