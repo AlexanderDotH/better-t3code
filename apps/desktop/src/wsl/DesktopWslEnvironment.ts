@@ -193,7 +193,7 @@ const formatWslShellTransportFailureReason = (
 // Reuse the SSH remote resolver so WSL and SSH discover version-managed Node
 // the same way. Passing the engine range lets the resolver fall through to
 // version managers like nvm when a system node exists but is too old.
-export const buildWslNodeEnvPreamble = (
+const buildWslNodeEnvPreamble = (
   nodeEngineRange?: string | null,
 ): string => `${buildRemoteNodeEnvScript({ nodeEngineRange: nodeEngineRange ?? null })}
 ensure_remote_node_path || true
@@ -291,8 +291,7 @@ const WSL_RUNTIME_READY_MARKER = ".t3code-wsl-runtime-ready";
 const WSL_RUNTIME_SELECTED_MARKER = ".t3code-wsl-runtime-selected";
 const WSL_RUNTIME_SELECTION_GRACE_MINUTES = 5;
 
-export const sanitizeWslRuntimeId = (value: string): string =>
-  value.replace(/[^A-Za-z0-9._-]/g, "_");
+const sanitizeWslRuntimeId = (value: string): string => value.replace(/[^A-Za-z0-9._-]/g, "_");
 
 // `archiveSha256` is the digest the build recorded alongside the archive. The
 // install verifies the bytes before extracting, so an archive can never be
