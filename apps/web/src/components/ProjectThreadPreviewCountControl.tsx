@@ -29,36 +29,31 @@ export function ProjectThreadPreviewCountControl({
   readonly onChange: (count: ProjectThreadPreviewCount) => void;
 }) {
   return (
-    <NumberField
-      aria-label={ariaLabel}
-      className="w-28 gap-0"
-      max={MAX_PROJECT_THREAD_PREVIEW_COUNT}
-      min={MIN_PROJECT_THREAD_PREVIEW_COUNT}
-      onValueChange={(nextValue) => {
-        if (nextValue === null) return;
-        const nextCount = clampProjectThreadPreviewCount(nextValue);
-        if (nextCount !== count) onChange(nextCount);
-      }}
-      size="sm"
-      step={1}
-      value={count}
-    >
-      <NumberFieldGroup className="h-7 rounded-md sm:h-6.5">
-        <NumberFieldDecrement
-          aria-label={`Decrease ${ariaLabel.toLocaleLowerCase()}`}
-          className="px-2 sm:px-2 [&_svg]:size-3.5"
-        />
-        <NumberFieldInput
-          aria-label={ariaLabel}
-          className="h-7 w-9 grow-0 px-0 text-xs leading-7 sm:h-6.5 sm:leading-6.5"
-          inputMode="numeric"
-          onKeyDownCapture={(event) => event.stopPropagation()}
-        />
-        <NumberFieldIncrement
-          aria-label={`Increase ${ariaLabel.toLocaleLowerCase()}`}
-          className="px-2 sm:px-2 [&_svg]:size-3.5"
-        />
-      </NumberFieldGroup>
-    </NumberField>
+    <div className="w-28">
+      <NumberField
+        aria-label={ariaLabel}
+        max={MAX_PROJECT_THREAD_PREVIEW_COUNT}
+        min={MIN_PROJECT_THREAD_PREVIEW_COUNT}
+        onValueChange={(nextValue) => {
+          if (nextValue === null) return;
+          const nextCount = clampProjectThreadPreviewCount(nextValue);
+          if (nextCount !== count) onChange(nextCount);
+        }}
+        size="xs"
+        step={1}
+        value={count}
+      >
+        <NumberFieldGroup>
+          <NumberFieldDecrement aria-label={`Decrease ${ariaLabel.toLocaleLowerCase()}`} />
+          <NumberFieldInput
+            aria-label={ariaLabel}
+            className="w-9 grow-0"
+            inputMode="numeric"
+            onKeyDownCapture={(event) => event.stopPropagation()}
+          />
+          <NumberFieldIncrement aria-label={`Increase ${ariaLabel.toLocaleLowerCase()}`} />
+        </NumberFieldGroup>
+      </NumberField>
+    </div>
   );
 }

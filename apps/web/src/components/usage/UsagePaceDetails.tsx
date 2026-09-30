@@ -10,7 +10,6 @@ import { useClientSettings } from "../../hooks/useSettings";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { observeVisibleAnimation } from "../../lib/visibleAnimation";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import "./UsagePaceDetails.css";
 
 type DailyPace = NonNullable<ReturnType<typeof dailyUsagePace>>;
 
@@ -44,7 +43,7 @@ export function UsagePaceHeaderLabel({
   const percent = (value: number) => `${number(value, { maximumFractionDigits: 1 })}%`;
   return (
     <span
-      className={`shrink-0 text-[11px] whitespace-nowrap @max-[650px]:hidden ${paceTone(pace.status)}`}
+      className={`shrink-0 text-2xs whitespace-nowrap @max-[650px]:hidden ${paceTone(pace.status)}`}
     >
       {paceLabel(pace, percent)}
     </span>
@@ -130,7 +129,7 @@ export function UsagePaceBar({
       aria-valuemax={100}
       aria-valuenow={pace.todayBalancePercent}
       aria-valuetext={`${number(pace.todayRemainingPercent, { maximumFractionDigits: 1 })}% left today, including ${number(pace.catchUpRemainingPercent, { maximumFractionDigits: 1 })}% catch-up.${pace.todayOverdrawPercent !== null && pace.todayOverdrawPercent > 0 ? ` ${number(pace.todayOverdrawPercent, { maximumFractionDigits: 1 })}% overdrawn today.` : ""} ${DAILY_USAGE_PACE_LABELS[pace.status]}`}
-      className="usage-pace-bar pointer-events-none absolute inset-y-0 flex rounded-r-full"
+      className="usage-pace-bar"
       data-overdrawn={overdrawn}
       style={{
         right: `${100 - remaining - (overdrawn ? width : 0)}%`,
@@ -150,7 +149,7 @@ export function UsagePaceBar({
       {hasNotch ? (
         <div
           aria-hidden
-          className="usage-pace-notch absolute inset-y-0 left-0 -translate-x-1/2 rounded-full"
+          className="usage-pace-notch"
           style={{ width: "min(12px, 200%)", backgroundColor: baseColor }}
         />
       ) : null}
@@ -186,7 +185,7 @@ export function UsagePaceDetails({
     <Tooltip>
       <TooltipTrigger
         render={<span tabIndex={0} />}
-        className={`flex w-full min-w-0 cursor-help flex-col items-center gap-0.5 rounded-sm text-center text-[11px] leading-4 outline-none focus-visible:ring-2 focus-visible:ring-ring ${className}`}
+        className={`flex w-full min-w-0 cursor-help flex-col items-center gap-0.5 rounded-sm text-center text-2xs leading-4 outline-none focus-visible:ring-2 focus-visible:ring-ring ${className}`}
       >
         {accountLabel ? <span className="text-muted-foreground">{accountLabel}</span> : null}
         <span className="min-w-0 text-center text-muted-foreground tabular-nums">
@@ -203,7 +202,7 @@ export function UsagePaceDetails({
           className={statusInHeader ? "@min-[651px]:hidden" : ""}
         />
       </TooltipTrigger>
-      <TooltipPopup side="top" className="max-w-80 text-xs">
+      <TooltipPopup side="top" className="max-w-80">
         <div className="flex flex-col gap-1.5 p-1">
           <span className="font-medium">{label}</span>
           <span>

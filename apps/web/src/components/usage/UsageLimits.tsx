@@ -106,10 +106,10 @@ function WindowBar({
         }
       >
         <div className="absolute inset-x-0 inset-y-1.5 rounded-full bg-muted" />
-        <div className="usage-window-track absolute inset-x-0 inset-y-1.5 overflow-hidden rounded-full">
+        <div className="usage-window-track">
           {remaining > 0 ? (
             <div
-              className="usage-window-fill absolute inset-y-0 left-0 rounded-full"
+              className="usage-window-fill"
               style={{ width: `${remaining}%`, backgroundColor: color }}
             />
           ) : null}

@@ -66,9 +66,10 @@ const LegacySidebarDraftRow = memo(function LegacySidebarDraftRow(props: {
   onDiscard: (draftId: DraftId) => void;
 }) {
   const translator = useInterfaceTranslator();
+  const { onNavigate, onDiscard } = props;
   const { draftId } = props.row;
   const preview = resolveLegacySidebarDraftPreview(props.row.composer);
-  const handleActivate = useCallback(() => props.onNavigate(draftId), [draftId, props.onNavigate]);
+  const handleActivate = useCallback(() => onNavigate(draftId), [draftId, onNavigate]);
   const handleKeyDown = useCallback(
     (event: ReactKeyboardEvent) => {
       if ((event.target as HTMLElement).closest("button")) {
@@ -76,18 +77,18 @@ const LegacySidebarDraftRow = memo(function LegacySidebarDraftRow(props: {
       }
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
-        props.onNavigate(draftId);
+        onNavigate(draftId);
       }
     },
-    [draftId, props.onNavigate],
+    [draftId, onNavigate],
   );
   const handleDiscard = useCallback(
     (event: ReactMouseEvent<HTMLButtonElement>) => {
       event.preventDefault();
       event.stopPropagation();
-      props.onDiscard(draftId);
+      onDiscard(draftId);
     },
-    [draftId, props.onDiscard],
+    [draftId, onDiscard],
   );
   const stopPointerDownPropagation = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
     event.stopPropagation();
@@ -96,50 +97,56 @@ const LegacySidebarDraftRow = memo(function LegacySidebarDraftRow(props: {
 
   return (
     <SidebarMenuSubItem className="group/classic-draft w-full" data-thread-selection-safe>
-      <SidebarMenuSubButton
-        render={rowButtonRender}
-        size="sm"
-        isActive={props.isActive}
-        data-thread-selection-safe
-        data-testid={`classic-sidebar-draft-row-${draftId}`}
-        className="relative isolate bg-amber-400/[0.04] hover:bg-amber-400/[0.08]"
-        onClick={handleActivate}
-        onKeyDown={handleKeyDown}
+      <div
+        className={
+          props.isActive
+            ? "-translate-x-px rounded-lg"
+            : "-translate-x-px rounded-lg bg-warning/4 hover:bg-warning/8"
+        }
       >
-        <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
-          <SquarePenIcon
-            aria-hidden
-            className="size-3 shrink-0 text-amber-600 dark:text-amber-300/80"
-          />
+        <SidebarMenuSubButton
+          render={rowButtonRender}
+          size="sm"
+          variant="transparent"
+          isActive={props.isActive}
+          data-thread-selection-safe
+          data-testid={`classic-sidebar-draft-row-${draftId}`}
+          className="relative isolate translate-x-0"
+          onClick={handleActivate}
+          onKeyDown={handleKeyDown}
+        >
+          <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
+            <SquarePenIcon aria-hidden className="size-3 shrink-0 text-warning-foreground" />
+            <Tooltip>
+              <TooltipTrigger
+                render={<span className="min-w-0 flex-1 truncate text-sm">{preview}</span>}
+              />
+              <TooltipPopup side="top">
+                <div className="leading-tight">{preview}</div>
+              </TooltipPopup>
+            </Tooltip>
+          </div>
           <Tooltip>
             <TooltipTrigger
-              render={<span className="min-w-0 flex-1 truncate text-sm">{preview}</span>}
+              render={
+                <button
+                  type="button"
+                  aria-label={translator.message("sidebar.thread.discardDraft")}
+                  data-thread-selection-safe
+                  className="pointer-events-none absolute top-1/2 right-0.5 inline-flex h-6 min-w-6 -translate-y-1/2 cursor-pointer items-center justify-center rounded-md px-1 text-icon-muted opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring max-sm:pointer-events-auto max-sm:opacity-100 group-hover/classic-draft:pointer-events-auto group-hover/classic-draft:opacity-100 group-focus-within/classic-draft:pointer-events-auto group-focus-within/classic-draft:opacity-100"
+                  onPointerDown={stopPointerDownPropagation}
+                  onClick={handleDiscard}
+                >
+                  <XIcon className="size-3.5" />
+                </button>
+              }
             />
-            <TooltipPopup side="top" className="max-w-80 whitespace-normal leading-tight">
-              {preview}
+            <TooltipPopup side="top">
+              {translator.message("sidebar.thread.discardDraft")}
             </TooltipPopup>
           </Tooltip>
-        </div>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                aria-label={translator.message("sidebar.thread.discardDraft")}
-                data-thread-selection-safe
-                className="pointer-events-none absolute top-1/2 right-0.5 inline-flex h-6 min-w-6 -translate-y-1/2 cursor-pointer items-center justify-center rounded-md px-1 text-icon-muted opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring max-sm:pointer-events-auto max-sm:opacity-100 group-hover/classic-draft:pointer-events-auto group-hover/classic-draft:opacity-100 group-focus-within/classic-draft:pointer-events-auto group-focus-within/classic-draft:opacity-100"
-                onPointerDown={stopPointerDownPropagation}
-                onClick={handleDiscard}
-              >
-                <XIcon className="size-3.5" />
-              </button>
-            }
-          />
-          <TooltipPopup side="top">
-            {translator.message("sidebar.thread.discardDraft")}
-          </TooltipPopup>
-        </Tooltip>
-      </SidebarMenuSubButton>
+        </SidebarMenuSubButton>
+      </div>
     </SidebarMenuSubItem>
   );
 });
