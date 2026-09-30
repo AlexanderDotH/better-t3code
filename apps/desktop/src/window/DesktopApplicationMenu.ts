@@ -233,7 +233,7 @@ export const make = Effect.gen(function* () {
         ],
       },
       {
-        label: "Edit",
+        label: t("desktop.menu.edit"),
         submenu: [
           { role: "undo" },
           { role: "redo" },
@@ -242,7 +242,7 @@ export const make = Effect.gen(function* () {
           { role: "copy" },
           { role: "paste" },
           {
-            label: "Paste as Text",
+            label: t("desktop.menu.pasteAsText"),
             accelerator: "CmdOrCtrl+Shift+V",
             click: pasteAsTextClick,
           },
@@ -253,7 +253,7 @@ export const make = Effect.gen(function* () {
             ? [
                 { type: "separator" as const },
                 {
-                  label: "Speech",
+                  label: t("desktop.menu.speech"),
                   submenu: [{ role: "startSpeaking" as const }, { role: "stopSpeaking" as const }],
                 },
               ]

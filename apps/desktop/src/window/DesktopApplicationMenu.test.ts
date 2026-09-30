@@ -195,6 +195,12 @@ describe("DesktopApplicationMenu", () => {
         throw new Error("Expected Fichier submenu to be an array.");
       }
       assert.isDefined(fileMenu.submenu.find((item) => item.label === "Réglages..."));
+      const editMenu = template.find((item) => item.label === "Édition");
+      assert.isDefined(editMenu);
+      if (!Array.isArray(editMenu.submenu)) {
+        throw new Error("Expected Édition submenu to be an array.");
+      }
+      assert.isDefined(editMenu.submenu.find((item) => item.label === "Coller en texte brut"));
     }),
   );
 

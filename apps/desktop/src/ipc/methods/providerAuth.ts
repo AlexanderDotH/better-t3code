@@ -8,6 +8,7 @@ import {
 } from "../../app/CodexAuthCallback.ts";
 import * as ElectronShell from "../../electron/ElectronShell.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import { translateDesktopInterfaceMessage } from "../../settings/DesktopInterfaceLanguage.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import * as IpcChannels from "../channels.ts";
 
@@ -27,8 +28,7 @@ export const receiveProviderAuthCallback = DesktopIpc.makeIpcMethod({
         receiveCodexAuthCallback(authorizationUrl, (url) => runPromise(shell.openExternal(url))),
       catch: () =>
         new CodexAuthCallbackError({
-          detail:
-            "Could not receive ChatGPT sign-in on this computer. Try again or paste the redirect URL.",
+          detail: translateDesktopInterfaceMessage("desktop.providerAuth.callbackFailed"),
         }),
     });
     const window = yield* windows.currentMainOrFirst;
@@ -44,6 +44,9 @@ export const cancelProviderAuthCallback = DesktopIpc.makeIpcMethod({
   handler: (authorizationUrl) =>
     Effect.try({
       try: () => cancelCodexAuthCallback(authorizationUrl),
-      catch: () => new CodexAuthCallbackError({ detail: "Invalid ChatGPT sign-in request." }),
+      catch: () =>
+        new CodexAuthCallbackError({
+          detail: translateDesktopInterfaceMessage("desktop.providerAuth.invalidRequest"),
+        }),
     }),
 });

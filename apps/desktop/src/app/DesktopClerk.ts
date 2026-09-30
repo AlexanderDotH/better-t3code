@@ -16,6 +16,7 @@ import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/rela
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import { translateDesktopInterfaceMessage } from "../settings/DesktopInterfaceLanguage.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
@@ -169,8 +170,9 @@ export const make = Effect.gen(function* () {
                 ),
               catch: () =>
                 new CodexAuthCallbackError({
-                  detail:
-                    "Could not receive hosted web ChatGPT sign-in. Retry or use the redirect URL in the web app.",
+                  detail: translateDesktopInterfaceMessage(
+                    "desktop.providerAuth.hostedCallbackFailed",
+                  ),
                 }),
             });
           }).pipe(

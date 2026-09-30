@@ -1,6 +1,10 @@
 // @effect-diagnostics globalTimers:off -- Poll TCC only while the native permission helper is open.
 import * as Electron from "electron";
 import { MAC_PERMISSION_HELPER_CHANNEL } from "../ipc/channels.ts";
+import {
+  readDesktopInterfaceLanguage,
+  translateDesktopInterfaceMessage,
+} from "../settings/DesktopInterfaceLanguage.ts";
 
 import {
   settingsHelperBounds,
@@ -8,7 +12,7 @@ import {
   type SettingsWindow,
 } from "./MacSettingsWindow.ts";
 
-import { MAC_PERMISSION_TITLES, type MacPermission } from "./MacPermission.ts";
+import { MAC_PERMISSION_TITLE_IDS, type MacPermission } from "./MacPermission.ts";
 
 const permissionGranted = (permission: MacPermission) => {
   if (permission === "screen-recording")
@@ -39,11 +43,10 @@ const escapeHtml = (value: string) =>
     }
   });
 
-function helperHtml(permission: MacPermission, icon: string) {
-  const title = MAC_PERMISSION_TITLES[permission];
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+function helperHtml(title: string, icon: string) {
+  return `<!doctype html><html lang="${readDesktopInterfaceLanguage()}"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">
-<title>Set up ${title}</title><style>
+<title>${escapeHtml(title)}</title><style>
 :root { color-scheme: light dark; --base: #fff; --row: #e7e7e7; --text: #292929; --line: #e3e3e3; }
 @media (prefers-color-scheme: dark) { :root { --base: #242424; --row: #383838; --text: #f5f5f5; --line: #484848; } }
 * { box-sizing: border-box; }
@@ -59,9 +62,9 @@ button:focus-visible { outline: 2px solid #007aff; outline-offset: 3px; }
 #app:active { cursor: grabbing; }
 img { width: 32px; height: 32px; pointer-events: none; }
 </style></head><body><main id="panel">
-<button id="close" aria-label="Close permission helper">×</button>
-<header>↑ Drag T3 Code into the list above</header>
-<button id="app" draggable="true" aria-label="Drag T3 Code to System Settings, or click to reveal in Finder"><img src="${escapeHtml(icon)}" alt="" draggable="false">T3 Code</button>
+<button id="close" aria-label="${escapeHtml(translateDesktopInterfaceMessage("desktop.permission.closeHelper"))}">×</button>
+<header>${escapeHtml(translateDesktopInterfaceMessage("desktop.permission.dragInstruction"))}</header>
+<button id="app" draggable="true" aria-label="${escapeHtml(translateDesktopInterfaceMessage("desktop.permission.dragAppLabel"))}"><img src="${escapeHtml(icon)}" alt="" draggable="false">T3 Code</button>
 </main></body></html>`;
 }
 
@@ -97,6 +100,9 @@ export class MacPermissionHelper {
       .find((image) => !image.isEmpty());
     if (!appIcon) throw new Error("The packaged T3 Code icon is missing.");
     const icon = appIcon.resize({ width: 64, height: 64 });
+    const title = translateDesktopInterfaceMessage("desktop.permission.setupTitle", {
+      permission: translateDesktopInterfaceMessage(MAC_PERMISSION_TITLE_IDS[permission]),
+    });
     const window = new Electron.BrowserWindow({
       width: 560,
       height: 140,
@@ -112,7 +118,7 @@ export class MacPermissionHelper {
       fullscreenable: false,
       alwaysOnTop: true,
       skipTaskbar: true,
-      title: `Set up ${MAC_PERMISSION_TITLES[permission]}`,
+      title,
       webPreferences: { preload, sandbox: true, contextIsolation: true, nodeIntegration: false },
     });
     this.window = window;
@@ -196,7 +202,7 @@ export class MacPermissionHelper {
     window.webContents.on("will-navigate", (event) => event.preventDefault());
     try {
       await window.loadURL(
-        `data:text/html;charset=utf-8,${encodeURIComponent(helperHtml(permission, icon.toDataURL()))}`,
+        `data:text/html;charset=utf-8,${encodeURIComponent(helperHtml(title, icon.toDataURL()))}`,
       );
       if (!window.isDestroyed()) {
         stopTracking = watchMacSettingsWindow(

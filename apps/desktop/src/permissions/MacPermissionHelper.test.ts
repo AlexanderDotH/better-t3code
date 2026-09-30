@@ -3,6 +3,7 @@ import * as Electron from "electron";
 import { MacPermissionHelper, macAppBundlePath } from "./MacPermissionHelper.ts";
 import type { SettingsWindow } from "./MacSettingsWindow.ts";
 import { MAC_PERMISSION_HELPER_CHANNEL } from "../ipc/channels.ts";
+import { setDesktopInterfaceLanguage } from "../settings/DesktopInterfaceLanguage.ts";
 
 const mocks = vi.hoisted(() => ({
   granted: false,
@@ -19,6 +20,7 @@ const windows = vi.hoisted(
   () =>
     [] as Array<{
       destroyed: boolean;
+      options: Electron.BrowserWindowConstructorOptions;
       webContents: { mainFrame: object };
       setBounds: ReturnType<typeof vi.fn>;
       hide: ReturnType<typeof vi.fn>;
@@ -28,6 +30,7 @@ const windows = vi.hoisted(
 vi.mock("electron", async () => {
   const { EventEmitter } = await import("node:events");
   class MockWindow extends EventEmitter {
+    readonly options: Electron.BrowserWindowConstructorOptions;
     destroyed = false;
     webContents = Object.assign(new EventEmitter(), {
       mainFrame: {},
@@ -35,8 +38,9 @@ vi.mock("electron", async () => {
       send: mocks.send,
       setWindowOpenHandler: vi.fn(),
     });
-    constructor(_options: unknown) {
+    constructor(options: Electron.BrowserWindowConstructorOptions) {
       super();
+      this.options = options;
       windows.push(this);
     }
     isDestroyed() {
@@ -105,6 +109,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   helper.close();
+  setDesktopInterfaceLanguage("en");
   vi.useRealTimers();
 });
 const iconPaths = ["/bundle/prod-resources/icon.png"];
@@ -130,6 +135,20 @@ describe("macAppBundlePath", () => {
     expect(macAppBundlePath("/usr/local/bin/electron")).toBeUndefined();
     expect(macAppBundlePath("/Applications/T3 Code.app/other/MacOS/T3 Code")).toBeUndefined();
   });
+});
+it("renders the selected desktop language in the native permission helper", async () => {
+  setDesktopInterfaceLanguage("fr");
+  await open();
+
+  expect(windows[0]!.options.title).toBe("Configurer Accessibilité");
+  const html = decodeURIComponent(mocks.loadURL.mock.calls[0]![0].split(",").slice(1).join(","));
+  expect(html).toContain('<html lang="fr">');
+  expect(html).toContain("<title>Configurer Accessibilité</title>");
+  expect(html).toContain('aria-label="Fermer l’aide aux autorisations"');
+  expect(html).toContain("↑ Glissez T3 Code dans la liste ci-dessus");
+  expect(html).toContain(
+    "Glissez T3 Code dans Réglages Système, ou cliquez pour l’afficher dans le Finder",
+  );
 });
 it("drags the running app bundle only for the helper's own renderer", async () => {
   await open();
