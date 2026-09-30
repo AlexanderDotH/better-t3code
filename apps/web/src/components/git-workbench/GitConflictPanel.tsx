@@ -1,4 +1,4 @@
-import { GitMerge } from "lucide-react";
+import { MergeIcon as GitMerge } from "lucide-react";
 
 import { Badge } from "~/components/ui/badge";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";

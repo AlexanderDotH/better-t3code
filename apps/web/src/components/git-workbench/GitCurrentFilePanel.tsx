@@ -139,7 +139,8 @@ function GitCurrentFileConflict({
         <label className="flex min-h-40 flex-col gap-1 text-xs">
           <span className="font-medium">{translate("git.workbench.mergedVersion")}</span>
           <Textarea
-            className="min-h-36 flex-1 resize-none font-mono text-xs"
+            className="min-h-36 flex-1 resize-none"
+            variant="code"
             disabled={readOnly}
             onChange={(event) => onMergedDraftChange(event.currentTarget.value)}
             spellCheck={false}
@@ -202,7 +203,8 @@ function ReadOnlyVersion({ content, label }: { content: string; label: string })
       <span className="font-medium">{label}</span>
       <Textarea
         aria-readonly="true"
-        className="min-h-36 flex-1 resize-none font-mono text-xs"
+        className="min-h-36 flex-1 resize-none"
+        variant="code"
         readOnly
         spellCheck={false}
         value={content}

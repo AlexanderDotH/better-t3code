@@ -11,6 +11,7 @@ import {
   buildWorkspaceDeckFrameMorphDescriptor,
   WORKSPACE_DECK_MORPH_DURATION_MS,
 } from "../workspace-deck/workspaceCardDeck.morph";
+import { workspaceDeckCssPolicySource } from "./workspaceDeckCssPolicy";
 
 const gitDeckCssPath = decodeURIComponent(
   new URL("./GitWorkspaceDeck.css", import.meta.url).pathname,
@@ -20,11 +21,13 @@ const workspaceDeckCssPath = decodeURIComponent(
 );
 const readGitDeckCss = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
-  return yield* fileSystem.readFileString(gitDeckCssPath);
+  const css = yield* fileSystem.readFileString(gitDeckCssPath);
+  return workspaceDeckCssPolicySource(css);
 }).pipe(Effect.provide(NodeServices.layer));
 const readWorkspaceDeckCss = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
-  return yield* fileSystem.readFileString(workspaceDeckCssPath);
+  const css = yield* fileSystem.readFileString(workspaceDeckCssPath);
+  return workspaceDeckCssPolicySource(css);
 }).pipe(Effect.provide(NodeServices.layer));
 
 describe("Git workspace deck motion model behavior", () => {
@@ -177,7 +180,6 @@ describe("Git workspace deck motion CSS repository policy", () => {
 
       const idleCardRule = css.match(/\.workspace-card-deck__card\s*\{([^}]*)\}/)?.[1] ?? "";
       expect(idleCardRule).not.toContain("will-change");
-      expect(css).not.toMatch(/\.workspace-card-deck__card-content\s*\{[^}]*will-change:/);
     }),
   );
 

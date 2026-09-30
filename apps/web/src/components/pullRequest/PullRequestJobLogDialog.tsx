@@ -81,19 +81,23 @@ export function PullRequestJobLogDialog({
         onWheel={(event) => event.stopPropagation()}
         onTouchMove={(event) => event.stopPropagation()}
       >
-        <DialogHeader className="shrink-0 pr-12">
-          <DialogTitle className="flex items-center gap-2">
-            <PullRequestCheckStatusIcon
-              status={currentCheck.status}
-              pendingState={currentCheck.pendingState}
-            />
-            <span className="truncate">{currentCheck.name}</span>
-          </DialogTitle>
-          <DialogDescription>
-            {currentCheck.stage ? `${currentCheck.stage} · ` : ""}
-            {pullRequestCheckStatusLabel(currentCheck)} · Job #{check.logId}
-          </DialogDescription>
-        </DialogHeader>
+        <div className="shrink-0 pr-6">
+          <DialogHeader>
+            <DialogTitle>
+              <span className="flex items-center gap-2">
+                <PullRequestCheckStatusIcon
+                  status={currentCheck.status}
+                  pendingState={currentCheck.pendingState}
+                />
+                <span className="truncate">{currentCheck.name}</span>
+              </span>
+            </DialogTitle>
+            <DialogDescription>
+              {currentCheck.stage ? `${currentCheck.stage} · ` : ""}
+              {pullRequestCheckStatusLabel(currentCheck)} · Job #{check.logId}
+            </DialogDescription>
+          </DialogHeader>
+        </div>
         {query.error !== null ? (
           <p role="alert" className="border-t px-6 py-3 text-sm text-destructive">
             {query.error}

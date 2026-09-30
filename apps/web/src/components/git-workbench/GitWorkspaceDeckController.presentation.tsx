@@ -35,7 +35,7 @@ export function GitWorkspaceDeckGitCard(props: {
       workbench={
         <GitWorkbenchDrawerShell
           activeTab={props.activeTab}
-          className="workspace-card-deck__card-content git-workbench-drawer--embedded"
+          className="git-workbench-drawer--embedded"
           {...(props.availableHeight === undefined
             ? {}
             : { availableHeight: props.availableHeight })}

@@ -148,7 +148,8 @@ export function GitBranchesPanel({
           <label className="mt-3 block text-xs">
             {translate("git.operation.targetCommit")}
             <Input
-              className="mt-1 font-mono"
+              className="mt-1"
+              font="mono"
               disabled={readOnly}
               onChange={(event) => setResetOid(event.currentTarget.value)}
               value={resetOid}

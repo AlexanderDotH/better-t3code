@@ -50,7 +50,7 @@ export function GitWorkspaceChangesIndicator(props: GitWorkspaceChangesIndicator
   return (
     <span
       className={cn(
-        "git-workspace-changes-indicator pointer-events-none relative z-10 hidden min-w-0 shrink-0 items-center gap-0.5 px-1 text-[0.625rem] leading-none text-muted-foreground/70 md:inline-flex",
+        "pointer-events-none relative z-10 hidden min-w-0 shrink-0 items-center gap-0.5 px-1 text-3xs leading-none text-muted-foreground/70 md:inline-flex",
         props.blocked && "opacity-60",
       )}
       data-git-workspace-changes-indicator="true"

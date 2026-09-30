@@ -1,6 +1,5 @@
 import { type FocusEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { cn } from "~/lib/utils";
 import { useBetterT3DeviceFeature } from "~/hooks/useBetterT3Feature";
 
 import {
@@ -320,7 +319,7 @@ export function ChatWorkspaceDeck(props: ChatWorkspaceDeckProps) {
 
   return (
     <div
-      className={cn("chat-workspace-deck", props.className)}
+      className={props.className}
       data-chat-workspace-deck="true"
       data-active-card={policyActiveCard}
       data-selection-locked={selectionLocked ? "true" : undefined}
