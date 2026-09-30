@@ -21,6 +21,13 @@ const sandboxPreloadDependencies = {
   neverBundle: (id: string) => id === "electron" || id.startsWith("electron/"),
   onlyBundle: false as const,
 };
+// Electron injects lexical bindings into the preload scope. Keep bundled
+// dependencies inside their own function so declarations cannot collide.
+const sandboxPreloadOutputOptions = {
+  codeSplitting: false,
+  banner: "(() => {",
+  footer: "})();",
+};
 const shouldLaunchElectronAfterPack = process.env.T3CODE_DESKTOP_DEV === "1";
 const publicConfigDefine = {
   __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: JSON.stringify(
@@ -113,7 +120,7 @@ export default defineConfig({
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
       define: publicConfigDefine,
-      outputOptions: { codeSplitting: false },
+      outputOptions: sandboxPreloadOutputOptions,
       entry: ["src/preload.ts"],
       deps: sandboxPreloadDependencies,
     },
@@ -123,7 +130,7 @@ export default defineConfig({
       dts: false,
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
-      outputOptions: { codeSplitting: false },
+      outputOptions: sandboxPreloadOutputOptions,
       entry: ["src/preview-pick-preload.ts"],
       deps: sandboxPreloadDependencies,
     },
@@ -133,7 +140,7 @@ export default defineConfig({
       dts: false,
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
-      outputOptions: { codeSplitting: false },
+      outputOptions: sandboxPreloadOutputOptions,
       entry: ["src/preview-pip-preload.ts"],
       deps: sandboxPreloadDependencies,
     },
@@ -144,7 +151,7 @@ export default defineConfig({
       dts: false,
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
-      outputOptions: { codeSplitting: false },
+      outputOptions: sandboxPreloadOutputOptions,
       entry: ["src/mac-permission-preload.ts"],
       deps: sandboxPreloadDependencies,
     },
