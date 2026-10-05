@@ -397,7 +397,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
 .better-t3-settings-group[data-focus-active="false"] [data-settings-focus-item] {
   opacity: var(--settings-focus-opacity, 0.4);
-  filter: blur(var(--settings-focus-blur, 5px));
 }
 
 .better-t3-settings-group[data-focus-active="true"] [data-slot="settings-section-body"] {
@@ -417,7 +416,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
   .better-t3-settings-group[data-focus-active="false"] [data-settings-focus-item] {
     opacity: 1;
-    filter: none;
   }
 }
 

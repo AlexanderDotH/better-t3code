@@ -385,6 +385,7 @@ const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
 interface WorkGroupViewState {
   scrollPositions: Map<string, WorkGroupScrollAnchor>;
   expandedEntries: Set<string>;
+  collapsedEntries?: Set<string>;
 }
 
 const WorkGroupViewCtx = createContext<{
@@ -715,6 +716,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       rememberedPosition?.disclosures?.workGroupState ?? {
         scrollPositions: new Map(),
         expandedEntries: new Set(),
+        collapsedEntries: new Set(),
       },
     [listIdentityKey, rememberedPosition],
   );
@@ -1425,7 +1427,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     if (hideEmptyPlaceholder) {
       // Occupy the pane with the theme surface so a thread switch cannot
       // punch a hole through to the window chrome (white in light mode).
-      return <div className="h-full min-h-0 bg-background" data-timeline-loading="true" />;
+      return (
+        <div className="h-full min-h-0 window-surface bg-background" data-timeline-loading="true" />
+      );
     }
     return (
       <div className="flex h-full items-center justify-center">
@@ -2190,13 +2194,20 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const revertTurnCount = row.revertTurnCount;
   // A file with a chip in the prose needs no standalone row. Media is the exception: the
   // thumbnail is the only way to actually see it, so it shows whether or not it has a chip.
+  const contextReferences = useMemo(
+    () => collectComposerContextReferences(resolvedContext.text),
+    [resolvedContext.text],
+  );
+  const referencedContextIds = useMemo(
+    () => new Set(contextReferences.map((reference) => reference.contextId)),
+    [contextReferences],
+  );
   const chippedAttachmentIds = new Set(
-    collectComposerContextReferences(resolvedContext.text).flatMap((occurrence) => {
+    contextReferences.flatMap((occurrence) => {
       const record = asKnownContextRecord(resolvedContext.recordsById.get(occurrence.contextId));
       return record?.kind === "file" || record?.kind === "image" ? [record.attachmentId] : [];
     }),
   );
-  const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
   const unchippedFiles = otherUserFiles.filter((file) => !chippedAttachmentIds.has(file.id));
   const annotationRecordIds = useMemo(
     () =>
@@ -2204,6 +2215,44 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         .filter((record) => record.kind === "preview-annotation")
         .map((record) => record.contextId),
     [resolvedContext.records],
+  );
+  const inlineAnnotations = useMemo(
+    () =>
+      ctx.chatVisualMode === "classic"
+        ? annotationRecordIds.flatMap((contextId) => {
+            if (!referencedContextIds.has(contextId)) return [];
+            const record = asKnownContextRecord(resolvedContext.recordsById.get(contextId));
+            return record?.kind === "preview-annotation"
+              ? [
+                  {
+                    record,
+                    image: resolvePreviewAnnotationImage({
+                      record,
+                      recordsById: resolvedContext.recordsById,
+                      userImages,
+                      previewImages,
+                      annotationRecordIds,
+                    }),
+                  },
+                ]
+              : [];
+          })
+        : [],
+    [
+      ctx.chatVisualMode,
+      annotationRecordIds,
+      referencedContextIds,
+      resolvedContext.recordsById,
+      userImages,
+      previewImages,
+    ],
+  );
+  const inlineAnnotationImageIds = new Set(
+    inlineAnnotations.flatMap(({ image }) => (image ? [image.id] : [])),
+  );
+  const regularImages = userImages.filter(
+    (image) =>
+      !image.name.startsWith("preview-annotation-") && !inlineAnnotationImageIds.has(image.id),
   );
   const contextClipboardFragment =
     resolvedContext.records.length === 0
@@ -2435,6 +2484,17 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             />
           )}
         </div>
+        {!editor && inlineAnnotations.length > 0 ? (
+          <div className="mt-3 space-y-2" data-classic-preview-annotations>
+            {inlineAnnotations.map(({ record, image }) => (
+              <UserMessagePreviewAnnotationDetails
+                key={record.contextId}
+                record={record}
+                image={image}
+              />
+            ))}
+          </div>
+        ) : null}
       </div>
       <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
         <div className="flex shrink-0 items-center gap-2">
@@ -5303,21 +5363,30 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   onToggleEntry?: ((collapsed: boolean) => void) | undefined;
 }) {
   const { workEntry, workspaceRoot, isExpandedToolGroupEntry, displayLabel } = props;
-  const { threadRef, onImageExpand, chatVisualMode, timestampFormat } = use(TimelineRowCtx);
+  const { threadRef, onImageExpand, chatVisualMode, timestampFormat, workGroupViewState } =
+    use(TimelineRowCtx);
   const groupView = use(WorkGroupViewCtx);
-  const [expanded, setExpanded] = useState(
-    () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
-  );
+  const viewState = groupView?.state ?? workGroupViewState;
+  const [expandedOverride, setExpandedOverride] = useState<boolean | undefined>(() => {
+    if (viewState.expandedEntries.has(workEntry.id)) return true;
+    if (viewState.collapsedEntries?.has(workEntry.id)) return false;
+    return undefined;
+  });
+  const expanded =
+    expandedOverride ?? (chatVisualMode === "classic" && Boolean(workEntry.questionAnswer));
   const toggleExpanded = () => {
     const next = !expanded;
-    if (groupView) {
-      groupView.onToggleEntry(!next);
-      if (next) groupView.state.expandedEntries.add(workEntry.id);
-      else groupView.state.expandedEntries.delete(workEntry.id);
+    if (groupView) groupView.onToggleEntry(!next);
+    else props.onToggleEntry?.(!next);
+    const collapsedEntries = (viewState.collapsedEntries ??= new Set());
+    if (next) {
+      viewState.expandedEntries.add(workEntry.id);
+      collapsedEntries.delete(workEntry.id);
     } else {
-      props.onToggleEntry?.(!next);
+      viewState.expandedEntries.delete(workEntry.id);
+      collapsedEntries.add(workEntry.id);
     }
-    setExpanded(next);
+    setExpandedOverride(next);
   };
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
@@ -5401,6 +5470,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
         "aria-expanded": expanded,
         onClick: toggleExpanded,
         onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
+          if (e.target !== e.currentTarget) return;
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
             toggleExpanded();

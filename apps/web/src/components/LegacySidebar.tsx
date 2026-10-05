@@ -1785,15 +1785,19 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         event.stopPropagation();
         return;
       }
-      if (
-        resolveProjectHeaderClickAction({
-          button: event.button,
-          detail: event.detail,
-          projectExpanded,
-          shiftKey: shiftClickShowLessEnabled && event.shiftKey,
-        }) === "show-less"
-      ) {
+      const action = resolveProjectHeaderClickAction({
+        button: event.button,
+        detail: event.detail,
+        projectExpanded,
+        canShowLess,
+        shiftKey: shiftClickShowLessEnabled && event.shiftKey,
+      });
+      if (action === "show-less") {
         collapseThreadListForProject(project.projectKey);
+        return;
+      }
+      if (action === "show-more") {
+        expandThreadListForProject(project.projectKey);
         return;
       }
       if (useThreadSelectionStore.getState().hasSelection()) {
@@ -1802,9 +1806,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       setProjectExpanded(projectPreferenceKeys, !projectExpanded);
     },
     [
+      canShowLess,
       clearSelection,
       collapseThreadListForProject,
       dragInProgressRef,
+      expandThreadListForProject,
       projectExpanded,
       project.projectKey,
       projectPreferenceKeys,

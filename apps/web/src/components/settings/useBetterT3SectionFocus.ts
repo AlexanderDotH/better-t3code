@@ -10,8 +10,6 @@ function applySectionFocus(content: HTMLElement, activeGroupId: string) {
   const activeBounds = groups[activeIndex]?.getBoundingClientRect();
   if (!activeBounds) return;
 
-  // Measure once when focus or layout changes. Per-row filters avoid capturing an entire section
-  // in a backdrop layer every time the page scrolls.
   const measurements = groups.map((group, index) => {
     const candidates = new Set(group.querySelectorAll<HTMLElement>(FOCUS_ITEM_SELECTOR));
     const items = [...candidates].filter((item) => {
@@ -33,7 +31,6 @@ function applySectionFocus(content: HTMLElement, activeGroupId: string) {
         const depth = Math.min(1, Math.max(0, distance) / FOCUS_FADE_DISTANCE_PX);
         return {
           item,
-          blur: `${(3 + depth * 5).toFixed(2)}px`,
           opacity: (0.62 - depth * 0.4).toFixed(2),
         };
       }),
@@ -42,9 +39,8 @@ function applySectionFocus(content: HTMLElement, activeGroupId: string) {
 
   for (const { group, active, items } of measurements) {
     group.dataset.focusActive = String(active);
-    for (const { item, blur, opacity } of items) {
+    for (const { item, opacity } of items) {
       item.dataset.settingsFocusItem = "";
-      item.style.setProperty("--settings-focus-blur", active ? "0px" : blur);
       item.style.setProperty("--settings-focus-opacity", active ? "1" : opacity);
     }
   }

@@ -621,51 +621,41 @@ describe("shouldCreateNewThreadInCurrentProject", () => {
 });
 
 describe("resolveProjectHeaderClickAction", () => {
-  it("shows less on Shift-left-click when the project is expanded", () => {
+  it.each([
+    { list: "preview", canShowLess: false, action: "show-more" },
+    { list: "expanded or settled", canShowLess: true, action: "show-less" },
+  ])("Shift-left-click shows $action from the $list list", ({ canShowLess, action }) => {
     expect(
       resolveProjectHeaderClickAction({
         button: 0,
         detail: 1,
         projectExpanded: true,
+        canShowLess,
         shiftKey: true,
       }),
-    ).toBe("show-less");
+    ).toBe(action);
   });
 
-  it("retains the existing toggle for regular, collapsed, keyboard, and non-primary clicks", () => {
-    expect(
-      resolveProjectHeaderClickAction({
+  it.each([false, true])(
+    "retains project toggling for other clicks with canShowLess=%s",
+    (canShowLess) => {
+      const input = {
         button: 0,
         detail: 1,
         projectExpanded: true,
-        shiftKey: false,
-      }),
-    ).toBe("toggle-expanded");
-    expect(
-      resolveProjectHeaderClickAction({
-        button: 0,
-        detail: 1,
-        projectExpanded: false,
+        canShowLess,
         shiftKey: true,
-      }),
-    ).toBe("toggle-expanded");
-    expect(
-      resolveProjectHeaderClickAction({
-        button: 0,
-        detail: 0,
-        projectExpanded: true,
-        shiftKey: true,
-      }),
-    ).toBe("toggle-expanded");
-    expect(
-      resolveProjectHeaderClickAction({
-        button: 1,
-        detail: 1,
-        projectExpanded: true,
-        shiftKey: true,
-      }),
-    ).toBe("toggle-expanded");
-  });
+      };
+      expect(resolveProjectHeaderClickAction({ ...input, shiftKey: false })).toBe(
+        "toggle-expanded",
+      );
+      expect(resolveProjectHeaderClickAction({ ...input, projectExpanded: false })).toBe(
+        "toggle-expanded",
+      );
+      expect(resolveProjectHeaderClickAction({ ...input, detail: 0 })).toBe("toggle-expanded");
+      expect(resolveProjectHeaderClickAction({ ...input, button: 1 })).toBe("toggle-expanded");
+    },
+  );
 });
 
 describe("orderItemsByPreferredIds", () => {
@@ -1908,8 +1898,6 @@ describe("applySidebarThreadDrop", () => {
     const preview = applySidebarThreadDrop(source, "settled", now);
     const final = {
       ...source,
-      pinnedAt: null,
-      pinOrderKey: null,
       snoozedAt: null,
       snoozedUntil: null,
       settledOverride: "settled" as const,

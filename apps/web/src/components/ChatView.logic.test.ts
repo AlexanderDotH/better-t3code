@@ -85,6 +85,7 @@ import {
   shouldOpenProactiveTurnDiff,
   shouldRenderPreviewMiniPlayer,
   shouldShowBranchMismatchBanner,
+  shouldShowPlanAnalysis,
   shouldShowPlanFollowUpPrompt,
   shouldWriteThreadErrorToCurrentServerThread,
   waitForRevertedMessage,
@@ -1726,8 +1727,19 @@ describe("shouldShowPlanFollowUpPrompt", () => {
     hasComposerAttachments: false,
   };
 
-  it("shows plan actions for a settled actionable plan without attachments", () => {
+  it("keeps analysis available in Build without changing its message submission mode", () => {
+    const build = { ...base, interactionMode: "default" as const };
+    expect(shouldShowPlanAnalysis(build)).toBe(true);
+    expect(shouldShowPlanFollowUpPrompt(build)).toBe(false);
+    expect(shouldShowPlanAnalysis(base)).toBe(true);
     expect(shouldShowPlanFollowUpPrompt(base)).toBe(true);
+  });
+
+  it("hides analysis for implemented plans, running turns, questions, and attachments", () => {
+    expect(shouldShowPlanAnalysis({ ...base, hasActionableProposedPlan: false })).toBe(false);
+    expect(shouldShowPlanAnalysis({ ...base, latestTurnSettled: false })).toBe(false);
+    expect(shouldShowPlanAnalysis({ ...base, pendingUserInputCount: 1 })).toBe(false);
+    expect(shouldShowPlanAnalysis({ ...base, hasComposerAttachments: true })).toBe(false);
   });
 
   it("hides plan actions while the composer has staged attachments", () => {

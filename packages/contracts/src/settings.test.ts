@@ -878,6 +878,25 @@ describe("ChatVisualModeSyncRecord", () => {
     expect(decodeChatVisualModeSyncRecord(encoded)).toEqual(record);
   });
 
+  it("preserves Classic and Current in durable client settings without requiring older files to contain a record", () => {
+    expect(decodeClientSettings({}).chatVisualModeLocalRecord).toBeNull();
+    expect(DEFAULT_CLIENT_SETTINGS.chatVisualModeLocalRecord).toBeNull();
+    for (const mode of ["classic", "current"] as const) {
+      const localRecord = { ...record, mode };
+      const saved = encodeClientSettings(
+        decodeClientSettings({ chatVisualModeLocalRecord: localRecord }),
+      );
+      expect(decodeClientSettings(saved).chatVisualModeLocalRecord).toEqual(localRecord);
+      expect(
+        decodeClientSettingsPatch({ chatVisualModeLocalRecord: localRecord })
+          .chatVisualModeLocalRecord,
+      ).toEqual(localRecord);
+    }
+    expect(
+      decodeClientSettingsPatch({ chatVisualModeLocalRecord: null }).chatVisualModeLocalRecord,
+    ).toBeNull();
+  });
+
   it("is optional in legacy server settings and accepted by settings patches", () => {
     expect(decodeServerSettings({}).chatVisualModeSyncRecord).toBeUndefined();
     expect(decodeServerSettingsPatch({})).not.toHaveProperty("chatVisualModeSyncRecord");
@@ -897,6 +916,8 @@ describe("ChatVisualModeSyncRecord", () => {
   ])("rejects an invalid synchronized chat visual record: $record", (invalidRecord) => {
     expect(() => decodeChatVisualModeSyncRecord(invalidRecord)).toThrow();
     expect(() => decodeServerSettingsPatch({ chatVisualModeSyncRecord: invalidRecord })).toThrow();
+    expect(() => decodeClientSettings({ chatVisualModeLocalRecord: invalidRecord })).toThrow();
+    expect(() => decodeClientSettingsPatch({ chatVisualModeLocalRecord: invalidRecord })).toThrow();
   });
 });
 

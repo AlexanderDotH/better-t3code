@@ -482,6 +482,9 @@ export const ClientSettingsSchema = Schema.Struct({
   environmentIdentificationMode: EnvironmentIdentificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE)),
   ),
+  chatVisualModeLocalRecord: Schema.NullOr(ChatVisualModeSyncRecord).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   /** Local cache participating in cross-environment interface-language sync. */
   interfaceLanguageLocalRecord: Schema.NullOr(InterfaceLanguageSyncRecord).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
@@ -2298,6 +2301,7 @@ export const ClientSettingsPatch = Schema.Struct({
   experimentalFetch: Schema.optionalKey(Schema.Boolean),
   experimentalParallelPlanImplementation: Schema.optionalKey(Schema.Boolean),
   environmentIdentificationMode: Schema.optionalKey(EnvironmentIdentificationMode),
+  chatVisualModeLocalRecord: Schema.optionalKey(Schema.NullOr(ChatVisualModeSyncRecord)),
   interfaceLanguageLocalRecord: Schema.optionalKey(Schema.NullOr(InterfaceLanguageSyncRecord)),
   interfaceLocaleLocalRecordV1: Schema.optionalKey(Schema.NullOr(InterfaceLocaleSyncRecordV1)),
   glassOpacity: Schema.optionalKey(GlassOpacity),

@@ -2,6 +2,7 @@
 
 import {
   ApprovalRequestId,
+  ComposerContextId,
   DEFAULT_CLIENT_SETTINGS,
   CheckpointRef,
   EnvironmentId,
@@ -3085,3 +3086,187 @@ it.each(["current", "classic"] as const)(
     }
   },
 );
+
+it("restores complete Classic question histories and remembers explicit collapse across row remounts", async () => {
+  visualPreference.mode = "current";
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("requestAnimationFrame", () => 0);
+  vi.stubGlobal("cancelAnimationFrame", () => {});
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const entry: TimelineEntry = {
+    id: "classic-answer-entry",
+    kind: "work",
+    createdAt: MESSAGE_CREATED_AT,
+    entry: {
+      id: "classic-answer-work",
+      createdAt: MESSAGE_CREATED_AT,
+      label: "Question answer submitted",
+      tone: "info",
+      questionAnswer: {
+        requestId: ApprovalRequestId.make("classic-answer-request"),
+        answers: { first: "Keep the current styling", second: "Restore the full details" },
+        questionTextById: { first: "Which styling?", second: "Which details?" },
+        attachmentsByQuestionId: {
+          second: [
+            {
+              type: "file",
+              id: "classic-spec",
+              name: "classic-spec.txt",
+              mimeType: "text/plain",
+              sizeBytes: 4,
+            },
+          ],
+        },
+      },
+    },
+  };
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const render = (entries: TimelineEntry[] = [entry]) => (
+    <MessagesTimeline {...buildProps()} timelineEntries={entries} />
+  );
+  try {
+    await act(() => root.render(render()));
+    expect(container.textContent).not.toContain("Which details?");
+    visualPreference.mode = "classic";
+    await act(() => root.render(render()));
+    expect(container.textContent).toContain("Which styling?");
+    expect(container.textContent).toContain("Which details?");
+    expect(container.textContent).toContain("Restore the full details");
+    expect(container.textContent).toContain("classic-spec.txt");
+
+    const toggle = () =>
+      container.querySelector<HTMLElement>(
+        '[role="button"][aria-label^="Question answer submitted"]',
+      )!;
+    const attachment = container.querySelector("a")!;
+    await act(() =>
+      attachment.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })),
+    );
+    expect(container.textContent).toContain("Which details?");
+
+    await act(() => toggle().click());
+    expect(container.textContent).not.toContain("Which details?");
+    await act(() => root.render(render([])));
+    await act(() => root.render(render()));
+    expect(container.textContent).not.toContain("Which details?");
+    await act(() =>
+      toggle().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })),
+    );
+    expect(container.textContent).toContain("Which details?");
+  } finally {
+    await act(() => root.unmount());
+    container.remove();
+    visualPreference.mode = "current";
+  }
+});
+
+it("restores an inline Classic annotation preview without duplicating its image and keeps zoom available", async () => {
+  visualPreference.mode = "classic";
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("requestAnimationFrame", () => 0);
+  vi.stubGlobal("cancelAnimationFrame", () => {});
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const annotationId = ComposerContextId.make("classic-annotation");
+  const imageContextId = ComposerContextId.make("classic-screenshot");
+  const image = {
+    type: "image" as const,
+    id: "classic-screenshot-attachment",
+    name: "capture.png",
+    mimeType: "image/png",
+    sizeBytes: 42,
+    previewUrl: "data:image/png;base64,Y2xhc3NpYw==",
+  };
+  const entry = buildUserTimelineEntry(
+    `Fix [Checkout button](t3-context://v1/preview-annotation/${annotationId}).`,
+  );
+  const message = {
+    ...entry.message,
+    attachments: [image],
+    context: {
+      version: 1 as const,
+      records: [
+        {
+          version: 1 as const,
+          contextId: imageContextId,
+          kind: "image" as const,
+          label: image.name,
+          attachmentId: image.id,
+          name: image.name,
+          mimeType: image.mimeType,
+          sizeBytes: image.sizeBytes,
+        },
+        {
+          version: 1 as const,
+          contextId: annotationId,
+          kind: "preview-annotation" as const,
+          label: "Checkout button",
+          annotationId: "classic-producer",
+          pageUrl: "https://example.test/checkout",
+          pageTitle: "Checkout",
+          comment: "Align the checkout button",
+          targetSummary: "1 selected element",
+          styleChanges: [],
+          screenshotContextId: imageContextId,
+        },
+      ],
+    },
+  };
+  const expand = vi.fn();
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const render = (text = message.text) => (
+    <MessagesTimeline
+      {...buildProps()}
+      onImageExpand={expand}
+      timelineEntries={[{ ...entry, message: { ...message, text } }]}
+    />
+  );
+  try {
+    await act(() => root.render(render()));
+    const preview = container.querySelector("[data-classic-preview-annotations]")!;
+    expect(preview.textContent).toContain("Align the checkout button");
+    expect(preview.textContent).toContain("Checkout");
+    expect(container.querySelectorAll("img")).toHaveLength(1);
+    const zoom = preview.querySelector<HTMLButtonElement>(
+      'button[aria-label="Preview capture.png"]',
+    )!;
+    await act(() => zoom.click());
+    expect(expand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        index: 0,
+        images: expect.arrayContaining([expect.objectContaining({ src: image.previewUrl })]),
+      }),
+    );
+
+    visualPreference.mode = "current";
+    await act(() => root.render(render()));
+    expect(container.querySelector("[data-classic-preview-annotations]")).toBeNull();
+    expect(container.textContent).toContain("Checkout button");
+    expect(container.textContent).not.toContain("Align the checkout button");
+
+    visualPreference.mode = "classic";
+    await act(() => root.render(render("Keep only the attached screenshot.")));
+    expect(container.querySelector("[data-classic-preview-annotations]")).toBeNull();
+    expect(container.textContent).not.toContain("Align the checkout button");
+    expect(container.querySelectorAll("img")).toHaveLength(1);
+  } finally {
+    await act(() => root.unmount());
+    container.remove();
+    visualPreference.mode = "current";
+  }
+});

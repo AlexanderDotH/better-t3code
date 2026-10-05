@@ -10,6 +10,7 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import { decideOrchestrationCommand } from "./decider.ts";
+import { projectEvent } from "./projector.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const PINNED_AT = "1969-12-30T00:00:00.000Z";
@@ -184,18 +185,31 @@ it.layer(NodeServices.layer)("pinned thread decider", (it) => {
     }),
   );
 
-  it.effect("settling a pinned thread also unpins it", () =>
+  it.effect("manual and automatic settlement preserve favorites through event replay", () =>
     Effect.gen(function* () {
-      const event = yield* decideOrchestrationCommand({
-        command: {
-          type: "thread.settle",
-          commandId: CommandId.make("cmd-settle-pinned"),
-          threadId: ThreadId.make("thread-1"),
-        },
-        readModel: makeReadModel({ pinnedAt: PINNED_AT }),
-      });
-      const events = Array.isArray(event) ? event : [event];
-      expect(events.map((entry) => entry.type)).toEqual(["thread.settled", "thread.unpinned"]);
+      for (const type of ["thread.settle", "thread.auto-settle"] as const) {
+        let readModel = makeReadModel({ pinnedAt: PINNED_AT, pinOrderKey: "m" });
+        const event = yield* decideOrchestrationCommand({
+          command: {
+            type,
+            commandId: CommandId.make(`cmd-${type}-pinned`),
+            threadId: ThreadId.make("thread-1"),
+            snapshotSequence: 0,
+            settledAt: NOW,
+          },
+          readModel,
+        });
+        const events = Array.isArray(event) ? event : [event];
+        expect(events.map((entry) => entry.type)).toEqual(["thread.settled"]);
+        for (const [index, planned] of events.entries()) {
+          readModel = yield* projectEvent(readModel, { ...planned, sequence: index + 1 });
+        }
+        expect(readModel.threads[0]).toMatchObject({
+          pinnedAt: PINNED_AT,
+          pinOrderKey: "m",
+          settledOverride: "settled",
+        });
+      }
     }),
   );
 

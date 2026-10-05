@@ -1295,6 +1295,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   planImplementationSuggestion: PlanImplementationSuggestion | null;
   planParallelismReviewStatus: PlanParallelismReviewStatus;
   showPlanFollowUpPrompt: boolean;
+  showPlanImplementationActions: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
   sendDisabledReason: string | null;
@@ -1330,6 +1331,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         pendingAction={props.pendingAction}
         isRunning={props.isRunning}
         showPlanFollowUpPrompt={props.showPlanFollowUpPrompt}
+        showPlanImplementationActions={props.showPlanImplementationActions}
         promptHasText={props.promptHasText}
         isSendBusy={props.isSendBusy}
         sendDisabledReason={props.sendDisabledReason}
@@ -1490,6 +1492,7 @@ export interface ChatComposerProps {
 
   // Plan
   showPlanFollowUpPrompt: boolean;
+  showPlanAnalysis?: boolean;
   activeProposedPlan: Thread["proposedPlans"][number] | null;
   activeTasksProgress: ComposerTasksProgress | null;
   activeTaskSteps: readonly ComposerTaskStep[] | null;
@@ -1637,6 +1640,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activePendingQuestionIndex,
     respondingRequestIds,
     showPlanFollowUpPrompt,
+    showPlanAnalysis = showPlanFollowUpPrompt,
     activeProposedPlan,
     runtimeMode,
     interactionMode: requestedInteractionMode,
@@ -2099,10 +2103,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     () => selectedProviderEntry?.snapshot ?? null,
     [selectedProviderEntry],
   );
+  const { enabled: planModeUiEnabled, interactionMode } = resolveComposerInteractionMode({
+    planModeEnabled: settings.planModeEnabled,
+    provider: selectedProviderStatus,
+    interactionMode: requestedInteractionMode,
+  });
   const planServerConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const parallelPlanEnabled =
     resolveBetterT3FeatureFlag(settings.betterT3Device, "agent.parallelPlanImplementation") &&
     (planServerConfig?.environment.capabilities.agentWorkflowVersion ?? 0) >= 1;
+  const showPlanAnalysisPanel =
+    showPlanFollowUpPrompt ||
+    (showPlanAnalysis && parallelPlanEnabled && planModeUiEnabled && phase !== "running");
   const planReviewerSelection = settings.parallelPlanReviewModelSelection;
   const planReviewerProvider = useMemo(
     () =>
@@ -2112,7 +2124,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [providerStatuses, planReviewerSelection.instanceId],
   );
   const planParallelismReview = usePlanParallelismReview({
-    enabled: parallelPlanEnabled && showPlanFollowUpPrompt && environmentUnavailable === null,
+    enabled: parallelPlanEnabled && showPlanAnalysisPanel && environmentUnavailable === null,
     environmentId,
     threadId: activeThreadId,
     plan: activeProposedPlan,
@@ -2230,11 +2242,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const selectedPromptEffort = composerProviderState.promptEffort;
   const selectedModelOptionsForDispatch = composerProviderState.modelOptionsForDispatch;
-  const { enabled: planModeUiEnabled, interactionMode } = resolveComposerInteractionMode({
-    planModeEnabled: settings.planModeEnabled,
-    provider: selectedProviderStatus,
-    interactionMode: requestedInteractionMode,
-  });
   const selectedModelSelection = useMemo<ModelSelection>(
     () => createModelSelection(selectedInstanceId, selectedModel, selectedModelOptionsForDispatch),
     [selectedInstanceId, selectedModel, selectedModelOptionsForDispatch],
@@ -2242,7 +2249,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const selectedModelForPicker = selectedModel;
   const planExecutionEstimate = useMemo(
     () =>
-      showPlanFollowUpPrompt && activeProposedPlan
+      showPlanAnalysisPanel && activeProposedPlan
         ? estimatePlanExecution({
             planMarkdown: activeProposedPlan.planMarkdown,
             modelSelection: selectedModelSelection,
@@ -2254,7 +2261,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           })
         : undefined,
     [
-      showPlanFollowUpPrompt,
+      showPlanAnalysisPanel,
       activeProposedPlan,
       selectedModelSelection,
       selectedProviderModels,
@@ -2757,7 +2764,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const showComposerTopDrawer =
     isComposerApprovalState ||
     pendingUserInputs.length > 0 ||
-    (!isComposerCollapsedMobile && showPlanFollowUpPrompt && activeProposedPlan !== null);
+    (!isComposerCollapsedMobile && showPlanAnalysisPanel && activeProposedPlan !== null);
   const showCollapsedMobilePromptRow =
     isComposerCollapsedMobile && !isComposerApprovalState && pendingUserInputs.length === 0;
   const showComposerAttachAction =
@@ -2765,7 +2772,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     (!activePendingProgress ||
       (supportsQuestionAttachments &&
         activePendingProgress.activeQuestion?.allowCustomAnswer !== false));
-  const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
+  const composerFooterHasWideActions = showPlanAnalysisPanel || activePendingProgress !== null;
   const composerFooterActionLayoutKey = useMemo(() => {
     if (activePendingProgress) {
       return `pending:${activePendingProgress.questionIndex}:${activePendingProgress.isLastQuestion}:${activePendingIsResponding}`;
@@ -2773,7 +2780,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (phase === "running") {
       return "running";
     }
-    if (showPlanFollowUpPrompt) {
+    if (showPlanFollowUpPrompt || (showPlanAnalysisPanel && prompt.trim().length === 0)) {
       return prompt.trim().length > 0 ? "plan:refine" : "plan:implement";
     }
     return `idle:${composerSendState.hasSendableContent}:${isSendBusy}:${isConnecting}:${isPreparingWorktree}`;
@@ -2786,6 +2793,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isSendBusy,
     phase,
     prompt,
+    showPlanAnalysisPanel,
     showPlanFollowUpPrompt,
   ]);
 
@@ -6694,7 +6702,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       onAdvance={onAdvanceActivePendingUserInput}
                       onDismiss={onDismissActivePendingUserInput}
                     />
-                  ) : !isComposerCollapsedMobile && showPlanFollowUpPrompt && activeProposedPlan ? (
+                  ) : !isComposerCollapsedMobile && showPlanAnalysisPanel && activeProposedPlan ? (
                     <ComposerPlanFollowUpBanner
                       key={activeProposedPlan.id}
                       planTitle={proposedPlanTitle(activeProposedPlan.planMarkdown) ?? null}
@@ -7523,6 +7531,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     showPlanFollowUpPrompt={
                       pendingUserInputs.length === 0 && showPlanFollowUpPrompt
                     }
+                    showPlanImplementationActions={showPlanAnalysisPanel}
                     promptHasText={prompt.trim().length > 0}
                     isSendBusy={isSendBusy || voiceDictation.active}
                     sendDisabledReason={sendDisabledReason}
