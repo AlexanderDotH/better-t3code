@@ -95,10 +95,7 @@ it("focuses the section occupying the most visible space and only updates row st
     await act(flushFrames);
     expect(renderer!.root.findByProps({ "data-active-group": "general" })).toBeDefined();
     expect(groups[0]!.dataset.focusActive).toBe("true");
-    expect(groups[0]!.values.get("--settings-focus-blur")).toBe("0px");
-    expect(parseFloat(groups[2]!.values.get("--settings-focus-blur")!)).toBeGreaterThan(
-      parseFloat(groups[1]!.values.get("--settings-focus-blur")!),
-    );
+    expect(groups[0]!.values.get("--settings-focus-opacity")).toBe("1");
     expect(Number(groups[2]!.values.get("--settings-focus-opacity"))).toBeLessThan(
       Number(groups[1]!.values.get("--settings-focus-opacity")),
     );
@@ -130,7 +127,7 @@ it("focuses the section occupying the most visible space and only updates row st
     });
     expect(renderer!.root.findByProps({ "data-active-group": "chat" })).toBeDefined();
     expect(groups[1]!.dataset.focusActive).toBe("false");
-    expect(groups[2]!.values.get("--settings-focus-blur")).toBe("0px");
+    expect(groups[2]!.values.get("--settings-focus-opacity")).toBe("1");
 
     // Scrolling back should focus appearance before its heading reaches the navigation.
     groupTops.general += 250;
@@ -141,7 +138,7 @@ it("focuses the section occupying the most visible space and only updates row st
       flushFrames();
     });
     expect(renderer!.root.findByProps({ "data-active-group": "appearance" })).toBeDefined();
-    expect(groups[1]!.values.get("--settings-focus-blur")).toBe("0px");
+    expect(groups[1]!.values.get("--settings-focus-opacity")).toBe("1");
 
     groupTops.general = -200;
     groupTops.appearance = 100;
@@ -171,7 +168,7 @@ it("focuses the section occupying the most visible space and only updates row st
       flushFrames();
     });
     expect(renderer!.root.findByProps({ "data-active-group": "chat" })).toBeDefined();
-    expect(groups[2]!.values.get("--settings-focus-blur")).toBe("0px");
+    expect(groups[2]!.values.get("--settings-focus-opacity")).toBe("1");
   } finally {
     await act(() => renderer?.unmount());
   }

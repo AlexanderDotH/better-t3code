@@ -976,8 +976,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: alreadySettled ? thread.updatedAt : occurredAt,
         },
       };
-      // Settling is "I'm done with this": clear states that would keep the
-      // row pinned or snoozed instead of showing the new settled state.
+      // Settlement does not remove favorites. Clear snoozing so settled
+      // threads wake, while their saved pin and position remain intact.
       const companionEvents: Array<PlannedOrchestrationEvent> = [];
       for (const [requestId, request] of pendingRequests) {
         companionEvents.push({
@@ -999,21 +999,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
               createdAt: occurredAt,
               payload: { requestId, responseMode: "message" },
             },
-          },
-        });
-      }
-      if (thread.pinnedAt != null) {
-        companionEvents.push({
-          ...(yield* withEventBase({
-            aggregateKind: "thread",
-            aggregateId: command.threadId,
-            occurredAt,
-            commandId: command.commandId,
-          })),
-          type: "thread.unpinned" as const,
-          payload: {
-            threadId: command.threadId,
-            updatedAt: occurredAt,
           },
         });
       }

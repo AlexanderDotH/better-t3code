@@ -15,6 +15,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { toastManager } from "./components/ui/toast";
 import { useLocalStorage } from "./hooks/useLocalStorage";
+import {
+  persistClientSettingsUpdate,
+  useClientSettings,
+  useClientSettingsHydrated,
+} from "./hooks/useSettings";
+import { useInterfaceTranslator } from "./hooks/useInterfaceTranslator";
 import { randomUUID } from "./lib/utils";
 import { useEnvironments } from "./state/environments";
 import { serverEnvironment } from "./state/server";
@@ -32,6 +38,8 @@ interface ChatVisualModeUpdateClock {
 function makeUpdateId(): string {
   return `web:${randomUUID()}`;
 }
+
+let latestObservedUpdatedAt = -1;
 
 const DEFAULT_UPDATE_CLOCK: ChatVisualModeUpdateClock = {
   now: Date.now,
@@ -117,8 +125,60 @@ function writesMatch(
   );
 }
 
+type ChatVisualModeCacheUpdate =
+  | ChatVisualModeSyncRecord
+  | null
+  | ((current: ChatVisualModeSyncRecord | null) => ChatVisualModeSyncRecord | null);
+
+function latestVisualModeRecord(
+  left: ChatVisualModeSyncRecord | null,
+  right: ChatVisualModeSyncRecord | null,
+): ChatVisualModeSyncRecord | null {
+  if (left === null) return right;
+  if (right === null) return left;
+  return right.updatedAt > left.updatedAt ||
+    (right.updatedAt === left.updatedAt && right.updateId > left.updateId)
+    ? right
+    : left;
+}
+
 function useChatVisualModeSyncCache() {
-  return useLocalStorage(CHAT_VISUAL_MODE_SYNC_STORAGE_KEY, null, ChatVisualModeSyncCache);
+  const durableRecord = useClientSettings((settings) => settings.chatVisualModeLocalRecord ?? null);
+  const [legacyRecord, clearLegacyRecord] = useLocalStorage(
+    CHAT_VISUAL_MODE_SYNC_STORAGE_KEY,
+    null,
+    ChatVisualModeSyncCache,
+  );
+  const translate = useInterfaceTranslator().message;
+  const setRecord = useCallback(
+    (update: ChatVisualModeCacheUpdate) => {
+      void persistClientSettingsUpdate((settings) => {
+        const current = latestVisualModeRecord(settings.chatVisualModeLocalRecord, legacyRecord);
+        const next = typeof update === "function" ? update(current) : update;
+        return {
+          ...settings,
+          chatVisualModeLocalRecord:
+            typeof update === "function" || next === null
+              ? next
+              : latestVisualModeRecord(current, next),
+        };
+      })
+        .then(() => clearLegacyRecord(null))
+        .catch(() => {
+          toastManager.add({
+            type: "error",
+            title: translate("settings.betterT3.chatAppearanceSaveFailed"),
+          });
+        });
+    },
+    [clearLegacyRecord, legacyRecord, translate],
+  );
+  const record = latestVisualModeRecord(durableRecord, legacyRecord);
+  return [
+    record,
+    setRecord,
+    durableRecord !== null && recordsMatch(durableRecord, record),
+  ] as const;
 }
 
 export function useChatVisualMode(): ChatVisualMode {
@@ -131,7 +191,11 @@ export function useSetChatVisualMode(): (mode: ChatVisualMode) => void {
   return useCallback(
     (mode: ChatVisualMode) => {
       setRecord((current) =>
-        createChatVisualModeSyncRecord(mode, DEFAULT_UPDATE_CLOCK, current?.updatedAt),
+        createChatVisualModeSyncRecord(
+          mode,
+          DEFAULT_UPDATE_CLOCK,
+          Math.max(current?.updatedAt ?? -1, latestObservedUpdatedAt),
+        ),
       );
     },
     [setRecord],
@@ -139,7 +203,8 @@ export function useSetChatVisualMode(): (mode: ChatVisualMode) => void {
 }
 
 export function ChatVisualModeSyncCoordinator() {
-  const [localRecord, setLocalRecord] = useChatVisualModeSyncCache();
+  const [localRecord, setLocalRecord, hasDurableRecord] = useChatVisualModeSyncCache();
+  const settingsHydrated = useClientSettingsHydrated();
   const { environments, isReady } = useEnvironments();
   const persistServerSettings = useAtomCommand(serverEnvironment.updateSettings, {
     label: "chat visual mode settings sync",
@@ -221,9 +286,10 @@ export function ChatVisualModeSyncCoordinator() {
   }, []);
 
   useEffect(() => {
-    if (!isReady || plan.winner === null) return;
+    if (!settingsHydrated || !isReady || plan.winner === null) return;
+    latestObservedUpdatedAt = Math.max(latestObservedUpdatedAt, plan.winner.updatedAt);
 
-    if (!recordsMatch(localRecord, plan.nextLocalRecord)) {
+    if (!hasDurableRecord || !recordsMatch(localRecord, plan.nextLocalRecord)) {
       setLocalRecord(plan.nextLocalRecord);
     }
     setPendingWrites((current) =>
@@ -302,12 +368,14 @@ export function ChatVisualModeSyncCoordinator() {
     });
   }, [
     failedWriteKeyByEnvironment,
+    hasDurableRecord,
     isReady,
     labelByEnvironmentId,
     localRecord,
     persistServerSettings,
     plan,
     setLocalRecord,
+    settingsHydrated,
   ]);
 
   return null;

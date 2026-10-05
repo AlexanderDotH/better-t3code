@@ -56,21 +56,29 @@ it.each([
   expect(require.resolve(packageName)).toBe(await NodeFSP.realpath(files.packageEntry));
 });
 
-it("loads native modules from the real unpacked Desktop tree", async () => {
+it("loads native modules from a worker in the real unpacked Desktop tree", async () => {
   const files = await fixture(
     "Café App.app/Resources/app.asar.unpacked/apps/server/dist/bin.mjs",
     "Café App.app/Resources/app.asar.unpacked",
     "asar",
   );
-  const archive = NodePath.join(files.root, "Café App.app/Resources/app.asar");
-  await NodeFSP.writeFile(archive, "inert archive fixture");
-  const moduleUrl = NodeURL.pathToFileURL(
-    files.entryPath.replace("app.asar.unpacked", "app.asar"),
-  ).href;
+  const moduleUrl = NodeURL.pathToFileURL(files.entryPath).href;
   expect(createFileBackedRequire(moduleUrl)(packageName)).toEqual({
     origin: "asar",
     entry: "commonjs",
   });
+});
+
+it("keeps archived wrappers reachable when the server entry also has an unpacked copy", async () => {
+  const archiveRoot = "Café App.app/Resources/app.asar";
+  const files = await fixture(`${archiveRoot}/apps/server/dist/bin.mjs`, archiveRoot, "asar");
+  const unpackedEntry = files.entryPath.replace("app.asar", "app.asar.unpacked");
+  await NodeFSP.mkdir(NodePath.dirname(unpackedEntry), { recursive: true });
+  await NodeFSP.writeFile(unpackedEntry, "inert unpacked entry fixture");
+
+  const require = createFileBackedRequire(NodeURL.pathToFileURL(files.entryPath).href);
+  expect(require(packageName)).toEqual({ origin: "asar", entry: "commonjs" });
+  expect(require.resolve(packageName)).toBe(await NodeFSP.realpath(files.packageEntry));
 });
 
 it("loads packaged modules beside the SEA executable rather than its embedded module URL", async () => {

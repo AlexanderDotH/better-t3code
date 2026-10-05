@@ -30,6 +30,11 @@ const clientSettings: ClientSettings = {
       "chat.classicSidebar": false,
     },
   },
+  chatVisualModeLocalRecord: {
+    mode: "classic",
+    updatedAt: 1_790_860_000_000,
+    updateId: "desktop:classic-persistence",
+  },
   interfaceLanguageLocalRecord: null,
   notificationMode: "notifications-and-sound",
   inAppNotificationsEnabled: true,

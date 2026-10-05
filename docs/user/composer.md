@@ -286,6 +286,8 @@ action uses the suggested strategy. Its menu lets you choose standard implementa
 subagent count, in the current thread or a new thread. If review fails, the interface identifies
 that its recommendation uses a fallback estimate.
 
-With an empty composer, Enter follows the plan's available implementation action. To refine the
-plan instead, type feedback and send it. A provider or model change can make a previously offered
-parallel strategy unavailable; choose a supported strategy before continuing.
+Analysis and implementation actions remain available for an unimplemented plan when you switch
+to Build mode. In Plan mode, Enter with an empty composer follows the plan's implementation action;
+type feedback to refine it. In Build mode, typed text sends a normal message; choose **Implement**
+to start the plan. A provider or model change can make a previously offered parallel strategy
+unavailable; choose a supported strategy before continuing.

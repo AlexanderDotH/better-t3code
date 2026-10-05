@@ -483,6 +483,7 @@ import {
   shouldDockDraftHeroForSubmission,
   shouldReleaseTimelineAnchorForToolActivity,
   shouldShowBranchMismatchBanner,
+  shouldShowPlanAnalysis,
   shouldShowPlanFollowUpPrompt,
   shouldOpenProactivePullRequest,
   shouldRetargetThreadPullRequestPanel,
@@ -3253,12 +3254,16 @@ export default function ChatView(props: ChatViewProps) {
     () => deriveActivePlanState(threadActivities, activeLatestTurn?.turnId ?? undefined),
     [activeLatestTurn?.turnId, threadActivities],
   );
-  const showPlanFollowUpPrompt = shouldShowPlanFollowUpPrompt({
+  const planAnalysisAvailability = {
     pendingUserInputCount: pendingUserInputs.length,
-    interactionMode,
     latestTurnSettled,
     hasActionableProposedPlan: hasActionableProposedPlan(activeProposedPlan),
     hasComposerAttachments: composerHasAttachments,
+  };
+  const showPlanAnalysis = shouldShowPlanAnalysis(planAnalysisAvailability);
+  const showPlanFollowUpPrompt = shouldShowPlanFollowUpPrompt({
+    ...planAnalysisAvailability,
+    interactionMode,
   });
   const activePendingApproval = pendingApprovals[0] ?? null;
   const usageLimitSources = serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES;
@@ -10657,7 +10662,7 @@ export default function ChatView(props: ChatViewProps) {
               />
             </div>
             {/* Messages Wrapper */}
-            <div className="relative flex min-h-0 flex-1 flex-col bg-background">
+            <div className="relative flex min-h-0 flex-1 flex-col window-surface bg-background">
               {/* Messages — LegendList handles virtualization and scrolling internally */}
               <MessagesTimeline
                 composerPlanTurnId={paintOnlyDisplayedTimeline ? null : composerPlanTurnId}
@@ -10960,6 +10965,7 @@ export default function ChatView(props: ChatViewProps) {
                                 activePendingQuestionIndex={activePendingQuestionIndex}
                                 respondingRequestIds={respondingRequestIds}
                                 showPlanFollowUpPrompt={showPlanFollowUpPrompt}
+                                showPlanAnalysis={showPlanAnalysis}
                                 activeProposedPlan={activeProposedPlan}
                                 activeTasksProgress={
                                   composerPlanTurnId === null ? null : activeComposerTasksProgress

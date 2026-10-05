@@ -206,6 +206,15 @@ export function UsagePaceBar({
           style={{ flex: catchUpShare }}
         />
       ) : null}
+      {catchUpShare > 0 && catchUpShare < 100 ? (
+        <View
+          className={`absolute inset-y-0 w-3 translate-x-1/2 rounded-full border-r-2 border-screen ${color}`}
+          style={{
+            right: `${catchUpShare}%`,
+            maxWidth: `${Math.min(catchUpShare, 100 - catchUpShare) * 2}%`,
+          }}
+        />
+      ) : null}
       {overdrawn ? <View className="absolute inset-y-0 right-0 w-px bg-foreground/60" /> : null}
       {remainingPercent(window) > pace.todayRemainingPercent && pace.todayRemainingPercent > 0 ? (
         <View

@@ -380,8 +380,6 @@ export function applySidebarThreadDrop<
   if (section === "settled") {
     return {
       ...awake,
-      pinnedAt: null,
-      pinOrderKey: null,
       activeOrderKey: null,
       settledOverride: "settled",
       settledAt: wasSettled ? (thread.settledAt ?? now) : now,
@@ -731,10 +729,12 @@ export function resolveProjectHeaderClickAction(input: {
   button: number;
   detail: number;
   projectExpanded: boolean;
+  canShowLess: boolean;
   shiftKey: boolean;
-}): "show-less" | "toggle-expanded" {
+}): "show-more" | "show-less" | "toggle-expanded" {
   const isShiftLeftClick = input.button === 0 && input.detail > 0 && input.shiftKey;
-  return input.projectExpanded && isShiftLeftClick ? "show-less" : "toggle-expanded";
+  if (!input.projectExpanded || !isShiftLeftClick) return "toggle-expanded";
+  return input.canShowLess ? "show-less" : "show-more";
 }
 
 export function orderItemsByPreferredIds<TItem, TId>(input: {

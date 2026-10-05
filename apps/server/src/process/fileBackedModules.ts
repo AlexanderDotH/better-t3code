@@ -13,7 +13,7 @@ export function unpackedFilePath(filePath: string): string {
 }
 
 export function createFileBackedRequire(moduleUrl: string) {
-  return NodeModule.createRequire(
-    unpackedFilePath(NodeURL.fileURLToPath(runtimeModuleUrl(moduleUrl))),
-  );
+  // Electron resolves archived wrappers and redirects native binaries itself.
+  // Rewriting the origin to .unpacked hides dependencies that remain archived.
+  return NodeModule.createRequire(runtimeModuleUrl(moduleUrl));
 }

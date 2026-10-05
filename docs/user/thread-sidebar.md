@@ -32,6 +32,8 @@ Pin a thread from its menu to keep it above your active work.
 In the Classic Sidebar on web and desktop, use a thread's star to keep it at the top
 of its project, including when the project's list is shortened. Click the star again
 to unpin it. These favorites use the same saved pins as the standard sidebar.
+When the Classic Sidebar’s Shift-click setting is enabled, Shift-click an open
+project’s name to switch between its preview and expanded thread list.
 On web and desktop, unpinning, settling, snoozing, and archiving a thread each show
 a notification with **Undo** for five seconds. Undo restores the thread's previous
 state, including its pinned position, and reopens an archived thread you were
@@ -46,7 +48,9 @@ files directly; see [Attach files](./composer.md#attach-files).
 On web and desktop, pinning or unpinning a thread keeps the sidebar at your current
 scroll position instead of following the thread to its new place in the list.
 
-Pinning does not prevent automatic settlement. Settling a thread removes its pin.
+Pinning does not prevent automatic settlement. Favorites and their saved positions remain
+when a thread is settled, including automatically. Remove the star or choose **Unpin**
+to remove a favorite.
 
 On web and desktop, drag a thread between sections to change its state. Drag a thread up into
 the pinned section to pin it at the spot you drop it; drag a pinned thread down into the active

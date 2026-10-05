@@ -959,20 +959,26 @@ export function shouldShowBranchMismatchBanner(input: {
   return input.composerHasContent || input.wasShownForCurrentMismatch;
 }
 
-export function shouldShowPlanFollowUpPrompt(input: {
+interface PlanAnalysisAvailability {
   pendingUserInputCount: number;
-  interactionMode: ProviderInteractionMode;
   latestTurnSettled: boolean;
   hasActionableProposedPlan: boolean;
   hasComposerAttachments: boolean;
-}): boolean {
+}
+
+export function shouldShowPlanAnalysis(input: PlanAnalysisAvailability): boolean {
   return (
     input.pendingUserInputCount === 0 &&
-    input.interactionMode === "plan" &&
     input.latestTurnSettled &&
     input.hasActionableProposedPlan &&
     !input.hasComposerAttachments
   );
+}
+
+export function shouldShowPlanFollowUpPrompt(
+  input: PlanAnalysisAvailability & { interactionMode: ProviderInteractionMode },
+): boolean {
+  return input.interactionMode === "plan" && shouldShowPlanAnalysis(input);
 }
 
 // Session-scoped (module-level so it survives ChatView remounts, e.g. route

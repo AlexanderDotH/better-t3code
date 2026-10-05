@@ -36,6 +36,7 @@ interface ComposerPrimaryActionsProps {
   isRunning: boolean;
   abortPresentation?: ThreadAbortPresentation;
   showPlanFollowUpPrompt: boolean;
+  showPlanImplementationActions?: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
   sendDisabledReason: string | null;
@@ -92,6 +93,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isRunning,
   abortPresentation,
   showPlanFollowUpPrompt,
+  showPlanImplementationActions = false,
   promptHasText,
   isSendBusy,
   sendDisabledReason,
@@ -212,7 +214,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     );
   }
 
-  if (showPlanFollowUpPrompt) {
+  if (showPlanFollowUpPrompt || (showPlanImplementationActions && !isRunning && !promptHasText)) {
     if (promptHasText) {
       return (
         <button

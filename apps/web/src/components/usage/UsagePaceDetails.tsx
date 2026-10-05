@@ -146,6 +146,16 @@ export function UsagePaceBar({
           style={{ flex: catchUpShare }}
         />
       ) : null}
+      {catchUpShare > 0 && catchUpShare < 100 ? (
+        <div
+          aria-hidden
+          className={`usage-pace-notch ${color}`}
+          style={{
+            left: `${100 - catchUpShare}%`,
+            width: `min(12px, ${Math.min(catchUpShare, 100 - catchUpShare) * 2}%)`,
+          }}
+        />
+      ) : null}
       {hasNotch ? (
         <div
           aria-hidden

@@ -19,6 +19,11 @@ const betterT3SettingsCatalog = defineLocalizedInterfaceCatalog({
     "Better-T3-Funktionen steuern, ohne Korrektheits- oder Datensicherheitsgarantien abzuschwächen.",
     "Contrôlez les fonctions Better T3 sans affaiblir les garanties de fiabilité ou de sécurité des données.",
   ],
+  "settings.betterT3.chatAppearanceSaveFailed": [
+    "Couldn’t save chat appearance.",
+    "Chat-Darstellung konnte nicht gespeichert werden.",
+    "Impossible d’enregistrer l’apparence du chat.",
+  ],
   "settings.betterT3.deviceScope": ["This device", "Dieses Gerät", "Cet appareil"],
   "settings.betterT3.environmentScope": [
     "Selected environment",
@@ -642,9 +647,9 @@ const featureLabels = {
   "chat.sorting": ["Chat sorting", "Chat-Sortierung", "Tri des discussions"],
   "chat.settling": ["Chat settling", "Chat-Ablage", "Classement des discussions"],
   "chat.shiftClickShowLess": [
-    "Shift-click Show Less",
-    "Umschalt-Klick für Weniger anzeigen",
-    "Maj-clic pour afficher moins",
+    "Shift-click Show More/Less",
+    "Umschalt-Klick für mehr/weniger Chats",
+    "Maj-clic pour afficher plus/moins",
   ],
   "chat.draftIndicators": ["Draft indicators", "Entwurfsanzeigen", "Indicateurs de brouillon"],
   "chat.sidebarPosition": [
