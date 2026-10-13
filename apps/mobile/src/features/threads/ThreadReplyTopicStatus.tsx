@@ -9,7 +9,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useSelectedThreadRequests } from "../../state/use-selected-thread-requests";
 import { PendingApprovalCard } from "./PendingApprovalCard";
 import { PendingUserInputCard } from "./PendingUserInputCard";
-import { messageReplyStatusKey } from "./message-replies";
+import { messageReplyStatusKey } from "../../lib/message-replies";
 
 type TopicProps = {
   readonly environmentId: EnvironmentId;

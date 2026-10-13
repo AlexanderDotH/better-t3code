@@ -464,6 +464,7 @@ describe("mobile Better T3 settings", () => {
 
   it("reports MCP, skills, and mixed-version compatibility explicitly", () => {
     const current = capabilities({
+      messageReplies: true,
       visualizationsVersion: 1,
       environmentSettingsVersion: 1,
       projectSettingsVersion: 1,
@@ -530,17 +531,22 @@ describe("mobile Better T3 settings", () => {
       supportedCount: currentCompatibility.supportedFeatureCount,
       totalCount: currentCompatibility.totalFeatureCount,
     });
-    const limitedCompatibility = prepareCompatibilityStatus({
-      surface: "phone",
-      capabilities: { ...current, knowledgeGraphVersion: undefined },
-      registry: BETTER_T3_FEATURE_REGISTRY,
-    });
-    expect(
-      mobileBetterT3PreparedStatusMessageKey({
-        featureId: "integration.compatibility",
-        status: limitedCompatibility,
-      }),
-    ).toBe("settings.betterT3.status.compatibilityLimited");
+    for (const missingCapability of [
+      { knowledgeGraphVersion: undefined },
+      { messageReplies: undefined },
+    ]) {
+      const limitedCompatibility = prepareCompatibilityStatus({
+        surface: "phone",
+        capabilities: { ...current, ...missingCapability },
+        registry: BETTER_T3_FEATURE_REGISTRY,
+      });
+      expect(
+        mobileBetterT3PreparedStatusMessageKey({
+          featureId: "integration.compatibility",
+          status: limitedCompatibility,
+        }),
+      ).toBe("settings.betterT3.status.compatibilityLimited");
+    }
     expect(
       mobileBetterT3PreparedStatusMessageKey({
         featureId: "integration.mcp",

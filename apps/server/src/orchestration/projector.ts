@@ -1187,13 +1187,19 @@ export function projectEvent(
                   }
                 : entry,
             )
-          : [...previousMessages, message].toSorted(
-              (left, right) =>
-                left.createdAt.localeCompare(right.createdAt) ||
-                (left.replyTopicId ?? "").localeCompare(right.replyTopicId ?? "") ||
-                left.id.localeCompare(right.id),
-            );
-        const cappedMessages = retainFrozenWithNativeLimit(messages, MAX_THREAD_MESSAGES);
+          : [...previousMessages, message];
+        // The main transcript follows event order, including imports and retention.
+        // Only independently arriving reply topics need chronological insertion.
+        const orderedMessages =
+          isReply && !existingMessage
+            ? messages.toSorted(
+                (left, right) =>
+                  left.createdAt.localeCompare(right.createdAt) ||
+                  (left.replyTopicId ?? "").localeCompare(right.replyTopicId ?? "") ||
+                  left.id.localeCompare(right.id),
+              )
+            : messages;
+        const cappedMessages = retainFrozenWithNativeLimit(orderedMessages, MAX_THREAD_MESSAGES);
 
         return {
           ...nextBase,

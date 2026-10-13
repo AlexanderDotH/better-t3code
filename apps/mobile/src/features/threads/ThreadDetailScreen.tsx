@@ -122,7 +122,7 @@ import { ThreadFeed, type ThreadFeedRetryAction } from "./ThreadFeed";
 import type { ComposerDraft } from "../../state/use-composer-drafts";
 import type { OrchestrationMessage } from "@t3tools/contracts";
 import { MESSAGE_REPLY_PREVIEW_MIN_HEIGHT } from "./MessageReplyPreview";
-import { mobileReplyTopicActionsEnabled } from "./message-replies";
+import { mobileReplyTopicActionsEnabled } from "../../lib/message-replies";
 import { ThreadSubagentStack } from "./ThreadSubagentStack";
 import { useMobilePlanParallelismReview } from "./use-plan-parallelism-review";
 import type { ThreadContentPresentation } from "./threadContentPresentation";

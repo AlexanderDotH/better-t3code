@@ -4,7 +4,6 @@ import {
   type BetterT3SettingsV1,
   type OrchestrationSubagentSummary,
 } from "@t3tools/contracts";
-import type { ComposerDraft } from "../../state/use-composer-drafts";
 
 const DEFAULT_MESSAGE_REPLY_SETTINGS = makeBetterT3SettingsV1("clean-install");
 
@@ -33,19 +32,6 @@ export function mobileReplyTopicActionsEnabled(
   connected: boolean,
 ) {
   return connected && capabilities?.messageReplies === true;
-}
-
-export function messageReplyDraftCompletion(
-  current: ComposerDraft,
-  sent: ComposerDraft,
-): "clear" | "cancel-reply" | "retain" {
-  if (current.messageReply !== sent.messageReply) return "retain";
-  const contentUnchanged =
-    current.text === sent.text &&
-    current.context === sent.context &&
-    current.attachments.length === sent.attachments.length &&
-    current.attachments.every((attachment, index) => attachment.id === sent.attachments[index]?.id);
-  return contentUnchanged ? "clear" : "cancel-reply";
 }
 
 export function messageReplyStatusKey(topic: Pick<OrchestrationSubagentSummary, "status">) {

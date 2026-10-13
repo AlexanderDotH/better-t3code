@@ -14,11 +14,11 @@ import {
 import { buildThreadFeed, deriveThreadFeedPresentation } from "../../lib/threadActivity";
 import type { ComposerDraft } from "../../state/use-composer-drafts";
 import {
-  messageReplyDraftCompletion,
   mobileMessageRepliesEnabled,
   mobileReplyTopicActionsEnabled,
   mobileReplyMessageKey,
-} from "./message-replies";
+} from "../../lib/message-replies";
+import { messageReplyDraftCompletion } from "../../state/message-reply-draft";
 
 const source: OrchestrationMessage = {
   id: MessageId.make("same-id"),

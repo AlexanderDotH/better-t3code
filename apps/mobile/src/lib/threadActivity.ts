@@ -1,5 +1,5 @@
 import * as Option from "effect/Option";
-import { mobileReplyMessageKey } from "../features/threads/message-replies";
+import { mobileReplyMessageKey } from "./message-replies";
 import { foldUserInputActivities } from "@t3tools/client-runtime/work-log/user-input";
 import * as Schema from "effect/Schema";
 import {

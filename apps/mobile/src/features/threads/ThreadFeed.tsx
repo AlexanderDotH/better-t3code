@@ -4,7 +4,7 @@ import type {
   OrchestrationSubagentSummary,
   SubagentId,
 } from "@t3tools/contracts";
-import { mobileReplyMessageKey } from "./message-replies";
+import { mobileReplyMessageKey } from "../../lib/message-replies";
 import { MessageReplyAction } from "./MessageReplyAction";
 import { MessageReplyGesture } from "./MessageReplyGesture";
 import { MessageReplyPreview } from "./MessageReplyPreview";

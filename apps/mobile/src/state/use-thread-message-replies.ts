@@ -19,10 +19,8 @@ import { serializeComposerMessageForServer, uploadedComposerContext } from "../l
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { uuidv4 } from "../lib/uuid";
 import { useMobileInterfaceTranslator } from "../localization/useMobileInterfaceTranslator";
-import {
-  mobileMessageRepliesEnabled,
-  messageReplyDraftCompletion,
-} from "../features/threads/message-replies";
+import { mobileMessageRepliesEnabled } from "../lib/message-replies";
+import { messageReplyDraftCompletion } from "./message-reply-draft";
 import {
   clearComposerDraftContent,
   getComposerDraftSnapshot,
