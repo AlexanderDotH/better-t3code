@@ -28,12 +28,13 @@ to use diagrams when they help explain a concept or interpret data.
 
 Ask, for example, “Explain this request flow with a diagram, then help me check my understanding”
 or provide a table and ask “Compare these months, show the units, and explain what the data cannot tell us.”
-Follow-up actions prepare an editable message and preserve your existing draft.
+Continue with normal chat questions to ask for a simpler explanation or explore the data.
 
 Mermaid, PlantUML, Graphviz (`dot` or `graphviz`), Vega-Lite, and Vega code blocks appear as
-previews that can be opened full screen and exported as SVG or PNG. Data charts also provide
-source tables and CSV export. Source tables show input values, which may differ from aggregated
-values in a chart. Interactive chart selections are available full screen.
+readable previews that you can scroll through or open full screen. Use the diagram actions menu
+to export SVG or PNG. Data charts also provide source tables and CSV export. Source tables show
+input values, which may differ from aggregated values in a chart. Interactive chart selections
+are available full screen.
 
 Keep data inline: external includes, symbol libraries, and map services are not loaded. Each
 diagram accepts up to 64 KiB of source and 5,000 data rows. Larger or invalid diagrams retain
@@ -49,6 +50,10 @@ Environments that support decision models show a dedicated model selector for Au
 when Project Index is available, under **Settings → Better T3 → Knowledge Automation**. These
 selectors include both ordinary text models and provider-native decision models. Native decision
 models do not appear in normal agent or text-generation model lists.
+
+Auto Reasoning considers the combined work in a turn, including investigation and verification.
+If automatic selection fails, it uses at least medium reasoning when the model supports it.
+Choose a reasoning level manually when you want a fixed effort.
 
 The Project Index decision is off by default. When enabled, T3 first retrieves local indexed
 context and then asks the selected model whether that candidate is useful for the current prompt.
@@ -72,6 +77,22 @@ agent or add a correction message. Your next message uses the corrected conversa
 the agent to finish before editing. The separate fork action remains available to branch a chat.
 
 This is enabled by default. Turn it off under **Settings → Better T3 → Chat → Edit chat messages**.
+
+## Reply to chat messages
+
+On web, desktop, and mobile, choose **Reply** on your own message or an assistant message,
+or swipe your message left or an assistant message right. You can start anywhere in the message,
+including its text. With a mouse or pen, use a quick, straight drag to reply; slower movement,
+holding before dragging, or moving across lines keeps text selection. On touchscreens, hold to
+select text. Type and send your follow-up after selecting the message. Changing or removing the reply target keeps your draft.
+
+Replies appear in the conversation as a separate topic, so you can follow up while the main
+agent keeps working. Reply to a message in that topic to continue it. Each topic uses the main
+conversation’s provider, model, and workspace; file changes are shared. Stop or retry a reply
+from its topic. Checkpoint restore is unavailable while the main agent or any reply topic is active.
+
+Replies are enabled by default on supported environments. Turn them off for this device under
+**Settings → Better T3 → Chat → Reply to chat messages**. Saved reply topics remain in the conversation.
 
 ## Composer controls
 

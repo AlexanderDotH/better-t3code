@@ -83,6 +83,7 @@ import { makeAdapterRegistryMock } from "../testUtils/providerAdapterRegistryMoc
 import { makeProviderRegistryLayer } from "../testUtils/providerRegistryMock.ts";
 import { ProviderRegistry } from "../Services/ProviderRegistry.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { replyContext, replyOwnerThreadId } from "../../mcp/testFixtures/messageReply.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const defaultServerSettingsLayer = ServerSettings.ServerSettingsService.layerTest();
@@ -5393,7 +5394,7 @@ describe("agent browser access", () => {
       | "provider"
       | "off"
       | { readonly browser?: boolean; readonly device?: boolean },
-    options?: { readonly withoutOrchestration?: boolean },
+    options?: { readonly withoutOrchestration?: boolean; readonly reply?: boolean },
   ) =>
     Effect.gen(function* () {
       const enableAgentBrowserAccess = typeof access === "boolean" ? access : access.browser;
@@ -5404,6 +5405,8 @@ describe("agent browser access", () => {
         readonly capabilities?: ReadonlyArray<string>;
         readonly projectMemoryEnabled?: boolean;
         readonly workspaceWriteEnabled?: boolean;
+        readonly messageReply?: typeof replyContext;
+        readonly workspaceContextThreadId?: ThreadId;
       }> = [];
       const codex = makeFakeCodexAdapter();
       const providerAdapterLayer = Layer.succeed(
@@ -5469,6 +5472,10 @@ describe("agent browser access", () => {
           Effect.sync(() => {
             issued.push({
               threadId: request.threadId,
+              ...(request.messageReply === undefined ? {} : { messageReply: request.messageReply }),
+              ...(request.workspaceContextThreadId === undefined
+                ? {}
+                : { workspaceContextThreadId: request.workspaceContextThreadId }),
               ...(typeof access === "boolean"
                 ? {
                     previewEnabled: request.previewEnabled ?? false,
@@ -5521,6 +5528,28 @@ describe("agent browser access", () => {
 
       yield* Effect.gen(function* () {
         const provider = yield* ProviderService.ProviderService;
+        if (options?.reply) {
+          return yield* provider.startTransientSession(
+            replyOwnerThreadId,
+            {
+              threadId: replyOwnerThreadId,
+              runtimeSessionId: replyContext.runtimeSessionId,
+              purpose: "subagent-worker",
+              providerInstanceId: codexInstanceId,
+              cwd: fixtureCwdRoot,
+              modelSelection: createModelSelection(codexInstanceId, "gpt-5.4"),
+              runtimeMode: replyContext.runtimeMode,
+            },
+            {
+              workspaceContextThreadId: threadId,
+              mcpMode: "full",
+              messageReply: {
+                replyTopicId: replyContext.replyTopicId,
+                interactionMode: replyContext.interactionMode,
+              },
+            },
+          );
+        }
         return yield* provider.startSession(threadId, {
           provider: CODEX_DRIVER,
           providerInstanceId: codexInstanceId,
@@ -5532,6 +5561,50 @@ describe("agent browser access", () => {
 
       return issued;
     });
+
+  it.effect(
+    "inherits parent project browser and device access into an authenticated reply runtime",
+    () =>
+      Effect.gen(function* () {
+        const threadId = asThreadId("reply-project-grants");
+        const issued = yield* startSessionWith(
+          { browser: false, device: false },
+          threadId,
+          { browser: true, device: true },
+          { reply: true },
+        );
+        assert.deepEqual(issued, [
+          {
+            threadId: replyOwnerThreadId,
+            workspaceContextThreadId: threadId,
+            messageReply: { ...replyContext, workspacePath: fixtureCwdRoot },
+            capabilities: ["device", "preview", "pull-requests"],
+          },
+        ]);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "preserves parent project denials when the environment grants browser and device access",
+    () =>
+      Effect.gen(function* () {
+        const threadId = asThreadId("reply-project-denials");
+        const issued = yield* startSessionWith(
+          { browser: true, device: true },
+          threadId,
+          { browser: false, device: false },
+          { reply: true },
+        );
+        assert.deepEqual(issued, [
+          {
+            threadId: replyOwnerThreadId,
+            workspaceContextThreadId: threadId,
+            messageReply: { ...replyContext, workspacePath: fixtureCwdRoot },
+            capabilities: ["pull-requests"],
+          },
+        ]);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
 
   it.effect("keeps MCP attached but withholds only preview tools when browser access is off", () =>
     Effect.gen(function* () {

@@ -10,6 +10,8 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import { resolveMessageReplyExecution } from "../../messageReplyExecution.ts";
+import { ProviderService } from "../../../provider/Services/ProviderService.ts";
 import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as WorkspaceContext from "../../../workspace/WorkspaceContext.ts";
 import * as WorkspaceFileSystem from "../../../workspace/WorkspaceFileSystem.ts";
@@ -23,6 +25,7 @@ export const invokeWorkspaceContext = Effect.fn("WorkspaceToolkit.invoke")(funct
   | McpInvocationContext.McpInvocationContext
   | ProjectionSnapshotQuery.ProjectionSnapshotQuery
   | WorkspaceContext.WorkspaceContext
+  | ProviderService
 > {
   const invocation = yield* McpInvocationContext.requireWorkspaceMcpCapability();
   const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
@@ -39,7 +42,22 @@ export const invokeWorkspaceContext = Effect.fn("WorkspaceToolkit.invoke")(funct
     return yield* new WorkspaceContextUnavailableError({ reason: "thread_not_found" });
   }
 
-  const workspaceRoot = context.value.worktreePath ?? context.value.workspaceRoot;
+  let workspaceRoot = context.value.worktreePath ?? context.value.workspaceRoot;
+  if (invocation.messageReply !== undefined) {
+    const execution = yield* resolveMessageReplyExecution(invocation).pipe(
+      Effect.mapError(
+        (cause) =>
+          new WorkspaceContextUnavailableError({
+            reason: "projection_unavailable",
+            cause,
+          }),
+      ),
+    );
+    if (Option.isNone(execution)) {
+      return yield* new WorkspaceContextUnavailableError({ reason: "credential_not_authorized" });
+    }
+    workspaceRoot = execution.value.workspacePath;
+  }
   const workspace = yield* WorkspaceContext.WorkspaceContext;
   return yield* workspace.execute({ workspaceRoot, input }).pipe(
     Effect.withSpan("WorkspaceToolkit.execute", {
@@ -67,6 +85,7 @@ export const invokeWorkspaceEdit = Effect.fn("WorkspaceToolkit.invokeEdit")(func
   | McpInvocationContext.McpInvocationContext
   | ProjectionSnapshotQuery.ProjectionSnapshotQuery
   | WorkspaceFileSystem.WorkspaceFileSystem
+  | ProviderService
 > {
   const invocation = yield* McpInvocationContext.requireWorkspaceWriteMcpCapability();
   const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
@@ -78,22 +97,36 @@ export const invokeWorkspaceEdit = Effect.fn("WorkspaceToolkit.invokeEdit")(func
     return yield* new WorkspaceEditError({ reason: "thread_not_found" });
   }
 
-  const session = thread.value.session;
-  if (
-    session?.status !== "running" ||
-    session.activeTurnId === null ||
-    session.providerInstanceId !== invocation.providerInstanceId
-  ) {
-    return yield* new WorkspaceEditError({ reason: "inactive_turn" });
+  let workspaceRoot = context.value.worktreePath ?? context.value.workspaceRoot;
+  let runtimeMode = thread.value.session?.runtimeMode;
+  let interactionMode = thread.value.interactionMode;
+  if (invocation.messageReply !== undefined) {
+    const execution = yield* resolveMessageReplyExecution(invocation).pipe(
+      Effect.mapError(projectionUnavailable),
+    );
+    if (Option.isNone(execution) || thread.value.archivedAt !== null) {
+      return yield* new WorkspaceEditError({ reason: "inactive_turn" });
+    }
+    workspaceRoot = execution.value.workspacePath;
+    runtimeMode = execution.value.runtimeMode;
+    interactionMode = execution.value.interactionMode;
+  } else {
+    const session = thread.value.session;
+    if (
+      session?.status !== "running" ||
+      session.activeTurnId === null ||
+      session.providerInstanceId !== invocation.providerInstanceId
+    ) {
+      return yield* new WorkspaceEditError({ reason: "inactive_turn" });
+    }
   }
-  if (session.runtimeMode === "approval-required") {
+  if (runtimeMode === "approval-required") {
     return yield* new WorkspaceEditError({ reason: "runtime_mode_not_authorized" });
   }
-  if (thread.value.interactionMode === "plan") {
+  if (interactionMode === "plan") {
     return yield* new WorkspaceEditError({ reason: "plan_mode" });
   }
 
-  const workspaceRoot = context.value.worktreePath ?? context.value.workspaceRoot;
   const workspace = yield* WorkspaceFileSystem.WorkspaceFileSystem;
   return yield* workspace.editFiles({ workspaceRoot, input }).pipe(
     Effect.withSpan("WorkspaceToolkit.edit", {

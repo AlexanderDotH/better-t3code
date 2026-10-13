@@ -196,6 +196,12 @@ passed as `--wsl-runtime`; see the
 
 ### Signing and passkeys
 
+Local macOS builds seal the app bundle with a code signature. To retain privacy grants across
+rebuilds, set `T3CODE_DESKTOP_LOCAL_SIGNING_IDENTITY` in `.env.local` to an installed code-signing
+certificate from `security find-identity -v -p codesigning`. Without a configured certificate,
+builds use an ad hoc signature, and macOS may require granting permissions again after a rebuild.
+After granting Screen Recording, quit and reopen the app manually if setup still reports it missing.
+
 Add `--signed` after configuring the platform credentials in the
 [release runbook](./release.md). macOS passkeys need a signed, provisioned app; follow the
 [Connect setup](./connect-setup.md#desktop-passkeys) for local signing and renderer HMR.

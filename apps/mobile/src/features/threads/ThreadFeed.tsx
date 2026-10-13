@@ -1,4 +1,14 @@
 import type { ChatVisualMode } from "@t3tools/contracts";
+import type {
+  OrchestrationMessage,
+  OrchestrationSubagentSummary,
+  SubagentId,
+} from "@t3tools/contracts";
+import { mobileReplyMessageKey } from "./message-replies";
+import { MessageReplyAction } from "./MessageReplyAction";
+import { MessageReplyGesture } from "./MessageReplyGesture";
+import { MessageReplyPreview } from "./MessageReplyPreview";
+import { ThreadReplyTopicStatus } from "./ThreadReplyTopicStatus";
 import { useVisualizationCodeBlock } from "../visualizations/useVisualizationCodeBlock";
 import type {
   OrchestrationProposedPlan,
@@ -232,6 +242,7 @@ import {
 
 /** `ml-7` gutter plus the `px-3` padding of the expanded reasoning container. */
 const REASONING_CONTENT_INSET = 52;
+const MESSAGE_REPLY_ACTION_WIDTH = 36;
 
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   // Native iOS blockquotes and adjacent selectable text are separate layout
@@ -276,6 +287,10 @@ function isFreshTimestamp(input: string): boolean {
 }
 
 export interface ThreadFeedProps {
+  readonly messageRepliesEnabled?: boolean;
+  readonly onReplyToMessage?: (message: OrchestrationMessage) => void;
+  readonly replyTopics?: ReadonlyArray<OrchestrationSubagentSummary>;
+  readonly replyActionsEnabled?: boolean;
   readonly worktreeSetup?: WorktreeSetupCardProps | null;
   readonly setupWorkingStartedAt?: string | null;
   readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
@@ -1602,7 +1617,11 @@ function renderFeedEntry(
     | "skills"
     | "dispatchingMessageId"
     | "onEditPendingMessage"
+    | "messageRepliesEnabled"
+    | "onReplyToMessage"
   > & {
+    readonly availableReplySourceIds: ReadonlySet<string>;
+    readonly onOpenReplySource: (messageId: MessageId, replyTopicId?: SubagentId) => void;
     readonly chatVisualMode: ChatVisualMode;
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
@@ -1783,13 +1802,34 @@ function renderFeedEntry(
     // is clamped, so the paragraphs around the block end up drawn on top of
     // each other. Pinning the width removes that pass.
     const hasWideBlock = hasWideMarkdownBlock(renderedText, WIDE_MARKDOWN_BLOCK_OPTIONS);
+    const replyEnabled =
+      props.messageRepliesEnabled === true &&
+      (message.role === "user" || message.role === "assistant") &&
+      props.onReplyToMessage !== undefined &&
+      entry.pendingMessage === undefined;
+    const onReply = () => props.onReplyToMessage?.(message);
+    const userBubbleMaxWidth = props.userBubbleMaxWidth;
+    const quote = message.replyTo ? (
+      <MessageReplyPreview
+        reference={message.replyTo}
+        sourceAvailable={props.availableReplySourceIds.has(
+          mobileReplyMessageKey({
+            id: message.replyTo.messageId,
+            replyTopicId: message.replyTo.replyTopicId,
+          }),
+        )}
+        onOpenSource={() =>
+          props.onOpenReplySource(message.replyTo!.messageId, message.replyTo!.replyTopicId)
+        }
+      />
+    ) : null;
     const assistantTurnStillInProgress =
       message.role === "assistant" &&
       props.unsettledTurnId !== null &&
       message.turnId === props.unsettledTurnId;
     const showAssistantMeta =
       message.role === "assistant" &&
-      props.terminalAssistantMessageIds.has(message.id) &&
+      props.terminalAssistantMessageIds.has(entry.id) &&
       !assistantTurnStillInProgress &&
       !message.streaming;
 
@@ -1808,131 +1848,141 @@ function renderFeedEntry(
         (attachment) => isImageAttachment(attachment) || !inlineAttachmentIds.has(attachment.id),
       );
       return (
-        <View className="mb-5 items-end">
-          <View
-            className="min-w-0 gap-2 rounded-[20px] px-3.5 py-2.5"
-            style={{
-              backgroundColor: userBubbleColor,
-              maxWidth: props.userBubbleMaxWidth,
-              ...(hasReviewCommentContext
-                ? { width: props.reviewCommentBubbleWidth }
-                : hasWideBlock
-                  ? { width: props.userBubbleMaxWidth }
-                  : null),
-            }}
-          >
-            {entry.pendingMessage?.attachments.map((attachment) =>
-              attachment.type === "image" && attachment.uploadedAttachmentId ? (
-                <MessageAttachmentImage
-                  key={attachment.id}
-                  environmentId={props.environmentId}
-                  attachmentId={attachment.uploadedAttachmentId}
-                  name={attachment.name}
-                  mimeType={attachment.mimeType}
-                  className="h-[140px] w-[180px] rounded-[14px]"
-                  onPressPreview={props.onPressPreview}
+        <MessageReplyGesture
+          message={message}
+          enabled={replyEnabled}
+          onReply={props.onReplyToMessage ?? (() => undefined)}
+        >
+          <View className="mb-5 items-end">
+            <View
+              className="min-w-0 gap-2 rounded-[20px] px-3.5 py-2.5"
+              style={{
+                backgroundColor: userBubbleColor,
+                maxWidth: userBubbleMaxWidth,
+                ...(hasReviewCommentContext
+                  ? { width: props.reviewCommentBubbleWidth }
+                  : hasWideBlock || message.replyTo
+                    ? { width: userBubbleMaxWidth }
+                    : null),
+              }}
+            >
+              {quote}
+              {entry.pendingMessage?.attachments.map((attachment) =>
+                attachment.type === "image" && attachment.uploadedAttachmentId ? (
+                  <MessageAttachmentImage
+                    key={attachment.id}
+                    environmentId={props.environmentId}
+                    attachmentId={attachment.uploadedAttachmentId}
+                    name={attachment.name}
+                    mimeType={attachment.mimeType}
+                    className="h-[140px] w-[180px] rounded-[14px]"
+                    onPressPreview={props.onPressPreview}
+                  />
+                ) : attachment.type === "image" ? (
+                  <Image
+                    key={attachment.id}
+                    source={{ uri: attachment.previewUri }}
+                    accessibilityLabel={attachment.name}
+                    style={{ width: 180, height: 140, borderRadius: 14 }}
+                  />
+                ) : (
+                  <MessageAttachmentUnknown key={attachment.id} name={attachment.name} />
+                ),
+              )}
+              {/* An empty container still takes a gap, which pads every attachment-free bubble. */}
+              {visibleAttachments.length > 0 ? (
+                <View className={inlineAttachmentIds.size ? "flex-row flex-wrap gap-2" : "gap-2"}>
+                  {visibleAttachments.map((attachment) => {
+                    return isImageAttachment(attachment) ? (
+                      <MessageAttachmentImage
+                        key={attachment.id}
+                        environmentId={props.environmentId}
+                        attachmentId={attachment.id}
+                        name={attachment.name}
+                        mimeType={attachment.mimeType}
+                        className={
+                          inlineAttachmentIds.size
+                            ? "h-24 w-24 rounded-[14px] bg-user-bubble-foreground/15"
+                            : "aspect-[1.3] w-full rounded-[14px] bg-user-bubble-foreground/15"
+                        }
+                        onPressPreview={props.onPressPreview}
+                      />
+                    ) : isFileAttachment(attachment) ? (
+                      <MessageAttachmentFile
+                        key={attachment.id}
+                        environmentId={props.environmentId}
+                        attachment={attachment}
+                        onPressPreview={props.onPressPreview}
+                        onPressVideo={props.onPressVideo}
+                      />
+                    ) : (
+                      <MessageAttachmentUnknown key={attachment.id} name={attachment.name} />
+                    );
+                  })}
+                </View>
+              ) : null}
+              {message.text.trim().length > 0 ? (
+                <MarkdownImageAvailableWidthContext
+                  value={userBubbleMaxWidth - USER_BUBBLE_HORIZONTAL_PADDING * 2}
+                >
+                  <UserMessageContent
+                    text={renderedText}
+                    environmentId={props.environmentId}
+                    context={message.context}
+                    markdownStyles={styles}
+                    reviewCommentColors={props.reviewCommentColors}
+                    skills={props.skills}
+                    linkHandlers={props.markdownLinkHandlers}
+                    renderImage={props.renderMarkdownImage}
+                  />
+                </MarkdownImageAvailableWidthContext>
+              ) : null}
+            </View>
+            <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
+              {replyEnabled ? (
+                <MessageReplyAction onReply={onReply} tintColor={iconSubtleColor} />
+              ) : null}
+              <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
+                {entry.pendingMessage && !entry.acknowledged ? "Pending" : timestampLabel}
+              </Text>
+              {entry.pendingMessage &&
+              !entry.acknowledged &&
+              !entry.pendingMessage.creation &&
+              entry.pendingMessage.messageId !== props.dispatchingMessageId ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Edit pending message"
+                  hitSlop={8}
+                  className="size-7 items-center justify-center"
+                  onPress={() => {
+                    if (entry.pendingMessage) props.onEditPendingMessage(entry.pendingMessage);
+                  }}
+                >
+                  <SymbolView name="pencil" size={14} tintColor={iconSubtleColor} />
+                </Pressable>
+              ) : null}
+              {visibleText.trim().length > 0 ? (
+                <CopyTextButton
+                  accessibilityLabel="Copy message"
+                  text={message.text}
+                  onCopy={
+                    message.context
+                      ? () =>
+                          writeComposerContextClipboard(message.text, {
+                            version: 1,
+                            source: { environmentId: props.environmentId, messageId: message.id },
+                            records: message.context!.records,
+                          })
+                      : undefined
+                  }
+                  tintColor={iconSubtleColor}
+                  buttonSize={28}
+                  iconSize={13}
                 />
-              ) : attachment.type === "image" ? (
-                <Image
-                  key={attachment.id}
-                  source={{ uri: attachment.previewUri }}
-                  accessibilityLabel={attachment.name}
-                  style={{ width: 180, height: 140, borderRadius: 14 }}
-                />
-              ) : (
-                <MessageAttachmentUnknown key={attachment.id} name={attachment.name} />
-              ),
-            )}
-            {/* An empty container still takes a gap, which pads every attachment-free bubble. */}
-            {visibleAttachments.length > 0 ? (
-              <View className={inlineAttachmentIds.size ? "flex-row flex-wrap gap-2" : "gap-2"}>
-                {visibleAttachments.map((attachment) => {
-                  return isImageAttachment(attachment) ? (
-                    <MessageAttachmentImage
-                      key={attachment.id}
-                      environmentId={props.environmentId}
-                      attachmentId={attachment.id}
-                      name={attachment.name}
-                      mimeType={attachment.mimeType}
-                      className={
-                        inlineAttachmentIds.size
-                          ? "h-24 w-24 rounded-[14px] bg-user-bubble-foreground/15"
-                          : "aspect-[1.3] w-full rounded-[14px] bg-user-bubble-foreground/15"
-                      }
-                      onPressPreview={props.onPressPreview}
-                    />
-                  ) : isFileAttachment(attachment) ? (
-                    <MessageAttachmentFile
-                      key={attachment.id}
-                      environmentId={props.environmentId}
-                      attachment={attachment}
-                      onPressPreview={props.onPressPreview}
-                      onPressVideo={props.onPressVideo}
-                    />
-                  ) : (
-                    <MessageAttachmentUnknown key={attachment.id} name={attachment.name} />
-                  );
-                })}
-              </View>
-            ) : null}
-            {message.text.trim().length > 0 ? (
-              <MarkdownImageAvailableWidthContext
-                value={props.userBubbleMaxWidth - USER_BUBBLE_HORIZONTAL_PADDING * 2}
-              >
-                <UserMessageContent
-                  text={renderedText}
-                  environmentId={props.environmentId}
-                  context={message.context}
-                  markdownStyles={styles}
-                  reviewCommentColors={props.reviewCommentColors}
-                  skills={props.skills}
-                  linkHandlers={props.markdownLinkHandlers}
-                  renderImage={props.renderMarkdownImage}
-                />
-              </MarkdownImageAvailableWidthContext>
-            ) : null}
+              ) : null}
+            </View>
           </View>
-          <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
-            <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
-              {entry.pendingMessage && !entry.acknowledged ? "Pending" : timestampLabel}
-            </Text>
-            {entry.pendingMessage &&
-            !entry.acknowledged &&
-            !entry.pendingMessage.creation &&
-            entry.pendingMessage.messageId !== props.dispatchingMessageId ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Edit pending message"
-                hitSlop={8}
-                className="size-7 items-center justify-center"
-                onPress={() => {
-                  if (entry.pendingMessage) props.onEditPendingMessage(entry.pendingMessage);
-                }}
-              >
-                <SymbolView name="pencil" size={14} tintColor={iconSubtleColor} />
-              </Pressable>
-            ) : null}
-            {visibleText.trim().length > 0 ? (
-              <CopyTextButton
-                accessibilityLabel="Copy message"
-                text={message.text}
-                onCopy={
-                  message.context
-                    ? () =>
-                        writeComposerContextClipboard(message.text, {
-                          version: 1,
-                          source: { environmentId: props.environmentId, messageId: message.id },
-                          records: message.context!.records,
-                        })
-                    : undefined
-                }
-                tintColor={iconSubtleColor}
-                buttonSize={28}
-                iconSize={13}
-              />
-            ) : null}
-          </View>
-        </View>
+        </MessageReplyGesture>
       );
     }
 
@@ -1947,63 +1997,86 @@ function renderFeedEntry(
     // intrinsic width before the container is clamped, overlapping the
     // timestamp/copy button row. Pinning the width removes that pass.
     const enterAnimated = isFreshTimestamp(message.createdAt);
+    const sideReplyActionWidth =
+      replyEnabled && !showAssistantMeta ? MESSAGE_REPLY_ACTION_WIDTH : 0;
     return (
-      <Animated.View
-        className={cn(showAssistantMeta ? "mb-5 px-1" : "mb-1 px-1", hasWideBlock && "w-full")}
-        {...(enterAnimated ? { entering: FadeIn.duration(220) } : {})}
+      <MessageReplyGesture
+        message={message}
+        enabled={replyEnabled}
+        onReply={props.onReplyToMessage ?? (() => undefined)}
       >
-        {renderedText.trim().length > 0 ? (
-          <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
-            <AssistantMarkdownContent
-              environmentId={props.environmentId}
-              markdown={renderedText}
-              markdownStyles={styles}
-              linkHandlers={props.markdownLinkHandlers}
-              onUseArtifactTemplate={props.onUseArtifactTemplate}
-              onVisualizationAction={props.onVisualizationAction}
-              renderImage={props.renderMarkdownImage}
-              skills={props.skills}
-            />
-          </MarkdownImageAvailableWidthContext>
-        ) : null}
-        {attachments.map((attachment) => {
-          return isImageAttachment(attachment) ? (
-            <MessageAttachmentImage
-              key={attachment.id}
-              environmentId={props.environmentId}
-              attachmentId={attachment.id}
-              name={attachment.name}
-              mimeType={attachment.mimeType}
-              className="mt-1.5 aspect-[1.3] w-full rounded-[18px] bg-subtle-strong"
-              onPressPreview={props.onPressPreview}
-            />
-          ) : isFileAttachment(attachment) ? (
-            <MessageAttachmentFile
-              key={attachment.id}
-              environmentId={props.environmentId}
-              attachment={attachment}
-              onPressPreview={props.onPressPreview}
-              onPressVideo={props.onPressVideo}
-            />
-          ) : (
-            <MessageAttachmentUnknown key={attachment.id} name={attachment.name} />
-          );
-        })}
-        {showAssistantMeta ? (
-          <View className="mt-1 flex-row items-center gap-1">
-            <CopyTextButton
-              accessibilityLabel="Copy message"
-              text={renderedText}
-              tintColor={iconSubtleColor}
-              buttonSize={28}
-              iconSize={13}
-            />
-            <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
-              {timestampLabel}
-            </Text>
-          </View>
-        ) : null}
-      </Animated.View>
+        <Animated.View
+          className={cn(showAssistantMeta ? "mb-5 px-1" : "mb-1 px-1", hasWideBlock && "w-full")}
+          style={
+            sideReplyActionWidth > 0
+              ? { paddingRight: sideReplyActionWidth, minHeight: 28 }
+              : undefined
+          }
+          {...(enterAnimated ? { entering: FadeIn.duration(220) } : {})}
+        >
+          {quote}
+          {renderedText.trim().length > 0 ? (
+            <MarkdownImageAvailableWidthContext
+              value={props.markdownContentWidth - sideReplyActionWidth}
+            >
+              <AssistantMarkdownContent
+                environmentId={props.environmentId}
+                markdown={renderedText}
+                markdownStyles={styles}
+                linkHandlers={props.markdownLinkHandlers}
+                onUseArtifactTemplate={props.onUseArtifactTemplate}
+                onVisualizationAction={props.onVisualizationAction}
+                renderImage={props.renderMarkdownImage}
+                skills={props.skills}
+              />
+            </MarkdownImageAvailableWidthContext>
+          ) : null}
+          {attachments.map((attachment) => {
+            return isImageAttachment(attachment) ? (
+              <MessageAttachmentImage
+                key={attachment.id}
+                environmentId={props.environmentId}
+                attachmentId={attachment.id}
+                name={attachment.name}
+                mimeType={attachment.mimeType}
+                className="mt-1.5 aspect-[1.3] w-full rounded-[18px] bg-subtle-strong"
+                onPressPreview={props.onPressPreview}
+              />
+            ) : isFileAttachment(attachment) ? (
+              <MessageAttachmentFile
+                key={attachment.id}
+                environmentId={props.environmentId}
+                attachment={attachment}
+                onPressPreview={props.onPressPreview}
+                onPressVideo={props.onPressVideo}
+              />
+            ) : (
+              <MessageAttachmentUnknown key={attachment.id} name={attachment.name} />
+            );
+          })}
+          {showAssistantMeta ? (
+            <View className="mt-1 flex-row items-center gap-1">
+              {replyEnabled ? (
+                <MessageReplyAction onReply={onReply} tintColor={iconSubtleColor} />
+              ) : null}
+              <CopyTextButton
+                accessibilityLabel="Copy message"
+                text={renderedText}
+                tintColor={iconSubtleColor}
+                buttonSize={28}
+                iconSize={13}
+              />
+              <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
+                {timestampLabel}
+              </Text>
+            </View>
+          ) : replyEnabled ? (
+            <View className="absolute right-0 top-0">
+              <MessageReplyAction onReply={onReply} tintColor={iconSubtleColor} />
+            </View>
+          ) : null}
+        </Animated.View>
+      </MessageReplyGesture>
     );
   }
 
@@ -2753,6 +2826,46 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const setupAnchorIndex = presentedFeed.findIndex(
     (entry) => entry.type === "message" && entry.message.role === "user",
   );
+  const [replySourceTarget, setReplySourceTarget] = useState<string | null>(null);
+  const availableReplySourceIds = useMemo(
+    () => new Set(props.feed.flatMap((entry) => (entry.type === "message" ? [entry.id] : []))),
+    [props.feed],
+  );
+  const onOpenReplySource = useCallback(
+    (messageId: MessageId, replyTopicId?: SubagentId) => {
+      const topicSourceKey = mobileReplyMessageKey({ id: messageId, replyTopicId });
+      const source = props.feed.find(
+        (entry) => entry.type === "message" && entry.id === topicSourceKey,
+      );
+      if (source?.type !== "message") return;
+      if (source.message.turnId && source.message.replyTopicId === undefined) {
+        const turnId = source.message.turnId;
+        setInteractionState((current) => ({
+          ...current,
+          expandedTurnIds: new Set(current.expandedTurnIds).add(turnId),
+        }));
+      }
+      setReplySourceTarget(source.id);
+    },
+    [props.feed],
+  );
+  useLayoutEffect(() => {
+    if (!replySourceTarget) return;
+    const index = presentedFeed.findIndex(
+      (entry) => entry.type === "message" && entry.id === replySourceTarget,
+    );
+    if (index < 0) return;
+    transitionEndFollow({ type: "user-scroll-begin" });
+    props.listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.25 });
+    setReplySourceTarget(null);
+  }, [presentedFeed, props.listRef, replySourceTarget, transitionEndFollow]);
+  const replyTopicLastMessageIds = useMemo(() => {
+    const lastMessages = new Map<string, string>();
+    for (const entry of presentedFeed)
+      if (entry.type === "message" && entry.message.replyTopicId)
+        lastMessages.set(entry.message.replyTopicId, entry.id);
+    return lastMessages;
+  }, [presentedFeed]);
   // The empty↔filled key below remounts the list and resets its imperative
   // content-inset override. Seed the fresh instance synchronously with the
   // current overlay height before the scroll integration's next reaction;
@@ -2773,16 +2886,23 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       resolveChatListAnchoredEndSpace(
         presentedFeed,
         props.anchorMessageId,
-        (entry) => (entry.type === "message" && entry.message.role === "user" ? entry.id : null),
+        (entry) =>
+          entry.type === "message" && entry.message.role === "user" ? entry.message.id : null,
         { anchorOffset: anchorTopInset + CHAT_LIST_ANCHOR_OFFSET },
       ),
     [presentedFeed, props.anchorMessageId, anchorTopInset],
   );
   const terminalAssistantMessageIds = useMemo(() => {
-    const terminalIdsByTurn = new Map<TurnId, string>();
+    const terminalIdsByTurn = new Map<string, string>();
     for (const entry of props.feed) {
       if (entry.type === "message" && entry.message.role === "assistant" && entry.message.turnId) {
-        terminalIdsByTurn.set(entry.message.turnId, entry.message.id);
+        terminalIdsByTurn.set(
+          mobileReplyMessageKey({
+            id: entry.message.turnId,
+            replyTopicId: entry.message.replyTopicId,
+          }),
+          entry.id,
+        );
       }
     }
     return new Set(terminalIdsByTurn.values());
@@ -3078,6 +3198,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               environmentId: props.environmentId,
               dispatchingMessageId: props.dispatchingMessageId,
               onEditPendingMessage: props.onEditPendingMessage,
+              messageRepliesEnabled: props.messageRepliesEnabled,
+              onReplyToMessage: props.onReplyToMessage,
+              availableReplySourceIds,
+              onOpenReplySource,
               copiedRowId,
               expandedWorkRows,
               expandedReasoningMessageIds,
@@ -3110,6 +3234,20 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               onVisualizationAction: props.onVisualizationAction,
             })
           )}
+          {info.item.type === "message" &&
+          info.item.message.replyTopicId &&
+          replyTopicLastMessageIds.get(info.item.message.replyTopicId) === info.item.id ? (
+            <ThreadReplyTopicStatus
+              environmentId={props.environmentId}
+              threadId={props.threadId}
+              topic={props.replyTopics?.find(
+                (topic) =>
+                  topic.id ===
+                  (info.item.type === "message" ? info.item.message.replyTopicId : undefined),
+              )}
+              enabled={props.replyActionsEnabled === true}
+            />
+          ) : null}
           {(() => {
             const boundary = resolveForkBoundary(info.item);
             const action = boundary
@@ -3153,6 +3291,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     ),
     [
       chatVisualMode,
+      availableReplySourceIds,
+      onOpenReplySource,
+      replyTopicLastMessageIds,
       implementingPlanId,
       props,
       props.worktreeSetup,

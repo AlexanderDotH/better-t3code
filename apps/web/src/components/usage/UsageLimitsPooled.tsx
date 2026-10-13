@@ -28,13 +28,9 @@ import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { UsagePaceBar, UsagePaceDetails } from "./UsagePaceDetails";
-import {
-  PaceIcon,
-  ResetCreditDialog,
-  barColor,
-  resetCreditsSummary,
-  useResetCredit,
-} from "./UsageLimits";
+import { resetManagementReport } from "@t3tools/shared/resetCredits";
+import { ResetManagementDialog } from "./ResetManagementDialog";
+import { PaceIcon, barColor, resetCreditsSummary } from "./UsageLimits";
 
 /** `someone@example.com` → `SE`: enough to tell accounts apart, too little to identify one. */
 function accountInitials(email: string): string {
@@ -141,16 +137,15 @@ function SegmentPopover({
   window,
   reset,
   now,
-  redeem,
-  onRedeem,
+  canManageResets,
+  onManageResets,
 }: {
   readonly account: LimitAccount;
   readonly window: LimitPoolMember["window"];
   readonly reset: LimitPoolWindow["resets"][number] | undefined;
   readonly now: number;
-  /** Redeem state owned by the segment, since the confirm lives outside this popover. */
-  readonly redeem: ReturnType<typeof useResetCredit> | null;
-  readonly onRedeem: () => void;
+  readonly canManageResets: boolean;
+  readonly onManageResets: () => void;
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const remaining = remainingPercent(window);
@@ -159,8 +154,7 @@ function SegmentPopover({
     account.environments.length > 0
       ? account.environments.map((environment) => environment.label).join(", ")
       : account.sourceLabel;
-  const credits =
-    redeem && account.limits.resetCredits?.availableCount ? account.limits.resetCredits : null;
+  const credits = canManageResets ? account.limits.resetCredits : null;
   return (
     <div className="flex w-72 max-w-[calc(100vw-3rem)] flex-col gap-2.5 text-xs">
       <div className="flex min-w-0 flex-col gap-0.5">
@@ -198,18 +192,12 @@ function SegmentPopover({
           <Row label="Restores">+{reset.restoresPercent}% of pool</Row>
         ) : null}
       </div>
-      {credits && redeem ? (
+      {credits && canManageResets ? (
         <div className="border-t border-border/60 pt-2.5 text-muted-foreground">
           <span className="flex items-center gap-3">
             <span className="tabular-nums">{resetCreditsSummary(credits, now, true)}</span>
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={redeem.busy}
-              className="ms-auto"
-              onClick={onRedeem}
-            >
-              {redeem.busy ? "Using…" : "Use reset"}
+            <Button size="xs" variant="outline" className="ms-auto" onClick={onManageResets}>
+              Manage resets
             </Button>
           </span>
         </div>
@@ -221,8 +209,8 @@ function SegmentPopover({
 
 /**
  * One account's share of one pooled window: the segment, its popover, and the
- * reset confirm. The confirm is a sibling of the popover, not a child: dialogs
- * stack under popovers, and the popover closes as the confirm opens.
+ * reset manager. The dialog is a sibling of the popover so closing the
+ * popover leaves reset management mounted.
  */
 function PoolSegment({
   account,
@@ -275,7 +263,7 @@ function PoolSegment({
             }}
           />
         ) : null}
-        {/* One translucent layer keeps the notch and its gap consistent with the weekly fill. */}
+        {/* One translucent layer keeps the quota segments at the same opacity. */}
         <div className="absolute inset-0 opacity-35">
           {remaining > 0 ? (
             <div
@@ -286,7 +274,7 @@ function PoolSegment({
               <div className="absolute inset-0 rounded-md border-r-2 border-background" />
             </div>
           ) : null}
-          <UsagePaceBar window={window} now={now} baseColor={color} />
+          <UsagePaceBar window={window} now={now} baseColor={color} shape="segment" />
         </div>
         <span
           aria-hidden
@@ -338,8 +326,8 @@ function PoolSegment({
             window={window}
             reset={reset}
             now={now}
-            redeem={null}
-            onRedeem={() => {}}
+            canManageResets={false}
+            onManageResets={() => {}}
           />
         </PopoverPopup>
       )}
@@ -407,7 +395,7 @@ function LegendRow({
   );
 }
 
-/** Split out so the redeem hook only runs for accounts that can redeem. */
+/** Keep reset management mounted after its account popover closes. */
 function RedeemableSegmentPopup({
   account,
   window,
@@ -423,7 +411,7 @@ function RedeemableSegmentPopup({
   readonly redeemAt: NonNullable<LimitAccount["redeem"]>;
   readonly closePopover: () => void;
 }) {
-  const redeem = useResetCredit(redeemAt.environmentId, redeemAt.input);
+  const [managing, setManaging] = useState(false);
   return (
     <>
       <PopoverPopup side="top" sideOffset={6}>
@@ -432,23 +420,20 @@ function RedeemableSegmentPopup({
           window={window}
           reset={reset}
           now={now}
-          redeem={redeem}
-          onRedeem={() => {
+          canManageResets
+          onManageResets={() => {
             closePopover();
-            redeem.setConfirming(true);
+            setManaging(true);
           }}
         />
       </PopoverPopup>
-      <ResetCreditDialog
-        open={redeem.confirming}
-        onOpenChange={redeem.setConfirming}
-        onConfirm={() => void redeem.redeem()}
-      />
-      {/* The popover closed before the confirm, so the outcome needs a home outside it. */}
-      {redeem.status ? (
-        <span role="status" className="col-span-full text-xs text-muted-foreground">
-          <AccountName account={account} className="font-medium text-foreground" /> {redeem.status}
-        </span>
+      {managing ? (
+        <ResetManagementDialog
+          report={resetManagementReport(account, now)}
+          environmentId={redeemAt.environmentId}
+          open={managing}
+          onOpenChange={setManaging}
+        />
       ) : null}
     </>
   );

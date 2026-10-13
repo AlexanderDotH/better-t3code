@@ -1516,9 +1516,18 @@ function compareActivityLifecycleRank(kind: string): number {
   return 1;
 }
 
+export function timelineMessageKey(message: {
+  readonly id: string;
+  readonly replyTopicId?: string | undefined;
+}): string {
+  return message.replyTopicId
+    ? `reply:${JSON.stringify([message.replyTopicId, message.id])}`
+    : message.id;
+}
+
 function timelineEntryFromMessage(message: ChatMessage): TimelineEntry {
   return {
-    id: message.id,
+    id: timelineMessageKey(message),
     kind: "message",
     createdAt: message.createdAt,
     message,
@@ -1800,7 +1809,9 @@ export function deriveTimelineEntriesWithState(
     ),
   );
   const showMessage = (message: ChatMessage) =>
-    message.role !== "user" || !foldedAnswerMessageIds.has(message.id);
+    message.replyTopicId !== undefined ||
+    message.role !== "user" ||
+    !foldedAnswerMessageIds.has(message.id);
   const canAppend =
     previous !== null &&
     !previous.entries.some((entry) => entry.kind === "message" && !showMessage(entry.message)) &&

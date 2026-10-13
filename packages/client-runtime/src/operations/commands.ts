@@ -52,6 +52,12 @@ export type SetThreadRuntimeModeInput = CommandInput<"thread.runtime-mode.set">;
 export type SetThreadInteractionModeInput = CommandInput<"thread.interaction-mode.set">;
 export type StartThreadTurnInput = CommandInput<"thread.turn.start">;
 export type RetryThreadTurnInput = CommandInput<"thread.turn.retry">;
+export type StartThreadReplyInput = CommandInput<"thread.reply.start">;
+export type InterruptThreadReplyInput = CommandInput<"thread.reply.interrupt">;
+export type RetryThreadReplyInput = CommandInput<"thread.reply.retry">;
+export type RespondToThreadReplyApprovalInput = CommandInput<"thread.reply.approval.respond">;
+export type RespondToThreadReplyUserInputInput = CommandInput<"thread.reply.user-input.respond">;
+export type DismissThreadReplyUserInputInput = CommandInput<"thread.reply.user-input.dismiss">;
 export type EditThreadMessageInput = CommandInput<"thread.message.edit">;
 export type InterruptThreadTurnInput = CommandInput<"thread.turn.interrupt">;
 export type RespondToThreadApprovalInput = CommandInput<"thread.approval.respond">;
@@ -334,6 +340,54 @@ export const startThreadTurn: (input: StartThreadTurnInput) => CommandEffect = E
     createdAt: metadata.createdAt,
   });
 });
+
+export const startThreadReply: (input: StartThreadReplyInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.startThreadReply",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({ ...input, type: "thread.reply.start", ...metadata });
+});
+
+export const interruptThreadReply: (input: InterruptThreadReplyInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.interruptThreadReply",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({ ...input, type: "thread.reply.interrupt", ...metadata });
+});
+
+export const retryThreadReply: (input: RetryThreadReplyInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.retryThreadReply",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({ ...input, type: "thread.reply.retry", ...metadata });
+});
+
+export const respondToThreadReplyApproval: (
+  input: RespondToThreadReplyApprovalInput,
+) => CommandEffect = Effect.fn("EnvironmentCommands.respondToThreadReplyApproval")(
+  function* (input) {
+    const metadata = yield* timestampedCommandMetadata(input);
+    return yield* dispatch({ ...input, type: "thread.reply.approval.respond", ...metadata });
+  },
+);
+
+export const respondToThreadReplyUserInput: (
+  input: RespondToThreadReplyUserInputInput,
+) => CommandEffect = Effect.fn("EnvironmentCommands.respondToThreadReplyUserInput")(
+  function* (input) {
+    const metadata = yield* timestampedCommandMetadata(input);
+    return yield* dispatch({ ...input, type: "thread.reply.user-input.respond", ...metadata });
+  },
+);
+
+export const dismissThreadReplyUserInput: (
+  input: DismissThreadReplyUserInputInput,
+) => CommandEffect = Effect.fn("EnvironmentCommands.dismissThreadReplyUserInput")(
+  function* (input) {
+    const metadata = yield* timestampedCommandMetadata(input);
+    return yield* dispatch({ ...input, type: "thread.reply.user-input.dismiss", ...metadata });
+  },
+);
 
 export const editThreadMessage: (input: EditThreadMessageInput) => CommandEffect = Effect.fn(
   "EnvironmentCommands.editThreadMessage",

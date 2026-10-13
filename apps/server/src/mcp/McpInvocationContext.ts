@@ -5,6 +5,10 @@ import {
   PreviewAutomationUnavailableError,
   type ProviderInstanceId,
   type ThreadId,
+  type SubagentId,
+  type RuntimeSessionId,
+  type RuntimeMode,
+  type ProviderInteractionMode,
   WorkspaceContextUnavailableError,
   WorkspaceEditError,
 } from "@t3tools/contracts";
@@ -19,10 +23,19 @@ export type McpCapability =
   | "device"
   | "pull-requests";
 
+export interface McpMessageReplyContext {
+  readonly replyTopicId: SubagentId;
+  readonly runtimeSessionId: RuntimeSessionId;
+  readonly runtimeMode: RuntimeMode;
+  readonly interactionMode: ProviderInteractionMode;
+  readonly workspacePath: string;
+}
+
 export interface McpInvocationScope {
   readonly environmentId: EnvironmentId;
   /** Authenticated runtime thread that owns this MCP credential. */
   readonly ownerThreadId?: ThreadId;
+  readonly messageReply?: McpMessageReplyContext;
   readonly threadId: ThreadId;
   readonly providerSessionId: string;
   readonly providerInstanceId: ProviderInstanceId;

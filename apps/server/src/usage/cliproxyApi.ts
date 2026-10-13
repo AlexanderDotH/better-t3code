@@ -6,6 +6,7 @@ import {
   type ProviderConsumeResetCreditResult,
   type UsageLimitSourceAccount,
   type UsageLimitSourceConfig,
+  type ServerProviderResetCredit,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -39,6 +40,15 @@ const CodexWindow = Schema.Struct({
 });
 const CodexUsage = Schema.Struct({
   plan_type: Schema.optional(Schema.String),
+  credits: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        has_credits: Schema.Boolean,
+        unlimited: Schema.Boolean,
+        balance: Schema.optional(Schema.NullOr(Schema.Union([Schema.String, Schema.Number]))),
+      }),
+    ),
+  ),
   rate_limit: Schema.NullOr(
     Schema.Struct({
       primary_window: Schema.optional(Schema.NullOr(CodexWindow)),
@@ -76,10 +86,43 @@ const CreditList = Schema.Struct({
       id: Schema.String,
       status: Schema.String,
       reset_type: Schema.String,
-      expires_at: Schema.String,
+      expires_at: Schema.optional(Schema.NullOr(Schema.String)),
+      granted_at: Schema.optional(Schema.NullOr(Schema.String)),
+      redeemed_at: Schema.optional(Schema.NullOr(Schema.String)),
+      title: Schema.optional(Schema.NullOr(Schema.String)),
+      description: Schema.optional(Schema.NullOr(Schema.String)),
     }),
   ),
 });
+
+function resetCreditDetails(
+  credit: (typeof CreditList.Type)["credits"][number],
+): ServerProviderResetCredit {
+  const timestamp = (value: string | null | undefined) =>
+    value && Number.isFinite(Date.parse(value))
+      ? DateTime.formatIso(DateTime.makeUnsafe(value))
+      : undefined;
+  const status =
+    credit.status === "available" ||
+    credit.status === "redeeming" ||
+    credit.status === "redeemed" ||
+    credit.status === "expired"
+      ? credit.status
+      : "unknown";
+  const grantedAt = timestamp(credit.granted_at);
+  const expiresAt = timestamp(credit.expires_at);
+  const redeemedAt = timestamp(credit.redeemed_at);
+  return {
+    id: credit.id,
+    resetType: "codexRateLimits",
+    status,
+    ...(credit.title?.trim() ? { title: credit.title.trim() } : {}),
+    ...(credit.description?.trim() ? { description: credit.description.trim() } : {}),
+    ...(grantedAt ? { grantedAt } : {}),
+    ...(expiresAt ? { expiresAt } : {}),
+    ...(redeemedAt ? { redeemedAt } : {}),
+  };
+}
 
 const decodeAuthFiles = Schema.decodeUnknownEffect(AuthFiles);
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -185,15 +228,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
   ) {
     const body = yield* apiCall(config, account, CREDIT_URL);
     const response = yield* decodeCreditList(body);
-    const now = DateTime.toEpochMillis(yield* DateTime.now);
-    return response.credits
-      .filter(
-        (credit) =>
-          credit.reset_type === "codex_rate_limits" &&
-          credit.status === "available" &&
-          Date.parse(credit.expires_at) > now,
-      )
-      .toSorted((a, b) => Date.parse(a.expires_at) - Date.parse(b.expires_at));
+    return response.credits.filter((credit) => credit.reset_type === "codex_rate_limits");
   });
 
   const readAccount = Effect.fn("CliproxyApi.readAccount")(function* (
@@ -250,7 +285,20 @@ export const makeCliproxyApi = Effect.gen(function* () {
             }
           : null;
       // A credits outage must not hide successfully fetched quota windows.
-      const available = yield* credits(config, account).pipe(Effect.orElseSucceed(() => undefined));
+      const creditDetails = yield* credits(config, account).pipe(
+        Effect.orElseSucceed(() => undefined),
+      );
+      const available = creditDetails
+        ?.filter(
+          (credit) =>
+            credit.status === "available" &&
+            (!credit.expires_at || Date.parse(credit.expires_at) > Date.parse(checkedAt)),
+        )
+        .toSorted(
+          (a, b) =>
+            (a.expires_at ? Date.parse(a.expires_at) : Infinity) -
+            (b.expires_at ? Date.parse(b.expires_at) : Infinity),
+        );
       const next = available?.[0];
       return {
         ...base,
@@ -262,16 +310,32 @@ export const makeCliproxyApi = Effect.gen(function* () {
               planType: usage.plan_type ?? null,
               primary: toWindow(usage.rate_limit?.primary_window),
               secondary: toWindow(usage.rate_limit?.secondary_window),
+              ...(usage.credits
+                ? {
+                    credits: {
+                      hasCredits: usage.credits.has_credits,
+                      unlimited: usage.credits.unlimited,
+                      balance: usage.credits.balance == null ? null : String(usage.credits.balance),
+                    },
+                  }
+                : {}),
             },
           }),
           ...(available
             ? {
                 resetCredits: {
                   availableCount: available.length,
+                  credits: creditDetails?.slice(0, 200).map(resetCreditDetails),
                   ...(next
                     ? {
                         nextCreditId: next.id,
-                        nextExpiresAt: DateTime.formatIso(DateTime.makeUnsafe(next.expires_at)),
+                        ...(next.expires_at
+                          ? {
+                              nextExpiresAt: DateTime.formatIso(
+                                DateTime.makeUnsafe(next.expires_at),
+                              ),
+                            }
+                          : {}),
                       }
                     : {}),
                 },

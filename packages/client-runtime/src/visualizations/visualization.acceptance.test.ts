@@ -11,6 +11,15 @@ import {
 } from "./model.ts";
 import { sanitizeVisualizationSvg } from "./renderer/runtime.ts";
 
+const appearance = {
+  fontFamily: "T3FixtureSans",
+  background: "#101c2c",
+  foreground: "#e8edf5",
+  mutedForeground: "#a0b3ca",
+  surface: "#26374d",
+  border: "#657a96",
+};
+
 beforeAll(() => {
   vi.stubGlobal("Viz", Viz);
   // jsdom has no layout engine; these tests verify actual renderer output, not visual geometry.
@@ -77,6 +86,27 @@ function assertSvg(svg: string) {
   );
   expect(geometry.filter((value) => /NaN|undefined/.test(value))).toEqual([]);
   expect(document.querySelector("script, foreignObject, image")).toBeNull();
+  return document;
+}
+
+function assertAppearance(svg: string) {
+  const document = assertSvg(sanitizeVisualizationSvg(svg));
+  const output = document.documentElement.outerHTML.toLowerCase();
+  expect(output).toContain(appearance.background);
+  expect(output).toContain(appearance.foreground);
+  expect(output).toContain(appearance.fontFamily.toLowerCase());
+  expect(output).toMatch(/font-size\s*[:=]\s*["']?14(?:\.0+)?(?:px)?\b/);
+  if (document.documentElement.id.startsWith("t3-diagram-")) {
+    expect(document.documentElement.style.backgroundColor).toBe("");
+  } else if (document.documentElement.style.backgroundColor) {
+    expect(document.documentElement.style.backgroundColor).toBe("rgb(16, 28, 44)");
+  } else {
+    const canvasColors = [
+      ...document.querySelectorAll("svg > rect, rect.background, .graph > polygon"),
+    ].map((element) => element.getAttribute("fill")?.toLowerCase());
+    expect(canvasColors).toContain(appearance.background);
+  }
+  return document;
 }
 
 describe("shipped diagram family acceptance", () => {
@@ -137,10 +167,20 @@ describe("shipped diagram family acceptance", () => {
   );
 
   test.each([
-    ["plantuml-component", "#262626"],
-    ["vega-lite-selection", "#171717"],
-  ])("keeps %s dark text and background readable", async (id, background) => {
+    "mermaid-flowchart",
+    "plantuml-component",
+    "dot-directed",
+    "vega-lite-selection",
+    "vega-custom-analysis",
+  ])("keeps %s appearance in previews and SVG exports", async (id) => {
     const example = VISUALIZATION_EXAMPLES.find((entry) => entry.id === id)!;
+    const source =
+      example.format === "vega"
+        ? JSON.stringify({
+            ...parseVisualization(example.format, example.source).spec,
+            title: "Current appearance",
+          })
+        : example.source;
     const container = document.createElement("div");
     document.body.append(container);
     const result = await render(
@@ -149,20 +189,54 @@ describe("shipped diagram family acceptance", () => {
         type: "render",
         requestId: id,
         format: example.format,
-        source: example.source,
+        source,
         theme: "dark",
+        appearance,
       },
       container,
     );
     try {
-      const svg = new DOMParser().parseFromString(
-        sanitizeVisualizationSvg(result.svg),
-        "image/svg+xml",
-      );
-      expect(svg.querySelector("rect")?.getAttribute("fill")?.toLowerCase()).toBe(background);
-      expect(svg.querySelector("text")?.getAttribute("fill")?.toLowerCase()).toBe("#eeeeee");
+      const svg = assertAppearance(result.svg);
+      assertAppearance(result.exportSvg ? await result.exportSvg() : result.svg);
+      if (example.format === "mermaid") {
+        expect(
+          svg.querySelector('linearGradient, radialGradient, [filter]:not([filter="none"])'),
+        ).toBeNull();
+        expect(svg.documentElement.outerHTML).not.toMatch(/filter\s*:\s*(?:drop-shadow|url\()/);
+      }
     } finally {
       result.dispose?.();
+      container.remove();
+    }
+  });
+
+  test("keeps Mermaid's authored canvas and connection styling", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    try {
+      const result = await render(
+        {
+          channel: VISUALIZATION_CHANNEL,
+          type: "render",
+          requestId: "authored-canvas",
+          format: "mermaid",
+          source:
+            '%%{init: {"themeVariables": {"background": "#f7ead5"}}}%%\nflowchart LR\nStart[Start] --> End[End]\nlinkStyle 0 stroke:#b419e7,stroke-width:4px',
+          theme: "dark",
+          appearance,
+        },
+        container,
+      );
+      const svg = assertSvg(sanitizeVisualizationSvg(result.svg));
+      expect(svg.documentElement.style.backgroundColor).toBe("rgb(247, 234, 213)");
+      const edge = svg.querySelector<SVGElement>(".flowchart-link");
+      expect(edge?.style.getPropertyValue("stroke-width")).toBe("4px");
+      expect(edge?.getAttribute("style")).toContain("#b419e7");
+      for (const shape of svg.querySelectorAll(".node > rect.basic.label-container")) {
+        expect(shape.getAttribute("rx")).toBe("8");
+        expect(shape.getAttribute("ry")).toBe("8");
+      }
+    } finally {
       container.remove();
     }
   });
@@ -195,6 +269,181 @@ describe("shipped diagram family acceptance", () => {
     }
   });
 
+  test.each([
+    [
+      "mermaid",
+      "flowchart LR\nAuthored-->Default\nclassDef authored fill:#b419e7,stroke:#3ec694,color:#072a11,font-family:AuthoredFixtureSerif\nclass Authored authored",
+    ],
+    [
+      "plantuml",
+      "@startuml\nskinparam componentBackgroundColor #b419e7\nskinparam componentBorderColor #3ec694\nskinparam defaultFontColor #072a11\nskinparam defaultFontName AuthoredFixtureSerif\n[Authored] --> [Default]\n@enduml",
+    ],
+    [
+      "dot",
+      'digraph { node [style=filled,fillcolor="#b419e7",color="#3ec694",fontcolor="#072a11",fontname="AuthoredFixtureSerif"]; Authored -> Default; }',
+    ],
+  ] as const)("preserves authored %s node colors and fonts", async (format, source) => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const result = await render(
+      {
+        channel: VISUALIZATION_CHANNEL,
+        type: "render",
+        requestId: `authored-${format}`,
+        format,
+        source,
+        theme: "dark",
+        appearance,
+      },
+      container,
+    );
+    try {
+      for (const svg of [result.svg, result.exportSvg ? await result.exportSvg() : result.svg]) {
+        const output = assertSvg(
+          sanitizeVisualizationSvg(svg),
+        ).documentElement.outerHTML.toLowerCase();
+        expect(output).toContain("authored");
+        expect(output).toContain("#b419e7");
+        expect(output).toContain("#3ec694");
+        expect(output).toContain("#072a11");
+        expect(output).toContain("authoredfixtureserif");
+      }
+    } finally {
+      result.dispose?.();
+      container.remove();
+    }
+  });
+
+  test.each(["vega", "vega-lite"] as const)(
+    "keeps authored %s guide styles, color scales and plotted values",
+    async (format) => {
+      const values = [
+        { category: "Alpha", amount: 3 },
+        { category: "Beta", amount: 7 },
+      ];
+      const colors = ["#b419e7", "#3ec694"];
+      const spec =
+        format === "vega-lite"
+          ? {
+              width: 160,
+              height: 100,
+              background: "#f5ebdc",
+              data: { values },
+              mark: "bar",
+              config: {
+                font: "AuthoredFixtureSerif",
+                axis: { labelColor: "#072a11" },
+              },
+              encoding: {
+                x: { field: "category", type: "nominal" },
+                y: { field: "amount", type: "quantitative" },
+                color: { field: "category", type: "nominal", scale: { range: colors } },
+              },
+            }
+          : {
+              width: 160,
+              height: 100,
+              background: "#f5ebdc",
+              data: [{ name: "rows", values }],
+              config: {
+                style: { "guide-label": { font: "AuthoredFixtureSerif" } },
+                axis: { labelColor: "#072a11" },
+              },
+              scales: [
+                {
+                  name: "x",
+                  type: "band",
+                  domain: { data: "rows", field: "category" },
+                  range: "width",
+                },
+                {
+                  name: "y",
+                  type: "linear",
+                  domain: { data: "rows", field: "amount" },
+                  range: "height",
+                  zero: true,
+                },
+                {
+                  name: "color",
+                  type: "ordinal",
+                  domain: { data: "rows", field: "category" },
+                  range: colors,
+                },
+              ],
+              axes: [
+                { orient: "bottom", scale: "x" },
+                { orient: "left", scale: "y" },
+              ],
+              marks: [
+                {
+                  type: "rect",
+                  from: { data: "rows" },
+                  encode: {
+                    enter: {
+                      x: { scale: "x", field: "category" },
+                      width: { scale: "x", band: 1 },
+                      y: { scale: "y", field: "amount" },
+                      y2: { scale: "y", value: 0 },
+                      fill: { scale: "color", field: "category" },
+                      description: { signal: "datum.category + ': ' + datum.amount" },
+                    },
+                  },
+                },
+              ],
+            };
+      const source = JSON.stringify(spec);
+      const markSnapshots: Array<
+        {
+          label: string | null;
+          path: string | null;
+          fill: string | null;
+        }[]
+      > = [];
+      for (const currentAppearance of [undefined, appearance]) {
+        const container = document.createElement("div");
+        document.body.append(container);
+        const result = await render(
+          {
+            channel: VISUALIZATION_CHANNEL,
+            type: "render",
+            requestId: `authored-${format}`,
+            format,
+            source,
+            theme: "dark",
+            ...(currentAppearance ? { appearance: currentAppearance } : {}),
+          },
+          container,
+        );
+        try {
+          const svg = assertSvg(
+            sanitizeVisualizationSvg(result.exportSvg ? await result.exportSvg() : result.svg),
+          );
+          expect(svg.querySelector("svg > rect")?.getAttribute("fill")).toBe("#f5ebdc");
+          expect(svg.querySelector(".role-axis-label text")?.getAttribute("fill")).toBe("#072a11");
+          expect(svg.querySelector(".role-axis-label text")?.getAttribute("font-family")).toBe(
+            "AuthoredFixtureSerif",
+          );
+          const marks = [...svg.querySelectorAll(".role-mark > path")].map((mark) => ({
+            label: mark.getAttribute("aria-label"),
+            path: mark.getAttribute("d"),
+            fill: mark.getAttribute("fill"),
+          }));
+          expect(marks).toHaveLength(2);
+          expect(marks.map((mark) => mark.fill)).toEqual(colors);
+          expect(marks[0]?.label).toContain("Alpha");
+          expect(marks[0]?.label).toContain("3");
+          expect(marks[1]?.label).toContain("Beta");
+          expect(marks[1]?.label).toContain("7");
+          markSnapshots.push(marks);
+        } finally {
+          result.dispose?.();
+          container.remove();
+        }
+      }
+      expect(markSnapshots[1]).toEqual(markSnapshots[0]);
+    },
+  );
+
   test("Vega-Lite fullscreen keeps an interactive view and exports its current SVG", async () => {
     const example = VISUALIZATION_EXAMPLES.find((entry) => entry.id === "vega-lite-selection")!;
     const container = document.createElement("div");
@@ -206,7 +455,8 @@ describe("shipped diagram family acceptance", () => {
         requestId: "selection",
         format: example.format,
         source: example.source,
-        theme: "light",
+        theme: "dark",
+        appearance,
         interactive: true,
       },
       container,
@@ -215,12 +465,12 @@ describe("shipped diagram family acceptance", () => {
       expect(container.querySelector("svg")).not.toBeNull();
       expect(result.exportSvg).toBeTypeOf("function");
       const initial = await result.exportSvg!();
-      assertSvg(sanitizeVisualizationSvg(initial));
+      assertAppearance(initial);
       const legendSymbol = container.querySelector(".role-legend-symbol path");
       expect(legendSymbol).not.toBeNull();
       legendSymbol!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       const selected = await result.exportSvg!();
-      assertSvg(sanitizeVisualizationSvg(selected));
+      assertAppearance(selected);
       expect(selected).not.toEqual(initial);
       expect(selected).toContain('opacity="0.2"');
     } finally {

@@ -6,6 +6,7 @@ import {
   defaultInstanceIdForDriver,
   EnvironmentId,
   ModelSelection,
+  MessageReplyReference,
   ProjectId,
   ProviderInstanceId,
   ProviderInteractionMode,
@@ -20,6 +21,7 @@ import {
   type ScopedProjectRef,
   type ScopedThreadRef,
   ThreadId,
+  SubagentId,
   SnapShotSource,
   VoiceFileReference,
 } from "@t3tools/contracts";
@@ -240,8 +242,16 @@ const PersistedTerminalContextDraft = Schema.Struct({
 });
 type PersistedTerminalContextDraft = typeof PersistedTerminalContextDraft.Type;
 
+export const ComposerMessageReply = Schema.Struct({
+  replyTo: MessageReplyReference,
+  replyTopicId: SubagentId,
+});
+export type ComposerMessageReply = typeof ComposerMessageReply.Type;
+const isComposerMessageReply = Schema.is(ComposerMessageReply);
+
 const PersistedComposerThreadDraftState = Schema.Struct({
   prompt: Schema.String,
+  replyTarget: Schema.optionalKey(ComposerMessageReply),
   attachments: Schema.Array(PersistedComposerImageAttachment),
   files: Schema.optionalKey(Schema.Array(PersistedComposerDraftFileAttachment)),
   terminalContexts: Schema.optionalKey(Schema.Array(PersistedTerminalContextDraft)),
@@ -392,6 +402,7 @@ const contextInsertionHandlers = new Map<string, ComposerContextInsertionHandler
 
 export interface ComposerThreadDraftState {
   prompt: string;
+  replyTarget?: ComposerMessageReply;
   images: ComposerImageAttachment[];
   files: ComposerFileAttachment[];
   nonPersistedImageIds: string[];
@@ -436,6 +447,7 @@ export function composerDraftHasUserContent(
     return false;
   }
   return (
+    draft.replyTarget !== undefined ||
     draft.prompt.trim().length > 0 ||
     draft.images.length > 0 ||
     draft.files.length > 0 ||
@@ -587,6 +599,10 @@ interface ComposerDraftStoreState {
   clearDraftThread: (threadRef: ComposerThreadTarget) => void;
   setStickyModelSelection: (modelSelection: ModelSelection | null | undefined) => void;
   setPrompt: (threadRef: ComposerThreadTarget, prompt: string) => void;
+  setReplyTarget: (
+    threadRef: ComposerThreadTarget,
+    replyTarget: ComposerMessageReply | null,
+  ) => void;
   setVoiceFileReferences: (
     threadRef: ComposerThreadTarget,
     references: ReadonlyArray<VoiceFileReference>,
@@ -916,6 +932,7 @@ function normalizeTerminalContextsForThread(
 
 function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
   return (
+    draft.replyTarget === undefined &&
     draft.prompt.length === 0 &&
     draft.images.length === 0 &&
     draft.files.length === 0 &&
@@ -1878,6 +1895,9 @@ function normalizePersistedDraftsByThreadId(
       continue;
     }
     const draftCandidate = draftValue as PersistedComposerThreadDraftState;
+    const replyTarget = isComposerMessageReply(draftCandidate.replyTarget)
+      ? draftCandidate.replyTarget
+      : undefined;
     const promptCandidate = typeof draftCandidate.prompt === "string" ? draftCandidate.prompt : "";
     const attachments = Array.isArray(draftCandidate.attachments)
       ? draftCandidate.attachments.flatMap((entry) => {
@@ -2018,6 +2038,7 @@ function normalizePersistedDraftsByThreadId(
     const hasModelData =
       Object.keys(modelSelectionByProvider).length > 0 || activeProvider !== null;
     if (
+      replyTarget === undefined &&
       promptCandidate.length === 0 &&
       attachments.length === 0 &&
       files.length === 0 &&
@@ -2045,6 +2066,7 @@ function normalizePersistedDraftsByThreadId(
             })();
     nextDraftsByThreadKey[normalizedThreadKey] = {
       prompt,
+      ...(replyTarget ? { replyTarget } : {}),
       attachments,
       ...(files.length > 0 ? { files } : {}),
       ...(terminalContexts.length > 0 ? { terminalContexts } : {}),
@@ -2070,6 +2092,7 @@ function normalizePersistedDraftsByThreadId(
 
 function persistedComposerDraftHasUserContent(draft: PersistedComposerThreadDraftState): boolean {
   return (
+    draft.replyTarget !== undefined ||
     draft.prompt.trim().length > 0 ||
     draft.attachments.length > 0 ||
     (draft.files?.length ?? 0) > 0 ||
@@ -2154,6 +2177,7 @@ export function partializeComposerDraftStoreState(
     const hasModelData =
       Object.keys(draft.modelSelectionByProvider).length > 0 || draft.activeProvider !== null;
     if (
+      draft.replyTarget === undefined &&
       draft.prompt.length === 0 &&
       draft.persistedAttachments.length === 0 &&
       draft.files.length === 0 &&
@@ -2168,6 +2192,7 @@ export function partializeComposerDraftStoreState(
     }
     const persistedDraft: DeepMutable<PersistedComposerThreadDraftState> = {
       prompt: draft.prompt,
+      ...(draft.replyTarget ? { replyTarget: draft.replyTarget } : {}),
       attachments: draft.persistedAttachments,
       ...(draft.files.length > 0
         ? {
@@ -2475,6 +2500,7 @@ function toHydratedThreadDraft(
 
   return {
     // Files predating inline references get a chip appended; images stay shelf-only.
+    ...(persistedDraft.replyTarget ? { replyTarget: persistedDraft.replyTarget } : {}),
     prompt: ensureInlineContextReferences(persistedDraft.prompt, [
       ...(persistedDraft.reviewComments ?? []).map(reviewCommentContextReference),
       ...(persistedDraft.previewAnnotations ?? []).map(previewAnnotationContextReference),
@@ -3041,6 +3067,19 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftsByThreadKey[threadKey] = nextDraft;
             }
             return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        setReplyTarget: (threadRef, replyTarget) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef);
+          if (!threadKey) return;
+          set((state) => {
+            const current = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
+            const { replyTarget: _previous, ...content } = current;
+            const nextDraft = replyTarget ? { ...content, replyTarget } : content;
+            const draftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) delete draftsByThreadKey[threadKey];
+            else draftsByThreadKey[threadKey] = nextDraft;
+            return { draftsByThreadKey };
           });
         },
         setVoiceFileReferences: (threadRef, references) => {
@@ -4052,8 +4091,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             if (!current) {
               return state;
             }
+            const { replyTarget: _replyTarget, ...retained } = current;
             const nextDraft: ComposerThreadDraftState = {
-              ...current,
+              ...retained,
               prompt: "",
               images: [],
               files: [],

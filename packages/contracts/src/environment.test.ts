@@ -22,6 +22,16 @@ describe("ExecutionEnvironmentCapabilities", () => {
     });
   });
 
+  it("enables message replies only when the environment advertises support", () => {
+    expect(decodeCapabilities({ repositoryIdentity: true }).messageReplies).toBeUndefined();
+    expect(
+      decodeCapabilities({ repositoryIdentity: true, messageReplies: false }).messageReplies,
+    ).toBe(false);
+    expect(
+      decodeCapabilities({ repositoryIdentity: true, messageReplies: true }).messageReplies,
+    ).toBe(true);
+  });
+
   it("accepts an advertised mid-chat provider switching capability", () => {
     expect(
       decodeCapabilities({

@@ -780,7 +780,7 @@ const make = Effect.gen(function* () {
     yield* Effect.forEach(
       thread.subagents,
       (subagent) => {
-        if (!isActiveSubagentStatus(subagent.status)) {
+        if (subagent.messageReply !== undefined || !isActiveSubagentStatus(subagent.status)) {
           return Effect.void;
         }
         const settled = settleSubagentAfterRuntimeLoss(subagent, settledAt);

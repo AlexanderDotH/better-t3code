@@ -1,4 +1,5 @@
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import { installSocketTypeOfServiceCompatibility } from "./socketTypeOfService.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as Effect from "effect/Effect";
@@ -7,6 +8,7 @@ import { Argument, Command } from "effect/unstable/cli";
 import * as CliError from "effect/unstable/cli/CliError";
 
 import * as NetService from "@t3tools/shared/Net";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import packageJson from "../package.json" with { type: "json" };
 import { authCommand } from "./cli/auth.ts";
 import { appCommand } from "./cli/app.ts";
@@ -97,6 +99,7 @@ if (
     runtimeMain: import.meta.main,
   })
 ) {
+  installSocketTypeOfServiceCompatibility(Effect.runSync(HostProcessPlatform));
   Command.run(cli, { version: packageJson.version }).pipe(
     Effect.scoped,
     Effect.provide(CliRuntimeLayer),

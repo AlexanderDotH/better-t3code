@@ -7,6 +7,8 @@ import {
   COMPOSER_CONTEXT_MAX_RECORDS,
   ForwardCompatibleArray,
   OrchestrationMessageContext,
+  MessageReplyReference,
+  SubagentId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProjectId as ProjectIdSchema,
   ProviderInteractionMode as ProviderInteractionModeSchema,
@@ -329,6 +331,10 @@ export class ComposerDraftPersistenceError extends Schema.TaggedError<ComposerDr
 
 export interface ComposerDraft {
   readonly text: string;
+  readonly messageReply?: {
+    readonly replyTo: MessageReplyReference;
+    readonly replyTopicId: SubagentId;
+  };
   readonly voiceFileReferences?: ReadonlyArray<VoiceFileReference>;
   readonly context?: OrchestrationMessageContext;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
@@ -399,6 +405,9 @@ const PersistedComposerContextSchema = Schema.Struct({
 
 const ComposerDraftSchema = Schema.Struct({
   text: Schema.String,
+  messageReply: Schema.optional(
+    Schema.Struct({ replyTo: MessageReplyReference, replyTopicId: SubagentId }),
+  ),
   voiceFileReferences: Schema.optional(Schema.Array(VoiceFileReferenceSchema)),
   context: Schema.optional(PersistedComposerContextSchema),
   attachments: Schema.Array(DraftComposerAttachmentSchema),
@@ -563,6 +572,7 @@ function isEmptyDraft(draft: ComposerDraft): boolean {
     draft.runtimeMode === undefined &&
     draft.interactionMode === undefined &&
     draft.fetchMode === undefined &&
+    draft.messageReply === undefined &&
     draft.workspaceSelection === undefined
   );
 }
@@ -1302,6 +1312,18 @@ export function setComposerDraftText(
   scheduleUnusedComposerAttachmentCleanup(removed);
 }
 
+export function setComposerDraftMessageReply(
+  draftKey: string,
+  messageReply: ComposerDraft["messageReply"],
+): void {
+  updateComposerDrafts((current) =>
+    withComposerDraft(current, draftKey, {
+      ...normalizeDraft(current[draftKey]),
+      messageReply,
+    }),
+  );
+}
+
 export function insertComposerDraftText(
   draftKey: string,
   value: string,
@@ -1519,6 +1541,7 @@ export function clearComposerDraftContentState(
     importedShareIds: _importedShareIds,
     voiceFileReferences: _voiceFileReferences,
     context: _context,
+    messageReply: _messageReply,
     modelSelection,
     workspaceSelection,
     project: _project,
@@ -1716,6 +1739,7 @@ export function sameComposerDraftState(a: ComposerDraft, b: ComposerDraft): bool
     a.voiceFileReferences === b.voiceFileReferences &&
     a.attachments === b.attachments &&
     a.context === b.context &&
+    a.messageReply === b.messageReply &&
     a.importedShareIds === b.importedShareIds &&
     a.modelSelection === b.modelSelection &&
     a.runtimeMode === b.runtimeMode &&

@@ -1,4 +1,5 @@
 import { useChatVisualMode } from "../../chatVisualModeSync";
+import { isMessageReplyTopicActive } from "@t3tools/client-runtime/messageReplies";
 import { resolveForkBoundaryTimelineEntryId } from "../../lib/threadFork";
 import { forkBoundaryKey } from "@t3tools/client-runtime/thread-fork";
 import { ForkChatButton } from "./ForkChatButton";
@@ -6,6 +7,10 @@ import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { useClientSettings } from "../../hooks/useSettings";
 import { resolveBetterT3FeatureFlag } from "@t3tools/contracts";
 import { PencilIcon, RefreshCwIcon } from "lucide-react";
+import { MessageReplyGesture } from "./MessageReplyGesture";
+import { MessageReplyQuote } from "./MessageReplyPreview";
+import { ReplyTopicControls } from "./ReplyTopicControls";
+import { toastManager } from "../ui/toast";
 import { ArrowUpIcon, ClockIcon } from "lucide-react";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -25,6 +30,7 @@ import {
   type ChatVisualMode,
   type EnvironmentId,
   type MessageId,
+  type MessageReplyReference,
   type ScopedThreadRef,
   type ServerProviderSkill,
   type ToolActivityIcon,
@@ -32,6 +38,8 @@ import {
   type ThreadForkBoundary,
   type OrchestrationProposedPlanId,
   type WorktreeSetupSnapshot,
+  type OrchestrationSubagentSummary,
+  type OrchestrationThreadActivity,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
@@ -63,6 +71,8 @@ const EMPTY_QUEUED_MESSAGES: ReadonlyArray<QueuedComposerMessage> = [];
 const NOOP_QUEUED_MESSAGE_ACTION = (_id: string) => {};
 const NOOP_USE_ARTIFACT_TEMPLATE = () => {};
 const NOOP_OPEN_ATTACHMENT = (_attachment: ChatFileAttachment) => {};
+const EMPTY_REPLY_TOPICS: ReadonlyArray<OrchestrationSubagentSummary> = [];
+const EMPTY_REPLY_ACTIVITIES: ReadonlyArray<OrchestrationThreadActivity> = [];
 import {
   advanceChatTurnFoldRetention,
   createChatTurnFoldRetention,
@@ -147,7 +157,6 @@ import {
   SmartphoneIcon,
   SquarePenIcon,
   TerminalIcon,
-  Undo2Icon,
   WrenchIcon,
   XIcon,
   ZapIcon,
@@ -327,6 +336,11 @@ interface TimelineRowSharedState {
   forkActions: TimelineForkActions | null;
   retryAction: TimelineRetryAction | null;
   editAction: TimelineEditAction | null;
+  onReplyMessage: ((message: ChatMessage) => void) | undefined;
+  onJumpReplySource: (replyTo: MessageReplyReference) => void;
+  replyTopicByLastMessageId: ReadonlyMap<string, OrchestrationSubagentSummary>;
+  replyActivities: ReadonlyArray<OrchestrationThreadActivity>;
+  replyControlsEnabled: boolean;
   citationRequest: AssistantCitationTarget | null;
   listRef: React.RefObject<LegendListRef | null>;
   timestampFormat: TimestampFormat;
@@ -365,6 +379,7 @@ interface TimelineRowSharedState {
 }
 
 interface TimelineRowActivityState {
+  replyWorkActive: boolean;
   isWorking: boolean;
   isPreparingWorktree: boolean;
   isCompacting: boolean;
@@ -484,6 +499,10 @@ interface MessagesTimelineProps {
   forkActions?: TimelineForkActions | null;
   retryAction?: TimelineRetryAction | null;
   editAction?: TimelineEditAction | null;
+  onReplyMessage?: ((message: ChatMessage) => void) | undefined;
+  replyTopics?: ReadonlyArray<OrchestrationSubagentSummary> | undefined;
+  replyActivities?: ReadonlyArray<OrchestrationThreadActivity> | undefined;
+  replyControlsEnabled?: boolean | undefined;
   citationRequest?: AssistantCitationRequest | null;
   citationHistoryLoading?: boolean;
   onCiteAssistantText?: (
@@ -570,6 +589,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   forkActions = null,
   retryAction = null,
   editAction = null,
+  onReplyMessage,
+  replyTopics = EMPTY_REPLY_TOPICS,
+  replyActivities = EMPTY_REPLY_ACTIVITIES,
+  replyControlsEnabled = false,
   citationRequest = null,
   citationHistoryLoading = false,
   onCiteAssistantText,
@@ -624,6 +647,46 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onRemoveQueuedMessage = NOOP_QUEUED_MESSAGE_ACTION,
 }: MessagesTimelineProps) {
   const listIdentityKey = displayThreadKey ?? routeThreadKey;
+  const translate = useInterfaceTranslator().message;
+  const [replySourceRequest, setReplySourceRequest] = useState<{
+    threadKey: string;
+    replyTo: MessageReplyReference;
+  } | null>(null);
+  const requestedReplySourceCursorRef = useRef<string | null>(null);
+  const finishedReplySourceRef = useRef<typeof replySourceRequest>(null);
+  const onJumpReplySource = useCallback(
+    (replyTo: MessageReplyReference) => {
+      requestedReplySourceCursorRef.current = null;
+      setReplySourceRequest({ threadKey: listIdentityKey, replyTo });
+      onManualNavigation();
+    },
+    [listIdentityKey, onManualNavigation],
+  );
+  const lastReplyMessageIds = useMemo(() => {
+    const lastMessages = new Map<string, MessageId>();
+    for (const entry of timelineEntries) {
+      if (
+        entry.kind === "message" &&
+        entry.message.replyTopicId &&
+        (entry.message.role === "user" || entry.message.role === "assistant")
+      ) {
+        lastMessages.set(entry.message.replyTopicId, entry.message.id);
+      }
+    }
+    return JSON.stringify([...lastMessages]);
+  }, [timelineEntries]);
+  const replyTopicByLastMessageId = useMemo(() => {
+    // Only topic membership changes row context; streamed text keeps it stable.
+    const lastMessages = new Map(JSON.parse(lastReplyMessageIds) as Array<[string, MessageId]>);
+    return new Map(
+      replyTopics.flatMap((topic) => {
+        const messageId = lastMessages.get(topic.id);
+        return messageId && topic.messageReply
+          ? [[JSON.stringify([topic.id, messageId]), topic] as const]
+          : [];
+      }),
+    );
+  }, [replyTopics, lastReplyMessageIds]);
   const rememberedPosition = useMemo(
     () => readTimelinePosition(listIdentityKey),
     [listIdentityKey],
@@ -947,6 +1010,53 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     queuedMessages,
   ]);
   const rows = useStableRows(rawRows, listIdentityKey);
+  useEffect(() => {
+    if (!replySourceRequest || finishedReplySourceRef.current === replySourceRequest) return;
+    if (replySourceRequest.threadKey !== listIdentityKey) {
+      finishedReplySourceRef.current = replySourceRequest;
+      return;
+    }
+    const matchesSource = (message: ChatMessage) =>
+      message.id === replySourceRequest.replyTo.messageId &&
+      message.replyTopicId === replySourceRequest.replyTo.replyTopicId;
+    const index = rows.findIndex((row) => row.kind === "message" && matchesSource(row.message));
+    if (index >= 0) {
+      void listRef.current?.scrollToIndex({
+        index,
+        animated: !prefersReducedMotion,
+        viewPosition: 0.25,
+      });
+      finishedReplySourceRef.current = replySourceRequest;
+      return;
+    }
+    const source = timelineEntries.find(
+      (entry) => entry.kind === "message" && matchesSource(entry.message),
+    );
+    if (source?.kind === "message" && source.message.turnId) {
+      expandCitedTurn(source.message.turnId);
+      return;
+    }
+    if (loadEarlier?.loading) return;
+    if (loadEarlier?.cursor) {
+      if (requestedReplySourceCursorRef.current !== loadEarlier.cursor) {
+        requestedReplySourceCursorRef.current = loadEarlier.cursor;
+        loadEarlier.onLoadEarlier();
+      }
+      return;
+    }
+    toastManager.add({ type: "info", title: translate("chat.reply.sourceUnavailable") });
+    finishedReplySourceRef.current = replySourceRequest;
+  }, [
+    expandCitedTurn,
+    listIdentityKey,
+    listRef,
+    loadEarlier,
+    prefersReducedMotion,
+    replySourceRequest,
+    rows,
+    timelineEntries,
+    translate,
+  ]);
   const forkDividerAfterRowId = useMemo(
     () =>
       forkProvenance
@@ -1322,6 +1432,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       forkDividerAfterRowId,
       retryAction,
       editAction,
+      onReplyMessage,
+      onJumpReplySource,
+      replyTopicByLastMessageId,
+      replyActivities,
+      replyControlsEnabled,
       onCancelWorktreeSetup: onCancelWorktreeSetup ?? null,
       onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocally ?? null,
       onOpenWorktreeSetupTerminal: onOpenWorktreeSetupTerminal ?? null,
@@ -1367,6 +1482,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       forkDividerAfterRowId,
       retryAction,
       editAction,
+      onReplyMessage,
+      onJumpReplySource,
+      replyTopicByLastMessageId,
+      replyActivities,
+      replyControlsEnabled,
       onCancelWorktreeSetup,
       onWorktreeSetupWorkLocally,
       onOpenWorktreeSetupTerminal,
@@ -1384,6 +1504,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       : null;
   const activityState = useMemo<TimelineRowActivityState>(
     () => ({
+      replyWorkActive: replyTopics.some(isMessageReplyTopicActive),
       isWorking,
       isPreparingWorktree,
       isCompacting,
@@ -1395,6 +1516,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       backgroundWorktreeSetup,
     }),
     [
+      replyTopics,
       backgroundWorktreeSetup,
       isCompacting,
       isRevertingCheckpoint,
@@ -1489,7 +1611,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             onScroll={handleScroll}
             onItemSizeChanged={reportContentOverflow}
             className={cn(
-              "scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 [overflow-anchor:none] sm:px-5",
+              "scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
+              onReplyMessage ? "px-9 sm:px-10" : "px-3 sm:px-5",
               topFadeEnabled && "topbar-scroll-fade",
             )}
             ListHeaderComponent={
@@ -1847,7 +1970,21 @@ type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["grouped
 type TimelineRow = MessagesTimelineRow;
 
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
-  const { forkDividerAfterRowId, chatVisualMode } = use(TimelineRowCtx);
+  const ctx = use(TimelineRowCtx);
+  const { forkDividerAfterRowId, chatVisualMode } = ctx;
+  const replyTopic =
+    row.kind === "message"
+      ? ctx.replyTopicByLastMessageId.get(
+          JSON.stringify([row.message.replyTopicId, row.message.id]),
+        )
+      : undefined;
+  const reply =
+    row.kind === "message" &&
+    ctx.onReplyMessage &&
+    !row.message.streaming &&
+    ctx.editAction?.editor?.messageId !== row.message.id
+      ? () => ctx.onReplyMessage?.(row.message)
+      : undefined;
   const translate = useInterfaceTranslator().message;
   const isExpandedToolGroup = row.kind === "work" && row.isExpandedToolGroup;
   const isExpandedToolGroupHeader =
@@ -1909,9 +2046,23 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "work-toggle" ? <WorkGroupToggleTimelineRow row={row} /> : null}
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
       {row.kind === "context-compaction" ? <ContextCompactionTimelineRow row={row} /> : null}
-      {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
+      {row.kind === "message" && row.message.role === "user" ? (
+        <MessageReplyGesture role="user" onReply={reply}>
+          <UserTimelineRow row={row} />
+        </MessageReplyGesture>
+      ) : null}
       {row.kind === "message" && row.message.role === "assistant" ? (
-        <AssistantTimelineRow row={row} />
+        <MessageReplyGesture role="assistant" onReply={reply}>
+          <AssistantTimelineRow row={row} />
+        </MessageReplyGesture>
+      ) : null}
+      {replyTopic && ctx.threadRef ? (
+        <ReplyTopicControls
+          threadRef={ctx.threadRef}
+          topic={replyTopic}
+          activities={ctx.replyActivities}
+          enabled={ctx.replyControlsEnabled}
+        />
       ) : null}
       {row.kind === "message" && row.message.role === "reasoning" ? (
         <ReasoningTimelineRow row={row} />
@@ -2191,7 +2342,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     () => userImages.filter((image) => image.name.startsWith("preview-annotation-")),
     [userImages],
   );
-  const revertTurnCount = row.revertTurnCount;
   // A file with a chip in the prose needs no standalone row. Media is the exception: the
   // thumbnail is the only way to actually see it, so it shows whether or not it has a chip.
   const contextReferences = useMemo(
@@ -2355,7 +2505,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   );
 
   const editor =
-    ctx.editAction?.editor?.messageId === row.message.id ? ctx.editAction.editor.content : null;
+    !row.message.replyTopicId && ctx.editAction?.editor?.messageId === row.message.id
+      ? ctx.editAction.editor.content
+      : null;
 
   return (
     <div className="group flex flex-col items-end gap-1">
@@ -2366,6 +2518,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         )}
       >
         <MessageAuthorHeading>You</MessageAuthorHeading>
+        {row.message.replyTo ? (
+          <MessageReplyQuote replyTo={row.message.replyTo} onJumpToSource={ctx.onJumpReplySource} />
+        ) : null}
         <MessageAudioAttachments
           environmentId={ctx.activeThreadEnvironmentId}
           attachments={userAudio}
@@ -2473,7 +2628,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             ))}
           </div>
         ) : null}
-        <div onCopyCapture={onBodyCopyCapture}>
+        <div onCopyCapture={onBodyCopyCapture} data-reply-message-content>
           {editor ?? (
             <CollapsibleUserMessageBody
               messageId={row.message.id}
@@ -2497,7 +2652,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         ) : null}
       </div>
       <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-x-2 gap-y-1">
           <Tooltip>
             <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
               {(ctx.chatVisualMode === "classic" ? formatShortTimestamp : formatDayAwareTimestamp)(
@@ -2510,12 +2665,13 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             </TooltipPopup>
           </Tooltip>
           <div className="flex items-center gap-0.5">
-            {typeof revertTurnCount === "number" && (
-              <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
-            )}
-            <RetryUserMessageButton messageId={row.message.id} />
+            {!row.message.replyTopicId ? (
+              <RetryUserMessageButton messageId={row.message.id} />
+            ) : null}
             <EditMessageButton message={row.message} />
-            {!row.message.streaming && ctx.forkActions?.forkableMessageIds.has(row.message.id) ? (
+            {!row.message.replyTopicId &&
+            !row.message.streaming &&
+            ctx.forkActions?.forkableMessageIds.has(row.message.id) ? (
               <TimelineForkButton boundary={{ kind: "message", messageId: row.message.id }} />
             ) : null}
             {resolvedContext.text && (
@@ -2548,6 +2704,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
 function EditMessageButton({ message }: { message: ChatMessage }) {
   const action = use(TimelineRowCtx).editAction;
   const { message: translate } = useInterfaceTranslator();
+  if (message.replyTopicId) return null;
   if (
     !action ||
     message.streaming ||
@@ -2561,7 +2718,7 @@ function EditMessageButton({ message }: { message: ChatMessage }) {
         render={
           <Button
             type="button"
-            size="xs"
+            size="icon-xs"
             variant="ghost-muted"
             aria-label={translate("chat.edit.title")}
             disabled={!action.available}
@@ -2655,37 +2812,6 @@ export function resolvePreviewAnnotationImage(input: {
   );
 }
 
-function RevertUserMessageButton({
-  turnCount,
-  messageId,
-}: {
-  turnCount: number;
-  messageId: MessageId;
-}) {
-  const ctx = use(TimelineRowCtx);
-  const activity = use(TimelineRowActivityCtx);
-
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            type="button"
-            size="xs"
-            variant="ghost"
-            disabled={activity.isRevertingCheckpoint || activity.isWorking}
-            onClick={() => ctx.onRevertToTurnCount(turnCount, messageId)}
-            aria-label="Edit from here"
-          />
-        }
-      >
-        <Undo2Icon className="size-3" />
-      </TooltipTrigger>
-      <TooltipPopup side="top">Edit from here</TooltipPopup>
-    </Tooltip>
-  );
-}
-
 /**
  * Hover-revealed wall-clock time with a full-date tooltip — the same metadata
  * presentation as message rows, for work entries and turn folds. The parent
@@ -2756,21 +2882,43 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   const { isWorking, unsettledTurnId } = use(TimelineRowActivityCtx);
   const isStreaming =
     Boolean(row.message.streaming) &&
-    isWorking &&
-    unsettledTurnId !== null &&
-    row.message.turnId === unsettledTurnId;
+    (row.message.replyTopicId !== undefined ||
+      (isWorking && unsettledTurnId !== null && row.message.turnId === unsettledTurnId));
   const translate = useInterfaceTranslator().message;
   const audioAttachments = (row.message.attachments ?? []).filter(isAudioAttachment);
   const messageText =
     row.message.text ||
     (row.message.streaming || audioAttachments.length > 0 ? "" : translate("chat.timeline.empty"));
+  const body = (
+    <ChatMarkdown
+      text={messageText}
+      cwd={ctx.markdownCwd}
+      threadRef={ctx.threadRef ?? undefined}
+      environmentId={ctx.activeThreadEnvironmentId}
+      isStreaming={isStreaming}
+      streamId={`${ctx.routeThreadKey}:${row.id}`}
+      streamingMotionEnabled={ctx.streamingMotionEnabled}
+      lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
+      skills={ctx.skills}
+      headingLevelOffset={MESSAGE_HEADING_LEVEL}
+      onRunShellCommand={ctx.onRunShellCommand}
+      onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+      onVisualizationAction={ctx.onVisualizationAction}
+      onImageExpand={ctx.onImageExpand}
+    />
+  );
 
   return (
     <>
-      <div className="relative min-w-0 px-1 py-0.5">
+      <div className="min-w-0 px-1 py-0.5">
         <MessageAuthorHeading>T3 Code</MessageAuthorHeading>
-        {ctx.editAction?.editor?.messageId === row.message.id ? (
+        {row.message.replyTo ? (
+          <MessageReplyQuote replyTo={row.message.replyTo} onJumpToSource={ctx.onJumpReplySource} />
+        ) : null}
+        {!row.message.replyTopicId && ctx.editAction?.editor?.messageId === row.message.id ? (
           ctx.editAction.editor.content
+        ) : row.message.replyTopicId ? (
+          <div data-reply-message-content>{body}</div>
         ) : (
           <AssistantCitationSource
             messageId={row.message.id}
@@ -2779,22 +2927,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             request={ctx.citationRequest}
             listRef={ctx.listRef}
           >
-            <ChatMarkdown
-              text={messageText}
-              cwd={ctx.markdownCwd}
-              threadRef={ctx.threadRef ?? undefined}
-              environmentId={ctx.activeThreadEnvironmentId}
-              isStreaming={isStreaming}
-              streamId={`${ctx.routeThreadKey}:${row.message.id}`}
-              streamingMotionEnabled={ctx.streamingMotionEnabled}
-              lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
-              skills={ctx.skills}
-              headingLevelOffset={MESSAGE_HEADING_LEVEL}
-              onRunShellCommand={ctx.onRunShellCommand}
-              onUseArtifactTemplate={ctx.onUseArtifactTemplate}
-              onVisualizationAction={ctx.onVisualizationAction}
-              onImageExpand={ctx.onImageExpand}
-            />
+            {body}
           </AssistantCitationSource>
         )}
         <MessageAudioAttachments
@@ -2864,15 +2997,19 @@ function AssistantMessageMeta({
         className,
       )}
     >
-      {!message.streaming && ctx.forkActions?.forkableMessageIds.has(message.id) ? (
-        <TimelineForkButton boundary={{ kind: "message", messageId: message.id }} />
-      ) : null}
-      <AssistantCopyButton
-        message={message}
-        showCopyButton={showCopyButton}
-        streaming={copyStreaming}
-      />
-      <EditMessageButton message={message} />
+      <div className="flex shrink-0 items-center gap-0.5">
+        {!message.replyTopicId &&
+        !message.streaming &&
+        ctx.forkActions?.forkableMessageIds.has(message.id) ? (
+          <TimelineForkButton boundary={{ kind: "message", messageId: message.id }} />
+        ) : null}
+        <AssistantCopyButton
+          message={message}
+          showCopyButton={showCopyButton}
+          streaming={copyStreaming}
+        />
+        <EditMessageButton message={message} />
+      </div>
       {!message.streaming && (
         <Tooltip>
           <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
@@ -2909,7 +3046,7 @@ function AssistantCopyButton({
     return null;
   }
 
-  return <MessageCopyButton text={assistantCopyState.text ?? ""} variant="ghost" />;
+  return <MessageCopyButton text={assistantCopyState.text ?? ""} variant="ghost" size="icon-xs" />;
 }
 
 function ProposedPlanTimelineRow({
@@ -2921,10 +3058,12 @@ function ProposedPlanTimelineRow({
 
   return (
     <div className="min-w-0 px-1 py-0.5">
-      {ctx.forkActions?.forkableProposedPlanIds.has(row.proposedPlan.id) ? (
-        <TimelineForkButton boundary={{ kind: "proposed-plan", planId: row.proposedPlan.id }} />
-      ) : null}
       <ProposedPlanCard
+        actions={
+          ctx.forkActions?.forkableProposedPlanIds.has(row.proposedPlan.id) ? (
+            <TimelineForkButton boundary={{ kind: "proposed-plan", planId: row.proposedPlan.id }} />
+          ) : undefined
+        }
         planMarkdown={row.proposedPlan.planMarkdown}
         environmentId={ctx.activeThreadEnvironmentId}
         threadRef={ctx.threadRef ?? undefined}

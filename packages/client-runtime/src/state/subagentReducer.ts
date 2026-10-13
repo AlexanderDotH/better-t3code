@@ -172,13 +172,16 @@ function routedToSubagent(event: OrchestrationEvent, subagentId: SubagentId): bo
   }
 }
 
-function mergeMessage(
+export function mergeSubagentMessage(
   messages: ReadonlyArray<OrchestrationMessage>,
   incoming: OrchestrationMessage,
 ): ReadonlyArray<OrchestrationMessage> {
   const existing = messages.find((entry) => entry.id === incoming.id);
   if (existing === undefined) {
-    return [...messages, incoming];
+    return [...messages, incoming].sort(
+      (left, right) =>
+        left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+    );
   }
   return messages.map((entry) =>
     entry.id !== incoming.id
@@ -194,7 +197,15 @@ function mergeMessage(
           ...(incoming.turnId !== undefined ? { turnId: incoming.turnId } : {}),
           ...(incoming.streaming ? {} : { updatedAt: incoming.updatedAt }),
           ...(incoming.attachments !== undefined ? { attachments: incoming.attachments } : {}),
-          ...(incoming.context !== undefined ? { context: incoming.context } : {}),
+          ...(incoming.context !== undefined && entry.context === undefined
+            ? { context: incoming.context }
+            : {}),
+          ...(incoming.replyTo !== undefined && entry.replyTo === undefined
+            ? { replyTo: incoming.replyTo }
+            : {}),
+          ...(incoming.replyTopicId !== undefined && entry.replyTopicId === undefined
+            ? { replyTopicId: incoming.replyTopicId }
+            : {}),
           ...(incoming.historyOrigin !== undefined
             ? { historyOrigin: incoming.historyOrigin }
             : {}),
@@ -292,6 +303,10 @@ export function applySubagentDetailEvent(
           ? {}
           : { attachments: event.payload.attachments }),
         ...(event.payload.context === undefined ? {} : { context: event.payload.context }),
+        ...(event.payload.replyTo === undefined ? {} : { replyTo: event.payload.replyTo }),
+        ...(event.payload.replyTopicId === undefined
+          ? {}
+          : { replyTopicId: event.payload.replyTopicId }),
         ...(event.payload.historyOrigin === undefined
           ? {}
           : { historyOrigin: event.payload.historyOrigin }),
@@ -304,7 +319,7 @@ export function applySubagentDetailEvent(
         kind: "updated",
         subagent: {
           ...subagent,
-          messages: mergeMessage(subagent.messages, message),
+          messages: mergeSubagentMessage(subagent.messages, message),
           updatedAt: maxIsoDate(subagent.updatedAt, event.occurredAt),
         },
       };

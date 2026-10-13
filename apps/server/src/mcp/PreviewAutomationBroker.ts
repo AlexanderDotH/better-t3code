@@ -614,9 +614,14 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       return yield* Option.match(result, {
         onNone: () =>
           Effect.gen(function* () {
-            // An unanswered request invalidates this connection. Do not replay
-            // actions: the client may have applied them before becoming unreachable.
-            yield* disconnect(connection.clientId, connection.queue, true);
+            // Optional icon metadata has a shorter deadline than browser actions;
+            // missing it must not evict a host that just completed an action.
+            const backgroundStatus =
+              input.operation === "status" && input.updateCurrentTab === false;
+            if (!backgroundStatus) {
+              // Do not replay actions: the client may already have applied them.
+              yield* disconnect(connection.clientId, connection.queue, true);
+            }
             return yield* new PreviewAutomationTimeoutError(requestContext);
           }),
         onSome: (value) => Effect.succeed(value as A),

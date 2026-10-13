@@ -4,9 +4,12 @@ import {
   ApprovalRequestId,
   ChatAttachment,
   OrchestrationMessageContext,
+  OrchestrationEvent,
   CheckpointRef,
   IsoDateTime,
   MessageId,
+  MessageReplyReference,
+  MessageReplyTopic,
   NonNegativeInt,
   OrchestrationCheckpointFile,
   OrchestrationHistoryOrigin,
@@ -80,9 +83,12 @@ import { ProjectionThreadSubagentProposedPlanRepositoryLive } from "../../persis
 import { ProjectionThreadSubagentRepositoryLive } from "../../persistence/Layers/ProjectionThreadSubagents.ts";
 import {
   ProjectionThreadSubagentActivityRepository,
-  type ProjectionThreadSubagentActivity,
+  ProjectionThreadSubagentActivity,
 } from "../../persistence/Services/ProjectionThreadSubagentActivities.ts";
-import { ProjectionThreadSubagentMessageRepository } from "../../persistence/Services/ProjectionThreadSubagentMessages.ts";
+import {
+  ProjectionThreadSubagentMessage,
+  ProjectionThreadSubagentMessageRepository,
+} from "../../persistence/Services/ProjectionThreadSubagentMessages.ts";
 import { ProjectionThreadSubagentProposedPlanRepository } from "../../persistence/Services/ProjectionThreadSubagentProposedPlans.ts";
 import {
   ProjectionThreadSubagent,
@@ -118,7 +124,7 @@ import {
   type ProjectionThreadPullRequests,
   type ProjectionSnapshotQueryShape,
 } from "../Services/ProjectionSnapshotQuery.ts";
-import { reconcileSubagentTerminalTurn } from "../subagentLifecycle.ts";
+import { isActiveSubagentStatus, reconcileSubagentTerminalTurn } from "../subagentLifecycle.ts";
 
 const decodeReadModel = Schema.decodeUnknownEffect(OrchestrationReadModel);
 const decodeThread = Schema.decodeUnknownEffect(OrchestrationThread);
@@ -172,10 +178,31 @@ const ProjectionTurnStartMessageDbRowSchema = ProjectionThreadMessageDbRowSchema
     providerContextSequence: Schema.Number,
   }),
 );
+const RECENT_THREAD_MESSAGE_LIMIT = 200;
+const REPLY_MESSAGE_LIMIT = 2_000;
+const REPLY_ACTIVITY_LIMIT = 500;
+const REPLY_ACTIVITY_MAX_BYTES = 4 * 1024 * 1024;
+
+const ProjectionReplyMessageDbRowSchema = ProjectionThreadSubagentMessage.mapFields(
+  Struct.assign({
+    attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
+    context: Schema.NullOr(Schema.fromJsonString(OrchestrationMessageContext)),
+    replyTo: Schema.NullOr(Schema.fromJsonString(MessageReplyReference)),
+    replyTopicId: Schema.NullOr(SubagentId),
+    isStreaming: Schema.Number,
+  }),
+);
+const ProjectionReplyActivityDbRowSchema = ProjectionThreadSubagentActivity.mapFields(
+  Struct.assign({
+    payload: Schema.fromJsonString(Schema.Unknown),
+    sequence: Schema.NullOr(NonNegativeInt),
+  }),
+);
 const ProjectionThreadSubagentDbRowSchema = ProjectionThreadSubagent.mapFields(
   Struct.assign({
     latestProgress: Schema.NullOr(Schema.fromJsonString(OrchestrationSubagentProgress)),
     latestTurn: Schema.NullOr(Schema.fromJsonString(OrchestrationLatestTurn)),
+    messageReply: Schema.NullOr(Schema.fromJsonString(MessageReplyTopic)),
     historyOrigin: Schema.NullOr(Schema.fromJsonString(OrchestrationHistoryOrigin)),
   }),
 );
@@ -577,6 +604,40 @@ function historyOrdinal(entry: { readonly historyOrigin: OrchestrationHistoryOri
   return entry.historyOrigin.ordinal;
 }
 
+function mapReplyMessageRow(
+  row: Schema.Schema.Type<typeof ProjectionReplyMessageDbRowSchema>,
+): OrchestrationMessage {
+  return {
+    id: row.messageId,
+    role: row.role,
+    text: row.text,
+    ...(row.attachments !== null ? { attachments: row.attachments } : {}),
+    ...(row.context !== null ? { context: row.context } : {}),
+    ...(row.replyTo !== null ? { replyTo: row.replyTo } : {}),
+    replyTopicId: row.subagentId,
+    turnId: row.turnId,
+    streaming: row.isStreaming === 1,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function mapReplyActivityRow(
+  row: Schema.Schema.Type<typeof ProjectionReplyActivityDbRowSchema>,
+): OrchestrationThreadActivity {
+  return projectActivityPayload({
+    id: row.activityId,
+    tone: row.tone,
+    kind: row.kind,
+    summary: row.summary,
+    payload: row.payload,
+    replyTopicId: row.subagentId,
+    turnId: row.turnId,
+    ...(row.sequence !== null ? { sequence: row.sequence } : {}),
+    createdAt: row.createdAt,
+  });
+}
+
 function mapPersistedSubagentSummaryRow(
   row: ProjectionThreadSubagentRow,
 ): OrchestrationSubagentSummary {
@@ -595,6 +656,7 @@ function mapPersistedSubagentSummaryRow(
     model: row.model,
     reasoningEffort: row.reasoningEffort,
     ...(row.serviceTier ? { serviceTier: row.serviceTier } : {}),
+    ...(row.messageReply != null ? { messageReply: row.messageReply } : {}),
     depth: row.depth,
     status: row.status,
     statusMessage: row.statusMessage,
@@ -688,6 +750,9 @@ function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: st
 }
 
 function groupActiveCoordinationClaims(input: {
+  readonly subagents: ReadonlyArray<
+    Pick<ProjectionThreadSubagentRow, "threadId" | "status" | "latestTurn" | "messageReply">
+  >;
   readonly claims: ReadonlyArray<ProjectAgentLease>;
   readonly threads: ReadonlyArray<{
     readonly threadId: ThreadId;
@@ -711,6 +776,19 @@ function groupActiveCoordinationClaims(input: {
   const latestTurns = new Map(
     input.latestTurns.map((latestTurn) => [latestTurn.threadId, latestTurn]),
   );
+  const activeReplyTurns = new Map<ThreadId, Set<TurnId>>();
+  for (const subagent of input.subagents) {
+    if (
+      subagent.messageReply == null ||
+      !isActiveSubagentStatus(subagent.status) ||
+      subagent.latestTurn?.state !== "running"
+    ) {
+      continue;
+    }
+    const turnIds = activeReplyTurns.get(subagent.threadId) ?? new Set<TurnId>();
+    turnIds.add(subagent.latestTurn.turnId);
+    activeReplyTurns.set(subagent.threadId, turnIds);
+  }
   const grouped = new Map<ProjectId, ProjectAgentLease[]>();
   for (const lease of input.claims) {
     const thread = threads.get(lease.threadId);
@@ -729,7 +807,7 @@ function groupActiveCoordinationClaims(input: {
       thread.projectId !== lease.projectId ||
       thread.archivedAt !== null ||
       thread.deletedAt !== null ||
-      (!activeSession && !activeTurn)
+      (!activeSession && !activeTurn && !activeReplyTurns.get(lease.threadId)?.has(lease.turnId))
     ) {
       continue;
     }
@@ -1164,7 +1242,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           started_at AS "startedAt",
           updated_at AS "updatedAt",
           completed_at AS "completedAt",
-          history_origin_json AS "historyOrigin"
+          history_origin_json AS "historyOrigin",
+          message_reply_json AS "messageReply"
         FROM projection_thread_subagents
         ORDER BY thread_id ASC, updated_at DESC, subagent_id ASC
       `,
@@ -1199,9 +1278,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           started_at AS "startedAt",
           updated_at AS "updatedAt",
           completed_at AS "completedAt",
-          history_origin_json AS "historyOrigin"
+          history_origin_json AS "historyOrigin",
+          message_reply_json AS "messageReply"
         FROM projection_thread_subagents
-        WHERE status IN ('starting', 'running', 'waiting')
+        WHERE (status IN ('starting', 'running', 'waiting') OR message_reply_json IS NOT NULL)
           AND history_origin_json IS NULL
         ORDER BY thread_id ASC, updated_at DESC, subagent_id ASC
       `,
@@ -1715,12 +1795,20 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             WHERE current_thread.thread_id = ${threadId}
             LIMIT 1
           )
-            AND peer.thread_id <> ${threadId}
             AND peer.deleted_at IS NULL
             AND peer.archived_at IS NULL
             AND (
-              peer_session.status IN ('starting', 'running')
-              OR peer_turn.state = 'running'
+              (peer.thread_id <> ${threadId} AND (
+                peer_session.status IN ('starting', 'running')
+                OR peer_turn.state = 'running'
+              ))
+              OR EXISTS (
+                SELECT 1 FROM projection_thread_subagents AS topic
+                WHERE topic.thread_id = peer.thread_id
+                  AND topic.message_reply_json IS NOT NULL
+                  AND topic.status IN ('starting', 'running', 'waiting')
+                  AND (topic.latest_turn_json IS NULL OR json_extract(topic.latest_turn_json, '$.state') = 'running')
+              )
             )
           LIMIT 1
         ) AS "hasActivePeer"
@@ -1949,6 +2037,39 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         ORDER BY created_at ASC, message_id ASC
       `,
   });
+
+  const listRecentThreadMessageRows = SqlSchema.findAll({
+    Request: Schema.Struct({ threadId: ThreadId, limit: NonNegativeInt }),
+    Result: ProjectionThreadMessageDbRowSchema,
+    execute: ({ threadId, limit }) => sql`
+      SELECT message_id AS "messageId", thread_id AS "threadId", turn_id AS "turnId", role, text,
+        attachments_json AS "attachments", context_json AS "context", is_streaming AS "isStreaming",
+        created_at AS "createdAt", updated_at AS "updatedAt", history_origin_json AS "historyOrigin"
+      FROM (
+        SELECT * FROM projection_thread_messages
+        WHERE thread_id = ${threadId}
+        ORDER BY created_at DESC, message_id DESC
+        LIMIT ${limit}
+      )
+      ORDER BY created_at ASC, message_id ASC
+    `,
+  });
+  const getRecentThreadMessages: ProjectionSnapshotQueryShape["getRecentThreadMessages"] = (
+    threadId,
+    limit,
+  ) =>
+    listRecentThreadMessageRows({
+      threadId,
+      limit: Math.max(0, Math.min(limit, RECENT_THREAD_MESSAGE_LIMIT)),
+    }).pipe(
+      Effect.map((rows) => rows.map(mapMessageRow)),
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.getRecentThreadMessages:query",
+          "ProjectionSnapshotQuery.getRecentThreadMessages:decodeRows",
+        ),
+      ),
+    );
 
   const listThreadProposedPlanRowsByThread = SqlSchema.findAll({
     Request: ThreadIdLookupInput,
@@ -2327,19 +2448,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     `,
   });
 
-  // Resolves a page of recent turns for a windowed thread detail read. Walks
-  // back from the exclusive (beforeAnchorAt, beforeTurnKey) keyset boundary
-  // (sentinels "~"/"" mean unbounded, i.e. the first page) until it has seen
-  // `userTurnLimit` user-anchored turns — turns whose pending message is a
-  // user message; subagent/fan-out turns between them ride along — or hits the
-  // `maxRawTurns` ceiling that bounds pathological fan-out. The `candidates`
-  // CTE applies the keyset bound and LIMIT before the window functions run;
-  // its ORDER BY uses raw columns so the migration-037
-  // (thread_id, requested_at, turn_id) index serves both range and order with
-  // no temp B-tree — the scan is genuinely bounded by the LIMIT. (Raw
-  // turn_id DESC places NULLs exactly where COALESCE-to-'' would, below every
-  // real id.) The caller derives the continuation cursor from the oldest
-  // returned row.
+  // Root turns and individual reply messages share a keyset cursor. Each
+  // candidate branch is bounded before merging, so topic-only conversations
+  // can load older pages without pulling every subagent transcript.
   // Highest thread-DETAIL event sequence for this thread that the projection
   // has applied (bounded by the global snapshot sequence read in the same
   // transaction). This is the thread-scoped watermark a windowed page carries
@@ -2361,6 +2472,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           AND sequence <= ${maxSequence}
           AND event_type IN (
             'thread.message-sent',
+            'thread.subagent-upserted',
+            'thread.subagent-state-set',
+            'thread.subagent-progress-set',
             'thread.message-edited',
             'thread.forked',
             'thread.fork-workspace-updated',
@@ -2371,6 +2485,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             'thread.reverted',
             'thread.session-set'
           )
+          AND (
+            event_type NOT IN ('thread.message-sent', 'thread.proposed-plan-upserted', 'thread.activity-appended')
+            OR json_extract(payload_json, '$.subagentId') IS NULL
+            OR (event_type = 'thread.message-sent' AND json_extract(payload_json, '$.replyTopicId') IS NOT NULL)
+            OR (event_type = 'thread.activity-appended' AND json_extract(payload_json, '$.activity.replyTopicId') IS NOT NULL)
+          )
       `,
   });
 
@@ -2379,11 +2499,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     Result: ProjectionTurnWindowRowSchema,
     execute: ({ threadId, beforeAnchorAt, beforeTurnKey, userTurnLimit, maxRawTurns }) =>
       sql`
-        WITH candidates AS (
+        WITH root_candidates AS (
           SELECT
             turns.requested_at AS anchor_at,
             COALESCE(turns.turn_id, '') AS turn_key,
-            turns.pending_message_id
+            turns.pending_message_id,
+            0 AS is_reply
           FROM projection_turns AS turns
           WHERE turns.thread_id = ${threadId}
             AND (
@@ -2396,26 +2517,179 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           ORDER BY turns.requested_at DESC, turns.turn_id DESC
           LIMIT ${maxRawTurns}
         ),
+        reply_candidates AS (
+          SELECT
+            messages.created_at AS anchor_at,
+            'reply:' || json_array(messages.subagent_id, messages.message_id) AS turn_key,
+            NULL AS pending_message_id,
+            1 AS is_reply
+          FROM projection_thread_subagent_messages AS messages
+          JOIN projection_thread_subagents AS topics
+            ON topics.thread_id = messages.thread_id AND topics.subagent_id = messages.subagent_id
+          WHERE messages.thread_id = ${threadId}
+            AND topics.message_reply_json IS NOT NULL
+            AND (
+              messages.created_at < ${beforeAnchorAt}
+              OR (
+                messages.created_at = ${beforeAnchorAt}
+                AND 'reply:' || json_array(messages.subagent_id, messages.message_id) < ${beforeTurnKey}
+              )
+            )
+          ORDER BY messages.created_at DESC, turn_key DESC
+          LIMIT ${maxRawTurns}
+        ),
+        candidates AS (
+          SELECT * FROM root_candidates
+          UNION ALL
+          SELECT * FROM reply_candidates
+          ORDER BY anchor_at DESC, turn_key DESC
+          LIMIT ${maxRawTurns}
+        ),
         walked AS (
           SELECT
             candidates.anchor_at,
             candidates.turn_key,
-            CASE WHEN messages.role = 'user' THEN 1 ELSE 0 END AS is_user_turn,
-            SUM(CASE WHEN messages.role = 'user' THEN 1 ELSE 0 END) OVER (
+            CASE WHEN candidates.is_reply = 1 OR messages.role = 'user' THEN 1 ELSE 0 END AS is_user_turn,
+            SUM(CASE WHEN candidates.is_reply = 1 OR messages.role = 'user' THEN 1 ELSE 0 END) OVER (
               ORDER BY candidates.anchor_at DESC, candidates.turn_key DESC
             ) AS user_turns_seen
           FROM candidates
           LEFT JOIN projection_thread_messages AS messages
             ON messages.message_id = candidates.pending_message_id
         )
-        SELECT
-          anchor_at AS "anchorAt",
-          turn_key AS "turnKey"
+        SELECT anchor_at AS "anchorAt", turn_key AS "turnKey"
         FROM walked
         WHERE user_turns_seen < ${userTurnLimit}
           OR (user_turns_seen = ${userTurnLimit} AND is_user_turn = 1)
         ORDER BY anchor_at ASC, turn_key ASC
       `,
+  });
+
+  const replyInteractionsCte = (threadId: string | null) => sql`
+      interactions AS (
+        SELECT activity.activity_id, activity.thread_id, activity.subagent_id, activity.kind,
+          ROW_NUMBER() OVER (
+            PARTITION BY activity.thread_id, activity.subagent_id,
+              CASE WHEN activity.kind LIKE 'approval.%' THEN 'approval' ELSE 'user-input' END,
+              json_extract(activity.payload_json, '$.requestId')
+            ORDER BY activity.created_at DESC, activity.activity_id DESC
+          ) AS request_rank
+        FROM projection_thread_subagent_activities AS activity
+        JOIN projection_thread_subagents AS topics
+          ON topics.thread_id = activity.thread_id AND topics.subagent_id = activity.subagent_id
+        WHERE ${threadId === null ? sql`1 = 1` : sql`activity.thread_id = ${threadId}`}
+          AND topics.message_reply_json IS NOT NULL
+          AND activity.kind IN ('approval.requested', 'approval.resolved', 'user-input.requested', 'user-input.resolved')
+          AND json_extract(activity.payload_json, '$.requestId') IS NOT NULL
+      )
+  `;
+
+  const listReplyMessageRows = SqlSchema.findAll({
+    Request: Schema.Struct({
+      threadId: Schema.NullOr(ThreadId),
+      minAnchorAt: Schema.String,
+      minTurnKey: Schema.String,
+      beforeAnchorAt: Schema.String,
+      beforeTurnKey: Schema.String,
+    }),
+    Result: ProjectionReplyMessageDbRowSchema,
+    execute: ({ threadId, minAnchorAt, minTurnKey, beforeAnchorAt, beforeTurnKey }) => sql`
+      WITH ${replyInteractionsCte(threadId)}, recent AS (
+        SELECT messages.thread_id, messages.subagent_id, messages.message_id,
+          ROW_NUMBER() OVER (
+            PARTITION BY messages.thread_id
+            ORDER BY messages.created_at DESC, messages.subagent_id DESC, messages.message_id DESC
+          ) AS message_rank
+        FROM projection_thread_subagent_messages AS messages
+        JOIN projection_thread_subagents AS topics
+          ON topics.thread_id = messages.thread_id AND topics.subagent_id = messages.subagent_id
+        WHERE ${threadId === null ? sql`1 = 1` : sql`messages.thread_id = ${threadId}`}
+          AND topics.message_reply_json IS NOT NULL
+          AND (
+            messages.created_at > ${minAnchorAt}
+            OR (messages.created_at = ${minAnchorAt}
+              AND 'reply:' || json_array(messages.subagent_id, messages.message_id) >= ${minTurnKey})
+          )
+          AND (
+            messages.created_at < ${beforeAnchorAt}
+            OR (messages.created_at = ${beforeAnchorAt}
+              AND 'reply:' || json_array(messages.subagent_id, messages.message_id) < ${beforeTurnKey})
+          )
+      ),
+      selected AS (
+        SELECT thread_id, subagent_id, message_id FROM recent WHERE message_rank <= ${REPLY_MESSAGE_LIMIT}
+        UNION
+        SELECT topics.thread_id, topics.subagent_id, (
+          SELECT message_id FROM projection_thread_subagent_messages AS latest
+          WHERE latest.thread_id = topics.thread_id AND latest.subagent_id = topics.subagent_id
+          ORDER BY latest.created_at DESC, latest.message_id DESC
+          LIMIT 1
+        ) AS message_id
+        FROM projection_thread_subagents AS topics
+        WHERE ${threadId === null ? sql`1 = 1` : sql`topics.thread_id = ${threadId}`}
+          AND topics.message_reply_json IS NOT NULL
+          AND (
+            (topics.status IN ('starting', 'running', 'waiting')
+              AND (topics.latest_turn_json IS NULL OR json_extract(topics.latest_turn_json, '$.state') = 'running'))
+            OR EXISTS (
+              SELECT 1 FROM interactions
+              WHERE interactions.thread_id = topics.thread_id AND interactions.subagent_id = topics.subagent_id
+                AND request_rank = 1 AND kind IN ('approval.requested', 'user-input.requested')
+            )
+          )
+      )
+      SELECT messages.thread_id AS "threadId", messages.subagent_id AS "subagentId", messages.message_id AS "messageId",
+        messages.turn_id AS "turnId", messages.role, messages.text, messages.attachments_json AS "attachments", messages.context_json AS "context",
+        messages.reply_to_json AS "replyTo", messages.reply_topic_id AS "replyTopicId", messages.is_streaming AS "isStreaming",
+        messages.created_at AS "createdAt", messages.updated_at AS "updatedAt"
+      FROM selected
+      JOIN projection_thread_subagent_messages AS messages
+        ON messages.thread_id = selected.thread_id AND messages.subagent_id = selected.subagent_id
+          AND messages.message_id = selected.message_id
+      ORDER BY messages.created_at ASC, messages.subagent_id ASC, messages.message_id ASC
+    `,
+  });
+
+  // Keep payloads out of the ordering window and pin unresolved interactions independently.
+  const listReplyActivityRows = SqlSchema.findAll({
+    Request: Schema.Struct({ threadId: Schema.NullOr(ThreadId) }),
+    Result: ProjectionReplyActivityDbRowSchema,
+    execute: ({ threadId }) => sql`
+      WITH marked AS (
+        SELECT activity.thread_id, activity.subagent_id, activity.activity_id, activity.created_at,
+          ROW_NUMBER() OVER (
+            PARTITION BY activity.thread_id
+            ORDER BY activity.created_at DESC, activity.subagent_id DESC, activity.activity_id DESC
+          ) AS activity_rank,
+          SUM(LENGTH(CAST(activity.payload_json AS BLOB)) + LENGTH(CAST(activity.summary AS BLOB)) + 64) OVER (
+            PARTITION BY activity.thread_id
+            ORDER BY activity.created_at DESC, activity.subagent_id DESC, activity.activity_id DESC
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+          ) AS cumulative_bytes
+        FROM projection_thread_subagent_activities AS activity
+        JOIN projection_thread_subagents AS topics
+          ON topics.thread_id = activity.thread_id AND topics.subagent_id = activity.subagent_id
+        WHERE ${threadId === null ? sql`1 = 1` : sql`activity.thread_id = ${threadId}`}
+          AND topics.message_reply_json IS NOT NULL
+      ),
+      ${replyInteractionsCte(threadId)}
+      SELECT activity.thread_id AS "threadId", activity.subagent_id AS "subagentId",
+        activity.activity_id AS "activityId", activity.turn_id AS "turnId", activity.tone, activity.kind,
+        activity.summary, activity.payload_json AS "payload", activity.sequence, activity.created_at AS "createdAt"
+      FROM marked
+      JOIN projection_thread_subagent_activities AS activity
+        ON activity.thread_id = marked.thread_id AND activity.subagent_id = marked.subagent_id
+          AND activity.activity_id = marked.activity_id
+      WHERE (activity_rank <= ${REPLY_ACTIVITY_LIMIT} AND (activity_rank = 1 OR cumulative_bytes <= ${REPLY_ACTIVITY_MAX_BYTES}))
+        OR EXISTS (
+          SELECT 1 FROM interactions
+          WHERE interactions.thread_id = marked.thread_id
+            AND interactions.subagent_id = marked.subagent_id
+            AND interactions.activity_id = marked.activity_id
+            AND request_rank = 1 AND interactions.kind IN ('approval.requested', 'user-input.requested')
+        )
+      ORDER BY activity.sequence ASC, activity.created_at ASC, activity.subagent_id ASC, activity.activity_id ASC
+    `,
   });
 
   // Windowed variants of the two heavy collections. Turn-linked rows are
@@ -2746,6 +3020,61 @@ pending_approval_requests AS (
       `,
   });
 
+  const replyRequestPredicate = sql`event_type IN (
+    'thread.reply-start-requested', 'thread.reply-interrupt-requested', 'thread.reply-retry-requested',
+    'thread.reply-approval-response-requested', 'thread.reply-user-input-response-requested',
+    'thread.reply-user-input-dismiss-requested'
+  )`;
+  const listReplyRecoveryThreadRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ThreadIdLookupInput,
+    execute: () => sql`
+      SELECT DISTINCT events.stream_id AS "threadId"
+      FROM orchestration_events AS events
+      JOIN projection_threads AS threads ON threads.thread_id = events.stream_id
+      WHERE ${replyRequestPredicate}
+        AND threads.deleted_at IS NULL AND threads.archived_at IS NULL
+      ORDER BY events.stream_id
+    `,
+  });
+  const listReplyRequestEventRows = SqlSchema.findAll({
+    Request: Schema.Struct({ threadId: ThreadId, throughSequence: NonNegativeInt }),
+    Result: Schema.Struct({ event: Schema.fromJsonString(OrchestrationEvent) }),
+    execute: ({ threadId, throughSequence }) => sql`
+      SELECT json_object(
+        'sequence', sequence, 'eventId', event_id, 'type', event_type,
+        'aggregateKind', aggregate_kind, 'aggregateId', stream_id, 'occurredAt', occurred_at,
+        'commandId', command_id, 'causationEventId', causation_event_id, 'correlationId', correlation_id,
+        'metadata', json(metadata_json), 'payload', json(payload_json)
+      ) AS event
+      FROM orchestration_events
+      WHERE stream_id = ${threadId} AND sequence <= ${throughSequence} AND ${replyRequestPredicate}
+      ORDER BY sequence ASC
+    `,
+  });
+  const getMessageReplyRecoveryThreadIds: ProjectionSnapshotQueryShape["getMessageReplyRecoveryThreadIds"] =
+    () =>
+      listReplyRecoveryThreadRows(undefined).pipe(
+        Effect.map((rows) => rows.map((row) => row.threadId)),
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.getMessageReplyRecoveryThreadIds:query",
+            "ProjectionSnapshotQuery.getMessageReplyRecoveryThreadIds:decodeRows",
+          ),
+        ),
+      );
+  const getMessageReplyRequestEvents: ProjectionSnapshotQueryShape["getMessageReplyRequestEvents"] =
+    (threadId, throughSequence) =>
+      listReplyRequestEventRows({ threadId, throughSequence }).pipe(
+        Effect.map((rows) => rows.map((row) => row.event)),
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.getMessageReplyRequestEvents:query",
+            "ProjectionSnapshotQuery.getMessageReplyRequestEvents:decodeRows",
+          ),
+        ),
+      );
+
   const getSnapshot: ProjectionSnapshotQueryShape["getSnapshot"] = () =>
     sql
       .withTransaction(
@@ -2847,6 +3176,28 @@ pending_approval_requests AS (
             ),
           ),
           projectionProjectAgentCoordinationRepository.listAllClaims(),
+          listReplyMessageRows({
+            threadId: null,
+            minAnchorAt: "",
+            minTurnKey: "",
+            beforeAnchorAt: "~",
+            beforeTurnKey: "",
+          }).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getSnapshot:replyMessages",
+                "ProjectionSnapshotQuery.getSnapshot:replyMessages:decode",
+              ),
+            ),
+          ),
+          listReplyActivityRows({ threadId: null }).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getSnapshot:replyActivities",
+                "ProjectionSnapshotQuery.getSnapshot:replyActivities:decode",
+              ),
+            ),
+          ),
         ]),
       )
       .pipe(
@@ -2865,8 +3216,22 @@ pending_approval_requests AS (
             latestTurnRows,
             stateRows,
             coordinationClaimRows,
+            replyMessageRows,
+            replyActivityRows,
           ]) =>
             Effect.gen(function* () {
+              const replyMessagesByThread = new Map<string, Array<OrchestrationMessage>>();
+              const replyActivitiesByThread = new Map<string, Array<OrchestrationThreadActivity>>();
+              for (const row of replyMessageRows) {
+                const messages = replyMessagesByThread.get(row.threadId) ?? [];
+                messages.push(mapReplyMessageRow(row));
+                replyMessagesByThread.set(row.threadId, messages);
+              }
+              for (const row of replyActivityRows) {
+                const activities = replyActivitiesByThread.get(row.threadId) ?? [];
+                activities.push(mapReplyActivityRow(row));
+                replyActivitiesByThread.set(row.threadId, activities);
+              }
               const messagesByThread = new Map<string, Array<OrchestrationMessage>>();
               const proposedPlansByThread = new Map<string, Array<OrchestrationProposedPlan>>();
               const subagentsByThread = new Map<string, Array<OrchestrationSubagentSummary>>();
@@ -2997,6 +3362,7 @@ pending_approval_requests AS (
               );
               const coordinationClaimsByProject = groupActiveCoordinationClaims({
                 claims: coordinationClaimRows,
+                subagents: subagentRows,
                 threads: threadRows,
                 sessions: sessionRows,
                 latestTurns: latestTurnRows,
@@ -3052,6 +3418,12 @@ pending_approval_requests AS (
                 titleState: row.titleState,
                 deletedAt: row.deletedAt,
                 messages: messagesByThread.get(row.threadId) ?? [],
+                ...(replyMessagesByThread.has(row.threadId)
+                  ? { replyMessages: replyMessagesByThread.get(row.threadId) }
+                  : {}),
+                ...(replyActivitiesByThread.has(row.threadId)
+                  ? { replyActivities: replyActivitiesByThread.get(row.threadId) }
+                  : {}),
                 proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
                 activities: activitiesByThread.get(row.threadId) ?? [],
                 subagents: subagentsByThread.get(row.threadId) ?? [],
@@ -3191,6 +3563,7 @@ pending_approval_requests AS (
               const threads: OrchestrationThread[] = [];
               const coordinationClaimsByProject = groupActiveCoordinationClaims({
                 claims: coordinationClaimRows,
+                subagents: subagentRows,
                 threads: threadRows,
                 sessions: sessionRows,
                 latestTurns: latestTurnRows,
@@ -4297,6 +4670,8 @@ pending_approval_requests AS (
         latestTurnRow,
         sessionRow,
         harnessSyncLink,
+        replyMessageRows,
+        replyActivityRows,
       ] = yield* Effect.all([
         getRetainedThreadRowById({ threadId }).pipe(
           Effect.mapError(
@@ -4360,6 +4735,28 @@ pending_approval_requests AS (
           ),
         ),
         projectionHarnessChatSyncRepository.getLinkByThreadId({ threadId }),
+        listReplyMessageRows({
+          threadId,
+          minAnchorAt: bounds?.minAnchorAt ?? "",
+          minTurnKey: bounds?.minTurnKey ?? "",
+          beforeAnchorAt: bounds?.beforeAnchorAt ?? "~",
+          beforeTurnKey: bounds?.beforeTurnKey ?? "",
+        }).pipe(
+          Effect.mapError(
+            toPersistenceSqlOrDecodeError(
+              "ProjectionSnapshotQuery.getThreadDetailById:listReplyMessages:query",
+              "ProjectionSnapshotQuery.getThreadDetailById:listReplyMessages:decodeRows",
+            ),
+          ),
+        ),
+        listReplyActivityRows({ threadId }).pipe(
+          Effect.mapError(
+            toPersistenceSqlOrDecodeError(
+              "ProjectionSnapshotQuery.getThreadDetailById:listReplyActivities:query",
+              "ProjectionSnapshotQuery.getThreadDetailById:listReplyActivities:decodeRows",
+            ),
+          ),
+        ),
       ]);
 
       if (Option.isNone(threadRow)) {
@@ -4402,6 +4799,12 @@ pending_approval_requests AS (
         titleState: threadRow.value.titleState,
         deletedAt: null,
         messages: messageRows.map(mapMessageRow),
+        ...(subagentRows.some((row) => row.messageReply !== undefined)
+          ? {
+              replyMessages: replyMessageRows.map(mapReplyMessageRow),
+              replyActivities: replyActivityRows.map(mapReplyActivityRow),
+            }
+          : {}),
         proposedPlans: proposedPlanRows.map(mapProposedPlanRow),
         subagents: subagentRows
           .filter((row) => !isLegacyRootSubagentRow(row))
@@ -4466,6 +4869,9 @@ pending_approval_requests AS (
         role: row.role,
         text: row.text,
         ...(row.attachments !== undefined ? { attachments: row.attachments } : {}),
+        ...(row.context !== undefined ? { context: row.context } : {}),
+        ...(row.replyTo !== undefined ? { replyTo: row.replyTo } : {}),
+        ...(row.replyTopicId !== undefined ? { replyTopicId: row.replyTopicId } : {}),
         turnId: row.turnId,
         streaming: row.isStreaming,
         createdAt: row.createdAt,
@@ -4502,6 +4908,17 @@ pending_approval_requests AS (
       ),
     );
   });
+
+  const getSubagentSummaryById: ProjectionSnapshotQueryShape["getSubagentSummaryById"] = (
+    threadId,
+    subagentId,
+  ) =>
+    projectionThreadSubagentRepository
+      .getById({ threadId, subagentId })
+      .pipe(
+        Effect.map(Option.filter((row) => !isLegacyRootSubagentRow(row))),
+        Effect.map(Option.map(mapSubagentSummaryRow)),
+      );
 
   const getSubagentDetailById: ProjectionSnapshotQueryShape["getSubagentDetailById"] = (
     threadId,
@@ -4872,6 +5289,8 @@ pending_approval_requests AS (
 
   return {
     getCommandReadModel,
+    getMessageReplyRecoveryThreadIds,
+    getMessageReplyRequestEvents,
     getUserInputActivity,
     listActivitiesByKind,
     getSnapshot,
@@ -4894,8 +5313,10 @@ pending_approval_requests AS (
     getThreadShellById,
     getThreadRuntimeContext,
     getTurnStartMessage,
+    getRecentThreadMessages,
     getThreadDetailById,
     getThreadForkHistory,
+    getSubagentSummaryById,
     getSubagentDetailById,
     getSubagentDetailSnapshot,
     getThreadDetailSnapshot,

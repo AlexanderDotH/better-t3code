@@ -64,6 +64,7 @@ const assertCurrent = Effect.gen(function* () {
     { migration_id: 61, name: "IndependentMigrationLedgers" },
     { migration_id: 62, name: "MessageEditContextIndex" },
     { migration_id: 63, name: "KnowledgeGraphSemanticLookupIndexes" },
+    { migration_id: 65, name: "ProjectionMessageReplyTopics" },
   ]);
   const editPlan = yield* sql<{ detail: string }>`
     EXPLAIN QUERY PLAN SELECT MAX(sequence) FROM orchestration_events
@@ -186,7 +187,10 @@ it.effect(
           yield* sql`SELECT project_id, default_model_selection_json, checkpoints_enabled FROM projection_projects`,
           projects,
         );
-        assert.deepStrictEqual(yield* sql`SELECT * FROM projection_thread_subagents`, subagents);
+        assert.deepStrictEqual(
+          yield* sql`SELECT * FROM projection_thread_subagents`,
+          subagents.map((subagent) => ({ ...subagent, message_reply_json: null })),
+        );
         yield* assertCurrent;
       }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
     }).pipe(Effect.scoped),
@@ -267,7 +271,7 @@ it.effect(
         );
         assert.deepStrictEqual(
           yield* sql`SELECT MAX(migration_id) AS id FROM ${sql(forkMigrationTable)}`,
-          [{ id: 63 }],
+          [{ id: 65 }],
         );
       }).pipe(
         Effect.provide(
@@ -276,3 +280,39 @@ it.effect(
       );
     }).pipe(Effect.scoped),
 );
+
+for (const latestForkId of [64, 65]) {
+  it.effect(`preserves retired migration history with fork migration ${latestForkId} applied`, () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations();
+      assert.deepStrictEqual(
+        yield* sql`SELECT name FROM ${sql(forkMigrationTable)} WHERE migration_id = 64`,
+        [],
+      );
+      yield* sql`
+        INSERT INTO ${sql(forkMigrationTable)} (migration_id, name)
+        VALUES (64, 'RetiredIntegration')
+      `;
+      yield* sql`CREATE TABLE retired_integration_data (value TEXT NOT NULL)`;
+      yield* sql`INSERT INTO retired_integration_data VALUES ('preserved')`;
+      if (latestForkId === 64)
+        yield* sql`DELETE FROM ${sql(forkMigrationTable)} WHERE migration_id = 65`;
+      const history = yield* sql`SELECT * FROM ${sql(forkMigrationTable)} WHERE migration_id <= 64`;
+      const schema = yield* readSchema;
+      assert.deepStrictEqual(
+        yield* runMigrations(),
+        latestForkId === 64 ? [[65, "ProjectionMessageReplyTopics"]] : [],
+      );
+      assert.deepStrictEqual(
+        yield* sql`SELECT * FROM ${sql(forkMigrationTable)} WHERE migration_id <= 64`,
+        history,
+      );
+      assert.deepStrictEqual(yield* sql`SELECT * FROM retired_integration_data`, [
+        { value: "preserved" },
+      ]);
+      assert.deepStrictEqual(yield* readSchema, schema);
+      assert.deepStrictEqual(yield* runMigrations(), []);
+    }).pipe(Effect.provide(NodeSqliteClient.layerMemory()), Effect.scoped),
+  );
+}

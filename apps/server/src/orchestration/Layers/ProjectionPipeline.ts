@@ -1246,6 +1246,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         // which is a monotonic maximum that folds in directly. The full refresh
         // would re-read every message body in the thread per user message.
         case "thread.message-sent": {
+          if (event.payload.subagentId !== undefined) {
+            return;
+          }
           const existingRow = yield* projectionThreadRepository.getById({
             threadId: event.payload.threadId,
           });
@@ -2018,6 +2021,15 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             role: event.payload.role,
             text: nextText,
             ...(attachments !== undefined ? { attachments: [...attachments] } : {}),
+            ...((previous?.context ?? event.payload.context)
+              ? { context: previous?.context ?? event.payload.context }
+              : {}),
+            ...((previous?.replyTo ?? event.payload.replyTo)
+              ? { replyTo: previous?.replyTo ?? event.payload.replyTo }
+              : {}),
+            ...((previous?.replyTopicId ?? event.payload.replyTopicId)
+              ? { replyTopicId: previous?.replyTopicId ?? event.payload.replyTopicId }
+              : {}),
             isStreaming: event.payload.streaming,
             createdAt: previous?.createdAt ?? event.payload.createdAt,
             updatedAt: event.payload.updatedAt,

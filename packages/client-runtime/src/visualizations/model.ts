@@ -24,6 +24,14 @@ export type VisualizationDocument = {
   metadata: VisualizationMetadata;
   datasets: VisualizationDataset[];
 };
+export type VisualizationAppearance = {
+  fontFamily: string;
+  background: string;
+  foreground: string;
+  mutedForeground: string;
+  surface: string;
+  border: string;
+};
 export type VisualizationRenderRequest = {
   channel: typeof VISUALIZATION_CHANNEL;
   type: "render";
@@ -31,6 +39,7 @@ export type VisualizationRenderRequest = {
   format: VisualizationFormat;
   source: string;
   theme: "light" | "dark";
+  appearance?: VisualizationAppearance;
   interactive?: boolean;
 };
 export type VisualizationRequest =
@@ -54,6 +63,18 @@ export type VisualizationResponse =
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isVisualizationAppearance(value: unknown): value is VisualizationAppearance {
+  return (
+    isRecord(value) &&
+    typeof value.fontFamily === "string" &&
+    typeof value.background === "string" &&
+    typeof value.foreground === "string" &&
+    typeof value.mutedForeground === "string" &&
+    typeof value.surface === "string" &&
+    typeof value.border === "string"
+  );
 }
 
 export function normalizeVisualizationFormat(
@@ -105,6 +126,7 @@ export function isVisualizationRequest(value: unknown): value is VisualizationRe
     normalizeVisualizationFormat(value.format) === value.format &&
     typeof value.source === "string" &&
     (value.theme === "light" || value.theme === "dark") &&
+    (value.appearance === undefined || isVisualizationAppearance(value.appearance)) &&
     (value.interactive === undefined || typeof value.interactive === "boolean")
   );
 }

@@ -1129,9 +1129,15 @@ export function projectEvent(
         if (!thread) {
           return nextBase;
         }
-        if (payload.subagentId !== undefined) {
+        if (
+          payload.subagentId !== undefined &&
+          !thread.subagents.some(
+            (subagent) => subagent.id === payload.subagentId && subagent.messageReply,
+          )
+        ) {
           return nextBase;
         }
+        const isReply = payload.subagentId !== undefined;
 
         const message: OrchestrationMessage = yield* decodeForEvent(
           OrchestrationMessage,
@@ -1141,6 +1147,8 @@ export function projectEvent(
             text: payload.text,
             ...(payload.attachments !== undefined ? { attachments: payload.attachments } : {}),
             ...(payload.context !== undefined ? { context: payload.context } : {}),
+            ...(payload.replyTo !== undefined ? { replyTo: payload.replyTo } : {}),
+            ...(isReply ? { replyTopicId: payload.subagentId } : {}),
             turnId: payload.turnId,
             streaming: payload.streaming,
             createdAt: payload.createdAt,
@@ -1150,10 +1158,13 @@ export function projectEvent(
           "message",
         );
 
-        const existingMessage = thread.messages.find((entry) => entry.id === message.id);
+        const previousMessages = isReply ? (thread.replyMessages ?? []) : thread.messages;
+        const matchesMessage = (entry: OrchestrationMessage) =>
+          entry.id === message.id && entry.replyTopicId === message.replyTopicId;
+        const existingMessage = previousMessages.find(matchesMessage);
         const messages = existingMessage
-          ? thread.messages.map((entry) =>
-              entry.id === message.id
+          ? previousMessages.map((entry) =>
+              matchesMessage(entry)
                 ? {
                     ...entry,
                     text: message.streaming
@@ -1167,17 +1178,27 @@ export function projectEvent(
                     ...(message.attachments !== undefined
                       ? { attachments: message.attachments }
                       : {}),
-                    ...(message.context !== undefined ? { context: message.context } : {}),
+                    ...(message.context !== undefined && entry.context === undefined
+                      ? { context: message.context }
+                      : {}),
+                    ...(message.replyTo !== undefined && entry.replyTo === undefined
+                      ? { replyTo: message.replyTo }
+                      : {}),
                   }
                 : entry,
             )
-          : [...thread.messages, message];
+          : [...previousMessages, message].toSorted(
+              (left, right) =>
+                left.createdAt.localeCompare(right.createdAt) ||
+                (left.replyTopicId ?? "").localeCompare(right.replyTopicId ?? "") ||
+                left.id.localeCompare(right.id),
+            );
         const cappedMessages = retainFrozenWithNativeLimit(messages, MAX_THREAD_MESSAGES);
 
         return {
           ...nextBase,
           threads: patchThreadAt(nextBase.threads, threadIndex, {
-            messages: cappedMessages,
+            ...(isReply ? { replyMessages: cappedMessages } : { messages: cappedMessages }),
             updatedAt: event.occurredAt,
           }),
         };
@@ -1544,7 +1565,29 @@ export function projectEvent(
             return nextBase;
           }
           if (payload.subagentId !== undefined) {
-            return nextBase;
+            if (
+              !thread.subagents.some(
+                (subagent) => subagent.id === payload.subagentId && subagent.messageReply,
+              )
+            ) {
+              return nextBase;
+            }
+            const activity = { ...payload.activity, replyTopicId: payload.subagentId };
+            return {
+              ...nextBase,
+              threads: patchThreadAt(nextBase.threads, threadIndex, {
+                replyActivities: [
+                  ...(thread.replyActivities ?? []).filter(
+                    (entry) =>
+                      entry.id !== activity.id || entry.replyTopicId !== activity.replyTopicId,
+                  ),
+                  activity,
+                ]
+                  .toSorted(compareThreadActivities)
+                  .slice(-500),
+                updatedAt: event.occurredAt,
+              }),
+            };
           }
 
           const activities = retainThreadActivities(

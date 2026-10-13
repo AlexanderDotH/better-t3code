@@ -3532,7 +3532,7 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     });
   });
 
-  it("falls back to the stored concrete effort for an invalid routing decision", async () => {
+  it("raises a low concrete fallback to supported medium effort for an invalid routing decision", async () => {
     const model = "gpt-5.6-sol";
     const autoSelection = createModelSelection(ProviderInstanceId.make("codex"), model, [
       { id: "reasoningEffort", value: "low" },
@@ -3570,7 +3570,7 @@ describe("ProviderCommandReactor.test.ts fork regressions", () => {
     expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
       modelSelection: {
         options: [
-          { id: "reasoningEffort", value: "low" },
+          { id: "reasoningEffort", value: "medium" },
           { id: "serviceTier", value: "default" },
         ],
       },

@@ -15,6 +15,18 @@ import {
   createEnvironmentRpcCommand,
 } from "./runtime.ts";
 import {
+  type StartThreadReplyInput,
+  startThreadReply,
+  type InterruptThreadReplyInput,
+  interruptThreadReply,
+  type RetryThreadReplyInput,
+  retryThreadReply,
+  type RespondToThreadReplyApprovalInput,
+  respondToThreadReplyApproval,
+  type RespondToThreadReplyUserInputInput,
+  respondToThreadReplyUserInput,
+  type DismissThreadReplyUserInputInput,
+  dismissThreadReplyUserInput,
   type ArchiveThreadInput,
   type CreateThreadInput,
   type DeleteThreadInput,
@@ -75,6 +87,12 @@ import {
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 
 export type {
+  StartThreadReplyInput,
+  InterruptThreadReplyInput,
+  RetryThreadReplyInput,
+  RespondToThreadReplyApprovalInput,
+  RespondToThreadReplyUserInputInput,
+  DismissThreadReplyUserInputInput,
   EditThreadMessageInput,
   ArchiveThreadInput,
   CreateThreadInput,
@@ -114,6 +132,16 @@ export function createThreadEnvironmentAtoms<R, E>(
     mode: "serial" as const,
     key: ({ environmentId, input }: { environmentId: string; input: { threadId: string } }) =>
       JSON.stringify([environmentId, input.threadId]),
+  };
+  const replyConcurrency = {
+    mode: "serial" as const,
+    key: ({
+      environmentId,
+      input,
+    }: {
+      environmentId: string;
+      input: { threadId: string; replyTopicId: string };
+    }) => JSON.stringify([environmentId, input.threadId, input.replyTopicId]),
   };
   const commands = {
     create: createEnvironmentCommand(runtime, {
@@ -229,6 +257,42 @@ export function createThreadEnvironmentAtoms<R, E>(
       execute: (input: SetThreadInteractionModeInput) => setThreadInteractionMode(input),
       scheduler,
       concurrency,
+    }),
+    startReply: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:startReply",
+      execute: (input: StartThreadReplyInput) => startThreadReply(input),
+      scheduler,
+      concurrency: replyConcurrency,
+    }),
+    interruptReply: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:interruptReply",
+      execute: (input: InterruptThreadReplyInput) => interruptThreadReply(input),
+      scheduler,
+      concurrency: replyConcurrency,
+    }),
+    retryReply: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:retryReply",
+      execute: (input: RetryThreadReplyInput) => retryThreadReply(input),
+      scheduler,
+      concurrency: replyConcurrency,
+    }),
+    respondToReplyApproval: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:respondToReplyApproval",
+      execute: (input: RespondToThreadReplyApprovalInput) => respondToThreadReplyApproval(input),
+      scheduler,
+      concurrency: replyConcurrency,
+    }),
+    respondToReplyUserInput: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:respondToReplyUserInput",
+      execute: (input: RespondToThreadReplyUserInputInput) => respondToThreadReplyUserInput(input),
+      scheduler,
+      concurrency: replyConcurrency,
+    }),
+    dismissReplyUserInput: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:dismissReplyUserInput",
+      execute: (input: DismissThreadReplyUserInputInput) => dismissThreadReplyUserInput(input),
+      scheduler,
+      concurrency: replyConcurrency,
     }),
     startTurn: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:start-turn",

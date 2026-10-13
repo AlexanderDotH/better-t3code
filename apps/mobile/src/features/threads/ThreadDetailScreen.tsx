@@ -119,6 +119,10 @@ import {
   ThreadComposer,
 } from "./ThreadComposer";
 import { ThreadFeed, type ThreadFeedRetryAction } from "./ThreadFeed";
+import type { ComposerDraft } from "../../state/use-composer-drafts";
+import type { OrchestrationMessage } from "@t3tools/contracts";
+import { MESSAGE_REPLY_PREVIEW_MIN_HEIGHT } from "./MessageReplyPreview";
+import { mobileReplyTopicActionsEnabled } from "./message-replies";
 import { ThreadSubagentStack } from "./ThreadSubagentStack";
 import { useMobilePlanParallelismReview } from "./use-plan-parallelism-review";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
@@ -126,6 +130,11 @@ import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 import { resolveForkComposerBudget } from "./thread-fork";
 
 export interface ThreadDetailScreenProps {
+  readonly messageReply?: ComposerDraft["messageReply"];
+  readonly messageRepliesEnabled?: boolean;
+  readonly messageReplySending?: boolean;
+  readonly onReplyToMessage?: (message: OrchestrationMessage) => void;
+  readonly onCancelMessageReply?: () => void;
   readonly worktreeSetup?: WorktreeSetupCardProps | null;
   readonly setupWorkingStartedAt?: string | null;
   readonly selectedThread: OrchestrationThreadShell;
@@ -306,6 +315,14 @@ const USER_INPUT_TOGGLE_TIMING = {
 };
 
 export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: ThreadDetailScreenProps) {
+  const replyTopics = useMemo(
+    () => props.subagents.filter((subagent) => subagent.messageReply !== undefined),
+    [props.subagents],
+  );
+  const threadSubagents = useMemo(
+    () => props.subagents.filter((subagent) => subagent.messageReply === undefined),
+    [props.subagents],
+  );
   const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const deviceState = useEnvironmentQuery(
@@ -478,7 +495,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     draftMessage: props.draftMessage,
     draftAttachmentCount: props.draftAttachments.length,
   });
-  const composerChrome = composerExpanded ? COMPOSER_EXPANDED_CHROME : COMPOSER_COLLAPSED_CHROME;
+  const composerChrome =
+    (composerExpanded ? COMPOSER_EXPANDED_CHROME : COMPOSER_COLLAPSED_CHROME) +
+    (props.messageReply ? MESSAGE_REPLY_PREVIEW_MIN_HEIGHT : 0);
   const composerOverlapHeight = composerChrome + composerBottomInset;
   // While a user-input request is pending, the questionnaire owns the
   // composer slot outright: expanded it is the full card, collapsed it is a
@@ -488,7 +507,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   // new request re-expands automatically.
   const [collapsedUserInputRequestId, setCollapsedUserInputRequestId] =
     useState<ApprovalRequestId | null>(null);
-  const activeUserInputRequestId = props.activePendingUserInput?.requestId ?? null;
+  const activeUserInputRequestId = props.messageReply
+    ? null
+    : (props.activePendingUserInput?.requestId ?? null);
   const preferences = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const usageLimitsVisible =
@@ -786,7 +807,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       lastScrolledSubmittedMessageIdRef.current === submittedMessageId ||
       contentPresentationKind !== "ready" ||
       (!selectedThreadFeed.some(
-        (entry) => entry.type === "message" && entry.id === submittedMessageId,
+        (entry) => entry.type === "message" && entry.message.id === submittedMessageId,
       ) &&
         !props.queuedMessages.some((message) => message.messageId === submittedMessageId))
     ) {
@@ -867,6 +888,14 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     selectedThreadFeed,
     selectedThreadKey,
   ]);
+
+  const handleReplyToMessage = useCallback(
+    (message: OrchestrationMessage) => {
+      props.onReplyToMessage?.(message);
+      requestAnimationFrame(() => composerEditorRef.current?.focus());
+    },
+    [props.onReplyToMessage],
+  );
 
   const handleEditPendingMessage = useCallback(async (message: QueuedThreadMessage) => {
     try {
@@ -1044,6 +1073,13 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               forkSourceAvailable={props.forkSourceAvailable}
               onOpenForkSource={props.onOpenForkSource}
               retryAction={props.retryAction}
+              messageRepliesEnabled={props.messageRepliesEnabled}
+              onReplyToMessage={handleReplyToMessage}
+              replyTopics={replyTopics}
+              replyActionsEnabled={mobileReplyTopicActionsEnabled(
+                props.serverConfig?.environment.capabilities,
+                props.connectionStateLabel === "connected",
+              )}
               loadEarlier={props.loadEarlier ?? null}
             />
           </RenderErrorBoundary>
@@ -1090,7 +1126,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 <ThreadSubagentStack
                   environmentId={props.environmentId}
                   threadId={props.selectedThread.id}
-                  subagents={props.subagents}
+                  subagents={threadSubagents}
                 />
                 {props.feedbackSubmissions.map((submission) => (
                   <ComposerFeedback
@@ -1125,7 +1161,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                     />
                   </Animated.View>
                 ) : null}
-                {props.activePendingApproval || props.activePendingUserInput ? (
+                {!props.messageReply &&
+                (props.activePendingApproval || props.activePendingUserInput) ? (
                   <Animated.View
                     className="shrink-0 gap-3 px-4 pb-3"
                     // The questionnaire replaces the composer, so it must pad
@@ -1201,6 +1238,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   transcriptExportBusy={props.transcriptExportBusy}
                   forkComposerBudget={forkComposerBudget}
                   draftMessage={props.draftMessage}
+                  replyTo={props.messageReply?.replyTo}
+                  replySending={props.messageReplySending}
+                  onCancelReply={props.onCancelMessageReply}
                   draftVoiceFileReferences={props.draftVoiceFileReferences}
                   readDraftText={props.readDraftText}
                   draftAttachments={props.draftAttachments}
@@ -1218,7 +1258,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   // them against a thread id the server may still reject
                   // would strand them in the outbox.
                   sendBlockedReason={
-                    props.creationState?.kind === "preparing" ? "Starting the task…" : null
+                    props.creationState?.kind === "preparing"
+                      ? "Starting the task…"
+                      : props.messageReply && !props.messageRepliesEnabled
+                        ? translator.message("chat.reply.unavailable")
+                        : null
                   }
                   bottomInset={composerBottomInset}
                   onChangeDraftMessage={props.onChangeDraftMessage}

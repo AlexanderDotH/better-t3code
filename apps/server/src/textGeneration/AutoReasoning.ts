@@ -38,28 +38,36 @@ const TRUNCATION_MARKER = "\n[truncated]";
 const MIDDLE_TRUNCATION_MARKER = "\n[... middle truncated ...]\n";
 export const AUTO_REASONING_DECISION_QUESTION_ID = "autoReasoning";
 export const AUTO_REASONING_TIMEOUT = Duration.seconds(15);
+const AUTO_REASONING_LOW_EFFORT_MIN_CONFIDENCE = 0.8;
+const LOW_REASONING_EFFORTS = new Set(["none", "minimal", "low"]);
 
 const AUTO_REASONING_DECISION_INSTRUCTIONS = [
-  "Choose the lowest adequate supported effort for the coding-agent turn in the decision state.",
+  "Choose the supported effort that reliably covers the entire remaining coding-agent turn.",
   "Review privately before choosing:",
   "- Read the conversation chronologically to establish the current work state.",
   "- Split the current prompt into individual requests, bullets, and work items.",
   "- Compare each item with prior assistant outcomes. Treat only explicitly completed or verified work as done. Count only remaining or newly requested work.",
   "- Assess ambiguity, root-cause discovery, cross-layer or cross-client wiring, contracts, persistence, concurrency, security, and verification burden.",
-  "- Prefer the lowest effort that can reliably satisfy the request.",
-  "- Use higher effort for unresolved deep wiring, broad changes, difficult diagnosis, or high-risk work.",
+  "- Assess the combined workload and interactions between requests, rather than the easiest item or the first apparent edit. A short prompt can require extensive investigation.",
+  "- Reserve none, minimal, and low for a single straightforward, bounded task with a clear approach and little verification. Multiple requested checks, comparisons, fixes, or unresolved concerns need at least medium when supported.",
+  "- Use high or above for broad audits, several interacting requirements, cross-layer or cross-client changes, root-cause diagnosis with competing explanations, or verification across multiple paths.",
+  "- Include discovery, integration, edge cases, regression checks, and validation in the effort estimate even when the user does not list each step.",
+  "- When the scope is uncertain or two levels seem plausible, choose the higher supported level. Underestimating the work is more costly than a modest reasoning increase.",
+  "- Examples: a known typo or one explicit copy change can be low; comparing several options or checking several concerns is medium or higher; diagnosing and fixing multiple related behaviors across clients is high or higher.",
+  "- When the response schema supports confidence or probabilities, include them. Low requires strong confidence that the entire remaining task is straightforward.",
   "- Do not raise effort merely because the conversation is long, the prompt is verbose, or completed work is repeated.",
   "- Do not answer or solve the user request.",
   "- Do not use tools, MCP, memory, skills, subagents, or project inspection.",
 ].join("\n");
 
 const AUTO_REASONING_EFFORT_GUIDANCE: Readonly<Record<string, string>> = {
-  none: "No deliberate reasoning is needed; the response can be produced directly.",
-  minimal: "The remaining work is trivial, explicit, and carries negligible implementation risk.",
-  low: "The work is narrow and well specified, with little diagnosis or cross-component coordination.",
+  none: "Only a direct response is needed, without analysis, investigation, implementation, or checks.",
+  minimal:
+    "One trivial, explicit task remains, with no discovery, dependencies, or meaningful verification.",
+  low: "Exactly one straightforward, bounded task remains, with a clear solution and minimal verification. Excludes multiple checks, uncertain diagnosis, interacting requirements, and cross-component coordination.",
   medium:
-    "The work needs ordinary analysis or implementation across a small number of connected concerns.",
-  high: "The work needs substantial diagnosis, multi-layer coordination, or careful verification.",
+    "The work includes several bounded checks or comparisons, ordinary investigation, or implementation with meaningful validation. Use at least this level for multiple remaining concerns.",
+  high: "The work includes several interacting requirements, broad investigation or review, cross-layer or cross-client coordination, uncertain root causes, or regression checks across multiple behaviors.",
   xhigh:
     "The work is unusually complex, ambiguous, broad, or high risk and benefits from deep reasoning.",
   max: "The work demands the strongest available reasoning because several unusually difficult concerns interact.",
@@ -131,7 +139,8 @@ function buildAutoReasoningCriteria(allowedEfforts: ReadonlyArray<string>): Reco
   for (const [index, effort] of allowedEfforts.entries()) {
     const guidance =
       AUTO_REASONING_EFFORT_GUIDANCE[effort] ??
-      "Use this effort only when it is the lowest supported option that can reliably complete the work.";
+      "Use this effort when it reliably covers the entire remaining workload and its verification.";
+
     criteria[effort] =
       `Rank ${index + 1} of ${allowedEfforts.length}, ordered from lowest to highest effort. ${guidance}`;
   }
@@ -280,12 +289,30 @@ export function resolveAutoReasoningDecisionModelSelection(input: {
   );
 }
 
+function reliableAutoReasoningEffort(
+  allowedEfforts: ReadonlyArray<string>,
+  effort: string,
+): string {
+  if (!LOW_REASONING_EFFORTS.has(effort)) return effort;
+  return allowedEfforts.find((candidate) => !LOW_REASONING_EFFORTS.has(candidate)) ?? effort;
+}
+
 function readValidAutoReasoningEffort(
   allowedEfforts: ReadonlyArray<string>,
   result: DecisionGenerationResult | undefined,
 ): string | undefined {
-  const effort = result?.answers[AUTO_REASONING_DECISION_QUESTION_ID]?.choice;
-  return effort !== undefined && allowedEfforts.includes(effort) ? effort : undefined;
+  const answer = result?.answers[AUTO_REASONING_DECISION_QUESTION_ID];
+  if (!answer || !allowedEfforts.includes(answer.choice)) return undefined;
+  const effort = answer.choice;
+  const confidence = answer.confidence ?? answer.probabilities?.[effort];
+  if (
+    LOW_REASONING_EFFORTS.has(effort) &&
+    confidence !== undefined &&
+    confidence < AUTO_REASONING_LOW_EFFORT_MIN_CONFIDENCE
+  ) {
+    return reliableAutoReasoningEffort(allowedEfforts, effort);
+  }
+  return effort;
 }
 
 export function applyAutoReasoningDecisionResult(input: {
@@ -304,7 +331,10 @@ export function applyAutoReasoningDecisionResult(input: {
 
   const chosenEffort = readValidAutoReasoningEffort(input.allowedEfforts, input.result);
   const acceptedResult = chosenEffort === undefined ? undefined : input.result;
-  const effort = chosenEffort ?? concreteFallback;
+  const fallbackEffort = isAutoReasoningEnabled(input.agentModelSelection)
+    ? reliableAutoReasoningEffort(input.allowedEfforts, concreteFallback)
+    : concreteFallback;
+  const effort = chosenEffort ?? fallbackEffort;
   const decisionModelSelection = stripAutoReasoning(input.decisionModelSelection);
   return {
     effectiveSelection: selectManualReasoningEffort(effectiveFallback, effort),

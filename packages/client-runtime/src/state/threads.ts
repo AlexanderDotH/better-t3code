@@ -618,6 +618,16 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         const seen = new Set(loadedRows.map((row) => row.id));
         return [...olderRows.filter((row) => !seen.has(row.id)), ...loadedRows];
       };
+      const mergeReplyRows = <
+        T extends { readonly id: string; readonly replyTopicId?: string | undefined },
+      >(
+        olderRows: ReadonlyArray<T>,
+        loadedRows: ReadonlyArray<T>,
+      ): ReadonlyArray<T> => {
+        const key = (row: T) => JSON.stringify([row.replyTopicId, row.id]);
+        const seen = new Set(loadedRows.map(key));
+        return [...olderRows.filter((row) => !seen.has(key(row))), ...loadedRows];
+      };
       const seenCheckpoints = new Set(loaded.checkpoints.map((row) => row.turnId));
       merged = {
         // Thread metadata stays the loaded (newer) snapshot's; only the
@@ -625,6 +635,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         ...loaded,
         messages: mergeById(older.messages, loaded.messages),
         activities: mergeById(older.activities, loaded.activities),
+        replyMessages: mergeReplyRows(older.replyMessages ?? [], loaded.replyMessages ?? []),
+        replyActivities: mergeReplyRows(older.replyActivities ?? [], loaded.replyActivities ?? []),
         proposedPlans: mergeById(older.proposedPlans, loaded.proposedPlans),
         checkpoints: [
           ...older.checkpoints.filter((row) => !seenCheckpoints.has(row.turnId)),

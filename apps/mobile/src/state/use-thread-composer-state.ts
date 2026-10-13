@@ -1,4 +1,6 @@
 import { resolveThreadAbortPresentation } from "@t3tools/client-runtime/state/thread-abort";
+import { mergeMessageReplyTimeline } from "@t3tools/client-runtime/messageReplies";
+import { useThreadMessageReplies } from "./use-thread-message-replies";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComposerTextPaste } from "../native/T3ComposerEditor.types";
@@ -171,6 +173,12 @@ export function useThreadComposerState() {
   const serverConfig = useEnvironmentServerConfig(selectedThreadShell?.environmentId ?? null);
   const { connectedEnvironments } = useRemoteConnectionStatus();
   const preferences = AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value : {};
+  const replies = useThreadMessageReplies({
+    thread: selectedThreadShell,
+    serverConfig,
+    connected: selectedEnvironmentRuntime?.connectionState === "connected",
+    deviceSettings: preferences.betterT3Device,
+  });
   const workflowSettings = useMemo(
     () =>
       resolveMobileAgentWorkflowSettings({
@@ -236,6 +244,7 @@ export function useThreadComposerState() {
     [selectedThreadKey],
   );
   const selectedThreadMessages = selectedThreadDetail?.messages;
+  const selectedThreadReplyMessages = selectedThreadDetail?.replyMessages;
   const selectedThreadProposedPlans = selectedThreadDetail?.proposedPlans;
   const selectedThreadActivities = selectedThreadDetail?.activities;
   // A thread whose creation has not delivered its turn yet: the prompt only
@@ -244,7 +253,10 @@ export function useThreadComposerState() {
   // cannot be an either/or with the loaded messages.
   const pendingCreationMessage = selectedThreadCreation?.message ?? null;
   const selectedThreadFeed = useMemo(() => {
-    const loadedMessages = selectedThreadMessages ?? [];
+    const loadedMessages = mergeMessageReplyTimeline(
+      selectedThreadMessages ?? [],
+      selectedThreadReplyMessages,
+    );
     const feed =
       (selectedThreadMessages && selectedThreadActivities) || pendingCreationMessage !== null
         ? buildThreadFeed({
@@ -270,6 +282,7 @@ export function useThreadComposerState() {
     selectedThreadActivities,
     selectedThreadProposedPlans,
     selectedThreadMessages,
+    selectedThreadReplyMessages,
     pendingCreationMessage,
     selectedThreadKey,
     selectedThreadQueuedMessages,
@@ -380,8 +393,11 @@ export function useThreadComposerState() {
     if (
       !selectedThreadShell ||
       isImprovingPrompt ||
-      selectedThreadShell.harnessSync?.activity === "active" ||
-      resolveThreadAbortPresentation(selectedThreadShell.session).phase !== null
+      (!getComposerDraftSnapshot(
+        scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id),
+      ).messageReply &&
+        (selectedThreadShell.harnessSync?.activity === "active" ||
+          resolveThreadAbortPresentation(selectedThreadShell.session).phase !== null))
     ) {
       return null;
     }
@@ -429,6 +445,8 @@ export function useThreadComposerState() {
       Alert.alert("Too much context", contextBlockReason);
       return null;
     }
+
+    if (draft.messageReply) return replies.sendReply(draft);
 
     const modelSelection = draft.modelSelection ?? thread.modelSelection;
     const serverConfig = selectedEnvironmentRuntime?.serverConfig;
@@ -594,6 +612,7 @@ export function useThreadComposerState() {
     uploadThreadFeedback,
     workflowSettings.fetchMode,
     workflowSettings.supported,
+    replies.sendReply,
   ]);
 
   const onImproveDraft = useCallback(async () => {
@@ -1077,6 +1096,11 @@ export function useThreadComposerState() {
     draftMessage,
     draftVoiceFileReferences,
     draftAttachments,
+    messageReply: selectedDraft?.messageReply,
+    messageRepliesEnabled: replies.enabled,
+    messageReplySending: replies.sending,
+    onReplyToMessage: replies.selectReply,
+    onCancelMessageReply: replies.cancelReply,
     modelSelection,
     runtimeMode,
     interactionMode,

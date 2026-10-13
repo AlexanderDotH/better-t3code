@@ -1,4 +1,5 @@
 import * as Option from "effect/Option";
+import { mobileReplyMessageKey } from "../features/threads/message-replies";
 import { foldUserInputActivities } from "@t3tools/client-runtime/work-log/user-input";
 import * as Schema from "effect/Schema";
 import {
@@ -1659,6 +1660,7 @@ function deriveThreadFeedTurnFolds(
   const firstAssistantMessageIdByTurn = new Map<TurnId, string>();
   const terminalAssistantMessageIdByTurn = new Map<TurnId, string>();
   for (const entry of feed) {
+    if (entry.type === "message" && entry.message.replyTopicId !== undefined) continue;
     if (entry.type === "message" && entry.message.role === "assistant" && entry.message.turnId) {
       if (!firstAssistantMessageIdByTurn.has(entry.message.turnId)) {
         firstAssistantMessageIdByTurn.set(entry.message.turnId, entry.id);
@@ -1674,6 +1676,7 @@ function deriveThreadFeedTurnFolds(
   const groupsByTurnId = new Map<TurnId, TurnGroup>();
   let pendingUserBoundary: string | null = null;
   for (const entry of feed) {
+    if (entry.type === "message" && entry.message.replyTopicId !== undefined) continue;
     if (entry.type === "message" && entry.message.role === "user") {
       pendingUserBoundary = entry.message.createdAt;
       continue;
@@ -1932,7 +1935,11 @@ export function deriveThreadFeedPresentation(
 }
 
 function activityRunTurnId(entry: ThreadFeedEntry): TurnId | null {
-  if (entry.type === "message" && entry.message.role === "reasoning") {
+  if (
+    entry.type === "message" &&
+    entry.message.role === "reasoning" &&
+    entry.message.replyTopicId === undefined
+  ) {
     return entry.message.turnId;
   }
   if (
@@ -2052,7 +2059,8 @@ function groupConsecutiveReasoningMessages(
       if (
         next.type !== "message" ||
         next.message.role !== "reasoning" ||
-        next.message.turnId !== entry.message.turnId
+        next.message.turnId !== entry.message.turnId ||
+        next.message.replyTopicId !== entry.message.replyTopicId
       ) {
         break;
       }
@@ -2467,11 +2475,21 @@ export function buildThreadFeed(
   const entries = Arr.sortWith(
     [
       ...messages
-        .filter((message) => message.role !== "user" || !foldedAnswerMessageIds.has(message.id))
+        .filter(
+          (message) =>
+            message.replyTopicId !== undefined ||
+            message.role !== "user" ||
+            !foldedAnswerMessageIds.has(message.id),
+        )
         .map((message) => {
           let entry = messageEntriesCache.get(message);
           if (!entry) {
-            entry = { type: "message", id: message.id, createdAt: message.createdAt, message };
+            entry = {
+              type: "message",
+              id: mobileReplyMessageKey(message),
+              createdAt: message.createdAt,
+              message,
+            };
             messageEntriesCache.set(message, entry);
           }
           return entry;

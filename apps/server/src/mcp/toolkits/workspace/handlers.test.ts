@@ -2,6 +2,7 @@ import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
   type OrchestrationThreadShell,
+  type OrchestrationSubagentSummary,
   ProjectId,
   ProviderInstanceId,
   RuntimeSessionId,
@@ -20,6 +21,15 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import {
+  ProviderService,
+  type ProviderAbortTarget,
+} from "../../../provider/Services/ProviderService.ts";
+import {
+  makeReplyInvocation,
+  makeReplySummary,
+  replyContext,
+} from "../../testFixtures/messageReply.ts";
 import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as WorkspaceContext from "../../../workspace/WorkspaceContext.ts";
 import * as WorkspaceFileSystem from "../../../workspace/WorkspaceFileSystem.ts";
@@ -57,9 +67,11 @@ const input: WorkspaceContextInput = { reads: [{ path: "README.md" }] };
 const makeLayer = (options?: {
   readonly contextMissing?: boolean;
   readonly worktreePath?: string | null;
+  readonly runtimeCurrent?: boolean;
 }) => {
   const roots: Array<string> = [];
   const projection = Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+    getSubagentSummaryById: () => Effect.succeedSome(makeReplySummary()),
     getThreadCheckpointContext: (requestedThreadId) => {
       expect(requestedThreadId).toBe(threadId);
       return Effect.succeed(
@@ -85,7 +97,16 @@ const makeLayer = (options?: {
       return Effect.succeed(result);
     },
   });
-  return { roots, layer: Layer.mergeAll(projection, workspace) };
+  return {
+    roots,
+    layer: Layer.mergeAll(
+      projection,
+      workspace,
+      Layer.mock(ProviderService)({
+        isAbortTargetCurrent: () => Effect.succeed(options?.runtimeCurrent !== false),
+      }),
+    ),
+  };
 };
 
 it.effect("resolves the authenticated thread worktree and never accepts a caller root", () => {
@@ -209,10 +230,19 @@ const makeEditLayer = (options?: {
   readonly shell?: OrchestrationThreadShell | null;
   readonly contextMissing?: boolean;
   readonly editError?: WorkspaceEditError;
+  readonly replySummary?: OrchestrationSubagentSummary | null;
+  readonly runtimeCurrent?: boolean;
 }) => {
   const requests: Array<{ readonly workspaceRoot: string; readonly input: WorkspaceEditInput }> =
     [];
+  const leaseTargets: ProviderAbortTarget[] = [];
   const projection = Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+    getSubagentSummaryById: () =>
+      Effect.succeed(
+        Option.fromNullishOr(
+          options?.replySummary === undefined ? makeReplySummary() : options.replySummary,
+        ),
+      ),
     getThreadCheckpointContext: () =>
       Effect.succeed(
         options?.contextMissing === true
@@ -237,7 +267,14 @@ const makeEditLayer = (options?: {
       return options?.editError ? Effect.fail(options.editError) : Effect.succeed(editResult);
     },
   });
-  return { requests, layer: Layer.mergeAll(projection, fileSystem) };
+  const provider = Layer.mock(ProviderService)({
+    isAbortTargetCurrent: (target) =>
+      Effect.sync(() => {
+        leaseTargets.push(target);
+        return options?.runtimeCurrent !== false;
+      }),
+  });
+  return { requests, leaseTargets, layer: Layer.mergeAll(projection, fileSystem, provider) };
 };
 
 const writableInvocation = invocation(new Set(["workspace", "workspace-write"]));
@@ -324,5 +361,121 @@ it.effect(
         expect(error.reason).toBe(reason);
         expect(test.requests).toEqual([]);
       }
+    }),
+);
+
+it.effect(
+  "keeps a live reply writable in its captured workspace after the parent becomes idle or changes modes",
+  () => {
+    const parent = activeShell({
+      runtimeMode: "approval-required",
+      interactionMode: "plan",
+      activeTurn: false,
+    });
+    const test = makeEditLayer({
+      shell: { ...parent, session: null, worktreePath: "/workspace/new" },
+    });
+    return Effect.gen(function* () {
+      expect(yield* invokeWorkspaceEdit(editInput)).toEqual(editResult);
+      expect(test.requests).toEqual([
+        { workspaceRoot: replyContext.workspacePath, input: editInput },
+      ]);
+      expect(test.leaseTargets).toEqual([
+        {
+          threadId: makeReplyInvocation(threadId).ownerThreadId,
+          runtimeSessionId: replyContext.runtimeSessionId,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          turnId: null,
+        },
+      ]);
+    }).pipe(
+      Effect.provideService(
+        McpInvocationContext.McpInvocationContext,
+        makeReplyInvocation(threadId),
+      ),
+      Effect.provide(test.layer),
+    );
+  },
+);
+
+it.effect(
+  "rejects stale reply runtimes, ended topics, and mismatched inherited context even with an active parent",
+  () =>
+    Effect.gen(function* () {
+      for (const test of [
+        makeEditLayer({ runtimeCurrent: false }),
+        makeEditLayer({ replySummary: null }),
+        makeEditLayer({ replySummary: { ...makeReplySummary(), status: "completed" } }),
+        makeEditLayer({
+          replySummary: makeReplySummary({ ...replyContext, workspacePath: "/workspace/other" }),
+        }),
+      ]) {
+        const error = yield* invokeWorkspaceEdit(editInput).pipe(
+          Effect.provideService(
+            McpInvocationContext.McpInvocationContext,
+            makeReplyInvocation(threadId),
+          ),
+          Effect.provide(test.layer),
+          Effect.flip,
+        );
+        expect(error.reason).toBe("inactive_turn");
+        expect(test.requests).toEqual([]);
+      }
+    }),
+);
+
+it.effect(
+  "enforces inherited reply approval and Plan modes after the parent becomes writable",
+  () =>
+    Effect.gen(function* () {
+      for (const [context, reason] of [
+        [
+          { ...replyContext, runtimeMode: "approval-required" as const },
+          "runtime_mode_not_authorized",
+        ],
+        [{ ...replyContext, interactionMode: "plan" as const }, "plan_mode"],
+      ] as const) {
+        const test = makeEditLayer({ replySummary: makeReplySummary(context) });
+        const error = yield* invokeWorkspaceEdit(editInput).pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, {
+            ...makeReplyInvocation(threadId),
+            messageReply: context,
+          }),
+          Effect.provide(test.layer),
+          Effect.flip,
+        );
+        expect(error.reason).toBe(reason);
+        expect(test.requests).toEqual([]);
+      }
+    }),
+);
+
+it.effect(
+  "keeps reply reads in the inherited workspace and rejects reads from a stale runtime",
+  () =>
+    Effect.gen(function* () {
+      const live = makeLayer({ worktreePath: "/workspace/new" });
+      expect(
+        yield* invokeWorkspaceContext(input).pipe(
+          Effect.provideService(
+            McpInvocationContext.McpInvocationContext,
+            makeReplyInvocation(threadId),
+          ),
+          Effect.provide(live.layer),
+        ),
+      ).toEqual(result);
+      expect(live.roots).toEqual([replyContext.workspacePath]);
+
+      const stale = makeLayer({ runtimeCurrent: false });
+      const error = yield* invokeWorkspaceContext(input).pipe(
+        Effect.provideService(
+          McpInvocationContext.McpInvocationContext,
+          makeReplyInvocation(threadId),
+        ),
+        Effect.provide(stale.layer),
+        Effect.flip,
+      );
+      expect(error.reason).toBe("credential_not_authorized");
+      expect(stale.roots).toEqual([]);
     }),
 );

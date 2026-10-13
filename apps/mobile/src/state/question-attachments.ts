@@ -1,20 +1,25 @@
-import type { ApprovalRequestId, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { ApprovalRequestId, EnvironmentId, ThreadId, SubagentId } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 import { appAtomRegistry } from "./atom-registry";
 
 export function questionAttachmentDraftPrefix(
   environmentId: EnvironmentId,
   threadId: ThreadId,
+  replyTopicId?: SubagentId,
 ): string {
-  return `${environmentId}:question-${encodeURIComponent(JSON.stringify(threadId))}-`;
+  const prefix = `${environmentId}:question-${encodeURIComponent(JSON.stringify(threadId))}-`;
+  return replyTopicId
+    ? `${prefix}reply-${encodeURIComponent(JSON.stringify(replyTopicId))}-`
+    : prefix;
 }
 export function questionAttachmentDraftKey(
   environmentId: EnvironmentId,
   threadId: ThreadId,
   requestId: ApprovalRequestId,
   questionId: string,
+  replyTopicId?: SubagentId,
 ): string {
-  return `${questionAttachmentDraftPrefix(environmentId, threadId)}${encodeURIComponent(JSON.stringify([requestId, questionId]))}`;
+  return `${questionAttachmentDraftPrefix(environmentId, threadId, replyTopicId)}${encodeURIComponent(JSON.stringify([requestId, questionId]))}`;
 }
 export const questionAttachmentPreparationAtom = Atom.make<Record<string, number>>({}).pipe(
   Atom.keepAlive,

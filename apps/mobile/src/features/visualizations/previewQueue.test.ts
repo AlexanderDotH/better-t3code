@@ -18,6 +18,54 @@ function request(requestId: string, source = requestId): VisualizationRenderRequ
 }
 
 describe("mobile diagram preview queue", () => {
+  it.each([
+    ["fontFamily", "Georgia, serif"],
+    ["background", "#f1f3f5"],
+    ["foreground", "#223344"],
+    ["mutedForeground", "#667788"],
+    ["surface", "#e1e3e5"],
+    ["border", "#aabbcc"],
+  ] as const)("refreshes cached previews when %s changes", async (field, value) => {
+    const renders: Array<string | null> = [];
+    const queue = createPreviewQueue((request) => renders.push(request?.requestId ?? null));
+    const appearance = {
+      fontFamily: "Arial, sans-serif",
+      background: "#ffffff",
+      foreground: "#111111",
+      mutedForeground: "#555555",
+      surface: "#eeeeee",
+      border: "#cccccc",
+    };
+    const original = { ...request("original", "flowchart LR\nAlpha-->Beta"), appearance };
+    const controller = new AbortController();
+    try {
+      const first = queue.request(original, controller.signal);
+      queue.result("original", "<svg>Original appearance</svg>");
+      expect(await first).toBe("<svg>Original appearance</svg>");
+      expect(
+        await queue.request(
+          { ...original, requestId: "cached", appearance: { ...appearance } },
+          controller.signal,
+        ),
+      ).toBe("<svg>Original appearance</svg>");
+      expect(renders).toEqual(["original", null]);
+
+      const changed = queue.request(
+        { ...original, requestId: "changed", appearance: { ...appearance, [field]: value } },
+        controller.signal,
+      );
+      expect(renders).toEqual(["original", null, "changed"]);
+      queue.result("changed", "<svg>Changed appearance</svg>");
+      expect(await changed).toBe("<svg>Changed appearance</svg>");
+      expect(await queue.request({ ...original, requestId: "restored" }, controller.signal)).toBe(
+        "<svg>Original appearance</svg>",
+      );
+      expect(renders).toEqual(["original", null, "changed", null]);
+    } finally {
+      queue.dispose();
+    }
+  });
+
   it("serializes previews, ignores a cancelled result, and reuses cached output", async () => {
     const renders: Array<string | null> = [];
     const queue = createPreviewQueue((request) => renders.push(request?.requestId ?? null));

@@ -64,14 +64,21 @@ export function applyUsageLimitsUpdate(input: {
   readonly checkedAt: string;
 }): ServerProviderUsageLimits | undefined {
   const { previous, update } = input;
-  if (update.windows.length === 0 || previous?.unavailable?.reason === "unsupported") {
+  if (
+    (update.windows.length === 0 && update.accountCredits === undefined) ||
+    previous?.unavailable?.reason === "unsupported"
+  ) {
     return previous;
   }
   const merged = new Map(previous?.windows.map((window) => [window.id, window] as const));
   // Codex sends this notification beside every token-usage tick, almost
   // always with unchanged numbers. Decide "nothing changed" per window on
   // the way through so the no-op case never allocates a new snapshot.
-  let changed = false;
+  let changed =
+    update.accountCredits !== undefined &&
+    (update.accountCredits.balance !== previous?.accountCredits?.balance ||
+      update.accountCredits.hasCredits !== previous?.accountCredits?.hasCredits ||
+      update.accountCredits.unlimited !== previous?.accountCredits?.unlimited);
   for (const window of update.windows) {
     const existing = merged.get(window.id);
     const next: ServerProviderUsageWindow = {
@@ -95,6 +102,9 @@ export function applyUsageLimitsUpdate(input: {
   return {
     ...makeUsageLimits({ checkedAt: input.checkedAt, windows: merged.values() }),
     ...(previous?.resetCredits !== undefined ? { resetCredits: previous.resetCredits } : {}),
+    ...((update.accountCredits ?? previous?.accountCredits) !== undefined
+      ? { accountCredits: update.accountCredits ?? previous?.accountCredits }
+      : {}),
   };
 }
 

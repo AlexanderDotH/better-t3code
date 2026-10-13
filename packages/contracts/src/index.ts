@@ -2,6 +2,7 @@ export * from "./baseSchemas.ts";
 export * from "./aiEndpoints.ts";
 export * from "./assistantCitations.ts";
 export * from "./composerContext.ts";
+export * from "./messageReplies.ts";
 export * from "./composerContextClipboard.ts";
 export * from "./background.ts";
 export * from "./betterT3.ts";

@@ -188,6 +188,7 @@ export interface LimitAccount {
 export function collectLimitAccounts(presentations: LimitPresentations): readonly LimitAccount[] {
   const accounts = new Map<string, LimitAccount>();
   const creditSources = new Map<string, LimitAccount>();
+  const balanceSources = new Map<string, LimitAccount>();
   const hubRedeems = new Map<string, LimitAccount>();
   const merge = (key: string, next: LimitAccount) => {
     // Redeeming through a hub also clears the routing cooldown that hub holds
@@ -202,6 +203,14 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       (!previousHub || Date.parse(next.limits.checkedAt) > Date.parse(previousHub.limits.checkedAt))
     ) {
       hubRedeems.set(key, next);
+    }
+    const previousBalance = balanceSources.get(key);
+    if (
+      next.limits.accountCredits &&
+      (!previousBalance ||
+        Date.parse(next.limits.checkedAt) > Date.parse(previousBalance.limits.checkedAt))
+    ) {
+      balanceSources.set(key, next);
     }
     const previousCredit = creditSources.get(key);
     if (
@@ -265,6 +274,9 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
               .slice(-MAX_USAGE_PACE_SAMPLES),
           };
         }),
+        ...(balanceSources.get(key)?.limits.accountCredits
+          ? { accountCredits: balanceSources.get(key)!.limits.accountCredits }
+          : {}),
         ...(creditSource?.limits.resetCredits
           ? { resetCredits: creditSource.limits.resetCredits }
           : { resetCredits: undefined }),
@@ -556,7 +568,7 @@ export type DailyUsagePaceStatus =
   | "exceeded";
 
 export const DAILY_USAGE_PACE_LABELS: Record<DailyUsagePaceStatus, string> = {
-  unknown: "Usage history unavailable",
+  unknown: "Pace unavailable",
   waiting: "Waiting for first usage",
   estimating: "Measuring pace",
   good: "Good pace",
@@ -588,6 +600,8 @@ export function dailyUsagePace(
   const samples = window.usageHistory ?? [];
   const baseline =
     samples.findLast((sample) => Date.parse(sample.at) <= dayStartMillis) ?? samples[0];
+  const partial =
+    !baseline || (Date.parse(baseline.at) > dayStartMillis && baseline.usedPercent > 0);
   const firstUsage = baseline
     ? samples.find(
         (sample) =>
@@ -604,12 +618,13 @@ export function dailyUsagePace(
   const windowDays = ((window.windowDurationMins ?? 0) * MINUTE) / DAY;
   // Bank earlier days' unused shares, then reserve an even share for each remaining day.
   const catchUpPercent =
-    baseline && windowDays > 0
+    baseline && !partial && windowDays > 0
       ? Math.max(0, (100 * (windowDays - daysLeft)) / windowDays - baseline.usedPercent)
       : 0;
   const regularDailyBudgetPercent = (remainingAtDayStart - catchUpPercent) / daysLeft;
   const dailyBudgetPercent = regularDailyBudgetPercent + catchUpPercent;
-  const todayUsedPercent = baseline ? Math.max(0, window.usedPercent - baseline.usedPercent) : null;
+  const todayUsedPercent =
+    baseline && !partial ? Math.max(0, window.usedPercent - baseline.usedPercent) : null;
   const workdayStart = workdayHours === 8 ? (startedAt ?? measuredAt) : dayStartMillis;
   const pacingHours = Math.min(
     workdayHours,
@@ -628,10 +643,10 @@ export function dailyUsagePace(
   // Provider percentages are rounded; one point of noise must not become a warning.
   const tolerance = Math.max(1, regularDailyBudgetPercent * 0.1);
   const status: DailyUsagePaceStatus =
-    todayUsedPercent !== null && todayUsedPercent > dailyBudgetPercent
-      ? "exceeded"
-      : window.usageHistorySource === "codex" && samples.length === 0
-        ? "unknown"
+    todayUsedPercent === null
+      ? "unknown"
+      : todayUsedPercent > dailyBudgetPercent
+        ? "exceeded"
         : startedAt === null
           ? "waiting"
           : elapsed < 15 * MINUTE
@@ -661,7 +676,27 @@ export function dailyUsagePace(
       todayUsedPercent === null ? null : Math.max(0, todayUsedPercent - dailyBudgetPercent),
     startedAt,
     workdayHours,
-    partial: !baseline || (Date.parse(baseline.at) > dayStartMillis && baseline.usedPercent > 0),
+    partial,
+  };
+}
+
+export function usagePaceBarSegments(
+  window: ServerProviderUsageWindow,
+  pace: Pick<
+    NonNullable<ReturnType<typeof dailyUsagePace>>,
+    "todayBalancePercent" | "catchUpRemainingPercent"
+  >,
+) {
+  const remaining = remainingPercent(window);
+  const today = Math.min(remaining, Math.max(0, pace.todayBalancePercent));
+  const catchUp = Math.min(today, Math.max(0, pace.catchUpRemainingPercent));
+  const overdraw = Math.min(100 - remaining, Math.max(0, -pace.todayBalancePercent));
+  return {
+    reservedPercent: remaining - today,
+    regularPercent: today - catchUp,
+    catchUpPercent: catchUp,
+    overdrawPercent: overdraw,
+    widthPercent: remaining + overdraw,
   };
 }
 
@@ -866,7 +901,13 @@ export function collectProviderUsageLimits(
       ...(provider.accentColor ? { accentColor: provider.accentColor } : {}),
       ...(provider.auth.email ? { email: provider.auth.email } : {}),
       limits: showHubCredits
-        ? { ...provider.usageLimits, resetCredits: hubCredits.account.usageLimits.resetCredits }
+        ? {
+            ...provider.usageLimits,
+            resetCredits: hubCredits.account.usageLimits.resetCredits,
+            ...(hubCredits.account.usageLimits.accountCredits
+              ? { accountCredits: hubCredits.account.usageLimits.accountCredits }
+              : {}),
+          }
         : provider.usageLimits,
     });
   }

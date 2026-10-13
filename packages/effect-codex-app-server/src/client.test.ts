@@ -1,4 +1,8 @@
 import * as Exit from "effect/Exit";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+
+import * as CodexError from "./errors.ts";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
@@ -28,6 +32,31 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
       });
       return yield* spawner.spawn(command);
     });
+
+  it.effect("reports a broken protocol without waiting for another client request", () =>
+    Effect.gen(function* () {
+      const handle = yield* makeHandle({ CODEX_APP_SERVER_TEST_BROKEN_PROTOCOL: "1" });
+      const terminated = yield* Deferred.make<CodexError.CodexAppServerError>();
+      const context = yield* Layer.build(
+        CodexClient.layerChildProcess(handle, {
+          onTermination: (error) => Deferred.succeed(terminated, error).pipe(Effect.asVoid),
+        }),
+      );
+      const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
+        Effect.provide(context),
+      );
+      const response = yield* client.request("account/read", {}).pipe(Effect.forkScoped);
+      const error = yield* Deferred.await(terminated);
+      assert.instanceOf(error, CodexError.CodexAppServerProtocolParseError);
+      const requestError = yield* Fiber.join(response).pipe(
+        Effect.match({
+          onFailure: (failure) => failure,
+          onSuccess: () => assert.fail("Request succeeded"),
+        }),
+      );
+      assert.strictEqual(requestError, error);
+    }),
+  );
 
   it.effect("initializes, handles typed server requests, and reads account and skills data", () =>
     Effect.gen(function* () {

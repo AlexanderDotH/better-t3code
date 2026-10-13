@@ -6,7 +6,8 @@ import { ensureLocalApi } from "../../localApi";
 import { Button } from "../ui/button";
 import { getDriverOption } from "../settings/providerDriverMeta";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
-import { LimitWindows, ResetCredits } from "../usage/UsageLimits";
+import { LimitWindows } from "../usage/UsageLimits";
+import { UsageResetMenu } from "../usage/ResetManagementDialog";
 import { UsagePaceDetails, UsagePaceHeaderLabel } from "../usage/UsagePaceDetails";
 import { ComposerBanner } from "./ComposerBanner";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
@@ -79,25 +80,17 @@ export function usageLimitsBannerItem(
     description: summary,
     dismissLabel: "Dismiss usage limits",
     onDismiss,
-    children: <UsageLimitsBannerBody report={report} environmentId={environmentId} />,
+    actions: <UsageResetMenu report={report} environmentId={environmentId} />,
+    children: <UsageLimitsBannerBody report={report} />,
   };
 }
 
-function UsageLimitsBannerBody({
-  report,
-  environmentId,
-}: {
-  readonly report: UsageLimitsReport;
-  readonly environmentId: EnvironmentId;
-}) {
+function UsageLimitsBannerBody({ report }: { readonly report: UsageLimitsReport }) {
   const now = Date.parse(report.createdAt);
   return (
     <ComposerBanner.Scroll>
       <ComposerBanner.Body className="flex flex-col gap-2 pt-1 pb-1.5 pe-2">
         {report.accounts.map((account) => {
-          const resetCreditInput =
-            account.resetCreditInput ??
-            (account.instanceId ? { instanceId: account.instanceId } : undefined);
           const notice = limitsNotice(account.limits);
           const externalUsage = account.limits.externalUsage;
           return (
@@ -126,14 +119,6 @@ function UsageLimitsBannerBody({
                 >
                   Manage usage
                 </Button>
-              ) : null}
-              {resetCreditInput && account.limits.resetCredits ? (
-                <ResetCredits
-                  environmentId={environmentId}
-                  input={resetCreditInput}
-                  credits={account.limits.resetCredits}
-                  now={now}
-                />
               ) : null}
             </div>
           );

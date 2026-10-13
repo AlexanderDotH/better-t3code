@@ -508,6 +508,66 @@ it.effect("distinguishes malformed remote failures", () =>
   ),
 );
 
+it.effect("keeps the browser host and current tab after optional status metadata times out", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const connected = yield* Deferred.make<void>();
+      const metadataReceived = yield* Deferred.make<RoutedRequest>();
+      const tabId = PreviewTabId.make("signed-in-tab");
+      const requests: RoutedRequest[] = [];
+      let holdStatus = true;
+      yield* Stream.runForEach(
+        requestsFrom(yield* broker.connect(makeHost()), () => {
+          Deferred.doneUnsafe(connected, Effect.void);
+        }),
+        (request) => {
+          requests.push(request);
+          if (request.operation === "status" && holdStatus) {
+            return Deferred.succeed(metadataReceived, request);
+          }
+          return broker.respond({
+            clientId: "client-1",
+            connectionId: request.connectionId,
+            requestId: request.requestId,
+            ok: true,
+            result: { available: true, tabId },
+          });
+        },
+      ).pipe(Effect.forkScoped);
+      yield* Deferred.await(connected);
+      yield* broker.invoke({ scope, operation: "open", input: {} });
+      const metadata = yield* broker
+        .invoke<void>({
+          scope,
+          operation: "status",
+          input: {},
+          timeoutMs: 500,
+          updateCurrentTab: false,
+        })
+        .pipe(Effect.flip, Effect.forkScoped);
+      const lateRequest = yield* Deferred.await(metadataReceived);
+      yield* TestClock.adjust(500);
+      expect(yield* Fiber.join(metadata)).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
+      yield* broker.respond({
+        clientId: "client-1",
+        connectionId: lateRequest.connectionId,
+        requestId: lateRequest.requestId,
+        ok: true,
+        result: { tabId: PreviewTabId.make("stale-tab") },
+      });
+      holdStatus = false;
+      expect(yield* broker.invoke({ scope, operation: "snapshot", input: {} })).toEqual({
+        available: true,
+        tabId,
+      });
+      expect(requests.map((request) => request.operation)).toEqual(["open", "status", "snapshot"]);
+      expect(requests[2]?.tabId).toBe(tabId);
+      expect(requests[2]?.connectionId).toBe(lateRequest.connectionId);
+    }),
+  ),
+);
+
 it.effect("rejects calls when no connected host exists", () =>
   Effect.gen(function* () {
     const broker = yield* makeBroker;

@@ -22,6 +22,8 @@ import type {
   ProviderSessionStartInput,
   ProviderStopSessionInput,
   RuntimeSessionId,
+  SubagentId,
+  ProviderInteractionMode,
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
   MessageId,
@@ -66,6 +68,10 @@ export interface ProviderTransientSessionOptions {
    * workspace-only Fetch profile.
    */
   readonly mcpMode?: "none" | "workspace-only" | "full";
+  readonly messageReply?: {
+    readonly replyTopicId: SubagentId;
+    readonly interactionMode: ProviderInteractionMode;
+  };
 }
 
 /**

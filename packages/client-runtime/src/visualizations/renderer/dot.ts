@@ -1,4 +1,5 @@
 import { instance } from "@viz-js/viz";
+import { resolveVisualizationDiagramAppearance, VISUALIZATION_FONT_SIZE } from "../appearance.ts";
 import type { VisualizationRenderRequest } from "../model.ts";
 import type { RenderedDiagram } from "./runtime.ts";
 
@@ -6,23 +7,30 @@ let engine: ReturnType<typeof instance> | undefined;
 
 export async function renderDiagram(request: VisualizationRenderRequest): Promise<RenderedDiagram> {
   const viz = await (engine ??= instance());
-  const dark = request.theme === "dark";
+  const appearance = resolveVisualizationDiagramAppearance(request.theme, request.appearance);
   return {
     svg: viz.renderString(request.source, {
       format: "svg",
       graphAttributes: {
-        bgcolor: dark ? "#171717" : "#ffffff",
-        fontcolor: dark ? "#fafafa" : "#171717",
+        bgcolor: appearance.background,
+        color: appearance.border,
+        fontcolor: appearance.foreground,
+        fontname: appearance.fontFamily,
+        fontsize: VISUALIZATION_FONT_SIZE,
       },
       nodeAttributes: {
-        color: dark ? "#e5e5e5" : "#171717",
-        fontcolor: dark ? "#fafafa" : "#171717",
-        fontname: "Arial",
+        color: appearance.border,
+        fillcolor: appearance.surface,
+        fontcolor: appearance.foreground,
+        fontname: appearance.fontFamily,
+        fontsize: VISUALIZATION_FONT_SIZE,
+        style: "filled",
       },
       edgeAttributes: {
-        color: dark ? "#e5e5e5" : "#171717",
-        fontcolor: dark ? "#fafafa" : "#171717",
-        fontname: "Arial",
+        color: appearance.mutedForeground,
+        fontcolor: appearance.foreground,
+        fontname: appearance.fontFamily,
+        fontsize: VISUALIZATION_FONT_SIZE,
       },
     }),
   };

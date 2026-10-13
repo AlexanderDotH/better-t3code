@@ -22,7 +22,7 @@ export function ForkChatButton(props: {
         render={
           <Button
             type="button"
-            size="xs"
+            size="icon-xs"
             variant="ghost"
             disabled={!props.available || props.dispatchPending}
             aria-label={label}

@@ -608,6 +608,11 @@ const featureLabels = {
     "Chatnachrichten bearbeiten",
     "Modifier les messages",
   ],
+  "chat.messageReplies": [
+    "Reply to chat messages",
+    "Auf Chatnachrichten antworten",
+    "Répondre aux messages",
+  ],
   "agent.generalSubagents": ["General subagents", "Allgemeine Subagents", "Sous-agents généraux"],
   "agent.nativeSubagentDisplay": [
     "Native T3 Code subagent display",
@@ -811,6 +816,11 @@ const featureDescriptionOverrides: Partial<Record<BetterT3FeatureId, FeatureLabe
     "Edit user and assistant messages directly in the chat. Your next message uses the corrected conversation.",
     "Nutzer- und Agentennachrichten direkt im Chat bearbeiten. Die nächste Nachricht verwendet den korrigierten Verlauf.",
     "Modifiez les messages utilisateur et assistant dans la discussion. Votre prochain message utilise la conversation corrigée.",
+  ],
+  "chat.messageReplies": [
+    "Reply to a message in a separate topic while the main conversation continues. Reply topics use the same workspace.",
+    "In einem eigenen Thema auf eine Nachricht antworten, während die Hauptunterhaltung weiterläuft. Antwortthemen nutzen denselben Workspace.",
+    "Répondez à un message dans un sujet distinct pendant que la conversation principale continue. Les sujets partagent le même espace de travail.",
   ],
   "chat.sidebarPosition": [
     "Move project navigation and its controls to the left or right side.",

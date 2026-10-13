@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./messageReplies": {
+      "types": "./src/messageReplies.ts",
+      "default": "./src/messageReplies.ts"
+    },
     "./work-log/reasoning": {
       "types": "./src/work-log/reasoning.ts",
       "default": "./src/work-log/reasoning.ts"
@@ -419,6 +423,7 @@
   "dependencies": {
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
+    "culori": "^4.0.2",
     "effect": "catalog:",
     "mdast-util-directive": "^3.1.0",
     "micromark-extension-directive": "^4.0.0",
@@ -430,6 +435,7 @@
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@plantuml/core": "1.2026.8",
+    "@types/culori": "^4.0.1",
     "@types/jsdom": "30.0.0",
     "@types/three": "0.180.0",
     "@viz-js/viz": "3.30.0",

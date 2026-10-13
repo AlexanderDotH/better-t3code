@@ -6,6 +6,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type ApprovalRequestId,
   type UserInputQuestion,
+  type SubagentId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { Alert, View } from "react-native";
@@ -32,6 +33,7 @@ import {
 } from "../../state/question-attachments";
 
 export function QuestionAttachments(props: {
+  replyTopicId?: SubagentId;
   requestId: ApprovalRequestId;
   question: UserInputQuestion;
   questions: ReadonlyArray<UserInputQuestion>;
@@ -51,6 +53,7 @@ export function QuestionAttachments(props: {
     selectedThread?.id,
     props.requestId,
     props.question.id,
+    props.replyTopicId,
   ]);
   const pickerScope = useRef<{ key: string; active: boolean } | null>(null);
   useEffect(() => {
@@ -72,6 +75,7 @@ export function QuestionAttachments(props: {
         selectedThread.id,
         props.requestId,
         question.id,
+        props.replyTopicId,
       );
       return target === key ? count : count + (current[target]?.attachments.length ?? 0);
     }, 0);
@@ -92,6 +96,7 @@ export function QuestionAttachments(props: {
       selectedThread.id,
       props.requestId,
       props.question.id,
+      props.replyTopicId,
     );
     changeQuestionAttachmentPreparation(key, 1);
     void convertPastedImagesToAttachments({
@@ -121,6 +126,7 @@ export function QuestionAttachments(props: {
     threadId,
     props.requestId,
     props.question.id,
+    props.replyTopicId,
   );
   const attachments = drafts[key]?.attachments ?? [];
   const pick = async (kind: "media" | "files") => {

@@ -195,6 +195,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   environmentSettingsVersion: Schema.optionalKey(PositiveInt),
   supportsSpeechDictationProcessing: Schema.optionalKey(Schema.Boolean),
   visualizationsVersion: Schema.optionalKey(PositiveInt),
+  messageReplies: Schema.optionalKey(Schema.Boolean),
   /** Versioned project metadata and agent-coordination administration surface.
       Missing on older servers, so clients keep project settings read-only. */
   projectSettingsVersion: Schema.optionalKey(PositiveInt),

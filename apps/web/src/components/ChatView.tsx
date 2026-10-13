@@ -30,6 +30,9 @@ import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { usageLimitsBannerItem } from "./chat/ComposerUsageLimits";
 import { useComposerUsageLimits } from "./chat/useComposerUsageLimits";
 import { derivePendingRequests } from "@t3tools/client-runtime/pending-requests";
+import { mergeMessageReplyTimeline } from "@t3tools/client-runtime/messageReplies";
+import { threadHasActiveReplyTopics } from "@t3tools/client-runtime/state/threads";
+import { useMessageReplies } from "./chat/useMessageReplies";
 import {
   questionAttachmentDraftId,
   questionAttachmentDraftPrefix,
@@ -1694,6 +1697,9 @@ export default function ChatView(props: ChatViewProps) {
   }, [citationLocation.href, citationLocation.key, environmentId, threadId]);
   const { resolvedTheme } = useTheme();
   // Granular store selectors — avoid subscribing to prompt changes.
+  const composerReplyTarget = useComposerDraftStore(
+    (store) => store.getComposerDraft(composerDraftTarget)?.replyTarget ?? null,
+  );
   const composerRuntimeMode = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.runtimeMode ?? null,
   );
@@ -2734,6 +2740,10 @@ export default function ChatView(props: ChatViewProps) {
     ? (activeEnvironment?.serverConfig ?? null)
     : (primaryEnvironment?.serverConfig ?? null);
   const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
+  const messageRepliesEnabled =
+    isServerThread &&
+    resolveBetterT3FeatureFlag(settings.betterT3Device, "chat.messageReplies") &&
+    serverConfig?.environment.capabilities.messageReplies === true;
   const projectIndexEnabled = useProjectIndexActivityStore((state) => {
     if (!activeProject) return false;
     const activity = selectProjectIndexActivity(
@@ -3060,7 +3070,10 @@ export default function ChatView(props: ChatViewProps) {
     [threadActivities],
   );
   const liveSubagents = useMemo(
-    () => activeThread?.subagents.filter((subagent) => subagent.historyOrigin === undefined) ?? [],
+    () =>
+      activeThread?.subagents.filter(
+        (subagent) => subagent.historyOrigin === undefined && !subagent.messageReply,
+      ) ?? [],
     [activeThread?.subagents],
   );
   const latestAutoReasoningEffort = useMemo(
@@ -3572,7 +3585,10 @@ export default function ChatView(props: ChatViewProps) {
     };
   }, [attachmentPreviewHandoffByMessageId, clearAttachmentPreviewHandoff, displayServerMessages]);
   const timelineMessages = useMemo(() => {
-    const messages = displayServerMessages;
+    const messages = mergeMessageReplyTimeline<ChatMessage>(
+      displayServerMessages,
+      activeThread?.replyMessages,
+    );
     const serverMessagesWithPreviewHandoff =
       Object.keys(attachmentPreviewHandoffByMessageId).length === 0
         ? messages
@@ -3613,6 +3629,7 @@ export default function ChatView(props: ChatViewProps) {
   }, [
     attachmentPreviewHandoffByMessageId,
     displayServerMessages,
+    activeThread?.replyMessages,
     optimisticUserMessages,
     projectHandoffMessagePreviews,
   ]);
@@ -7306,7 +7323,12 @@ export default function ChatView(props: ChatViewProps) {
         );
         return;
       }
-      if (phase === "running" || isSendBusy || isConnecting) {
+      if (
+        phase === "running" ||
+        isSendBusy ||
+        isConnecting ||
+        threadHasActiveReplyTopics(activeThread)
+      ) {
         setThreadError(activeThread.id, "Interrupt the current turn before reverting checkpoints.");
         return;
       }
@@ -7593,6 +7615,14 @@ export default function ChatView(props: ChatViewProps) {
     });
   };
 
+  const messageReplies = useMessageReplies({
+    threadRef: routeThreadRef,
+    composerRef,
+    enabled: messageRepliesEnabled,
+    blocked: isRevertingCheckpoint || threadDetailLoading || activeEnvironmentUnavailable,
+    onSent: scrollToEnd,
+  });
+
   const onSend = async (
     e?: { preventDefault: () => void },
     submissionIntent: ComposerSubmissionIntent = "foreground",
@@ -7602,6 +7632,10 @@ export default function ChatView(props: ChatViewProps) {
     },
   ) => {
     e?.preventDefault();
+    if (composerReplyTarget) {
+      await messageReplies.sendReply();
+      return;
+    }
     // Typed out in full rather than picked from the menu. Attachments or contexts
     // mean the user is sending a prompt, so those go through as usual.
     if (
@@ -10665,6 +10699,20 @@ export default function ChatView(props: ChatViewProps) {
             <div className="relative flex min-h-0 flex-1 flex-col window-surface bg-background">
               {/* Messages — LegendList handles virtualization and scrolling internally */}
               <MessagesTimeline
+                replyControlsEnabled={
+                  !paintOnlyDisplayedTimeline &&
+                  !activeEnvironmentUnavailable &&
+                  serverConfig?.environment.capabilities.messageReplies === true
+                }
+                onReplyMessage={
+                  messageRepliesEnabled && !paintOnlyDisplayedTimeline
+                    ? messageReplies.onReply
+                    : undefined
+                }
+                replyTopics={paintOnlyDisplayedTimeline ? undefined : activeThread?.subagents}
+                replyActivities={
+                  paintOnlyDisplayedTimeline ? undefined : activeThread?.replyActivities
+                }
                 composerPlanTurnId={paintOnlyDisplayedTimeline ? null : composerPlanTurnId}
                 {...(!paintOnlyDisplayedTimeline
                   ? {
@@ -10925,11 +10973,17 @@ export default function ChatView(props: ChatViewProps) {
                                 projectSelectionRequired={
                                   isLocalDraftThread && activeProject === null
                                 }
-                                phase={phase}
+                                phase={composerReplyTarget ? "ready" : phase}
                                 isConnecting={isConnecting}
-                                isSendBusy={isSendBusy}
+                                isSendBusy={
+                                  composerReplyTarget ? messageReplies.isSending : isSendBusy
+                                }
+                                replyError={messageReplies.error}
                                 isRevertingCheckpoint={isRevertingCheckpoint}
                                 sendDisabledReason={
+                                  (composerReplyTarget && !messageRepliesEnabled
+                                    ? translate("chat.reply.unavailable")
+                                    : null) ??
                                   harnessSendDisabledReason ??
                                   (isRevertingCheckpoint
                                     ? "Rewinding conversation"
@@ -10955,18 +11009,24 @@ export default function ChatView(props: ChatViewProps) {
                                     : undefined
                                 }
                                 environmentUnavailable={activeEnvironmentUnavailableState}
-                                activePendingApproval={activePendingApproval}
-                                pendingApprovals={pendingApprovals}
-                                pendingUserInputs={pendingUserInputs}
-                                activePendingProgress={activePendingProgress}
+                                activePendingApproval={
+                                  composerReplyTarget ? null : activePendingApproval
+                                }
+                                pendingApprovals={composerReplyTarget ? [] : pendingApprovals}
+                                pendingUserInputs={composerReplyTarget ? [] : pendingUserInputs}
+                                activePendingProgress={
+                                  composerReplyTarget ? null : activePendingProgress
+                                }
                                 activePendingResolvedAnswers={activePendingResolvedAnswers}
                                 activePendingIsResponding={activePendingIsResponding}
                                 activePendingDraftAnswers={activePendingDraftAnswers}
                                 activePendingQuestionIndex={activePendingQuestionIndex}
                                 respondingRequestIds={respondingRequestIds}
-                                showPlanFollowUpPrompt={showPlanFollowUpPrompt}
-                                showPlanAnalysis={showPlanAnalysis}
-                                activeProposedPlan={activeProposedPlan}
+                                showPlanFollowUpPrompt={
+                                  !composerReplyTarget && showPlanFollowUpPrompt
+                                }
+                                showPlanAnalysis={!composerReplyTarget && showPlanAnalysis}
+                                activeProposedPlan={composerReplyTarget ? null : activeProposedPlan}
                                 activeTasksProgress={
                                   composerPlanTurnId === null ? null : activeComposerTasksProgress
                                 }

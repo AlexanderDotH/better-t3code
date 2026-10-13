@@ -13,10 +13,14 @@ import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as ProjectAgentCoordinator from "../../../projectAgent/ProjectAgentCoordinator.ts";
+import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProviderService } from "../../../provider/Services/ProviderService.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
   ProjectAgentCoordinator.ProjectAgentCoordinator,
+  ProjectionSnapshotQuery,
+  ProviderService,
 ];
 
 const ProjectAgentListTool = Tool.make("project_agent_list", {

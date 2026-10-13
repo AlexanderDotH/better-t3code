@@ -2,11 +2,16 @@ import {
   VISUALIZATION_CHANNEL,
   VisualizationPreviewCache,
   isVisualizationResponse,
+  type VisualizationAppearance,
   type VisualizationFormat,
   type VisualizationRenderRequest,
   type VisualizationRequest,
   type VisualizationResponse,
 } from "@t3tools/client-runtime/visualizations/model";
+import {
+  normalizeVisualizationAppearance,
+  visualizationPreviewCacheKey,
+} from "@t3tools/client-runtime/visualizations/appearance";
 
 const RENDER_TIMEOUT_MS = 30_000;
 const previews = new VisualizationPreviewCache();
@@ -28,6 +33,7 @@ export function createRenderRequest(
   source: string,
   theme: "light" | "dark",
   interactive = false,
+  appearance?: VisualizationAppearance,
 ): VisualizationRenderRequest {
   return {
     channel: VISUALIZATION_CHANNEL,
@@ -37,6 +43,7 @@ export function createRenderRequest(
     source,
     theme,
     interactive,
+    ...(appearance ? { appearance: normalizeVisualizationAppearance(appearance, theme) } : {}),
   };
 }
 
@@ -130,7 +137,7 @@ export function renderVisualizationPreview(
       { once: true },
     );
   }
-  const key = JSON.stringify([request.format, request.source, request.theme]);
+  const key = visualizationPreviewCacheKey(request);
   const work = queue
     .catch(() => undefined)
     .then(async () => {

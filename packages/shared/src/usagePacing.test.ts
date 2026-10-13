@@ -2,7 +2,13 @@ import type { ServerProviderUsageWindow } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
 
-import { dailyUsagePace, paceOf, usageWindowLabel } from "./usageLimits.ts";
+import {
+  dailyUsagePace,
+  paceOf,
+  remainingPercent,
+  usagePaceBarSegments,
+  usageWindowLabel,
+} from "./usageLimits.ts";
 
 const time = (day: number, hour: number, minute = 0) =>
   DateTime.toEpochMillis(
@@ -25,6 +31,71 @@ const weekly: ServerProviderUsageWindow = {
   resetsAt: iso(time(20, 0)),
   usageHistory: [sample(13, 8, 0), sample(13, 9, 1), sample(13, 13, 6)],
 };
+
+describe("usage pace bar segments", () => {
+  it.each([0.4, 0.001, 0, -0.001, -0.4])(
+    "preserves a %s-point daily balance at the allowance boundary",
+    (balance) => {
+      const window = { ...weekly, usedPercent: 100 / 7 - balance };
+      const pace = dailyUsagePace(window, time(13, 13), 8)!;
+      const segments = usagePaceBarSegments(window, pace);
+      const remaining = remainingPercent(window);
+      expect(segments.regularPercent).toBeCloseTo(Math.max(0, balance), 8);
+      expect(segments.overdrawPercent).toBeCloseTo(Math.max(0, -balance), 8);
+      expect(segments.catchUpPercent).toBe(0);
+      expect(segments.reservedPercent + segments.regularPercent).toBeCloseTo(remaining);
+      expect(segments.widthPercent).toBeCloseTo(remaining + Math.max(0, -balance));
+    },
+  );
+
+  it("spends catch-up before shrinking the regular daily share", () => {
+    for (const usedPercent of [12, 14, 15]) {
+      const window = {
+        ...weekly,
+        usedPercent,
+        usageHistory: [...weekly.usageHistory!, sample(14, 10, 7)],
+      };
+      const pace = dailyUsagePace(window, time(14, 14), 8)!;
+      const segments = usagePaceBarSegments(window, pace);
+      expect(segments.catchUpPercent).toBeCloseTo(Math.max(0, 100 / 7 - usedPercent));
+      expect(segments.regularPercent).toBeCloseTo(Math.min(100 / 7, 200 / 7 - usedPercent));
+      expect(segments.overdrawPercent).toBe(0);
+      expect(
+        segments.reservedPercent + segments.regularPercent + segments.catchUpPercent,
+      ).toBeCloseTo(remainingPercent(window));
+    }
+  });
+
+  it("keeps portions within the track when provider percentages are rounded", () => {
+    const segments = usagePaceBarSegments(
+      { ...weekly, usedPercent: 99 },
+      { todayBalancePercent: 1.2, catchUpRemainingPercent: 5 },
+    );
+    expect(segments).toEqual({
+      reservedPercent: 0,
+      regularPercent: 0,
+      catchUpPercent: 1,
+      overdrawPercent: 0,
+      widthPercent: 1,
+    });
+    const overdrawn = usagePaceBarSegments(
+      { ...weekly, usedPercent: 2 },
+      { todayBalancePercent: -300, catchUpRemainingPercent: 0 },
+    );
+    expect(overdrawn.widthPercent).toBe(100);
+    expect(overdrawn.reservedPercent).toBe(98);
+    expect(overdrawn.overdrawPercent).toBe(2);
+  });
+
+  it("has no portions when the weekly quota is exhausted without a daily overdraw", () => {
+    const segments = usagePaceBarSegments(
+      { ...weekly, usedPercent: 100 },
+      { todayBalancePercent: 0, catchUpRemainingPercent: 0 },
+    );
+    expect(segments.widthPercent).toBe(0);
+    expect(segments.regularPercent + segments.catchUpPercent + segments.overdrawPercent).toBe(0);
+  });
+});
 
 describe("daily usage pacing", () => {
   it("measures consumption against today's allowance, including overdraw and catch-up", () => {
@@ -49,7 +120,7 @@ describe("daily usage pacing", () => {
         time(13, 13),
         8,
       )?.todayBudgetUsedPercent,
-    ).toBe(0);
+    ).toBeNull();
     const catchUp = dailyUsagePace(
       {
         ...weekly,
@@ -264,7 +335,7 @@ describe("daily usage pacing", () => {
 
   it("does not invent earlier usage or a missing reset time", () => {
     expect(dailyUsagePace({ ...weekly, usageHistory: undefined }, time(13, 13), 8)).toMatchObject({
-      status: "waiting",
+      status: "unknown",
       todayUsedPercent: null,
       partial: true,
       catchUpPercent: 0,
@@ -276,11 +347,45 @@ describe("daily usage pacing", () => {
         time(13, 13),
         8,
       ),
-    ).toMatchObject({ todayUsedPercent: 2, startedAt: time(13, 13), partial: true });
+    ).toMatchObject({
+      status: "unknown",
+      todayUsedPercent: null,
+      startedAt: time(13, 13),
+      partial: true,
+    });
     expect(dailyUsagePace({ ...weekly, resetsAt: undefined }, time(13, 13), 8)).toBeNull();
     expect(dailyUsagePace(weekly, time(20, 1), 8)).toBeNull();
     expect(dailyUsagePace(weekly, Number.NaN, 8)).toBeNull();
   });
+
+  it.each([undefined, "codex"] as const)(
+    "withholds daily usage and catch-up until %s history covers the start of today",
+    (usageHistorySource) => {
+      const partialHistory = [
+        { ...sample(19, 12, 5), hasUsage: true },
+        { ...sample(19, 13, 6), hasUsage: true },
+      ];
+      const window = { ...weekly, usageHistorySource, usageHistory: partialHistory };
+      expect(dailyUsagePace(window, time(19, 14), 8)).toMatchObject({
+        status: "unknown",
+        partial: true,
+        todayUsedPercent: null,
+        todayBudgetUsedPercent: null,
+        todayOverdrawPercent: null,
+        catchUpPercent: 0,
+        catchUpRemainingPercent: 0,
+        paceOverPercent: null,
+      });
+      const recovered = dailyUsagePace(
+        { ...window, usageHistory: [sample(18, 22, 5), ...partialHistory] },
+        time(19, 14),
+        8,
+      )!;
+      expect(recovered).toMatchObject({ status: "good", partial: false, todayUsedPercent: 1 });
+      expect(recovered.catchUpPercent).toBeCloseTo(600 / 7 - 5);
+      expect(recovered.catchUpRemainingPercent).toBeCloseTo(600 / 7 - 6);
+    },
+  );
 
   it("keeps returning five-hour windows on their own rolling clock", () => {
     const session: ServerProviderUsageWindow = {

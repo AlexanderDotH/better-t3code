@@ -13,8 +13,12 @@ export function isThreadAggregateEvent(event: OrchestrationEvent, threadId: Thre
 function isRootThreadDetailEvent(event: OrchestrationEvent): boolean {
   switch (event.type) {
     case "thread.message-sent":
-    case "thread.proposed-plan-upserted":
+      return event.payload.subagentId === undefined || event.payload.replyTopicId !== undefined;
     case "thread.activity-appended":
+      return (
+        event.payload.subagentId === undefined || event.payload.activity.replyTopicId !== undefined
+      );
+    case "thread.proposed-plan-upserted":
       return event.payload.subagentId === undefined;
     case "thread.turn-abort-settled":
     case "thread.turn-diff-completed":
