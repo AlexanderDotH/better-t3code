@@ -2,7 +2,7 @@ import type { ServerProviderUsageWindow } from "@t3tools/contracts";
 import {
   DAILY_USAGE_PACE_LABELS,
   dailyUsagePace,
-  remainingPercent,
+  usagePaceBarSegments,
 } from "@t3tools/shared/usageLimits";
 import { type ReactNode, useEffect, useRef } from "react";
 
@@ -91,10 +91,12 @@ export function UsagePaceBar({
   window,
   now,
   baseColor = "var(--foreground)",
+  shape = "pill",
 }: {
   readonly window: ServerProviderUsageWindow;
   readonly now: number;
   readonly baseColor?: string;
+  readonly shape?: "pill" | "segment";
 }) {
   const settings = useClientSettings();
   const { number } = useInterfaceTranslator();
@@ -102,17 +104,7 @@ export function UsagePaceBar({
     ? dailyUsagePace(window, now, settings.usagePacingWorkdayHours)
     : null;
   if (pace?.todayUsedPercent == null) return null;
-  const overdrawn = pace.todayBalancePercent < 0;
-  const remaining = remainingPercent(window);
-  const width = Math.min(
-    overdrawn ? 100 - remaining : remaining,
-    Math.abs(pace.todayBalancePercent),
-  );
-  const hasNotch = !overdrawn && width > 0 && remaining > width;
-  const catchUpShare =
-    pace.todayRemainingPercent > 0
-      ? (pace.catchUpRemainingPercent / pace.todayRemainingPercent) * 100
-      : 0;
+  const segments = usagePaceBarSegments(window, pace);
   const color =
     pace.status === "exceeded"
       ? "bg-destructive"
@@ -124,44 +116,35 @@ export function UsagePaceBar({
   return (
     <div
       role="meter"
-      aria-label="Today's allowance remaining, including catch-up"
+      aria-label={
+        pace.catchUpPercent > 0
+          ? "Today's allowance remaining, including catch-up"
+          : "Today's allowance remaining"
+      }
       aria-valuemin={-100}
       aria-valuemax={100}
       aria-valuenow={pace.todayBalancePercent}
-      aria-valuetext={`${number(pace.todayRemainingPercent, { maximumFractionDigits: 1 })}% left today, including ${number(pace.catchUpRemainingPercent, { maximumFractionDigits: 1 })}% catch-up.${pace.todayOverdrawPercent !== null && pace.todayOverdrawPercent > 0 ? ` ${number(pace.todayOverdrawPercent, { maximumFractionDigits: 1 })}% overdrawn today.` : ""} ${DAILY_USAGE_PACE_LABELS[pace.status]}`}
-      className="usage-pace-bar"
-      data-overdrawn={overdrawn}
+      aria-valuetext={`${number(pace.todayRemainingPercent, { maximumFractionDigits: 1 })}% left today.${pace.catchUpRemainingPercent > 0 ? ` ${number(pace.catchUpRemainingPercent, { maximumFractionDigits: 1 })}% catch-up left.` : ""}${pace.todayOverdrawPercent !== null && pace.todayOverdrawPercent > 0 ? ` ${number(pace.todayOverdrawPercent, { maximumFractionDigits: 1 })}% overdrawn today.` : ""} ${DAILY_USAGE_PACE_LABELS[pace.status]}`}
+      className={`usage-pace-bar ${shape === "segment" ? "rounded-md" : "rounded-full"}`}
       style={{
-        right: `${100 - remaining - (overdrawn ? width : 0)}%`,
-        width: `${overdrawn ? remaining + width : width}%`,
+        right: `${100 - segments.widthPercent}%`,
+        width: `${segments.widthPercent}%`,
       }}
     >
-      <div
-        className={`min-w-0 ${hasNotch ? "" : "rounded-l-full"} ${catchUpShare === 0 ? "rounded-r-full" : ""} ${color}`}
-        style={{ flex: 100 - catchUpShare }}
-      />
-      {pace.catchUpRemainingPercent > 0 ? (
+      {segments.reservedPercent > 0 ? (
         <div
-          className={`min-w-0 rounded-r-full opacity-50 ${color}`}
-          style={{ flex: catchUpShare }}
+          className="min-w-0"
+          style={{ flex: segments.reservedPercent, backgroundColor: baseColor }}
         />
       ) : null}
-      {catchUpShare > 0 && catchUpShare < 100 ? (
-        <div
-          aria-hidden
-          className={`usage-pace-notch ${color}`}
-          style={{
-            left: `${100 - catchUpShare}%`,
-            width: `min(12px, ${Math.min(catchUpShare, 100 - catchUpShare) * 2}%)`,
-          }}
-        />
+      {segments.regularPercent > 0 ? (
+        <div className={`min-w-0 ${color}`} style={{ flex: segments.regularPercent }} />
       ) : null}
-      {hasNotch ? (
-        <div
-          aria-hidden
-          className="usage-pace-notch"
-          style={{ width: "min(12px, 200%)", backgroundColor: baseColor }}
-        />
+      {segments.catchUpPercent > 0 ? (
+        <div className={`min-w-0 opacity-50 ${color}`} style={{ flex: segments.catchUpPercent }} />
+      ) : null}
+      {segments.overdrawPercent > 0 ? (
+        <div className={`min-w-0 ${color}`} style={{ flex: segments.overdrawPercent }} />
       ) : null}
     </div>
   );
@@ -186,9 +169,11 @@ export function UsagePaceDetails({
   if (!settings.usagePacingEnabled || !pace) return null;
   const percent = (value: number) => `${number(value, { maximumFractionDigits: 1 })}%`;
   const balance =
-    pace.todayOverdrawPercent !== null && pace.todayOverdrawPercent > 0
-      ? `${percent(pace.todayOverdrawPercent)} overdrawn today`
-      : `${percent(pace.todayRemainingPercent)} left today`;
+    pace.todayUsedPercent === null
+      ? null
+      : pace.todayOverdrawPercent !== null && pace.todayOverdrawPercent > 0
+        ? `${percent(pace.todayOverdrawPercent)} overdrawn today`
+        : `${percent(pace.todayRemainingPercent)} left today`;
   const label = paceLabel(pace, percent);
   const tone = paceTone(pace.status);
   return (
@@ -198,73 +183,44 @@ export function UsagePaceDetails({
         className={`flex w-full min-w-0 cursor-help flex-col items-center gap-0.5 rounded-sm text-center text-2xs leading-4 outline-none focus-visible:ring-2 focus-visible:ring-ring ${className}`}
       >
         {accountLabel ? <span className="text-muted-foreground">{accountLabel}</span> : null}
-        <span className="min-w-0 text-center text-muted-foreground tabular-nums">
-          <span className={pace.status === "exceeded" ? tone : undefined}>{balance}</span>
-          {" · "}
-          {percent(pace.dailyBudgetPercent)} budget today
-          {" · "}
-          {percent(pace.catchUpRemainingPercent)} catch-up left
-        </span>
+        {balance !== null ? (
+          <span className="min-w-0 text-center text-muted-foreground tabular-nums">
+            <span className={pace.status === "exceeded" ? tone : undefined}>{balance}</span>
+            {" · "}
+            {percent(pace.dailyBudgetPercent)} budget today
+            {pace.catchUpRemainingPercent > 0 ? (
+              <> · {percent(pace.catchUpRemainingPercent)} catch-up left</>
+            ) : null}
+          </span>
+        ) : null}
         <ScrollingPaceLabel
           key={label}
           label={label}
           tone={tone}
-          className={statusInHeader ? "@min-[651px]:hidden" : ""}
+          className={statusInHeader && balance !== null ? "@min-[651px]:hidden" : ""}
         />
       </TooltipTrigger>
       <TooltipPopup side="top" className="max-w-80">
         <div className="flex flex-col gap-1.5 p-1">
           <span className="font-medium">{label}</span>
-          <span>
-            The filled bar shows the total quota left this week. Its colored right end is available
-            today, including catch-up in the lighter section. The rest is reserved for later days.
-            Green means within pace and amber means too fast. A red section beyond the remaining
-            quota shows today's negative balance; its far edge marks zero daily allowance.
-          </span>
           {pace.todayBudgetUsedPercent !== null ? (
             <span>{percent(pace.todayBudgetUsedPercent)} of today's allowance used</span>
           ) : null}
-          {(pace.todayOverdrawPercent ?? 0) > 0 ? (
-            <span>{balance}. This reduces the quota available for later days.</span>
-          ) : null}
-          <span>
-            {pace.todayUsedPercent === null ? "—" : percent(pace.todayUsedPercent)} observed today
-            {" · "}
-            {percent(pace.dailyBudgetPercent)} daily allowance
-          </span>
-          <span>
-            {percent(pace.hourlyBudgetPercent)} per hour · up to {pace.workdayHours}-hour day
-          </span>
-          {pace.catchUpPercent > 0 ? (
+          {balance !== null ? (
             <span>
-              {percent(pace.catchUpPercent)} catch-up from earlier days is included in today's
-              allowance and can be used immediately. {percent(pace.catchUpRemainingPercent)}{" "}
-              remains.
+              Daily budget: {percent(pace.dailyBudgetPercent)} · {pace.workdayHours}-hour pace
             </span>
           ) : null}
-          <span className="text-muted-foreground">
-            {pace.workdayHours === 8
-              ? window.usageHistorySource === "codex"
-                ? "Your 8-hour workday starts with the first token usage recorded by Codex each local day, including activity outside T3."
-                : "Your 8-hour workday starts with the first observed quota increase each local day."
-              : "24-hour pacing spreads the regular daily allowance across the full local calendar day."}
-          </span>
-          <span className="text-muted-foreground">
-            Unused allowance from earlier days in this weekly window is available as catch-up; the
-            rest is shared across the days until reset, including weekends. Pace includes catch-up
-            before comparing today's usage with the hourly target. An earlier reset shortens that
-            target. Allowances are quota percentages, not a fixed token count.
-          </span>
+          {pace.catchUpRemainingPercent > 0 ? (
+            <span>{percent(pace.catchUpRemainingPercent)} catch-up left</span>
+          ) : null}
           {pace.status === "estimating" ? (
-            <span className="text-muted-foreground">
-              Allow 15 minutes to measure a useful pace.
-            </span>
+            <span className="text-muted-foreground">Measuring pace for the first 15 minutes.</span>
           ) : null}
-          {pace.partial ? (
+          {balance === null ? (
             <span className="text-muted-foreground">
-              {window.usageHistorySource === "codex"
-                ? "Codex history does not contain a complete baseline for today. Earlier usage on other machines may be missing."
-                : "Earlier usage today is unknown. This estimate covers observed changes only; tracking restarts with the server."}
+              Daily pace needs usage history covering the start of today. The bar shows the reported
+              weekly quota remaining.
             </span>
           ) : null}
         </div>

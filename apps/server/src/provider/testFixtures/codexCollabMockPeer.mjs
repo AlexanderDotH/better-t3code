@@ -162,6 +162,10 @@ rl.on("line", (line) => {
     write({ id, result: fixture.responses.threadStart });
     return;
   }
+  if (method === "thread/read" && script.failTransportOnRead === true) {
+    process.stdout.write("{malformed-json}\n");
+    return;
+  }
   if (method === "turn/start") {
     const turnId = script.turnIds?.[turnStartCount];
     const turn = turnId
@@ -169,7 +173,9 @@ rl.on("line", (line) => {
       : fixture.responses.turnStart.turn;
     activeTurn = turn;
     turnStartCount += 1;
-    write({ id, result: { ...fixture.responses.turnStart, turn } });
+    if (script.replyAfterTurnCompleted !== true) {
+      write({ id, result: { ...fixture.responses.turnStart, turn } });
+    }
     const rootThreadId = script.rootThreadId;
     if (script.onlyFirstTurnStarts !== true || turnStartCount === 1) {
       write({
@@ -209,6 +215,9 @@ rl.on("line", (line) => {
           turn: { ...turn, status: "completed" },
         },
       });
+    }
+    if (script.replyAfterTurnCompleted === true) {
+      write({ id, result: { ...fixture.responses.turnStart, turn } });
     }
     return;
   }

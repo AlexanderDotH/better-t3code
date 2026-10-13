@@ -1,11 +1,14 @@
 import {
   EventId,
+  MessageId,
+  SubagentId,
   ProjectAgentMessageId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
   TurnId,
   type OrchestrationEvent,
+  type OrchestrationSubagentSummary,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
@@ -168,6 +171,207 @@ it.layer(TestLayer)("project agent coordination projections", (it) => {
       expect((yield* snapshotQuery.getCommandReadModel()).projects[0]?.coordinationClaims).toEqual(
         [],
       );
+    }),
+  );
+  it.effect("keeps the parent lease live for an active reply after the main turn completes", () =>
+    Effect.gen(function* () {
+      const pipeline = yield* OrchestrationProjectionPipeline;
+      const query = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      const projectId = ProjectId.make("reply-coordination-project");
+      const threadId = ThreadId.make("reply-coordination-parent");
+      const observerId = ThreadId.make("reply-coordination-observer");
+      const topicId = SubagentId.make("reply-coordination-topic");
+      const rootTurnId = TurnId.make("reply-coordination-root-turn");
+      const replyTurnId = TurnId.make("reply-coordination-reply-turn");
+      const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
+      let sequence = 100;
+      yield* pipeline.projectEvent(
+        event(sequence++, "project.created", "project", projectId, {
+          projectId,
+          title: "Reply coordination",
+          workspaceRoot: "/workspace/reply-coordination",
+          defaultModelSelection: null,
+          checkpointsEnabled: true,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        }),
+      );
+      for (const id of [threadId, observerId]) {
+        yield* pipeline.projectEvent(
+          event(sequence++, "thread.created", "thread", id, {
+            threadId: id,
+            projectId,
+            title: id,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          }),
+        );
+      }
+      const session = {
+        threadId,
+        status: "running" as const,
+        providerName: "codex",
+        providerInstanceId: modelSelection.instanceId,
+        runtimeSessionId: null,
+        runtimeMode: "full-access" as const,
+        activeTurnId: rootTurnId,
+        abortState: null,
+        lastError: null,
+        updatedAt: now,
+      };
+      yield* pipeline.projectEvent(
+        event(sequence++, "thread.session-set", "thread", threadId, { threadId, session }),
+      );
+      const topic: OrchestrationSubagentSummary = {
+        id: topicId,
+        origin: "t3-managed",
+        providerInstanceId: modelSelection.instanceId,
+        providerDriver: null,
+        providerThreadId: topicId,
+        parentId: null,
+        path: null,
+        name: "Reply",
+        nickname: null,
+        role: null,
+        task: null,
+        model: modelSelection.model,
+        reasoningEffort: null,
+        depth: 1,
+        status: "waiting",
+        statusMessage: null,
+        latestProgress: null,
+        latestTurn: {
+          turnId: replyTurnId,
+          state: "running",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: null,
+          assistantMessageId: null,
+        },
+        startedAt: now,
+        updatedAt: now,
+        completedAt: null,
+        messageReply: {
+          rootMessageId: MessageId.make("coordination-source"),
+          replyTo: {
+            messageId: MessageId.make("coordination-source"),
+            role: "assistant",
+            text: "Quoted source",
+          },
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          workspacePath: "/workspace/reply-coordination",
+        },
+      };
+      yield* pipeline.projectEvent(
+        event(sequence++, "thread.subagent-upserted", "thread", threadId, {
+          threadId,
+          subagent: topic,
+        }),
+      );
+      const lease = {
+        projectId,
+        threadId,
+        turnId: replyTurnId,
+        summary: "Reply owns this file",
+        claims: [{ kind: "path" as const, path: "reply.ts" }],
+        updatedAt: now,
+      };
+      yield* pipeline.projectEvent(
+        event(sequence++, "project.agent-claim-set", "project", projectId, lease),
+      );
+      yield* pipeline.projectEvent(
+        event(sequence++, "thread.session-set", "thread", threadId, {
+          threadId,
+          session: { ...session, status: "ready", activeTurnId: null },
+        }),
+      );
+      yield* pipeline.projectEvent(
+        event(sequence++, "project.agent-claim-released", "project", projectId, {
+          projectId,
+          threadId,
+          expectedTurnId: rootTurnId,
+          releasedAt: now,
+        }),
+      );
+      expect(
+        (yield* query.getCommandReadModel()).projects.find((project) => project.id === projectId)
+          ?.coordinationClaims,
+      ).toEqual([lease]);
+      expect(
+        (yield* query.getSnapshot()).projects.find((project) => project.id === projectId)
+          ?.coordinationClaims,
+      ).toEqual([lease]);
+      expect(yield* query.hasActiveProjectAgentPeer(observerId)).toBe(true);
+      expect(yield* query.hasActiveProjectAgentPeer(threadId)).toBe(true);
+      const summary = yield* query.getSubagentSummaryById(threadId, topicId);
+      expect(summary).toMatchObject({
+        value: { messageReply: topic.messageReply, status: "waiting" },
+      });
+
+      yield* pipeline.projectEvent(
+        event(sequence++, "project.agent-claim-set", "project", projectId, {
+          ...lease,
+          turnId: TurnId.make("stale-reply-turn"),
+        }),
+      );
+      expect(
+        (yield* query.getCommandReadModel()).projects.find((project) => project.id === projectId)
+          ?.coordinationClaims,
+      ).toEqual([]);
+      yield* pipeline.projectEvent(
+        event(sequence++, "project.agent-claim-set", "project", projectId, lease),
+      );
+      yield* pipeline.projectEvent(
+        event(sequence++, "thread.subagent-upserted", "thread", threadId, {
+          threadId,
+          subagent: {
+            ...topic,
+            latestTurn: { ...topic.latestTurn!, state: "completed", completedAt: now },
+          },
+        }),
+      );
+      expect(
+        (yield* query.getCommandReadModel()).projects.find((project) => project.id === projectId)
+          ?.coordinationClaims,
+      ).toEqual([]);
+      expect(
+        (yield* query.getSnapshot()).projects.find((project) => project.id === projectId)
+          ?.coordinationClaims,
+      ).toEqual([]);
+      expect(yield* query.hasActiveProjectAgentPeer(observerId)).toBe(false);
+      expect(yield* query.hasActiveProjectAgentPeer(threadId)).toBe(false);
+      const remainingClaims = yield* sql<{ readonly turnId: string }>`
+        SELECT turn_id AS "turnId" FROM projection_project_agent_claims WHERE project_id = ${projectId}
+      `;
+      expect(remainingClaims).toEqual([{ turnId: replyTurnId }]);
+
+      yield* pipeline.projectEvent(
+        event(sequence++, "thread.subagent-upserted", "thread", threadId, {
+          threadId,
+          subagent: topic,
+        }),
+      );
+      yield* pipeline.projectEvent(
+        event(sequence++, "thread.archived", "thread", threadId, {
+          threadId,
+          archivedAt: now,
+          updatedAt: now,
+        }),
+      );
+      expect(
+        (yield* query.getCommandReadModel()).projects.find((project) => project.id === projectId)
+          ?.coordinationClaims,
+      ).toEqual([]);
+      expect(yield* query.hasActiveProjectAgentPeer(observerId)).toBe(false);
     }),
   );
 });

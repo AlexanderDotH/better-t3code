@@ -17,7 +17,7 @@ import { threadPullRequestKeysEqual } from "@t3tools/shared/threadPullRequests";
 import { isImportedAgentSessionMessageId } from "@t3tools/contracts";
 import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
 
-import { applySubagentSummaryEvent } from "./subagentReducer.ts";
+import { applySubagentSummaryEvent, mergeSubagentMessage } from "./subagentReducer.ts";
 
 export type ThreadDetailReducerResult =
   | { readonly kind: "updated"; readonly thread: OrchestrationThread }
@@ -511,7 +511,46 @@ export function applyThreadDetailEvent(
     case "thread.harness-sync-message-imported":
     case "thread.message-sent": {
       if (event.payload.subagentId !== undefined) {
-        return { kind: "unchanged" };
+        const topicId = event.payload.subagentId;
+        if (
+          !thread.subagents.some((subagent) => subagent.id === topicId && subagent.messageReply)
+        ) {
+          return { kind: "unchanged" };
+        }
+        const message: OrchestrationMessage = {
+          id: event.payload.messageId,
+          role: event.payload.role,
+          text: event.payload.text,
+          turnId: event.payload.turnId,
+          streaming: event.payload.streaming,
+          createdAt: event.payload.createdAt,
+          updatedAt: event.payload.updatedAt,
+          replyTopicId: topicId,
+          ...(event.payload.replyTo ? { replyTo: event.payload.replyTo } : {}),
+          ...(event.payload.context ? { context: event.payload.context } : {}),
+          ...(event.payload.attachments ? { attachments: event.payload.attachments } : {}),
+        };
+        const current = thread.replyMessages ?? [];
+        const topicMessages = mergeSubagentMessage(
+          current.filter((entry) => entry.replyTopicId === topicId),
+          message,
+        );
+        return {
+          kind: "updated",
+          thread: {
+            ...thread,
+            replyMessages: [
+              ...current.filter((entry) => entry.replyTopicId !== topicId),
+              ...topicMessages,
+            ].sort(
+              (left, right) =>
+                left.createdAt.localeCompare(right.createdAt) ||
+                (left.replyTopicId ?? "").localeCompare(right.replyTopicId ?? "") ||
+                left.id.localeCompare(right.id),
+            ),
+            updatedAt: event.occurredAt,
+          },
+        };
       }
       const message: OrchestrationMessage = {
         id: event.payload.messageId,
@@ -820,7 +859,26 @@ export function applyThreadDetailEvent(
     // ── Activities ──────────────────────────────────────────────────
     case "thread.activity-appended": {
       if (event.payload.subagentId !== undefined) {
-        return { kind: "unchanged" };
+        const topicId = event.payload.subagentId;
+        if (
+          !thread.subagents.some((subagent) => subagent.id === topicId && subagent.messageReply)
+        ) {
+          return { kind: "unchanged" };
+        }
+        const activity = { ...event.payload.activity, replyTopicId: topicId };
+        return {
+          kind: "updated",
+          thread: {
+            ...thread,
+            replyActivities: [
+              ...(thread.replyActivities ?? []).filter(
+                (entry) => entry.id !== activity.id || entry.replyTopicId !== topicId,
+              ),
+              activity,
+            ].sort(activityOrder),
+            updatedAt: event.occurredAt,
+          },
+        };
       }
       const activity = event.payload.activity;
       // A resolvable context-window update supersedes earlier resolvable ones

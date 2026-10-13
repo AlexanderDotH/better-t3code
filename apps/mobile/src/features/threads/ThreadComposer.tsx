@@ -1,4 +1,6 @@
 import { ChatGptUsageLimitNotice } from "./ChatGptUsageLimitNotice";
+import { MessageReplyPreview } from "./MessageReplyPreview";
+import type { MessageReplyReference } from "@t3tools/contracts";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import { pastedTextDisposition, replaceTextSelection } from "@t3tools/client-runtime/text-paste";
@@ -142,6 +144,9 @@ export const COMPOSER_COLLAPSED_CHROME = 60;
 export const COMPOSER_EXPANDED_CHROME = 156;
 
 export interface ThreadComposerProps {
+  readonly replyTo?: MessageReplyReference;
+  readonly replySending?: boolean;
+  readonly onCancelReply?: () => void;
   readonly draftMessage: string;
   readonly readDraftText?: () => string;
   readonly draftVoiceFileReferences?: ReadonlyArray<VoiceFileReference>;
@@ -330,7 +335,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
   const hasContent = props.draftMessage.trim().length > 0 || props.draftAttachments.length > 0;
   const stopAction = resolveThreadAbortPresentation(props.selectedThread.session);
-  const showStopAction = stopAction.showStopAction && (!hasContent || stopAction.phase !== null);
+  const showStopAction =
+    !props.replyTo && stopAction.showStopAction && (!hasContent || stopAction.phase !== null);
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const { interfaceLanguage } = useAppearancePreferences();
   const resourceProtectionQuery = useEnvironmentQuery(
@@ -498,7 +504,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const isVoiceInputPresented = voicePresentation.statusLabel !== null;
   // An open draft stays visible; only a collapsed composer becomes a voice strip.
   const isExpanded =
-    isFocused || settingsSheetPresentation.keepsComposerExpanded || voiceDictation.active;
+    props.replyTo !== undefined ||
+    isFocused ||
+    settingsSheetPresentation.keepsComposerExpanded ||
+    voiceDictation.active;
   const showsCompactDictation = isVoiceInputPresented && !isExpanded;
   const isToolbarVisible = isExpanded || isVoiceInputPresented;
   const attachmentBlockReason = composerAttachmentUploadBlockReason({
@@ -519,9 +528,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     !voiceInput.blocksSubmission &&
     !voiceDictation.active &&
     !props.isImprovingPrompt &&
-    stopAction.phase === null &&
-    props.forkComposerBudget?.canSend !== false &&
-    props.selectedThread.harnessSync?.activity !== "active" &&
+    !props.replySending &&
+    (props.replyTo ? props.connectionState === "connected" : stopAction.phase === null) &&
+    (props.replyTo !== undefined || props.forkComposerBudget?.canSend !== false) &&
+    (props.replyTo !== undefined || props.selectedThread.harnessSync?.activity !== "active") &&
     sendBlockedReason === null &&
     !modelUnavailable;
 
@@ -578,6 +588,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     // user is sending a prompt, so those go through as usual.
     if (
       usageLimitsOffered &&
+      props.replyTo === undefined &&
       isUsageLimitsCommand(props.draftMessage) &&
       props.draftAttachments.length === 0
     ) {
@@ -607,6 +618,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
   }, [
     props.draftMessage,
+    props.replyTo,
     props.draftAttachments.length,
     onChangeDraftMessage,
     openUsageLimits,
@@ -909,6 +921,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               className={isExpanded ? "px-[14px]" : "min-w-0 flex-1 px-[4px]"}
               layout={COMPOSER_LAYOUT_TRANSITION}
             >
+              {props.replyTo ? (
+                <MessageReplyPreview reference={props.replyTo} onCancel={props.onCancelReply} />
+              ) : null}
               <ComposerEditor
                 draftKey={composerOwnerKey}
                 environmentId={props.environmentId}

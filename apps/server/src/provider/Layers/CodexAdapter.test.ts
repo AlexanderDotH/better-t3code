@@ -1276,6 +1276,58 @@ const sessionErrorLayer = it.layer(
 );
 
 sessionErrorLayer("CodexAdapterLive session errors", (it) => {
+  for (const active of [true, false]) {
+    it.effect(`settles a transport failure with an active turn: ${active}`, () =>
+      Effect.gen(function* () {
+        const adapter = yield* CodexAdapter;
+        const threadId = asThreadId(`transport-error-${active}`);
+        const session = yield* adapter.startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          runtimeMode: "full-access",
+        });
+        const runtime = sessionRuntimeFactory.lastRuntime;
+        NodeAssert.ok(runtime);
+        const events = yield* adapter.streamEvents.pipe(
+          Stream.filter(
+            (event) =>
+              event.threadId === threadId &&
+              (event.type === "runtime.error" || event.type === "turn.completed"),
+          ),
+          Stream.take(active ? 2 : 1),
+          Stream.runCollect,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        const turnId = asTurnId("lost-transport-turn");
+        yield* runtime.emit({
+          id: asEventId(`transport-error-${active}`),
+          kind: "session",
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          method: "session/error",
+          message: "Codex communication failed.",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          ...(active ? { turnId } : {}),
+        });
+        const received = Array.from(yield* Fiber.join(events));
+        NodeAssert.deepStrictEqual(
+          received.map((event) => event.type),
+          active ? ["runtime.error", "turn.completed"] : ["runtime.error"],
+        );
+        for (const event of received) {
+          NodeAssert.equal(event.runtimeSessionId, session.runtimeSessionId);
+        }
+        const completed = received.find((event) => event.type === "turn.completed");
+        if (active) {
+          NodeAssert.ok(completed);
+          NodeAssert.equal(completed.turnId, turnId);
+          NodeAssert.equal(completed.payload.state, "failed");
+          NodeAssert.equal(completed.payload.errorMessage, "Codex communication failed.");
+        }
+      }),
+    );
+  }
+
   it.effect("advertises native thread forking and manual compaction", () =>
     Effect.gen(function* () {
       const adapter = yield* CodexAdapter;

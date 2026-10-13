@@ -22,6 +22,7 @@ import {
 } from "@t3tools/client-runtime/visualizations/model";
 
 import { uuidv4 } from "../../lib/uuid";
+import { useFontFamily } from "../../lib/useFontFamily";
 import { createPreviewQueue } from "./previewQueue";
 
 const RENDER_TIMEOUT_MS = 30_000;
@@ -31,6 +32,23 @@ const rendererAssets = {
   dot: () => require("../../../assets/visualizations/dot.html"),
   vega: () => require("../../../assets/visualizations/vega.html"),
 };
+let rendererFont: Promise<string> | null = null;
+
+function loadRendererFont() {
+  if (!rendererFont) {
+    rendererFont = (async () => {
+      const asset = await Asset.fromModule(
+        require("@expo-google-fonts/dm-sans/400Regular/DMSans_400Regular.ttf"),
+      ).downloadAsync();
+      if (!asset.localUri) throw new Error("The bundled diagram font could not be loaded.");
+      return new File(asset.localUri).base64();
+    })().catch((error: unknown) => {
+      rendererFont = null;
+      throw error;
+    });
+  }
+  return rendererFont;
+}
 
 export interface VisualizationRuntimeHandle {
   exportPng(): void;
@@ -44,24 +62,26 @@ export const VisualizationRuntime = forwardRef<
     request: VisualizationRenderRequest;
     onResult: (svg: string) => void;
     onError: (error: string) => void;
+    onExportError?: (error: string) => void;
     onPng?: (dataUrl: string) => void;
     onSvg?: (svg: string) => void;
   }
->(function VisualizationRuntime({ request, onResult, onError, onPng, onSvg }, ref) {
+>(function VisualizationRuntime({ request, onResult, onError, onExportError, onPng, onSvg }, ref) {
   const webView = useRef<WebView>(null);
   const [html, setHtml] = useState<{ family: string; text: string } | null>(null);
   const [ready, setReady] = useState(false);
   const family = request.format === "vega-lite" ? "vega" : request.format;
-  const callbacks = useRef({ onResult, onError, onPng, onSvg });
+  const fontFamily = useFontFamily("regular");
+  const callbacks = useRef({ onResult, onError, onExportError, onPng, onSvg });
   const pending = useRef(request.requestId);
   const pendingExports = useRef(new Map<string, "svg" | "png">());
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const webSource = useMemo(() => ({ html: html?.text ?? "" }), [html]);
   useLayoutEffect(() => {
-    callbacks.current = { onResult, onError, onPng, onSvg };
+    callbacks.current = { onResult, onError, onExportError, onPng, onSvg };
     if (pending.current !== request.requestId) pendingExports.current.clear();
     pending.current = request.requestId;
-  }, [onResult, onError, onPng, onSvg, request.requestId]);
+  }, [onResult, onError, onExportError, onPng, onSvg, request.requestId]);
   const finish = useCallback(() => {
     if (timer.current) clearTimeout(timer.current);
     timer.current = null;
@@ -72,10 +92,16 @@ export const VisualizationRuntime = forwardRef<
     void (async () => {
       const asset = await Asset.fromModule(rendererAssets[family]()).downloadAsync();
       if (!asset.localUri) throw new Error("The bundled diagram renderer could not be loaded.");
-      const text = await new File(asset.localUri).text();
+      const [text, font] = await Promise.all([
+        new File(asset.localUri).text(),
+        loadRendererFont().catch(() => null),
+      ]);
+      const fontStyle = font
+        ? `<style>@font-face{font-family:${JSON.stringify(fontFamily)};src:url(data:font/ttf;base64,${font}) format("truetype")}html,body{font-family:${JSON.stringify(fontFamily)},sans-serif}</style>`
+        : "";
       if (!cancelled) {
         setReady(false);
-        setHtml({ family, text });
+        setHtml({ family, text: text.replace("</head>", `${fontStyle}</head>`) });
       }
     })().catch((error: unknown) => {
       if (!cancelled)
@@ -84,7 +110,7 @@ export const VisualizationRuntime = forwardRef<
     return () => {
       cancelled = true;
     };
-  }, [family]);
+  }, [family, fontFamily]);
 
   useEffect(() => {
     pendingExports.current.clear();
@@ -100,9 +126,12 @@ export const VisualizationRuntime = forwardRef<
       if (pendingExports.current.size) return;
       const requestId = uuidv4();
       pendingExports.current.set(requestId, format);
+      finish();
       timer.current = setTimeout(() => {
         pendingExports.current.clear();
-        callbacks.current.onError("The diagram export took too long. Try again.");
+        (callbacks.current.onExportError ?? callbacks.current.onError)(
+          "The diagram export took too long. Try again.",
+        );
       }, RENDER_TIMEOUT_MS);
       webView.current?.postMessage(
         JSON.stringify({ channel: VISUALIZATION_CHANNEL, type: `export-${format}`, requestId }),
@@ -122,7 +151,7 @@ export const VisualizationRuntime = forwardRef<
         );
       },
     };
-  }, []);
+  }, [finish]);
 
   if (!html || html.family !== family) return null;
   return (
@@ -156,7 +185,8 @@ export const VisualizationRuntime = forwardRef<
           finish();
           const kind = pendingExports.current.get(response.requestId);
           pendingExports.current.delete(response.requestId);
-          if (response.type === "error") callbacks.current.onError(response.error);
+          if (response.type === "error")
+            (callbacks.current.onExportError ?? callbacks.current.onError)(response.error);
           if (kind === "svg" && response.type === "result") callbacks.current.onSvg?.(response.svg);
           if (kind === "png" && response.type === "png")
             callbacks.current.onPng?.(response.dataUrl);

@@ -1716,13 +1716,6 @@ export const makeCodexSessionRuntime = (
       );
     }
 
-    const clientContext = yield* CodexClient.layerChildProcess(child).pipe(
-      Layer.build,
-      Effect.provideService(Scope.Scope, runtimeScope),
-    );
-    const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
-      Effect.provide(clientContext),
-    );
     const serverNotifications = yield* makeBoundedProviderEventQueue<CodexServerNotification>({
       capacity: PROVIDER_SESSION_EVENT_QUEUE_CAPACITY,
       byteCapacity: PROVIDER_SESSION_EVENT_QUEUE_BYTE_CAPACITY,
@@ -1774,6 +1767,35 @@ export const makeCodexSessionRuntime = (
         method,
         message,
       });
+
+    const clientContext = yield* CodexClient.layerChildProcess(child, {
+      onTermination: (error) =>
+        Effect.gen(function* () {
+          if ((yield* Ref.get(closedRef)) || error._tag === "CodexAppServerProcessExitedError") {
+            return;
+          }
+          const session = yield* Ref.get(sessionRef);
+          yield* updateSession(sessionRef, {
+            status: "error",
+            activeTurnId: undefined,
+            lastError: error.message,
+          });
+          yield* emitEvent({
+            kind: "session",
+            threadId: options.threadId,
+            method: "session/error",
+            message: error.message,
+            ...(session.activeTurnId ? { turnId: session.activeTurnId } : {}),
+          });
+        }).pipe(
+          Effect.catch((cause) =>
+            Effect.logError("Failed to publish Codex transport termination", { cause }),
+          ),
+        ),
+    }).pipe(Layer.build, Effect.provideService(Scope.Scope, runtimeScope));
+    const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
+      Effect.provide(clientContext),
+    );
 
     const updateCollabChildMetadata = (
       agentThreadId: string,
@@ -3019,6 +3041,7 @@ export const makeCodexSessionRuntime = (
             ),
           });
           yield* Ref.set(lastAdditionalContextRef, params.additionalContext);
+          const sessionBeforeStart = yield* Ref.get(sessionRef);
           const rawResponse = yield* client.raw.request("turn/start", params);
           const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(
             Effect.mapError((error) =>
@@ -3031,11 +3054,15 @@ export const makeCodexSessionRuntime = (
           );
           const turnId = TurnId.make(response.turn.id);
           yield* updateSession(sessionRef, (session) => ({
-            status: "running",
-            // Codex accepts follow-ups while the current turn is still
-            // running. The response contains the queued turn id, but
-            // turn/interrupt only accepts the id that is active now.
-            activeTurnId: session.activeTurnId ?? turnId,
+            // A start response can arrive after completion. Only fill in the
+            // lifecycle state if no newer notification has replaced the session.
+            ...(session === sessionBeforeStart
+              ? {
+                  status: "running" as const,
+                  // A queued follow-up must preserve the turn that is active now.
+                  activeTurnId: session.activeTurnId ?? turnId,
+                }
+              : {}),
             ...(normalizedModel ? { model: normalizedModel } : {}),
           }));
           const resumedProviderThreadId = currentProviderThreadId(yield* Ref.get(sessionRef));

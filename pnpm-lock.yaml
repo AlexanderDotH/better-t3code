@@ -784,6 +784,9 @@ importers:
       '@types/culori':
         specifier: ^4.0.1
         version: 4.0.1
+      '@types/jsdom':
+        specifier: 30.0.0
+        version: 30.0.0
       '@types/mdast':
         specifier: ^4.0.4
         version: 4.0.4
@@ -909,6 +912,9 @@ importers:
       '@t3tools/shared':
         specifier: workspace:*
         version: link:../shared
+      culori:
+        specifier: ^4.0.2
+        version: 4.0.2
       effect:
         specifier: 4.0.0-rc.115
         version: 4.0.0-rc.115(patch_hash=0dfc4bb8ebd80fb3e06b91ef61346f5259517ab0f2437644fe95ae531084b1f5)
@@ -937,6 +943,9 @@ importers:
       '@plantuml/core':
         specifier: 1.2026.8
         version: 1.2026.8
+      '@types/culori':
+        specifier: ^4.0.1
+        version: 4.0.1
       '@types/jsdom':
         specifier: 30.0.0
         version: 30.0.0

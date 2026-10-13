@@ -1,6 +1,7 @@
 import { EnvironmentId, type ThreadPullRequestLink } from "@t3tools/contracts";
 import type { DesktopPreviewFavicon, PreviewSessionSnapshot } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
+import { JSDOM } from "jsdom";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -8,6 +9,7 @@ import {
   resolvePullRequestTabLink,
   shouldOpenDefaultBrowserProfileFromMenuClick,
   surfaceShortcutActionForKey,
+  surfaceShortcutHasBlockingLayer,
   surfaceShortcutTargetsTypingContext,
   tabMuteMenuItem,
 } from "./RightPanelTabs";
@@ -186,6 +188,41 @@ describe("surface shortcuts", () => {
       surfaceShortcutActionForKey(actions, shortcutEvent("b", { defaultPrevented: true })),
     ).toBeNull();
   });
+});
+
+describe("surface shortcut overlays", () => {
+  const popupSlots = [
+    "dialog-popup",
+    "alert-dialog-popup",
+    "command-dialog-popup",
+    "menu-popup",
+    "select-popup",
+    "popover-popup",
+    "combobox-popup",
+    "autocomplete-popup",
+  ];
+
+  it.each(popupSlots)(
+    "ignores a mounted closed %s, but respects it while open or closing",
+    (slot) => {
+      const dom = new JSDOM();
+      try {
+        const popup = dom.window.document.createElement("div");
+        popup.setAttribute("data-slot", slot);
+        dom.window.document.body.append(popup);
+        expect(surfaceShortcutHasBlockingLayer(dom.window.document)).toBe(false);
+        popup.setAttribute("data-open", "");
+        expect(surfaceShortcutHasBlockingLayer(dom.window.document)).toBe(true);
+        popup.removeAttribute("data-open");
+        popup.setAttribute("data-ending-style", "");
+        expect(surfaceShortcutHasBlockingLayer(dom.window.document)).toBe(true);
+        popup.removeAttribute("data-ending-style");
+        expect(surfaceShortcutHasBlockingLayer(dom.window.document)).toBe(false);
+      } finally {
+        dom.window.close();
+      }
+    },
+  );
 });
 
 describe("surface shortcut typing contexts", () => {

@@ -1,4 +1,4 @@
-import { memo, useState, useId, type CSSProperties } from "react";
+import { memo, useState, useId, type CSSProperties, type ReactNode } from "react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -45,12 +45,14 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   threadRef,
   cwd,
   workspaceRoot,
+  actions,
 }: {
   planMarkdown: string;
   environmentId: EnvironmentId;
   threadRef?: ScopedThreadRef | undefined;
   cwd: string | undefined;
   workspaceRoot: string | undefined;
+  actions?: ReactNode;
 }) {
   const translate = useInterfaceTranslator().message;
   const bluePlanBubble = useClientSettings((settings) =>
@@ -162,8 +164,8 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
         bluePlanBubble ? "border-primary/35 bg-primary/10" : "border-border/80 bg-card/70",
       )}
     >
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-2">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
           <Badge
             variant={bluePlanBubble ? "label" : "secondary"}
             style={bluePlanBubble ? ({ "--label": "var(--primary)" } as CSSProperties) : undefined}
@@ -179,28 +181,35 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
             {title}
           </h3>
         </div>
-        <Menu>
-          <MenuTrigger
-            render={
-              <Button
-                aria-label={translate("chat.plan.actions")}
-                size="icon-xs"
-                variant="outline"
-              />
-            }
-          >
-            <EllipsisIcon aria-hidden="true" className="size-4" />
-          </MenuTrigger>
-          <MenuPopup align="end">
-            <MenuItem onClick={handleCopyPlan}>
-              {isCopied ? translate("chat.plan.copied") : translate("chat.composer.copyClipboard")}
-            </MenuItem>
-            <MenuItem onClick={handleDownload}>{translate("chat.plan.downloadMarkdown")}</MenuItem>
-            <MenuItem onClick={openSaveDialog} disabled={!workspaceRoot || isSavingToWorkspace}>
-              {translate("chat.plan.saveWorkspace")}
-            </MenuItem>
-          </MenuPopup>
-        </Menu>
+        <div className="flex shrink-0 items-center gap-0.5">
+          {actions}
+          <Menu>
+            <MenuTrigger
+              render={
+                <Button
+                  aria-label={translate("chat.plan.actions")}
+                  size="icon-xs"
+                  variant="outline"
+                />
+              }
+            >
+              <EllipsisIcon aria-hidden="true" className="size-4" />
+            </MenuTrigger>
+            <MenuPopup align="end">
+              <MenuItem onClick={handleCopyPlan}>
+                {isCopied
+                  ? translate("chat.plan.copied")
+                  : translate("chat.composer.copyClipboard")}
+              </MenuItem>
+              <MenuItem onClick={handleDownload}>
+                {translate("chat.plan.downloadMarkdown")}
+              </MenuItem>
+              <MenuItem onClick={openSaveDialog} disabled={!workspaceRoot || isSavingToWorkspace}>
+                {translate("chat.plan.saveWorkspace")}
+              </MenuItem>
+            </MenuPopup>
+          </Menu>
+        </div>
       </div>
       <div className="mt-4">
         <div

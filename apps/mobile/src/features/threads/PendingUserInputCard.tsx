@@ -1,6 +1,6 @@
 import { RequestActionButton } from "./RequestActionButton";
 import { QuestionAttachments } from "./QuestionAttachments";
-import type { ApprovalRequestId, UserInputQuestion } from "@t3tools/contracts";
+import type { ApprovalRequestId, UserInputQuestion, SubagentId } from "@t3tools/contracts";
 import { useCallback, useRef } from "react";
 import { Platform, Pressable, ScrollView, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
@@ -28,6 +28,8 @@ import {
 } from "../../lib/threadActivity";
 
 export interface PendingUserInputCardProps {
+  readonly replyTopicId?: SubagentId;
+  readonly inline?: boolean;
   readonly pendingUserInput: PendingUserInput;
   /**
    * Constant while a request is pending (it reserves keyboard space), so the
@@ -155,8 +157,9 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
   // style): expanding animates existing views on the UI thread the same
   // frame the host starts the progress timing, instead of paying a React
   // mount + layout before anything moves.
-  const renderCard = EXPANDED_CARD_IS_OVERLAY || !props.collapsed;
-  const showBar = props.collapsed || EXPANDED_CARD_IS_OVERLAY;
+  const expandedCardIsOverlay = EXPANDED_CARD_IS_OVERLAY && !props.inline;
+  const renderCard = expandedCardIsOverlay || !props.collapsed;
+  const showBar = props.collapsed || expandedCardIsOverlay;
   // The bar renders UNDER the card (earlier in JSX), always opaque: while
   // expanded the opaque card covers it, and during the collapse slide the
   // card's top edge wipes past and reveals it — no opacity handoff, so no
@@ -310,6 +313,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                 })}
               </View>
               <QuestionAttachments
+                replyTopicId={props.replyTopicId}
                 requestId={props.pendingUserInput.requestId}
                 question={question}
                 questions={props.pendingUserInput.questions}
@@ -350,7 +354,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
   return (
     <View className="relative">
       {bar}
-      {EXPANDED_CARD_IS_OVERLAY ? (
+      {expandedCardIsOverlay ? (
         // Clipping window for the collapse slide: same footprint as the
         // expanded card, bottom edge on the bar's bottom edge. The sliding
         // card exits through the bottom edge instead of drawing over the

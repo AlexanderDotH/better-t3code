@@ -28,7 +28,9 @@ import { AppText as Text } from "../../components/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { environmentPresentations } from "../../state/presentation";
-import { ResetCredits, UsagePaceBar, UsagePaceDetails } from "./UsageLimitsSection";
+import { UsagePaceBar, UsagePaceDetails } from "./UsageLimitsSection";
+import { ResetManagementDialog } from "./ResetManagementDialog";
+import { resetManagementReport } from "@t3tools/shared/resetCredits";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { useProviderColors } from "./usageProviders";
 
@@ -148,7 +150,7 @@ function PoolWindowCard({
                 pending={Boolean(window.resetsAt)}
               />
               <View pointerEvents="none" className="absolute inset-0 opacity-35">
-                <UsagePaceBar window={window} now={now} baseColor={color} />
+                <UsagePaceBar window={window} now={now} baseColor={color} shape="segment" />
               </View>
               {remainingPercent(window) > 0 && remainingPercent(window) < 100 ? (
                 <View
@@ -375,6 +377,7 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
   const window = pool?.members.find((member) => member.account.key === accountKey)?.window;
   const reset = pool?.resets.find((candidate) => candidate.member.account.key === accountKey);
   const [revealed, setRevealed] = useState(false);
+  const [managingResets, setManagingResets] = useState(false);
   return (
     <SettingsScreen title="Account">
       <ScrollView
@@ -453,13 +456,20 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
             {account.redeem && account.limits.resetCredits ? (
               <View className="gap-3 rounded-[24px] border-continuous bg-card p-4">
                 <Text className="text-sm font-t3-medium text-foreground">Reset credits</Text>
-                <ResetCredits
-                  key={account.key}
-                  environmentId={account.redeem.environmentId}
-                  input={account.redeem.input}
-                  credits={account.limits.resetCredits}
-                  now={now}
-                />
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setManagingResets(true)}
+                  className="min-h-[44px] justify-center rounded-full bg-subtle-strong px-3 py-2"
+                >
+                  <Text className="text-sm font-t3-medium text-foreground">Manage resets</Text>
+                </Pressable>
+                {managingResets ? (
+                  <ResetManagementDialog
+                    report={resetManagementReport(account, now)}
+                    environmentId={account.redeem.environmentId}
+                    onClose={() => setManagingResets(false)}
+                  />
+                ) : null}
               </View>
             ) : null}
           </>

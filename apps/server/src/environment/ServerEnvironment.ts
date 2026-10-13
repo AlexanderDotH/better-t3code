@@ -270,6 +270,7 @@ export const make = Effect.gen(function* () {
       midChatProviderSwitching: true,
       responseStreamingModes: true,
       threadForking: true,
+      messageReplies: true,
       interruptedTurnRetry: true,
       messageEditing: true,
     },

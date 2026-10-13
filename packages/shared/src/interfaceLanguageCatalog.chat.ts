@@ -1,6 +1,54 @@
 import { defineLocalizedInterfaceCatalog } from "./interfaceLanguageCatalog.types.ts";
 
 export const chatInterfaceCatalog = defineLocalizedInterfaceCatalog({
+  "chat.reply.action": ["Reply", "Antworten", "Répondre"],
+  "chat.reply.replyingTo": [
+    "Replying to {{author}}",
+    "Antwort an {{author}}",
+    "Réponse à {{author}}",
+  ],
+  "chat.reply.cancel": ["Cancel reply", "Antwortbezug entfernen", "Annuler la réponse"],
+  "chat.reply.jumpToSource": [
+    "Go to original message",
+    "Zur ursprünglichen Nachricht",
+    "Aller au message d’origine",
+  ],
+  "chat.reply.sourceUnavailable": [
+    "Original message is unavailable",
+    "Ursprüngliche Nachricht ist nicht verfügbar",
+    "Le message d’origine est indisponible",
+  ],
+  "chat.reply.you": ["You", "Du", "Vous"],
+  "chat.reply.assistant": ["Assistant", "Assistent", "Assistant"],
+  "chat.reply.attachment": ["Attachment", "Anhang", "Pièce jointe"],
+  "chat.reply.topic": ["Reply topic", "Antwortthema", "Sujet de réponse"],
+  "chat.reply.status.pending": ["Waiting to start", "Start ausstehend", "En attente de démarrage"],
+  "chat.reply.status.running": ["Working on reply…", "Antwort wird erstellt…", "Réponse en cours…"],
+  "chat.reply.status.waiting": [
+    "Waiting for your response",
+    "Wartet auf deine Antwort",
+    "En attente de votre réponse",
+  ],
+  "chat.reply.status.completed": ["Reply completed", "Antwort abgeschlossen", "Réponse terminée"],
+  "chat.reply.status.interrupted": [
+    "Reply interrupted",
+    "Antwort unterbrochen",
+    "Réponse interrompue",
+  ],
+  "chat.reply.status.failed": ["Reply failed", "Antwort fehlgeschlagen", "Échec de la réponse"],
+  "chat.reply.stop": ["Stop reply", "Antwort stoppen", "Arrêter la réponse"],
+  "chat.reply.retry": ["Retry reply", "Antwort erneut versuchen", "Réessayer la réponse"],
+  "chat.reply.continue": ["Continue reply topic", "Antwortthema fortsetzen", "Poursuivre le sujet"],
+  "chat.reply.sendFailed": [
+    "Couldn’t send reply. Your draft is saved.",
+    "Antwort konnte nicht gesendet werden. Dein Entwurf bleibt erhalten.",
+    "Impossible d’envoyer la réponse. Votre brouillon est conservé.",
+  ],
+  "chat.reply.unavailable": [
+    "Replies are unavailable on this server",
+    "Antworten sind auf diesem Server nicht verfügbar",
+    "Les réponses sont indisponibles sur ce serveur",
+  ],
   "chat.planEstimate.duration": [
     "Approx. {{min}}–{{max}} min after starting",
     "Ca. {{min}}–{{max}} Min. ab Start",

@@ -84,11 +84,18 @@ function fixture(
                   credit("later", "2099-02-01T00:00:00Z"),
                   credit("first"),
                   credit("expired", "2000-01-01T00:00:00Z"),
-                  { ...credit("used"), status: "redeemed" },
+                  {
+                    ...credit("used"),
+                    status: "redeemed",
+                    redeemed_at: "2026-09-01T10:00:00Z",
+                    granted_at: "2026-08-01T10:00:00Z",
+                    title: "Full reset",
+                  },
                 ],
               }
             : {
                 plan_type: "pro",
+                credits: { has_credits: true, unlimited: false, balance: "42.50" },
                 rate_limit: {
                   secondary_window: {
                     used_percent: 78,
@@ -119,10 +126,26 @@ describe("CLIProxyAPI built-in management API", () => {
         const test = fixture();
         const api = yield* test.api;
         const result = yield* api.readAccounts(config);
-        expect(result.map((account) => account.usageLimits.resetCredits)).toEqual([
+        expect(result.map((account) => account.usageLimits.resetCredits)).toMatchObject([
           { availableCount: 2, nextCreditId: "first", nextExpiresAt: "2099-01-01T00:00:00.000Z" },
           { availableCount: 2, nextCreditId: "first", nextExpiresAt: "2099-01-01T00:00:00.000Z" },
         ]);
+        expect(result[0]?.usageLimits.accountCredits).toEqual({
+          hasCredits: true,
+          unlimited: false,
+          balance: "42.50",
+        });
+        expect(
+          result[0]?.usageLimits.resetCredits?.credits?.find((entry) => entry.id === "used"),
+        ).toEqual({
+          id: "used",
+          resetType: "codexRateLimits",
+          status: "redeemed",
+          title: "Full reset",
+          grantedAt: "2026-08-01T10:00:00.000Z",
+          redeemedAt: "2026-09-01T10:00:00.000Z",
+          expiresAt: "2099-01-01T00:00:00.000Z",
+        });
         expect(result[0]?.usageLimits.windows).toMatchObject([
           { id: "secondary", usedPercent: 78, kind: "weekly" },
         ]);

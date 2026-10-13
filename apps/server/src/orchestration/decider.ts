@@ -47,6 +47,12 @@ import {
   requireThreadNotArchived,
 } from "./commandInvariants.ts";
 import { projectEvent } from "./projector.ts";
+import {
+  hasActiveMessageReplies,
+  messageReplyRequestedEvent,
+  prepareMessageReplySummary,
+  validateMessageReplyCommand,
+} from "./messageReplyDecision.ts";
 import { threadHasQueuedTurnStart } from "./ThreadSettlementPolicy.ts";
 import { findProjectAgentClaimConflicts } from "../projectAgent/claimRules.ts";
 
@@ -67,7 +73,8 @@ function isActiveProjectAgentThread(thread: OrchestrationReadModel["threads"][nu
     isAvailableProjectAgentThread(thread) &&
     (thread.session?.status === "starting" ||
       thread.session?.status === "running" ||
-      thread.latestTurn?.state === "running")
+      thread.latestTurn?.state === "running" ||
+      hasActiveMessageReplies(thread))
   );
 }
 
@@ -80,7 +87,27 @@ function activeProjectAgentTurnId(
   ) {
     return thread.session.activeTurnId;
   }
-  return thread.latestTurn?.state === "running" ? thread.latestTurn.turnId : null;
+  if (thread.latestTurn?.state === "running") return thread.latestTurn.turnId;
+  return (
+    thread.subagents.find(
+      (topic) =>
+        topic.messageReply !== undefined &&
+        (topic.status === "starting" || topic.status === "running" || topic.status === "waiting") &&
+        topic.latestTurn !== null,
+    )?.latestTurn?.turnId ?? null
+  );
+}
+
+function isActiveProjectAgentTurn(thread: OrchestrationThread, turnId: TurnId): boolean {
+  return (
+    activeProjectAgentTurnId(thread) === turnId ||
+    thread.subagents.some(
+      (topic) =>
+        topic.messageReply !== undefined &&
+        (topic.status === "starting" || topic.status === "running" || topic.status === "waiting") &&
+        topic.latestTurn?.turnId === turnId,
+    )
+  );
 }
 
 function currentProjectAgentLease(
@@ -481,7 +508,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         project.deletedAt !== null ||
         thread.projectId !== command.projectId ||
         !isActiveProjectAgentThread(thread) ||
-        activeProjectAgentTurnId(thread) !== command.turnId
+        !isActiveProjectAgentTurn(thread, command.turnId)
       ) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
@@ -1806,6 +1833,47 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.reply.start":
+    case "thread.reply.interrupt":
+    case "thread.reply.retry":
+    case "thread.reply.approval.respond":
+    case "thread.reply.user-input.respond":
+    case "thread.reply.user-input.dismiss": {
+      const thread = yield* validateMessageReplyCommand(readModel, command);
+      const requested = messageReplyRequestedEvent(
+        command,
+        yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+      );
+      const lifecycleEvents =
+        command.type === "thread.reply.start" || command.type === "thread.reply.retry"
+          ? yield* makeThreadLifecycleResetEvents({
+              thread,
+              occurredAt: command.createdAt,
+              commandId: command.commandId,
+            })
+          : [];
+      const startingEvents: PlannedOrchestrationEvent[] = [];
+      if (command.type === "thread.reply.start" || command.type === "thread.reply.retry") {
+        const subagent = yield* prepareMessageReplySummary(readModel, thread, command);
+        startingEvents.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.subagent-upserted",
+          payload: { threadId: command.threadId, subagent },
+        });
+      }
+      return [...lifecycleEvents, ...startingEvents, requested];
+    }
+
     case "thread.turn.start": {
       if (isImportedAgentSessionMessageId(command.message.messageId)) {
         return yield* new OrchestrationCommandInvariantError({
@@ -2367,6 +2435,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      if (hasActiveMessageReplies(thread)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Stop the active reply tasks before restoring this conversation or workspace.",
+        });
+      }
       const targetCheckpoint = thread.checkpoints.find(
         (checkpoint) => checkpoint.checkpointTurnCount === command.turnCount,
       );
@@ -2639,6 +2713,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           ...(command.subagentId !== undefined ? { subagentId: command.subagentId } : {}),
           messageId: command.messageId,
+          ...(command.replyTo !== undefined ? { replyTo: command.replyTo } : {}),
+          ...(command.replyTopicId !== undefined ? { replyTopicId: command.replyTopicId } : {}),
           role: command.type === "thread.message.reasoning.delta" ? "reasoning" : "assistant",
           text: command.delta,
           turnId: command.turnId ?? null,
@@ -2674,6 +2750,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           ...(command.subagentId !== undefined ? { subagentId: command.subagentId } : {}),
           messageId: command.messageId,
+          ...(command.replyTo !== undefined ? { replyTo: command.replyTo } : {}),
+          ...(command.replyTopicId !== undefined ? { replyTopicId: command.replyTopicId } : {}),
           role: command.type === "thread.message.reasoning.complete" ? "reasoning" : "assistant",
           text: "",
           turnId: command.turnId ?? null,
@@ -2777,6 +2855,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           messageId: command.message.id,
           role: command.message.role,
           text: command.message.text,
+          ...(command.message.context !== undefined ? { context: command.message.context } : {}),
+          ...(command.message.replyTo !== undefined ? { replyTo: command.message.replyTo } : {}),
+          ...(command.message.replyTopicId !== undefined
+            ? { replyTopicId: command.message.replyTopicId }
+            : {}),
           ...(command.message.attachments !== undefined
             ? { attachments: command.message.attachments }
             : {}),
@@ -2841,6 +2924,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           messageId: command.message.id,
           role: command.message.role,
           text: command.message.text,
+          ...(command.message.context !== undefined ? { context: command.message.context } : {}),
+          ...(command.message.replyTo !== undefined ? { replyTo: command.message.replyTo } : {}),
+          ...(command.message.replyTopicId !== undefined
+            ? { replyTopicId: command.message.replyTopicId }
+            : {}),
           ...(command.message.attachments !== undefined
             ? { attachments: command.message.attachments }
             : {}),

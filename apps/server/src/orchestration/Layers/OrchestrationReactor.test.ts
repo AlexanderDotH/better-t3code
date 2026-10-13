@@ -14,6 +14,7 @@ import * as PullRequestSyncReactor from "../PullRequestSyncReactor.ts";
 import * as ThreadPullRequestReactor from "../ThreadPullRequestReactor.ts";
 import { OrchestrationReactor } from "../Services/OrchestrationReactor.ts";
 import { makeOrchestrationReactor } from "./OrchestrationReactor.ts";
+import { MessageReplyReactor } from "./MessageReplyReactor.ts";
 import * as AgentAwarenessRelay from "../../relay/AgentAwarenessRelay.ts";
 import { StorageCleanup } from "../../storageCleanup.ts";
 
@@ -54,6 +55,15 @@ describe("OrchestrationReactor", () => {
           Layer.succeed(ProviderCommandReactor, {
             start: () => {
               started.push("provider-command-reactor");
+              return Effect.void;
+            },
+            drain: Effect.void,
+          }),
+        ),
+        Layer.provideMerge(
+          Layer.succeed(MessageReplyReactor, {
+            start: () => {
+              started.push("message-reply-reactor");
               return Effect.void;
             },
             drain: Effect.void,
@@ -125,6 +135,7 @@ describe("OrchestrationReactor", () => {
     expect(started).toEqual([
       "provider-runtime-ingestion",
       "provider-command-reactor",
+      "message-reply-reactor",
       "checkpoint-reactor",
       "thread-deletion-reactor",
       "thread-pull-request-reactor",

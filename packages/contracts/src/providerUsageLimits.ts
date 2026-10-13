@@ -44,11 +44,32 @@ export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
  * has rate-limited the user unfairly; redeeming one clears the current
  * windows. Only present when the provider reports them at all.
  */
+export const ServerProviderResetCredit = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  status: Schema.Literals(["available", "redeeming", "redeemed", "expired", "unknown"]),
+  resetType: TrimmedNonEmptyString,
+  title: Schema.optional(TrimmedNonEmptyString),
+  description: Schema.optional(TrimmedNonEmptyString),
+  grantedAt: Schema.optional(IsoDateTime),
+  expiresAt: Schema.optional(IsoDateTime),
+  redeemedAt: Schema.optional(IsoDateTime),
+});
+export type ServerProviderResetCredit = typeof ServerProviderResetCredit.Type;
+
+export const ServerProviderAccountCredits = Schema.Struct({
+  hasCredits: Schema.Boolean,
+  unlimited: Schema.Boolean,
+  balance: Schema.optional(TrimmedNonEmptyString),
+});
+export type ServerProviderAccountCredits = typeof ServerProviderAccountCredits.Type;
+
 export const ServerProviderResetCredits = Schema.Struct({
   availableCount: NonNegativeInt,
   nextExpiresAt: Schema.optional(IsoDateTime),
   /** Pins hub redemption to the displayed credit, including retries from another client. */
   nextCreditId: Schema.optional(TrimmedNonEmptyString),
+  /** Missing means the provider reported only a count; the detail list may be partial. */
+  credits: Schema.optional(Schema.Array(ServerProviderResetCredit).check(Schema.isMaxLength(200))),
 });
 export type ServerProviderResetCredits = typeof ServerProviderResetCredits.Type;
 
@@ -65,6 +86,7 @@ export const ServerProviderUsageLimits = Schema.Struct({
   /** Opaque credential identity when the provider does not report an account. */
   credentialFingerprint: Schema.optional(TrimmedNonEmptyString),
   resetCredits: Schema.optional(ServerProviderResetCredits),
+  accountCredits: Schema.optional(ServerProviderAccountCredits),
   /** Provider-owned usage settings when quota windows are not available to the client. */
   externalUsage: Schema.optional(
     Schema.Struct({
@@ -89,6 +111,7 @@ export type ServerProviderUsageLimits = typeof ServerProviderUsageLimits.Type;
  */
 export const ProviderUsageLimitsUpdate = Schema.Struct({
   windows: Schema.Array(ServerProviderUsageWindow),
+  accountCredits: Schema.optional(ServerProviderAccountCredits),
 });
 export type ProviderUsageLimitsUpdate = typeof ProviderUsageLimitsUpdate.Type;
 

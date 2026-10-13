@@ -20,6 +20,7 @@ import * as NetAddress from "effect/unstable/net/NetAddress";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
+import { replyContext, replyOwnerThreadId } from "./testFixtures/messageReply.ts";
 
 const environmentId = EnvironmentId.make("environment-1");
 const makeFakeHttpServer = (hostname: string, port = 43123) =>
@@ -394,5 +395,30 @@ it.effect("selects the full relevant profile when an optional coding group is en
       });
       expect(credential.config.endpoint).toBe("http://127.0.0.1:43123/mcp/workspace-no-preview");
     }
+  }),
+);
+
+it.effect("retains authenticated reply execution metadata when the parent session is revoked", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000);
+    const parentThreadId = ThreadId.make("reply-parent");
+    const issued = yield* registry.issue({
+      threadId: replyOwnerThreadId,
+      workspaceContextThreadId: parentThreadId,
+      messageReply: replyContext,
+      workspaceOnly: false,
+      workspaceWriteEnabled: true,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      provider: CODEX_DRIVER_KIND,
+    });
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+    yield* registry.revokeThread(parentThreadId);
+    expect(yield* registry.resolve(token)).toMatchObject({
+      ownerThreadId: replyOwnerThreadId,
+      threadId: parentThreadId,
+      messageReply: replyContext,
+    });
+    yield* registry.revokeThread(replyOwnerThreadId);
+    expect(yield* registry.resolve(token)).toBeUndefined();
   }),
 );

@@ -1,6 +1,7 @@
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
+import * as Option from "effect/Option";
 import * as Sink from "effect/Sink";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
@@ -9,6 +10,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as CodexError from "../errors.ts";
 
 const encoder = new TextEncoder();
+const PROCESS_EXIT_STATUS_TIMEOUT = "1 second";
 
 export const makeChildStdio = (handle: ChildProcessSpawner.ChildProcessHandle) =>
   Stdio.make({
@@ -60,4 +62,7 @@ export const makeTerminationError = (
         cause,
       }),
     onSuccess: (code) => new CodexError.CodexAppServerProcessExitedError({ code, pid: handle.pid }),
-  });
+  }).pipe(
+    Effect.timeoutOption(PROCESS_EXIT_STATUS_TIMEOUT),
+    Effect.map(Option.getOrElse(() => new CodexError.CodexAppServerInputStreamEndedError({}))),
+  );

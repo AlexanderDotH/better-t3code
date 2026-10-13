@@ -5,18 +5,25 @@ import {
   parseVisualization,
   visualizationDataToCsv,
   type VisualizationAction,
+  type VisualizationAppearance,
   type VisualizationDocument,
   type VisualizationDataset,
   type VisualizationFormat,
 } from "@t3tools/client-runtime/visualizations/model";
 import { visualizationLabels } from "@t3tools/client-runtime/visualizations/labels";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { visualizationPreviewCacheKey } from "@t3tools/client-runtime/visualizations/appearance";
+import { readVisualizationSvgDimensions } from "@t3tools/client-runtime/visualizations/sizing";
+import { prepareVisualizationSvgExport } from "@t3tools/client-runtime/visualizations/export";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   CodeIcon,
   CopyIcon,
+  DownloadIcon,
+  EllipsisIcon,
   Maximize2Icon,
   MoveIcon,
   ScanIcon,
+  XIcon,
   ZoomInIcon,
   ZoomOutIcon,
 } from "lucide-react";
@@ -24,6 +31,9 @@ import { useInterfaceLanguage } from "~/interfaceLanguageSync";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { Button } from "../ui/button";
 import { Dialog, DialogClose, DialogDescription, DialogPopup, DialogTitle } from "../ui/dialog";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
+import { stackedThreadToast, toastManager } from "../ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { downloadMedia, readMediaPng } from "../media/mediaContent";
 import {
   createRenderRequest,
@@ -33,6 +43,10 @@ import {
   renderVisualizationPreview,
   requestVisualizationFrame,
 } from "./renderer";
+import {
+  useVisualizationAppearance,
+  VISUALIZATION_SURFACE_CLASS_NAME,
+} from "./useVisualizationAppearance";
 
 type Labels = ReturnType<typeof visualizationLabels>;
 type Theme = "light" | "dark";
@@ -46,7 +60,41 @@ async function saveBlob(blob: Blob, filename: string) {
   }
 }
 
+function reportExportFailure(cause: unknown, labels: Labels) {
+  toastManager.add(
+    stackedThreadToast({
+      type: "error",
+      title: labels.exportFailed,
+      ...(cause instanceof Error ? { description: cause.message } : {}),
+    }),
+  );
+}
+
+async function copySource(source: string, labels: Labels) {
+  try {
+    const copied = await writeTextToClipboard(source, "diagram source");
+    toastManager.add(
+      copied
+        ? { type: "success", title: labels.copied }
+        : stackedThreadToast({ type: "error", title: labels.copyFailed }),
+    );
+  } catch {
+    toastManager.add(stackedThreadToast({ type: "error", title: labels.copyFailed }));
+  }
+}
+
+function hasDiagramDetails(document: VisualizationDocument) {
+  return Boolean(
+    document.metadata.summary ||
+    document.format === "vega" ||
+    document.format === "vega-lite" ||
+    document.metadata.limitations.length ||
+    document.datasets.length,
+  );
+}
+
 function DiagramDetails({ document, labels }: { document: VisualizationDocument; labels: Labels }) {
+  if (!hasDiagramDetails(document)) return null;
   const { metadata, datasets } = document;
   const isData = document.format === "vega" || document.format === "vega-lite";
   return (
@@ -85,7 +133,6 @@ const DATA_PAGE_SIZE = 100;
 function SourceDataTable({ dataset, labels }: { dataset: VisualizationDataset; labels: Labels }) {
   const [expanded, setExpanded] = useState(false);
   const [page, setPage] = useState(0);
-  const [error, setError] = useState<string>();
   const start = page * DATA_PAGE_SIZE;
   return (
     <details
@@ -105,9 +152,7 @@ function SourceDataTable({ dataset, labels }: { dataset: VisualizationDataset; l
                 void saveBlob(
                   new Blob([visualizationDataToCsv(dataset)], { type: "text/csv;charset=utf-8" }),
                   "diagram-data.csv",
-                ).catch((cause: unknown) =>
-                  setError(cause instanceof Error ? cause.message : labels.exportFailed),
-                );
+                ).catch((cause: unknown) => reportExportFailure(cause, labels));
               }}
             >
               {labels.exportCsv}
@@ -137,11 +182,6 @@ function SourceDataTable({ dataset, labels }: { dataset: VisualizationDataset; l
               </>
             )}
           </div>
-          {error && (
-            <p role="alert" className="px-3 pb-2 text-destructive">
-              {error}
-            </p>
-          )}
           <div
             className="max-h-64 overflow-auto"
             tabIndex={0}
@@ -189,46 +229,127 @@ function SourceDataTable({ dataset, labels }: { dataset: VisualizationDataset; l
   );
 }
 
-function FollowUpActions({
-  labels,
-  onAction,
+function DiagramIconButton({
+  label,
+  tooltip = label,
+  children,
+  disabled,
+  pressed,
+  onClick,
 }: {
-  labels: Labels;
-  onAction?: ((action: VisualizationAction) => void) | undefined;
+  label: string;
+  tooltip?: string;
+  children: ReactNode;
+  disabled?: boolean;
+  pressed?: boolean;
+  onClick: () => void;
 }) {
-  if (!onAction) return null;
-  const groups = [
-    {
-      label: labels.learning,
-      actions: [
-        ["simpler", labels.simpler],
-        ["step-by-step", labels.stepByStep],
-        ["check-understanding", labels.checkUnderstanding],
-      ],
-    },
-    {
-      label: labels.analysis,
-      actions: [
-        ["break-down", labels.breakDown],
-        ["compare-periods", labels.comparePeriods],
-        ["explain-assumptions", labels.explainAssumptions],
-      ],
-    },
-  ] as const;
   return (
-    <div className="grid gap-2 border-t border-border pt-3 sm:grid-cols-2">
-      {groups.map((group) => (
-        <div key={group.label} role="group" aria-label={group.label}>
-          <p className="mb-1 text-xs font-medium text-muted-foreground">{group.label}</p>
-          <div className="flex flex-wrap gap-1">
-            {group.actions.map(([action, label]) => (
-              <Button key={action} variant="ghost" size="compact" onClick={() => onAction(action)}>
-                {label}
-              </Button>
-            ))}
-          </div>
-        </div>
-      ))}
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant={pressed ? "secondary" : "ghost-muted"}
+            size="icon-xs"
+            aria-label={label}
+            aria-pressed={pressed}
+            disabled={disabled}
+            onClick={onClick}
+          />
+        }
+      >
+        {children}
+      </TooltipTrigger>
+      <TooltipPopup>{tooltip}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function DiagramActionsMenu({
+  source,
+  showSource,
+  sourceRequired = false,
+  onSourceChange,
+  canExport,
+  onExport,
+  labels,
+}: {
+  source: string;
+  showSource: boolean;
+  sourceRequired?: boolean;
+  onSourceChange: (show: boolean) => void;
+  canExport: boolean;
+  onExport: (format: "svg" | "png") => void;
+  labels: Labels;
+}) {
+  return (
+    <Menu>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <MenuTrigger
+              render={<Button variant="ghost-muted" size="icon-xs" aria-label={labels.actions} />}
+            />
+          }
+        >
+          <EllipsisIcon />
+        </TooltipTrigger>
+        <TooltipPopup>{labels.actions}</TooltipPopup>
+      </Tooltip>
+      <MenuPopup align="end">
+        <MenuItem disabled={sourceRequired} onClick={() => onSourceChange(!showSource)}>
+          <CodeIcon />
+          {showSource ? labels.hideSource : labels.showSource}
+        </MenuItem>
+        <MenuItem onClick={() => void copySource(source, labels)}>
+          <CopyIcon />
+          {labels.copySource}
+        </MenuItem>
+        <MenuSeparator />
+        <MenuItem disabled={!canExport} onClick={() => onExport("svg")}>
+          <DownloadIcon />
+          {labels.exportSvg}
+        </MenuItem>
+        <MenuItem disabled={!canExport} onClick={() => onExport("png")}>
+          <DownloadIcon />
+          {labels.exportPng}
+        </MenuItem>
+      </MenuPopup>
+    </Menu>
+  );
+}
+
+function DiagramSource({ source, labels }: { source: string; labels: Labels }) {
+  return (
+    <pre
+      className="max-h-96 overflow-auto rounded-md bg-muted p-3 text-xs focus-visible:outline-ring"
+      tabIndex={0}
+      role="region"
+      aria-label={labels.source}
+    >
+      <code>{source}</code>
+    </pre>
+  );
+}
+
+function DiagramError({
+  error,
+  labels,
+  onFix,
+}: {
+  error: string;
+  labels: Labels;
+  onFix?: (() => void) | undefined;
+}) {
+  return (
+    <div role="alert" className="space-y-2">
+      <p className="text-sm text-destructive">{labels.renderFailed}</p>
+      <p className="whitespace-pre-wrap font-mono text-xs text-muted-foreground">{error}</p>
+      {onFix && (
+        <Button size="compact" variant="outline" onClick={onFix}>
+          {labels.fix}
+        </Button>
+      )}
     </div>
   );
 }
@@ -236,41 +357,51 @@ function FollowUpActions({
 function FullscreenDiagram({
   document,
   theme,
+  appearance,
   labels,
   onAction,
 }: {
   document: VisualizationDocument;
   theme: Theme;
+  appearance: VisualizationAppearance;
   labels: Labels;
   onAction?: ((action: VisualizationAction, error?: string) => void) | undefined;
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const lifetime = useRef<AbortController | null>(null);
-  const [ready, setReady] = useState(false);
-  const [error, setError] = useState<string>();
-  const [pan, setPan] = useState(false);
+  const request = useMemo(
+    () => createRenderRequest(document.format, document.source, theme, true, appearance),
+    [document, theme, appearance],
+  );
+  const renderKey = useMemo(() => visualizationPreviewCacheKey(request), [request]);
+  const [result, setResult] = useState<{ key: string; error?: string }>();
+  const [panning, setPanning] = useState<{ key: string; enabled: boolean }>();
+  const [showSource, setShowSource] = useState(false);
+  const currentResult = result?.key === renderKey ? result : undefined;
+  const error = currentResult?.error;
+  const sourceVisible = showSource || Boolean(error);
+  const ready = Boolean(currentResult && !error);
+  const pan = panning?.key === renderKey && panning.enabled;
+
   useEffect(() => {
     const controller = new AbortController();
     lifetime.current = controller;
     const target = frame.current;
-    if (!target) return;
+    if (!target) return () => controller.abort();
     void loadVisualizationFrame(target, document.format, controller.signal)
-      .then(() =>
-        renderInFrame(
-          target,
-          createRenderRequest(document.format, document.source, theme, true),
-          controller.signal,
-        ),
-      )
+      .then(() => renderInFrame(target, request, controller.signal))
       .then(() => {
-        if (!controller.signal.aborted) setReady(true);
+        if (!controller.signal.aborted) setResult({ key: renderKey });
       })
       .catch((cause: unknown) => {
-        if (!controller.signal.aborted)
-          setError(cause instanceof Error ? cause.message : labels.renderFailed);
+        if (controller.signal.aborted) return;
+        setResult({
+          key: renderKey,
+          error: cause instanceof Error ? cause.message : labels.renderFailed,
+        });
       });
     return () => controller.abort();
-  }, [document, theme, labels.renderFailed]);
+  }, [document.format, request, renderKey, labels.renderFailed]);
 
   const view = (action: "zoom-in" | "zoom-out" | "fit" | "pan" | "select") => {
     frame.current?.contentWindow?.postMessage(
@@ -286,7 +417,7 @@ function FullscreenDiagram({
   const exportImage = async (format: "svg" | "png") => {
     const target = frame.current;
     const signal = lifetime.current?.signal;
-    if (!target || !signal) return;
+    if (!ready || !target || !signal) return;
     try {
       const response = await requestVisualizationFrame(
         target,
@@ -301,77 +432,69 @@ function FullscreenDiagram({
         await saveBlob(new Blob([response.svg], { type: "image/svg+xml" }), "diagram.svg");
       else if (response.type === "png") await downloadMedia(response.dataUrl, "diagram.png");
     } catch (cause) {
-      if (!signal.aborted) setError(cause instanceof Error ? cause.message : labels.exportFailed);
+      if (!signal.aborted) reportExportFailure(cause, labels);
     }
   };
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-1" role="group" aria-label={labels.title}>
-        <Button
-          variant="ghost"
-          size="compact"
-          aria-label={labels.copySource}
-          onClick={() => {
-            void writeTextToClipboard(document.source, "diagram source")
-              .then((copied) => {
-                if (!copied) setError(labels.copyFailed);
-              })
-              .catch(() => setError(labels.copyFailed));
-          }}
-        >
-          <CopyIcon />
-        </Button>
-        <Button
-          variant="outline"
-          size="compact"
-          disabled={!ready}
-          aria-label={labels.zoomOut}
-          onClick={() => view("zoom-out")}
-        >
-          <ZoomOutIcon />
-        </Button>
-        <Button
-          variant="outline"
-          size="compact"
-          disabled={!ready}
-          aria-label={labels.zoomIn}
-          onClick={() => view("zoom-in")}
-        >
-          <ZoomInIcon />
-        </Button>
-        <Button variant="outline" size="compact" disabled={!ready} onClick={() => view("fit")}>
-          <ScanIcon />
-          {labels.fit}
-        </Button>
-        <Button
-          variant="outline"
-          size="compact"
-          disabled={!ready}
-          aria-pressed={pan}
-          onClick={() => {
-            setPan(!pan);
-            view(pan ? "select" : "pan");
-          }}
-        >
-          <MoveIcon />
-          {labels.panHint}
-        </Button>
-        <Button
-          variant="ghost"
-          size="compact"
-          disabled={!ready}
-          onClick={() => void exportImage("svg")}
-        >
-          {labels.exportSvg}
-        </Button>
-        <Button
-          variant="ghost"
-          size="compact"
-          disabled={!ready}
-          onClick={() => void exportImage("png")}
-        >
-          {labels.exportPng}
-        </Button>
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+        <DialogTitle size="sm">
+          {labels.title}{" "}
+          <span className="font-mono text-muted-foreground">· {document.format}</span>
+        </DialogTitle>
+        <div className="flex items-center gap-0.5" role="group" aria-label={labels.actions}>
+          <DiagramIconButton
+            label={labels.zoomOut}
+            disabled={!ready}
+            onClick={() => view("zoom-out")}
+          >
+            <ZoomOutIcon />
+          </DiagramIconButton>
+          <DiagramIconButton
+            label={labels.zoomIn}
+            disabled={!ready}
+            onClick={() => view("zoom-in")}
+          >
+            <ZoomInIcon />
+          </DiagramIconButton>
+          <DiagramIconButton label={labels.fit} disabled={!ready} onClick={() => view("fit")}>
+            <ScanIcon />
+          </DiagramIconButton>
+          <DiagramIconButton
+            label={labels.pan}
+            tooltip={labels.panHint}
+            disabled={!ready}
+            pressed={Boolean(pan)}
+            onClick={() => {
+              setPanning({ key: renderKey, enabled: !pan });
+              view(pan ? "select" : "pan");
+            }}
+          >
+            <MoveIcon />
+          </DiagramIconButton>
+          <DiagramActionsMenu
+            source={document.source}
+            showSource={sourceVisible}
+            sourceRequired={Boolean(error)}
+            onSourceChange={setShowSource}
+            canExport={ready}
+            onExport={(format) => void exportImage(format)}
+            labels={labels}
+          />
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <DialogClose
+                  render={<Button variant="ghost-muted" size="icon-xs" aria-label={labels.close} />}
+                />
+              }
+            >
+              <XIcon />
+            </TooltipTrigger>
+            <TooltipPopup>{labels.close}</TooltipPopup>
+          </Tooltip>
+        </div>
       </div>
       {!ready && !error && (
         <p role="status" className="text-sm text-muted-foreground">
@@ -379,33 +502,25 @@ function FullscreenDiagram({
         </p>
       )}
       {error && (
-        <div role="alert" className="text-sm text-destructive">
-          {labels.renderFailed}: {error}
-          {onAction && (
-            <Button variant="outline" size="compact" onClick={() => onAction("fix", error)}>
-              {labels.fix}
-            </Button>
-          )}
-        </div>
+        <DiagramError
+          error={error}
+          labels={labels}
+          onFix={onAction ? () => onAction("fix", error) : undefined}
+        />
       )}
       <iframe
         ref={frame}
         title={document.metadata.summary || labels.interactive}
         sandbox="allow-scripts"
-        className="min-h-64 w-full flex-1 rounded-md border border-border bg-background"
+        className="min-h-64 w-full flex-1 rounded-md border border-border"
+        style={{ backgroundColor: appearance.background }}
       />
-      <div className="max-h-[30vh] space-y-3 overflow-auto">
-        <DiagramDetails document={document} labels={labels} />
-        <details>
-          <summary className="cursor-pointer text-xs text-muted-foreground">
-            {labels.source}
-          </summary>
-          <pre className="mt-2 max-h-64 overflow-auto rounded-md bg-muted p-3 text-xs">
-            <code>{document.source}</code>
-          </pre>
-        </details>
-        <FollowUpActions labels={labels} onAction={onAction} />
-      </div>
+      {(sourceVisible || hasDiagramDetails(document)) && (
+        <div className="max-h-[30vh] space-y-3 overflow-auto">
+          {sourceVisible && <DiagramSource source={document.source} labels={labels} />}
+          <DiagramDetails document={document} labels={labels} />
+        </div>
+      )}
     </div>
   );
 }
@@ -424,6 +539,7 @@ function VisualizationContent({
   const { language } = useInterfaceLanguage();
   const locale = language === "de" ? "de" : "en";
   const labels = visualizationLabels(locale);
+  const appearance = useVisualizationAppearance(theme);
   const parsed = useMemo(() => {
     try {
       return { document: parseVisualization(format, source) };
@@ -431,32 +547,52 @@ function VisualizationContent({
       return { error: cause instanceof Error ? cause.message : "Invalid diagram." };
     }
   }, [format, source]);
-  const [render, setRender] = useState<{ svg?: string; url?: string; error?: string }>({});
+  const request = useMemo(
+    () => createRenderRequest(format, source, theme, false, appearance),
+    [format, source, theme, appearance],
+  );
+  const renderKey = useMemo(() => visualizationPreviewCacheKey(request), [request]);
+  const [render, setRender] = useState<{
+    key: string;
+    svg?: string;
+    url?: string;
+    error?: string;
+  }>();
   const [open, setOpen] = useState(false);
   const [showSource, setShowSource] = useState(false);
-  const [notice, setNotice] = useState<string>();
-  const svgUrl = render.url;
+  const currentRender = render?.key === renderKey ? render : undefined;
+  const svgUrl = currentRender?.url;
+  const dimensions = useMemo(
+    () => (currentRender?.svg ? readVisualizationSvgDimensions(currentRender.svg) : null),
+    [currentRender],
+  );
+
   useEffect(() => {
     if (!parsed.document) return;
     const controller = new AbortController();
     let previewUrl: string | undefined;
-    void renderVisualizationPreview(createRenderRequest(format, source, theme), controller.signal)
+    void renderVisualizationPreview(request, controller.signal)
       .then((svg) => {
         if (!controller.signal.aborted) {
           previewUrl = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
-          setRender({ svg, url: previewUrl });
+          setRender({ key: renderKey, svg, url: previewUrl });
         }
       })
       .catch((cause: unknown) => {
-        if (!controller.signal.aborted)
-          setRender({ error: cause instanceof Error ? cause.message : labels.renderFailed });
+        if (controller.signal.aborted) return;
+        setRender({
+          key: renderKey,
+          error: cause instanceof Error ? cause.message : labels.renderFailed,
+        });
       });
     return () => {
       controller.abort();
       if (previewUrl) URL.revokeObjectURL(previewUrl);
     };
-  }, [parsed, format, source, theme, labels.renderFailed]);
-  const error = parsed.error || render.error;
+  }, [parsed, request, renderKey, labels.renderFailed]);
+
+  const error = parsed.error || currentRender?.error;
+  const sourceVisible = showSource || Boolean(error);
   const ask = onAction
     ? (action: VisualizationAction, renderError?: string) => {
         onAction(
@@ -472,99 +608,100 @@ function VisualizationContent({
       }
     : undefined;
   const exportPreview = async (type: "svg" | "png") => {
-    if (!svgUrl) return;
+    if (!currentRender?.svg) return;
+    let exportUrl: string | undefined;
     try {
-      if (type === "svg") await downloadMedia(svgUrl, "diagram.svg");
-      else await saveBlob(await readMediaPng(svgUrl), "diagram.png");
+      const svg = prepareVisualizationSvgExport(currentRender.svg, appearance.background);
+      exportUrl = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+      if (type === "svg") await downloadMedia(exportUrl, "diagram.svg");
+      else await saveBlob(await readMediaPng(exportUrl), "diagram.png");
     } catch (cause) {
-      setNotice(cause instanceof Error ? cause.message : labels.exportFailed);
+      reportExportFailure(cause, labels);
+    } finally {
+      if (exportUrl) URL.revokeObjectURL(exportUrl);
     }
   };
+
   return (
     <section
-      className="my-3 overflow-hidden rounded-lg border border-border bg-background text-foreground"
+      className={
+        VISUALIZATION_SURFACE_CLASS_NAME +
+        " my-[0.65rem] overflow-hidden rounded-lg text-foreground leading-snug"
+      }
       aria-label={labels.title}
     >
-      <div className="flex flex-wrap items-center gap-1 border-b border-border bg-muted/40 px-3 py-2">
-        <span className="mr-auto text-xs font-medium">
-          {labels.title} <span className="font-mono text-muted-foreground">· {format}</span>
-        </span>
-        {isExperimentalVisualization(format, source) && (
-          <span className="rounded border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
-            {labels.experimental}
+      <div className="chat-markdown-codeblock-header flex items-center justify-between gap-2 pt-1.5 pr-1.5 pl-3 select-none">
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate font-mono text-2xs">
+            {labels.title} · {format}
           </span>
-        )}
-        <Button
-          variant="ghost"
-          size="compact"
-          aria-pressed={showSource}
-          onClick={() => setShowSource(!showSource)}
+          {isExperimentalVisualization(format, source) && (
+            <span className="shrink-0 text-2xs text-muted-foreground">{labels.experimental}</span>
+          )}
+        </span>
+        <div
+          className="flex shrink-0 items-center gap-0.5"
+          role="group"
+          aria-label={labels.actions}
         >
-          <CodeIcon />
-          {labels.source}
-        </Button>
-        <Button
-          variant="ghost"
-          size="compact"
-          aria-label={labels.copySource}
-          onClick={() => {
-            void writeTextToClipboard(source, "diagram source")
-              .then((copied) => setNotice(copied ? labels.copied : labels.copyFailed))
-              .catch(() => setNotice(labels.copyFailed));
-          }}
-        >
-          <CopyIcon />
-        </Button>
-        <Button variant="ghost" size="compact" disabled={!render.svg} onClick={() => setOpen(true)}>
-          <Maximize2Icon />
-          {labels.fullscreen}
-        </Button>
+          <DiagramIconButton
+            label={labels.fullscreen}
+            disabled={!currentRender?.svg}
+            onClick={() => setOpen(true)}
+          >
+            <Maximize2Icon />
+          </DiagramIconButton>
+          <DiagramActionsMenu
+            source={source}
+            showSource={sourceVisible}
+            sourceRequired={Boolean(error)}
+            onSourceChange={setShowSource}
+            canExport={Boolean(currentRender?.svg)}
+            onExport={(type) => void exportPreview(type)}
+            labels={labels}
+          />
+        </div>
       </div>
       <div className="space-y-3 p-3">
         {error ? (
-          <div role="alert" className="space-y-2">
-            <p className="text-sm text-destructive">
-              {labels.renderFailed}: {error}
-            </p>
-            {ask && (
-              <Button size="compact" variant="outline" onClick={() => ask("fix", error)}>
-                {labels.fix}
-              </Button>
-            )}
-          </div>
-        ) : svgUrl ? (
-          <img
-            src={svgUrl}
-            alt={parsed.document?.metadata.summary || `${labels.title} (${format})`}
-            className="mx-auto max-h-96 max-w-full"
+          <DiagramError
+            error={error}
+            labels={labels}
+            onFix={ask ? () => ask("fix", error) : undefined}
           />
+        ) : svgUrl ? (
+          dimensions ? (
+            <div
+              className="max-h-[384px] overflow-auto focus-visible:outline-ring"
+              tabIndex={0}
+              role="region"
+              aria-label={labels.preview}
+            >
+              <div className="flex w-max min-w-full justify-center">
+                <img
+                  src={svgUrl}
+                  alt={parsed.document?.metadata.summary || labels.title + " (" + format + ")"}
+                  width={dimensions.width}
+                  height={dimensions.height}
+                  style={{ width: dimensions.width, height: dimensions.height }}
+                  className="block max-w-none shrink-0"
+                />
+              </div>
+            </div>
+          ) : (
+            <img
+              src={svgUrl}
+              alt={parsed.document?.metadata.summary || labels.title + " (" + format + ")"}
+              className="mx-auto block max-h-96 max-w-full"
+            />
+          )
         ) : (
           <p role="status" className="py-6 text-center text-sm text-muted-foreground">
             {labels.loading}
           </p>
         )}
-        {(showSource || error) && (
-          <pre className="max-h-96 overflow-auto rounded-md bg-muted p-3 text-xs">
-            <code>{source}</code>
-          </pre>
-        )}
-        {render.svg && (
-          <div className="flex gap-1">
-            <Button size="compact" variant="ghost" onClick={() => void exportPreview("svg")}>
-              {labels.exportSvg}
-            </Button>
-            <Button size="compact" variant="ghost" onClick={() => void exportPreview("png")}>
-              {labels.exportPng}
-            </Button>
-          </div>
-        )}
-        {notice && (
-          <p role="status" className="text-xs text-muted-foreground">
-            {notice}
-          </p>
-        )}
+        {sourceVisible && <DiagramSource source={source} labels={labels} />}
         {parsed.document && <DiagramDetails document={parsed.document} labels={labels} />}
-        <FollowUpActions labels={labels} onAction={ask} />
       </div>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogPopup
@@ -572,15 +709,7 @@ function VisualizationContent({
           bottomStickOnMobile={false}
           showCloseButton={false}
         >
-          <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
-            <div className="flex items-center justify-between gap-4">
-              <DialogTitle size="sm">
-                {labels.title} · {format}
-              </DialogTitle>
-              <DialogClose render={<Button variant="outline" size="compact" />}>
-                {labels.close}
-              </DialogClose>
-            </div>
+          <div className="flex min-h-0 flex-1 flex-col p-4">
             <DialogDescription className="sr-only">
               {parsed.document?.metadata.summary || labels.interactive}
             </DialogDescription>
@@ -588,6 +717,7 @@ function VisualizationContent({
               <FullscreenDiagram
                 document={parsed.document}
                 theme={theme}
+                appearance={appearance}
                 labels={labels}
                 onAction={ask}
               />

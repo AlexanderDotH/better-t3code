@@ -13,6 +13,7 @@ import type {
   MessageId,
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
+  OrchestrationEvent,
   OrchestrationProject,
   OrchestrationProjectShell,
   OrchestrationReadModel,
@@ -20,6 +21,7 @@ import type {
   OrchestrationSearchThreadsResult,
   OrchestrationShellSnapshot,
   OrchestrationSubagentDetail,
+  OrchestrationSubagentSummary,
   OrchestrationSubagentDetailSnapshot,
   OrchestrationSubagentDetailWindow,
   OrchestrationThread,
@@ -91,6 +93,15 @@ export interface ProjectionThreadDetailQuery {
  * ProjectionSnapshotQueryShape - Service API for read-model snapshots.
  */
 export interface ProjectionSnapshotQueryShape {
+  readonly getMessageReplyRecoveryThreadIds: () => Effect.Effect<
+    ReadonlyArray<ThreadId>,
+    ProjectionRepositoryError
+  >;
+  readonly getMessageReplyRequestEvents: (
+    threadId: ThreadId,
+    throughSequence: number,
+  ) => Effect.Effect<ReadonlyArray<OrchestrationEvent>, ProjectionRepositoryError>;
+
   /** Read the latest request or resolution without loading the thread history. */
   readonly getUserInputActivity: (input: {
     readonly threadId: ThreadId;
@@ -237,8 +248,8 @@ export interface ProjectionSnapshotQueryShape {
   >;
 
   /**
-   * Check whether another retained root thread in the same project is actively
-   * starting or running work.
+   * Check whether another root thread or a reply topic in the same project is
+   * actively working, including topics belonging to this thread.
    */
   readonly hasActiveProjectAgentPeer: (
     threadId: ThreadId,
@@ -297,6 +308,11 @@ export interface ProjectionSnapshotQueryShape {
   /**
    * Read a single retained (active or archived, but not deleted) thread detail snapshot by id.
    */
+  readonly getRecentThreadMessages: (
+    threadId: ThreadId,
+    limit: number,
+  ) => Effect.Effect<ReadonlyArray<OrchestrationMessage>, ProjectionRepositoryError>;
+
   readonly getThreadDetailById: (
     threadId: ThreadId,
     query?: ProjectionThreadDetailQuery,
@@ -307,10 +323,13 @@ export interface ProjectionSnapshotQueryShape {
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<ThreadForkHistory>, ProjectionRepositoryError>;
 
-  /**
-   * Read one retained subagent and its transcript without hydrating the
-   * transcripts of sibling agents.
-   */
+  /** Read only the subagent metadata needed for runtime authorization. */
+  readonly getSubagentSummaryById: (
+    threadId: ThreadId,
+    subagentId: SubagentId,
+  ) => Effect.Effect<Option.Option<OrchestrationSubagentSummary>, ProjectionRepositoryError>;
+
+  /** Read one subagent transcript without hydrating sibling transcripts. */
   readonly getSubagentDetailById: (
     threadId: ThreadId,
     subagentId: SubagentId,

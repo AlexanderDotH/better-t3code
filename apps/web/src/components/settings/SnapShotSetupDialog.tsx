@@ -195,7 +195,7 @@ export function SnapShotSetupDialog({
                       : macPermissions
                         ? macPermissionsReady
                           ? "Test a snapshot of the current window. If macOS asks to bypass its window picker, choose Allow. The test image is discarded."
-                          : "Allow each permission, then continue."
+                          : "Allow each permission, then continue. If you already allowed them in System Settings, quit and reopen T3 Code, then return to setup."
                         : "Allow access when prompted to start capturing windows.",
                 };
   const title = step === "access" ? accessCopy.title : "Choose your shortcut";

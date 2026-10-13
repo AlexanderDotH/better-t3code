@@ -1,16 +1,88 @@
+// @vitest-environment jsdom
+
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
 import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { expect, it, vi } from "vite-plus/test";
 
-import { UsagePaceBar } from "./UsagePaceDetails";
+import { TooltipProvider } from "../ui/tooltip";
+import { UsagePaceBar, UsagePaceDetails, UsagePaceHeaderLabel } from "./UsagePaceDetails";
 
 const settings = vi.hoisted(() => ({ usagePacingEnabled: true, usagePacingWorkdayHours: 8 }));
 vi.mock("../../hooks/useSettings", () => ({ useClientSettings: () => settings }));
 vi.mock("../../hooks/useInterfaceTranslator", () => ({
   useInterfaceTranslator: () => createInterfaceTranslator({ language: "en", locale: "en-US" }),
 }));
+
+it("shows unavailable pace without daily figures and restores them when complete history arrives", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const at = (day: number, hour: number) => new Date(2026, 8, day, hour).toISOString();
+  const window: ServerProviderUsageWindow = {
+    id: "weekly",
+    kind: "weekly",
+    label: "Weekly",
+    usedPercent: 6,
+    windowDurationMins: 10_080,
+    resetsAt: at(20, 0),
+    usageHistorySource: "codex",
+  };
+  const now = Date.parse(at(19, 14));
+  const partialHistory = [
+    { at: at(19, 12), usedPercent: 5, hasUsage: true },
+    { at: at(19, 13), usedPercent: 6, hasUsage: true },
+  ];
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const render = (usageHistory: ServerProviderUsageWindow["usageHistory"]) =>
+    act(() => {
+      const current = { ...window, usageHistory };
+      root.render(
+        <TooltipProvider>
+          <UsagePaceHeaderLabel window={current} now={now} />
+          <UsagePaceBar window={current} now={now} />
+          <UsagePaceDetails window={current} now={now} statusInHeader />
+        </TooltipProvider>,
+      );
+    });
+  try {
+    for (const usageHistory of [undefined, [], partialHistory]) {
+      await render(usageHistory);
+      expect(container.textContent).toContain("Pace unavailable");
+      expect(container.textContent).not.toContain("%");
+      expect(container.querySelector('[role="meter"]')).toBeNull();
+    }
+    await render([{ at: at(18, 22), usedPercent: 5 }, ...partialHistory]);
+    expect(container.textContent).not.toContain("Pace unavailable");
+    expect(container.textContent).toContain("left today");
+    expect(container.textContent).toContain("budget today");
+    expect(container.textContent).toContain("catch-up left");
+    expect(container.querySelector('[role="meter"]')).not.toBeNull();
+
+    await render(partialHistory);
+    expect(container.textContent).toContain("Pace unavailable");
+    expect(container.textContent).not.toContain("%");
+    expect(container.querySelector('[role="meter"]')).toBeNull();
+
+    settings.usagePacingEnabled = false;
+    await render(partialHistory);
+    expect(container.textContent).toBe("");
+  } finally {
+    settings.usagePacingEnabled = true;
+    await act(() => root.unmount());
+    container.remove();
+    vi.unstubAllGlobals();
+  }
+});
 
 it("keeps today's allowance at the right edge of the weekly remainder while spending catch-up first", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -52,18 +124,18 @@ it("keeps today's allowance at the right edge of the weekly remainder while spen
       }
       const weeklyRemaining = Math.round(100 - usedPercent);
       const drawnWidth = Number.parseFloat(meter.props.style.width);
-      expect(drawnWidth - (remaining < 0 ? weeklyRemaining : 0)).toBeCloseTo(Math.abs(remaining));
-      const notches = meter.findAll((element) =>
-        element.props.className?.includes("usage-pace-notch"),
-      );
-      expect(notches).toHaveLength(remaining > 0 && weeklyRemaining > remaining ? 1 : 0);
-      expect(Number.parseFloat(meter.props.style.right)).toBeCloseTo(
-        Math.round(usedPercent) + Math.min(0, remaining),
-      );
+      expect(drawnWidth).toBeCloseTo(weeklyRemaining + Math.max(0, -remaining));
+      expect(Number.parseFloat(meter.props.style.right) + drawnWidth).toBeCloseTo(100);
+      const coloredSegments = meter
+        .findAllByType("div")
+        .filter(
+          (element) =>
+            element.props.style?.flex !== undefined &&
+            element.props.style.backgroundColor === undefined,
+        );
       expect(
-        meter.findAllByType("div").find((element) => element.props.style?.flex !== undefined)?.props
-          .style.flex,
-      ).toBe(100);
+        coloredSegments.reduce((total, segment) => total + segment.props.style.flex, 0),
+      ).toBeCloseTo(Math.abs(remaining));
       expect(
         meter.findAllByType("div").some((element) => element.props.className.includes(color)),
       ).toBe(true);
@@ -87,20 +159,22 @@ it("keeps today's allowance at the right edge of the weekly remainder while spen
       const remaining = 200 / 7 - usedPercent;
       expect(meter.props["aria-label"]).toContain("remaining, including catch-up");
       expect(meter.props["aria-valuenow"]).toBeCloseTo(remaining);
-      expect(Number.parseFloat(meter.props.style.width)).toBeCloseTo(remaining);
+      expect(Number.parseFloat(meter.props.style.width)).toBe(100 - usedPercent);
       expect(Number.parseFloat(meter.props.style.right)).toBe(usedPercent);
       const segments = meter
         .findAllByType("div")
-        .filter((element) => element.props.style?.flex !== undefined);
+        .filter(
+          (element) =>
+            element.props.style?.flex !== undefined &&
+            element.props.style.backgroundColor === undefined,
+        );
       expect(segments.reduce((total, segment) => total + segment.props.style.flex, 0)).toBeCloseTo(
-        100,
+        remaining,
       );
       if (usedPercent < 100 / 7) {
         expect(segments).toHaveLength(2);
-        expect(segments[0]!.props.style.flex).toBeCloseTo((100 / 7 / remaining) * 100);
-        expect(segments[1]!.props.style.flex).toBeCloseTo(
-          ((100 / 7 - usedPercent) / remaining) * 100,
-        );
+        expect(segments[0]!.props.style.flex).toBeCloseTo(100 / 7);
+        expect(segments[1]!.props.style.flex).toBeCloseTo(100 / 7 - usedPercent);
         expect(segments[1]!.props.className).toContain("opacity-50");
       } else {
         expect(segments).toHaveLength(1);

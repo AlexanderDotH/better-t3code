@@ -5,6 +5,8 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
+import * as Sink from "effect/Sink";
+import * as PlatformError from "effect/PlatformError";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -36,6 +38,64 @@ const decodeConsumeRateLimitResetCreditResponse = Schema.decodeUnknownEffect(
 const decodeModelListResponse = Schema.decodeUnknownEffect(CodexSchema.V2ModelListResponse);
 
 it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
+  it.effect("fails pending and future requests when writing to the peer fails", () =>
+    Effect.gen(function* () {
+      const { stdio, output } = yield* makeInMemoryStdio();
+      const termination = yield* Deferred.make<CodexError.CodexAppServerError>();
+      const releaseWrite = yield* Deferred.make<void>();
+      const brokenOutput = Stdio.make({
+        args: stdio.args,
+        stdin: stdio.stdin,
+        stdout: () =>
+          Sink.forEach((chunk: string | Uint8Array) =>
+            Queue.offer(output, String(chunk)).pipe(
+              Effect.andThen(Deferred.await(releaseWrite)),
+              Effect.andThen(
+                Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "Unknown",
+                    module: "Stdio",
+                    method: "write",
+                    cause: new Error("broken pipe"),
+                  }),
+                ),
+              ),
+            ),
+          ),
+        stderr: () => Sink.drain,
+      });
+      let terminationCount = 0;
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio: brokenOutput,
+        onTermination: (error) =>
+          Effect.sync(() => {
+            terminationCount += 1;
+          }).pipe(Effect.andThen(Deferred.succeed(termination, error)), Effect.asVoid),
+      });
+      const pending = yield* transport.request("thread/read", {}).pipe(Effect.forkScoped);
+      yield* Queue.take(output);
+      yield* Deferred.succeed(releaseWrite, undefined);
+      const error = yield* Deferred.await(termination);
+      assert.instanceOf(error, CodexError.CodexAppServerTransportError);
+      assert.equal(error.operation, "write-output-stream");
+      const requestError = yield* Fiber.join(pending).pipe(
+        Effect.match({
+          onFailure: (failure) => failure,
+          onSuccess: () => assert.fail("Request succeeded"),
+        }),
+      );
+      assert.strictEqual(requestError, error);
+      const futureError = yield* transport.request("thread/read", {}).pipe(
+        Effect.match({
+          onFailure: (failure) => failure,
+          onSuccess: () => assert.fail("Request succeeded"),
+        }),
+      );
+      assert.strictEqual(futureError, error);
+      assert.equal(terminationCount, 1);
+    }),
+  );
+
   it.effect("maps account usage responses to the upstream token usage schema", () =>
     Effect.gen(function* () {
       assert.strictEqual(

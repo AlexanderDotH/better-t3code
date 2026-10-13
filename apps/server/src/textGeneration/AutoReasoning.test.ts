@@ -2,7 +2,11 @@ import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { TestClock } from "effect/testing";
-import { DecisionGenerationError, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  DecisionGenerationError,
+  ProviderInstanceId,
+  type DecisionAnswer,
+} from "@t3tools/contracts";
 import { selectManualReasoningEffort, stripAutoReasoning } from "@t3tools/shared/model";
 import { expect } from "vite-plus/test";
 
@@ -83,7 +87,10 @@ it("builds a bounded preflight prompt from prior outcomes and current work items
 
   expect(built.estimatedTokens).toBeLessThanOrEqual(AUTO_REASONING_MAX_ESTIMATED_TOKENS);
   expect(built.prompt).toContain("<t3code_auto_reasoning_call>");
-  expect(built.prompt).toContain("lowest adequate supported effort");
+  expect(built.prompt).toContain("reliably covers the entire remaining coding-agent turn");
+  expect(built.prompt).toContain("Assess the combined workload");
+  expect(built.prompt).toContain("Multiple requested checks");
+  expect(built.prompt).toContain("choose the higher supported level");
   expect(built.prompt).toContain("low, medium, high, xhigh");
   expect(built.prompt).toContain("Interaction mode: plan");
   expect(built.prompt).toContain("image | architecture.png | image/png | 42 bytes");
@@ -116,7 +123,7 @@ it("builds a bounded provider-neutral decision request with one choice per live 
   expect(built.request.state).toContain("The contract is complete.");
   expect(built.request.state).toContain("CURRENT_PROMPT_TAIL");
   expect(built.request.questions[AUTO_REASONING_DECISION_QUESTION_ID]).toMatchObject({
-    instructions: expect.stringContaining("lowest adequate supported effort"),
+    instructions: expect.stringContaining("reliably covers the entire remaining coding-agent turn"),
     criteria: {
       low: expect.stringContaining("Rank 1 of 4"),
       medium: expect.stringContaining("Rank 2 of 4"),
@@ -158,6 +165,65 @@ it("keeps the concrete fallback while stripping Auto from effective selections",
     ],
   });
 });
+
+it.each([
+  {
+    answer: { choice: "low", confidence: 0.98 },
+    allowed: ["low", "medium", "high"],
+    effort: "low",
+  },
+  { answer: { choice: "low", confidence: 0.8 }, allowed: ["low", "medium", "high"], effort: "low" },
+  {
+    answer: { choice: "low", confidence: 0.79 },
+    allowed: ["low", "medium", "high"],
+    effort: "medium",
+  },
+  {
+    answer: { choice: "none", confidence: 0.4 },
+    allowed: ["none", "minimal", "low", "high"],
+    effort: "high",
+  },
+  { answer: { choice: "low", confidence: 0.6 }, allowed: ["low", "high"], effort: "high" },
+  {
+    answer: { choice: "low", probabilities: { low: 0.45, medium: 0.55 } },
+    allowed: ["low", "medium"],
+    effort: "medium",
+  },
+  { answer: { choice: "low" }, allowed: ["low", "medium"], effort: "low" },
+  {
+    answer: { choice: "high", confidence: 0.3 },
+    allowed: ["low", "medium", "high"],
+    effort: "high",
+  },
+  { answer: { choice: "low", confidence: 0.4 }, allowed: ["none", "low"], effort: "low" },
+] satisfies Array<{ answer: DecisionAnswer; allowed: string[]; effort: string }>)(
+  "resolves $answer with supported efforts $allowed to $effort",
+  ({ answer, allowed, effort }) => {
+    const resolution = applyAutoReasoningDecisionResult({
+      agentModelSelection: selection,
+      decisionModelSelection: promptedDecisionSelection,
+      allowedEfforts: allowed,
+      result: {
+        model: promptedDecisionSelection.model,
+        answers: { [AUTO_REASONING_DECISION_QUESTION_ID]: answer },
+        usage: { totalTokens: 34 },
+      },
+      durationMs: 15,
+    });
+    expect(resolution.effectiveSelection).toEqual(
+      selectManualReasoningEffort(stripAutoReasoning(selection), effort),
+    );
+    expect(resolution.diagnostic).toMatchObject({
+      effort,
+      fallback: false,
+      usage: { totalTokens: 34 },
+      durationMs: 15,
+    });
+    expect(buildAutoReasoningActivityPayload(resolution.diagnostic!).autoReasoningEffort).toBe(
+      effort,
+    );
+  },
+);
 
 it("applies a valid native decision and preserves the compatibility activity payload", () => {
   const resolution = applyAutoReasoningDecisionResult({
@@ -206,27 +272,61 @@ it("applies a valid native decision and preserves the compatibility activity pay
   });
 });
 
-it("uses the concrete effort when a decision answer is missing or invalid", () => {
+it("uses a supported medium fallback when the decision answer is invalid", () => {
   const resolution = applyAutoReasoningDecisionResult({
     agentModelSelection: selection,
     decisionModelSelection: promptedDecisionSelection,
-    allowedEfforts: ["low", "high"],
+    allowedEfforts: ["low", "medium", "high"],
     result: {
       model: "gpt-5.6-luna",
-      answers: { [AUTO_REASONING_DECISION_QUESTION_ID]: { choice: "medium" } },
+      answers: { [AUTO_REASONING_DECISION_QUESTION_ID]: { choice: "xhigh" } },
       usage: { totalTokens: 42 },
     },
     durationMs: -1,
   });
 
-  expect(resolution.effectiveSelection).toEqual(stripAutoReasoning(selection));
+  expect(resolution.effectiveSelection).toEqual(selectManualReasoningEffort(selection, "medium"));
   expect(resolution.diagnostic).toEqual({
     routerModel: { instanceId: "codex", model: "gpt-5.6-luna" },
-    effort: "low",
+    effort: "medium",
     durationMs: 0,
     fallback: true,
   });
 });
+
+it.each([
+  { automatic: true, concrete: "low", allowed: ["low", "medium", "high"], effort: "medium" },
+  { automatic: true, concrete: "low", allowed: ["low", "high"], effort: "high" },
+  {
+    automatic: true,
+    concrete: "xhigh",
+    allowed: ["low", "medium", "high", "xhigh"],
+    effort: "xhigh",
+  },
+  { automatic: true, concrete: "low", allowed: [], effort: "low" },
+  { automatic: true, concrete: "low", allowed: ["low"], effort: "low" },
+  { automatic: false, concrete: "low", allowed: ["low", "medium", "high"], effort: "low" },
+])(
+  "keeps the fallback supported without reducing a concrete $concrete choice",
+  ({ automatic, concrete, allowed, effort }) => {
+    const configured = {
+      ...selection,
+      options: [
+        { id: "reasoningEffort", value: concrete },
+        { id: "t3AutoReasoning", value: automatic },
+        { id: "serviceTier", value: "priority" },
+      ],
+    };
+    const resolution = applyAutoReasoningDecisionResult({
+      agentModelSelection: configured,
+      decisionModelSelection: promptedDecisionSelection,
+      allowedEfforts: allowed,
+      durationMs: 1,
+    });
+    expect(resolution.effectiveSelection).toEqual(selectManualReasoningEffort(configured, effort));
+    expect(resolution.diagnostic).toMatchObject({ effort, fallback: true });
+  },
+);
 
 it("keeps the null setting fallback to text generation while honoring an explicit decision model", () => {
   expect(
@@ -308,7 +408,7 @@ it.effect("forwards prompted and native selections through the same decision con
   }),
 );
 
-it.effect("falls back to the concrete effort on a decision error", () =>
+it.effect("uses supported medium reasoning when the automatic decision fails", () =>
   Effect.gen(function* () {
     const decide: AutoReasoningDecide = () =>
       Effect.fail(
@@ -328,12 +428,14 @@ it.effect("falls back to the concrete effort on a decision error", () =>
       decide,
     );
 
-    expect(resolution?.diagnostic).toMatchObject({ effort: "low", fallback: true });
-    expect(resolution?.effectiveSelection).toEqual(stripAutoReasoning(selection));
+    expect(resolution?.diagnostic).toMatchObject({ effort: "medium", fallback: true });
+    expect(resolution?.effectiveSelection).toEqual(
+      selectManualReasoningEffort(selection, "medium"),
+    );
   }),
 );
 
-it.effect("falls back to the concrete effort when the decision times out", () =>
+it.effect("uses supported medium reasoning when the automatic decision times out", () =>
   Effect.gen(function* () {
     const decide: AutoReasoningDecide = () => Effect.never;
     const fiber = yield* resolveAutoReasoningDecision(
@@ -349,7 +451,9 @@ it.effect("falls back to the concrete effort when the decision times out", () =>
     yield* Effect.yieldNow;
     yield* TestClock.adjust("16 seconds");
     const resolution = yield* Fiber.join(fiber);
-    expect(resolution?.diagnostic).toMatchObject({ effort: "low", fallback: true });
-    expect(resolution?.effectiveSelection).toEqual(stripAutoReasoning(selection));
+    expect(resolution?.diagnostic).toMatchObject({ effort: "medium", fallback: true });
+    expect(resolution?.effectiveSelection).toEqual(
+      selectManualReasoningEffort(selection, "medium"),
+    );
   }),
 );

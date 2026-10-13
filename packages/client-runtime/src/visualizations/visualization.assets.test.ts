@@ -8,12 +8,21 @@ import { beforeAll, expect, test } from "vite-plus/test";
 import { VISUALIZATION_EXAMPLES } from "./examples.ts";
 import {
   isVisualizationResponse,
+  parseVisualization,
   VISUALIZATION_CHANNEL,
   type VisualizationRequest,
   type VisualizationResponse,
 } from "./model.ts";
 
 const root = new URL("../../../../", import.meta.url);
+const appearance = {
+  fontFamily: "T3FixtureSans",
+  background: "#101c2c",
+  foreground: "#e8edf5",
+  mutedForeground: "#a0b3ca",
+  surface: "#26374d",
+  border: "#657a96",
+};
 
 beforeAll(() => {
   NodeChildProcess.execFileSync("node", ["scripts/build-visualizations.mjs", "--if-needed"], {
@@ -27,8 +36,9 @@ for (const [format, exampleId] of [
   ["plantuml", "plantuml-component"],
   ["dot", "dot-directed"],
   ["vega", "vega-lite-selection"],
+  ["vega", "vega-custom-analysis"],
 ] as const) {
-  test(`${format} shipped HTML boots, renders and exports through the host protocol`, async () => {
+  test(`${exampleId} shipped HTML boots, renders and exports through the host protocol`, async () => {
     const html = await NodeFSP.readFile(
       new URL(`apps/web/public/visualizations/${format}.html`, root),
       "utf8",
@@ -120,22 +130,51 @@ for (const [format, exampleId] of [
       );
       return response;
     };
+    const assertAppearance = (svg: string, standalone = false) => {
+      const document = new dom.window.DOMParser().parseFromString(svg, "image/svg+xml");
+      expect(document.querySelector("parsererror")).toBeNull();
+      const output = document.documentElement.outerHTML.toLowerCase();
+      expect(output).toContain(appearance.fontFamily.toLowerCase());
+      expect(output).toContain(appearance.foreground);
+      expect(output).toMatch(/font-size\s*[:=]\s*["']?14(?:\.0+)?(?:px)?\b/);
+      if (format === "mermaid" && !standalone) {
+        expect(document.documentElement.style.backgroundColor).toBe("");
+      } else if (document.documentElement.style.backgroundColor) {
+        expect(document.documentElement.style.backgroundColor).toBe("rgb(16, 28, 44)");
+      } else {
+        const canvasColors = [
+          ...document.querySelectorAll("svg > rect, rect.background, .graph > polygon"),
+        ].map((element) => element.getAttribute("fill")?.toLowerCase());
+        expect(canvasColors).toContain(appearance.background);
+      }
+    };
     try {
       expect(errors).toEqual([]);
       expect(await receive("ready")).toEqual({ channel: VISUALIZATION_CHANNEL, type: "ready" });
       const example = VISUALIZATION_EXAMPLES.find((entry) => entry.id === exampleId)!;
+      const source =
+        example.format === "vega"
+          ? JSON.stringify({
+              ...parseVisualization(example.format, example.source).spec,
+              title: "Current appearance",
+            })
+          : example.source;
       const rendered = await send({
         channel: VISUALIZATION_CHANNEL,
         type: "render",
         requestId: "render-1",
         format: example.format,
-        source: example.source,
-        theme: "light",
+        source,
+        theme: "dark",
+        appearance,
         interactive: format === "vega",
       });
       expect(rendered.type, JSON.stringify(rendered)).toBe("result");
       if (rendered.type !== "result") throw new Error(JSON.stringify(rendered));
       expect(rendered.svg).toContain("<svg");
+      assertAppearance(rendered.svg);
+      expect(dom.window.document.body.style.backgroundColor).toBe("rgb(16, 28, 44)");
+      expect(dom.window.document.body.style.fontFamily).toContain(appearance.fontFamily);
       expect(dom.window.document.querySelector("#diagram svg")).not.toBeNull();
       expect(dom.window.document.querySelector("#diagram")?.getAttribute("role")).toBe("group");
       expect(
@@ -146,8 +185,14 @@ for (const [format, exampleId] of [
         type: "export-svg",
         requestId: "export-1",
       });
-      expect(exported).toMatchObject({ type: "result", svg: rendered.svg });
-      if (format === "vega") {
+      expect(exported).toMatchObject({ type: "result" });
+      if (exported.type !== "result") throw new Error(JSON.stringify(exported));
+      const parser = new dom.window.DOMParser();
+      expect(parser.parseFromString(exported.svg, "image/svg+xml").documentElement.innerHTML).toBe(
+        parser.parseFromString(rendered.svg, "image/svg+xml").documentElement.innerHTML,
+      );
+      assertAppearance(exported.svg, true);
+      if (exampleId === "vega-lite-selection") {
         const symbol = dom.window.document.querySelector(".role-legend-symbol path");
         expect(symbol).not.toBeNull();
         symbol!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
@@ -158,6 +203,7 @@ for (const [format, exampleId] of [
         });
         expect(selection.type).toBe("result");
         if (selection.type !== "result") throw new Error(JSON.stringify(selection));
+        assertAppearance(selection.svg, true);
         expect(selection.svg).not.toEqual(rendered.svg);
         expect(selection.svg).toContain('opacity="0.2"');
       }

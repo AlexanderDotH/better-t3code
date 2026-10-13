@@ -4,6 +4,7 @@ import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Struct from "effect/Struct";
 import { OrchestrationMessageContext } from "./composerContext.ts";
+import { MessageReplyReference } from "./messageReplies.ts";
 import { ProviderOptionSelections } from "./model.ts";
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
 import {
@@ -452,6 +453,14 @@ const ClientSendChatAttachment = Schema.Union([
   ChatFileAttachment,
 ]);
 
+export const ClientUserInputAttachments = Schema.Record(
+  Schema.String,
+  Schema.Array(ClientSendChatAttachment).check(
+    Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS),
+  ),
+);
+export type ClientUserInputAttachments = typeof ClientUserInputAttachments.Type;
+
 export const ProjectScriptIcon = Schema.Literals([
   "play",
   "test",
@@ -629,6 +638,8 @@ export type OrchestrationHistoryOrigin = typeof OrchestrationHistoryOrigin.Type;
 
 export const OrchestrationMessage = Schema.Struct({
   id: MessageId,
+  replyTo: Schema.optional(MessageReplyReference),
+  replyTopicId: Schema.optional(SubagentId),
   role: OrchestrationMessageRole,
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
@@ -763,6 +774,7 @@ export type OrchestrationThreadActivityTone = typeof OrchestrationThreadActivity
 
 export const OrchestrationThreadActivity = Schema.Struct({
   id: EventId,
+  replyTopicId: Schema.optional(SubagentId),
   tone: OrchestrationThreadActivityTone,
   kind: TrimmedNonEmptyString,
   summary: TrimmedNonEmptyString,
@@ -834,8 +846,21 @@ export const OrchestrationSubagentOrigin = Schema.Literals([
 ]);
 export type OrchestrationSubagentOrigin = typeof OrchestrationSubagentOrigin.Type;
 
+export const MessageReplyTopic = Schema.Struct({
+  rootMessageId: MessageId,
+  replyTo: MessageReplyReference,
+  modelSelection: ModelSelection,
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
+  workspacePath: TrimmedNonEmptyString,
+  lastCommandId: Schema.optional(CommandId),
+  lastUserMessageId: Schema.optional(MessageId),
+});
+export type MessageReplyTopic = typeof MessageReplyTopic.Type;
+
 export const OrchestrationSubagentSummary = Schema.Struct({
   id: SubagentId,
+  messageReply: Schema.optional(MessageReplyTopic),
   origin: OrchestrationSubagentOrigin.pipe(
     Schema.withDecodingDefault(Effect.succeed("provider-native" as const)),
   ),
@@ -1142,6 +1167,8 @@ export const OrchestrationThread = Schema.Struct({
   titleState: Schema.optional(Schema.NullOr(ThreadTitleState)),
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
+  replyMessages: Schema.optional(Schema.Array(OrchestrationMessage)),
+  replyActivities: Schema.optional(Schema.Array(OrchestrationThreadActivity)),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -1767,6 +1794,96 @@ const ClientThreadTurnStartCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadReplyCommandFields = {
+  commandId: CommandId,
+  threadId: ThreadId,
+  replyTopicId: SubagentId,
+  createdAt: IsoDateTime,
+};
+
+export const ThreadReplyStartRequestedPayload = Schema.Struct({
+  ...ThreadReplyCommandFields,
+  message: ThreadTurnStartCommand.fields.message,
+  replyTo: MessageReplyReference,
+});
+export type ThreadReplyStartRequestedPayload = typeof ThreadReplyStartRequestedPayload.Type;
+
+export const ThreadReplyStartCommand = Schema.Struct({
+  type: Schema.Literal("thread.reply.start"),
+  ...ThreadReplyStartRequestedPayload.fields,
+});
+export type ThreadReplyStartCommand = typeof ThreadReplyStartCommand.Type;
+
+const ClientThreadReplyStartCommand = Schema.Struct({
+  ...ThreadReplyStartCommand.fields,
+  message: ClientThreadTurnStartCommand.fields.message,
+});
+
+export const ThreadReplyInterruptRequestedPayload = Schema.Struct(ThreadReplyCommandFields);
+export type ThreadReplyInterruptRequestedPayload = typeof ThreadReplyInterruptRequestedPayload.Type;
+
+export const ThreadReplyInterruptCommand = Schema.Struct({
+  type: Schema.Literal("thread.reply.interrupt"),
+  ...ThreadReplyInterruptRequestedPayload.fields,
+});
+export type ThreadReplyInterruptCommand = typeof ThreadReplyInterruptCommand.Type;
+
+export const ThreadReplyRetryRequestedPayload = Schema.Struct(ThreadReplyCommandFields);
+export type ThreadReplyRetryRequestedPayload = typeof ThreadReplyRetryRequestedPayload.Type;
+
+export const ThreadReplyRetryCommand = Schema.Struct({
+  type: Schema.Literal("thread.reply.retry"),
+  ...ThreadReplyRetryRequestedPayload.fields,
+});
+export type ThreadReplyRetryCommand = typeof ThreadReplyRetryCommand.Type;
+
+export const ThreadReplyApprovalResponseRequestedPayload = Schema.Struct({
+  ...ThreadReplyCommandFields,
+  requestId: ApprovalRequestId,
+  decision: ProviderApprovalDecision,
+});
+export type ThreadReplyApprovalResponseRequestedPayload =
+  typeof ThreadReplyApprovalResponseRequestedPayload.Type;
+
+export const ThreadReplyApprovalRespondCommand = Schema.Struct({
+  type: Schema.Literal("thread.reply.approval.respond"),
+  ...ThreadReplyApprovalResponseRequestedPayload.fields,
+});
+export type ThreadReplyApprovalRespondCommand = typeof ThreadReplyApprovalRespondCommand.Type;
+
+export const ThreadReplyUserInputResponseRequestedPayload = Schema.Struct({
+  ...ThreadReplyCommandFields,
+  requestId: ApprovalRequestId,
+  answers: ProviderUserInputAnswers,
+  attachmentsByQuestionId: Schema.optional(UserInputAttachments),
+});
+export type ThreadReplyUserInputResponseRequestedPayload =
+  typeof ThreadReplyUserInputResponseRequestedPayload.Type;
+
+export const ThreadReplyUserInputRespondCommand = Schema.Struct({
+  type: Schema.Literal("thread.reply.user-input.respond"),
+  ...ThreadReplyUserInputResponseRequestedPayload.fields,
+});
+export type ThreadReplyUserInputRespondCommand = typeof ThreadReplyUserInputRespondCommand.Type;
+
+const ClientThreadReplyUserInputRespondCommand = Schema.Struct({
+  ...ThreadReplyUserInputRespondCommand.fields,
+  attachmentsByQuestionId: Schema.optional(ClientUserInputAttachments),
+});
+
+export const ThreadReplyUserInputDismissRequestedPayload = Schema.Struct({
+  ...ThreadReplyCommandFields,
+  requestId: ApprovalRequestId,
+});
+export type ThreadReplyUserInputDismissRequestedPayload =
+  typeof ThreadReplyUserInputDismissRequestedPayload.Type;
+
+export const ThreadReplyUserInputDismissCommand = Schema.Struct({
+  type: Schema.Literal("thread.reply.user-input.dismiss"),
+  ...ThreadReplyUserInputDismissRequestedPayload.fields,
+});
+export type ThreadReplyUserInputDismissCommand = typeof ThreadReplyUserInputDismissCommand.Type;
+
 const ThreadTurnInterruptCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.interrupt"),
   commandId: CommandId,
@@ -1858,6 +1975,12 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
   ThreadTurnStartCommand,
+  ThreadReplyStartCommand,
+  ThreadReplyInterruptCommand,
+  ThreadReplyRetryCommand,
+  ThreadReplyApprovalRespondCommand,
+  ThreadReplyUserInputRespondCommand,
+  ThreadReplyUserInputDismissCommand,
   ThreadTurnRetryCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
@@ -1895,6 +2018,12 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
   ClientThreadTurnStartCommand,
+  ClientThreadReplyStartCommand,
+  ThreadReplyInterruptCommand,
+  ThreadReplyRetryCommand,
+  ThreadReplyApprovalRespondCommand,
+  ClientThreadReplyUserInputRespondCommand,
+  ThreadReplyUserInputDismissCommand,
   ThreadTurnRetryCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
@@ -1937,6 +2066,8 @@ export const ThreadForkHandoffCompleteCommand = Schema.Struct({
 export type ThreadForkHandoffCompleteCommand = typeof ThreadForkHandoffCompleteCommand.Type;
 
 const ThreadMessageAssistantDeltaCommand = Schema.Struct({
+  replyTo: Schema.optional(MessageReplyReference),
+  replyTopicId: Schema.optional(SubagentId),
   type: Schema.Literal("thread.message.assistant.delta"),
   commandId: CommandId,
   threadId: ThreadId,
@@ -1948,6 +2079,8 @@ const ThreadMessageAssistantDeltaCommand = Schema.Struct({
 });
 
 const ThreadMessageAssistantCompleteCommand = Schema.Struct({
+  replyTo: Schema.optional(MessageReplyReference),
+  replyTopicId: Schema.optional(SubagentId),
   type: Schema.Literal("thread.message.assistant.complete"),
   commandId: CommandId,
   threadId: ThreadId,
@@ -1958,6 +2091,8 @@ const ThreadMessageAssistantCompleteCommand = Schema.Struct({
 });
 
 const ThreadMessageReasoningDeltaCommand = Schema.Struct({
+  replyTo: Schema.optional(MessageReplyReference),
+  replyTopicId: Schema.optional(SubagentId),
   type: Schema.Literal("thread.message.reasoning.delta"),
   commandId: CommandId,
   threadId: ThreadId,
@@ -1969,6 +2104,8 @@ const ThreadMessageReasoningDeltaCommand = Schema.Struct({
 });
 
 const ThreadMessageReasoningCompleteCommand = Schema.Struct({
+  replyTo: Schema.optional(MessageReplyReference),
+  replyTopicId: Schema.optional(SubagentId),
   type: Schema.Literal("thread.message.reasoning.complete"),
   commandId: CommandId,
   threadId: ThreadId,
@@ -2303,6 +2440,12 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.message-edited",
   "thread.harness-sync-linked",
   "thread.harness-sync-message-imported",
+  "thread.reply-start-requested",
+  "thread.reply-interrupt-requested",
+  "thread.reply-retry-requested",
+  "thread.reply-approval-response-requested",
+  "thread.reply-user-input-response-requested",
+  "thread.reply-user-input-dismiss-requested",
   "thread.turn-start-requested",
   "thread.turn-interrupt-requested",
   "thread.turn-force-abort-requested",
@@ -2579,6 +2722,8 @@ export const ThreadMessageEditedPayload = Schema.Struct({
 export const ThreadMessageSentPayload = Schema.Struct({
   threadId: ThreadId,
   subagentId: Schema.optional(SubagentId),
+  replyTo: Schema.optional(MessageReplyReference),
+  replyTopicId: Schema.optional(SubagentId),
   messageId: MessageId,
   role: OrchestrationMessageRole,
   text: Schema.String,
@@ -2778,6 +2923,36 @@ const EventBaseFields = {
 } as const;
 
 export const OrchestrationEvent = Schema.Union([
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.reply-start-requested"),
+    payload: ThreadReplyStartRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.reply-interrupt-requested"),
+    payload: ThreadReplyInterruptRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.reply-retry-requested"),
+    payload: ThreadReplyRetryRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.reply-approval-response-requested"),
+    payload: ThreadReplyApprovalResponseRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.reply-user-input-response-requested"),
+    payload: ThreadReplyUserInputResponseRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.reply-user-input-dismiss-requested"),
+    payload: ThreadReplyUserInputDismissRequestedPayload,
+  }),
   Schema.Struct({
     ...EventBaseFields,
     type: Schema.Literal("project.created"),

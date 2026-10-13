@@ -15,6 +15,9 @@ import {
   type ProjectAgentMessageSendInput,
   type ProjectAgentMessageSendResult,
   type ThreadId,
+  type SubagentId,
+  type ProviderInstanceId,
+  type OrchestrationSubagentSummary,
   type TurnId,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -36,21 +39,31 @@ import { ProjectionProjectAgentCoordinationRepository } from "../persistence/Ser
 import { ServerSettingsService } from "../serverSettings.ts";
 import { normalizeProjectAgentClaims } from "./claimRules.ts";
 
+export interface ProjectAgentReplyExecution {
+  readonly replyTopicId: SubagentId;
+  readonly turnId: TurnId;
+  readonly providerInstanceId: ProviderInstanceId;
+}
+
 export interface ProjectAgentCoordinatorShape {
   readonly list: (
     threadId: ThreadId,
+    reply?: ProjectAgentReplyExecution,
   ) => Effect.Effect<ProjectAgentListResult, ProjectAgentCoordinationError>;
   readonly claim: (
     threadId: ThreadId,
     input: ProjectAgentClaimSetInput,
+    reply?: ProjectAgentReplyExecution,
   ) => Effect.Effect<ProjectAgentClaimSetResult, ProjectAgentCoordinationError>;
   readonly send: (
     threadId: ThreadId,
     input: ProjectAgentMessageSendInput,
+    reply?: ProjectAgentReplyExecution,
   ) => Effect.Effect<ProjectAgentMessageSendResult, ProjectAgentCoordinationError>;
   readonly inbox: (
     threadId: ThreadId,
     input: ProjectAgentInboxInput,
+    reply?: ProjectAgentReplyExecution,
   ) => Effect.Effect<ProjectAgentInboxResult, ProjectAgentCoordinationError>;
 }
 
@@ -72,7 +85,7 @@ function isAvailableThread(thread: {
   );
 }
 
-function isActiveThread(thread: {
+function isActiveRootThread(thread: {
   readonly archivedAt: string | null;
   readonly deletedAt?: string | null;
   readonly session: { readonly status: string; readonly activeTurnId: TurnId | null } | null;
@@ -83,6 +96,24 @@ function isActiveThread(thread: {
     (thread.session?.status === "starting" ||
       thread.session?.status === "running" ||
       thread.latestTurn?.state === "running")
+  );
+}
+
+function isActiveReplyTopic(topic: OrchestrationSubagentSummary): boolean {
+  return (
+    topic.messageReply !== undefined &&
+    (topic.status === "starting" || topic.status === "running" || topic.status === "waiting")
+  );
+}
+
+function isActiveThread(
+  thread: Parameters<typeof isActiveRootThread>[0] & {
+    readonly subagents: ReadonlyArray<OrchestrationSubagentSummary>;
+  },
+): boolean {
+  return (
+    isActiveRootThread(thread) ||
+    (isAvailableThread(thread) && thread.subagents.some(isActiveReplyTopic))
   );
 }
 
@@ -147,10 +178,25 @@ const makeCoordinator = Effect.gen(function* () {
 
   const resolveScope = Effect.fn("ProjectAgentCoordinator.resolveScope")(function* (
     threadId: ThreadId,
+    reply?: ProjectAgentReplyExecution,
   ) {
     const readModel = yield* readCommandModel();
     const thread = readModel.threads.find((candidate) => candidate.id === threadId);
-    if (!thread || !isActiveThread(thread)) {
+    const topic =
+      reply === undefined
+        ? undefined
+        : thread?.subagents.find((candidate) => candidate.id === reply.replyTopicId);
+    const active =
+      reply === undefined
+        ? thread !== undefined && isActiveRootThread(thread)
+        : thread !== undefined &&
+          isAvailableThread(thread) &&
+          topic !== undefined &&
+          isActiveReplyTopic(topic) &&
+          topic.messageReply?.modelSelection.instanceId === reply.providerInstanceId &&
+          topic.latestTurn?.state === "running" &&
+          topic.latestTurn.turnId === reply.turnId;
+    if (!thread || !active) {
       return yield* new ProjectAgentCoordinationUnavailableError({
         reason: "thread_unavailable",
       });
@@ -163,13 +209,13 @@ const makeCoordinator = Effect.gen(function* () {
         reason: "project_unavailable",
       });
     }
-    return { readModel, project, thread, turnId: activeTurnId(thread) } as const;
+    return { readModel, project, thread, turnId: reply?.turnId ?? activeTurnId(thread) } as const;
   });
 
   const list: ProjectAgentCoordinatorShape["list"] = Effect.fn("ProjectAgentCoordinator.list")(
-    function* (threadId) {
+    function* (threadId, reply) {
       yield* ensureFeatureEnabled("list");
-      const scope = yield* resolveScope(threadId);
+      const scope = yield* resolveScope(threadId, reply);
       const [shell, unreadCounts] = yield* Effect.all([
         snapshots
           .getShellSnapshot()
@@ -226,9 +272,9 @@ const makeCoordinator = Effect.gen(function* () {
   );
 
   const claim: ProjectAgentCoordinatorShape["claim"] = Effect.fn("ProjectAgentCoordinator.claim")(
-    function* (threadId, input) {
+    function* (threadId, input, reply) {
       if (input.action !== "release") yield* ensureFeatureEnabled("claim");
-      const { project, turnId } = yield* resolveScope(threadId);
+      const { project, turnId } = yield* resolveScope(threadId, reply);
       const timestamp = yield* nowIso;
       if (input.action === "release") {
         const lease = project.coordinationClaims.find(
@@ -301,9 +347,9 @@ const makeCoordinator = Effect.gen(function* () {
   );
 
   const send: ProjectAgentCoordinatorShape["send"] = Effect.fn("ProjectAgentCoordinator.send")(
-    function* (threadId, input) {
+    function* (threadId, input, reply) {
       yield* ensureFeatureEnabled("send");
-      const { readModel, project } = yield* resolveScope(threadId);
+      const { readModel, project } = yield* resolveScope(threadId, reply);
       const projectPeers = readModel.threads.filter(
         (candidate) =>
           candidate.projectId === project.id &&
@@ -355,9 +401,9 @@ const makeCoordinator = Effect.gen(function* () {
   );
 
   const inbox: ProjectAgentCoordinatorShape["inbox"] = Effect.fn("ProjectAgentCoordinator.inbox")(
-    function* (threadId, input) {
+    function* (threadId, input, reply) {
       yield* ensureFeatureEnabled("inbox");
-      const { project } = yield* resolveScope(threadId);
+      const { project } = yield* resolveScope(threadId, reply);
       if (input.acknowledgeThrough !== undefined) {
         const timestamp = yield* nowIso;
         yield* orchestration

@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./resetCredits": "./src/resetCredits.ts",
     "./projectIndexLanguages": "./src/projectIndexLanguages.ts",
     "./voiceFileContext": {
       "types": "./src/voiceFileContext.ts",

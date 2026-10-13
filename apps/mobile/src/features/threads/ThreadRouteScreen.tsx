@@ -1255,6 +1255,11 @@ function ThreadRouteContent(
           activePendingUserInputAnswers={requests.activePendingUserInputAnswers}
           respondingUserInputId={requests.respondingUserInputId}
           draftMessage={composer.draftMessage}
+          messageReply={composer.messageReply}
+          messageRepliesEnabled={composer.messageRepliesEnabled}
+          messageReplySending={composer.messageReplySending}
+          onReplyToMessage={composer.onReplyToMessage}
+          onCancelMessageReply={composer.onCancelMessageReply}
           draftVoiceFileReferences={composer.draftVoiceFileReferences}
           readDraftText={composer.readDraftText}
           draftAttachments={composer.draftAttachments}

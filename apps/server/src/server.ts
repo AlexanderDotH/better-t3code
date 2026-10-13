@@ -110,6 +110,8 @@ import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRun
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
 import { FetchWorkerCoordinatorLive } from "./fetch/FetchWorkerCoordinator.ts";
 import { GeneralSubagentCoordinatorLive } from "./subagents/GeneralSubagentCoordinator.ts";
+import { MessageReplyCoordinatorLive } from "./messageReplies/MessageReplyCoordinator.ts";
+import { MessageReplyReactorLive } from "./orchestration/Layers/MessageReplyReactor.ts";
 import { TurnAbortCoordinatorLive } from "./orchestration/Layers/TurnAbortCoordinator.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
@@ -325,6 +327,8 @@ const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(ProviderCommandReactorLive),
   Layer.provideMerge(FetchWorkerCoordinatorLive),
   Layer.provideMerge(GeneralSubagentCoordinatorLive),
+  Layer.provideMerge(MessageReplyReactorLive),
+  Layer.provideMerge(MessageReplyCoordinatorLive),
   Layer.provideMerge(TurnAbortCoordinatorLive),
   Layer.provideMerge(CheckpointReactorLive),
   Layer.provideMerge(StorageCleanup.layer),

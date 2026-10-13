@@ -1,5 +1,6 @@
 import {
   OrchestrationHistoryOrigin,
+  MessageReplyTopic,
   OrchestrationLatestTurn,
   OrchestrationSubagentProgress,
 } from "@t3tools/contracts";
@@ -26,6 +27,7 @@ const ProjectionThreadSubagentDbRow = ProjectionThreadSubagent.mapFields(
   Struct.assign({
     latestProgress: Schema.NullOr(Schema.fromJsonString(OrchestrationSubagentProgress)),
     latestTurn: Schema.NullOr(Schema.fromJsonString(OrchestrationLatestTurn)),
+    messageReply: Schema.NullOr(Schema.fromJsonString(MessageReplyTopic)),
     historyOrigin: Schema.NullOr(Schema.fromJsonString(OrchestrationHistoryOrigin)),
   }),
 );
@@ -33,9 +35,10 @@ const ProjectionThreadSubagentDbRow = ProjectionThreadSubagent.mapFields(
 function toProjectionThreadSubagent(
   row: typeof ProjectionThreadSubagentDbRow.Type,
 ): ProjectionThreadSubagent {
-  const { historyOrigin, ...subagent } = row;
+  const { historyOrigin, messageReply, ...subagent } = row;
   return {
     ...subagent,
+    ...(messageReply !== null ? { messageReply } : {}),
     ...(historyOrigin !== null ? { historyOrigin } : {}),
   };
 }
@@ -76,6 +79,7 @@ const makeProjectionThreadSubagentRepository = Effect.gen(function* () {
         updated_at,
         completed_at
         , history_origin_json
+        , message_reply_json
       )
       VALUES (
         ${row.threadId},
@@ -102,6 +106,7 @@ const makeProjectionThreadSubagentRepository = Effect.gen(function* () {
         ${row.updatedAt},
         ${row.completedAt}
         , ${row.historyOrigin === undefined ? null : JSON.stringify(row.historyOrigin)}
+        , ${row.messageReply === undefined ? null : JSON.stringify(row.messageReply)}
       )
       ON CONFLICT (thread_id, subagent_id)
       DO UPDATE SET
@@ -126,6 +131,9 @@ const makeProjectionThreadSubagentRepository = Effect.gen(function* () {
         started_at = excluded.started_at,
         updated_at = excluded.updated_at,
         completed_at = excluded.completed_at
+        , message_reply_json = COALESCE(
+          excluded.message_reply_json, projection_thread_subagents.message_reply_json
+        )
         , history_origin_json = COALESCE(
           excluded.history_origin_json,
           projection_thread_subagents.history_origin_json
@@ -162,6 +170,7 @@ const makeProjectionThreadSubagentRepository = Effect.gen(function* () {
         updated_at AS "updatedAt",
         completed_at AS "completedAt"
         , history_origin_json AS "historyOrigin"
+        , message_reply_json AS "messageReply"
       FROM projection_thread_subagents
       WHERE thread_id = ${threadId}
         AND subagent_id = ${subagentId}
@@ -198,6 +207,7 @@ const makeProjectionThreadSubagentRepository = Effect.gen(function* () {
         updated_at AS "updatedAt",
         completed_at AS "completedAt"
         , history_origin_json AS "historyOrigin"
+        , message_reply_json AS "messageReply"
       FROM projection_thread_subagents
       WHERE thread_id = ${threadId}
       ORDER BY updated_at DESC, subagent_id ASC

@@ -1,4 +1,7 @@
 import DOMPurify from "dompurify";
+import { resolveVisualizationAppearance, VISUALIZATION_FONT_SIZE } from "../appearance.ts";
+import { readVisualizationSvgDimensions } from "../sizing.ts";
+import { prepareVisualizationSvgExport } from "../export.ts";
 import {
   isVisualizationRequest,
   parseVisualization,
@@ -51,6 +54,15 @@ export function sanitizeVisualizationSvg(source: string): string {
     }
   }
   svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  const width = svg.getAttribute("width");
+  const height = svg.getAttribute("height");
+  if (!width || !height || width.endsWith("%") || height.endsWith("%")) {
+    const dimensions = readVisualizationSvgDimensions(clean);
+    if (dimensions) {
+      svg.setAttribute("width", String(dimensions.width));
+      svg.setAttribute("height", String(dimensions.height));
+    }
+  }
   if (!svg.hasAttribute("viewBox")) {
     const width = Number.parseFloat(svg.getAttribute("width") ?? "");
     const height = Number.parseFloat(svg.getAttribute("height") ?? "");
@@ -186,8 +198,19 @@ export function installVisualizationRuntime(
           current?.dispose?.();
           current = undefined;
           container.replaceChildren();
+          const appearance = resolveVisualizationAppearance(request.theme, request.appearance);
           document.documentElement.style.colorScheme = request.theme;
-          document.body.style.background = request.theme === "dark" ? "#171717" : "#ffffff";
+          document.documentElement.style.setProperty(
+            "--visualization-focus",
+            appearance.foreground,
+          );
+          document.body.style.background = appearance.background;
+          document.body.style.color = appearance.foreground;
+          document.body.style.fontFamily = appearance.fontFamily;
+          document.body.style.fontSize = `${VISUALIZATION_FONT_SIZE}px`;
+          await document.fonts
+            ?.load(`${VISUALIZATION_FONT_SIZE}px ${appearance.fontFamily}`)
+            .catch(() => undefined);
           fit();
           current = await render(request, container);
           current.svg = sanitizeVisualizationSvg(current.svg);
@@ -217,9 +240,13 @@ export function installVisualizationRuntime(
           }
         }
         if (!current) throw new Error("Render a diagram before exporting it.");
-        const svg = sanitizeVisualizationSvg(
+        const sanitizedSvg = sanitizeVisualizationSvg(
           current.exportSvg ? await current.exportSvg() : current.svg,
         );
+        const svg =
+          request.type === "render"
+            ? sanitizedSvg
+            : prepareVisualizationSvgExport(sanitizedSvg, document.body.style.backgroundColor);
         if (request.type === "export-png") {
           post({
             channel: VISUALIZATION_CHANNEL,

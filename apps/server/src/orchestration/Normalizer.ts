@@ -133,20 +133,26 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
 
     if (
       canonicalCommand.type !== "thread.turn.start" &&
-      canonicalCommand.type !== "thread.user-input.respond"
+      canonicalCommand.type !== "thread.reply.start" &&
+      canonicalCommand.type !== "thread.user-input.respond" &&
+      canonicalCommand.type !== "thread.reply.user-input.respond"
     ) {
       return canonicalCommand as OrchestrationCommand;
     }
 
     const attachments =
-      canonicalCommand.type === "thread.turn.start"
+      canonicalCommand.type === "thread.turn.start" ||
+      canonicalCommand.type === "thread.reply.start"
         ? canonicalCommand.message.attachments
         : Object.values(canonicalCommand.attachmentsByQuestionId ?? {}).flat();
     const attachmentLimitError = getProviderAttachmentLimitError(attachments);
     if (attachmentLimitError) {
       return yield* new OrchestrationDispatchCommandError({ message: attachmentLimitError });
     }
-    if (canonicalCommand.type === "thread.turn.start") {
+    if (
+      canonicalCommand.type === "thread.turn.start" ||
+      canonicalCommand.type === "thread.reply.start"
+    ) {
       const clientAttachmentIds = new Set<string>();
       for (const attachment of attachments) {
         if (attachment.id === undefined) continue;
@@ -298,7 +304,14 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
       { concurrency: 1 },
     ).pipe(Effect.tapError(() => removeClaimedAttachmentPaths(claimedAttachmentPaths)));
 
-    if (canonicalCommand.type === "thread.user-input.respond") {
+    if (
+      canonicalCommand.type === "thread.user-input.respond" ||
+      canonicalCommand.type === "thread.reply.user-input.respond"
+    ) {
+      const {
+        attachmentsByQuestionId: originalAttachmentsByQuestionId,
+        ...commandWithoutAttachments
+      } = canonicalCommand;
       let index = 0;
       const attachmentsByQuestionId = Object.fromEntries(
         Object.entries(canonicalCommand.attachmentsByQuestionId ?? {}).map(
@@ -313,9 +326,9 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
         ),
       );
       return {
-        ...canonicalCommand,
-        ...(attachments.length > 0 ? { attachmentsByQuestionId } : {}),
-      };
+        ...commandWithoutAttachments,
+        ...(originalAttachmentsByQuestionId !== undefined ? { attachmentsByQuestionId } : {}),
+      } satisfies OrchestrationCommand;
     }
     const context = canonicalCommand.message.context;
     const normalizedContext =
@@ -347,15 +360,18 @@ export const cleanupFailedUploadedAttachments = Effect.fn(
   "Normalizer.cleanupFailedUploadedAttachments",
 )(function* (command: ClientOrchestrationCommand, normalizedCommand: OrchestrationCommand) {
   const originalAttachments =
-    command.type === "thread.turn.start"
+    command.type === "thread.turn.start" || command.type === "thread.reply.start"
       ? command.message.attachments
-      : command.type === "thread.user-input.respond"
+      : command.type === "thread.user-input.respond" ||
+          command.type === "thread.reply.user-input.respond"
         ? Object.values(command.attachmentsByQuestionId ?? {}).flat()
         : [];
   const normalizedAttachments =
-    normalizedCommand.type === "thread.turn.start"
+    normalizedCommand.type === "thread.turn.start" ||
+    normalizedCommand.type === "thread.reply.start"
       ? normalizedCommand.message.attachments
-      : normalizedCommand.type === "thread.user-input.respond"
+      : normalizedCommand.type === "thread.user-input.respond" ||
+          normalizedCommand.type === "thread.reply.user-input.respond"
         ? Object.values(normalizedCommand.attachmentsByQuestionId ?? {}).flat()
         : [];
   if (normalizedAttachments.length === 0) return;

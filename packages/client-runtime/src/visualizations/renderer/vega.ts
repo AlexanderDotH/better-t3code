@@ -1,6 +1,7 @@
 import { parse, View, type Spec } from "vega";
 import { compile, type TopLevelSpec } from "vega-lite";
 import { expressionInterpreter } from "vega-interpreter";
+import { resolveVisualizationAppearance, VISUALIZATION_FONT_SIZE } from "../appearance.ts";
 import { parseVisualization, type VisualizationRenderRequest } from "../model.ts";
 import type { RenderedDiagram } from "./runtime.ts";
 
@@ -10,21 +11,36 @@ export async function renderDiagram(
 ): Promise<RenderedDiagram> {
   const { spec } = parseVisualization(request.format, request.source);
   if (!spec) throw new Error("Expected a Vega or Vega-Lite JSON specification.");
+  const appearance = resolveVisualizationAppearance(request.theme, request.appearance);
+  const textStyle = {
+    fill: appearance.foreground,
+    font: appearance.fontFamily,
+    fontSize: VISUALIZATION_FONT_SIZE,
+  };
   const theme = {
-    background: request.theme === "dark" ? "#171717" : "#ffffff",
+    background: appearance.background,
+    text: textStyle,
     axis: {
-      labelColor: request.theme === "dark" ? "#eeeeee" : "#171717",
-      titleColor: request.theme === "dark" ? "#eeeeee" : "#171717",
+      domainColor: appearance.border,
+      gridColor: appearance.border,
+      tickColor: appearance.border,
     },
-    legend: {
-      labelColor: request.theme === "dark" ? "#eeeeee" : "#171717",
-      titleColor: request.theme === "dark" ? "#eeeeee" : "#171717",
+    style: {
+      "guide-label": textStyle,
+      "guide-title": textStyle,
+      "group-title": textStyle,
+      "group-subtitle": { ...textStyle, fill: appearance.mutedForeground },
     },
-    title: { color: request.theme === "dark" ? "#eeeeee" : "#171717" },
   };
   const input =
     request.format === "vega-lite"
-      ? compile(spec as unknown as TopLevelSpec, { config: theme }).spec
+      ? compile(spec as unknown as TopLevelSpec, {
+          config: {
+            background: appearance.background,
+            text: { color: appearance.foreground },
+            view: { stroke: appearance.border },
+          },
+        }).spec
       : (spec as Spec);
   const runtime = parse(input, theme, { ast: true });
   const view = new View(runtime, {

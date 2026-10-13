@@ -1456,6 +1456,26 @@ function mapToRuntimeEvents(
     ];
   }
 
+  if (event.method === "session/error") {
+    const message = event.message ?? "Codex communication failed.";
+    return [
+      {
+        ...runtimeEventBase(event, canonicalThreadId),
+        type: "runtime.error",
+        payload: { message, class: "provider_error" },
+      },
+      ...(event.turnId
+        ? [
+            {
+              ...runtimeEventBase(event, canonicalThreadId),
+              type: "turn.completed" as const,
+              payload: { state: "failed" as const, errorMessage: message },
+            },
+          ]
+        : []),
+    ];
+  }
+
   if (event.method === "session/connecting") {
     return [
       {

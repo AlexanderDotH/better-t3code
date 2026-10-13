@@ -71,6 +71,10 @@ const handleMethod = (message: Record<string, unknown>) => {
       return;
     }
     case "account/read": {
+      if (process.env.CODEX_APP_SERVER_TEST_BROKEN_PROTOCOL === "1") {
+        process.stdout.write("{malformed-json}\n");
+        return;
+      }
       respond(message.id as number | string, {
         account: {
           type: "chatgpt",

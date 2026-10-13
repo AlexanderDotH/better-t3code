@@ -1,5 +1,6 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
 import {
+  ComposerContextId,
   EventId,
   MessageId,
   OrchestrationProposedPlanId,
@@ -33,6 +34,64 @@ const layer = it.layer(
 );
 
 layer("ProjectionThreadSubagent repositories", (it) => {
+  it.effect("keeps a reply quote and captured context immutable across message updates", () =>
+    Effect.gen(function* () {
+      const messages = yield* ProjectionThreadSubagentMessageRepository;
+      const threadId = ThreadId.make("thread-quote-immutable");
+      const subagentId = SubagentId.make("reply-topic-immutable");
+      const messageId = MessageId.make("reply-user-immutable");
+      const replyTo = {
+        messageId: MessageId.make("quoted-source"),
+        role: "assistant" as const,
+        text: "Original source",
+      };
+      const context = {
+        version: 1 as const,
+        records: [
+          {
+            version: 1 as const,
+            kind: "terminal" as const,
+            contextId: ComposerContextId.make("reply-context"),
+            label: "Selection",
+            terminalId: "terminal",
+            terminalLabel: "Shell",
+            lineStart: 1,
+            lineEnd: 1,
+            text: "Original context",
+          },
+        ],
+      };
+      const message = {
+        threadId,
+        subagentId,
+        messageId,
+        role: "user" as const,
+        text: "Explain this",
+        replyTo,
+        replyTopicId: subagentId,
+        context,
+        turnId: null,
+        isStreaming: false,
+        createdAt: "2026-10-13T10:00:00.000Z",
+        updatedAt: "2026-10-13T10:00:00.000Z",
+      };
+      yield* messages.upsert(message);
+      yield* messages.upsert({
+        ...message,
+        text: "Explain this in detail",
+        replyTo: { ...replyTo, text: "Edited source" },
+        context: { version: 1, records: [] },
+      });
+      const persisted = Option.getOrThrow(
+        yield* messages.getById({ threadId, subagentId, messageId }),
+      );
+      assert.deepEqual(persisted.replyTo, replyTo);
+      assert.deepEqual(persisted.context, context);
+      assert.equal(persisted.replyTopicId, subagentId);
+      assert.equal(persisted.text, "Explain this in detail");
+    }),
+  );
+
   it.effect("upserts complete summary metadata and isolates it by root thread", () =>
     Effect.gen(function* () {
       const repository = yield* ProjectionThreadSubagentRepository;

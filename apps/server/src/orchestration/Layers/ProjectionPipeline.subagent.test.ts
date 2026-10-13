@@ -14,6 +14,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
@@ -22,6 +24,7 @@ import { ServerConfig } from "../../config.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const threadId = ThreadId.make("thread-subagent-projection");
 const subagentId = SubagentId.make("agent-subagent-projection");
 const startedAt = "2026-07-30T10:00:00.000Z";
@@ -296,4 +299,180 @@ it.layer(TestLayer)("OrchestrationProjectionPipeline subagent projections", (it)
         ]);
       }),
   );
+  it.effect("persists reply metadata without moving the root turn", () =>
+    Effect.gen(function* () {
+      const pipeline = yield* OrchestrationProjectionPipeline;
+      const sql = yield* SqlClient.SqlClient;
+      const replyTo = {
+        messageId: MessageId.make("root-source"),
+        role: "assistant" as const,
+        text: "Original source",
+      };
+      const marker = {
+        rootMessageId: replyTo.messageId,
+        replyTo,
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        workspacePath: "/workspace",
+      };
+      yield* pipeline.projectEvent(
+        event(100, "thread.created", startedAt, {
+          threadId,
+          projectId: ProjectId.make("project-reply-persistence"),
+          title: "Replies",
+          modelSelection: marker.modelSelection,
+          runtimeMode: marker.runtimeMode,
+          interactionMode: marker.interactionMode,
+          branch: null,
+          worktreePath: null,
+          createdAt: startedAt,
+          updatedAt: startedAt,
+        }),
+      );
+      yield* sql`UPDATE projection_threads SET latest_turn_id = 'root-turn', latest_user_message_at = ${startedAt} WHERE thread_id = ${threadId}`;
+      yield* pipeline.projectEvent(
+        event(101, "thread.subagent-upserted", startedAt, {
+          threadId,
+          subagent: { ...summary(), messageReply: marker },
+        }),
+      );
+      const userMessage = event(102, "thread.message-sent", "2026-07-30T10:00:02.000Z", {
+        threadId,
+        subagentId,
+        messageId: MessageId.make("reply-user"),
+        role: "user",
+        text: "Explain",
+        replyTopicId: subagentId,
+        replyTo,
+        context: { version: 1, records: [] },
+        turnId: null,
+        streaming: false,
+        createdAt: "2026-07-30T10:00:02.000Z",
+        updatedAt: "2026-07-30T10:00:02.000Z",
+      });
+      yield* pipeline.projectEvent(userMessage);
+      const delta = event(103, "thread.message-sent", "2026-07-30T10:00:03.000Z", {
+        threadId,
+        subagentId,
+        messageId: MessageId.make("reply-assistant"),
+        role: "assistant",
+        text: "Answer",
+        replyTopicId: subagentId,
+        turnId: TurnId.make("topic-turn"),
+        streaming: true,
+        createdAt: "2026-07-30T10:00:03.000Z",
+        updatedAt: "2026-07-30T10:00:03.000Z",
+      });
+      yield* pipeline.projectEvent(delta);
+      const messages = yield* sql<{
+        readonly text: string;
+        readonly replyTo: string | null;
+        readonly topic: string | null;
+        readonly context: string | null;
+      }>`
+        SELECT text, reply_to_json AS "replyTo", reply_topic_id AS topic, context_json AS context
+        FROM projection_thread_subagent_messages WHERE thread_id = ${threadId} ORDER BY message_id
+      `;
+      assert.equal(messages.length, 2);
+      assert.equal(messages[0]?.text, "Answer");
+      assert.equal(messages[1]?.replyTo, encodeJson(replyTo));
+      assert.equal(messages[1]?.context, '{"version":1,"records":[]}');
+      assert.equal(messages[1]?.topic, subagentId);
+      const roots = yield* sql<{
+        readonly turn: string;
+        readonly latestUser: string;
+        readonly count: number;
+      }>`
+        SELECT latest_turn_id AS turn, latest_user_message_at AS "latestUser",
+          (SELECT COUNT(*) FROM projection_thread_messages WHERE thread_id = ${threadId}) AS count
+        FROM projection_threads WHERE thread_id = ${threadId}
+      `;
+      assert.deepEqual(roots, [{ turn: "root-turn", latestUser: startedAt, count: 0 }]);
+      const summaries = yield* sql<{
+        readonly marker: string;
+      }>`SELECT message_reply_json AS marker FROM projection_thread_subagents WHERE thread_id = ${threadId}`;
+      assert.equal(summaries[0]?.marker, encodeJson(marker));
+    }),
+  );
 });
+
+it.effect("replays reply messages from the event store without duplicating streamed text", () =>
+  Effect.gen(function* () {
+    const pipeline = yield* OrchestrationProjectionPipeline;
+    const eventStore = yield* OrchestrationEventStore;
+    const sql = yield* SqlClient.SqlClient;
+    const replyTo = {
+      messageId: MessageId.make("replay-source"),
+      role: "user" as const,
+      text: "Original task",
+    };
+    const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
+    yield* eventStore.append(
+      event(1, "thread.created", startedAt, {
+        threadId,
+        projectId: ProjectId.make("project-reply-replay"),
+        title: "Replay",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt: startedAt,
+        updatedAt: startedAt,
+      }),
+    );
+    yield* eventStore.append(
+      event(2, "thread.subagent-upserted", startedAt, {
+        threadId,
+        subagent: {
+          ...summary(),
+          messageReply: {
+            rootMessageId: replyTo.messageId,
+            replyTo,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            workspacePath: "/workspace",
+          },
+        },
+      }),
+    );
+    yield* eventStore.append(
+      event(3, "thread.message-sent", startedAt, {
+        threadId,
+        subagentId,
+        messageId: MessageId.make("replayed-message"),
+        role: "assistant",
+        text: "First",
+        replyTopicId: subagentId,
+        replyTo,
+        turnId: TurnId.make("replayed-turn"),
+        streaming: true,
+        createdAt: startedAt,
+        updatedAt: startedAt,
+      }),
+    );
+    yield* pipeline.bootstrap;
+    yield* eventStore.append(
+      event(4, "thread.message-sent", startedAt, {
+        threadId,
+        subagentId,
+        messageId: MessageId.make("replayed-message"),
+        role: "assistant",
+        text: " second",
+        replyTopicId: subagentId,
+        turnId: TurnId.make("replayed-turn"),
+        streaming: true,
+        createdAt: startedAt,
+        updatedAt: startedAt,
+      }),
+    );
+    yield* pipeline.bootstrap;
+    yield* pipeline.bootstrap;
+    const rows = yield* sql<{ readonly text: string; readonly replyTo: string }>`
+      SELECT text, reply_to_json AS "replyTo" FROM projection_thread_subagent_messages WHERE thread_id = ${threadId}
+    `;
+    assert.deepEqual(rows, [{ text: "First second", replyTo: encodeJson(replyTo) }]);
+  }).pipe(Effect.provide(TestLayer)),
+);

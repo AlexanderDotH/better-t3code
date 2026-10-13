@@ -169,7 +169,7 @@ const SURFACE_DISABLED_REASONS = {
   device: "Devices are only available from a thread.",
 } as const;
 
-/** Overlays that must win over the launcher's letter shortcuts. */
+/** Closed popups can stay mounted; only open or closing overlays claim shortcuts. */
 const LAUNCHER_SHORTCUT_BLOCKING_LAYERS = [
   '[data-slot="dialog-popup"]',
   '[data-slot="alert-dialog-popup"]',
@@ -179,7 +179,13 @@ const LAUNCHER_SHORTCUT_BLOCKING_LAYERS = [
   '[data-slot="popover-popup"]',
   '[data-slot="combobox-popup"]',
   '[data-slot="autocomplete-popup"]',
-].join(",");
+]
+  .map((selector) => `${selector}:is([data-open],[data-ending-style])`)
+  .join(",");
+
+export function surfaceShortcutHasBlockingLayer(root: Pick<Document, "querySelector">): boolean {
+  return root.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS) !== null;
+}
 
 /** One-line unavailability hints for the empty-state rows. */
 const SURFACE_UNAVAILABLE_HINTS = {
@@ -451,7 +457,7 @@ function RightPanelEmptyState(props: {
     const handler = (event: KeyboardEvent) => {
       const action = surfaceShortcutActionForKey(shortcutActionsRef.current, event);
       if (!action) return;
-      if (document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) return;
+      if (surfaceShortcutHasBlockingLayer(document)) return;
       const target = event.target;
       if (target instanceof Element && surfaceShortcutTargetsTypingContext(target)) return;
       event.preventDefault();

@@ -22,6 +22,7 @@ import {
   formatDuration,
   inferCheckpointTurnCountByTurnId,
   isStreamingMessageTextUpdate,
+  timelineMessageKey,
   workEntryDisplayIndicatesToolFailure,
   workEntryIndicatesToolSuccess,
   workEntryIndicatesToolNeutralStatus,
@@ -325,6 +326,7 @@ function maxIsoTimestamp(a: string | null, b: string | null): string | null {
 
 export interface TimelineDurationMessage {
   id: string;
+  replyTopicId?: string | undefined;
   role: ChatMessage["role"];
   createdAt: string;
   updatedAt: string;
@@ -480,15 +482,16 @@ export function computeMessageDurationStart(
   messages: ReadonlyArray<TimelineDurationMessage>,
 ): Map<string, string> {
   const result = new Map<string, string>();
-  let lastBoundary: string | null = null;
+  const lastBoundaryByTopic = new Map<string, string>();
 
   for (const message of messages) {
+    const topic = message.replyTopicId ?? "";
     if (message.role === "user") {
-      lastBoundary = message.createdAt;
+      lastBoundaryByTopic.set(topic, message.createdAt);
     }
-    result.set(message.id, lastBoundary ?? message.createdAt);
+    result.set(timelineMessageKey(message), lastBoundaryByTopic.get(topic) ?? message.createdAt);
     if (message.role === "assistant" && !message.streaming) {
-      lastBoundary = message.updatedAt;
+      lastBoundaryByTopic.set(topic, message.updatedAt);
     }
   }
 
@@ -538,25 +541,27 @@ export function resolveAssistantMessageCopyState({
 
 function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<TimelineEntry>) {
   const lastAssistantMessageIdByResponseKey = new Map<string, string>();
-  let nullTurnResponseIndex = 0;
+  const nullTurnResponseIndices = new Map<string, number>();
 
   for (const timelineEntry of timelineEntries) {
     if (timelineEntry.kind !== "message") {
       continue;
     }
     const { message } = timelineEntry;
+    const topic = message.replyTopicId ?? "";
     if (message.role === "user") {
-      nullTurnResponseIndex += 1;
+      nullTurnResponseIndices.set(topic, (nullTurnResponseIndices.get(topic) ?? 0) + 1);
       continue;
     }
     if (message.role !== "assistant") {
       continue;
     }
 
-    const responseKey = message.turnId
-      ? `turn:${message.turnId}`
-      : `unkeyed:${nullTurnResponseIndex}`;
-    lastAssistantMessageIdByResponseKey.set(responseKey, message.id);
+    const responseKey = JSON.stringify([
+      topic,
+      message.turnId ?? nullTurnResponseIndices.get(topic) ?? 0,
+    ]);
+    lastAssistantMessageIdByResponseKey.set(responseKey, timelineMessageKey(message));
   }
 
   return new Set(lastAssistantMessageIdByResponseKey.values());
@@ -594,12 +599,14 @@ export function deriveUnsettledTurnId(
 
 function lastUserMessageIndex(timelineEntries: ReadonlyArray<TimelineEntry>): number {
   return timelineEntries.findLastIndex(
-    (entry) => entry.kind === "message" && entry.message.role === "user",
+    (entry) =>
+      entry.kind === "message" && entry.message.role === "user" && !entry.message.replyTopicId,
   );
 }
 
 function timelineEntryTurnId(entry: TimelineEntry): TurnId | null {
   if (entry.kind === "message") {
+    if (entry.message.replyTopicId) return null;
     return entry.message.role === "assistant" || entry.message.role === "reasoning"
       ? (entry.message.turnId ?? null)
       : null;
@@ -678,6 +685,7 @@ function deriveTurnFolds(input: {
 
   let pendingUserBoundary: string | null = null;
   for (const entry of input.timelineEntries) {
+    if (entry.kind === "message" && entry.message.replyTopicId) continue;
     if (entry.kind === "message" && entry.message.role === "user") {
       pendingUserBoundary = entry.message.createdAt;
       continue;
@@ -712,7 +720,7 @@ function deriveTurnFolds(input: {
     }
     group.entries.push(entry);
     if (entry.kind === "message") {
-      if (input.terminalAssistantMessageIds.has(entry.message.id)) {
+      if (input.terminalAssistantMessageIds.has(timelineMessageKey(entry.message))) {
         group.terminalEntry = entry;
       }
       // A live turn is already excluded above, so only an answer still being
@@ -861,6 +869,7 @@ function attachTrailingToolGroupsToAssistant(
     if (
       row.kind !== "message" ||
       row.message.role !== "assistant" ||
+      row.message.replyTopicId !== undefined ||
       !row.showAssistantMeta ||
       turnId === null
     ) {
@@ -949,13 +958,18 @@ function buildRevertTurnCountByUserMessageId(input: {
   const entryCount = input.supportsConversationRollback ? input.timelineEntries.length : 0;
   for (let index = 0; index < entryCount; index += 1) {
     const entry = input.timelineEntries[index];
-    if (!entry || entry.kind !== "message" || entry.message.role !== "user") {
+    if (
+      !entry ||
+      entry.kind !== "message" ||
+      entry.message.role !== "user" ||
+      entry.message.replyTopicId
+    ) {
       continue;
     }
 
     for (let nextIndex = index + 1; nextIndex < input.timelineEntries.length; nextIndex += 1) {
       const nextEntry = input.timelineEntries[nextIndex];
-      if (!nextEntry || nextEntry.kind !== "message") {
+      if (!nextEntry || nextEntry.kind !== "message" || nextEntry.message.replyTopicId) {
         continue;
       }
       if (nextEntry.message.role === "user") {
@@ -1496,20 +1510,22 @@ export function deriveMessagesTimelineRows(input: {
     }
 
     const assistantResponseStillInProgress =
+      timelineEntry.message.replyTopicId === undefined &&
       timelineEntry.message.role === "assistant" &&
       timelineEntry.message.turnId !== null &&
       timelineEntry.message.turnId !== undefined &&
       activeVisualResponseTurnIds.has(timelineEntry.message.turnId);
 
     const durationStart =
-      durationStartByMessageId.get(timelineEntry.message.id) ?? timelineEntry.message.createdAt;
+      durationStartByMessageId.get(timelineMessageKey(timelineEntry.message)) ??
+      timelineEntry.message.createdAt;
 
     // While the turn is still running, the latest assistant message is only
     // provisionally terminal — withhold the metadata row until the turn
     // settles so commentary doesn't flash timestamps mid-work.
     const showAssistantMeta =
       timelineEntry.message.role === "assistant" &&
-      terminalAssistantMessageIds.has(timelineEntry.message.id) &&
+      terminalAssistantMessageIds.has(timelineMessageKey(timelineEntry.message)) &&
       !assistantResponseStillInProgress;
 
     nextRows.push({
@@ -1522,11 +1538,11 @@ export function deriveMessagesTimelineRows(input: {
       showAssistantCopyButton: showAssistantMeta,
       assistantCopyStreaming: timelineEntry.message.streaming || assistantResponseStillInProgress,
       assistantTurnDiffSummary:
-        timelineEntry.message.role === "assistant"
+        timelineEntry.message.role === "assistant" && !timelineEntry.message.replyTopicId
           ? turnDiffSummaryByAssistantMessageId.get(timelineEntry.message.id)
           : undefined,
       revertTurnCount:
-        timelineEntry.message.role === "user"
+        timelineEntry.message.role === "user" && !timelineEntry.message.replyTopicId
           ? revertTurnCountByUserMessageId.get(timelineEntry.message.id)
           : undefined,
     });

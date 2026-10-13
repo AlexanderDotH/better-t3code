@@ -38,3 +38,16 @@ export function threadHasOlderTurns(state: EnvironmentThreadState): boolean {
     onSome: (page) => page.hasMore,
   });
 }
+
+/** Active reply topics share the workspace and must settle before a restore. */
+export function threadHasActiveReplyTopics(
+  thread: Pick<OrchestrationThread, "subagents">,
+): boolean {
+  return thread.subagents.some(
+    (subagent) =>
+      subagent.messageReply !== undefined &&
+      (subagent.status === "starting" ||
+        subagent.status === "running" ||
+        subagent.status === "waiting"),
+  );
+}

@@ -2,6 +2,7 @@ import {
   VisualizationPreviewCache,
   type VisualizationRenderRequest,
 } from "@t3tools/client-runtime/visualizations/model";
+import { visualizationPreviewCacheKey } from "@t3tools/client-runtime/visualizations/appearance";
 
 type PreviewJob = {
   request: VisualizationRenderRequest;
@@ -25,7 +26,7 @@ export function createPreviewQueue(
   return {
     request(request: VisualizationRenderRequest, signal: AbortSignal): Promise<string> {
       if (signal.aborted) return Promise.reject(new Error("Cancelled"));
-      const cacheKey = JSON.stringify([request.format, request.source, request.theme]);
+      const cacheKey = visualizationPreviewCacheKey(request);
       const cached = cache.get(cacheKey);
       if (cached) return Promise.resolve(cached);
       return new Promise((resolve, reject) => {

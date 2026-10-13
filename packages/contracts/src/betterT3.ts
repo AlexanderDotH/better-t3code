@@ -54,6 +54,7 @@ const featureIds = [
   "chat.cardMorphing",
   "chat.hideComposerDivider",
   "chat.messageEditing",
+  "chat.messageReplies",
   "chat.characterStreamingMotion",
   "chat.presentation",
   "chat.contextWindowSelector",
@@ -100,6 +101,7 @@ export type BetterT3FeatureId = typeof BetterT3FeatureId.Type;
 const switchFeatureIds = [
   "chat.visualizations",
   "chat.messageEditing",
+  "chat.messageReplies",
   "agent.fetch",
   "agent.parallelPlanImplementation",
   "agent.planMode",
@@ -390,6 +392,15 @@ export const BETTER_T3_FEATURE_REGISTRY = [
     existing: true,
     clean: true,
     surfaces: ["web", "desktop"],
+  }),
+  descriptor({
+    id: "chat.messageReplies",
+    section: "chat-layout",
+    scope: "device",
+    controlKind: "switch",
+    existing: true,
+    clean: true,
+    capabilities: [capability("messageReplies")],
   }),
   descriptor({
     id: "chat.characterStreamingMotion",

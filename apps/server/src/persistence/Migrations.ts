@@ -15,6 +15,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import Migration0061 from "./Migrations/061_IndependentMigrationLedgers.ts";
 import Migration0062 from "./Migrations/062_MessageEditContextIndex.ts";
 import Migration0063 from "./Migrations/063_KnowledgeGraphSemanticLookupIndexes.ts";
+import Migration0065 from "./Migrations/065_ProjectionMessageReplyTopics.ts";
 import { migrationManifest as legacyForkManifest } from "./Migrations/LegacyForkMigrations.ts";
 
 // Import all migrations statically
@@ -164,6 +165,8 @@ const forkMigrationEntries = [
   [61, "IndependentMigrationLedgers", Migration0061],
   [62, "MessageEditContextIndex", Migration0062],
   [63, "KnowledgeGraphSemanticLookupIndexes", Migration0063],
+  // 64 was retired after shipping; keep later IDs stable for installed databases.
+  [65, "ProjectionMessageReplyTopics", Migration0065],
 ] as const;
 export const forkMigrationManifest = forkMigrationEntries.map(([id, name]) => [id, name] as const);
 

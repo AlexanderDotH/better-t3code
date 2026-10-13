@@ -1243,13 +1243,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     provider: ProviderDriverKind,
     options?: {
       readonly workspaceContextThreadId?: ThreadId;
+      readonly messageReply?: McpInvocationContext.McpMessageReplyContext;
       readonly workspaceOnly?: boolean;
       readonly projectMemoryEnabled?: boolean;
       readonly workspaceWriteEnabled?: boolean;
     },
   ) =>
     Effect.gen(function* () {
-      const capabilities = yield* agentAccessCapabilities(threadId);
+      const capabilities = yield* agentAccessCapabilities(
+        options?.workspaceContextThreadId ?? threadId,
+      );
       const previewEnabled = capabilities.has("preview");
       const credential = yield* issueMcpCredential({
         threadId,
@@ -1312,6 +1315,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     readonly persistence?: ProviderRuntimeLease["persistence"];
     readonly mountMcp?: boolean;
     readonly workspaceContextThreadId?: ThreadId;
+    readonly messageReply?: McpInvocationContext.McpMessageReplyContext;
     readonly workspaceOnlyMcp?: boolean;
     readonly sessionInput: Parameters<
       ProviderAdapterShape<ProviderAdapterError>["startSession"]
@@ -1360,6 +1364,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
               ...(input.workspaceContextThreadId !== undefined
                 ? { workspaceContextThreadId: input.workspaceContextThreadId }
                 : {}),
+              ...(input.messageReply === undefined ? {} : { messageReply: input.messageReply }),
               ...(input.workspaceOnlyMcp !== undefined
                 ? { workspaceOnly: input.workspaceOnlyMcp }
                 : {}),
@@ -2288,6 +2293,19 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         "Fetch worker sessions cannot mount the full MCP profile.",
       );
     }
+    if (
+      options?.messageReply !== undefined &&
+      (fetchWorker ||
+        mcpMode !== "full" ||
+        !options.workspaceContextThreadId ||
+        options.workspaceContextThreadId === threadId ||
+        parsed.cwd === undefined)
+    ) {
+      return yield* toValidationError(
+        "ProviderService.startTransientSession",
+        "Message reply MCP access requires a separate parent workspace and full worker profile.",
+      );
+    }
     if (parsed.modelSelection === undefined) {
       return yield* toValidationError(
         "ProviderService.startTransientSession",
@@ -2340,6 +2358,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       providerInstanceId: resolvedInstanceId,
       runtimeSessionId: parsed.runtimeSessionId,
       persistence: "transient",
+      ...(options?.messageReply !== undefined && parsed.cwd !== undefined
+        ? {
+            messageReply: {
+              ...options.messageReply,
+              runtimeSessionId: parsed.runtimeSessionId,
+              runtimeMode: parsed.runtimeMode,
+              workspacePath: parsed.cwd,
+            },
+          }
+        : {}),
       ...(mcpMode === "none"
         ? { mountMcp: false }
         : {

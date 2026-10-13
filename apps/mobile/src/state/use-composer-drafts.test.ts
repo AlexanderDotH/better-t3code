@@ -7,6 +7,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  SubagentId,
   type VoiceFileReference,
 } from "@t3tools/contracts";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
@@ -186,6 +187,7 @@ import {
   restoreCloudComposerDrafts,
   retargetNewTaskDraft,
   setComposerDraftText,
+  setComposerDraftMessageReply,
   insertComposerDraftContext,
   insertComposerDraftText,
   rememberComposerDraftSelection,
@@ -252,6 +254,37 @@ function contextDraft(start: number, count: number): ComposerDraft {
 }
 
 describe("mobile composer drafts", () => {
+  it("persists reply-only drafts and preserves typed text when changing or cancelling the source", () => {
+    const key = "environment:thread";
+    const reference = {
+      messageId: MessageId.make("source"),
+      role: "assistant" as const,
+      text: "Original answer",
+    };
+    const firstReply = { replyTo: reference, replyTopicId: SubagentId.make("topic-one") };
+    setComposerDraftMessageReply(key, firstReply);
+    const restored = decodePersistedComposerState({
+      schemaVersion: 1,
+      drafts: { [key]: getComposerDraftSnapshot(key) },
+    });
+    expect(restored.drafts[key]?.messageReply).toEqual(firstReply);
+    setComposerDraftText(key, "Keep this draft");
+    setComposerDraftMessageReply(key, {
+      replyTo: { ...reference, messageId: MessageId.make("other-source") },
+      replyTopicId: SubagentId.make("topic-two"),
+    });
+    expect(getComposerDraftSnapshot(key).text).toBe("Keep this draft");
+    setComposerDraftMessageReply(key, undefined);
+    expect(getComposerDraftSnapshot(key)).toMatchObject({
+      text: "Keep this draft",
+      messageReply: undefined,
+    });
+    setComposerDraftMessageReply(key, firstReply);
+    expect(clearComposerDraftContentState({ [key]: getComposerDraftSnapshot(key) }, key)).toEqual(
+      {},
+    );
+  });
+
   it.each([false, true])(
     "restores visible file chips from legacy drafts (archived: %s)",
     async (archived) => {

@@ -18,11 +18,13 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as WorkspaceContext from "../../../workspace/WorkspaceContext.ts";
 import * as WorkspaceFileSystem from "../../../workspace/WorkspaceFileSystem.ts";
+import { ProviderService } from "../../../provider/Services/ProviderService.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
   ProjectionSnapshotQuery.ProjectionSnapshotQuery,
   WorkspaceContext.WorkspaceContext,
+  ProviderService,
 ];
 
 export const WorkspaceFindTool = Tool.make("workspace_find", {
@@ -80,6 +82,7 @@ export const WorkspaceEditTool = Tool.make("workspace_edit", {
     McpInvocationContext.McpInvocationContext,
     ProjectionSnapshotQuery.ProjectionSnapshotQuery,
     WorkspaceFileSystem.WorkspaceFileSystem,
+    ProviderService,
   ],
 })
   .annotate(Tool.Title, "Edit workspace files")

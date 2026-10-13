@@ -269,6 +269,49 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             };
           }
         }
+        if (envelope.command.type === "thread.reply.start") {
+          const replyCommand = envelope.command;
+          const source = yield* projectionSnapshotQuery.getTurnStartMessage({
+            threadId: replyCommand.threadId,
+            messageId: replyCommand.replyTo.messageId,
+          });
+          const topic = yield* projectionSnapshotQuery.getSubagentDetailById(
+            replyCommand.threadId,
+            replyCommand.replyTopicId,
+          );
+          decisionReadModel = {
+            ...decisionReadModel,
+            threads: decisionReadModel.threads.map((thread) =>
+              thread.id !== replyCommand.threadId
+                ? thread
+                : {
+                    ...thread,
+                    ...(Option.isSome(source)
+                      ? {
+                          messages: [
+                            ...thread.messages.filter(
+                              (message) => message.id !== source.value.message.id,
+                            ),
+                            source.value.message,
+                          ],
+                        }
+                      : {}),
+                    ...(Option.isSome(topic)
+                      ? {
+                          subagents: [
+                            ...thread.subagents.filter((entry) => entry.id !== topic.value.id),
+                            topic.value,
+                          ],
+                          replyMessages: topic.value.messages.map((message) => ({
+                            ...message,
+                            replyTopicId: topic.value.id,
+                          })),
+                        }
+                      : {}),
+                  },
+            ),
+          };
+        }
         const sourceEvents =
           envelope.command.type === "thread.fork"
             ? yield* Stream.runCollect(

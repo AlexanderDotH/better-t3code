@@ -207,6 +207,21 @@ describe("visualization source model", () => {
       theme: "light",
     };
     expect(isVisualizationRequest(request)).toBe(true);
+    const appearance = {
+      fontFamily: "Arial, sans-serif",
+      background: "#ffffff",
+      foreground: "#111111",
+      mutedForeground: "#555555",
+      surface: "#eeeeee",
+      border: "#cccccc",
+    };
+    expect(isVisualizationRequest({ ...request, appearance })).toBe(true);
+    expect(isVisualizationRequest({ ...request, appearance: null })).toBe(false);
+    expect(isVisualizationRequest({ ...request, appearance: [] })).toBe(false);
+    expect(isVisualizationRequest({ ...request, appearance: { fontFamily: "Arial" } })).toBe(false);
+    expect(
+      isVisualizationRequest({ ...request, appearance: { ...appearance, background: 1 } }),
+    ).toBe(false);
     expect(isVisualizationRequest({ ...request, interactive: "yes" })).toBe(false);
     expect(isVisualizationRequest({ ...request, format: "html" })).toBe(false);
     expect(

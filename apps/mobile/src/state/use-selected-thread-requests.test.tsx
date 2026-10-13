@@ -6,6 +6,8 @@ const fixture = vi.hoisted(() => ({
   uploads: {} as Record<string, unknown>,
   preparations: {} as Record<string, number>,
   preparationAtom: Symbol("preparation"),
+  replyActivities: [] as unknown[],
+  commands: vi.fn(async (..._args: unknown[]) => ({ _tag: "Success" })),
 }));
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
 vi.mock("@effect/atom-react", () => ({
@@ -47,8 +49,16 @@ vi.mock("./entities", () => ({
       ],
     ]),
 }));
-vi.mock("./threads", () => ({ threadEnvironment: {} }));
-vi.mock("./use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
+vi.mock("./threads", () => ({
+  threadEnvironment: {
+    respondToReplyApproval: "reply-approval",
+    respondToReplyUserInput: "reply-input",
+    dismissReplyUserInput: "reply-dismiss",
+  },
+}));
+vi.mock("./use-atom-command", () => ({
+  useAtomCommand: (command: unknown) => (input: unknown) => fixture.commands(command, input),
+}));
 vi.mock("./use-thread-selection", () => ({
   useThreadSelection: () => ({
     selectedThread: { environmentId: "environment-1", id: "thread-1" },
@@ -56,6 +66,7 @@ vi.mock("./use-thread-selection", () => ({
 }));
 vi.mock("./use-thread-detail", () => ({
   useSelectedThreadDetail: () => ({
+    replyActivities: fixture.replyActivities,
     activities: [
       {
         id: "request-activity",
@@ -76,9 +87,10 @@ vi.mock("./use-thread-detail", () => ({
   }),
 }));
 
-import { ApprovalRequestId, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { ApprovalRequestId, EnvironmentId, ThreadId, SubagentId } from "@t3tools/contracts";
 import { questionAttachmentDraftKey } from "./question-attachments";
 import { useSelectedThreadRequests } from "./use-selected-thread-requests";
+import { composerDraftEnvironmentId } from "../lib/composerAttachmentUploadQueue";
 
 const environmentId = EnvironmentId.make("environment-1");
 const key = (question: string) =>
@@ -96,6 +108,8 @@ function submitButtonMarkup() {
   return renderToStaticMarkup(<Probe />);
 }
 beforeEach(() => {
+  fixture.replyActivities = [];
+  fixture.commands.mockClear();
   fixture.preparations = {};
   fixture.drafts = Object.fromEntries(
     ["first", "second"].map((id) => [
@@ -115,6 +129,72 @@ beforeEach(() => {
     ]),
   );
   fixture.uploads = { "environment-1:first": { status: "ready" } };
+});
+
+describe("reply request routing", () => {
+  it("keeps duplicate request ids separate and sends approval decisions to their topic", async () => {
+    const firstTopic = SubagentId.make("first-topic");
+    const secondTopic = SubagentId.make("second-topic");
+    fixture.replyActivities = [firstTopic, secondTopic].map((replyTopicId) => ({
+      id: `${replyTopicId}-request`,
+      kind: "approval.requested",
+      replyTopicId,
+      createdAt: "2026-10-13T10:00:00Z",
+      payload: { requestId: "same-request", requestKind: "command", detail: replyTopicId },
+    }));
+    fixture.replyActivities.push({
+      id: "first-response",
+      kind: "approval.resolved",
+      replyTopicId: firstTopic,
+      createdAt: "2026-10-13T10:00:01Z",
+      payload: { requestId: "same-request", decision: "accept" },
+    });
+    const captured: Array<ReturnType<typeof useSelectedThreadRequests>> = [];
+    function Probe() {
+      captured.push(useSelectedThreadRequests(firstTopic), useSelectedThreadRequests(secondTopic));
+      return null;
+    }
+    renderToStaticMarkup(<Probe />);
+    expect(captured[0]?.activePendingApproval).toBeNull();
+    expect(captured[1]?.activePendingApproval?.detail).toBe(secondTopic);
+    await captured[1]!.onRespondToApproval(ApprovalRequestId.make("same-request"), "decline");
+    expect(fixture.commands).toHaveBeenCalledWith("reply-approval", {
+      environmentId,
+      input: {
+        threadId: "thread-1",
+        replyTopicId: secondTopic,
+        requestId: "same-request",
+        decision: "decline",
+      },
+    });
+  });
+  it("scopes question attachment drafts by environment, thread and topic", () => {
+    const args = [
+      environmentId,
+      ThreadId.make("thread-1"),
+      ApprovalRequestId.make("same-request"),
+      "question",
+    ] as const;
+    const keys = [
+      questionAttachmentDraftKey(...args),
+      questionAttachmentDraftKey(...args, SubagentId.make("first-topic")),
+      questionAttachmentDraftKey(...args, SubagentId.make("second-topic")),
+      questionAttachmentDraftKey(
+        EnvironmentId.make("other-environment"),
+        args[1],
+        args[2],
+        args[3],
+        SubagentId.make("first-topic"),
+      ),
+    ];
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(keys.map((draftKey) => composerDraftEnvironmentId(draftKey, []))).toEqual([
+      environmentId,
+      environmentId,
+      environmentId,
+      "other-environment",
+    ]);
+  });
 });
 describe("question attachment submission readiness", () => {
   it.each([

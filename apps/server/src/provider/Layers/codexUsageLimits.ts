@@ -9,6 +9,8 @@
 import type {
   ProviderUsageLimitsUpdate,
   ServerProviderResetCredits,
+  ServerProviderResetCredit,
+  ServerProviderAccountCredits,
   ServerProviderUsageLimits,
   ServerProviderUsageWindow,
 } from "@t3tools/contracts";
@@ -31,14 +33,25 @@ export interface CodexRateLimitSnapshot {
   readonly rateLimitReachedType?: string | null;
   readonly primary?: CodexRateLimitWindow | null;
   readonly secondary?: CodexRateLimitWindow | null;
+  readonly credits?: {
+    readonly hasCredits: boolean;
+    readonly unlimited: boolean;
+    readonly balance?: string | null;
+  } | null;
 }
 
 /** Structural view of the read response's `rateLimitResetCredits`. */
 export interface CodexResetCreditsSummary {
   readonly availableCount: number;
   readonly credits?: ReadonlyArray<{
+    readonly id?: string;
     readonly status: string;
+    readonly resetType?: string;
+    readonly title?: string | null;
+    readonly description?: string | null;
+    readonly grantedAt?: number | null;
     readonly expiresAt?: number | null;
+    readonly redeemedAt?: number | null;
   }> | null;
 }
 
@@ -108,9 +121,48 @@ export function codexResetCreditsToContract(
     .filter((value): value is number => typeof value === "number");
   const nextExpiresAt =
     expiries.length > 0 ? isoFromEpochSeconds(Math.min(...expiries)) : undefined;
+  const credits = summary.credits?.flatMap((credit): ServerProviderResetCredit[] => {
+    if (!credit.id?.trim()) return [];
+    const status =
+      credit.status === "available" ||
+      credit.status === "redeeming" ||
+      credit.status === "redeemed" ||
+      credit.status === "expired"
+        ? credit.status
+        : "unknown";
+    const grantedAt = isoFromEpochSeconds(credit.grantedAt);
+    const expiresAt = isoFromEpochSeconds(credit.expiresAt);
+    const redeemedAt = isoFromEpochSeconds(credit.redeemedAt);
+    return [
+      {
+        id: credit.id,
+        status,
+        resetType: credit.resetType ?? "unknown",
+        ...(credit.title?.trim() ? { title: credit.title.trim() } : {}),
+        ...(credit.description?.trim() ? { description: credit.description.trim() } : {}),
+        ...(grantedAt ? { grantedAt } : {}),
+        ...(expiresAt ? { expiresAt } : {}),
+        ...(redeemedAt ? { redeemedAt } : {}),
+      },
+    ];
+  });
   return {
     availableCount: Math.max(0, summary.availableCount),
     ...(nextExpiresAt ? { nextExpiresAt } : {}),
+    ...(credits && (credits.length > 0 || summary.credits?.length === 0)
+      ? { credits: credits.slice(0, 200) }
+      : {}),
+  };
+}
+
+function codexAccountCredits(
+  credits: CodexRateLimitSnapshot["credits"],
+): ServerProviderAccountCredits | undefined {
+  if (!credits) return undefined;
+  return {
+    hasCredits: credits.hasCredits,
+    unlimited: credits.unlimited,
+    ...(credits.balance?.trim() ? { balance: credits.balance.trim() } : {}),
   };
 }
 
@@ -125,21 +177,28 @@ export function codexRateLimitsToLimits(input: {
 }): ServerProviderUsageLimits {
   const resetCredits = codexResetCreditsToContract(input.resetCredits);
   // Select the main bucket explicitly; the legacy snapshot can name another limit.
-  const windows = codexRateLimitsToWindows(input.rateLimitsByLimitId?.codex ?? input.snapshot);
+  const main = input.rateLimitsByLimitId?.codex ?? input.snapshot;
+  const windows = codexRateLimitsToWindows(main);
+  const accountCredits = codexAccountCredits(main.credits ?? input.snapshot.credits);
   return {
     ...makeUsageLimits({
       checkedAt: input.checkedAt,
       windows,
     }),
     ...(resetCredits ? { resetCredits } : {}),
+    ...(accountCredits ? { accountCredits } : {}),
   };
 }
 
 export function codexRateLimitsToUpdate(
   snapshot: CodexRateLimitSnapshot,
 ): ProviderUsageLimitsUpdate | undefined {
+  if (snapshot.limitId && snapshot.limitId !== "codex") return undefined;
   const windows = codexRateLimitsToWindows(snapshot);
-  return windows.length > 0 ? { windows } : undefined;
+  const accountCredits = codexAccountCredits(snapshot.credits);
+  return windows.length > 0 || accountCredits
+    ? { windows, ...(accountCredits ? { accountCredits } : {}) }
+    : undefined;
 }
 
 /**
@@ -183,6 +242,7 @@ export function mergeCodexRateLimits(
       : {}),
     ...(update.primary !== undefined ? { primary: update.primary } : {}),
     ...(update.secondary !== undefined ? { secondary: update.secondary } : {}),
+    ...(update.credits !== undefined ? { credits: update.credits } : {}),
   };
 }
 

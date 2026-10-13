@@ -727,6 +727,7 @@ const make = Effect.gen(function* () {
       if (
         event.metadata.historyImport === true ||
         event.metadata.deferredTurn === true ||
+        event.payload.subagentId !== undefined ||
         event.payload.role !== "user" ||
         event.payload.streaming ||
         event.payload.turnId !== null

@@ -3,7 +3,8 @@ import { Pressable, ScrollView, useWindowDimensions, View } from "react-native";
 
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
-import { AccountLimits, ResetCredits } from "../usage/UsageLimitsSection";
+import { AccountLimits } from "../usage/UsageLimitsSection";
+import { UsageResetMenu } from "../usage/ResetManagementDialog";
 
 const DRIVER_LABEL: Partial<Record<string, string>> = { codex: "Codex", claudeAgent: "Claude" };
 
@@ -24,15 +25,23 @@ export function ComposerUsageLimits({
   const now = Date.parse(report.createdAt);
   const { height } = useWindowDimensions();
   const close = (
-    <Pressable
-      accessibilityLabel="Dismiss usage limits"
-      accessibilityRole="button"
-      hitSlop={12}
-      onPress={onClose}
-      className="-me-1 p-1 active:opacity-60"
-    >
-      <SymbolView name="xmark" size={14} tintColorClassName="accent-icon-muted" type="monochrome" />
-    </Pressable>
+    <View className="flex-row items-center gap-2">
+      <UsageResetMenu report={report} environmentId={environmentId} />
+      <Pressable
+        accessibilityLabel="Dismiss usage limits"
+        accessibilityRole="button"
+        hitSlop={12}
+        onPress={onClose}
+        className="-me-1 p-1 active:opacity-60"
+      >
+        <SymbolView
+          name="xmark"
+          size={14}
+          tintColorClassName="accent-icon-muted"
+          type="monochrome"
+        />
+      </Pressable>
+    </View>
   );
   return (
     <View className="overflow-hidden rounded-[20px] border-continuous bg-card">
@@ -42,9 +51,6 @@ export function ComposerUsageLimits({
         style={{ maxHeight: Math.round(height * 0.4) }}
       >
         {report.accounts.map((account, index) => {
-          const resetCreditInput =
-            account.resetCreditInput ??
-            (account.instanceId ? { instanceId: account.instanceId } : undefined);
           const driverLabel = DRIVER_LABEL[account.driver] ?? String(account.driver);
           return (
             <AccountLimits
@@ -67,17 +73,6 @@ export function ComposerUsageLimits({
               limits={account.limits}
               now={now}
               trailing={index === 0 ? close : undefined}
-              footer={
-                resetCreditInput && account.limits.resetCredits ? (
-                  <ResetCredits
-                    dense
-                    environmentId={environmentId}
-                    input={resetCreditInput}
-                    credits={account.limits.resetCredits}
-                    now={now}
-                  />
-                ) : undefined
-              }
             />
           );
         })}

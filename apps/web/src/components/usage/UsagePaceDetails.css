@@ -3,26 +3,7 @@
   position: absolute;
   inset-block: 0;
   display: flex;
-  border-top-right-radius: calc(infinity * 1px);
-  border-bottom-right-radius: calc(infinity * 1px);
-}
-
-@utility usage-pace-notch {
-  position: absolute;
-  inset-block: 0;
-  left: 0;
-  translate: -50% 0;
-  border-radius: calc(infinity * 1px);
-
-  /* Clip only the shadow; clipping the fill exposes a seam at fractional positions. */
-  &::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    box-shadow: 0 0 0 2px var(--muted);
-    clip-path: inset(-2px -2px -2px 50%);
-  }
+  overflow: hidden;
 }
 
 @utility usage-window-track {
@@ -38,12 +19,6 @@
   inset-block: 0;
   left: 0;
   border-radius: calc(infinity * 1px);
-
-  /* The weekly fill masks overdraw, so its cap is painted only once at any size. */
-  .usage-window-track:has(> .usage-pace-bar[data-overdrawn="true"]) > & {
-    z-index: 1;
-    box-shadow: 2px 0 0 var(--muted);
-  }
 }
 
 @utility usage-pace-label {

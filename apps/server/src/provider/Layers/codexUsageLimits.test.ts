@@ -301,3 +301,63 @@ describe("mergeCodexRateLimits", () => {
     ).toBe(main);
   });
 });
+
+describe("reset management account data", () => {
+  it("preserves the credit balance and individual reset metadata", () => {
+    const limits = codexRateLimitsToLimits({
+      checkedAt,
+      snapshot: {
+        primary: { usedPercent: 95 },
+        credits: { hasCredits: true, unlimited: false, balance: "15.75" },
+      },
+      resetCredits: {
+        availableCount: 2,
+        credits: [
+          {
+            id: "reset-1",
+            status: "available",
+            resetType: "codexRateLimits",
+            title: "Full reset",
+            description: "Restores usage windows",
+            grantedAt: 1_784_000_000,
+            expiresAt: 1_784_500_000,
+          },
+          {
+            id: "used-1",
+            status: "redeemed",
+            resetType: "codexRateLimits",
+            grantedAt: 1_784_000_000,
+          },
+        ],
+      },
+    });
+    expect(limits.accountCredits).toEqual({ hasCredits: true, unlimited: false, balance: "15.75" });
+    expect(limits.resetCredits?.credits).toEqual([
+      {
+        id: "reset-1",
+        status: "available",
+        resetType: "codexRateLimits",
+        title: "Full reset",
+        description: "Restores usage windows",
+        grantedAt: "2026-07-14T03:33:20.000Z",
+        expiresAt: "2026-07-19T22:26:40.000Z",
+      },
+      {
+        id: "used-1",
+        status: "redeemed",
+        resetType: "codexRateLimits",
+        grantedAt: "2026-07-14T03:33:20.000Z",
+      },
+    ]);
+  });
+
+  it("distinguishes a missing balance from an explicitly zero balance", () => {
+    expect(codexRateLimitsToLimits({ checkedAt, snapshot: {} }).accountCredits).toBeUndefined();
+    expect(
+      codexRateLimitsToUpdate({ credits: { hasCredits: false, unlimited: false, balance: "0" } }),
+    ).toEqual({
+      windows: [],
+      accountCredits: { hasCredits: false, unlimited: false, balance: "0" },
+    });
+  });
+});

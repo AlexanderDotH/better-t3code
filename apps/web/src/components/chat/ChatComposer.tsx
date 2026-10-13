@@ -338,6 +338,7 @@ import {
   submitComposerDraft,
 } from "./composerSubmission";
 import { ComposerPromptLengthValidation } from "./ComposerPromptLengthValidation";
+import { MessageReplyPreview } from "./MessageReplyPreview";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { pendingDraftWork } from "./pendingDraftWork";
 import { isTimelineScrollTarget } from "./timelineScrollTarget";
@@ -1426,6 +1427,7 @@ export interface ChatComposerHandle {
 // --------------------------------------------------------------------------
 
 export interface ChatComposerProps {
+  replyError?: string | null;
   composerDraftTarget: ScopedThreadRef | DraftId;
   environmentId: EnvironmentId;
   attachmentUploadsCapabilityKnown: boolean;
@@ -2359,7 +2361,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     active: false,
   });
   const isComposerCollapsedMobile =
-    isMobileViewport && !forceExpandedOnMobile && !isComposerFocused && !hasMultilinePrompt;
+    isMobileViewport &&
+    !forceExpandedOnMobile &&
+    !isComposerFocused &&
+    !hasMultilinePrompt &&
+    composerDraft.replyTarget === undefined;
 
   // ------------------------------------------------------------------
   // Refs
@@ -5116,6 +5122,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // it, so they do not hold the composer open; only surface-internal chrome
   // does.
   const composerHasExpandedChrome =
+    composerDraft.replyTarget !== undefined ||
     showComposerTopDrawer ||
     isTasksDrawerOpen ||
     composerMenuOpen ||
@@ -7262,6 +7269,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   </div>
                 )}
 
+              {composerDraft.replyTarget ? (
+                <MessageReplyPreview
+                  replyTo={composerDraft.replyTarget.replyTo}
+                  onCancel={() => {
+                    useComposerDraftStore.getState().setReplyTarget(composerDraftTarget, null);
+                    composerEditorRef.current?.focusAtEnd();
+                  }}
+                />
+              ) : null}
+              {composerDraft.replyTarget && props.replyError ? (
+                <p className="mb-2 text-xs text-destructive" role="alert">
+                  {props.replyError}
+                </p>
+              ) : null}
               <div
                 className={cn(
                   "relative",

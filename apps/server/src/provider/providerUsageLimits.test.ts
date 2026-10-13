@@ -230,3 +230,26 @@ describe("resolveUsageLimitsAfterProbe", () => {
     ).toEqual([]);
   });
 });
+
+it("preserves account credits across sparse window updates and accepts a balance-only update", () => {
+  const previous = {
+    checkedAt: "2026-10-13T10:00:00.000Z",
+    windows: [{ id: "primary", kind: "session" as const, label: "Session", usedPercent: 50 }],
+    accountCredits: { hasCredits: true, unlimited: false, balance: "25" },
+    resetCredits: { availableCount: 2 },
+  };
+  const next = applyUsageLimitsUpdate({
+    previous,
+    update: { windows: [{ ...previous.windows[0]!, usedPercent: 55 }] },
+    checkedAt: "2026-10-13T10:01:00.000Z",
+  });
+  expect(next?.accountCredits).toEqual(previous.accountCredits);
+  const spent = applyUsageLimitsUpdate({
+    previous: next,
+    update: { windows: [], accountCredits: { hasCredits: false, unlimited: false, balance: "0" } },
+    checkedAt: "2026-10-13T10:02:00.000Z",
+  });
+  expect(spent?.accountCredits?.balance).toBe("0");
+  expect(spent?.windows[0]?.usedPercent).toBe(55);
+  expect(spent?.resetCredits?.availableCount).toBe(2);
+});

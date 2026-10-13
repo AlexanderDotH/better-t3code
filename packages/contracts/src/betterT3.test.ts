@@ -253,6 +253,27 @@ describe("Better T3 feature registry", () => {
 });
 
 describe("BetterT3SettingsV1", () => {
+  it("defaults message replies on for every surface and retains an explicit device opt-out", () => {
+    expect(BETTER_T3_FEATURE_REGISTRY.find(({ id }) => id === "chat.messageReplies")).toMatchObject(
+      {
+        scope: "device",
+        availability: {
+          surfaces: ["web", "desktop", "phone", "tablet"],
+          capabilities: [{ name: "messageReplies" }],
+        },
+      },
+    );
+    for (const origin of ["clean-install", "existing-install-migration"] as const) {
+      expect(
+        resolveBetterT3FeatureFlag(makeBetterT3SettingsV1(origin), "chat.messageReplies"),
+      ).toBe(true);
+      const settings = makeBetterT3SettingsV1(origin, { "chat.messageReplies": false });
+      expect(
+        resolveBetterT3FeatureFlag(decodeSettings(encodeSettings(settings)), "chat.messageReplies"),
+      ).toBe(false);
+    }
+  });
+
   it("keeps notification suppression opt-in and persists both toggle directions", () => {
     for (const origin of ["clean-install", "existing-install-migration"] as const) {
       expect(
@@ -316,7 +337,7 @@ describe("BetterT3SettingsV1", () => {
 
     expect(
       switchFeatureIds.filter((featureId) => resolveBetterT3FeatureFlag(clean, featureId)),
-    ).toEqual(["agent.expandedComposerControls", "chat.messageEditing"]);
+    ).toEqual(["agent.expandedComposerControls", "chat.messageEditing", "chat.messageReplies"]);
     expect(
       switchFeatureIds.filter((featureId) => resolveBetterT3FeatureFlag(existing, featureId)),
     ).toEqual([
@@ -326,6 +347,7 @@ describe("BetterT3SettingsV1", () => {
       "chat.workspaceCardDeck",
       "chat.cardMorphing",
       "chat.messageEditing",
+      "chat.messageReplies",
       "chat.characterStreamingMotion",
       "chat.shiftClickShowLess",
       "chat.draftIndicators",

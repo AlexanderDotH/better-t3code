@@ -26,6 +26,7 @@ import * as McpProviderSession from "./McpProviderSession.ts";
 export interface McpCredentialRequest {
   readonly threadId: ThreadId;
   readonly workspaceContextThreadId?: ThreadId;
+  readonly messageReply?: McpInvocationContext.McpMessageReplyContext;
   /** True selects core-only; explicit false requests the full optional profile. */
   readonly workspaceOnly?: boolean;
   /** False omits project memory when memory is disabled or provider-managed. */
@@ -237,6 +238,9 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       const scope: McpInvocationContext.McpInvocationScope = {
         environmentId,
         ownerThreadId: request.threadId,
+        ...(request.messageReply === undefined
+          ? {}
+          : { messageReply: { ...request.messageReply } }),
         threadId: ThreadId.make(request.workspaceContextThreadId ?? request.threadId),
         providerSessionId,
         providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),

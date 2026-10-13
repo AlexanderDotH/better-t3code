@@ -1,4 +1,9 @@
-import { ChatAttachment } from "@t3tools/contracts";
+import {
+  ChatAttachment,
+  MessageReplyReference,
+  OrchestrationMessageContext,
+  SubagentId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -21,6 +26,9 @@ import {
 const ProjectionThreadSubagentMessageDbRow = ProjectionThreadSubagentMessage.mapFields(
   Struct.assign({
     attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
+    context: Schema.NullOr(Schema.fromJsonString(OrchestrationMessageContext)),
+    replyTo: Schema.NullOr(Schema.fromJsonString(MessageReplyReference)),
+    replyTopicId: Schema.NullOr(SubagentId),
     isStreaming: Schema.Number,
   }),
 );
@@ -41,6 +49,9 @@ function toProjectionThreadSubagentMessage(
     role: row.role,
     text: row.text,
     ...(row.attachments !== null ? { attachments: row.attachments } : {}),
+    ...(row.context !== null ? { context: row.context } : {}),
+    ...(row.replyTo !== null ? { replyTo: row.replyTo } : {}),
+    ...(row.replyTopicId !== null ? { replyTopicId: row.replyTopicId } : {}),
     isStreaming: row.isStreaming === 1,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -64,6 +75,9 @@ const makeProjectionThreadSubagentMessageRepository = Effect.gen(function* () {
           role,
           text,
           attachments_json,
+          context_json,
+          reply_to_json,
+          reply_topic_id,
           is_streaming,
           created_at,
           updated_at
@@ -85,6 +99,9 @@ const makeProjectionThreadSubagentMessageRepository = Effect.gen(function* () {
                 AND message_id = ${row.messageId}
             )
           ),
+          ${row.context === undefined ? null : JSON.stringify(row.context)},
+          ${row.replyTo === undefined ? null : JSON.stringify(row.replyTo)},
+          ${row.replyTopicId ?? null},
           ${row.isStreaming ? 1 : 0},
           ${row.createdAt},
           ${row.updatedAt}
@@ -97,6 +114,15 @@ const makeProjectionThreadSubagentMessageRepository = Effect.gen(function* () {
           attachments_json = COALESCE(
             excluded.attachments_json,
             projection_thread_subagent_messages.attachments_json
+          ),
+          context_json = COALESCE(
+            projection_thread_subagent_messages.context_json, excluded.context_json
+          ),
+          reply_to_json = COALESCE(
+            projection_thread_subagent_messages.reply_to_json, excluded.reply_to_json
+          ),
+          reply_topic_id = COALESCE(
+            projection_thread_subagent_messages.reply_topic_id, excluded.reply_topic_id
           ),
           is_streaming = excluded.is_streaming,
           created_at = excluded.created_at,
@@ -117,6 +143,9 @@ const makeProjectionThreadSubagentMessageRepository = Effect.gen(function* () {
         role,
         text,
         attachments_json AS "attachments",
+        context_json AS "context",
+        reply_to_json AS "replyTo",
+        reply_topic_id AS "replyTopicId",
         is_streaming AS "isStreaming",
         created_at AS "createdAt",
         updated_at AS "updatedAt"
@@ -140,6 +169,9 @@ const makeProjectionThreadSubagentMessageRepository = Effect.gen(function* () {
         role,
         text,
         attachments_json AS "attachments",
+        context_json AS "context",
+        reply_to_json AS "replyTo",
+        reply_topic_id AS "replyTopicId",
         is_streaming AS "isStreaming",
         created_at AS "createdAt",
         updated_at AS "updatedAt"
