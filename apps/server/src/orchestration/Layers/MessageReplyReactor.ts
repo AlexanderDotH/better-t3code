@@ -51,7 +51,7 @@ function isReplyReactorEvent(event: OrchestrationEvent): event is ReplyReactorEv
   }
 }
 
-export const makeMessageReplyReactor = Effect.gen(function* () {
+const makeMessageReplyReactor = Effect.gen(function* () {
   const engine = yield* OrchestrationEngineService;
   const query = yield* ProjectionSnapshotQuery;
   const coordinator = yield* MessageReplyCoordinator;
