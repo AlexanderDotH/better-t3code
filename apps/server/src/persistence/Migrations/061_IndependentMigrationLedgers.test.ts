@@ -65,6 +65,8 @@ const assertCurrent = Effect.gen(function* () {
     { migration_id: 62, name: "MessageEditContextIndex" },
     { migration_id: 63, name: "KnowledgeGraphSemanticLookupIndexes" },
     { migration_id: 65, name: "ProjectionMessageReplyTopics" },
+    { migration_id: 66, name: "ProjectionThreadDeepPlan" },
+    { migration_id: 67, name: "DeepPlanSources" },
   ]);
   const editPlan = yield* sql<{ detail: string }>`
     EXPLAIN QUERY PLAN SELECT MAX(sequence) FROM orchestration_events
@@ -271,7 +273,7 @@ it.effect(
         );
         assert.deepStrictEqual(
           yield* sql`SELECT MAX(migration_id) AS id FROM ${sql(forkMigrationTable)}`,
-          [{ id: 65 }],
+          [{ id: 67 }],
         );
       }).pipe(
         Effect.provide(
@@ -281,7 +283,7 @@ it.effect(
     }).pipe(Effect.scoped),
 );
 
-for (const latestForkId of [64, 65]) {
+for (const latestForkId of [64, 65, 66, 67]) {
   it.effect(`preserves retired migration history with fork migration ${latestForkId} applied`, () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -296,13 +298,18 @@ for (const latestForkId of [64, 65]) {
       `;
       yield* sql`CREATE TABLE retired_integration_data (value TEXT NOT NULL)`;
       yield* sql`INSERT INTO retired_integration_data VALUES ('preserved')`;
-      if (latestForkId === 64)
-        yield* sql`DELETE FROM ${sql(forkMigrationTable)} WHERE migration_id = 65`;
+      yield* sql`DELETE FROM ${sql(forkMigrationTable)} WHERE migration_id > ${latestForkId}`;
       const history = yield* sql`SELECT * FROM ${sql(forkMigrationTable)} WHERE migration_id <= 64`;
       const schema = yield* readSchema;
       assert.deepStrictEqual(
         yield* runMigrations(),
-        latestForkId === 64 ? [[65, "ProjectionMessageReplyTopics"]] : [],
+        (
+          [
+            [65, "ProjectionMessageReplyTopics"],
+            [66, "ProjectionThreadDeepPlan"],
+            [67, "DeepPlanSources"],
+          ] as const
+        ).filter(([id]) => id > latestForkId),
       );
       assert.deepStrictEqual(
         yield* sql`SELECT * FROM ${sql(forkMigrationTable)} WHERE migration_id <= 64`,
