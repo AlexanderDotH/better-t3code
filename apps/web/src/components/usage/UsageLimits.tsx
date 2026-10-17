@@ -9,6 +9,10 @@ import {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import {
+  DAILY_USAGE_PACE_LABELS,
+  USAGE_PACE_BAR_DESCRIPTION,
+  dailyUsagePace,
+  displayLimitWindows,
   formatDuration,
   formatResetsIn,
   type LimitPace,
@@ -86,6 +90,10 @@ function WindowBar({
   readonly now: number;
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
+  const settings = useClientSettings();
+  const dailyPace = settings.usagePacingEnabled
+    ? dailyUsagePace(window, now, settings.usagePacingWorkdayHours)
+    : null;
   const remaining = remainingPercent(window);
   const resetsIn = formatResetsIn(window, now);
   const resetsAt = window.resetsAt
@@ -117,8 +125,18 @@ function WindowBar({
         </div>
       </TooltipTrigger>
       <TooltipPopup side="top">
-        <div className="flex flex-col gap-0.5">
+        <div className="flex max-w-80 flex-col gap-1.5">
           <span className="text-foreground">{remaining}% left</span>
+          {dailyPace ? (
+            <>
+              <span>{DAILY_USAGE_PACE_LABELS[dailyPace.status]}</span>
+              <span>
+                {dailyPace.todayUsedPercent === null
+                  ? "Daily pace needs usage history covering the start of today. The bar shows the reported weekly quota remaining."
+                  : USAGE_PACE_BAR_DESCRIPTION}
+              </span>
+            </>
+          ) : null}
           {resetsAt ? (
             <span className="text-muted-foreground">
               Resets {resetsAt}
@@ -156,7 +174,7 @@ export function LimitWindows({
           : "grid grid-cols-[11rem_minmax(0,1fr)_7rem] gap-x-4 gap-y-1"
       }
     >
-      {windows.map((window) => {
+      {displayLimitWindows({ driver, windows }).map((window) => {
         const pace = pacingEnabled && window.kind !== "weekly" ? paceOf(window, now) : null;
         const resetsIn = formatResetsIn(window, now);
         return (

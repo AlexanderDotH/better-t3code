@@ -1,6 +1,7 @@
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
 import {
   DAILY_USAGE_PACE_LABELS,
+  USAGE_PACE_BAR_DESCRIPTION,
   dailyUsagePace,
   usagePaceBarSegments,
 } from "@t3tools/shared/usageLimits";
@@ -105,6 +106,9 @@ export function UsagePaceBar({
     : null;
   if (pace?.todayUsedPercent == null) return null;
   const segments = usagePaceBarSegments(window, pace);
+  const scale = segments.widthPercent > 0 ? 100 / segments.widthPercent : 0;
+  const adjacentPercent =
+    segments.regularPercent + segments.catchUpPercent + segments.overdrawPercent;
   const color =
     pace.status === "exceeded"
       ? "bg-destructive"
@@ -113,39 +117,69 @@ export function UsagePaceBar({
         : pace.status === "good"
           ? "bg-success"
           : "bg-muted-foreground";
+  const rounding = shape === "segment" ? "rounded-r-md" : "rounded-r-full";
   return (
     <div
       role="meter"
       aria-label={
-        pace.catchUpPercent > 0
-          ? "Today's allowance remaining, including catch-up"
-          : "Today's allowance remaining"
+        pace.todayBalancePercent < 0
+          ? "Today's allowance overdrawn"
+          : pace.catchUpPercent > 0
+            ? "Today's allowance remaining, including catch-up"
+            : "Today's allowance remaining"
       }
       aria-valuemin={-100}
       aria-valuemax={100}
       aria-valuenow={pace.todayBalancePercent}
-      aria-valuetext={`${number(pace.todayRemainingPercent, { maximumFractionDigits: 1 })}% left today.${pace.catchUpRemainingPercent > 0 ? ` ${number(pace.catchUpRemainingPercent, { maximumFractionDigits: 1 })}% catch-up left.` : ""}${pace.todayOverdrawPercent !== null && pace.todayOverdrawPercent > 0 ? ` ${number(pace.todayOverdrawPercent, { maximumFractionDigits: 1 })}% overdrawn today.` : ""} ${DAILY_USAGE_PACE_LABELS[pace.status]}`}
+      aria-valuetext={`${number(pace.todayRemainingPercent, { maximumFractionDigits: 1 })}% left today.${pace.catchUpRemainingPercent > 0 ? ` ${number(pace.catchUpRemainingPercent, { maximumFractionDigits: 1 })}% catch-up left.` : ""}${pace.todayOverdrawPercent !== null && pace.todayOverdrawPercent > 0 ? ` ${number(pace.todayOverdrawPercent, { maximumFractionDigits: 1 })}% overdrawn today; already spent from the weekly quota.` : ""} ${DAILY_USAGE_PACE_LABELS[pace.status]}`}
       className={`usage-pace-bar ${shape === "segment" ? "rounded-md" : "rounded-full"}`}
       style={{
         right: `${100 - segments.widthPercent}%`,
         width: `${segments.widthPercent}%`,
       }}
     >
-      {segments.reservedPercent > 0 ? (
-        <div
-          className="min-w-0"
-          style={{ flex: segments.reservedPercent, backgroundColor: baseColor }}
-        />
-      ) : null}
-      {segments.regularPercent > 0 ? (
-        <div className={`min-w-0 ${color}`} style={{ flex: segments.regularPercent }} />
-      ) : null}
-      {segments.catchUpPercent > 0 ? (
-        <div className={`min-w-0 opacity-50 ${color}`} style={{ flex: segments.catchUpPercent }} />
-      ) : null}
-      {segments.overdrawPercent > 0 ? (
-        <div className={`min-w-0 ${color}`} style={{ flex: segments.overdrawPercent }} />
-      ) : null}
+      <div aria-hidden className="absolute inset-0 flex overflow-hidden rounded-[inherit]">
+        {segments.reservedPercent > 0 ? (
+          <div
+            className="min-w-0"
+            style={{ flex: segments.reservedPercent, backgroundColor: baseColor }}
+          />
+        ) : null}
+        {segments.regularPercent > 0 ? (
+          <div className={`min-w-0 ${color}`} style={{ flex: segments.regularPercent }} />
+        ) : null}
+        {segments.catchUpPercent > 0 ? (
+          <div
+            className={`min-w-0 opacity-50 ${color}`}
+            style={{ flex: segments.catchUpPercent }}
+          />
+        ) : null}
+        {segments.overdrawPercent > 0 ? (
+          <div
+            className={`usage-pace-overdraw min-w-0 ${color}`}
+            style={{ flex: segments.overdrawPercent }}
+          />
+        ) : null}
+        {segments.reservedPercent > 0 && adjacentPercent > 0 ? (
+          <div
+            className={`usage-pace-cap ${rounding}`}
+            style={{
+              left: `${segments.reservedPercent * scale}%`,
+              width: `${Math.min(segments.reservedPercent, adjacentPercent) * scale}%`,
+              backgroundColor: baseColor,
+            }}
+          />
+        ) : null}
+        {segments.regularPercent > 0 && segments.catchUpPercent > 0 ? (
+          <div
+            className={`usage-pace-cap ${rounding} ${color}`}
+            style={{
+              left: `${(segments.reservedPercent + segments.regularPercent) * scale}%`,
+              width: `${Math.min(segments.regularPercent, segments.catchUpPercent) * scale}%`,
+            }}
+          />
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -203,13 +237,20 @@ export function UsagePaceDetails({
       <TooltipPopup side="top" className="max-w-80">
         <div className="flex flex-col gap-1.5 p-1">
           <span className="font-medium">{label}</span>
+          {balance !== null ? <span>{USAGE_PACE_BAR_DESCRIPTION}</span> : null}
           {pace.todayBudgetUsedPercent !== null ? (
             <span>{percent(pace.todayBudgetUsedPercent)} of today's allowance used</span>
           ) : null}
-          {balance !== null ? (
-            <span>
-              Daily budget: {percent(pace.dailyBudgetPercent)} · {pace.workdayHours}-hour pace
-            </span>
+          {pace.todayUsedPercent !== null ? (
+            <>
+              <span>
+                Daily budget: {percent(pace.dailyBudgetPercent)} · {pace.workdayHours}-hour pace
+              </span>
+              <span>
+                {percent(pace.todayUsedPercent)} observed today ·{" "}
+                {percent(pace.hourlyBudgetPercent)} per hour
+              </span>
+            </>
           ) : null}
           {pace.catchUpRemainingPercent > 0 ? (
             <span>{percent(pace.catchUpRemainingPercent)} catch-up left</span>

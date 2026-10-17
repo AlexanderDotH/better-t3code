@@ -416,7 +416,10 @@ export interface LimitPool {
 }
 
 /** Show Cursor's two usable pools instead of a combined percentage when both are available. */
-export function displayLimitWindows(pool: LimitPool) {
+export function displayLimitWindows<Window extends { readonly id: string }>(pool: {
+  readonly driver: ServerProvider["driver"];
+  readonly windows: readonly Window[];
+}) {
   if (pool.driver !== "cursor") return pool.windows;
   const hasAuto = pool.windows.some((window) => window.id === "autoPercentUsed");
   const hasApi = pool.windows.some((window) => window.id === "apiPercentUsed");
@@ -575,6 +578,9 @@ export const DAILY_USAGE_PACE_LABELS: Record<DailyUsagePaceStatus, string> = {
   fast: "Spending too fast today",
   exceeded: "Daily allowance exceeded",
 };
+
+export const USAGE_PACE_BAR_DESCRIPTION =
+  "The filled bar shows the weekly quota left. Its colored end is available today; the lighter part is catch-up from earlier days. The rest is reserved for later days. A hatched red section beyond the quota boundary is already spent, not available. The boundary remains visible when today's allowance reaches zero.";
 
 /** A daily share of the weekly quota; native usage timestamps take precedence over quota ticks. */
 export function dailyUsagePace(
