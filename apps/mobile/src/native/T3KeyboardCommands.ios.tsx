@@ -6,6 +6,7 @@ import type { HardwareKeyboardCommand } from "../features/keyboard/hardwareKeybo
 
 interface NativeKeyboardCommandsProps extends ViewProps, PropsWithChildren {
   readonly enabledCommands: ReadonlyArray<HardwareKeyboardCommand>;
+  readonly cycleComposerModeTitle?: string;
   readonly onCommand: (
     event: NativeSyntheticEvent<{ readonly command: HardwareKeyboardCommand }>,
   ) => void;
@@ -16,6 +17,7 @@ const NativeKeyboardCommands = requireNativeView<NativeKeyboardCommandsProps>("T
 export function T3KeyboardCommands(
   props: PropsWithChildren<{
     readonly enabledCommands: ReadonlyArray<HardwareKeyboardCommand>;
+    readonly cycleComposerModeTitle?: string;
     readonly onCommand: (command: HardwareKeyboardCommand) => void;
   }>,
 ) {
@@ -23,6 +25,7 @@ export function T3KeyboardCommands(
     <NativeKeyboardCommands
       onCommand={(event) => props.onCommand(event.nativeEvent.command)}
       enabledCommands={props.enabledCommands}
+      cycleComposerModeTitle={props.cycleComposerModeTitle}
       style={{ flex: 1 }}
     >
       {props.children}

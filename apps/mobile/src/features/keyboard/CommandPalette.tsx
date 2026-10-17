@@ -35,7 +35,12 @@ import {
   nextPaletteIndex,
   type CommandPaletteItem,
 } from "./commandPaletteItems";
-import { parseActiveThreadPath, type HardwareKeyboardCommand } from "./hardwareKeyboardCommands";
+import {
+  getRegisteredHardwareKeyboardCommands,
+  parseActiveThreadPath,
+  type HardwareKeyboardCommand,
+} from "./hardwareKeyboardCommands";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { threadJumpIndex } from "./threadKeyboardShortcuts";
 
 const PALETTE_COMMANDS: ReadonlyArray<HardwareKeyboardCommand> = [
@@ -60,6 +65,7 @@ const ACTION_ICONS: Record<string, AppSymbolName> = {
   terminal: "terminal",
   review: "arrow.triangle.pull",
   copyThreadReference: "link",
+  cycleComposerMode: { ios: "list.bullet.clipboard", android: "auto_awesome" },
 };
 
 function itemIcon(item: CommandPaletteItem): AppSymbolName {
@@ -136,6 +142,7 @@ export function CommandPalette(props: {
   readonly onClose: () => void;
   readonly onCommand: (command: HardwareKeyboardCommand) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const { themeVariables } = useAppearancePreferences();
   const { selectThread } = useAdaptiveWorkspaceLayout();
@@ -248,6 +255,21 @@ export function CommandPalette(props: {
           }),
       },
     ];
+    if (getRegisteredHardwareKeyboardCommands().has("cycleComposerMode")) {
+      actions.push({
+        key: "cycleComposerMode",
+        kind: "action",
+        title: translator.message("chat.deepPlan.modeLabel", {
+          mode: [
+            translator.message("chat.composer.interaction.build"),
+            translator.message("chat.composer.mode.plan"),
+            translator.message("chat.deepPlan.label"),
+          ].join(" / "),
+        }),
+        searchTerms: ["plan", "deep plan", "build", "mode", "shift tab"],
+        run: () => runCommand("cycleComposerMode"),
+      });
+    }
     const projectByKey = new Map(
       projects.map((project) => [scopedProjectKey(project.environmentId, project.id), project]),
     );
@@ -339,6 +361,7 @@ export function CommandPalette(props: {
     savedConnectionsById,
     selectThread,
     threads,
+    translator,
   ]);
   const results = useMemo(
     () => filterCommandPaletteItems(items, query, matchedThreadKeys),

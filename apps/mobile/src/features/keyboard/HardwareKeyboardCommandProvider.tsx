@@ -15,6 +15,7 @@ import {
 
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { T3KeyboardCommands } from "../../native/T3KeyboardCommands";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { useThreadShell } from "../../state/entities";
 import type { GitActionProgress } from "../../state/use-vcs-action-state";
 import { GitActionProgressOverlay } from "../threads/GitActionProgressOverlay";
@@ -46,6 +47,7 @@ export function HardwareKeyboardCommandProvider({
   children,
   pathname,
 }: PropsWithChildren<{ readonly pathname: string }>) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const closePalette = useCallback(() => setPaletteOpen(false), []);
@@ -185,7 +187,11 @@ export function HardwareKeyboardCommandProvider({
 
   return (
     <CommandPaletteContext value={palette}>
-      <T3KeyboardCommands enabledCommands={enabledCommands} onCommand={onCommand}>
+      <T3KeyboardCommands
+        enabledCommands={enabledCommands}
+        onCommand={onCommand}
+        cycleComposerModeTitle={translator.message("chat.deepPlan.changeMode")}
+      >
         {children}
       </T3KeyboardCommands>
       <GitActionProgressOverlay progress={copyFeedback} onDismiss={dismissCopyFeedback} />
