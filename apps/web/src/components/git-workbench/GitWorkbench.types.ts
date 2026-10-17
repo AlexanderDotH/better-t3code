@@ -1,4 +1,6 @@
+import type { ReactNode } from "react";
 import type { GitQueuedWorkflowPlan } from "@t3tools/contracts";
+import type { GitCurrentFileDraftInput } from "./gitCurrentFileDraft";
 
 export type GitWorkbenchTabId = "overview" | "changes" | "history" | "branches" | "operations";
 
@@ -287,7 +289,18 @@ export interface GitWorkbenchPanelProps {
   branches: readonly GitBranch[];
   changes: readonly GitWorkbenchChange[];
   currentFile: GitCurrentFileState | null;
+  currentFileDraft?: GitCurrentFileDraftInput | null | undefined;
+  editorPath?: string | null | undefined;
+  indexReadOnly?: boolean | undefined;
+  onCloseCurrentFile?: (() => void) | undefined;
+  onCurrentFileDraftChange?: ((draft: GitCurrentFileDraftInput) => void) | undefined;
+  onSetFilesStaged?: ((paths: readonly string[], staged: boolean) => void) | undefined;
+  stagingPending?: boolean | undefined;
+  stagingError?: string | null | undefined;
   history: GitHistoryState;
+  commitComposer?: ReactNode;
+  pushAvailable?: boolean | undefined;
+  pullAvailable?: boolean | undefined;
   insights: GitRepositoryInsights | null;
   loading: boolean;
   upgradeRequired?: boolean;
@@ -327,6 +340,7 @@ export interface GitWorkbenchPanelProps {
   } | null;
   rebasePlan?: readonly GitWorkbenchRebaseNode[];
   rebaseUpstreamRef?: string | null;
+  rebasePreparedTarget?: string | null | undefined;
   forcePushTarget?: { readonly expectedRemoteOid: string; readonly remoteRef: string } | undefined;
   queue: GitQueuedWorkflow | null;
   readOnly: boolean;

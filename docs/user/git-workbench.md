@@ -1,87 +1,109 @@
 # Git workbench
 
-The Git workbench brings repository context and common source-control tasks into a T3 Code chat. Web
-and desktop expose the full workspace card when the connected server advertises Git workbench
-support. Mobile uses the same typed repository state and safe operations in its Git sheet: it shows
-staged, unstaged, untracked, and conflicted files, supports whole-file stage, unstage, and discard,
-and includes the active operation, latest commit, and recent history.
+Use the Git workbench to review changes, choose what to commit, and push from a T3 Code chat.
+Web and desktop provide the full workbench when the connected server supports it. Mobile keeps
+its smaller Git sheet with file staging, active operations, the latest commit, and recent history.
 
-## Open the Git card
+## Open the workbench
 
-The Git overview is one card in the web and desktop [workspace-card carousel](./thread-sidebar.md#workspace-cards), alongside Chat and MCP. On a new repository thread, Git is the exposed edge below Chat. Select the edge's free area, repository status, or changed-file count to bring Git forward with a vertical shuffle. Its enabled environment, worktree, branch, and pull-request controls keep their original actions instead of switching cards.
+Select the Git edge in the [workspace-card stack](./thread-sidebar.md#workspace-cards) to open
+**Changes** directly. The normal Commit actions open the same preparation without committing.
+The branch picker and other controls in the Git edge keep their own actions.
 
-When Git is in front, Chat is exposed above and MCP is exposed below. Select either edge to leave Git; there is no separate Return-to-chat control inside the Git card. Your composer remains mounted and retains its draft, attachments, provider settings, and context controls. Selecting the Chat edge restores its previous focus.
+Git stays within your configured chat width. Collapse it to the compact repository summary, or
+select the Chat edge to return to your conversation. Your composer retains its text, attachments,
+settings, and focus. An approval or question from the agent brings Chat back automatically.
+Finish or cancel voice recording before switching cards.
 
-The compact Git card shows observable repository facts rather than a generated quality score:
+The compact summary shows the branch, upstream, file counts, ahead/behind counts, and latest
+commit. Its suggested action follows the same repository state as the open workbench: resolve
+conflicts or a paused operation first, prepare local changes, pull incoming commits, or push
+outgoing commits. A diverged branch opens the synchronization controls in **Advanced**.
 
-- current branch and upstream;
-- clean, changed, conflicted, detached, unborn, stale, or disconnected state;
-- staged, unstaged, untracked, and conflicted file counts;
-- ahead and behind counts;
-- the most recent commit; and
-- a contextual next action.
+## Review and stage changes
 
-If an agent needs an approval or answer while Git is selected, Chat returns to the front. Finish or cancel active voice recording before switching cards.
+**Changes** shows one row per file. Each checkbox reflects the actual Git index: unstaged,
+partially staged, or fully staged. Selecting a file opens its Diff. For a partially staged file,
+choose the staged or unstaged version to inspect each set of changes separately.
 
-Use the upward arrow—or pull the small grabber at the top of the compact card upward—to expand the workbench inside the selected Git card. The card keeps the composer's centered width and grows upward rather than opening a full-width surface across the chat column. The two neighboring card edges stay visible. Selecting one first collapses Git completely to the composer's compact height and only then shuffles the requested card forward. Once expanded, the card follows the active Git section's content height up to the available safe maximum; taller sections scroll inside the workbench. Expanding Git temporarily hides the terminal drawer without closing its terminal sessions; collapsing Git restores it.
+Use a file checkbox, **All**, or **None** to change the index. Staging preserves changes already
+staged elsewhere, including changes staged by another client or a terminal. Bulk actions run in
+order and stop on an error or external repository change. Successful actions remain applied;
+review the updated state before retrying.
 
-## Overview
+Select individual added/deleted lines or hunks for partial staging or unstaging. Binary files,
+submodules, rename-only changes, and mode-only changes use whole-file actions. If a Diff becomes
+stale, refresh it and choose the changes again. Stale selections are never applied to different
+content.
 
-Overview combines the repository pulse with bounded repository insights:
+On narrower chat widths, the Diff replaces the file list. Use the back action to choose another
+file. **Edit** explicitly replaces the Diff with the current file editor; **Back to Diff** returns
+to review.
 
-- **Recent activity** counts reachable commits by day for the previous 12 months, up to 5,000 commits.
-- **Top contributors** honors the repository's `.mailmap`. T3 Code shows names and opaque identities, never author email addresses or network avatars.
-- **Code mix** classifies a bounded set of tracked source files by extension. It excludes common dependency, vendor, generated, build-output, coverage, and cache directories, plus filenames ending in `.generated.*` or `.gen.*`. It is an approximate tracked-file mix, not a language-quality score. Coverage and truncation are shown alongside it.
-- **Queued workflow** shows the one post-turn workflow retained for the current worktree.
-- **Undo snapshots** lists recent local recovery points.
+Discard captures a local undo snapshot first. Deleting an untracked file requires confirmation.
 
-Insights load only while Git is expanded on Overview. The compact card continues to subscribe only to the detailed repository state needed for truthful counts. Large repositories may show sampled or truncated insight results.
+## Commit the staged index
 
-## Changes and the Git index
+The commit area stays available in **Changes** and summarizes the staged files, including partial
+stagings. A commit contains the actual index and leaves unstaged changes out. Stage at least one
+change before committing.
 
-The Changes tab uses the standard Git index. It groups files into Conflicts, Staged, Unstaged, and Untracked. A partially staged file can appear in both Staged and Unstaged because it has separate index and worktree changes.
+Choose **Write a message** to enter your own message, or **Generate on commit** to have T3 Code
+generate it when you commit. **Commit on new branch** uses the existing branch-creation flow.
 
-A regular commit contains everything currently staged. T3 Code does not reset the index before committing:
+Your message stays in memory for the current environment and repository during this app session,
+including when you switch chats or tabs. Failed, cancelled, or skipped commits preserve it.
+A successful commit clears only the unchanged message submitted with it; edits made while it was
+running remain available.
 
-- when files are staged, the primary action is **Commit staged**;
-- when only worktree changes exist, the primary action is **Stage all & commit**; and
-- staging another file preserves anything already staged.
+After a successful commit, choose **Push** and the appropriate pull request or merge request
+action separately. Nothing is pushed or opened automatically. Existing remote, branch, permission,
+and default-branch confirmations still apply.
 
-Text patches can be selected by file, hunk, or individual added/deleted line. T3 Code sends stable selection identifiers to the server; it does not execute patch text supplied by the browser. Binary files, submodules, rename-only changes, and mode-only changes use whole-file operations.
-
-If the repository changes after a diff loads, the workbench marks the selection stale and refreshes it. An operation never silently applies a stale selection to different content.
-
-Discard creates a local undo snapshot first. Deleting an untracked file requires an explicit confirmation. Undo snapshots cannot recover remote history.
+During an agent turn, **Queue commit after turn** queues a commit of the staged index without
+adding Push or a change request. If a workflow already exists, manage it in **Advanced**.
 
 ## Edit the current file
 
-The editor in Changes edits only the current worktree version. Historical files, binary files, and files over the displayed size limit remain read-only.
+The editor changes only the current worktree version. Selecting a Diff does not load the full
+file editor. Historical files, binary files, and files over the preview limit remain read-only.
 
-Each save includes the revision that was originally read. If another client or the coding agent changed the file, T3 Code refuses to overwrite it and presents:
+Unsaved edits remain in memory when you confirm leaving the editor. They are not saved to disk
+until you select **Save**. Reloading or closing the app ends that session.
 
-- the base version;
-- the current agent/server version; and
-- your buffered version.
+If another client or the coding agent changes the file before you save, T3 Code refuses to
+overwrite it. You can inspect the base, current agent/server, and buffered versions, then keep
+the agent version, explicitly keep yours, or save a manually merged result.
 
-You can keep the agent version, explicitly keep your version, or save a manually merged result.
+During an agent turn, saved edits stay buffered in device memory. After the turn reaches its
+checkpoint, each file is written only if its base version is still current. Changed files remain
+available for conflict resolution, even when their editor is closed. Leaving the page with a
+buffer produces a warning.
 
-While an agent turn is active, edits stay in device-local memory and are not written to disk. After the turn reaches its checkpoint, T3 Code rereads every buffered file and writes each one only when its own base revision is still current. Buffers whose files changed remain available for three-way resolution, even if they are not currently open. Leaving the page with a buffer produces a warning; source buffers are not stored in browser storage or the server database.
+## Inspect history and branches
 
-## History
+**History** loads commits in pages of at most 50. Filter by a local or remote branch and an
+optional repository path. Later pages stay tied to the first page's resolved commit.
 
-History is topologically ordered and loaded in pages of at most 50 commits. Filter it by a validated local or remote branch and an optional repository path. The first page resolves the selected branch to a snapshot commit so later pages remain stable if new commits arrive.
+Select a commit for its metadata, changed paths, and individual file patches. Historical content
+is read-only. **Open current worktree version** explicitly opens the current file editor, even
+when that file has no pending Git changes. Revert and cherry-pick create local recovery state
+before changing the repository.
 
-Select a commit to inspect:
+**Branches** lets you create and switch local branches and inspect local and remote refs.
+History rewriting lives in **Advanced**.
 
-- its full hash, parents, subject, body, author, committer, and timestamps;
-- changed paths, renames, additions, deletions, and binary markers; and
-- a lazy, bounded patch for an individual file.
+## Resolve conflicts
 
-Historical files are immutable in the workbench. **Open current worktree version** explicitly switches to the editable current file. Revert and cherry-pick operate on one selected commit at a time and create recovery state before changing the repository.
+When merge, rebase, cherry-pick, or revert pauses, **Changes** shows the operation and conflict
+files. Choose a conflict to inspect its Diff, use **Edit** to resolve the current file, save,
+and stage the result. **Continue** stays disabled until the updated repository state reports
+that all conflicts are resolved. Skip and Abort remain available when the operation supports them.
 
-## Branches and reset
+## Use advanced actions
 
-Branches lists local and remote refs and keeps the existing environment, branch, and worktree controls available. You can create or switch a local branch or start a guided rebase onto another ref.
+In **Advanced**, choose Reset, Rebase, or an available Force-with-lease action to open its controls.
+Queued workflows and local recovery snapshots are also available there.
 
 Reset modes follow Git semantics:
 
@@ -89,43 +111,59 @@ Reset modes follow Git semantics:
 - **Mixed** also resets the index.
 - **Hard** replaces the index and worktree and requires typing `RESET`.
 
-T3 Code creates a local undo snapshot before mixed or hard reset. The server revalidates the branch, HEAD, index, and active operation immediately before running it.
+Mixed and hard reset capture a local undo snapshot. T3 Code rechecks the current repository state
+before applying an operation.
 
-## Operations and conflicts
+For rebase, choose a target branch and either start a guided rebase or prepare an interactive plan.
+Changing the target hides a plan prepared for another branch. Interactive plans retain Git's
+merge structure and support pick, reword, edit, squash, fixup, and drop. Invalid dependency
+reordering is blocked.
 
-When merge, rebase, cherry-pick, or revert pauses, Operations shows its authoritative repository state. Resolve every conflicted current file and stage the completed result before selecting Continue. Skip and Abort appear only when Git supports them for that operation.
+After history rewriting, **force with lease** compares the remote ref with the exact previously
+observed commit and rejects the push if another contributor moved it. Type `FORCE` to confirm.
+Raw force push is unavailable; local snapshots cannot restore a remote branch.
 
-Interactive rebase uses Git's merge-preserving plan. Commit actions include pick, reword, edit, squash, fixup, and drop. Structural label, reset, and merge nodes remain visible. T3 Code validates that labels exist before use and prevents reordering that breaks merge dependencies.
+## Run workflows after the active turn
 
-After rewritten history, the only overwrite-style push is **force with lease**. It compares the remote ref with the exact previously observed object ID and is rejected if another contributor moved it. Raw force push is not available. Type `FORCE` to confirm; local snapshots cannot restore a remote branch after it is published.
+Advanced delivery workflows can stage, commit, push, and create a change request. An advanced
+operation workflow contains one reset, revert, cherry-pick, or rebase operation.
 
-## Run after the active turn
+A workflow waits for the turn's checkpoint and revalidates the repository, selected content,
+operation, and relevant remote state. Valid workflows run automatically. Changed preconditions
+move the workflow to **Needs review**; T3 Code never retargets it silently. Truncated repository
+snapshots cannot be used for mutations or queue creation.
 
-When an agent is working, Git mutations can be stored as one durable workflow for the worktree. A delivery workflow may stage changes, commit, push, and create a pull request. An advanced workflow contains one reset, revert, cherry-pick, or rebase operation.
+Replacing a workflow requires confirmation. Review, edit, retry, or cancel it in **Advanced**.
+Queued workflows survive reconnects and server restarts and are shared by connected clients.
 
-The server waits for the authoritative turn checkpoint and then revalidates paths, revisions, branch, HEAD, the exact index and worktree identities, operation state, and relevant remote IDs. A valid workflow runs automatically. A stale workflow moves to **Needs review** with the reasons it did not run; T3 Code never retargets it silently. If a repository snapshot was truncated, mutations and queue creation are refused until a complete snapshot can be obtained.
+## Inspect repository statistics
 
-Creating another workflow replaces the current one only after confirmation. Existing workflows can be reviewed, edited, retried with freshly captured preconditions, or cancelled. Queued workflows survive reconnects and server restarts and are visible from connected web and desktop clients.
+**Repository** retains recent activity, top contributors, and the tracked-file code mix.
+Statistics load only while this view is visible.
 
-## Undo scope and retention
+Activity covers the previous 12 months, up to 5,000 reachable commits. Contributors honor
+`.mailmap` without showing author email addresses. Code mix excludes common dependency,
+generated, vendor, build, coverage, and cache files. It is an approximate file mix. Large
+repositories can show sampled or truncated results, with coverage displayed alongside them.
 
-Destructive workbench operations capture local HEAD/ref identity, index content, worktree content, and untracked files. Restoring a snapshot first snapshots the current state, which provides redo-like recovery.
+## Restore local work
 
-By default, each worktree retains at most 20 snapshots and removes snapshots older than seven days. Restoring over newer work requires typing `RESTORE`.
+Recovery snapshots capture local branch, index, worktree, and untracked-file state.
+Restoring first captures the current state so you can recover it in turn. Restoring over newer
+work requires typing `RESTORE`.
 
-Undo is local to the repository host. It does not reverse a push, pull-request update, or another remote-side change.
+By default, each worktree keeps at most 20 snapshots and removes snapshots older than seven days.
+Recovery is local to the repository host and cannot undo a push or another remote-side change.
 
-## Read-only and older servers
+## Read-only connections and older servers
 
-Credentials with orchestration read permission can browse status, changes, history, patches, and insights. Mutation controls are disabled unless the connection also has operate permission.
+Read-only credentials can browse repository state, changes, history, patches, and statistics.
+Mutations require operate permission.
 
-When an older server does not advertise Git workbench support, web and desktop keep the existing
-compact status and header Git shortcut but omit Git from the workspace carousel. Mobile falls back
-to its legacy Git actions. T3 Code never claims that an unsupported repository is clean.
+Older servers and disabled workbenches retain the existing header Git actions and commit dialog.
+Git is omitted from the workspace stack when unavailable. Mobile retains its existing fallback
+actions. Unsupported repository state is never presented as clean.
 
-## Not included
-
-The first workbench release does not add tag management, stash management, bisect, submodule
-management, arbitrary Git command execution, raw force push, remote-history undo, or historical-file
-editing. Advanced history rewriting, queued workflows, and patch-level selection remain web and
-desktop surfaces; mobile intentionally exposes the smaller whole-file workbench described above.
+Tag and stash management, bisect, submodule management, arbitrary Git commands, remote-history
+undo, and historical-file editing are outside the workbench. Patch selection, advanced history
+rewriting, and queued workflow editing remain web and desktop features.

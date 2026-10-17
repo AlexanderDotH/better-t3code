@@ -1,23 +1,18 @@
 import type { GitQueuedWorkflowPlan } from "@t3tools/contracts";
-import {
-  ArrowDown,
-  ArrowUp,
-  MergeIcon as GitMerge,
-  ListTodo,
-  Play,
-  ShieldAlert,
-  Undo2,
-} from "lucide-react";
-import { useEffect, useState } from "react";
+import { ArrowDown, ArrowUp, ListTodo, Play, ShieldAlert, Undo2 } from "lucide-react";
+import { useState } from "react";
 
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
+import { NativeSelect } from "~/components/ui/select";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 import { validateRebasePlan } from "./GitWorkbench.logic";
 import { GitWorkbenchConfirmation } from "./GitWorkbenchConfirmation";
+import { GitResetPanel } from "./GitResetPanel";
 import type {
+  GitBranch,
   GitOperationState,
   GitQueuedWorkflow,
   GitUndoSnapshot,
@@ -26,6 +21,11 @@ import type {
 } from "./GitWorkbench.types";
 
 interface GitOperationsPanelProps {
+  readonly blocked?: boolean | undefined;
+  readonly branches?: readonly GitBranch[] | undefined;
+  readonly headOid?: string | null | undefined;
+  readonly onPrepareInteractiveRebase?: ((upstreamRef: string) => void) | undefined;
+  readonly rebasePreparedTarget?: string | null | undefined;
   readonly forcePushTarget?:
     | { readonly expectedRemoteOid: string; readonly remoteRef: string }
     | undefined;
@@ -44,8 +44,13 @@ interface GitOperationsPanelProps {
   readonly undoSnapshots: readonly GitUndoSnapshot[];
 }
 
+type AdvancedAction = "" | "rebase" | "reset" | "force-with-lease";
+
 export function GitOperationsPanel(props: GitOperationsPanelProps) {
   const translate = useInterfaceTranslator().message;
+  const [action, setAction] = useState<AdvancedAction>("");
+  const controls = { ...props, readOnly: props.readOnly || props.blocked === true };
+  const rewriteDisabled = controls.readOnly || props.operation !== null;
   return (
     <div className="grid gap-4 p-4 @3xl/git-panel:grid-cols-[minmax(0,1.2fr)_minmax(18rem,0.7fr)]">
       <div className="space-y-4">
@@ -54,87 +59,120 @@ export function GitOperationsPanel(props: GitOperationsPanelProps) {
             {translate("git.operation.readOnly")}
           </div>
         ) : null}
-        <ActiveOperation {...props} />
-        <RebasePlanEditor {...props} />
+        <section className="rounded-xl border bg-card p-4">
+          <label className="block font-medium text-sm">
+            {translate("git.operation.chooseAdvancedAction")}
+            <NativeSelect
+              aria-label={translate("git.operation.chooseAdvancedAction")}
+              className="mt-2"
+              onChange={(event) => {
+                const nextAction = event.currentTarget.value;
+                if (
+                  nextAction === "" ||
+                  nextAction === "rebase" ||
+                  nextAction === "reset" ||
+                  nextAction === "force-with-lease"
+                )
+                  setAction(nextAction);
+              }}
+              value={action}
+            >
+              <option value="">{translate("git.operation.selectAdvancedAction")}</option>
+              <option value="rebase">{translate("git.operation.rebaseCurrent")}</option>
+              <option value="reset">{translate("git.branches.resetCurrent")}</option>
+              {props.forcePushTarget ? (
+                <option value="force-with-lease">
+                  {translate("git.operation.forceWithLease")}
+                </option>
+              ) : null}
+            </NativeSelect>
+          </label>
+        </section>
+        {action === "rebase" ? <RebaseWorkflow {...controls} /> : null}
+        {action === "reset" ? (
+          <GitResetPanel
+            disabled={rewriteDisabled}
+            headOid={props.headOid ?? null}
+            onRunOperation={props.onRunOperation}
+          />
+        ) : null}
+        {action === "force-with-lease" ? (
+          <ForcePush {...controls} readOnly={rewriteDisabled} />
+        ) : null}
       </div>
       <div className="space-y-4">
-        <QueueWorkflow {...props} />
-        <UndoSnapshots {...props} />
-        <ForcePush {...props} />
+        <QueueWorkflow
+          {...controls}
+          key={props.queue ? `${props.queue.id}:${props.queue.revision}` : "empty"}
+        />
+        <UndoSnapshots {...controls} />
       </div>
     </div>
   );
 }
 
-function ActiveOperation({ operation, onRunOperation, readOnly }: GitOperationsPanelProps) {
+function RebaseWorkflow(props: GitOperationsPanelProps) {
   const translate = useInterfaceTranslator().message;
-  if (!operation) {
-    return (
-      <section className="rounded-xl border bg-card p-4">
-        <div className="flex items-center gap-2">
-          <GitMerge aria-hidden="true" className="size-4" />
-          <h2 className="font-semibold text-sm">{translate("git.operation.active")}</h2>
-        </div>
-        <p className="mt-2 text-muted-foreground text-sm">
-          {translate("git.operation.noneActive")}
-        </p>
-      </section>
-    );
-  }
+  const [target, setTarget] = useState(props.rebasePreparedTarget ?? "");
+  const branches = (props.branches ?? []).filter((branch) => !branch.current);
+  const disabled = props.readOnly || props.operation !== null;
+  const showPreparedPlan = Boolean(
+    props.rebasePreparedTarget && props.rebasePreparedTarget === target,
+  );
   return (
-    <section
-      aria-labelledby="active-operation-heading"
-      className="rounded-xl border border-warning/24 bg-warning/5 p-4"
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <GitMerge aria-hidden="true" className="size-4 text-warning-foreground" />
-        <h2 className="font-semibold text-sm" id="active-operation-heading">
-          {translate("git.operation.inProgress", {
-            operation: operation.kind.replaceAll("-", " "),
-          })}
+    <div className="space-y-4">
+      <section aria-labelledby="rebase-heading" className="rounded-xl border bg-card p-4">
+        <h2 className="font-semibold text-sm" id="rebase-heading">
+          {translate("git.operation.rebaseCurrent")}
         </h2>
-        <Badge variant={operation.conflicts.length ? "error" : "warning"}>
-          {operation.conflicts.length
-            ? translate("git.workbench.conflictsCount", { count: operation.conflicts.length })
-            : translate("git.operation.paused")}
-        </Badge>
-      </div>
-      <p className="mt-2 text-sm">{operation.detail}</p>
-      {operation.conflicts.length ? (
-        <ul className="mt-2 list-inside list-disc text-sm">
-          {operation.conflicts.map((path) => (
-            <li className="break-all font-mono text-xs" key={path}>
-              {path}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      <div className="mt-3 flex flex-wrap gap-2">
-        <Button
-          disabled={readOnly || !operation.canContinue || operation.conflicts.length > 0}
-          onClick={() => onRunOperation({ kind: "continue" })}
-          size="sm"
-        >
-          {translate("git.common.continue")}
-        </Button>
-        <Button
-          disabled={readOnly || !operation.canSkip}
-          onClick={() => onRunOperation({ kind: "skip" })}
-          size="sm"
-          variant="outline"
-        >
-          {translate("git.operation.skip")}
-        </Button>
-        <GitWorkbenchConfirmation
-          confirmLabel={translate("git.operation.abortAction")}
-          description={translate("git.operation.abortDescription")}
-          disabled={readOnly || !operation.canAbort}
-          onConfirm={() => onRunOperation({ kind: "abort" })}
-          title={translate("git.operation.abortTitle", { operation: operation.kind })}
-          triggerLabel={translate("git.operation.abort")}
-        />
-      </div>
-    </section>
+        <label className="mt-3 block text-xs">
+          {translate("git.operation.rebaseOnto")}
+          <NativeSelect
+            aria-label={translate("git.operation.rebaseOnto")}
+            className="mt-1"
+            disabled={disabled}
+            onChange={(event) => setTarget(event.currentTarget.value)}
+            value={target}
+          >
+            <option disabled value="">
+              {translate("git.operation.selectRebaseTarget")}
+            </option>
+            {target && !branches.some((branch) => branch.name === target) ? (
+              <option value={target}>{target}</option>
+            ) : null}
+            {branches.map((branch) => (
+              <option key={`${branch.remote}:${branch.name}`} value={branch.name}>
+                {branch.name}
+              </option>
+            ))}
+          </NativeSelect>
+        </label>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button
+            disabled={disabled || !target}
+            onClick={() => {
+              if (!disabled && target)
+                props.onRunOperation({ branch: target, kind: "guided-rebase" });
+            }}
+            size="sm"
+            variant="outline"
+          >
+            {translate("git.branches.rebaseOnto")}
+          </Button>
+          <Button
+            disabled={disabled || !target || !props.onPrepareInteractiveRebase}
+            onClick={() => {
+              if (!disabled && target) props.onPrepareInteractiveRebase?.(target);
+            }}
+            size="sm"
+            variant="outline"
+          >
+            {translate("git.operation.prepareRebase")}
+          </Button>
+        </div>
+      </section>
+      {showPreparedPlan || props.operation?.rebasePlan ? <RebasePlanEditor {...props} /> : null}
+    </div>
   );
 }
 
@@ -214,9 +252,10 @@ function RebasePlanEditor({
               {index + 1}
             </span>
             {isCommitAction(node) ? (
-              <select
+              <NativeSelect
                 aria-label={translate("git.operation.actionFor", { subject: node.subject })}
-                className="h-7 rounded-md border bg-background px-1 text-xs"
+                className="shrink-0"
+                size="compact"
                 disabled={readOnly || Boolean(operation)}
                 onChange={(event) =>
                   changeCommitAction(index, node, event.currentTarget.value as CommitRebaseAction)
@@ -228,7 +267,7 @@ function RebasePlanEditor({
                     {action}
                   </option>
                 ))}
-              </select>
+              </NativeSelect>
             ) : (
               <Badge variant={node.kind === "merge" ? "info" : "outline"}>{node.kind}</Badge>
             )}
@@ -288,10 +327,6 @@ function QueueWorkflow(props: GitOperationsPanelProps) {
   const translate = useInterfaceTranslator().message;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<GitQueuedWorkflowPlan | null>(props.queue?.plan ?? null);
-  useEffect(() => {
-    setEditing(false);
-    setDraft(props.queue?.plan ?? null);
-  }, [props.queue?.id, props.queue?.revision]);
 
   if (props.queue) {
     return (
@@ -466,8 +501,8 @@ function QueuePlanEditor({
       <div className="mt-3 space-y-2 rounded-md border bg-muted/20 p-3">
         <label className="block text-xs">
           {translate("git.operation.commitSelection")}
-          <select
-            className="mt-1 h-8 w-full rounded-md border bg-background px-2 text-sm"
+          <NativeSelect
+            className="mt-1"
             onChange={(event) => {
               const mode = event.currentTarget.value;
               if (mode === "all" || mode === "staged") {
@@ -483,7 +518,7 @@ function QueuePlanEditor({
                 {translate("git.operation.selectedPaths", { count: plan.stage.paths.length })}
               </option>
             ) : null}
-          </select>
+          </NativeSelect>
         </label>
         <label className="block text-xs">
           {translate("git.actions.commitMessageOptional")}
@@ -538,8 +573,8 @@ function QueuePlanEditor({
         <>
           <label className="block text-xs">
             {translate("git.operation.resetMode")}
-            <select
-              className="mt-1 h-8 w-full rounded-md border bg-background px-2 text-sm"
+            <NativeSelect
+              className="mt-1"
               onChange={(event) =>
                 onChange({
                   ...plan,
@@ -551,7 +586,7 @@ function QueuePlanEditor({
               <option value="soft">{translate("git.operation.soft")}</option>
               <option value="mixed">{translate("git.operation.mixed")}</option>
               <option value="hard">{translate("git.operation.hard")}</option>
-            </select>
+            </NativeSelect>
           </label>
           <QueueTextField
             label={translate("git.operation.targetCommit")}

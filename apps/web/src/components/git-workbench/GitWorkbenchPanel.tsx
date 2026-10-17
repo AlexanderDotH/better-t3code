@@ -7,6 +7,7 @@ import { GitBranchesPanel } from "./GitBranchesPanel";
 import { GitChangesPanel } from "./GitChangesPanel";
 import { GitHistoryPanel } from "./GitHistoryPanel";
 import { GitOperationsPanel } from "./GitOperationsPanel";
+import { GitOperationBanner } from "./GitOperationBanner";
 import { GitOverviewPanel } from "./GitOverviewPanel";
 import { GitWorkbenchTabs } from "./GitWorkbenchTabs";
 import type { GitWorkbenchPanelProps } from "./GitWorkbench.types";
@@ -64,9 +65,7 @@ export function GitWorkbenchPanel(props: GitWorkbenchPanelProps) {
             "min-h-0",
             documentSized ? "flex-[0_1_auto]" : "flex flex-1 flex-col",
             documentSized ? "overflow-auto" : "overflow-hidden",
-            refreshing && "mt-10",
           )}
-          data-git-workbench-refresh-inset={refreshing ? "true" : undefined}
           data-git-workbench-scroll-region={documentSized ? "document" : "nested"}
           data-git-workbench-view={props.activeTab}
           id={`git-workbench-panel-${props.activeTab}`}
@@ -100,14 +99,50 @@ export function GitWorkbenchPanel(props: GitWorkbenchPanelProps) {
 function ActivePanel(
   props: GitWorkbenchPanelProps & { snapshot: NonNullable<GitWorkbenchPanelProps["snapshot"]> },
 ) {
+  const mutationsDisabled =
+    props.readOnly ||
+    props.snapshot.stale ||
+    props.loading ||
+    props.operationProgress?.status === "running";
+  const operationBanner = (
+    <GitOperationBanner
+      changes={props.changes}
+      disabled={mutationsDisabled}
+      onRunOperation={props.onRunOperation}
+      onSelectConflict={(path) => {
+        const change =
+          props.changes.find(
+            (candidate) =>
+              candidate.path === path &&
+              (candidate.conflict ||
+                candidate.kind === "conflicted" ||
+                candidate.kind === "unmerged"),
+          ) ?? props.changes.find((candidate) => candidate.path === path);
+        if (!change) return;
+        props.onSelectChange(change.id);
+      }}
+      operation={props.operation}
+      selectedPath={
+        props.editorPath
+          ? null
+          : (props.changes.find((change) => change.id === props.selectedChangeId)?.path ?? null)
+      }
+      snapshotConflicts={props.snapshot.conflicts}
+    />
+  );
   if (props.activeTab === "overview") {
     return (
       <GitOverviewPanel
+        blocked={mutationsDisabled}
         insights={props.insights}
         onCancelQueue={props.onCancelQueue}
         onNavigate={props.onChangeTab}
         onRestoreUndo={props.onRestoreUndo}
         onRunOperation={props.onRunOperation}
+        operation={props.operation}
+        operationRunning={props.operationProgress?.status === "running"}
+        pushAvailable={props.pushAvailable}
+        pullAvailable={props.pullAvailable}
         queue={props.queue}
         readOnly={props.readOnly}
         snapshot={props.snapshot}
@@ -117,18 +152,31 @@ function ActivePanel(
   }
   if (props.activeTab === "changes") {
     return (
-      <GitChangesPanel
-        changes={props.changes}
-        currentFile={props.currentFile}
-        onApplySelection={props.onApplySelection}
-        onOpenCurrentFile={props.onOpenCurrentFile}
-        onRefreshChange={props.onRefreshChange}
-        onSaveCurrentFile={props.onSaveCurrentFile}
-        onSelectChange={props.onSelectChange}
-        readOnly={props.readOnly}
-        selectedChangeId={props.selectedChangeId}
-        stateToken={props.snapshot.stateToken}
-      />
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        {operationBanner}
+        <GitChangesPanel
+          changes={props.changes}
+          currentFile={props.currentFile}
+          initialDraft={props.currentFileDraft}
+          editorPath={props.editorPath}
+          indexReadOnly={props.indexReadOnly || mutationsDisabled}
+          operationActive={props.operation !== null}
+          onCloseCurrentFile={props.onCloseCurrentFile}
+          onCurrentFileDraftChange={props.onCurrentFileDraftChange}
+          onSetFilesStaged={props.onSetFilesStaged}
+          stagingPending={props.stagingPending}
+          stagingError={props.stagingError}
+          onApplySelection={props.onApplySelection}
+          onOpenCurrentFile={props.onOpenCurrentFile}
+          onRefreshChange={props.onRefreshChange}
+          onSaveCurrentFile={props.onSaveCurrentFile}
+          onSelectChange={props.onSelectChange}
+          readOnly={mutationsDisabled}
+          selectedChangeId={props.selectedChangeId}
+          stateToken={props.snapshot.stateToken}
+        />
+        {props.commitComposer}
+      </div>
     );
   }
   if (props.activeTab === "history") {
@@ -146,7 +194,7 @@ function ActivePanel(
         onSelectCommit={props.onSelectCommit}
         pathFilter={props.historyPathFilter}
         refFilter={props.historyRefFilter}
-        readOnly={props.readOnly}
+        readOnly={mutationsDisabled}
         selectedCommit={props.selectedCommit}
       />
     );
@@ -154,33 +202,39 @@ function ActivePanel(
   if (props.activeTab === "branches") {
     return (
       <GitBranchesPanel
+        blocked={mutationsDisabled}
         branches={props.branches}
-        headOid={props.snapshot.headOid}
         onCreateBranch={props.onCreateBranch}
-        onPrepareInteractiveRebase={props.onPrepareInteractiveRebase ?? (() => {})}
-        onRunOperation={props.onRunOperation}
         onSwitchBranch={props.onSwitchBranch}
         readOnly={props.readOnly}
       />
     );
   }
   return (
-    <GitOperationsPanel
-      forcePushTarget={props.forcePushTarget}
-      onCancelQueue={props.onCancelQueue}
-      onEditQueue={props.onEditQueue}
-      onQueueWorkflow={props.onQueueWorkflow}
-      onRestoreUndo={props.onRestoreUndo}
-      onRetryQueue={props.onRetryQueue}
-      onRunOperation={props.onRunOperation}
-      onUpdateRebasePlan={props.onUpdateRebasePlan}
-      operation={props.operation}
-      queue={props.queue}
-      readOnly={props.readOnly}
-      rebasePlan={props.rebasePlan ?? []}
-      rebaseUpstreamRef={props.rebaseUpstreamRef}
-      undoSnapshots={props.undoSnapshots}
-    />
+    <>
+      {operationBanner}
+      <GitOperationsPanel
+        blocked={mutationsDisabled}
+        branches={props.branches}
+        headOid={props.snapshot.headOid}
+        onPrepareInteractiveRebase={props.onPrepareInteractiveRebase}
+        rebasePreparedTarget={props.rebasePreparedTarget}
+        forcePushTarget={props.forcePushTarget}
+        onCancelQueue={props.onCancelQueue}
+        onEditQueue={props.onEditQueue}
+        onQueueWorkflow={props.onQueueWorkflow}
+        onRestoreUndo={props.onRestoreUndo}
+        onRetryQueue={props.onRetryQueue}
+        onRunOperation={props.onRunOperation}
+        onUpdateRebasePlan={props.onUpdateRebasePlan}
+        operation={props.operation}
+        queue={props.queue}
+        readOnly={props.readOnly}
+        rebasePlan={props.rebasePlan ?? []}
+        rebaseUpstreamRef={props.rebaseUpstreamRef}
+        undoSnapshots={props.undoSnapshots}
+      />
+    </>
   );
 }
 

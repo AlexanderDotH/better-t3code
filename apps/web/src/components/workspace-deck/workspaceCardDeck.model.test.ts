@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { WorkspaceDeckCardDefinition } from "./WorkspaceCardDeck";
 import { prepareWorkspaceCardDeckView } from "./workspaceCardDeck.model";
+import { resolveWorkspaceDeckCompactHeight } from "./workspaceCardDeck.logic";
 
 function card(id: string): WorkspaceDeckCardDefinition<string> {
   return {
@@ -42,6 +43,41 @@ describe("prepareWorkspaceCardDeckView", () => {
 
     expect(view.activeCard).toBe("chat");
     expect(view.compactHeightReferenceCard).toBe("chat");
+  });
+
+  it("uses the MCP overview height while retaining the Chat reference", () => {
+    const view = prepareWorkspaceCardDeckView({
+      activeCard: "mcp",
+      cards: [card("chat"), { ...card("mcp"), compactSizing: "content" }],
+      compactHeightReferenceCard: "chat",
+    });
+
+    expect(view.compactHeightReferenceCard).toBe("chat");
+    expect(
+      resolveWorkspaceDeckCompactHeight({
+        activeCard: view.activeCard,
+        cardIds: view.cardIds,
+        referenceCard: view.compactHeightCard,
+        measurements: { chat: 640, mcp: 128 },
+      }),
+    ).toBe(128);
+  });
+
+  it.each(["chat", "git"])("keeps reference sizing for %s", (activeCard) => {
+    const view = prepareWorkspaceCardDeckView({
+      activeCard,
+      cards: [card("chat"), card("git"), { ...card("mcp"), compactSizing: "content" }],
+      compactHeightReferenceCard: "chat",
+    });
+
+    expect(
+      resolveWorkspaceDeckCompactHeight({
+        activeCard: view.activeCard,
+        cardIds: view.cardIds,
+        referenceCard: view.compactHeightCard,
+        measurements: { chat: 220, git: 180, mcp: 128 },
+      }),
+    ).toBe(220);
   });
 
   it("rejects duplicate identifiers before rendering any body", () => {

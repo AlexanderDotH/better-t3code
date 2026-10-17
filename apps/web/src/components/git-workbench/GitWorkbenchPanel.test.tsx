@@ -64,7 +64,7 @@ describe("GitWorkbenchPanel", () => {
 
     expect(markup).toContain('role="tablist"');
     expect(markup).toContain('role="tab"');
-    for (const label of ["Overview", "Changes", "History", "Branches", "Operations"]) {
+    for (const label of ["Changes", "History", "Branches", "Repository", "Advanced"]) {
       expect(markup).toContain(`>${label}<`);
     }
     expect(markup).toContain("Changed");
@@ -140,42 +140,6 @@ describe("GitWorkbenchPanel", () => {
     expect(markup).toContain("disabled");
   });
 
-  it("offers local and remote refs as rebase targets without switching a remote ref directly", () => {
-    const props = baseProps();
-    props.activeTab = "branches";
-    props.branches = [
-      ...props.branches,
-      { current: false, name: "origin/main", oid: null, remote: true },
-    ];
-
-    const markup = renderToStaticMarkup(<GitWorkbenchPanel {...props} />);
-
-    expect(markup).toContain("origin/main");
-    expect(markup).toContain("Rebase onto");
-    expect(markup).toContain("Interactive…");
-    expect(markup).not.toContain(">Switch</button>");
-  });
-
-  it("renders controlled commit-message editing for reword steps", () => {
-    const props = baseProps();
-    props.activeTab = "operations";
-    props.rebasePlan = [
-      {
-        commitId: "b".repeat(40),
-        id: "reword-1",
-        kind: "reword",
-        message: "Clarify workbench behavior",
-        subject: "Original subject",
-      },
-    ];
-    props.rebaseUpstreamRef = "a".repeat(40);
-
-    const markup = renderToStaticMarkup(<GitWorkbenchPanel {...props} />);
-
-    expect(markup).toContain('aria-label="New commit message for Original subject"');
-    expect(markup).toContain('value="Clarify workbench behavior"');
-  });
-
   it("defers tab semantics to an embedding drawer when tabs are hidden", () => {
     const markup = renderToStaticMarkup(<GitWorkbenchPanel {...baseProps()} showTabs={false} />);
 
@@ -195,24 +159,6 @@ describe("GitWorkbenchPanel", () => {
     expect(workbench).not.toContain("size-full");
     expect(activeView).toContain('data-git-workbench-scroll-region="document"');
     expect(activeView).toContain("overflow-auto");
-  });
-
-  it("keeps refresh status fixed above the active view and reserves space below it", () => {
-    const props = baseProps();
-    props.loading = true;
-    const markup = renderToStaticMarkup(<GitWorkbenchPanel {...props} />);
-    const activeView = markup.match(/<div[^>]*data-git-workbench-view="overview"[^>]*>/)?.[0];
-    const overlay = markup.match(/<div[^>]*data-git-workbench-refresh-overlay="true"[^>]*>/)?.[0];
-
-    expect(activeView).toContain('data-git-workbench-refresh-inset="true"');
-    expect(activeView).toContain("mt-10");
-    expect(overlay).toContain("pointer-events-none");
-    expect(overlay).toContain("absolute");
-    expect(overlay).toContain("top-3");
-    expect(overlay).toContain("right-3");
-    expect(markup).toContain('role="status"');
-    expect(markup).toContain("Refreshing Git");
-    expect(markup).toContain("motion-reduce:animate-none");
   });
 
   it("leaves Changes and History outer views unscrollable for their bounded inner regions", () => {

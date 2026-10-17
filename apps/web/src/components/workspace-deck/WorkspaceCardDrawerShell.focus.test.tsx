@@ -1,6 +1,8 @@
+// @vitest-environment jsdom
+
 import { act, type ReactNode } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 vi.mock("~/hooks/useInterfaceTranslator", async () => {
   const { createInterfaceTranslator } = await import("@t3tools/shared/interfaceLanguage");
@@ -16,82 +18,121 @@ vi.mock("../ui/tooltip", () => ({
 
 import { WorkspaceCardDrawerShell } from "./WorkspaceCardDrawerShell";
 
-let renderer: ReactTestRenderer | undefined;
+let root: Root;
+let container: HTMLDivElement;
+let trigger: HTMLButtonElement;
+let frameId = 0;
+const frames = new Map<number, FrameRequestCallback>();
 
-afterEach(async () => {
-  await act(() => renderer?.unmount());
-  renderer = undefined;
-  vi.useRealTimers();
+beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    const id = ++frameId;
+    frames.set(id, callback);
+    return id;
+  });
+  vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+  trigger = document.createElement("button");
+  container = document.createElement("div");
+  document.body.append(trigger, container);
+  trigger.focus();
+  root = createRoot(container);
+});
+
+afterEach(() => {
+  act(() => root.unmount());
+  trigger.remove();
+  container.remove();
+  frames.clear();
   vi.unstubAllGlobals();
 });
 
-it("preserves input focus across callback changes and restores the original trigger on close", async () => {
-  class FocusTarget {
-    isConnected = true;
-    focus() {
-      document.activeElement = this;
-    }
-  }
-  const trigger = new FocusTarget();
-  const collapse = new FocusTarget();
-  const branchInput = new FocusTarget();
-  const document = Object.assign(new EventTarget(), { activeElement: trigger });
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("HTMLElement", FocusTarget);
-  vi.stubGlobal("document", document);
-  vi.stubGlobal("window", {
-    requestAnimationFrame: (callback: () => void) => setTimeout(callback, 0),
-    cancelAnimationFrame: clearTimeout,
+function flushFrames() {
+  act(() => {
+    const callbacks = [...frames.values()];
+    frames.clear();
+    for (const callback of callbacks) callback(0);
   });
+}
+
+function renderDrawer(
+  open: boolean,
+  onOpenChange = vi.fn(),
+  onEscapeBeforeCollapse?: () => boolean,
+) {
+  act(() =>
+    root.render(
+      <WorkspaceCardDrawerShell
+        open={open}
+        sizingMode="content"
+        availableHeight={620}
+        activeTab="branches"
+        ariaLabel="Git workspace"
+        collapseLabel="Collapse Git workspace"
+        tabs={[]}
+        title="Git workspace"
+        onActiveTabChange={vi.fn()}
+        onOpenChange={onOpenChange}
+        {...(onEscapeBeforeCollapse ? { onEscapeBeforeCollapse } : {})}
+      >
+        <input aria-label="New branch name" />
+      </WorkspaceCardDrawerShell>,
+    ),
+  );
+}
+
+function branchInput() {
+  const input = container.querySelector<HTMLInputElement>('input[aria-label="New branch name"]');
+  if (!input) throw new Error("Missing branch input");
+  return input;
+}
+
+it("preserves input focus across callback changes and restores the original trigger on close", () => {
   const initialClose = vi.fn();
   const latestClose = vi.fn();
   const handleEscape = vi.fn(() => true);
-  const drawer = (open: boolean, onOpenChange = initialClose, interceptEscape?: () => boolean) => (
-    <WorkspaceCardDrawerShell
-      open={open}
-      sizingMode="content"
-      availableHeight={620}
-      activeTab="branches"
-      ariaLabel="Git workspace"
-      collapseLabel="Collapse Git workspace"
-      tabs={[]}
-      title="Git workspace"
-      onActiveTabChange={vi.fn()}
-      onOpenChange={onOpenChange}
-      {...(interceptEscape ? { onEscapeBeforeCollapse: interceptEscape } : {})}
-    >
-      <input aria-label="New branch name" />
-    </WorkspaceCardDrawerShell>
+  renderDrawer(true, initialClose);
+  flushFrames();
+  expect(document.activeElement).toBe(
+    container.querySelector("[data-workspace-card-drawer-initial-focus]"),
   );
-  await act(() => {
-    renderer = create(drawer(true), {
-      createNodeMock: (element) =>
-        element.type === "section" ? { querySelector: () => collapse } : null,
-    });
-  });
-  await act(() => vi.runAllTimers());
-  expect(document.activeElement).toBe(collapse);
 
-  branchInput.focus();
-  await act(() => renderer?.update(drawer(true, latestClose, handleEscape)));
-  await act(() => vi.runAllTimers());
-  expect(document.activeElement).toBe(branchInput);
+  const input = branchInput();
+  input.focus();
+  input.value = "feature/keep-typing";
+  input.setSelectionRange(7, 7);
+  renderDrawer(true, latestClose, handleEscape);
+  flushFrames();
+  expect(branchInput()).toBe(input);
+  expect(document.activeElement).toBe(input);
+  expect(input.value).toBe("feature/keep-typing");
+  expect(input.selectionStart).toBe(7);
 
   const escape = () =>
     document.dispatchEvent(
-      Object.assign(new Event("keydown", { cancelable: true }), { key: "Escape" }),
+      new KeyboardEvent("keydown", {
+        key: "Escape",
+        cancelable: true,
+        bubbles: true,
+      }),
     );
-  escape();
+  act(escape);
   expect(handleEscape).toHaveBeenCalledOnce();
   expect(latestClose).not.toHaveBeenCalled();
-
   handleEscape.mockReturnValue(false);
-  escape();
+  act(escape);
   expect(latestClose).toHaveBeenCalledWith(false);
   expect(initialClose).not.toHaveBeenCalled();
 
-  await act(() => renderer?.update(drawer(false, latestClose)));
-  await act(() => vi.runAllTimers());
+  renderDrawer(false, latestClose);
+  flushFrames();
   expect(document.activeElement).toBe(trigger);
+});
+
+it("preserves a child's explicit input focus before the first opening frame", () => {
+  renderDrawer(true);
+  const input = branchInput();
+  input.focus();
+  flushFrames();
+  expect(document.activeElement).toBe(input);
 });

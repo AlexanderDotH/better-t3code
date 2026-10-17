@@ -1,5 +1,5 @@
 import type { EnvironmentId, GitCommitFileDiffResult, GitHistoryItem } from "@t3tools/contracts";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ChatWorkspaceCardId } from "./ChatWorkspaceDeck";
 import type {
@@ -12,8 +12,14 @@ import { mapDiff } from "./GitWorkspaceDeckController.model";
 import {
   bufferedFileEdits,
   deckSelectionByThread,
+  rememberDeckSelection,
   type ScopedWorkspaceDeckSelection,
 } from "./GitWorkspaceDeckSessionState";
+
+export interface GitWorkbenchOpenChangesOptions {
+  readonly focusCommit?: boolean;
+  readonly returnFocusTarget?: HTMLElement | null;
+}
 
 export function useGitWorkspaceDeckSession(input: {
   readonly activeTurn: boolean;
@@ -26,7 +32,8 @@ export function useGitWorkspaceDeckSession(input: {
     scopeKey: input.scopeKey,
   }));
   const [expandedCard, setExpandedCard] = useState<ChatWorkspaceCardId | null>(null);
-  const [activeTab, setActiveTab] = useState<GitWorkbenchTabId>("overview");
+  const [activeTab, setActiveTab] = useState<GitWorkbenchTabId>("changes");
+  const [commitFocusRequest, setCommitFocusRequest] = useState(0);
   const [selectedChangeId, setSelectedChangeId] = useState<string | null>(null);
   const [diffs, setDiffs] = useState<Readonly<Record<string, ReturnType<typeof mapDiff>>>>({});
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
@@ -48,10 +55,25 @@ export function useGitWorkspaceDeckSession(input: {
   } | null>(null);
   const [rebasePlan, setRebasePlan] = useState<readonly GitWorkbenchRebaseNode[]>([]);
   const [rebasePlanTarget, setRebasePlanTarget] = useState<string | null>(null);
+  const [rebasePreparedTarget, setRebasePreparedTarget] = useState<string | null>(null);
   const [rebaseUpstreamRef, setRebaseUpstreamRef] = useState<string | null>(null);
   const previousActiveTurnRef = useRef(input.activeTurn);
   const resetScopeRef = useRef<string | null>(null);
   const expandButtonRef = useRef<HTMLButtonElement | null>(null);
+  const entryReturnFocusTargetRef = useRef<HTMLElement | null>(null);
+  const workbenchReturnFocusRef = useMemo(
+    () => ({
+      get current() {
+        const origin = entryReturnFocusTargetRef.current;
+        return origin?.isConnected &&
+          origin !== origin.ownerDocument.body &&
+          !origin.closest("[inert]")
+          ? origin
+          : expandButtonRef.current;
+      },
+    }),
+    [],
+  );
   const flushingBufferKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -63,7 +85,9 @@ export function useGitWorkspaceDeckSession(input: {
       scopeKey: input.scopeKey,
     });
     setExpandedCard(null);
-    setActiveTab("overview");
+    setActiveTab("changes");
+    setCommitFocusRequest(0);
+    entryReturnFocusTargetRef.current = null;
     setSelectedChangeId(null);
     setSelectedFilePath(null);
     setCurrentFile(null);
@@ -84,8 +108,28 @@ export function useGitWorkspaceDeckSession(input: {
     setCommitPatches({});
     setRebasePlan([]);
     setRebasePlanTarget(null);
+    setRebasePreparedTarget(null);
     setRebaseUpstreamRef(null);
   }, [input.activeTurn, input.cwd, input.environmentId, input.scopeKey]);
+
+  const openChanges = useCallback(
+    (options: GitWorkbenchOpenChangesOptions = {}) => {
+      if (expandedCard !== "git") {
+        const activeElement = typeof document === "undefined" ? null : document.activeElement;
+        entryReturnFocusTargetRef.current =
+          options.returnFocusTarget ??
+          (typeof HTMLElement !== "undefined" && activeElement instanceof HTMLElement
+            ? activeElement
+            : null);
+      }
+      rememberDeckSelection(input.scopeKey, "git");
+      setCurrentSelection({ card: "git", scopeKey: input.scopeKey });
+      setActiveTab("changes");
+      setExpandedCard("git");
+      if (options.focusCommit) setCommitFocusRequest((request) => request + 1);
+    },
+    [expandedCard, input.scopeKey],
+  );
 
   const resetHistory = useCallback((path: string) => {
     setHistoryPath(path);
@@ -108,6 +152,7 @@ export function useGitWorkspaceDeckSession(input: {
   return {
     activeTab,
     bufferFlushQueue,
+    commitFocusRequest,
     commitPatches,
     commitPatchTarget,
     currentFile,
@@ -122,9 +167,11 @@ export function useGitWorkspaceDeckSession(input: {
     historyPath,
     historyRefName,
     historySnapshotOid,
+    openChanges,
     previousActiveTurnRef,
     rebasePlan,
     rebasePlanTarget,
+    rebasePreparedTarget,
     rebaseUpstreamRef,
     resetHistory,
     resetHistoryRef,
@@ -145,9 +192,11 @@ export function useGitWorkspaceDeckSession(input: {
     setHistorySnapshotOid,
     setRebasePlan,
     setRebasePlanTarget,
+    setRebasePreparedTarget,
     setRebaseUpstreamRef,
     setSelectedChangeId,
     setSelectedCommitOid,
     setSelectedFilePath,
+    workbenchReturnFocusRef,
   };
 }

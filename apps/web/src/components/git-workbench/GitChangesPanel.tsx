@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   ArrowLeft,
   Binary,
@@ -6,6 +6,7 @@ import {
   ChevronRight,
   FileCode2,
   FolderGit2,
+  Pencil,
   RefreshCw,
 } from "lucide-react";
 
@@ -16,13 +17,15 @@ import { cn } from "~/lib/utils";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 
+import { buildChangeSelection, retainValidSelectionIds } from "./GitWorkbench.logic";
 import {
-  buildChangeSelection,
-  groupGitChanges,
-  retainValidSelectionIds,
-} from "./GitWorkbench.logic";
+  defaultGitReviewChange,
+  gitReviewFiles,
+  type GitReviewFile,
+} from "./GitChangesPanel.model";
 import { GitConflictPanel } from "./GitConflictPanel";
 import { GitCurrentFilePanel } from "./GitCurrentFilePanel";
+import type { GitCurrentFileDraftInput } from "./gitCurrentFileDraft";
 import { GitWorkbenchConfirmation } from "./GitWorkbenchConfirmation";
 import type {
   GitChangeSelectionInput,
@@ -34,7 +37,13 @@ import type {
 interface GitChangesPanelProps {
   readonly changes: readonly GitWorkbenchChange[];
   readonly currentFile: GitCurrentFileState | null;
+  readonly editorPath?: string | null | undefined;
+  readonly initialDraft?: GitCurrentFileDraftInput | null | undefined;
+  readonly indexReadOnly?: boolean | undefined;
+  readonly operationActive?: boolean | undefined;
   readonly onApplySelection: (input: GitChangeSelectionInput) => void;
+  readonly onCloseCurrentFile?: (() => void) | undefined;
+  readonly onCurrentFileDraftChange?: ((draft: GitCurrentFileDraftInput) => void) | undefined;
   readonly onOpenCurrentFile: (path: string) => void;
   readonly onRefreshChange?: ((path: string) => void) | undefined;
   readonly onSaveCurrentFile: (input: {
@@ -44,55 +53,115 @@ interface GitChangesPanelProps {
     readonly resolution?: "agent" | "merged" | "mine";
   }) => void;
   readonly onSelectChange: (changeId: string | null) => void;
+  readonly onSetFilesStaged?: ((paths: readonly string[], staged: boolean) => void) | undefined;
   readonly readOnly: boolean;
   readonly selectedChangeId: string | null;
+  readonly stagingError?: string | null | undefined;
+  readonly stagingPending?: boolean | undefined;
   readonly stateToken: string;
 }
 
 export function GitChangesPanel(props: GitChangesPanelProps) {
   const translate = useInterfaceTranslator().message;
-  const groups = groupGitChanges(props.changes);
+  const files = gitReviewFiles(props.changes);
   const selected = props.changes.find((change) => change.id === props.selectedChangeId) ?? null;
+  const selectedFile = files.find((file) => file.path === selected?.path) ?? null;
+  const editorPath = props.editorPath ?? null;
+  const detailVisible = selected !== null || editorPath !== null;
+  const stagePaths = files
+    .filter((file) => !file.conflict && file.worktree !== null)
+    .map((file) => file.path);
+  const unstagePaths = files
+    .filter((file) => !file.conflict && file.index !== null)
+    .map((file) => file.path);
+  const stagingDisabled =
+    props.readOnly ||
+    props.indexReadOnly ||
+    props.operationActive ||
+    props.stagingPending ||
+    !props.onSetFilesStaged;
+
   return (
     <div
-      className="grid h-fit max-h-full w-full min-h-0 grid-rows-[minmax(0,1fr)] overflow-hidden @container/git-changes @3xl/git-changes:grid-cols-[minmax(15rem,0.7fr)_minmax(0,1.7fr)]"
+      aria-busy={Boolean(props.stagingPending)}
+      className="@container/git-changes grid h-fit max-h-full w-full min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden"
       data-git-changes-layout="content"
     >
-      <aside
-        aria-label={translate("git.workbench.changedFilesAria")}
-        className={cn(
-          "min-h-0 overflow-auto border-r",
-          selected ? "hidden @3xl/git-changes:block" : "block",
-        )}
-        data-git-changes-scroll-region="files"
-      >
-        {groups.length ? (
-          groups.map((group) => (
-            <section aria-labelledby={`change-group-${group.id}`} key={group.id}>
-              <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-background/95 px-3 py-2 backdrop-blur">
-                <h3
-                  className="font-medium text-xs uppercase tracking-wide"
-                  id={`change-group-${group.id}`}
-                >
-                  {translate(`git.common.${group.id}`)}
-                </h3>
-                <Badge size="sm" variant={group.id === "conflicts" ? "error" : "secondary"}>
-                  {group.changes.length}
-                </Badge>
-              </div>
-              <ul>
-                {group.changes.map((change) => (
-                  <li key={`${group.id}:${change.id}`}>
+      <div>
+        {props.stagingError ? (
+          <p
+            className="border-b bg-destructive/8 px-3 py-2 text-destructive-foreground text-xs"
+            role="alert"
+          >
+            {props.stagingError}
+          </p>
+        ) : null}
+      </div>
+      <div className="grid w-full min-h-0 grid-rows-[minmax(0,1fr)] @3xl/git-changes:grid-cols-[minmax(15rem,0.7fr)_minmax(0,1.7fr)]">
+        <aside
+          aria-label={translate("git.workbench.changedFilesAria")}
+          className={cn(
+            "min-h-0 overflow-auto border-r",
+            detailVisible ? "hidden @3xl/git-changes:block" : "block",
+          )}
+          data-git-changes-scroll-region="files"
+        >
+          <div className="sticky top-0 z-10 flex items-center gap-2 border-b bg-background/95 px-3 py-2 backdrop-blur">
+            <h3 className="flex-1 font-medium text-xs uppercase tracking-wide">
+              {translate("git.common.files")}
+            </h3>
+            <Badge size="sm" variant="secondary">
+              {files.length}
+            </Badge>
+            <Button
+              aria-label={translate("git.changes.stageAll")}
+              disabled={stagingDisabled || stagePaths.length === 0}
+              onClick={() => props.onSetFilesStaged?.(stagePaths, true)}
+              size="xs"
+              variant="ghost"
+            >
+              {translate("common.all")}
+            </Button>
+            <Button
+              aria-label={translate("git.changes.unstageAll")}
+              disabled={stagingDisabled || unstagePaths.length === 0}
+              onClick={() => props.onSetFilesStaged?.(unstagePaths, false)}
+              size="xs"
+              variant="ghost"
+            >
+              {translate("git.common.none")}
+            </Button>
+          </div>
+          {files.length ? (
+            <ul>
+              {files.map((file) => {
+                const change = defaultGitReviewChange(file);
+                if (!change) return null;
+                const isSelected = selected?.path === file.path;
+                return (
+                  <li
+                    className={cn("flex items-start border-b", isSelected && "bg-accent")}
+                    data-git-review-path={file.path}
+                    key={file.path}
+                  >
+                    <span className="flex shrink-0 items-center py-3 pl-3">
+                      <Checkbox
+                        aria-label={translate(
+                          file.staging === "full"
+                            ? "git.changes.unstagePath"
+                            : "git.changes.stagePath",
+                          { path: file.path },
+                        )}
+                        checked={file.staging === "full"}
+                        disabled={stagingDisabled || file.conflict !== null}
+                        indeterminate={file.staging === "partial"}
+                        onCheckedChange={(staged) => props.onSetFilesStaged?.([file.path], staged)}
+                      />
+                    </span>
                     <button
-                      aria-current={change.id === props.selectedChangeId ? "true" : undefined}
-                      className={cn(
-                        "flex w-full items-start gap-2 border-b px-3 py-2 text-left text-sm outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                        change.id === props.selectedChangeId && "bg-accent",
-                      )}
-                      onClick={() => {
-                        props.onSelectChange(change.id);
-                        props.onOpenCurrentFile(change.path);
-                      }}
+                      aria-current={isSelected ? "true" : undefined}
+                      className="flex min-w-0 flex-1 items-start gap-2 px-3 py-2 text-left text-sm outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                      onClick={() => props.onSelectChange(change.id)}
                       type="button"
                     >
                       {change.binary ? (
@@ -101,79 +170,146 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
                         <FileCode2 aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
                       )}
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate">{change.path}</span>
+                        <span className="block truncate">{file.path}</span>
                         {change.previousPath ? (
                           <span className="block truncate text-muted-foreground text-xs">
                             {translate("git.changes.from", { path: change.previousPath })}
                           </span>
                         ) : null}
+                        <span className="block text-muted-foreground text-xs">
+                          {file.conflict
+                            ? translate("git.common.conflicts")
+                            : file.staging === "partial"
+                              ? translate("git.changes.partialStaged")
+                              : file.staging === "full"
+                                ? translate("git.common.staged")
+                                : change.untracked
+                                  ? translate("git.common.untracked")
+                                  : translate("git.common.unstaged")}
+                        </span>
                       </span>
-                      <ChangeStats change={change} />
+                      <ChangeStats
+                        change={{
+                          ...change,
+                          additions:
+                            (file.index?.additions ?? 0) +
+                            (file.worktree?.additions ?? 0) +
+                            (file.conflict?.additions ?? 0),
+                          deletions:
+                            (file.index?.deletions ?? 0) +
+                            (file.worktree?.deletions ?? 0) +
+                            (file.conflict?.deletions ?? 0),
+                        }}
+                      />
                     </button>
                   </li>
-                ))}
-              </ul>
-            </section>
-          ))
-        ) : (
-          <div className="grid min-h-48 place-content-center gap-2 p-6 text-center text-muted-foreground">
-            <FolderGit2 aria-hidden="true" className="mx-auto size-7" />
-            <p className="text-sm">{translate("git.workbench.clean")}</p>
-          </div>
-        )}
-      </aside>
+                );
+              })}
+            </ul>
+          ) : (
+            <div className="grid min-h-48 place-content-center gap-2 p-6 text-center text-muted-foreground">
+              <FolderGit2 aria-hidden="true" className="mx-auto size-7" />
+              <p className="text-sm">{translate("git.workbench.clean")}</p>
+            </div>
+          )}
+        </aside>
 
-      <main
-        className={cn(
-          "min-h-0 overflow-auto",
-          selected ? "block" : "hidden @3xl/git-changes:block",
-        )}
-        data-git-changes-scroll-region="details"
-      >
-        {selected ? (
-          <GitChangeDetail {...props} change={selected} />
-        ) : (
-          <div className="grid min-h-48 w-full place-content-center text-muted-foreground text-sm">
-            {translate("git.changes.selectFile")}
-          </div>
-        )}
-      </main>
+        <main
+          className={cn(
+            "min-h-0 overflow-auto",
+            detailVisible ? "block" : "hidden @3xl/git-changes:block",
+          )}
+          data-git-changes-scroll-region="details"
+        >
+          {editorPath ? (
+            <div className="flex h-fit max-h-full w-full min-h-0 flex-col">
+              <div className="flex shrink-0 items-center border-b px-3 py-2">
+                <Button onClick={props.onCloseCurrentFile} size="xs" variant="ghost">
+                  <ArrowLeft />
+                  {translate(
+                    selected ? "git.changes.backToDiff" : "git.workbench.backChangedFiles",
+                  )}
+                </Button>
+              </div>
+              {props.currentFile?.path === editorPath ? (
+                <GitCurrentFilePanel
+                  file={props.currentFile}
+                  initialDraft={props.initialDraft}
+                  key={editorPath}
+                  onDraftChange={props.onCurrentFileDraftChange}
+                  onSave={props.onSaveCurrentFile}
+                  readOnly={props.readOnly}
+                />
+              ) : (
+                <p className="p-6 text-muted-foreground text-sm" role="status">
+                  {translate("git.changes.loadingCurrent")}
+                </p>
+              )}
+            </div>
+          ) : selected && selectedFile ? (
+            <GitChangeDetail {...props} change={selected} file={selectedFile} key={selected.id} />
+          ) : (
+            <div className="grid min-h-48 w-full place-content-center text-muted-foreground text-sm">
+              {translate("git.changes.selectFile")}
+            </div>
+          )}
+        </main>
+      </div>
     </div>
   );
 }
 
 function GitChangeDetail({
   change,
-  currentFile,
+  file,
+  indexReadOnly,
+  operationActive,
   onApplySelection,
+  onOpenCurrentFile,
   onRefreshChange,
-  onSaveCurrentFile,
   onSelectChange,
   readOnly,
+  stagingPending,
   stateToken,
-}: GitChangesPanelProps & { readonly change: GitWorkbenchChange }) {
+}: GitChangesPanelProps & { readonly change: GitWorkbenchChange; readonly file: GitReviewFile }) {
   const translate = useInterfaceTranslator().message;
   const [selectedHunks, setSelectedHunks] = useState<ReadonlySet<string>>(new Set());
   const [selectedLines, setSelectedLines] = useState<ReadonlySet<string>>(new Set());
+  const [selectionDiff, setSelectionDiff] = useState(change.diff);
   const [showDiff, setShowDiff] = useState(true);
   const [diffLayout, setDiffLayout] = useState<"split" | "unified">("unified");
   const selectionCount = selectedHunks.size + selectedLines.size;
   const actions = availableSelectionActions(change);
+  const disabled =
+    readOnly ||
+    Boolean(indexReadOnly) ||
+    Boolean(stagingPending) ||
+    !change.diff ||
+    Boolean(change.diff.stale);
 
-  useEffect(() => {
-    if (!change.diff) return;
+  if (selectionDiff !== change.diff) {
+    setSelectionDiff(change.diff);
+    const diff = change.diff;
     setSelectedHunks((current) =>
-      retainValidSelectionIds(current, change.diff?.hunks.map((hunk) => hunk.id) ?? []),
+      diff && !diff.stale
+        ? retainValidSelectionIds(
+            current,
+            diff.hunks.map((hunk) => hunk.id),
+          )
+        : new Set(),
     );
     setSelectedLines((current) =>
-      retainValidSelectionIds(
-        current,
-        change.diff?.hunks.flatMap((hunk) => hunk.lines.map((line) => line.id)) ?? [],
-      ),
+      diff && !diff.stale
+        ? retainValidSelectionIds(
+            current,
+            diff.hunks.flatMap((hunk) => hunk.lines.map((line) => line.id)),
+          )
+        : new Set(),
     );
-  }, [change.diff]);
+  }
 
   const apply = (action: GitSelectionAction) => {
+    if (disabled || (operationActive && action === "discard")) return;
     onApplySelection(
       buildChangeSelection({
         action,
@@ -190,7 +326,7 @@ function GitChangeDetail({
 
   return (
     <div className="flex h-fit max-h-full w-full min-h-0 flex-col" data-git-change-detail="content">
-      <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2">
         <Button
           aria-label={translate("git.workbench.backChangedFiles")}
           className="@3xl/git-changes:hidden"
@@ -208,15 +344,27 @@ function GitChangeDetail({
         {change.modeChanged ? (
           <Badge variant="outline">{translate("git.common.modeChanged")}</Badge>
         ) : null}
+        {!change.binary && !change.submodule && change.kind !== "deleted" ? (
+          <Button
+            aria-label={translate("git.file.editAria", { path: change.path })}
+            onClick={() => onOpenCurrentFile(change.path)}
+            size="xs"
+            variant="outline"
+          >
+            <Pencil /> {translate("git.common.edit")}
+          </Button>
+        ) : null}
         {actions.map((action) => {
-          const disabled = readOnly || !change.diff || Boolean(change.diff.stale);
-          const label = selectionActionLabel(action.action, selectionCount > 0, translate);
+          const label =
+            change.conflict && action.action === "stage"
+              ? translate("git.changes.markResolved")
+              : selectionActionLabel(action.action, selectionCount > 0, translate);
           if (action.action === "discard") {
             return (
               <GitWorkbenchConfirmation
                 confirmLabel={translate("git.changes.discardSelection")}
                 description={translate("git.changes.discardDescription")}
-                disabled={disabled}
+                disabled={disabled || Boolean(operationActive)}
                 key={action.action}
                 onConfirm={() => apply(action.action)}
                 phrase={change.untracked ? "DISCARD" : undefined}
@@ -246,7 +394,7 @@ function GitChangeDetail({
       {change.conflict ? <GitConflictPanel change={change} /> : null}
       {change.diff?.stale ? (
         <div
-          className="flex items-center gap-2 border-b bg-warning/8 px-3 py-2 text-warning-foreground text-xs"
+          className="flex shrink-0 items-center gap-2 border-b bg-warning/8 px-3 py-2 text-warning-foreground text-xs"
           role="status"
         >
           <RefreshCw aria-hidden="true" className="size-3.5" />
@@ -257,20 +405,48 @@ function GitChangeDetail({
         </div>
       ) : null}
 
-      <div className="flex items-center border-b">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2">
         <button
           aria-expanded={showDiff}
-          className="flex min-w-0 flex-1 items-center gap-1 px-3 py-2 text-left font-medium text-xs hover:bg-accent/40"
+          className="flex items-center gap-1 text-left font-medium text-xs hover:text-foreground"
           onClick={() => setShowDiff((visible) => !visible)}
           type="button"
         >
-          {showDiff ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
+          {showDiff ? (
+            <ChevronDown aria-hidden="true" className="size-3.5" />
+          ) : (
+            <ChevronRight aria-hidden="true" className="size-3.5" />
+          )}
           {translate("git.changes.diff")}{" "}
           {change.diff?.truncated ? `(${translate("git.changes.truncated")})` : ""}
         </button>
         <div
+          aria-label={translate("git.diff.scopeAria", { scope: change.path })}
+          className="flex gap-1"
+          role="group"
+        >
+          {[file.index, file.worktree]
+            .filter((source) => source !== null)
+            .map((source) => (
+              <button
+                aria-pressed={source.id === change.id}
+                className={cn(
+                  "rounded px-2 py-0.5 text-xs",
+                  source.id === change.id
+                    ? "bg-accent text-foreground"
+                    : "text-muted-foreground hover:bg-accent/50",
+                )}
+                key={source.id}
+                onClick={() => onSelectChange(source.id)}
+                type="button"
+              >
+                {translate(source.staged ? "git.common.staged" : "git.diff.workingTree")}
+              </button>
+            ))}
+        </div>
+        <div
           aria-label={translate("git.diff.view.layout")}
-          className="mr-2 flex rounded-md border p-0.5"
+          className="ml-auto flex rounded-md border p-0.5"
           role="group"
         >
           {(["unified", "split"] as const).map((layout) => (
@@ -284,17 +460,16 @@ function GitChangeDetail({
               onClick={() => setDiffLayout(layout)}
               type="button"
             >
-              {layout === "unified"
-                ? translate("git.changes.unified")
-                : translate("git.changes.split")}
+              {translate(layout === "unified" ? "git.changes.unified" : "git.changes.split")}
             </button>
           ))}
         </div>
       </div>
       {showDiff ? (
-        <div className="max-h-[45%] min-h-32 overflow-auto border-b bg-muted/20 font-mono text-xs">
+        <div className="min-h-0 overflow-auto bg-muted/20 font-mono text-xs">
           <GitSelectableDiff
             change={change}
+            disabled={disabled}
             layout={diffLayout}
             onSelectedHunksChange={setSelectedHunks}
             onSelectedLinesChange={setSelectedLines}
@@ -303,20 +478,13 @@ function GitChangeDetail({
           />
         </div>
       ) : null}
-
-      {currentFile?.path === change.path ? (
-        <GitCurrentFilePanel file={currentFile} onSave={onSaveCurrentFile} readOnly={readOnly} />
-      ) : (
-        <div className="grid min-h-32 flex-1 place-content-center text-muted-foreground text-sm">
-          {translate("git.changes.loadingCurrent")}
-        </div>
-      )}
     </div>
   );
 }
 
 function GitSelectableDiff({
   change,
+  disabled,
   layout,
   onSelectedHunksChange,
   onSelectedLinesChange,
@@ -324,6 +492,7 @@ function GitSelectableDiff({
   selectedLines,
 }: {
   change: GitWorkbenchChange;
+  disabled: boolean;
   layout: "split" | "unified";
   onSelectedHunksChange: (value: ReadonlySet<string>) => void;
   onSelectedLinesChange: (value: ReadonlySet<string>) => void;
@@ -347,6 +516,7 @@ function GitSelectableDiff({
           <Checkbox
             aria-label={`Select hunk ${hunk.header}`}
             checked={hunkSelected}
+            disabled={disabled}
             onCheckedChange={(next) => {
               const hunks = new Set(selectedHunks);
               const lines = new Set(selectedLines);
@@ -371,6 +541,7 @@ function GitSelectableDiff({
             <Checkbox
               aria-label={`Select ${line.kind} line ${line.newLine ?? line.oldLine ?? "metadata"}`}
               checked={hunkSelected || selectedLines.has(line.id)}
+              disabled={disabled}
               onCheckedChange={(next) => {
                 const lines = new Set(selectedLines);
                 const hunks = new Set(selectedHunks);

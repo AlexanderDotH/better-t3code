@@ -4,6 +4,7 @@ import { ArrowLeft, FileDiff, GitCommitHorizontal, LoaderCircle } from "lucide-r
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
+import { NativeSelect } from "~/components/ui/select";
 import { cn } from "~/lib/utils";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
@@ -72,9 +73,8 @@ export function GitHistoryPanel(props: GitHistoryPanelProps) {
         )}
       >
         <div className="grid gap-2 border-b p-2">
-          <select
+          <NativeSelect
             aria-label={translate("git.history.branchFilter")}
-            className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
             onChange={(event) => props.onHistoryRefFilterChange?.(event.currentTarget.value)}
             value={props.refFilter ?? ""}
           >
@@ -88,7 +88,7 @@ export function GitHistoryPanel(props: GitHistoryPanelProps) {
                 {branch.remote ? ` (${translate("git.history.remoteSuffix")})` : ""}
               </option>
             ))}
-          </select>
+          </NativeSelect>
           <Input
             aria-label={translate("git.history.pathFilter")}
             onChange={(event) => props.onHistoryPathFilterChange?.(event.currentTarget.value)}

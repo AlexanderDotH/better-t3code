@@ -381,11 +381,11 @@ describe("GitWorkbenchDrawerShell", () => {
     expect(html).not.toContain('role="separator"');
     expect(html).toContain("aria-controls=");
     expect(html).toContain("aria-labelledby=");
-    expect(html).toContain("Overview");
+    expect(html).toContain("Repository");
     expect(html).toContain("Changes");
     expect(html).toContain("History");
     expect(html).toContain("Branches");
-    expect(html).toContain("Operations");
+    expect(html).toContain("Advanced");
     expect(html).toContain("Repository pulse");
   });
 
@@ -404,7 +404,7 @@ describe("GitWorkbenchDrawerShell", () => {
     expect(html).toBe("");
   });
 
-  it("omits Operations until there is an operation to show", () => {
+  it("keeps Advanced reachable before the first operation", () => {
     const html = renderToStaticMarkup(
       <GitWorkbenchDrawerShell
         open
@@ -417,7 +417,7 @@ describe("GitWorkbenchDrawerShell", () => {
       </GitWorkbenchDrawerShell>,
     );
 
-    expect(html).not.toContain(">Operations</button>");
+    expect(html).toContain(">Advanced</button>");
   });
 
   it("can delegate tab rendering to an embedded workbench panel", () => {

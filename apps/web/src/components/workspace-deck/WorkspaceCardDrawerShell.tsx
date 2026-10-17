@@ -233,6 +233,7 @@ export function WorkspaceCardDrawerShell<TabId extends string>(
     const activeElement = document.activeElement;
     returnFocusTargetRef.current = activeElement instanceof HTMLElement ? activeElement : null;
     const focusFrame = window.requestAnimationFrame(() => {
+      if (drawerRef.current?.contains(document.activeElement)) return;
       drawerRef.current
         ?.querySelector<HTMLElement>("[data-workspace-card-drawer-initial-focus]")
         ?.focus({ preventScroll: true });

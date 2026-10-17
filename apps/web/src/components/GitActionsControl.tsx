@@ -1,7 +1,7 @@
 import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
-import { subscribeGitActionsControl } from "./gitActionsControlBus";
-import { gitWorkbenchEnvironment } from "~/state/gitWorkbench";
+import { subscribeGitActionsControl, type GitCommitOutcome } from "./gitActionsControlBus";
+import { requestGitWorkbenchEntry } from "./git-workbench/gitWorkbenchEntryBus";
 import { useAtomValue } from "@effect/atom-react";
 import { type ScopedThreadRef } from "@t3tools/contracts";
 import {
@@ -27,6 +27,7 @@ import {
   useCallback,
   useEffect,
   useEffectEvent,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -114,6 +115,7 @@ import { sourceControlEnvironment } from "~/state/sourceControl";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { vcsEnvironment } from "~/state/vcs";
+import { gitWorkbenchEnvironment } from "~/state/gitWorkbench";
 import { randomUUID } from "~/lib/utils";
 import { resolvePathLinkTarget } from "~/terminal-links";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
@@ -995,9 +997,6 @@ export default function GitActionsControl({
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(activeEnvironmentId));
   const supportsStandardIndexCommit =
     serverConfig?.environment.capabilities.gitWorkbenchVersion !== undefined;
-  const refreshGitWorkbench = useAtomCommand(gitWorkbenchEnvironment.refresh, {
-    reportFailure: false,
-  });
   const openInPreferredEditor = useOpenInPreferredEditor(
     activeEnvironmentId,
     serverConfig?.availableEditors ?? [],
@@ -1029,7 +1028,16 @@ export default function GitActionsControl({
     () => ({ environmentId: activeEnvironmentId, cwd: gitCwd }),
     [activeEnvironmentId, gitCwd],
   );
-  let runGitActionWithToast: (input: RunGitActionWithToastInput) => Promise<void>;
+  const commitRequestsRef = useRef(new Set<string>());
+  const actionContext = JSON.stringify([activeEnvironmentId, gitCwd, activeThreadRef?.threadId]);
+  const latestActionContextRef = useRef<string | null>(actionContext);
+  useLayoutEffect(() => {
+    latestActionContextRef.current = actionContext;
+    return () => {
+      latestActionContextRef.current = null;
+    };
+  }, [actionContext]);
+  let runGitActionWithToast: (input: RunGitActionWithToastInput) => Promise<GitCommitOutcome>;
 
   const updateActiveProgressToast = useCallback(() => {
     const progress = activeGitActionProgressRef.current;
@@ -1111,6 +1119,9 @@ export default function GitActionsControl({
       : null,
   );
   const refreshVcsStatus = useAtomCommand(vcsEnvironment.refreshStatus, {
+    reportFailure: false,
+  });
+  const refreshWorkbench = useAtomCommand(gitWorkbenchEnvironment.refresh, {
     reportFailure: false,
   });
   const { data: gitStatus, error: gitStatusError } = gitStatusQuery;
@@ -1277,7 +1288,7 @@ export default function GitActionsControl({
       progressToastId,
       filePaths,
       commitSelection,
-    }: RunGitActionWithToastInput) => {
+    }: RunGitActionWithToastInput): Promise<GitCommitOutcome> => {
       const actionStatus = statusOverride ?? gitStatusForActions;
       const actionBranch = actionStatus?.refName ?? null;
       const actionIsDefaultBranch = featureBranch ? false : isDefaultRef;
@@ -1297,7 +1308,7 @@ export default function GitActionsControl({
           action !== "commit_push" &&
           action !== "commit_push_pr"
         ) {
-          return;
+          return { status: "cancelled" };
         }
         setPendingDefaultBranchAction({
           action,
@@ -1308,7 +1319,7 @@ export default function GitActionsControl({
           ...(filePaths ? { filePaths } : {}),
           ...(commitSelection ? { commitSelection } : {}),
         });
-        return;
+        return { status: "cancelled" };
       }
       onConfirmed?.();
 
@@ -1429,7 +1440,7 @@ export default function GitActionsControl({
       if (result._tag === "Failure") {
         if (isAtomCommandInterrupted(result)) {
           toastManager.close(resolvedProgressToastId);
-          return;
+          return { status: "cancelled" };
         }
 
         const error = squashAtomCommandFailure(result);
@@ -1443,7 +1454,10 @@ export default function GitActionsControl({
             ...(scopedToastData !== undefined ? { data: scopedToastData } : {}),
           }),
         );
-        return;
+        return {
+          status: "failure",
+          message: error instanceof Error ? error.message : translate("git.common.errorOccurred"),
+        };
       }
 
       const actionResult = result.value;
@@ -1503,6 +1517,7 @@ export default function GitActionsControl({
           data: successToastData,
         });
       }
+      return { status: "success", result: actionResult };
     },
   );
 
@@ -1609,6 +1624,15 @@ export default function GitActionsControl({
     })();
   };
 
+  const openWorkbenchCommit = () =>
+    activeEnvironmentId !== null &&
+    gitCwd !== null &&
+    requestGitWorkbenchEntry({
+      environmentId: activeEnvironmentId,
+      cwd: gitCwd,
+      focusCommit: true,
+    });
+
   const runQuickAction = () => {
     if (quickAction.kind === "open_pr") {
       void openExistingPr();
@@ -1635,35 +1659,12 @@ export default function GitActionsControl({
       const action = quickAction.action;
       const includesCommit =
         action === "commit" || action === "commit_push" || action === "commit_push_pr";
-      if (
-        includesCommit &&
-        supportsStandardIndexCommit &&
-        activeEnvironmentId !== null &&
-        gitCwd !== null
-      ) {
-        void (async () => {
-          const refreshed = await refreshGitWorkbench({
-            environmentId: activeEnvironmentId,
-            input: { cwd: gitCwd },
-          });
-          if (refreshed._tag === "Failure") {
-            if (!isAtomCommandInterrupted(refreshed)) {
-              const error = squashAtomCommandFailure(refreshed);
-              toastManager.add({
-                type: "error",
-                title: translate("git.common.errorOccurred"),
-                description: error instanceof Error ? error.message : String(error),
-                data: threadToastData,
-              });
-            }
-            return;
-          }
-          const commitSelection =
-            refreshed.value.totals.staged > 0
-              ? ({ mode: "staged" } as const)
-              : ({ mode: "all" } as const);
-          await runGitActionWithToast({ action, commitSelection });
-        })();
+      if (includesCommit) {
+        if (!openWorkbenchCommit()) {
+          setExcludedFiles(new Set());
+          setIsEditingFiles(false);
+          setIsCommitDialogOpen(true);
+        }
         return;
       }
       void runGitActionWithToast({ action });
@@ -1684,6 +1685,7 @@ export default function GitActionsControl({
       void runGitActionWithToast({ action: "create_pr" });
       return;
     }
+    if (openWorkbenchCommit()) return;
     setExcludedFiles(new Set());
     setIsEditingFiles(false);
     setIsCommitDialogOpen(true);
@@ -1721,6 +1723,68 @@ export default function GitActionsControl({
       ) {
         return;
       }
+      if (request.intent === "execute-commit") {
+        if (!request.claim()) return;
+        const requestScope = JSON.stringify([request.environmentId, request.cwd]);
+        if (!supportsStandardIndexCommit) {
+          request.complete({ status: "blocked", reason: "unavailable" });
+          return;
+        }
+        if (isGitActionRunning || commitRequestsRef.current.has(requestScope)) {
+          request.complete({ status: "blocked", reason: "busy" });
+          return;
+        }
+        commitRequestsRef.current.add(requestScope);
+        const capturedContext = actionContext;
+        void (async (): Promise<GitCommitOutcome> => {
+          const refreshed = await refreshWorkbench({
+            environmentId: request.environmentId,
+            input: { cwd: request.cwd },
+          });
+          if (latestActionContextRef.current !== capturedContext) return { status: "cancelled" };
+          if (refreshed._tag === "Failure") {
+            if (isAtomCommandInterrupted(refreshed)) return { status: "cancelled" };
+            const error = squashAtomCommandFailure(refreshed);
+            return {
+              status: "failure",
+              message:
+                error instanceof Error ? error.message : translate("git.common.errorOccurred"),
+            };
+          }
+          const snapshot = refreshed.value;
+          if (!snapshot.isRepository || snapshot.truncated) {
+            return { status: "blocked", reason: "unavailable" };
+          }
+          if (snapshot.stateToken !== request.expectedStateToken) {
+            return { status: "blocked", reason: "changed" };
+          }
+          if (snapshot.operation.kind !== "none" || snapshot.totals.conflicted > 0) {
+            return { status: "blocked", reason: "operation" };
+          }
+          if (snapshot.totals.staged === 0) return { status: "blocked", reason: "empty" };
+          return runGitActionWithToast({
+            action: "commit",
+            commitSelection: request.commitSelection,
+            ...(request.commitMessage !== undefined
+              ? { commitMessage: request.commitMessage }
+              : {}),
+            ...(request.featureBranch ? { featureBranch: true } : {}),
+          });
+        })()
+          .catch((error: unknown): GitCommitOutcome => ({
+            status: "failure",
+            message: error instanceof Error ? error.message : translate("git.common.errorOccurred"),
+          }))
+          .then((outcome) => {
+            commitRequestsRef.current.delete(requestScope);
+            request.complete(outcome);
+          });
+        return;
+      }
+      if (request.intent === "open-pull-request") {
+        void openExistingPr();
+        return;
+      }
       if (request.intent === "pull") {
         runPullWithToast();
         return;
@@ -1729,12 +1793,8 @@ export default function GitActionsControl({
         runQuickAction();
         return;
       }
-      if (request.intent === "commit-staged") {
-        void runGitActionWithToast({ action: "commit", commitSelection: { mode: "staged" } });
-        return;
-      }
-      if (request.intent === "stage-all-and-commit") {
-        void runGitActionWithToast({ action: "commit", commitSelection: { mode: "all" } });
+      if (request.intent === "commit-staged" || request.intent === "stage-all-and-commit") {
+        if (!openWorkbenchCommit()) setIsCommitDialogOpen(true);
         return;
       }
       void runGitActionWithToast({

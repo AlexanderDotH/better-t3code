@@ -572,7 +572,21 @@ describe("vcsActionState", () => {
     registry.dispose();
   });
 
-  it.effect("invalidates persisted refs after successful and failed stacked actions", () =>
+  it.effect.each([
+    { label: "legacy omission", input: {} },
+    { label: "legacy paths", input: { filePaths: ["src/legacy.ts"] } },
+    { label: "staged changes", input: { commitSelection: { mode: "staged" } } },
+    { label: "all changes", input: { commitSelection: { mode: "all" } } },
+    {
+      label: "selected paths",
+      input: {
+        commitSelection: { mode: "paths", paths: ["src/one.ts", "src/renamed file.ts"] },
+      },
+    },
+  ] satisfies ReadonlyArray<{
+    label: string;
+    input: Pick<GitRunStackedActionInput, "commitSelection" | "filePaths">;
+  }>)("preserves $label and invalidates refs after successful and failed actions", ({ input }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const connectionState: SupervisorConnectionState = {
@@ -661,6 +675,7 @@ describe("vcsActionState", () => {
             actionId: successfulActionId,
             action,
             threadId,
+            ...input,
           }),
         );
 
@@ -669,7 +684,7 @@ describe("vcsActionState", () => {
         expect(removed).toEqual([`${environmentId}:*`]);
         // The server links a created pull request to this thread, so the id must ride along.
         expect(rpcInputs).toEqual([
-          { actionId: successfulTransportActionId, cwd, action, threadId },
+          { actionId: successfulTransportActionId, cwd, action, threadId, ...input },
         ]);
 
         const failedResult = yield* Effect.promise(() =>
