@@ -31,13 +31,13 @@ class T3KeyboardCommandsView(
   override fun dispatchKeyEvent(event: KeyEvent): Boolean {
     if (
       event.action == KeyEvent.ACTION_DOWN &&
-        event.repeatCount == 0 &&
-        event.keyCode == KeyEvent.KEYCODE_TAB &&
-        event.isShiftPressed &&
-        !event.isCtrlPressed &&
-        !event.isAltPressed &&
-        !event.isMetaPressed &&
-        enabledCommands.contains("cycleComposerMode")
+      event.repeatCount == 0 &&
+      event.keyCode == KeyEvent.KEYCODE_TAB &&
+      event.isShiftPressed &&
+      !event.isCtrlPressed &&
+      !event.isAltPressed &&
+      !event.isMetaPressed &&
+      enabledCommands.contains("cycleComposerMode")
     ) {
       onCommand(mapOf("command" to "cycleComposerMode"))
       return true
