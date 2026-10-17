@@ -244,6 +244,7 @@ function makeTestLayer(input: {
   readonly copiedTexts?: string[];
   readonly onPopupTemplate?: (input: ElectronMenu.ElectronMenuTemplateInput) => Effect.Effect<void>;
   readonly previewZoomReapplies?: number[];
+  readonly afterPreviewZoomReapply?: Effect.Effect<void>;
   readonly onReveal?: (window: Electron.BrowserWindow) => void;
   readonly clientSettings?: Effect.Effect<Option.Option<ClientSettings>>;
   readonly platform?: NodeJS.Platform;
@@ -346,7 +347,7 @@ function makeTestLayer(input: {
           reapplyZoom: () =>
             Effect.sync(() => {
               input.previewZoomReapplies?.push(input.window.webContents.getZoomLevel());
-            }),
+            }).pipe(Effect.andThen(input.afterPreviewZoomReapply ?? Effect.void)),
         }),
       ),
     ),
@@ -974,6 +975,80 @@ describe("DesktopWindow", () => {
       }).pipe(Effect.provide(layer));
     }),
   );
+
+  for (const platform of ["darwin", "linux", "win32"] as const) {
+    it.effect(`zooms in with the platform modifier across keyboard layouts on ${platform}`, () =>
+      Effect.gen(function* () {
+        const fakeWindow = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const zoomApplied = yield* Queue.unbounded<void>();
+        const previewZoomReapplies: number[] = [];
+        const layer = makeTestLayer({
+          window: fakeWindow.window,
+          createCount,
+          mainWindow,
+          platform,
+          previewZoomReapplies,
+          afterPreviewZoomReapply: Queue.offer(zoomApplied, undefined).pipe(Effect.asVoid),
+        });
+
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+          const beforeInput = fakeWindow.webContentsListeners.get("before-input-event");
+          if (!beforeInput) {
+            return yield* Effect.die("before-input-event listener was not registered");
+          }
+          const input = {
+            type: "keyDown",
+            key: "+",
+            code: "BracketRight",
+            meta: platform === "darwin",
+            control: platform !== "darwin",
+            alt: false,
+            shift: false,
+            isAutoRepeat: false,
+            isComposing: false,
+          };
+          for (const overrides of [
+            {},
+            { code: "Equal", shift: true },
+            { key: "=", code: "Equal" },
+            { code: "NumpadAdd" },
+            { key: "Add", code: "NumpadAdd" },
+            { code: "Equal", shift: true, isAutoRepeat: true },
+          ]) {
+            const preventDefault = vi.fn();
+            beforeInput({ preventDefault }, { ...input, ...overrides });
+            assert.equal(preventDefault.mock.calls.length, 1);
+            yield* Queue.take(zoomApplied);
+          }
+
+          assert.deepEqual(
+            fakeWindow.setZoomLevel.mock.calls.map(([level]) => level),
+            [0.5, 1, 1.5, 2, 2.5, 3],
+          );
+          assert.deepEqual(previewZoomReapplies, [0.5, 1, 1.5, 2, 2.5, 3]);
+
+          for (const overrides of [
+            { meta: false, control: false },
+            { meta: platform !== "darwin", control: platform === "darwin" },
+            { meta: true, control: true },
+            { alt: true },
+            { isComposing: true },
+            { type: "keyUp" },
+            { key: "a", code: "KeyA" },
+          ]) {
+            const preventDefault = vi.fn();
+            beforeInput({ preventDefault }, { ...input, ...overrides });
+            assert.equal(preventDefault.mock.calls.length, 0);
+          }
+          assert.equal(fakeWindow.setZoomLevel.mock.calls.length, 6);
+        }).pipe(Effect.provide(layer));
+      }),
+    );
+  }
 
   it.effect("forwards native trackpad release to the renderer", () =>
     Effect.gen(function* () {
