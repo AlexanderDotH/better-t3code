@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeTimersPromises from "node:timers/promises";
+
 import type { RocksDatabase, Transaction } from "@harperfast/rocksdb-js";
 
 import { createFileBackedRequire } from "../process/fileBackedModules.ts";
@@ -40,10 +43,29 @@ export function kvStringPrefix(prefix: string) {
   throw new Error("Knowledge KV prefixes cannot consist entirely of 0xFF bytes.");
 }
 
+const KV_IO_BATCH_SIZE = 256;
+
+// Native transactions can resolve reads and writes synchronously; awaiting them alone starves I/O.
+export async function* iterateKvItems<A>(
+  items: Iterable<A>,
+  signal?: AbortSignal,
+): AsyncGenerator<A> {
+  let processed = 0;
+  for (const item of items) {
+    signal?.throwIfAborted();
+    yield item;
+    if (++processed % KV_IO_BATCH_SIZE === 0)
+      await NodeTimersPromises.setImmediate(undefined, { signal });
+  }
+}
+
 export async function* scanKvPrefix(
   database: RocksDatabase | Transaction,
   ...parts: ReadonlyArray<string>
 ): AsyncGenerator<{ readonly key: string; readonly value: unknown }> {
-  for await (const entry of database.getRange(kvPrefix(...parts)))
+  let processed = 0;
+  for await (const entry of database.getRange(kvPrefix(...parts))) {
     yield { key: kvKeyText(entry.key), value: entry.value };
+    if (++processed % KV_IO_BATCH_SIZE === 0) await NodeTimersPromises.setImmediate();
+  }
 }

@@ -224,13 +224,13 @@ it.effect("publishes accurate persisting progress before committing", () =>
               Effect.andThen(repository.applyDeterministicPatch(patch)),
             ),
         });
-        const indexer = yield* KnowledgeGraphIndexer.pipe(
+        const result = yield* Effect.flatMap(KnowledgeGraphIndexer, (indexer) =>
+          indexer.indexScope(scope),
+        ).pipe(
           Effect.provide(
             layer.pipe(Layer.provide(Layer.succeed(KnowledgeGraphRepository, observedRepository))),
           ),
         );
-
-        const result = yield* indexer.indexScope(scope);
 
         assert.isTrue(Option.isSome(result));
         assert.deepStrictEqual(events, ["status:discovering", "status:persisting", "commit"]);

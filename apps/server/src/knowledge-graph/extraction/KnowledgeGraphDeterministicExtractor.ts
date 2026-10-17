@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodePath from "node:path";
+import * as NodeTimersPromises from "node:timers/promises";
 
 import {
   KNOWLEDGE_GRAPH_MAX_EVIDENCE_EXCERPT_LENGTH,
@@ -31,13 +32,10 @@ import {
   makeKnowledgeGraphNodeId,
 } from "./KnowledgeGraphFingerprint.ts";
 import {
-  extractKnowledgeGraphManifestDependencies,
-  knowledgeGraphManifestKind,
-  knowledgeGraphPackageLabel,
-} from "./KnowledgeGraphManifestAnalysis.ts";
+  KnowledgeGraphAnalysisCache,
+  type KnowledgeGraphFileAnalysis,
+} from "./KnowledgeGraphAnalysisCache.ts";
 import {
-  extractKnowledgeGraphImports,
-  extractKnowledgeGraphSymbols,
   knowledgeGraphDependencyNameFromSpecifier,
   knowledgeGraphLanguageForPath,
   knowledgeGraphTechnologyForPath,
@@ -60,6 +58,7 @@ export interface KnowledgeGraphDeterministicExtractionInput {
   readonly maxNodes: number;
   readonly omittedFileCount: number;
   readonly seenGeneration: number;
+  readonly analysisCache?: KnowledgeGraphAnalysisCache;
 }
 
 export interface KnowledgeGraphDeterministicExtractionResult {
@@ -99,9 +98,10 @@ function boundedExcerpt(content: string): string {
   return redacted.slice(0, KNOWLEDGE_GRAPH_MAX_EVIDENCE_EXCERPT_LENGTH);
 }
 
-export function buildDeterministicKnowledgeGraph(
+export async function buildDeterministicKnowledgeGraph(
   input: KnowledgeGraphDeterministicExtractionInput,
-): KnowledgeGraphDeterministicExtractionResult {
+  signal: AbortSignal,
+): Promise<KnowledgeGraphDeterministicExtractionResult> {
   const nodes: KnowledgeGraphNodeV1[] = [];
   const edges: KnowledgeGraphEdgeV1[] = [];
   const evidence: KnowledgeGraphEvidenceV1[] = [];
@@ -235,9 +235,15 @@ export function buildDeterministicKnowledgeGraph(
   const files = [...input.files].sort((left, right) => compareText(left.path, right.path));
   const filePaths = new Set(files.map((file) => file.path));
   const fileFingerprints: KnowledgeGraphFileFingerprintV1[] = [];
+  const analysisCache = input.analysisCache ?? new KnowledgeGraphAnalysisCache(0);
+  const analysisByFile = new Map<KnowledgeGraphInventoryFile, KnowledgeGraphFileAnalysis>();
 
+  // File analysis must yield to I/O so background indexing cannot stall provider streams.
   for (const file of files) {
-    const fingerprint = fingerprintKnowledgeGraphContent(file.content);
+    await NodeTimersPromises.setImmediate(undefined, { signal });
+    const analysis = analysisCache.analyze(file);
+    analysisByFile.set(file, analysis);
+    const { fingerprint } = analysis;
     fileFingerprints.push({
       path: file.path,
       fingerprint,
@@ -298,11 +304,12 @@ export function buildDeterministicKnowledgeGraph(
       addEdge("configures", repositoryNodeId, architectureNodeId, file.path, [sourceEvidenceId]);
     }
 
-    const kind = knowledgeGraphManifestKind(file.path);
-    if (kind !== null) {
+    const manifest = analysis.manifest;
+    if (manifest !== null) {
+      const { kind } = manifest;
       if (nodes.length >= input.maxNodes) {
         addNode("package", file.path, {
-          label: knowledgeGraphPackageLabel(file, kind),
+          label: manifest.label,
           path: file.path,
         });
         continue;
@@ -314,7 +321,7 @@ export function buildDeterministicKnowledgeGraph(
         excerpt: file.content,
       });
       const packageNodeId = addNode("package", file.path, {
-        label: knowledgeGraphPackageLabel(file, kind),
+        label: manifest.label,
         path: file.path,
         evidenceIds: [manifestEvidenceId],
       });
@@ -339,7 +346,7 @@ export function buildDeterministicKnowledgeGraph(
         `${file.path}:${manifestTechnology}`,
         [manifestEvidenceId],
       );
-      for (const dependency of extractKnowledgeGraphManifestDependencies(file)) {
+      for (const dependency of manifest.dependencies) {
         const dependencyNodeId = addNode("dependency", dependency, { label: dependency });
         addEdge("depends-on", packageNodeId, dependencyNodeId, `${file.path}:${dependency}`, [
           manifestEvidenceId,
@@ -349,10 +356,13 @@ export function buildDeterministicKnowledgeGraph(
   }
 
   for (const file of files) {
+    await NodeTimersPromises.setImmediate(undefined, { signal });
     const fileNodeId = fileNodeIdByPath.get(file.path) ?? null;
     if (fileNodeId === null) continue;
+    const analysis = analysisByFile.get(file);
+    if (analysis === undefined) throw new Error("The inventory file has no source analysis.");
     const symbolLanguage = knowledgeGraphLanguageForPath(file.path);
-    for (const symbol of extractKnowledgeGraphSymbols(file)) {
+    for (const symbol of analysis.symbols) {
       if (nodes.length >= input.maxNodes) {
         addNode("symbol", `${file.path}:${symbol.name}`, {
           label: symbol.name,
@@ -369,7 +379,7 @@ export function buildDeterministicKnowledgeGraph(
         path: file.path,
         line: symbol.line,
         symbol: symbol.name,
-        excerpt: file.content.split(/\r?\n/u)[symbol.line - 1] ?? symbol.name,
+        excerpt: symbol.excerpt,
       });
       const symbolNodeId = addNode("symbol", `${file.path}:${symbol.name}`, {
         label: symbol.name,
@@ -384,7 +394,7 @@ export function buildDeterministicKnowledgeGraph(
       ]);
     }
 
-    for (const imported of extractKnowledgeGraphImports(file)) {
+    for (const imported of analysis.imports) {
       if (imported.specifier.startsWith(".")) {
         const targetPath = resolveKnowledgeGraphRelativeImport(
           file.path,
@@ -398,7 +408,7 @@ export function buildDeterministicKnowledgeGraph(
           key: `${file.path}:${imported.line}:${imported.specifier}`,
           path: file.path,
           line: imported.line,
-          excerpt: file.content.split(/\r?\n/u)[imported.line - 1] ?? imported.specifier,
+          excerpt: imported.excerpt,
         });
         addEdge(
           "imports",
@@ -417,7 +427,7 @@ export function buildDeterministicKnowledgeGraph(
         key: `${file.path}:${imported.line}:${imported.specifier}`,
         path: file.path,
         line: imported.line,
-        excerpt: file.content.split(/\r?\n/u)[imported.line - 1] ?? imported.specifier,
+        excerpt: imported.excerpt,
       });
       addEdge("imports", fileNodeId, dependencyNodeId, `${file.path}:${imported.specifier}`, [
         importEvidenceId,
@@ -429,6 +439,7 @@ export function buildDeterministicKnowledgeGraph(
   for (const [pair, count] of [...coChangeCounts].sort(([left], [right]) =>
     compareText(left, right),
   )) {
+    await NodeTimersPromises.setImmediate(undefined, { signal });
     const [leftPath, rightPath] = pair.split("\0") as [string, string];
     const coChangeEvidenceId = addEvidence({
       kind: "co-change",

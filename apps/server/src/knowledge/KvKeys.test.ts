@@ -2,15 +2,38 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeTimersPromises from "node:timers/promises";
 
 import { afterEach, expect, it } from "vite-plus/test";
 
-import { kvKey, kvStringPrefix, openKnowledgeKvDatabase, scanKvPrefix } from "./KvKeys.ts";
+import {
+  iterateKvItems,
+  kvKey,
+  kvStringPrefix,
+  openKnowledgeKvDatabase,
+  scanKvPrefix,
+} from "./KvKeys.ts";
 
 const roots: string[] = [];
 
 afterEach(() => {
   for (const root of roots.splice(0)) NodeFS.rmSync(root, { recursive: true, force: true });
+});
+
+it("lets native I/O run before a large transaction batch finishes", async () => {
+  let processed = 0;
+  let processedAtIo = 0;
+  const ioTurn = NodeTimersPromises.setImmediate().then(() => {
+    processedAtIo = processed;
+  });
+  for await (const value of iterateKvItems(Array.from({ length: 1_024 }, (_, index) => index))) {
+    expect(value).toBe(processed);
+    processed += 1;
+  }
+  await ioTurn;
+  expect(processed).toBe(1_024);
+  expect(processedAtIo).toBeGreaterThan(0);
+  expect(processedAtIo).toBeLessThan(processed);
 });
 
 it("keeps scoped keys separate across workspaces and survives a checkpoint", async () => {
