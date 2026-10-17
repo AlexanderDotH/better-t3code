@@ -3,13 +3,10 @@
 Permission modes control when an agent needs your approval to act. Choose a mode in the message
 composer; it applies to that thread.
 
-New threads remember the last permission mode you chose or sent a message with in that project
-and environment. Opening an older thread does not change it. The remembered mode survives
-restarts and is shared across web, desktop, and mobile connected to that environment.
-
-Set the initial default in **Settings → General → New threads → Permissions**. Projects can
-override the environment default. Changing or resetting a project's permission default makes
-it apply again. The initial default is **Full access**; existing threads keep their permissions.
+Set the default for new threads in **Settings → General → New threads → Permissions**.
+Projects can override the environment default. New threads use this setting rather than the
+mode of the thread you were viewing. The initial default is **Full access**; existing threads
+and modes you choose in a draft keep their permissions.
 
 | Mode                  | Behavior                                                                              |
 | --------------------- | ------------------------------------------------------------------------------------- |

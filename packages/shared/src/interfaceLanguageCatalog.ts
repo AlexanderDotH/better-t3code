@@ -23,6 +23,10 @@ import {
   type CoreInterfaceMessageKey,
 } from "./interfaceLanguageCatalog.core.ts";
 import {
+  deepPlanningInterfaceCatalog,
+  type DeepPlanningInterfaceMessageKey,
+} from "./interfaceLanguageCatalog.deepPlanning.ts";
+import {
   desktopInterfaceCatalog,
   type DesktopInterfaceMessageKey,
 } from "./interfaceLanguageCatalog.desktop.ts";
@@ -116,6 +120,7 @@ export type InterfaceMessageKey =
   | ChatInterfaceMessageKey
   | ComposerInterfaceMessageKey
   | CloudInterfaceMessageKey
+  | DeepPlanningInterfaceMessageKey
   | WebInterfaceMessageKey
   | WebShellInterfaceMessageKey
   | DesktopInterfaceMessageKey
@@ -144,6 +149,7 @@ const catalogs = [
   chatInterfaceCatalog,
   composerInterfaceCatalog,
   cloudInterfaceCatalog,
+  deepPlanningInterfaceCatalog,
   webInterfaceCatalog,
   webShellInterfaceCatalog,
   desktopInterfaceCatalog,
