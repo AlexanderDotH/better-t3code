@@ -270,9 +270,7 @@ function PoolSegment({
               aria-hidden
               className="absolute inset-y-0 left-0 rounded-md"
               style={{ width: `${remaining}%`, backgroundColor: color }}
-            >
-              <div className="absolute inset-0 rounded-md border-r-2 border-background" />
-            </div>
+            />
           ) : null}
           <UsagePaceBar window={window} now={now} baseColor={color} shape="segment" />
         </div>
@@ -458,6 +456,7 @@ function PoolBar({
   readonly now: number;
 }) {
   const restores = new Map(pool.resets.map((reset) => [reset.member.account.key, reset]));
+  const pacingEnabled = useClientSettings((settings) => settings.usagePacingEnabled);
   return (
     <div className="@container/pool min-w-0">
       <div
@@ -476,7 +475,30 @@ function PoolBar({
               index={position + 1}
               showAccountName={pool.columns.length > 1}
             />
-          ) : null,
+          ) : (
+            <Fragment key={member.account.key}>
+              <span
+                style={{ gridColumn: position + 1, gridRow: 1 }}
+                role="img"
+                aria-label={`${member.account.displayName ?? (member.account.email ? accountInitials(member.account.email) : member.account.driver)}: ${pool.label} not reported`}
+                className={cn(
+                  "flex min-w-0 items-center justify-center rounded-md border border-dashed border-border text-xs text-muted-foreground @2xl/pool:h-8",
+                  pacingEnabled && pool.kind === "weekly" ? "h-7" : "h-5",
+                )}
+              >
+                <span aria-hidden>—</span>
+                <span className="ms-2 hidden truncate @2xl/pool:inline">Not reported</span>
+              </span>
+              <span
+                style={{ gridColumn: "1 / -1", gridRow: position + 2 }}
+                className="flex min-w-0 items-center gap-2 px-2 py-1 text-xs text-muted-foreground @2xl/pool:hidden"
+              >
+                <span className="shrink-0 tabular-nums">{position + 1}</span>
+                <AccountName account={member.account} className="min-w-0 truncate" />
+                <span className="ms-auto shrink-0">Not reported</span>
+              </span>
+            </Fragment>
+          ),
         )}
       </div>
     </div>

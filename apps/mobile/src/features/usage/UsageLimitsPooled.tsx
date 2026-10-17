@@ -45,7 +45,7 @@ function accountName(account: LimitAccount) {
 }
 
 /** The spent share comes back at reset. SVG keeps the hatching static on both platforms. */
-function AccountSegment({
+function AccountResetHatching({
   remaining,
   color,
   pending,
@@ -70,7 +70,6 @@ function AccountSegment({
           fill={`url(#${patternId})`}
         />
       ) : null}
-      <Rect width={`${remaining}%`} height="100%" fill={color} opacity={0.35} />
     </Svg>
   );
 }
@@ -134,7 +133,18 @@ function PoolWindowCard({
       ) : null}
       <View className="flex-row gap-1">
         {pool.columns.map(({ account, window }, index) => {
-          if (!window) return <View key={account.key} className="h-7 min-w-0 flex-1" />;
+          if (!window) {
+            return (
+              <View
+                key={account.key}
+                accessible
+                accessibilityLabel={`${accountName(account)}: ${pool.label} not reported`}
+                className="h-7 min-w-0 flex-1 items-center justify-center rounded-md border border-dashed border-border-subtle"
+              >
+                <Text className="text-xs text-foreground-muted">—</Text>
+              </View>
+            );
+          }
           return (
             <Pressable
               key={account.key}
@@ -144,21 +154,18 @@ function PoolWindowCard({
               onPress={() => openAccount(account)}
               className="h-7 min-w-0 flex-1 overflow-hidden rounded-md bg-subtle"
             >
-              <AccountSegment
+              <AccountResetHatching
                 remaining={remainingPercent(window)}
                 color={color}
                 pending={Boolean(window.resetsAt)}
               />
               <View pointerEvents="none" className="absolute inset-0 opacity-35">
+                <View
+                  className="absolute inset-y-0 left-0 rounded-md"
+                  style={{ width: `${remainingPercent(window)}%`, backgroundColor: color }}
+                />
                 <UsagePaceBar window={window} now={now} baseColor={color} shape="segment" />
               </View>
-              {remainingPercent(window) > 0 && remainingPercent(window) < 100 ? (
-                <View
-                  pointerEvents="none"
-                  className="absolute inset-y-0 w-0.5 bg-card"
-                  style={{ right: `${100 - remainingPercent(window)}%` }}
-                />
-              ) : null}
               <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
                 <Text className="text-xs font-t3-medium tabular-nums text-foreground">
                   {index + 1}
@@ -170,7 +177,17 @@ function PoolWindowCard({
       </View>
       <View>
         {pool.columns.map(({ account, window }, index) => {
-          if (!window) return null;
+          if (!window) {
+            return (
+              <View key={account.key} className="min-h-[44px] flex-row items-center gap-2">
+                <Text className="text-xs tabular-nums text-foreground-muted">{index + 1}</Text>
+                <Text numberOfLines={1} className="min-w-0 flex-1 text-sm text-foreground-muted">
+                  {accountName(account)}
+                </Text>
+                <Text className="text-xs text-foreground-muted">Not reported</Text>
+              </View>
+            );
+          }
           const credits = account.limits.resetCredits?.availableCount ?? 0;
           const resetsIn = formatResetsIn(window, now);
           return (

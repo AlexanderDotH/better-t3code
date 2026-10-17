@@ -13,7 +13,9 @@ import type {
 } from "@t3tools/contracts";
 import {
   DAILY_USAGE_PACE_LABELS,
+  USAGE_PACE_BAR_DESCRIPTION,
   dailyUsagePace,
+  displayLimitWindows,
   formatDuration,
   formatResetsIn,
   limitsNotice,
@@ -22,7 +24,8 @@ import {
   usagePaceBarSegments,
   usageWindowLabel,
 } from "@t3tools/shared/usageLimits";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { Defs, Path, Pattern, Rect, Svg } from "react-native-svg";
 import { AccessibilityInfo, Alert, AppState, Pressable, ScrollView, View } from "react-native";
 import { AsyncResult } from "effect/unstable/reactivity";
 
@@ -118,25 +121,11 @@ function WindowRow(props: {
           className={`${showPaceBar ? "h-3" : "h-1.5"} flex-row overflow-hidden rounded-full bg-subtle`}
         >
           <View
-            className={
-              remaining <= 10
-                ? "h-full rounded-full bg-red-500"
-                : remaining <= 30
-                  ? "h-full rounded-full bg-amber-500"
-                  : "h-full rounded-full bg-foreground"
-            }
-            style={[
-              { flex: remaining },
-              remaining > 30 && props.color ? { backgroundColor: props.color } : null,
-            ]}
-          >
-            <View
-              pointerEvents="none"
-              className="absolute inset-0 rounded-full border-r-2 border-screen"
-            />
-          </View>
+            className="h-full rounded-full bg-foreground"
+            style={[{ flex: remaining }, props.color ? { backgroundColor: props.color } : null]}
+          />
           <View style={{ flex: 100 - remaining }} />
-          <UsagePaceBar window={window} now={now} baseColor={remaining > 30 ? props.color : null} />
+          <UsagePaceBar window={window} now={now} baseColor={props.color} />
         </View>
       </View>
       {pace || resetsIn ? (
@@ -146,6 +135,20 @@ function WindowRow(props: {
         </View>
       ) : null}
     </View>
+  );
+}
+
+function UsageOverdrawHatching() {
+  const patternId = useId().replace(/:/g, "");
+  return (
+    <Svg width="100%" height="100%" accessible={false}>
+      <Defs>
+        <Pattern id={patternId} width={6} height={6} patternUnits="userSpaceOnUse">
+          <Path d="M-1 1L1 -1M0 6L6 0M5 7L7 5" stroke="white" strokeWidth={1} opacity={0.35} />
+        </Pattern>
+      </Defs>
+      <Rect width="100%" height="100%" fill={`url(#${patternId})`} />
+    </Svg>
   );
 }
 
@@ -167,8 +170,10 @@ export function UsagePaceBar({
       ? dailyUsagePace(window, now, preferences.usagePacingWorkdayHours ?? 8)
       : null;
   if (pace?.todayUsedPercent == null) return null;
-  const remaining = remainingPercent(window);
   const segments = usagePaceBarSegments(window, pace);
+  const scale = segments.widthPercent > 0 ? 100 / segments.widthPercent : 0;
+  const adjacentPercent =
+    segments.regularPercent + segments.catchUpPercent + segments.overdrawPercent;
   const color =
     pace.status === "exceeded"
       ? "bg-danger-foreground"
@@ -177,45 +182,79 @@ export function UsagePaceBar({
         : pace.status === "good"
           ? "bg-adaptive-emerald-700-300"
           : "bg-foreground-tertiary";
+  const rounding = shape === "segment" ? "rounded-r-md" : "rounded-r-full";
   return (
     <View
       pointerEvents="none"
       accessibilityRole="progressbar"
       accessibilityLabel={
-        pace.catchUpPercent > 0
-          ? "Today's allowance remaining, including catch-up"
-          : "Today's allowance remaining"
+        pace.todayBalancePercent < 0
+          ? "Today's allowance overdrawn"
+          : pace.catchUpPercent > 0
+            ? "Today's allowance remaining, including catch-up"
+            : "Today's allowance remaining"
       }
       accessibilityValue={{
         min: -100,
         max: 100,
         now: pace.todayBalancePercent,
-        text: `${pace.todayRemainingPercent.toFixed(1)}% left today.${pace.catchUpRemainingPercent > 0 ? ` ${pace.catchUpRemainingPercent.toFixed(1)}% catch-up left.` : ""}${pace.todayOverdrawPercent !== null && pace.todayOverdrawPercent > 0 ? ` ${pace.todayOverdrawPercent.toFixed(1)}% overdrawn today.` : ""} ${DAILY_USAGE_PACE_LABELS[pace.status]}`,
+        text: `${pace.todayRemainingPercent.toFixed(1)}% left today.${pace.catchUpRemainingPercent > 0 ? ` ${pace.catchUpRemainingPercent.toFixed(1)}% catch-up left.` : ""}${pace.todayOverdrawPercent !== null && pace.todayOverdrawPercent > 0 ? ` ${pace.todayOverdrawPercent.toFixed(1)}% overdrawn today; already spent from the weekly quota.` : ""} ${DAILY_USAGE_PACE_LABELS[pace.status]}`,
       }}
-      className={`absolute inset-y-0 flex-row overflow-hidden ${shape === "pill" ? "rounded-full" : ""}`}
+      className="absolute inset-y-0"
       style={{
         right: `${100 - segments.widthPercent}%`,
         width: `${segments.widthPercent}%`,
       }}
     >
-      {segments.reservedPercent > 0 ? (
-        <View
-          className={`min-w-0 ${shape === "segment" ? "" : remaining <= 10 ? "bg-red-500" : remaining <= 30 ? "bg-amber-500" : "bg-foreground"}`}
-          style={{
-            flex: segments.reservedPercent,
-            ...(shape === "pill" && baseColor ? { backgroundColor: baseColor } : {}),
-          }}
-        />
-      ) : null}
-      {segments.regularPercent > 0 ? (
-        <View className={`min-w-0 ${color}`} style={{ flex: segments.regularPercent }} />
-      ) : null}
-      {segments.catchUpPercent > 0 ? (
-        <View className={`min-w-0 opacity-50 ${color}`} style={{ flex: segments.catchUpPercent }} />
-      ) : null}
-      {segments.overdrawPercent > 0 ? (
-        <View className={`min-w-0 ${color}`} style={{ flex: segments.overdrawPercent }} />
-      ) : null}
+      <View
+        accessible={false}
+        className={`absolute inset-0 flex-row overflow-hidden ${shape === "segment" ? "rounded-md" : "rounded-full"}`}
+      >
+        {segments.reservedPercent > 0 ? (
+          <View
+            className="min-w-0 bg-foreground"
+            style={{
+              flex: segments.reservedPercent,
+              ...(baseColor ? { backgroundColor: baseColor } : {}),
+            }}
+          />
+        ) : null}
+        {segments.regularPercent > 0 ? (
+          <View className={`min-w-0 ${color}`} style={{ flex: segments.regularPercent }} />
+        ) : null}
+        {segments.catchUpPercent > 0 ? (
+          <View
+            className={`min-w-0 opacity-50 ${color}`}
+            style={{ flex: segments.catchUpPercent }}
+          />
+        ) : null}
+        {segments.overdrawPercent > 0 ? (
+          <View className={`min-w-0 ${color}`} style={{ flex: segments.overdrawPercent }}>
+            <UsageOverdrawHatching />
+          </View>
+        ) : null}
+        {segments.reservedPercent > 0 && adjacentPercent > 0 ? (
+          <View
+            className={`absolute inset-y-0 bg-foreground ${rounding}`}
+            style={{
+              left: `${segments.reservedPercent * scale}%`,
+              width: `${Math.min(segments.reservedPercent, adjacentPercent) * scale}%`,
+              maxWidth: 6,
+              ...(baseColor ? { backgroundColor: baseColor } : {}),
+            }}
+          />
+        ) : null}
+        {segments.regularPercent > 0 && segments.catchUpPercent > 0 ? (
+          <View
+            className={`absolute inset-y-0 ${rounding} ${color}`}
+            style={{
+              left: `${(segments.reservedPercent + segments.regularPercent) * scale}%`,
+              width: `${Math.min(segments.regularPercent, segments.catchUpPercent) * scale}%`,
+              maxWidth: 6,
+            }}
+          />
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -243,11 +282,15 @@ export function UsagePaceDetails({
       ? `${DAILY_USAGE_PACE_LABELS[pace.status]} (${pace.paceOverPercent.toFixed(1)}% over pace)`
       : DAILY_USAGE_PACE_LABELS[pace.status];
   const details = [
+    ...(balance !== null ? [USAGE_PACE_BAR_DESCRIPTION] : []),
     ...(pace.todayBudgetUsedPercent !== null
       ? [`${pace.todayBudgetUsedPercent.toFixed(1)}% of today's allowance used`]
       : []),
-    ...(balance !== null
-      ? [`Daily budget: ${pace.dailyBudgetPercent.toFixed(1)}% · ${pace.workdayHours}-hour pace`]
+    ...(pace.todayUsedPercent !== null
+      ? [
+          `Daily budget: ${pace.dailyBudgetPercent.toFixed(1)}% · ${pace.workdayHours}-hour pace`,
+          `${pace.todayUsedPercent.toFixed(1)}% observed today · ${pace.hourlyBudgetPercent.toFixed(1)}% per hour`,
+        ]
       : [
           "Daily pace needs usage history covering the start of today. The bar shows the reported weekly quota remaining.",
         ]),
@@ -332,6 +375,7 @@ export function AccountLimits(props: {
   const color = useBarColor(props.driver);
   if (!limits) return null;
   const notice = limitsNotice(limits);
+  const windows = displayLimitWindows({ driver: props.driver, windows: limits.windows });
   const externalUsage = limits.externalUsage;
   const padding = dense ? "px-4 py-3" : "p-4";
   return (
@@ -359,7 +403,7 @@ export function AccountLimits(props: {
         <Text className="text-sm text-foreground-muted">{notice}</Text>
       ) : (
         <View className="gap-3">
-          {limits.windows.map((window) => (
+          {windows.map((window) => (
             <WindowRow key={window.id} window={window} color={color} now={now} />
           ))}
         </View>
@@ -375,9 +419,7 @@ export function AccountLimits(props: {
       ) : null}
       {props.footer}
       {!notice
-        ? limits.windows.map((window) => (
-            <UsagePaceDetails key={window.id} window={window} now={now} />
-          ))
+        ? windows.map((window) => <UsagePaceDetails key={window.id} window={window} now={now} />)
         : null}
     </View>
   );

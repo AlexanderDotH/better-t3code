@@ -843,6 +843,19 @@ describe("Cursor limit presentation", () => {
     expect(display.map((window) => window.id)).toEqual(["autoPercentUsed", "apiPercentUsed"]);
   });
 
+  it("uses the same two allowances for individual account rows without changing the reported data", () => {
+    const original = [...cursorAccount.limits.windows];
+    const displayed = displayLimitWindows({
+      driver: cursorAccount.driver,
+      windows: cursorAccount.limits.windows,
+    });
+    expect(displayed.map((window) => window.label)).toEqual(["Cursor Models", "Other Models"]);
+    expect(cursorAccount.limits.windows).toEqual(original);
+    expect(
+      displayLimitWindows({ driver: ProviderDriverKind.make("codex"), windows: original }),
+    ).toEqual(original);
+  });
+
   it("keeps the combined percentage as a card if either allowance is missing", () => {
     const [pool] = collectLimitPools(
       [

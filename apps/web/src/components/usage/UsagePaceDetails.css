@@ -2,8 +2,20 @@
   pointer-events: none;
   position: absolute;
   inset-block: 0;
-  display: flex;
-  overflow: hidden;
+}
+
+@utility usage-pace-cap {
+  position: absolute;
+  inset-block: 0;
+  max-width: calc(var(--spacing) * 1.5);
+}
+
+@utility usage-pace-overdraw {
+  background-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 3px,
+    rgb(255 255 255 / 35%) 3px 4px
+  );
 }
 
 @utility usage-window-track {
