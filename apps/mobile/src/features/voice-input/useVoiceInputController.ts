@@ -1,8 +1,6 @@
 import {
   RecordingPresets,
   requestRecordingPermissionsAsync,
-  setAudioModeAsync,
-  setIsAudioActiveAsync,
   useAudioRecorder,
   type RecordingStatus,
 } from "expo-audio";
@@ -15,6 +13,7 @@ import { useSharedValue } from "react-native-reanimated";
 
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import { getLocalVoiceTranscriber } from "../../native/voiceTranscription";
+import { configureVoiceRecordingAudio, releaseVoiceRecordingAudio } from "./voiceRecordingAudio";
 import { getNativeShowcaseScene } from "../showcase/nativeShowcaseScene";
 import {
   VoiceInputController,
@@ -32,35 +31,6 @@ const VOICE_RECORDING_OPTIONS = {
   ...RecordingPresets.HIGH_QUALITY,
   isMeteringEnabled: true,
 };
-
-async function releaseVoiceRecordingAudio(): Promise<void> {
-  try {
-    await setAudioModeAsync({ allowsRecording: false });
-  } finally {
-    // Expo does not deactivate AVAudioSession when recording stops or its
-    // category changes. Explicit deactivation resumes interrupted app audio.
-    await setIsAudioActiveAsync(false);
-  }
-}
-
-async function configureVoiceRecordingAudio(): Promise<void> {
-  try {
-    await setAudioModeAsync({
-      allowsRecording: true,
-      interruptionMode: "doNotMix",
-      playsInSilentMode: true,
-      shouldPlayInBackground: false,
-    });
-    await setIsAudioActiveAsync(true);
-  } catch (error) {
-    try {
-      await releaseVoiceRecordingAudio();
-    } catch {
-      // Keep the setup error. The controller has not started a recorder yet.
-    }
-    throw error;
-  }
-}
 
 export function useVoiceInputController(input: {
   readonly ownerKey: string | null;

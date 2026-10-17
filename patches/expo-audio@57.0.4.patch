@@ -1,8 +1,20 @@
 diff --git a/ios/AudioRecorder.swift b/ios/AudioRecorder.swift
-index 20020bff9f8ba7bb6e7f61c99b4de5d29eee00db..284c22f12e30c8c2ed16feb141876cbfd8897c90 100644
+index 20020bff9f8ba7bb6e7f61c99b4de5d29eee00db..cee17e19c1dc3a074ae240c5f845a1462c1bdb4e 100644
 --- a/ios/AudioRecorder.swift
 +++ b/ios/AudioRecorder.swift
-@@ -216,15 +216,15 @@ class AudioRecorder: SharedRef<AVAudioRecorder>, RecordingResultHandler {
+@@ -80,7 +80,10 @@ class AudioRecorder: SharedRef<AVAudioRecorder>, RecordingResultHandler {
+ 
+     let session = AVAudioSession.sharedInstance()
+     do {
+-      try session.setCategory(.playAndRecord, mode: .default, options: sessionOptions)
++      // Keep the caller's A2DP route; replacing it can activate a Bluetooth headset microphone.
++      if session.category != .playAndRecord || !session.categoryOptions.contains(.allowBluetoothA2DP) {
++        try session.setCategory(.playAndRecord, mode: .default, options: sessionOptions)
++      }
+       try session.setActive(true)
+     } catch {
+       currentState = .error
+@@ -216,15 +219,15 @@ class AudioRecorder: SharedRef<AVAudioRecorder>, RecordingResultHandler {
    }
  
    func didFinish(_ recorder: AVAudioRecorder, successfully flag: Bool) {
@@ -22,3 +34,21 @@ index 20020bff9f8ba7bb6e7f61c99b4de5d29eee00db..284c22f12e30c8c2ed16feb141876cbf
        "url": recorder.url.absoluteString
      ])
    }
+diff --git a/ios/AudioStream.swift b/ios/AudioStream.swift
+index f938eff05ed5f2f21692fc686e36877b120281fa..1187dfddc3a38e030d84b73059f7a835aafbe834 100644
+--- a/ios/AudioStream.swift
++++ b/ios/AudioStream.swift
+@@ -30,8 +30,11 @@ class AudioStream: SharedObject {
+     guard !isStreaming else { return }
+ 
+     let session = AVAudioSession.sharedInstance()
+-    try session.setCategory(.record, mode: .measurement)
+-    try session.setPreferredSampleRate(requestedSampleRate)
++    // The converter below resamples microphone audio without changing the music playback route.
++    if session.category != .playAndRecord || !session.categoryOptions.contains(.allowBluetoothA2DP) {
++      try session.setCategory(.record, mode: .measurement)
++      try session.setPreferredSampleRate(requestedSampleRate)
++    }
+     try session.setActive(true)
+ 
+     let engine = AVAudioEngine()
