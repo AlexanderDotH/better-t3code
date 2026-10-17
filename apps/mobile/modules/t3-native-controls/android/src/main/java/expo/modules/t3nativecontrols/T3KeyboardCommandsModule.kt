@@ -29,31 +29,25 @@ class T3KeyboardCommandsView(
   var enabledCommands = emptySet<String>()
 
   override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-    if (
-      event.action == KeyEvent.ACTION_DOWN &&
-      event.repeatCount == 0 &&
-      event.keyCode == KeyEvent.KEYCODE_TAB &&
-      event.isShiftPressed &&
-      !event.isCtrlPressed &&
-      !event.isAltPressed &&
-      !event.isMetaPressed &&
-      enabledCommands.contains("cycleComposerMode")
-    ) {
-      onCommand(mapOf("command" to "cycleComposerMode"))
-      return true
-    }
-    val copiesThreadReference =
-      event.action == KeyEvent.ACTION_DOWN &&
-        event.repeatCount == 0 &&
+    val command =
+      when {
+        event.action != KeyEvent.ACTION_DOWN || event.repeatCount != 0 -> null
+        event.keyCode == KeyEvent.KEYCODE_TAB &&
+          hasComposerModeModifiers(event) -> "cycleComposerMode"
         event.keyCode == KeyEvent.KEYCODE_C &&
-        event.isCtrlPressed &&
-        event.isShiftPressed &&
-        !event.isAltPressed &&
-        enabledCommands.contains("copyThreadReference")
-    if (copiesThreadReference) {
-      onCommand(mapOf("command" to "copyThreadReference"))
-      return true
+          event.isCtrlPressed &&
+          event.isShiftPressed &&
+          !event.isAltPressed -> "copyThreadReference"
+        else -> null
+      }
+    return if (command != null && enabledCommands.contains(command)) {
+      onCommand(mapOf("command" to command))
+      true
+    } else {
+      super.dispatchKeyEvent(event)
     }
-    return super.dispatchKeyEvent(event)
   }
+
+  private fun hasComposerModeModifiers(event: KeyEvent): Boolean =
+    event.isShiftPressed && !event.isCtrlPressed && !event.isAltPressed && !event.isMetaPressed
 }
