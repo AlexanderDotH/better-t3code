@@ -1,3 +1,10 @@
+import { createResponseMetricsTracker } from "../responseMetrics.ts";
+import {
+  makeAssistantTextBatcher,
+  type AssistantTextBatch,
+  type AssistantTextBatcher,
+  type AssistantTextFlushInput,
+} from "../assistantTextBatcher.ts";
 import {
   ApprovalRequestId,
   CommandId,
@@ -22,6 +29,7 @@ import {
   type ProviderRuntimeEvent,
   type ResponseStreamingMode,
   RuntimeRequestId,
+  type RuntimeSessionId,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
@@ -30,14 +38,22 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Stream from "effect/Stream";
-import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { makeKeyedDrainableWorker } from "@t3tools/shared/KeyedDrainableWorker";
 import { formatTokens } from "@t3tools/shared/usageFormat";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { consumeProviderEvents } from "../../provider/providerEventHub.ts";
+import { providerEventEncodedBytes } from "../../provider/boundedEventQueue.ts";
+import {
+  CurrentProviderEvent,
+  recordProviderPipelineDuration,
+  recordProviderPipelineQueue,
+} from "../../observability/ProviderPipelineMetrics.ts";
 import { ProjectionThreadSubagentMessageRepository } from "../../persistence/Services/ProjectionThreadSubagentMessages.ts";
 import { ProjectionThreadSubagentMessageRepositoryLive } from "../../persistence/Layers/ProjectionThreadSubagentMessages.ts";
 import { ProjectionThreadSubagentRepository } from "../../persistence/Services/ProjectionThreadSubagents.ts";
@@ -210,7 +226,8 @@ type RuntimeIngestionInput =
   | {
       source: "diff";
       event: ProviderDiffEvent;
-    };
+    }
+  | ({ source: "assistant-text-flush" } & AssistantTextFlushInput);
 
 type ProviderCommandSource = Pick<ProviderRuntimeEvent | OrchestrationEvent, "eventId">;
 
@@ -1373,6 +1390,7 @@ function safeContentStreamSplitIndex(value: string, requestedIndex: number): num
 }
 
 const make = Effect.gen(function* () {
+  const ingestionScope = yield* Effect.scope;
   const threadBackgroundLiveness = yield* ThreadBackgroundLivenessService;
   const threadPlanProgress = yield* ThreadPlanProgressService;
   const crypto = yield* Crypto.Crypto;
@@ -1392,22 +1410,78 @@ const make = Effect.gen(function* () {
     crypto.randomUUIDv4.pipe(
       Effect.map((uuid) => CommandId.make(`provider:${event.eventId}:${tag}:${uuid}`)),
     );
-  const latestRootUsage = new Map<ThreadId, ThreadTokenUsageSnapshot>();
-  const lastCompactionAttempt = new Map<ThreadId, number>();
+  const responseMetricsTracker = createResponseMetricsTracker();
+  const assistantTextBatcher: AssistantTextBatcher = yield* makeAssistantTextBatcher(
+    (input): Effect.Effect<void> =>
+      worker.enqueue({ source: "assistant-text-flush", ...input }).pipe(Effect.asVoid),
+  );
+  const dispatchAssistantTextBatches = Effect.fnUntraced(function* (
+    batches: ReadonlyArray<AssistantTextBatch>,
+  ) {
+    for (const batch of batches) {
+      const turnId = toTurnId(batch.event.turnId);
+      yield* orchestrationEngine
+        .dispatch({
+          type: "thread.message.assistant.delta",
+          commandId: batch.commandId,
+          threadId: batch.event.threadId,
+          ...(batch.event.subagentId !== undefined ? { subagentId: batch.event.subagentId } : {}),
+          messageId: batch.messageId,
+          delta: batch.text,
+          ...(turnId !== undefined ? { turnId } : {}),
+          createdAt: batch.event.createdAt,
+        })
+        .pipe(Effect.provideService(CurrentProviderEvent, batch.event));
+    }
+  });
+  const latestRootUsage = new Map<
+    ThreadId,
+    { readonly runtimeSessionId: RuntimeSessionId | null; readonly usage: ThreadTokenUsageSnapshot }
+  >();
+  const lastCompactionAttempt = new Map<
+    ThreadId,
+    { readonly runtimeSessionId: RuntimeSessionId; readonly usedTokens: number }
+  >();
+  const inFlightCompactions = new Map<
+    ThreadId,
+    { readonly runtimeSessionId: RuntimeSessionId; fiber?: Fiber.Fiber<void> }
+  >();
 
-  const maybeCompactAtMilestone = Effect.fn("maybeCompactAtMilestone")(function* (input: {
-    readonly thread: OrchestrationThread;
+  const loadMilestoneThread = Effect.fn("loadMilestoneThread")(function* (threadId: ThreadId) {
+    const [subagents, activityRows] = yield* Effect.all([
+      subagentRepository.listByThreadId({ threadId }),
+      projectionThreadActivityRepository.listByThreadId({
+        threadId,
+        activityKinds: [
+          "approval.requested",
+          "approval.resolved",
+          "provider.approval.respond.failed",
+          "user-input.requested",
+          "user-input.resolved",
+          "provider.user-input.respond.failed",
+        ],
+      }),
+    ]);
+    const thread = Option.getOrUndefined(
+      yield* projectionSnapshotQuery.getThreadRuntimeContext(threadId),
+    );
+    if (thread === undefined) return;
+    return {
+      id: thread.id,
+      session: thread.session,
+      subagents,
+      activities: activityRows.map(({ activityId, ...activity }) => ({
+        ...activity,
+        id: activityId,
+      })),
+    };
+  });
+
+  const milestoneCompactionContext = (input: {
+    readonly thread: Pick<OrchestrationThread, "id" | "session" | "subagents" | "activities">;
     readonly settledSubagentId?: SubagentId;
     readonly settledSubagentStatus?: OrchestrationSubagentSummary["status"];
-  }) {
-    const usage = latestRootUsage.get(input.thread.id);
-    if (
-      usage?.maxTokens === undefined ||
-      usage.usedTokens < Math.floor(usage.maxTokens * 0.5) ||
-      lastCompactionAttempt.get(input.thread.id) === usage.usedTokens
-    ) {
-      return;
-    }
+  }) => {
     const session = input.thread.session;
     if (
       session?.runtimeSessionId === null ||
@@ -1415,7 +1489,20 @@ const make = Effect.gen(function* () {
       session.providerInstanceId === undefined ||
       session.status === "running" ||
       session.status === "starting" ||
+      session.status === "stopped" ||
       session.activeTurnId !== null
+    ) {
+      return;
+    }
+    const snapshot = latestRootUsage.get(input.thread.id);
+    const usage = snapshot?.usage;
+    const lastAttempt = lastCompactionAttempt.get(input.thread.id);
+    if (
+      snapshot?.runtimeSessionId !== session.runtimeSessionId ||
+      usage?.maxTokens === undefined ||
+      usage.usedTokens < Math.floor(usage.maxTokens * 0.5) ||
+      (lastAttempt?.runtimeSessionId === session.runtimeSessionId &&
+        lastAttempt.usedTokens === usage.usedTokens)
     ) {
       return;
     }
@@ -1427,21 +1514,75 @@ const make = Effect.gen(function* () {
     if (hasActiveChild) return;
     const pending = findOpenPendingInteractions({ activities: input.thread.activities });
     if (pending.approvals.length > 0 || pending.userInputs.length > 0) return;
-    const capabilities = yield* providerService.getCapabilities(session.providerInstanceId);
-    if (capabilities.manualCompaction !== true) return;
+    return {
+      runtimeSessionId: session.runtimeSessionId,
+      providerInstanceId: session.providerInstanceId,
+      usage,
+    };
+  };
 
-    lastCompactionAttempt.set(input.thread.id, usage.usedTokens);
-    yield* providerService.compactThread(input.thread.id, session.runtimeSessionId).pipe(
+  const cancelMilestoneCompaction = Effect.fnUntraced(function* (threadId: ThreadId) {
+    const task = inFlightCompactions.get(threadId);
+    if (task === undefined) return;
+    inFlightCompactions.delete(threadId);
+    if (task.fiber !== undefined) {
+      yield* Fiber.interrupt(task.fiber).pipe(Effect.forkIn(ingestionScope));
+    }
+  });
+
+  const maybeCompactAtMilestone = Effect.fn("maybeCompactAtMilestone")(function* (
+    input: Parameters<typeof milestoneCompactionContext>[0],
+  ) {
+    const context = milestoneCompactionContext(input);
+    if (context === undefined || inFlightCompactions.has(input.thread.id)) return;
+
+    const task: { readonly runtimeSessionId: RuntimeSessionId; fiber?: Fiber.Fiber<void> } = {
+      runtimeSessionId: context.runtimeSessionId,
+    };
+    // Reserve before forking so another milestone cannot schedule the same runtime.
+    inFlightCompactions.set(input.thread.id, task);
+    let attemptedUsage = context.usage;
+    task.fiber = yield* Effect.gen(function* () {
+      const capabilities = yield* providerService.getCapabilities(context.providerInstanceId);
+      if (capabilities.manualCompaction !== true) return;
+      const currentThread = yield* loadMilestoneThread(input.thread.id);
+      if (currentThread === undefined) return;
+      const current = milestoneCompactionContext({ thread: currentThread });
+      if (
+        current === undefined ||
+        current.runtimeSessionId !== task.runtimeSessionId ||
+        current.providerInstanceId !== context.providerInstanceId ||
+        inFlightCompactions.get(input.thread.id) !== task
+      ) {
+        return;
+      }
+      attemptedUsage = current.usage;
+      lastCompactionAttempt.set(input.thread.id, {
+        runtimeSessionId: task.runtimeSessionId,
+        usedTokens: current.usage.usedTokens,
+      });
+      yield* providerService.compactThread(input.thread.id, task.runtimeSessionId);
+    }).pipe(
       Effect.catchCause((cause) =>
-        Effect.logWarning("provider milestone compaction failed", {
-          threadId: input.thread.id,
-          usedTokens: usage.usedTokens,
-          maxTokens: usage.maxTokens,
-          cause: Cause.pretty(cause),
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.void
+          : Effect.logWarning("provider milestone compaction failed", {
+              threadId: input.thread.id,
+              usedTokens: attemptedUsage.usedTokens,
+              maxTokens: attemptedUsage.maxTokens,
+              cause: Cause.pretty(cause),
+            }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (inFlightCompactions.get(input.thread.id) === task) {
+            inFlightCompactions.delete(input.thread.id);
+          }
         }),
       ),
+      Effect.forkIn(ingestionScope),
     );
-  });
+  }, Effect.uninterruptible);
 
   const synchronizeSubagentBackgroundLiveness = (
     threadId: ThreadId,
@@ -1690,10 +1831,6 @@ const make = Effect.gen(function* () {
       });
       bufferedContentStreams.delete(key);
     }
-  });
-
-  const resolveThreadDetail = Effect.fn("resolveThreadDetail")(function* (threadId: ThreadId) {
-    return Option.getOrUndefined(yield* projectionSnapshotQuery.getThreadDetailById(threadId));
   });
 
   const resolveThreadRuntimeContext = Effect.fn("resolveThreadRuntimeContext")(function* (
@@ -1975,7 +2112,7 @@ const make = Effect.gen(function* () {
       (settings) => resolveProjectSettings(settings, projectId).settings.responseStreamingMode,
     );
 
-  // `mode` is "turn" or "paragraph"; token mode never buffers.
+  // Paragraph and turn delivery use their own markdown-aware buffer.
   const appendBufferedAssistantText = (
     messageId: MessageId,
     delta: string,
@@ -2149,6 +2286,18 @@ const make = Effect.gen(function* () {
     hasProjectedMessage?: boolean;
   }) =>
     Effect.gen(function* () {
+      yield* dispatchAssistantTextBatches(
+        yield* assistantTextBatcher.flushTarget(
+          {
+            threadId: input.threadId,
+            subagentId: input.subagentId,
+            messageId: input.messageId,
+            ...(input.turnId !== undefined ? { turnId: input.turnId } : {}),
+          },
+          "boundary",
+          true,
+        ),
+      );
       const bufferedText = yield* takeBufferedAssistantText(input.messageId);
       const text =
         bufferedText.length > 0
@@ -2280,6 +2429,19 @@ const make = Effect.gen(function* () {
     fallbackMarkdown?: string;
     updatedAt: string;
   }) {
+    if (input.subagentId === undefined) {
+      const owner = yield* projectionSnapshotQuery.getThreadShellById(input.threadId);
+      const phase = Option.isSome(owner) ? owner.value.deepPlan?.phase : undefined;
+      if (
+        phase === "collecting" ||
+        phase === "planning" ||
+        phase === "awaitingApproval" ||
+        phase === "implementing" ||
+        phase === "validating"
+      ) {
+        return yield* clearBufferedProposedPlan(input.planId);
+      }
+    }
     const bufferedPlan = Option.getOrUndefined(
       yield* Cache.getOption(bufferedProposedPlanById, input.planId),
     );
@@ -2590,19 +2752,20 @@ const make = Effect.gen(function* () {
         return;
       }
       const runtimeSessionId = projectedRuntimeSessionId ?? event.runtimeSessionId ?? null;
-      if (event.type === "thread.token-usage.updated" && event.subagentId === undefined) {
-        latestRootUsage.set(thread.id, event.payload.usage);
+      if (latestRootUsage.get(thread.id)?.runtimeSessionId !== runtimeSessionId) {
+        latestRootUsage.delete(thread.id);
       }
-
-      let loadedThreadDetail: OrchestrationThread | null | undefined;
-      const getLoadedThreadDetail = () =>
-        Effect.gen(function* () {
-          if (loadedThreadDetail !== undefined) {
-            return loadedThreadDetail;
-          }
-          loadedThreadDetail = (yield* resolveThreadDetail(thread.id)) ?? null;
-          return loadedThreadDetail;
-        });
+      if (lastCompactionAttempt.get(thread.id)?.runtimeSessionId !== runtimeSessionId) {
+        lastCompactionAttempt.delete(thread.id);
+      }
+      const compactionTask = inFlightCompactions.get(thread.id);
+      if (compactionTask !== undefined && compactionTask.runtimeSessionId !== runtimeSessionId) {
+        yield* cancelMilestoneCompaction(thread.id);
+      }
+      yield* dispatchAssistantTextBatches(yield* assistantTextBatcher.flushBefore(event));
+      if (event.type === "thread.token-usage.updated" && event.subagentId === undefined) {
+        latestRootUsage.set(thread.id, { runtimeSessionId, usage: event.payload.usage });
+      }
 
       const now = event.createdAt;
       const eventTurnId = toTurnId(event.turnId);
@@ -2693,8 +2856,8 @@ const make = Effect.gen(function* () {
         });
         synchronizeSubagentBackgroundLiveness(thread.id, subagent, event.payload.state);
         if (!isActiveSubagentStatus(event.payload.state) && latestRootUsage.has(thread.id)) {
-          const detailedThread = yield* getLoadedThreadDetail();
-          if (detailedThread !== null) {
+          const detailedThread = yield* loadMilestoneThread(thread.id);
+          if (detailedThread !== undefined) {
             yield* maybeCompactAtMilestone({
               thread: detailedThread,
               settledSubagentId: event.payload.subagentId,
@@ -2802,6 +2965,9 @@ const make = Effect.gen(function* () {
             return true;
         }
       })();
+      const responseMetrics = shouldApplyThreadLifecycle
+        ? responseMetricsTracker.observe(event)
+        : null;
       const abortState = thread.session?.abortState ?? null;
       const matchingAbortTerminal =
         shouldApplyThreadLifecycle &&
@@ -2947,8 +3113,8 @@ const make = Effect.gen(function* () {
             runtimeSessionId !== null &&
             latestRootUsage.has(thread.id)
           ) {
-            const detailedThread = yield* getLoadedThreadDetail();
-            if (detailedThread !== null) {
+            const detailedThread = yield* loadMilestoneThread(thread.id);
+            if (detailedThread !== undefined) {
               yield* maybeCompactAtMilestone({
                 thread:
                   detailedThread.session === null
@@ -3105,17 +3271,10 @@ const make = Effect.gen(function* () {
               createdAt: now,
             });
           }
-        } else {
-          yield* orchestrationEngine.dispatch({
-            type: "thread.message.assistant.delta",
-            commandId: yield* providerCommandId(event, "assistant-delta"),
-            threadId: thread.id,
-            ...(eventSubagentId !== undefined ? { subagentId: eventSubagentId } : {}),
-            messageId: assistantMessageId,
-            delta: assistantDelta,
-            ...(turnId ? { turnId } : {}),
-            createdAt: now,
-          });
+        } else if (event.type === "content.delta") {
+          yield* dispatchAssistantTextBatches(
+            yield* assistantTextBatcher.append(event, assistantMessageId),
+          );
         }
       }
 
@@ -3478,6 +3637,7 @@ const make = Effect.gen(function* () {
         });
         yield* clearTurnStateForSession(thread.id, eventSubagentId);
         if (eventSubagentId === undefined) {
+          yield* cancelMilestoneCompaction(thread.id);
           latestRootUsage.delete(thread.id);
           lastCompactionAttempt.delete(thread.id);
         }
@@ -3672,7 +3832,18 @@ const make = Effect.gen(function* () {
         yield* flushContentStreams(event, thread.id);
       }
 
-      const runtimeActivities = runtimeEventToActivities(activityEvent, taskTitle);
+      const runtimeActivities = [...runtimeEventToActivities(activityEvent, taskTitle)];
+      if (responseMetrics !== null) {
+        runtimeActivities.push({
+          id: EventId.make(`response-metrics:${thread.id}:${responseMetrics.turnId}`),
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "response.metrics",
+          summary: "Response metrics",
+          payload: responseMetrics.snapshot,
+          turnId: responseMetrics.turnId,
+        });
+      }
       const enrichedActivities = runtimeActivities.map((activity) =>
         enrichActivityWithRuntimeContext(activityEvent, activity),
       );
@@ -3727,9 +3898,17 @@ const make = Effect.gen(function* () {
   const processDomainEvent = Effect.fn("ProviderRuntimeIngestion.processDomainEvent")(function* (
     event: RuntimeIngestionDomainEvent,
   ) {
-    if (event.type !== "thread.turn-abort-settled" || event.payload.turnId === null) {
+    if (event.type === "thread.turn-start-requested") {
+      yield* dispatchAssistantTextBatches(
+        yield* assistantTextBatcher.flushTarget(
+          { threadId: event.payload.threadId },
+          "boundary",
+          true,
+        ),
+      );
       return;
     }
+    if (event.payload.turnId === null) return;
     yield* finalizeBufferedTurnContent({
       event,
       threadId: event.payload.threadId,
@@ -3787,6 +3966,8 @@ const make = Effect.gen(function* () {
         return processDomainEvent(input.event);
       case "diff":
         return recordProviderDiff(input.event);
+      case "assistant-text-flush":
+        return assistantTextBatcher.flush(input).pipe(Effect.flatMap(dispatchAssistantTextBatches));
     }
   };
 
@@ -3806,8 +3987,48 @@ const make = Effect.gen(function* () {
         ),
       );
 
-  const worker = yield* makeDrainableWorker((input: RuntimeIngestionInput) =>
-    processInput(input).pipe(logIngestionFailure(input.source, input.event)),
+  const worker = yield* makeKeyedDrainableWorker(
+    (input: RuntimeIngestionInput) =>
+      processInput(input).pipe(
+        Effect.provideService(
+          CurrentProviderEvent,
+          input.source === "domain" ? undefined : input.event,
+        ),
+        logIngestionFailure(input.source, input.event),
+      ),
+    {
+      keyOf: (input) =>
+        input.source === "domain" ? input.event.payload.threadId : input.event.threadId,
+      weightOf: (input) => providerEventEncodedBytes(input.event),
+      onAccepted: ({ usage }) => recordProviderPipelineQueue("ingestion", usage),
+      onStart: ({ input, waitMs, usage }) => {
+        recordProviderPipelineQueue("ingestion", usage);
+        recordProviderPipelineDuration(
+          "ingestion_queue_wait",
+          waitMs,
+          input.source === "domain" ? undefined : input.event.provider,
+          input.event,
+        );
+      },
+      onComplete: ({ input, processMs, usage }) => {
+        recordProviderPipelineQueue("ingestion", usage);
+        recordProviderPipelineDuration(
+          "ingestion_process",
+          processMs,
+          input.source === "domain" ? undefined : input.event.provider,
+          input.event,
+        );
+      },
+      onBackpressure: ({ input, blockedMs, usage }) => {
+        recordProviderPipelineQueue("ingestion", usage);
+        recordProviderPipelineDuration(
+          "blocked_publication",
+          blockedMs,
+          input.source === "domain" ? undefined : input.event.provider,
+          input.event,
+        );
+      },
+    },
   );
 
   // Repository detection for a diff goes through VCS subprocesses, which can
@@ -3829,18 +4050,21 @@ const make = Effect.gen(function* () {
       return;
     yield* worker.enqueue({ source: "diff", event });
   });
-  const diffWorker = yield* makeDrainableWorker((event: ProviderDiffEvent) =>
-    detectProviderDiffRepository(event).pipe(logIngestionFailure("diff", event)),
+  const diffWorker = yield* makeKeyedDrainableWorker(
+    (event: ProviderDiffEvent) =>
+      detectProviderDiffRepository(event).pipe(logIngestionFailure("diff", event)),
+    { keyOf: (event) => event.threadId, weightOf: providerEventEncodedBytes },
   );
 
   const start: ProviderRuntimeIngestionShape["start"] = () =>
     Effect.gen(function* () {
-      yield* forkParked(
-        Stream.runForEach(providerService.streamEvents, (event) =>
+      yield* consumeProviderEvents(
+        providerService,
+        (event) =>
           event.type === "turn.diff.updated"
             ? diffWorker.enqueue(event)
             : worker.enqueue({ source: "runtime", event }),
-        ),
+        { delivery: "lossless" },
       );
       yield* forkParked(
         Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
@@ -3857,8 +4081,15 @@ const make = Effect.gen(function* () {
 
   return {
     start,
-    // The diff worker feeds the lifecycle worker, so drain it first.
-    drain: diffWorker.drain.pipe(Effect.andThen(worker.drain)),
+    // Scheduled text must join the same queue before the final idle barrier.
+    drain: Effect.gen(function* () {
+      yield* diffWorker.drain;
+      yield* worker.drain;
+      for (const input of yield* assistantTextBatcher.pendingFlushes) {
+        yield* worker.enqueue({ source: "assistant-text-flush", ...input, reason: "drain" });
+      }
+      yield* worker.drain;
+    }),
   } satisfies ProviderRuntimeIngestionShape;
 });
 

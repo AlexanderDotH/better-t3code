@@ -279,6 +279,8 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
           ),
         ),
     },
+    summarizeContext: (value) =>
+      protect("summarizeContext", nativeGeneration.summarizeContext(value)),
     decideAutoReasoning: (value) =>
       protect("decideAutoReasoning", nativeGeneration.decideAutoReasoning(value)),
     generateThreadMetadata: (value) =>

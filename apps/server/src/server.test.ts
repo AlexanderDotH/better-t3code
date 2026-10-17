@@ -177,6 +177,7 @@ import { AssemblyAiDictation } from "./speech/AssemblyAiDictation.ts";
 import { NoOpSkillEngineLayer } from "./skills/testUtils/NoOpSkillEngine.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as PlanParallelismReview from "./plan/PlanParallelismReview.ts";
+import { DeepPlanApplication } from "./deepPlanning/DeepPlanApplication.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
@@ -1180,6 +1181,7 @@ const buildAppUnderTest = (options?: {
             ...options?.layers?.projectionSnapshotQuery,
           }),
         ),
+        Layer.provide(Layer.mock(DeepPlanApplication)({ pauseForInterrupt: () => Effect.void })),
         Layer.provide(
           Layer.mock(PlanParallelismReview.PlanParallelismReview)({
             review: () => Effect.die("PlanParallelismReview not stubbed in this test"),
@@ -10072,12 +10074,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
   );
 
   it.effect(
-    "stops an overflowing thread producer without an ACK and replays the missing events",
+    "stops an overflowing thread producer without an ACK while another client stays live and replays without duplicate text",
     () =>
       Effect.gen(function* () {
         const liveEvents = yield* PubSub.unbounded<OrchestrationEvent>();
-        const attached = yield* Deferred.make<void>();
-        const detached = yield* Deferred.make<void>();
+        const attached = yield* Queue.unbounded<number>();
+        const detached = yield* Queue.unbounded<number>();
         const ackHeld = yield* Deferred.make<void>();
         const releaseAck = yield* Deferred.make<void>();
         const firstApplied = yield* Deferred.make<void>();
@@ -10085,6 +10087,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         const replayCalls: Array<{ afterSequence: number; headSequence: number }> = [];
         let headSequence = 0;
         let snapshotCalls = 0;
+        let nextSubscriptionId = 0;
         const message = (sequence: number, text: string) =>
           ({
             sequence,
@@ -10110,9 +10113,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           }) satisfies OrchestrationEvent;
         const events = [
           message(1, "a".repeat(4 * 1024 * 1024)),
-          message(2, "b".repeat(4 * 1024 * 1024)),
-          makeLiveToolActivityEvent(3, "tool.completed"),
-          message(4, "Finished"),
+          message(2, "b".repeat(3 * 1024 * 1024)),
+          message(3, "c".repeat(2 * 1024 * 1024)),
+          makeLiveToolActivityEvent(4, "tool.completed"),
+          message(5, "Finished"),
         ] as const;
 
         yield* buildAppUnderTest({
@@ -10122,10 +10126,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               streamDomainEvents: Stream.unwrap(
                 Effect.gen(function* () {
                   const subscription = yield* PubSub.subscribe(liveEvents);
-                  yield* Deferred.succeed(attached, undefined);
-                  return Stream.fromSubscription(subscription);
+                  const subscriptionId = ++nextSubscriptionId;
+                  yield* Queue.offer(attached, subscriptionId);
+                  return Stream.fromSubscription(subscription).pipe(
+                    Stream.ensuring(Queue.offer(detached, subscriptionId)),
+                  );
                 }),
-              ).pipe(Stream.ensuring(Deferred.succeed(detached, undefined))),
+              ),
               readThreadEvents: ({ fromSequenceExclusive, toSequenceInclusive }) => {
                 replayCalls.push({
                   afterSequence: fromSequenceExclusive,
@@ -10171,6 +10178,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             Effect.gen(function* () {
               let cursor = 0;
               const received: number[] = [];
+              const slowText: string[] = [];
               const attempt = yield* client[ORCHESTRATION_WS_METHODS.subscribeThread]({
                 threadId: defaultThreadId,
                 afterSequence: cursor,
@@ -10179,24 +10187,68 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   if (item.kind !== "event") return Effect.void;
                   cursor = item.event.sequence;
                   received.push(cursor);
+                  if (item.event.type === "thread.message-sent") {
+                    slowText.push(item.event.payload.text);
+                  }
                   return Deferred.succeed(firstApplied, undefined);
                 }),
                 Stream.runDrain,
                 Effect.result,
                 Effect.forkScoped,
               );
-              yield* Deferred.await(attached);
+              assert.equal(yield* Queue.take(attached), 1);
               yield* Deferred.await(replayStarted);
+
+              const subscribeFast = (healthyClient: WsRpcClient) =>
+                healthyClient[ORCHESTRATION_WS_METHODS.subscribeThread]({
+                  threadId: defaultThreadId,
+                  afterSequence: 0,
+                  requestCompletionMarker: true,
+                });
+              type ThreadSubscriptionFailure = Stream.Error<ReturnType<typeof subscribeFast>>;
+              const fastReceived = yield* Queue.unbounded<
+                OrchestrationThreadStreamItem,
+                ThreadSubscriptionFailure
+              >();
+              const fastClient = yield* withWsRpcClient(wsUrl, (healthyClient) =>
+                subscribeFast(healthyClient).pipe(
+                  Stream.runForEach((item) => Queue.offer(fastReceived, item)),
+                  Effect.catchCause((cause) => Queue.failCause(fastReceived, cause)),
+                ),
+              ).pipe(Effect.forkScoped);
+              assert.equal(yield* Queue.take(attached), 2);
+              assert.deepEqual(yield* Queue.take(fastReceived), { kind: "synchronized" });
+              const fastSequences: number[] = [];
+              const fastText: string[] = [];
+              const receiveFastEvent = Effect.fnUntraced(function* (sequence: number) {
+                const item = yield* Queue.take(fastReceived);
+                assertTrue(item.kind === "event");
+                assert.equal(item.event.sequence, sequence);
+                fastSequences.push(item.event.sequence);
+                if (item.event.type === "thread.message-sent") {
+                  fastText.push(item.event.payload.text);
+                }
+              });
+
               headSequence = 1;
               yield* PubSub.publish(liveEvents, events[0]!);
               yield* Deferred.await(ackHeld);
               yield* Deferred.await(firstApplied);
-              headSequence = 4;
-              yield* PubSub.publishAll(liveEvents, events.slice(1));
+              yield* receiveFastEvent(1);
+              headSequence = 2;
+              yield* PubSub.publish(liveEvents, events[1]!);
+              yield* receiveFastEvent(2);
+              assert.equal(yield* Queue.size(detached), 0);
+              headSequence = 5;
+              yield* PubSub.publishAll(liveEvents, events.slice(2));
 
               // This must finish while the server is still waiting for the first
               // batch's ACK. A failed output queue alone would leave PubSub live.
-              yield* Deferred.await(detached);
+              assert.equal(yield* Queue.take(detached), 1);
+              yield* receiveFastEvent(3);
+              yield* receiveFastEvent(4);
+              yield* receiveFastEvent(5);
+              assert.deepEqual(fastSequences, [1, 2, 3, 4, 5]);
               assert.equal(yield* PubSub.size(liveEvents), 0);
               assert.deepEqual(received, [1]);
               yield* Deferred.succeed(releaseAck, undefined);
@@ -10214,21 +10266,49 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               );
               assert.deepEqual(
                 recovered.map((item) => (item.kind === "event" ? item.event.sequence : item.kind)),
-                [2, 3, 4, "synchronized"],
+                [2, 3, 4, 5, "synchronized"],
               );
               const first = recovered[0];
               assertTrue(first?.kind === "event" && first.event.type === "thread.message-sent");
               assert.equal(first.event.payload.text, events[1]!.payload.text);
-              const completed = recovered[1];
+              const completed = recovered[2];
               assertTrue(
                 completed?.kind === "event" && completed.event.type === "thread.activity-appended",
               );
               assert.equal(completed.event.payload.activity.kind, "tool.completed");
+              const recoveredSequences: number[] = [];
+              for (const item of recovered) {
+                if (item.kind !== "event") continue;
+                recoveredSequences.push(item.event.sequence);
+                if (item.event.type === "thread.message-sent") {
+                  slowText.push(item.event.payload.text);
+                }
+              }
+              assert.deepEqual([...received, ...recoveredSequences], fastSequences);
+              const expectedText = [
+                events[0].payload.text,
+                events[1].payload.text,
+                events[2].payload.text,
+                events[4].payload.text,
+              ];
+              assert.deepEqual(slowText, expectedText);
+              assert.deepEqual(fastText, expectedText);
               assert.deepEqual(replayCalls, [
                 { afterSequence: 0, headSequence: 0 },
-                { afterSequence: 1, headSequence: 4 },
+                { afterSequence: 0, headSequence: 0 },
+                { afterSequence: 1, headSequence: 5 },
               ]);
               assert.equal(snapshotCalls, 0);
+              assert.equal(yield* Queue.take(attached), 3);
+              assert.equal(yield* Queue.take(detached), 3);
+
+              headSequence = 6;
+              yield* PubSub.publish(liveEvents, message(6, "After recovery"));
+              yield* receiveFastEvent(6);
+              assert.deepEqual(fastSequences, [1, 2, 3, 4, 5, 6]);
+              assert.deepEqual(fastText, [...expectedText, "After recovery"]);
+              assert.equal(yield* Queue.size(detached), 0);
+              yield* Fiber.interrupt(fastClient);
             }),
           ),
           Effect.provide(withFirstWsAckHeld(wsUrl, ackHeld, releaseAck)),

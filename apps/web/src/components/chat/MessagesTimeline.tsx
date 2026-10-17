@@ -1,3 +1,5 @@
+import { ResponseMetricsDetails } from "./ResponseMetricsDetails";
+import type { ResponseMetricsSnapshot } from "@t3tools/contracts";
 import { useChatVisualMode } from "../../chatVisualModeSync";
 import { isMessageReplyTopicActive } from "@t3tools/client-runtime/messageReplies";
 import { resolveForkBoundaryTimelineEntryId } from "../../lib/threadFork";
@@ -328,6 +330,8 @@ export interface TimelineForkProvenance {
 }
 
 interface TimelineRowSharedState {
+  deepPlanReview: DeepPlanTimelineReview | null;
+  responseMetrics: ReadonlyMap<TurnId, ResponseMetricsSnapshot> | null;
   chatVisualMode: ChatVisualMode;
   showReasoning: boolean;
   showWorkingReasoning: boolean;
@@ -492,7 +496,15 @@ function TimelineForkProvenanceBanner({ sourceTitle, onOpenSource }: TimelineFor
     </div>
   );
 }
+export interface DeepPlanTimelineReview {
+  readonly runId: string;
+  readonly planVersion: number;
+  readonly content: ReactNode;
+}
+
 interface MessagesTimelineProps {
+  deepPlanReview?: DeepPlanTimelineReview | null;
+  responseMetrics?: ReadonlyMap<TurnId, ResponseMetricsSnapshot> | null;
   composerPlanTurnId?: TurnId | null;
   streamingMotionEnabled?: boolean;
   forkProvenance?: TimelineForkProvenance | null;
@@ -583,6 +595,8 @@ interface MessagesTimelineProps {
 // ---------------------------------------------------------------------------
 
 export const MessagesTimeline = memo(function MessagesTimeline({
+  deepPlanReview = null,
+  responseMetrics = null,
   composerPlanTurnId = null,
   streamingMotionEnabled = false,
   forkProvenance = null,
@@ -1394,6 +1408,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
+      deepPlanReview,
+      responseMetrics,
       chatVisualMode,
       showReasoning,
       showWorkingReasoning,
@@ -1445,6 +1461,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRemoveQueuedMessage,
     }),
     [
+      deepPlanReview,
       chatVisualMode,
       showReasoning,
       showWorkingReasoning,
@@ -1493,6 +1510,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onSteerQueuedMessage,
       steerQueuedMessageShortcutLabel,
       onRemoveQueuedMessage,
+      responseMetrics,
     ],
   );
   const backgroundWorktreeSetup =
@@ -2990,7 +3008,7 @@ function AssistantMessageMeta({
   return (
     <div
       className={cn(
-        "flex items-center gap-2 text-xs tabular-nums transition-opacity duration-200",
+        "flex flex-wrap items-center gap-x-2 gap-y-1 text-xs tabular-nums transition-opacity duration-200",
         alwaysVisible
           ? "opacity-100"
           : "opacity-0 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover/assistant:opacity-100",
@@ -3023,6 +3041,11 @@ function AssistantMessageMeta({
           </TooltipPopup>
         </Tooltip>
       )}
+      {ctx.responseMetrics !== null && !message.streaming && !message.replyTopicId ? (
+        <ResponseMetricsDetails
+          snapshot={message.turnId ? (ctx.responseMetrics.get(message.turnId) ?? null) : null}
+        />
+      ) : null}
     </div>
   );
 }
@@ -3058,18 +3081,27 @@ function ProposedPlanTimelineRow({
 
   return (
     <div className="min-w-0 px-1 py-0.5">
-      <ProposedPlanCard
-        actions={
-          ctx.forkActions?.forkableProposedPlanIds.has(row.proposedPlan.id) ? (
-            <TimelineForkButton boundary={{ kind: "proposed-plan", planId: row.proposedPlan.id }} />
-          ) : undefined
-        }
-        planMarkdown={row.proposedPlan.planMarkdown}
-        environmentId={ctx.activeThreadEnvironmentId}
-        threadRef={ctx.threadRef ?? undefined}
-        cwd={ctx.markdownCwd}
-        workspaceRoot={ctx.workspaceRoot}
-      />
+      {ctx.deepPlanReview &&
+      row.proposedPlan.deepPlan?.runId === ctx.deepPlanReview.runId &&
+      row.proposedPlan.deepPlan?.planVersion === ctx.deepPlanReview.planVersion ? (
+        ctx.deepPlanReview.content
+      ) : (
+        <ProposedPlanCard
+          actions={
+            ctx.forkActions?.forkableProposedPlanIds.has(row.proposedPlan.id) ? (
+              <TimelineForkButton
+                boundary={{ kind: "proposed-plan", planId: row.proposedPlan.id }}
+              />
+            ) : undefined
+          }
+          variant={row.proposedPlan.deepPlan ? "deep-plan" : "plan"}
+          planMarkdown={row.proposedPlan.planMarkdown}
+          environmentId={ctx.activeThreadEnvironmentId}
+          threadRef={ctx.threadRef ?? undefined}
+          cwd={ctx.markdownCwd}
+          workspaceRoot={ctx.workspaceRoot}
+        />
+      )}
     </div>
   );
 }

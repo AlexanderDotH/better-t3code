@@ -48,6 +48,9 @@ import { ProjectContextToolkit } from "./toolkits/project-context/tools.ts";
 import { ProjectContextToolkitHandlersLive } from "./toolkits/project-context/handlers.ts";
 import { ThreadContextToolkitHandlersLive } from "./toolkits/thread-context/handlers.ts";
 import { ThreadContextToolkit } from "./toolkits/thread-context/tools.ts";
+import { DeepPlanToolkit } from "./toolkits/deep-plan/tools.ts";
+import { DeepPlanToolkitHandlersLive } from "./toolkits/deep-plan/handlers.ts";
+import { DEEP_PLAN_TOOL_NAMES } from "./toolkits/deep-plan/toolNames.ts";
 import { ProjectMemoryToolkitHandlersLive } from "./toolkits/project-memory/handlers.ts";
 import { ProjectMemoryToolkit } from "./toolkits/project-memory/tools.ts";
 import { PullRequestsToolkitHandlersLive } from "./toolkits/pullRequests/handlers.ts";
@@ -156,6 +159,38 @@ const registerMcpCompatibleToolkit = Effect.fn("McpHttpServer.registerCompatible
         server.addTool({
           ...options,
           tool: normalizeMcpTool(options.tool),
+          handle: (payload) =>
+            Effect.withFiber((fiber) => {
+              const invocation = Context.getOrUndefined(
+                fiber.context,
+                McpInvocationContext.McpInvocationContext,
+              );
+              if (
+                (invocation?.deepPlan?.phase === "planning" ||
+                  invocation?.deepPlan?.readOnly === true) &&
+                options.tool.annotations?.readOnlyHint !== true &&
+                (invocation.deepPlan.sourceAnalysis !== undefined ||
+                  options.tool.name === "workspace_edit") &&
+                !DEEP_PLAN_TOOL_NAMES.has(options.tool.name)
+              ) {
+                const message =
+                  "This Deep Plan turn cannot modify the workspace. Source-analysis workers may only inspect sources and save their bound summaries.";
+                return Effect.succeed(
+                  new McpSchema.CallToolResult({
+                    isError: true,
+                    structuredContent: {
+                      error: {
+                        _tag: "DeepPlanReadonlyError",
+                        toolName: options.tool.name,
+                        message,
+                      },
+                    },
+                    content: [{ type: "text", text: message }],
+                  }),
+                );
+              }
+              return options.handle(payload);
+            }),
         }),
     });
     // MCP requires object parameters even for unions and empty object schemas.
@@ -793,6 +828,10 @@ const ProjectMemoryToolkitRegistrationLive = mcpCompatibleToolkit(ProjectMemoryT
   Layer.provide(ProjectMemoryToolkitHandlersLive),
 );
 
+const DeepPlanToolkitRegistrationLive = mcpCompatibleToolkit(DeepPlanToolkit).pipe(
+  Layer.provide(DeepPlanToolkitHandlersLive),
+);
+
 const ThreadContextToolkitRegistrationLive = mcpCompatibleToolkit(ThreadContextToolkit).pipe(
   Layer.provide(ThreadContextToolkitHandlersLive),
 );
@@ -801,6 +840,7 @@ const WorkspaceContextCoreToolkitRegistrationLive = Layer.mergeAll(
   WorkspaceContextToolkitRegistrationLive,
   ProjectContextToolkitRegistrationLive,
   ThreadContextToolkitRegistrationLive,
+  DeepPlanToolkitRegistrationLive,
 );
 
 const WorkspaceCoreToolkitRegistrationLive = Layer.mergeAll(
@@ -834,6 +874,7 @@ const OptionalCoordinationToolkitRegistrationLive = Layer.mergeAll(
 const CoordinationToolkitRegistrationLive = Layer.mergeAll(
   OptionalCoordinationToolkitRegistrationLive,
   ThreadContextToolkitRegistrationLive,
+  DeepPlanToolkitRegistrationLive,
 );
 
 const WorkspaceOnlyToolkitRegistrationLive = WorkspaceCoreToolkitRegistrationLive;

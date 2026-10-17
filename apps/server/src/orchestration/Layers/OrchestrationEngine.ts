@@ -29,7 +29,13 @@ import {
   orchestrationCommandsTotal,
   orchestrationCommandDuration,
 } from "../../observability/Metrics.ts";
-import { toPersistenceSqlError } from "../../persistence/Errors.ts";
+import {
+  CurrentProviderEvent,
+  getProviderIngressTime,
+  recordProviderPipelineDuration,
+  transferProviderIngress,
+} from "../../observability/ProviderPipelineMetrics.ts";
+import { isPersistenceError, toPersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepository } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
 import {
@@ -60,6 +66,8 @@ interface CommandEnvelope {
   origin: OrchestrationClientOrigin | undefined;
   result: Deferred.Deferred<{ sequence: number }, OrchestrationDispatchError>;
   startedAtMs: number;
+  enqueuedAt: number;
+  providerEvent: object | undefined;
 }
 
 function commandToAggregateRef(command: OrchestrationCommand): {
@@ -138,6 +146,12 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 
     return Effect.exit(
       Effect.gen(function* () {
+        recordProviderPipelineDuration(
+          "engine_queue_wait",
+          performance.now() - envelope.enqueuedAt,
+          undefined,
+          envelope.providerEvent,
+        );
         processingStartedAtMs = yield* Clock.currentTimeMillis;
         yield* Effect.annotateCurrentSpan({
           "orchestration.command_id": envelope.command.commandId,
@@ -312,18 +326,12 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             ),
           };
         }
-        const sourceEvents =
-          envelope.command.type === "thread.fork"
-            ? yield* Stream.runCollect(
-                eventStore.readByThreadId(envelope.command.sourceThreadId),
-              ).pipe(Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)))
-            : null;
         const eventBase = yield* Effect.gen(function* () {
           if (envelope.command.type === "thread.fork") {
             return yield* planThreadFork({
               command: envelope.command,
               readModel: commandReadModel,
-              sourceEvents: sourceEvents ?? [],
+              sourceEvents: eventStore.readByThreadId(envelope.command.sourceThreadId),
             });
           }
           return yield* decideOrchestrationCommand({
@@ -336,7 +344,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         }).pipe(
           Effect.provideService(Crypto.Crypto, crypto),
           Effect.mapError((cause) =>
-            isOrchestrationCommandRejection(cause)
+            isOrchestrationCommandRejection(cause) || isPersistenceError(cause)
               ? cause
               : new OrchestrationCommandInvariantError({
                   commandType: envelope.command.type,
@@ -355,6 +363,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                 ...planned,
                 metadata: { ...planned.metadata, origin: envelope.origin },
               }));
+        const transactionStartedAt = performance.now();
         const committedCommand = yield* sql
           .withTransaction(
             Effect.gen(function* () {
@@ -364,6 +373,9 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 
               for (const nextEvent of eventBases) {
                 const savedEvent = yield* eventStore.append(nextEvent);
+                if (envelope.providerEvent !== undefined) {
+                  transferProviderIngress(envelope.providerEvent, savedEvent);
+                }
                 nextCommandReadModel = yield* projectEvent(nextCommandReadModel, savedEvent);
                 const cleanup = yield* projectionPipeline.projectEventDeferred(savedEvent);
                 attachmentCleanups.push(cleanup);
@@ -404,6 +416,25 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             ),
           );
 
+        const committedAt = performance.now();
+        recordProviderPipelineDuration(
+          "db_commit",
+          committedAt - transactionStartedAt,
+          undefined,
+          envelope.providerEvent,
+        );
+        const ingressAt =
+          envelope.providerEvent === undefined
+            ? undefined
+            : getProviderIngressTime(envelope.providerEvent);
+        if (ingressAt !== undefined) {
+          recordProviderPipelineDuration(
+            "ingress_to_commit",
+            committedAt - ingressAt,
+            undefined,
+            envelope.providerEvent,
+          );
+        }
         commandReadModel = committedCommand.nextCommandReadModel;
         for (const cleanup of committedCommand.attachmentCleanups) {
           yield* cleanup;
@@ -528,6 +559,8 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         origin: options?.origin,
         result,
         startedAtMs: yield* Clock.currentTimeMillis,
+        enqueuedAt: performance.now(),
+        providerEvent: yield* CurrentProviderEvent,
       });
       return yield* Deferred.await(result);
     });

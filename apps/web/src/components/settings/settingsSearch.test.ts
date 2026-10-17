@@ -45,6 +45,56 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
 ];
 
 describe("searchSettings", () => {
+  it("finds the Codex and Better T3 compaction settings and their environment targets", () => {
+    for (const query of ["Codex compaction", "custom context engine", "Kontextkompaktierung"]) {
+      expect(searchSettings(query)).toContainEqual(
+        expect.objectContaining({
+          id: "context-compaction-engine",
+          to: "/settings/better-t3",
+          targetId: "agent.contextCompaction",
+        }),
+      );
+    }
+    expect(searchSettings("compaction model")).toContainEqual(
+      expect.objectContaining({
+        id: "context-compaction-model",
+        targetId: "agent.contextCompactionModel",
+      }),
+    );
+    expect(getSettingsSearchTargetScope("agent.contextCompaction")?.scope).toBe("environment");
+  });
+
+  it.each(["TTFT", "tokens per second", "Antwortdetails"])(
+    "finds response details in Better T3 for %s",
+    (query) => {
+      expect(searchSettings(query)).toContainEqual(
+        expect.objectContaining({
+          id: "response-metrics",
+          to: "/settings/better-t3",
+          category: "Chat",
+        }),
+      );
+    },
+  );
+
+  it("finds context usage in Better T3 composer settings while preserving its saved anchor", () => {
+    for (const query of ["context usage", "context window", "composer ring", "Kontextnutzung"]) {
+      expect(searchSettings(query).map((item) => item.id)).toContain(
+        "legacy-context-window-indicator",
+      );
+    }
+    expect(searchableSetting("legacy-context-window-indicator")).toEqual({
+      id: "legacy-context-window-indicator",
+      title: "Context usage indicator",
+    });
+    expect(
+      SETTINGS_SEARCH_ITEMS.find((item) => item.id === "legacy-context-window-indicator"),
+    ).toMatchObject({ to: "/settings/better-t3", category: "Composer" });
+    const target = getSettingsSearchTargetScope("legacy-context-window-indicator")!;
+    expect(target.scope).toBeNull();
+    expect(isSettingsSearchScopeAvailable(target.scope, "project")).toBe(true);
+  });
+
   it.each(["send shortcut", "multiline", "new line"])("finds Send shortcut for %s", (query) => {
     expect(searchSettings(query).map((item) => item.id)).toContain("send-shortcut");
   });

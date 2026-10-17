@@ -1,4 +1,21 @@
+import {
+  ContextCompactionError,
+  makeContextCompactionEngine,
+} from "../../contextCompaction/ContextCompactionEngine.ts";
+import {
+  buildContextReplacementHandoff,
+  CONTEXT_CHECKPOINT_ACTIVITY,
+  CONTEXT_APPLIED_ACTIVITY,
+  resolveContextCompactionModel,
+} from "../../contextCompaction/contextCompactionPolicy.ts";
 import { withWorkspaceLease } from "../../workspace/workspaceLease.ts";
+import { deepPlanProviderContext } from "../../deepPlanning/DeepPlanProviderContext.ts";
+import {
+  pendingDeepPlanValidationRequests,
+  canDispatchDeepPlanValidationRequest,
+} from "../../deepPlanning/pendingDeepPlanValidationRequests.ts";
+import { OrchestrationCommandReceiptRepository } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
+import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import {
   type ChatAttachment,
   CODEX_REASONING_EFFORT_OPTION_ID,
@@ -146,7 +163,8 @@ type ProviderIntentEvent = Extract<
       | "thread.user-input-response-requested"
       | "thread.session-stop-requested"
       | "thread.settled"
-      | "thread.session-set";
+      | "thread.session-set"
+      | "thread.activity-appended";
   }
 >;
 
@@ -387,6 +405,8 @@ const make = Effect.gen(function* () {
   const skillEngine = yield* SkillEngine;
   const projectMemory = yield* ProjectMemoryStore;
   const projectContext = yield* Effect.serviceOption(ProjectContextQuery);
+  const commandReceipts = yield* Effect.serviceOption(OrchestrationCommandReceiptRepository);
+  const projectionTurns = yield* Effect.serviceOption(ProjectionTurnRepository);
   const terminalManager = yield* TerminalManager.TerminalManager;
   /** Environment settings with the thread's project overrides applied. */
   const projectSettingsForThread = Effect.fnUntraced(function* (threadId: ThreadId) {
@@ -935,12 +955,92 @@ const make = Effect.gen(function* () {
 
   const resolveThread = resolveThreadDetail;
 
+  const contextCompactionFailure = (cause: unknown) =>
+    new ContextCompactionError({ detail: "Context engine operation failed.", cause });
+  const contextCompaction = yield* makeContextCompactionEngine({
+    configuration: Effect.gen(function* () {
+      const settings = yield* serverSettingsService.getSettings;
+      if (!resolveBetterT3FeatureFlag(settings.betterT3Environment, "agent.contextCompaction"))
+        return { enabled: false, model: undefined };
+      const providers = yield* providerRegistry.getProviders;
+      return {
+        enabled: true,
+        model: resolveContextCompactionModel({
+          selection: settings.contextCompactionModelSelection,
+          fallbackSelection: settings.textGenerationModelSelection,
+          providers,
+        }),
+      };
+    }).pipe(Effect.mapError(contextCompactionFailure)),
+    load: (threadId) =>
+      Effect.gen(function* () {
+        const result = yield* projectionSnapshotQuery.getThreadDetailById(threadId, {
+          activityKinds: [
+            "context-window.updated",
+            CONTEXT_CHECKPOINT_ACTIVITY,
+            CONTEXT_APPLIED_ACTIVITY,
+          ],
+        });
+        if (Option.isNone(result)) return undefined;
+        const thread = result.value;
+        const project = yield* resolveProject(thread.projectId);
+        return {
+          threadId,
+          provider: thread.session?.providerName ?? null,
+          runtimeSessionId: thread.session?.runtimeSessionId ?? null,
+          busy:
+            thread.session?.status === "running" ||
+            thread.session?.status === "starting" ||
+            thread.session?.activeTurnId != null ||
+            thread.session?.abortState != null ||
+            thread.subagents.some((subagent) => isActiveSubagentStatus(subagent.status)),
+          agentModelSelection: thread.modelSelection,
+          cwd:
+            resolveThreadWorkspaceCwd({ thread, projects: project ? [project] : [] }) ??
+            process.cwd(),
+          messages: thread.messages,
+          activities: thread.activities,
+        };
+      }).pipe(Effect.mapError(contextCompactionFailure)),
+    summarize: (input) =>
+      textGeneration.summarizeContext
+        ? textGeneration.summarizeContext(input).pipe(Effect.mapError(contextCompactionFailure))
+        : Effect.fail(
+            new ContextCompactionError({ detail: "Context summarization is unavailable." }),
+          ),
+    decide: (input) =>
+      decisionGeneration.decide(input).pipe(Effect.mapError(contextCompactionFailure)),
+    publish: (threadId, kind, checkpoint) =>
+      Effect.gen(function* () {
+        const now = DateTime.formatIso(yield* DateTime.now);
+        yield* orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId: yield* serverCommandId("context-engine"),
+          threadId,
+          createdAt: now,
+          activity: {
+            id: EventId.make(`${kind}:${threadId}`),
+            kind,
+            tone: "info",
+            summary:
+              kind === CONTEXT_APPLIED_ACTIVITY
+                ? `Context continued with ${checkpoint.modelSelection.model}`
+                : `Context prepared with ${checkpoint.modelSelection.model}`,
+            createdAt: now,
+            turnId: null,
+            payload: checkpoint,
+          },
+        });
+      }).pipe(Effect.asVoid, Effect.mapError(contextCompactionFailure)),
+  });
+
   const ensureSessionForThread = Effect.fn("ensureSessionForThread")(function* (
     threadId: ThreadId,
     createdAt: string,
     options?: {
       readonly modelSelection?: ModelSelection;
       readonly pendingTurnStart?: boolean;
+      readonly interactionMode?: "default" | "plan";
       readonly forceFreshSession?: boolean;
       readonly projectMemoryMode?: ProjectMemoryMode;
       readonly nativeFork?: {
@@ -958,8 +1058,17 @@ const make = Effect.gen(function* () {
       return yield* Effect.die(new Error(`Thread '${threadId}' was not found in read model.`));
     }
 
+    const deepPlanBinding = deepPlanProviderContext(
+      thread.deepPlan,
+      threadId,
+      options?.modelSelection ?? thread.modelSelection,
+      options?.interactionMode,
+    );
     const desiredRuntimeMode = thread.runtimeMode;
-    const requestedModelSelection = options?.modelSelection;
+    const requestedModelSelection =
+      deepPlanBinding?.phase === "execution" || deepPlanBinding?.phase === "validation"
+        ? deepPlanBinding.modelSelection
+        : options?.modelSelection;
     const forceFreshSession = options?.forceFreshSession === true;
     const projectMemoryMode = options?.projectMemoryMode;
     const previousProjectMemoryMode = threadProjectMemoryModes.get(threadId);
@@ -1177,7 +1286,7 @@ const make = Effect.gen(function* () {
     const existingSessionThreadId =
       thread.session && thread.session.status !== "stopped" && activeSession ? thread.id : null;
     if (existingSessionThreadId) {
-      const runtimeModeChanged = thread.runtimeMode !== thread.session?.runtimeMode;
+      const runtimeModeChanged = desiredRuntimeMode !== thread.session?.runtimeMode;
       const cwdChanged = effectiveCwd !== activeSession?.cwd;
       const sessionModelSwitch = (yield* providerService.getCapabilities(desiredInstanceId))
         .sessionModelSwitch;
@@ -1361,7 +1470,18 @@ const make = Effect.gen(function* () {
       );
     }
     const project = yield* resolveProject(thread.projectId);
-    const durableModelSelection = input.modelSelection ?? thread.modelSelection;
+    const deepPlanBinding = deepPlanProviderContext(
+      thread.deepPlan,
+      thread.id,
+      input.modelSelection ?? thread.modelSelection,
+      input.interactionMode,
+    );
+    const pinnedDeepPlanModel =
+      deepPlanBinding?.phase === "execution" || deepPlanBinding?.phase === "validation"
+        ? deepPlanBinding.modelSelection
+        : undefined;
+    const durableModelSelection =
+      pinnedDeepPlanModel ?? input.modelSelection ?? thread.modelSelection;
     const effectiveCwd =
       resolveThreadWorkspaceCwd({
         thread,
@@ -1505,7 +1625,8 @@ const make = Effect.gen(function* () {
         usage: autoReasoning.diagnostic.usage ?? null,
       });
     }
-    const effectiveInputModelSelection = autoReasoning?.effectiveSelection ?? input.modelSelection;
+    const effectiveInputModelSelection =
+      pinnedDeepPlanModel ?? autoReasoning?.effectiveSelection ?? input.modelSelection;
     const memoryModelSelection = autoReasoning?.effectiveSelection ?? durableModelSelection;
     const projectMemoryRead = project
       ? yield* projectMemory
@@ -1535,14 +1656,49 @@ const make = Effect.gen(function* () {
             ),
           )
       : Option.none();
+    const preparedContext =
+      !input.hasPendingMessageEdits &&
+      !forkHandoffRequired &&
+      !failedTurnHandoffRequired &&
+      (effectiveInputModelSelection === undefined ||
+        (effectiveInputModelSelection.instanceId === thread.modelSelection.instanceId &&
+          effectiveInputModelSelection.model === thread.modelSelection.model))
+        ? yield* contextCompaction
+            .replacement(input.threadId, input.boundaryMessageId)
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning(
+                  "Could not read prepared context; continuing the existing session.",
+                  { threadId: input.threadId, cause: Cause.pretty(cause) },
+                ).pipe(Effect.as(undefined)),
+              ),
+            )
+        : undefined;
+    const contextHandoff = preparedContext
+      ? buildContextReplacementHandoff({
+          summary: preparedContext.checkpoint.summary,
+          messages: preparedContext.messages,
+          boundaryMessageId: input.boundaryMessageId,
+          maxChars: Math.max(
+            0,
+            PROVIDER_SEND_TURN_MAX_INPUT_CHARS -
+              input.messageText.length -
+              TRANSCRIPT_HANDOFF_RESERVED_CHARS,
+          ),
+        })
+      : undefined;
     const sessionPreparation = yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(effectiveInputModelSelection !== undefined
         ? { modelSelection: effectiveInputModelSelection }
         : {}),
       ...(input.titleSeed !== undefined ? { titleSeed: input.titleSeed } : {}),
       pendingTurnStart: true,
+      ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
       forceFreshSession:
-        forkHandoffRequired || failedTurnHandoffRequired || input.hasPendingMessageEdits,
+        contextHandoff !== undefined ||
+        forkHandoffRequired ||
+        failedTurnHandoffRequired ||
+        input.hasPendingMessageEdits,
       ...(Option.isSome(projectMemoryRead)
         ? { projectMemoryMode: projectMemoryRead.value.mode }
         : {}),
@@ -1575,11 +1731,13 @@ const make = Effect.gen(function* () {
     const needsTranscriptHandoff =
       (forkHandoffRequired && sessionPreparation.forkStrategy !== "provider-native") ||
       sessionPreparation.transcriptHandoffRequired;
-    const transcriptHistory = needsTranscriptHandoff
-      ? yield* resolveThreadDetail(input.threadId)
-      : undefined;
+    const transcriptHistory =
+      needsTranscriptHandoff && contextHandoff === undefined
+        ? yield* resolveThreadDetail(input.threadId)
+        : undefined;
     const compactHandoff =
-      (forkHandoffRequired && sessionPreparation.forkStrategy !== "provider-native") ||
+      contextHandoff ??
+      ((forkHandoffRequired && sessionPreparation.forkStrategy !== "provider-native") ||
       sessionPreparation.transcriptHandoffRequired
         ? buildProviderTranscriptHandoff({
             messages: transcriptHistory?.messages ?? [],
@@ -1596,7 +1754,7 @@ const make = Effect.gen(function* () {
               : {}),
             checkpoints: transcriptHistory?.checkpoints ?? [],
           })
-        : undefined;
+        : undefined);
     const projectMemoryContext =
       sessionPreparation.newSession &&
       Option.isSome(projectMemoryRead) &&
@@ -1674,12 +1832,22 @@ const make = Effect.gen(function* () {
     }
 
     return {
+      ...(contextHandoff && preparedContext
+        ? { contextCheckpoint: preparedContext.checkpoint }
+        : {}),
       threadId: input.threadId,
       ...(normalizedInput ? { input: normalizedInput } : {}),
       ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
       ...(transcriptHandoff !== undefined ? { transcriptHandoff } : {}),
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
-      ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+      ...(deepPlanBinding !== undefined
+        ? {
+            interactionMode:
+              deepPlanBinding.readOnly === true ? ("plan" as const) : ("default" as const),
+          }
+        : input.interactionMode !== undefined
+          ? { interactionMode: input.interactionMode }
+          : {}),
       ...(autoReasoning?.diagnostic !== undefined
         ? { autoReasoning: autoReasoning.diagnostic }
         : {}),
@@ -2304,6 +2472,7 @@ const make = Effect.gen(function* () {
     if (!thread) {
       return;
     }
+    if (!canDispatchDeepPlanValidationRequest(event, thread.deepPlan)) return;
     const turnStart = yield* projectionSnapshotQuery.getTurnStartMessage({
       threadId: thread.id,
       messageId: event.payload.messageId,
@@ -2569,6 +2738,7 @@ const make = Effect.gen(function* () {
             : { pendingTurnStart: true },
         );
         compactionSessionEnsured = true;
+        yield* restoreCompaction(event.payload.threadId);
         if (event.payload.modelSelection !== undefined) {
           threadModelSelections.set(event.payload.threadId, event.payload.modelSelection);
         }
@@ -2697,7 +2867,16 @@ const make = Effect.gen(function* () {
                 };
           const { autoReasoning, projectIndexContextDecision, ...providerRequest } =
             enhancedRequest;
-          const started = yield* providerService.sendTurn(providerRequest);
+          const { contextCheckpoint, ...sendRequest } = providerRequest;
+          const started = yield* providerService.sendTurn(sendRequest);
+          if (contextCheckpoint)
+            yield* contextCompaction.applied(event.payload.threadId, contextCheckpoint).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Could not record context checkpoint.", {
+                  cause: Cause.pretty(cause),
+                }),
+              ),
+            );
           if (autoReasoning !== undefined) {
             yield* appendAutoReasoningActivity({
               threadId: event.payload.threadId,
@@ -2897,6 +3076,10 @@ const make = Effect.gen(function* () {
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.turn-interrupt-requested" }>,
   ) {
+    if (compactingThreadIds.has(event.payload.threadId)) {
+      yield* restoreCompaction(event.payload.threadId, true);
+      return;
+    }
     yield* cancelTurnsAfterCompaction(
       event.payload.threadId,
       "Context compaction was interrupted. Send this message again to continue.",
@@ -3138,6 +3321,15 @@ const make = Effect.gen(function* () {
         else if (event.payload.titleState?.needsRefinement)
           yield* maybeRefineThreadTitle(event.payload.threadId);
         return;
+      case "thread.activity-appended":
+        if (
+          event.payload.activity.kind === "context-window.updated" &&
+          event.payload.subagentId === undefined &&
+          event.payload.activity.replyTopicId === undefined &&
+          !event.payload.activity.id.startsWith("subagent:")
+        )
+          yield* contextCompaction.observe(event.payload.threadId, event.payload.activity.payload);
+        return;
       case "thread.session-set":
         if (event.payload.session.status === "ready")
           yield* maybeRefineThreadTitle(event.payload.threadId);
@@ -3175,6 +3367,7 @@ const make = Effect.gen(function* () {
         yield* processUserInputResponseRequested(event);
         return;
       case "thread.session-stop-requested":
+        yield* contextCompaction.forget(event.payload.threadId);
         yield* processSessionStopRequested(event);
         return;
       case "thread.settled": {
@@ -3248,7 +3441,9 @@ const make = Effect.gen(function* () {
         event.type === "thread.approval-response-requested" ||
         event.type === "thread.user-input-response-requested" ||
         event.type === "thread.session-stop-requested" ||
-        event.type === "thread.settled"
+        event.type === "thread.settled" ||
+        (event.type === "thread.activity-appended" &&
+          event.payload.activity.kind === "context-window.updated")
       ) {
         return yield* worker.enqueue(event);
       }
@@ -3275,6 +3470,22 @@ const make = Effect.gen(function* () {
     if (Option.isNone(startupReadModel)) {
       return;
     }
+
+    const pendingDeepPlanTurns =
+      Option.isSome(commandReceipts) && Option.isSome(projectionTurns)
+        ? yield* pendingDeepPlanValidationRequests({
+            readModel: startupReadModel.value,
+            receipts: commandReceipts.value,
+            turns: projectionTurns.value,
+            engine: orchestrationEngine,
+          }).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("Could not recover pending Deep Plan validation requests.", {
+                error,
+              }).pipe(Effect.as([])),
+            ),
+          )
+        : [];
 
     yield* reconcileOrphanedSessionsAtStartup(startupReadModel.value).pipe(
       Effect.catchCause((cause) => {
@@ -3313,11 +3524,15 @@ const make = Effect.gen(function* () {
         );
       }),
     );
+    const recoverStartupWork = Effect.andThen(
+      recoverTitles,
+      Effect.forEach(pendingDeepPlanTurns, (event) => worker.enqueue(event), { discard: true }),
+    );
     const activation = yield* ServerActivation;
     if (activation === undefined) {
-      yield* recoverTitles;
+      yield* recoverStartupWork;
     } else {
-      yield* forkParked(recoverTitles);
+      yield* forkParked(recoverStartupWork);
     }
   });
 
@@ -3327,6 +3542,7 @@ const make = Effect.gen(function* () {
       yield* worker.drain;
       yield* Effect.forEach([...pendingTurnStarts.keys()], Deferred.await, { discard: true });
       yield* threadTitleRegenerationWorker.drain;
+      yield* contextCompaction.drain;
     }),
   } satisfies ProviderCommandReactorShape;
 });

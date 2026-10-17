@@ -5,6 +5,7 @@ import {
   CODEX_DRIVER_KIND,
   CURSOR_DRIVER_KIND,
   EnvironmentId,
+  DeepPlanRunId,
   GROK_DRIVER_KIND,
   OPENCODE_DRIVER_KIND,
   ProviderDriverKind,
@@ -23,6 +24,48 @@ import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import { replyContext, replyOwnerThreadId } from "./testFixtures/messageReply.ts";
 
 const environmentId = EnvironmentId.make("environment-1");
+
+it.effect(
+  "binds existing credentials to the current Deep Plan without leaking the binding to other threads",
+  () =>
+    Effect.gen(function* () {
+      const registry = yield* makeRegistry(() => 1_000);
+      const threadId = ThreadId.make("deep-plan-owner");
+      const otherId = ThreadId.make("other-thread");
+      const issue = (id: ThreadId) =>
+        registry.issue({
+          threadId: id,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          provider: CODEX_DRIVER_KIND,
+          workspaceWriteEnabled: true,
+        });
+      const issued = yield* issue(threadId);
+      const other = yield* issue(otherId);
+      const token = issued.config.authorizationHeader.slice("Bearer ".length);
+      const otherToken = other.config.authorizationHeader.slice("Bearer ".length);
+      const binding = {
+        runId: DeepPlanRunId.make("run"),
+        runThreadId: threadId,
+        approvedPlanVersion: null,
+        phase: "planning" as const,
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test-model" },
+      };
+      yield* registry.bindDeepPlan(threadId, binding);
+      const planning = yield* registry.resolve(token);
+      expect(planning?.deepPlan).toEqual(binding);
+      expect(planning?.capabilities.has("deep-plan")).toBe(true);
+      expect((yield* registry.resolve(otherToken))?.deepPlan).toBeUndefined();
+      const execution = { ...binding, approvedPlanVersion: 1, phase: "execution" as const };
+      yield* registry.bindDeepPlan(threadId, execution);
+      expect((yield* registry.resolve(token))?.deepPlan).toEqual(execution);
+      yield* registry.bindDeepPlan(threadId, undefined);
+      const ordinary = yield* registry.resolve(token);
+      expect(ordinary?.deepPlan).toBeUndefined();
+      expect(ordinary?.capabilities.has("deep-plan")).toBe(false);
+      expect(ordinary?.capabilities.has("workspace-write")).toBe(true);
+    }),
+);
+
 const makeFakeHttpServer = (hostname: string, port = 43123) =>
   HttpServer.HttpServer.of({
     address: NetAddress.inetAddressFromIpStringUnsafe(hostname, port),

@@ -866,6 +866,92 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     ).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("persists and broadcasts project chat choices across settings service instances", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const serverSettings = yield* ServerSettingsService;
+        const first = ProjectId.make("chat-persisted");
+        const second = ProjectId.make("chat-other");
+        const selection = createModelSelection(ProviderInstanceId.make("codex-work"), "gpt-5.4", [
+          { id: "reasoningEffort", value: "high" },
+          { id: "fastMode", value: true },
+        ]);
+        yield* serverSettings.updateSettings({
+          projectChatSettings: {
+            [first]: { modelSelection: selection, runtimeMode: "auto", composerMode: "deep-plan" },
+            [second]: {},
+          },
+        });
+        const changes = yield* serverSettings.subscribeChanges;
+        const replacement = {
+          modelSelection: createModelSelection(ProviderInstanceId.make("codex-work"), "gpt-5.4"),
+          runtimeMode: "approval-required" as const,
+          composerMode: "plan" as const,
+        };
+        const next = yield* serverSettings.updateSettings({
+          projectChatSettings: { [first]: replacement },
+        });
+        const change = Option.getOrUndefined(yield* Stream.runHead(changes));
+        const persisted = yield* decodePersistedServerSettings(
+          yield* fileSystem.readFileString(serverConfig.settingsPath),
+        );
+        const reloaded = yield* ServerSettingsService.pipe(
+          Effect.provide(Layer.fresh(ServerSettingsModule.layer)),
+        );
+
+        assert.deepEqual(next.projectChatSettings, { [first]: replacement, [second]: {} });
+        assert.deepEqual(change?.projectChatSettings, next.projectChatSettings);
+        assert.deepEqual(persisted.projectChatSettings, next.projectChatSettings);
+        assert.deepEqual(
+          (yield* reloaded.getSettings).projectChatSettings,
+          next.projectChatSettings,
+        );
+        assert.isUndefined(next.projectChatSettings[first]?.modelSelection?.options);
+      }),
+    ).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("preserves project default resets through settings-file reload", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsService;
+      const first = ProjectId.make("chat-model-reset");
+      const second = ProjectId.make("chat-permission-reset");
+      const modelSelection = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4");
+      yield* serverSettings.updateSettings({
+        projectSettingsOverrides: {
+          [first]: { defaultModelSelection: modelSelection },
+          [second]: { defaultRuntimeMode: "full-access" },
+        },
+        projectChatSettings: {
+          [first]: { modelSelection },
+          [second]: { modelSelection, runtimeMode: "auto", composerMode: "deep-plan" },
+        },
+      });
+      const reset = yield* serverSettings.updateSettings({
+        projectSettingsOverrides: { [first]: null, [second]: {} },
+      });
+      assert.deepEqual(reset.projectChatSettings, {
+        [first]: {},
+        [second]: { modelSelection, composerMode: "deep-plan" },
+      });
+      const persisted = yield* decodePersistedServerSettings(
+        yield* fileSystem.readFileString(serverConfig.settingsPath),
+      );
+      const reloaded = yield* ServerSettingsService.pipe(
+        Effect.provide(Layer.fresh(ServerSettingsModule.layer)),
+      );
+      assert.deepEqual(persisted.projectChatSettings, reset.projectChatSettings);
+      assert.deepEqual(
+        (yield* reloaded.getSettings).projectChatSettings,
+        reset.projectChatSettings,
+      );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("persists custom usage prices and removes them from the settings file", () =>
     Effect.scoped(
       Effect.gen(function* () {

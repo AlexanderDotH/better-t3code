@@ -15,6 +15,7 @@ import * as PullRequestSyncReactor from "../PullRequestSyncReactor.ts";
 import * as ThreadPullRequestReactor from "../ThreadPullRequestReactor.ts";
 import * as AgentAwarenessRelay from "../../relay/AgentAwarenessRelay.ts";
 import * as StorageCleanup from "../../storageCleanup.ts";
+import { DeepPlanValidationReactor } from "../../deepPlanning/DeepPlanValidationReactor.ts";
 
 export const makeOrchestrationReactor = Effect.gen(function* () {
   const providerRuntimeIngestion = yield* ProviderRuntimeIngestionService;
@@ -27,10 +28,12 @@ export const makeOrchestrationReactor = Effect.gen(function* () {
   const threadPullRequestReactor = yield* ThreadPullRequestReactor.ThreadPullRequestReactor;
   const agentAwarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
   const storageCleanup = yield* StorageCleanup.StorageCleanup;
+  const deepPlanValidation = yield* DeepPlanValidationReactor;
 
   const start: OrchestrationReactorShape["start"] = Effect.fn("start")(function* () {
     yield* providerRuntimeIngestion.start();
     yield* providerCommandReactor.start();
+    yield* deepPlanValidation.start();
     yield* messageReplyReactor.start();
     yield* checkpointReactor.start();
     yield* threadDeletionReactor.start();

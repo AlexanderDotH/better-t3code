@@ -5,7 +5,9 @@ import {
   type OrchestrationThreadActivity,
   type ProviderInstanceId,
   type SubagentId,
-  type ThreadId,
+  ThreadId,
+  type DeepPlanSourceSnapshot,
+  type DeepPlanSourceId,
   type TurnId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -22,6 +24,12 @@ import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import type { McpDeepPlanContext } from "../mcp/McpInvocationContext.ts";
+import {
+  buildDeepPlanSourceBatchTask,
+  selectDeepPlanSourceBatches,
+  DEEP_PLAN_PARALLEL_SOURCE_BATCHES,
+} from "../deepPlanning/DeepPlanSourceBatches.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ThreadBackgroundLivenessService } from "../orchestration/ThreadBackgroundLiveness.ts";
@@ -86,7 +94,17 @@ export interface GeneralSubagentCaller {
   readonly callerProviderInstanceId: ProviderInstanceId;
 }
 
+export interface DeepPlanSourceAnalysisBatch extends GeneralSubagentSpawnResult {
+  readonly sourceIds: ReadonlyArray<DeepPlanSourceId>;
+}
+
 export interface GeneralSubagentCoordinatorShape {
+  readonly analyzeDeepPlanSources: (
+    input: GeneralSubagentCaller & {
+      readonly binding: McpDeepPlanContext;
+      readonly sources: ReadonlyArray<DeepPlanSourceSnapshot>;
+    },
+  ) => Effect.Effect<ReadonlyArray<DeepPlanSourceAnalysisBatch>, GeneralSubagentError>;
   readonly listModels: (
     input: GeneralSubagentCaller,
   ) => Effect.Effect<GeneralSubagentModelsResult, GeneralSubagentError>;
@@ -246,7 +264,8 @@ const make = Effect.gen(function* () {
     listModelsEffect(input).pipe(Effect.mapError(publicError("Listing subagent models")));
 
   const spawnWorkerEffect = Effect.fn("GeneralSubagentCoordinator.spawnWorker")(function* (
-    input: GeneralSubagentCaller & GeneralSubagentSpawnInput,
+    input: GeneralSubagentCaller &
+      GeneralSubagentSpawnInput & { readonly deepPlan?: McpDeepPlanContext },
     retainSession: boolean,
   ) {
     if (state.getByThread(input.parentThreadId)) {
@@ -260,7 +279,7 @@ const make = Effect.gen(function* () {
     const resolution = resolveGeneralSubagentSelection({
       providers,
       callerProviderInstanceId: input.callerProviderInstanceId,
-      parentModelSelection: parentModelSelection(parent),
+      parentModelSelection: input.deepPlan?.modelSelection ?? parentModelSelection(parent),
       request: {
         ...(input.providerInstanceId !== undefined
           ? { providerInstanceId: input.providerInstanceId }
@@ -288,6 +307,17 @@ const make = Effect.gen(function* () {
       providerDriver: resolution.provider.driver,
       cwd: parent.cwd,
       runtimeMode: parent.thread.runtimeMode,
+      ...(input.deepPlan?.sourceAnalysis
+        ? {
+            deepPlan: {
+              ...input.deepPlan,
+              sourceAnalysis: {
+                ...input.deepPlan.sourceAnalysis,
+                workerThreadId: ThreadId.make(`general:${input.parentThreadId}:${uuid}`),
+              },
+            },
+          }
+        : {}),
       retainSession,
       task: input.task,
       ...(input.name !== undefined ? { name: input.name } : {}),
@@ -388,6 +418,54 @@ const make = Effect.gen(function* () {
     ensureFeatureEnabled().pipe(
       Effect.andThen(spawnWorkerEffect(input, true)),
       Effect.mapError(publicError("Spawning the direct agent")),
+    );
+
+  const analyzeDeepPlanSources: GeneralSubagentCoordinatorShape["analyzeDeepPlanSources"] =
+    Effect.fn("GeneralSubagentCoordinator.analyzeDeepPlanSources")(
+      function* (input) {
+        const active = state
+          .allByThread()
+          .filter(
+            (worker) =>
+              worker.parentThreadId === input.parentThreadId &&
+              worker.deepPlan?.runId === input.binding.runId &&
+              worker.deepPlan.sourceAnalysis !== undefined &&
+              workerIsBusy(worker),
+          );
+        const batches = selectDeepPlanSourceBatches(
+          input.sources,
+          active.map((worker) => worker.deepPlan!.sourceAnalysis!.sourceIds),
+        );
+        const spawned = yield* Effect.forEach(
+          batches,
+          (sources) => {
+            const sourceIds = sources.map((source) => source.sourceId);
+            return spawnWorkerEffect(
+              {
+                parentThreadId: input.parentThreadId,
+                callerProviderInstanceId: input.callerProviderInstanceId,
+                task: buildDeepPlanSourceBatchTask(input.binding, sources),
+                name: `Deep Plan · ${sources.length} chats`,
+                deepPlan: {
+                  ...input.binding,
+                  readOnly: true,
+                  sourceAnalysis: { workerThreadId: input.parentThreadId, sourceIds },
+                },
+              },
+              false,
+            ).pipe(Effect.map((agent) => ({ ...agent, sourceIds })));
+          },
+          { concurrency: DEEP_PLAN_PARALLEL_SOURCE_BATCHES },
+        );
+        return [
+          ...active.map((worker) => ({
+            ...identity(worker),
+            sourceIds: worker.deepPlan!.sourceAnalysis!.sourceIds,
+          })),
+          ...spawned,
+        ];
+      },
+      Effect.mapError(publicError("Analyzing Deep Plan source batches")),
     );
 
   const resolveOwnedWorkers = Effect.fn("GeneralSubagentCoordinator.resolveOwnedWorkers")(
@@ -531,7 +609,7 @@ const make = Effect.gen(function* () {
     Stream.filter((enabled) => !enabled),
     Stream.runForEach(() =>
       Effect.forEach(
-        state.all().filter((worker) => !worker.finalized),
+        state.all().filter((worker) => !worker.finalized && !worker.deepPlan?.sourceAnalysis),
         (worker) => cancelWorker(worker, "General subagents were disabled in Better T3 settings."),
         { concurrency: "unbounded", discard: true },
       ),
@@ -545,6 +623,7 @@ const make = Effect.gen(function* () {
   );
 
   return GeneralSubagentCoordinator.of({
+    analyzeDeepPlanSources,
     listModels,
     spawn,
     wait,

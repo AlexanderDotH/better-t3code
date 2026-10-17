@@ -9,6 +9,7 @@ import {
   ProviderInstanceId,
   RuntimeSessionId,
   RuntimeRequestId,
+  RuntimeItemId,
   SubagentId,
   ThreadId,
   TurnId,
@@ -870,6 +871,92 @@ describe("message reply recovery", () => {
 });
 
 describe("reply transcript completeness", () => {
+  for (const withItemIds of [true, false]) {
+    it.effect(
+      `does not repeat trimmed completion text ${withItemIds ? "with" : "without"} item ids`,
+      () =>
+        Effect.gen(function* () {
+          const h = yield* makeHarness();
+          yield* Effect.gen(function* () {
+            const service = yield* MessageReplyCoordinator;
+            const request = start("trimmed-completion");
+            yield* service.handleStart(request);
+            const sent = yield* h.nextSend;
+            const commentary = "Working through the answer.\n";
+            const item = withItemIds ? { itemId: RuntimeItemId.make("commentary") } : {};
+            for (const delta of ["Working", " through the answer.\n"]) {
+              yield* h.publish({
+                ...h.event(sent, {
+                  type: "content.delta",
+                  payload: { streamKind: "assistant_text", delta },
+                }),
+                ...item,
+              });
+            }
+            for (const detail of [commentary.trim(), commentary.trim()]) {
+              yield* h.publish({
+                ...h.event(sent, {
+                  type: "item.completed",
+                  payload: { itemType: "assistant_message", status: "completed", detail },
+                }),
+                ...item,
+              });
+            }
+            yield* h.publish({
+              ...h.event(sent, {
+                type: "item.completed",
+                payload: {
+                  itemType: "assistant_message",
+                  status: "completed",
+                  detail: "Here is the final answer.",
+                },
+              }),
+              ...(withItemIds ? { itemId: RuntimeItemId.make("final") } : {}),
+            });
+            yield* h.complete(sent);
+            yield* service.awaitIdle(threadId);
+            expect(
+              h.details
+                .get(request.replyTopicId)
+                ?.messages.find((message) => message.role === "assistant")?.text,
+            ).toBe(`${commentary}\n\nHere is the final answer.`);
+          }).pipe(Effect.provide(h.layer));
+        }),
+    );
+  }
+
+  it.effect("preserves identical text from distinct assistant items", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* Effect.gen(function* () {
+        const service = yield* MessageReplyCoordinator;
+        const request = start("distinct-items");
+        yield* service.handleStart(request);
+        const sent = yield* h.nextSend;
+        for (const id of ["first", "second"]) {
+          yield* h.publish({
+            ...h.event(sent, {
+              type: "item.completed",
+              payload: {
+                itemType: "assistant_message",
+                status: "completed",
+                detail: "Repeated intentionally.",
+              },
+            }),
+            itemId: RuntimeItemId.make(id),
+          });
+        }
+        yield* h.complete(sent);
+        yield* service.awaitIdle(threadId);
+        expect(
+          h.details
+            .get(request.replyTopicId)
+            ?.messages.find((message) => message.role === "assistant")?.text,
+        ).toBe("Repeated intentionally.\n\nRepeated intentionally.");
+      }).pipe(Effect.provide(h.layer));
+    }),
+  );
+
   it.effect("keeps final assistant items from providers that omit item ids", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();

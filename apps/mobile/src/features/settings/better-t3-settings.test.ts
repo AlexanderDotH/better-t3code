@@ -2,6 +2,8 @@ import {
   BETTER_T3_FEATURE_REGISTRY,
   DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
   DEFAULT_EXISTING_BETTER_T3_SETTINGS_V1,
+  DEFAULT_SERVER_SETTINGS,
+  resolveBetterT3FeatureFlag,
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
@@ -20,6 +22,7 @@ import {
   prepareSkillsStatus,
 } from "@t3tools/client-runtime/better-t3-status";
 import { describe, expect, it } from "vite-plus/test";
+import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
 import {
   buildMobileBetterT3Sections,
@@ -477,6 +480,7 @@ describe("mobile Better T3 settings", () => {
       resourceDiagnosticsVersion: 1,
       mcpWorkspaceVersion: 1,
       decisionModelsVersion: 1,
+      contextCompactionVersion: 1,
     });
     const mcp = prepareMcpStatus({
       capability: "supported",
@@ -719,4 +723,80 @@ describe("mobile Better T3 settings", () => {
     expect(supportsMobileResourceDiagnostics(1)).toBe(true);
     expect(supportsMobileTranscriptPortability(1)).toBe(true);
   });
+});
+
+it("switches compaction engines through environment settings without losing the model or other flags", () => {
+  const selection = { instanceId: ProviderInstanceId.make("codex"), model: "test-luna" };
+  let settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+    contextCompactionModelSelection: selection,
+    betterT3Environment: {
+      version: 1,
+      flags: { "chat.visualizations": false },
+    },
+  });
+  for (const enabled of [false, true, false, true]) {
+    settings = applyServerSettingsPatch(
+      settings,
+      createMobileBetterT3EnvironmentPatch({
+        settings: settings.betterT3Environment,
+        featureId: "agent.contextCompaction",
+        enabled,
+      }),
+    );
+    expect(
+      resolveBetterT3FeatureFlag(settings.betterT3Environment, "agent.contextCompaction"),
+    ).toBe(enabled);
+    expect(settings.contextCompactionModelSelection).toEqual(selection);
+    expect(settings.betterT3Environment.flags["chat.visualizations"]).toBe(false);
+    const sections = buildMobileBetterT3Sections({
+      registry: BETTER_T3_FEATURE_REGISTRY,
+      surface: "phone",
+      deviceAvailable: true,
+      environmentAvailable: true,
+      deviceSettings: DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
+      environmentSettings: settings.betterT3Environment,
+      capabilities: capabilities({ contextCompactionVersion: 1 }),
+    });
+    expect(feature(sections, "agent.contextCompaction")?.value).toBe(enabled);
+    expect(feature(sections, "agent.contextCompactionModel")?.availability.state).toBe(
+      enabled ? "available" : "blocked",
+    );
+  }
+});
+
+it("keeps the context model and its environment switch independently reversible", () => {
+  const model = { instanceId: ProviderInstanceId.make("codex"), model: "test-luna" };
+  expect(
+    createMobileBetterT3EnvironmentControlPatch({
+      id: "agent.contextCompactionModel",
+      value: model,
+    }),
+  ).toEqual({ contextCompactionModelSelection: model });
+  expect(
+    createMobileBetterT3EnvironmentControlPatch({
+      id: "agent.contextCompactionModel",
+      value: null,
+    }),
+  ).toEqual({ contextCompactionModelSelection: null });
+  for (const supported of [true, false])
+    for (const enabled of [true, false]) {
+      const sections = buildMobileBetterT3Sections({
+        registry: BETTER_T3_FEATURE_REGISTRY,
+        surface: "phone",
+        deviceAvailable: true,
+        environmentAvailable: true,
+        deviceSettings: DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
+        environmentSettings: {
+          ...DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
+          flags: { "agent.contextCompaction": enabled },
+        },
+        capabilities: capabilities(supported ? { contextCompactionVersion: 1 } : {}),
+      });
+      expect(feature(sections, "agent.contextCompaction")?.availability.state).toBe(
+        supported ? "available" : "unsupported",
+      );
+      expect(feature(sections, "agent.contextCompactionModel")?.availability.state).toBe(
+        !supported ? "unsupported" : enabled ? "available" : "blocked",
+      );
+    }
 });

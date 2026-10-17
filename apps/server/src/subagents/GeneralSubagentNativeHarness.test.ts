@@ -30,6 +30,7 @@ it.effect("publishes the six direct-agent aliases and binds execution to its roo
     }),
   );
   const coordinator = GeneralSubagentCoordinator.of({
+    analyzeDeepPlanSources: () => Effect.die("unused"),
     listModels: () => Effect.succeed({ providers: [] }),
     spawn: () => Effect.die("unused"),
     wait: () => Effect.die("unused"),

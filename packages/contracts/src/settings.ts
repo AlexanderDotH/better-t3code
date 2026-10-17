@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { AssemblyAiVoiceSettings } from "./speech.ts";
+import { ComposerMode } from "./composerMode.ts";
 import {
   ForwardCompatibleNullable,
   NonNegativeInt,
@@ -560,9 +561,8 @@ export const ClientSettingsSchema = Schema.Struct({
   // default UI; this beta flag restores it (plus the /plan and /default slash
   // commands) for users who still rely on the old workflow.
   planModeEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  // Legacy context window meter. The composer hides it by default; users who
-  // still want the old usage indicator can restore it from Settings.
-  contextWindowMeterEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  contextWindowMeterEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  responseMetricsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   contextWindowSelector: ContextWindowSelector.pipe(
     Schema.withDecodingDefault(Effect.succeed("better-t3" as const)),
   ),
@@ -1600,6 +1600,14 @@ export const ProjectSettingsOverrides = Schema.Struct({
 } satisfies Record<ProjectScopedServerSettingKey, unknown>);
 export type ProjectSettingsOverrides = typeof ProjectSettingsOverrides.Type;
 
+/** Missing fields use current project defaults; a present empty entry preserves that choice. */
+export const ProjectChatSettings = Schema.Struct({
+  modelSelection: Schema.optionalKey(ModelSelection),
+  runtimeMode: Schema.optionalKey(RuntimeMode),
+  composerMode: Schema.optionalKey(ComposerMode),
+});
+export type ProjectChatSettings = typeof ProjectChatSettings.Type;
+
 /**
  * Whether `null` is a stored override value for this key rather than "unset".
  * Clients writing a project override treat null for every other key as a
@@ -1694,6 +1702,9 @@ export const ServerSettings = Schema.Struct({
    * kept for one release so older clients keep reading them.
    */
   projectSettingsOverrides: Schema.Record(ProjectId, ProjectSettingsOverrides).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  projectChatSettings: Schema.Record(ProjectId, ProjectChatSettings).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   /**
@@ -1793,6 +1804,9 @@ export const ServerSettings = Schema.Struct({
         ],
       }),
     ),
+  ),
+  contextCompactionModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   autoReasoningModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
@@ -2150,6 +2164,10 @@ export const ServerSettingsPatch = Schema.Struct({
   projectSettingsOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(ProjectSettingsOverrides)),
   ),
+  /** Each entry replaces all remembered choices; `null` deletes it and `{}` uses defaults. */
+  projectChatSettings: Schema.optionalKey(
+    Schema.Record(ProjectId, Schema.NullOr(ProjectChatSettings)),
+  ),
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),
   deviceOnboardingCompleted: Schema.optionalKey(Schema.Boolean),
@@ -2173,6 +2191,7 @@ export const ServerSettingsPatch = Schema.Struct({
   worktreeSubmodules: Schema.optionalKey(Schema.NullOr(WorktreeSubmodules)),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  contextCompactionModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   autoReasoningModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   projectIndexingDecisionModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   // Fetch selection is an atomic value: provider, model, and traits must
@@ -2343,6 +2362,7 @@ export const ClientSettingsPatch = Schema.Struct({
   ),
   planModeEnabled: Schema.optionalKey(Schema.Boolean),
   contextWindowMeterEnabled: Schema.optionalKey(Schema.Boolean),
+  responseMetricsEnabled: Schema.optionalKey(Schema.Boolean),
   contextWindowSelector: Schema.optionalKey(ContextWindowSelector),
   composerCollapseOnScroll: Schema.optionalKey(Schema.Boolean),
   composerRichTextEnabled: Schema.optionalKey(Schema.Boolean),

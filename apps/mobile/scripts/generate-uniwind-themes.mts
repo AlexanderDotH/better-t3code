@@ -83,6 +83,7 @@ const ADAPTIVE_COLORS: Readonly<Record<string, readonly [light: string, dark: st
   "--color-adaptive-indigo-500-a12-a16": [color("indigo", 500, 0.12), color("indigo", 500, 0.16)],
   "--color-adaptive-indigo-600-300": [color("indigo", 600), color("indigo", 300)],
   "--color-adaptive-indigo-700-300": [color("indigo", 700), color("indigo", 300)],
+  "--color-adaptive-orange-700-400": [color("orange", 700), color("orange", 400)],
   "--color-adaptive-neutral-100-900": [color("neutral", 100), color("neutral", 900)],
   "--color-adaptive-neutral-200-700-a60": [color("neutral", 200), color("neutral", 700, 0.6)],
   "--color-adaptive-neutral-200-800": [color("neutral", 200), color("neutral", 800)],

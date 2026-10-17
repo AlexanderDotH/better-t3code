@@ -1,4 +1,5 @@
-import type { ChatVisualMode } from "@t3tools/contracts";
+import type { ChatVisualMode, ResponseMetricsSnapshot } from "@t3tools/contracts";
+import { ResponseMetricsDetails } from "./ResponseMetricsDetails";
 import type {
   OrchestrationMessage,
   OrchestrationSubagentSummary,
@@ -25,6 +26,12 @@ import {
   stripDisplayedPlanMarkdown,
   proposedPlanTitle,
 } from "@t3tools/client-runtime/proposed-plan";
+import {
+  formatDeepPlanForDisplay,
+  getDeepPlanProposalBlockReason,
+} from "@t3tools/client-runtime/deep-planning";
+import { DeepPlanChecklist } from "./DeepPlanChecklist";
+import type { DeepPlanRun } from "@t3tools/contracts";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import {
   resolveForkBoundary,
@@ -287,6 +294,7 @@ function isFreshTimestamp(input: string): boolean {
 }
 
 export interface ThreadFeedProps {
+  readonly responseMetrics?: ReadonlyMap<TurnId, ResponseMetricsSnapshot> | null | undefined;
   readonly messageRepliesEnabled?: boolean;
   readonly onReplyToMessage?: (message: OrchestrationMessage) => void;
   readonly replyTopics?: ReadonlyArray<OrchestrationSubagentSummary>;
@@ -331,6 +339,13 @@ export interface ThreadFeedProps {
     plan: OrchestrationProposedPlan,
     strategy: PlanImplementationStrategy,
   ) => Promise<MessageId | null>;
+  readonly deepPlan?: DeepPlanRun | null;
+  readonly deepPlanningBlockedReason?: string | null;
+  readonly onRefineDeepPlan?: (plan: OrchestrationProposedPlan) => void;
+  readonly onImplementPlanInNewThread?: (
+    plan: OrchestrationProposedPlan,
+    strategy: PlanImplementationStrategy,
+  ) => Promise<void>;
   readonly forkActionSupported?: boolean;
   readonly forkActionEnabled?: boolean;
   readonly pendingForkBoundaryKey?: string | null;
@@ -391,24 +406,61 @@ const MobileProposedPlanCard = memo(function MobileProposedPlanCard(props: {
   readonly onFork?: () => void;
   readonly onLinkPress: (href: string) => void;
   readonly onImplement?: (strategy: PlanImplementationStrategy) => void;
+  readonly deepPlan?: DeepPlanRun | null;
+  readonly onRefine?: () => void;
+  readonly onImplementNewThread?: (strategy: PlanImplementationStrategy) => void;
+  readonly unavailableReason?: string | null;
 }) {
   const translator = useMobileInterfaceTranslator();
   const [expanded, setExpanded] = useState(false);
+  const [sourcesExpanded, setSourcesExpanded] = useState(false);
+  const deepPlan = props.deepPlan;
+  const isDeepPlan = props.plan.deepPlan !== undefined;
+  const latestDeepPlan =
+    deepPlan &&
+    deepPlan.id === props.plan.deepPlan?.runId &&
+    (props.plan.deepPlan?.planVersion === undefined ||
+      props.plan.deepPlan.planVersion === deepPlan.plan?.version);
+  const approvalBlocked =
+    isDeepPlan &&
+    (getDeepPlanProposalBlockReason(props.plan, deepPlan) !== null ||
+      Boolean(props.unavailableReason));
   const implemented = props.plan.implementedAt !== null;
-  const canCollapse =
-    props.plan.planMarkdown.length > 900 || props.plan.planMarkdown.split("\n").length > 20;
+  const planMarkdown = latestDeepPlan
+    ? formatDeepPlanForDisplay(deepPlan, translator, { includeImplementation: false })
+    : props.plan.planMarkdown;
+  const canCollapse = planMarkdown.length > 900 || planMarkdown.split("\n").length > 20;
   const markdown =
     canCollapse && !expanded
-      ? buildCollapsedProposedPlanPreviewMarkdown(props.plan.planMarkdown, { maxLines: 10 })
-      : stripDisplayedPlanMarkdown(props.plan.planMarkdown);
-  const title = proposedPlanTitle(props.plan.planMarkdown) ?? "Proposed plan";
+      ? buildCollapsedProposedPlanPreviewMarkdown(planMarkdown, { maxLines: 10 })
+      : stripDisplayedPlanMarkdown(planMarkdown);
+  const title =
+    (latestDeepPlan ? deepPlan.plan?.goal : proposedPlanTitle(planMarkdown)) ?? "Proposed plan";
 
   return (
-    <View className="mb-5 overflow-hidden rounded-[22px] border border-adaptive-neutral-200-white-a6 bg-adaptive-white-neutral-950-a70">
+    <View
+      className={
+        isDeepPlan
+          ? "mb-5 overflow-hidden rounded-[22px] border border-orange-500/35 bg-orange-500/10"
+          : "mb-5 overflow-hidden rounded-[22px] border border-adaptive-neutral-200-white-a6 bg-adaptive-white-neutral-950-a70"
+      }
+    >
       <View className="flex-row items-center gap-2 border-b border-adaptive-neutral-200-white-a6 px-4 py-3">
-        <View className="rounded-full bg-blue-500/10 px-2 py-1">
-          <Text className="font-t3-bold text-2xs uppercase tracking-widest text-adaptive-blue-600-400">
-            {translator.message("mobile.thread.plan")}
+        <View
+          className={
+            isDeepPlan
+              ? "rounded-full bg-orange-500/10 px-2 py-1"
+              : "rounded-full bg-blue-500/10 px-2 py-1"
+          }
+        >
+          <Text
+            className={
+              isDeepPlan
+                ? "font-t3-bold text-2xs uppercase tracking-widest text-adaptive-orange-700-400"
+                : "font-t3-bold text-2xs uppercase tracking-widest text-adaptive-blue-600-400"
+            }
+          >
+            {translator.message(isDeepPlan ? "chat.deepPlan.label" : "mobile.thread.plan")}
           </Text>
         </View>
         <Text className="min-w-0 flex-1 font-t3-bold text-sm text-foreground" numberOfLines={1}>
@@ -428,6 +480,59 @@ const MobileProposedPlanCard = memo(function MobileProposedPlanCard(props: {
           />
         ) : null}
       </View>
+      {isDeepPlan ? (
+        <View className="border-b border-border-subtle">
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded: sourcesExpanded, disabled: !deepPlan }}
+            disabled={!deepPlan}
+            onPress={() => setSourcesExpanded((current) => !current)}
+            className="min-h-11 flex-row items-center justify-between gap-2 px-4 py-2"
+          >
+            <Text className="text-xs text-foreground-muted">
+              {deepPlan
+                ? translator.message("chat.deepPlan.sourceVersion", {
+                    count: deepPlan.sources.length,
+                    version: props.plan.deepPlan?.planVersion ?? deepPlan.plan?.version ?? 1,
+                  })
+                : translator.message("chat.deepPlan.planVersion", {
+                    version: props.plan.deepPlan?.planVersion ?? 1,
+                  })}
+            </Text>
+            {deepPlan ? (
+              <SymbolView
+                name={sourcesExpanded ? "chevron.up" : "chevron.down"}
+                size={12}
+                tintColorClassName="accent-icon-muted"
+              />
+            ) : null}
+          </Pressable>
+          {sourcesExpanded ? (
+            <ScrollView
+              nestedScrollEnabled
+              style={{ maxHeight: 180 }}
+              contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 12, gap: 8 }}
+            >
+              {deepPlan?.sources.map((source) => (
+                <View key={source.sourceId}>
+                  <Text className="text-xs font-t3-medium text-foreground">
+                    {source.threadTitle}
+                  </Text>
+                  <Text className="text-xs text-foreground-muted">
+                    {[
+                      source.projectTitle,
+                      source.environmentLabel,
+                      source.archived ? translator.message("chat.deepPlan.archived") : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </Text>
+                </View>
+              ))}
+            </ScrollView>
+          ) : null}
+        </View>
+      ) : null}
       <View className="px-4 py-4">
         {hasNativeSelectableMarkdownText() ? (
           <SelectableMarkdownText
@@ -451,7 +556,7 @@ const MobileProposedPlanCard = memo(function MobileProposedPlanCard(props: {
         <Pressable
           accessibilityRole="button"
           accessibilityState={{ expanded }}
-          className="items-center px-4 pb-3 active:opacity-60"
+          className="min-h-11 items-center justify-center px-4 pb-3 active:opacity-60"
           onPress={() => setExpanded((current) => !current)}
         >
           <Text className="font-t3-medium text-xs text-foreground-muted">
@@ -461,12 +566,34 @@ const MobileProposedPlanCard = memo(function MobileProposedPlanCard(props: {
           </Text>
         </Pressable>
       ) : null}
-      {!implemented && !props.inherited && props.onImplement ? (
+      {latestDeepPlan ? (
+        <View className="border-t border-orange-500/20 px-4 py-3">
+          <DeepPlanChecklist run={deepPlan} embedded />
+        </View>
+      ) : null}
+      {!implemented && !props.inherited && props.onImplement && (!isDeepPlan || latestDeepPlan) ? (
         <View className="flex-row flex-wrap gap-2 border-t border-adaptive-neutral-200-white-a6 px-4 py-3">
+          {isDeepPlan && props.unavailableReason ? (
+            <Text accessibilityRole="alert" className="w-full text-xs text-foreground-muted">
+              {props.unavailableReason}
+            </Text>
+          ) : null}
+          {isDeepPlan && latestDeepPlan && props.onRefine ? (
+            <Pressable
+              accessibilityRole="button"
+              disabled={props.implementing || deepPlan?.phase !== "awaitingApproval"}
+              className="min-h-11 items-center justify-center rounded-xl border border-border px-4 active:opacity-60 disabled:opacity-50"
+              onPress={props.onRefine}
+            >
+              <Text className="font-t3-medium text-sm text-foreground">
+                {translator.message("chat.deepPlan.refine")}
+              </Text>
+            </Pressable>
+          ) : null}
           <Pressable
             accessibilityRole="button"
-            disabled={props.implementing}
-            className="min-h-10 flex-1 items-center justify-center rounded-xl bg-primary px-4 active:opacity-75 disabled:opacity-50"
+            disabled={props.implementing || approvalBlocked}
+            className="min-h-11 flex-1 items-center justify-center rounded-xl bg-primary px-4 active:opacity-75 disabled:opacity-50"
             onPress={() => props.onImplement?.({ kind: "standard" })}
           >
             {props.implementing ? (
@@ -480,14 +607,26 @@ const MobileProposedPlanCard = memo(function MobileProposedPlanCard(props: {
           {props.suggestion ? (
             <Pressable
               accessibilityRole="button"
-              disabled={props.implementing}
-              className="min-h-10 flex-1 items-center justify-center rounded-xl border border-adaptive-neutral-300-a60-white-a12 px-4 active:opacity-60 disabled:opacity-50"
+              disabled={props.implementing || approvalBlocked}
+              className="min-h-11 flex-1 items-center justify-center rounded-xl border border-adaptive-neutral-300-a60-white-a12 px-4 active:opacity-60 disabled:opacity-50"
               onPress={() => props.onImplement?.(props.suggestion!.strategy)}
             >
               <Text className="font-t3-bold text-sm text-foreground">
                 {translator.message("mobile.thread.agentCount", {
                   count: props.suggestion.strategy.count,
                 })}
+              </Text>
+            </Pressable>
+          ) : null}
+          {isDeepPlan && props.onImplementNewThread ? (
+            <Pressable
+              accessibilityRole="button"
+              disabled={props.implementing || approvalBlocked}
+              className="min-h-11 w-full items-center justify-center rounded-xl border border-border px-4 active:opacity-60 disabled:opacity-50"
+              onPress={() => props.onImplementNewThread?.({ kind: "standard" })}
+            >
+              <Text className="font-t3-medium text-sm text-foreground">
+                {translator.message("chat.deepPlan.implementNewThread")}
               </Text>
             </Pressable>
           ) : null}
@@ -1618,6 +1757,7 @@ function renderFeedEntry(
     | "dispatchingMessageId"
     | "onEditPendingMessage"
     | "messageRepliesEnabled"
+    | "responseMetrics"
     | "onReplyToMessage"
   > & {
     readonly availableReplySourceIds: ReadonlySet<string>;
@@ -2055,7 +2195,7 @@ function renderFeedEntry(
             );
           })}
           {showAssistantMeta ? (
-            <View className="mt-1 flex-row items-center gap-1">
+            <View className="mt-1 flex-row flex-wrap items-center gap-x-2 gap-y-1">
               {replyEnabled ? (
                 <MessageReplyAction onReply={onReply} tintColor={iconSubtleColor} />
               ) : null}
@@ -2066,9 +2206,19 @@ function renderFeedEntry(
                 buttonSize={28}
                 iconSize={13}
               />
-              <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
+              <Text
+                className="shrink-0 font-t3-medium text-xs tabular-nums text-foreground-secondary"
+                numberOfLines={1}
+              >
                 {timestampLabel}
               </Text>
+              {props.responseMetrics != null && !message.replyTopicId ? (
+                <ResponseMetricsDetails
+                  snapshot={
+                    message.turnId ? (props.responseMetrics.get(message.turnId) ?? null) : null
+                  }
+                />
+              ) : null}
             </View>
           ) : replyEnabled ? (
             <View className="absolute right-0 top-0">
@@ -2639,6 +2789,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       worktreeSetup: props.worktreeSetup,
       setupWorkingStartedAt: props.setupWorkingStartedAt,
       dispatchingMessageId: props.dispatchingMessageId,
+      responseMetrics: props.responseMetrics,
+      deepPlan: props.deepPlan,
+      deepPlanningBlockedReason: props.deepPlanningBlockedReason,
+      environmentId: props.environmentId,
+      threadId: props.threadId,
+      implementingPlanId,
       unsettledTurnId,
       copiedRowId,
       expandedWorkRows,
@@ -2655,6 +2811,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       props.worktreeSetup,
       props.setupWorkingStartedAt,
       props.dispatchingMessageId,
+      props.responseMetrics,
+      props.deepPlan,
+      props.deepPlanningBlockedReason,
+      props.environmentId,
+      props.threadId,
+      implementingPlanId,
       unsettledTurnId,
       copiedRowId,
       expandedWorkRows,
@@ -3166,6 +3328,33 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               markdownStyles={markdownStyles.assistant}
               skills={props.skills}
               inherited={info.item.proposedPlan.historyOrigin !== undefined}
+              deepPlan={
+                props.deepPlan?.id === info.item.proposedPlan.deepPlan?.runId
+                  ? props.deepPlan
+                  : null
+              }
+              unavailableReason={props.deepPlanningBlockedReason}
+              onRefine={
+                props.onRefineDeepPlan
+                  ? () => {
+                      if (info.item.type === "proposed-plan")
+                        props.onRefineDeepPlan?.(info.item.proposedPlan);
+                    }
+                  : undefined
+              }
+              onImplementNewThread={
+                props.onImplementPlanInNewThread
+                  ? (strategy) => {
+                      const plan =
+                        info.item.type === "proposed-plan" ? info.item.proposedPlan : null;
+                      if (!plan || implementingPlanId !== null) return;
+                      setImplementingPlanId(plan.id);
+                      void props
+                        .onImplementPlanInNewThread?.(plan, strategy)
+                        .finally(() => setImplementingPlanId(null));
+                    }
+                  : undefined
+              }
               suggestion={resolvePlanImplementationSuggestion({
                 featureEnabled: props.parallelPlanImplementationEnabled ?? false,
                 planMarkdown: info.item.proposedPlan.planMarkdown,
@@ -3199,6 +3388,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               dispatchingMessageId: props.dispatchingMessageId,
               onEditPendingMessage: props.onEditPendingMessage,
               messageRepliesEnabled: props.messageRepliesEnabled,
+              responseMetrics: props.responseMetrics,
               onReplyToMessage: props.onReplyToMessage,
               availableReplySourceIds,
               onOpenReplySource,

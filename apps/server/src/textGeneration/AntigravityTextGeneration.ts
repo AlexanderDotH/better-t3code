@@ -1,3 +1,4 @@
+import { makeContextSummarizer } from "./ContextSummaryGeneration.ts";
 import {
   type ModelSelection,
   type ProviderSetupError,
@@ -487,6 +488,12 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
 
   return {
     decisionGeneration,
+    summarizeContext: makeContextSummarizer((input) =>
+      runAntigravityJson({
+        ...input,
+        operation: "summarizeContext",
+      }),
+    ),
     generateThreadMetadata,
     translateTranscriptToEnglish,
     improvePrompt,

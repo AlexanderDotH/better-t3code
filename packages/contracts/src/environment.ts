@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { DeepPlanEnvironmentCapability } from "./deepPlanning.ts";
 
 import {
   EnvironmentId,
@@ -89,6 +90,7 @@ export const ServerSelfUpdateCapability = Schema.Literals([
 export type ServerSelfUpdateCapability = typeof ServerSelfUpdateCapability.Type;
 
 export const ExecutionEnvironmentCapabilities = Schema.Struct({
+  deepPlanning: ForwardCompatibleOptional(DeepPlanEnvironmentCapability),
   repositoryIdentity: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   connectionProbe: Schema.optionalKey(Schema.Boolean),
   /** Missing on older servers; clients must not start endpoint discovery without it. */
@@ -124,6 +126,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadRestartContinuation: Schema.optionalKey(Schema.Boolean),
   /** Server resolves `projectSettingsOverrides`; older servers ignore the key. */
   projectSettingsOverrides: Schema.optionalKey(Schema.Boolean),
+  /** Server persists remembered composer choices per project. */
+  projectChatSettings: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.snooze / thread.unsnooze commands. Same
       version-skew contract as threadSettlement. */
   threadSnooze: Schema.optionalKey(Schema.Boolean),
@@ -207,6 +211,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   projectIndexingVersion: Schema.optionalKey(PositiveInt),
   projectIndexingDefaultsVersion: Schema.optionalKey(PositiveInt),
   decisionModelsVersion: Schema.optionalKey(PositiveInt),
+  contextCompactionVersion: Schema.optionalKey(PositiveInt),
   /** Versioned adaptive admission and provider-process suspension policies.
       Missing on older servers, so clients do not expose policy switches that
       the environment cannot enforce. */

@@ -106,6 +106,9 @@ import { claudeSignedOutMessage, makeClaudeEnvironment } from "../Drivers/Claude
 import { planClaudeSkillDispatch } from "../Drivers/ClaudeSkillDispatch.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
+import { DEEP_PLAN_PROVIDER_SUPPORT } from "../DeepPlanSupport.ts";
+import { deepPlanContextForThread, isBoundDeepPlanTool } from "../DeepPlanToolContext.ts";
+import { buildDeepPlanInstructions } from "../DeepPlanInstructions.ts";
 import type { ClaudeGatewayModelProfile } from "../Drivers/ClaudeGatewayCatalog.ts";
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
@@ -133,12 +136,9 @@ import type {
   ProviderMcpRuntimeTarget,
 } from "../Services/ProviderAdapter.ts";
 import { bindProviderRuntimeEventOrigin } from "../runtimeEventOrigin.ts";
-import {
-  makeBoundedProviderEventQueue,
-  providerEventEncodedBytes,
-  PROVIDER_RUNTIME_EVENT_QUEUE_BYTE_CAPACITY,
-  PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY,
-} from "../boundedEventQueue.ts";
+import { makeProviderEventHub } from "../providerEventHub.ts";
+import { withProviderEventIngress } from "../providerEventIngress.ts";
+import { stampProviderIngress } from "../../observability/ProviderPipelineMetrics.ts";
 import { spawnAndCollect } from "../providerSnapshot.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import * as ResourceProtection from "../../resourceProtection/SubagentResourceGovernor.ts";
@@ -2193,11 +2193,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }) as ClaudeQueryRuntime);
 
   const sessions = new Map<ThreadId, ClaudeSessionContext>();
-  const runtimeEventQueue = yield* makeBoundedProviderEventQueue<ProviderRuntimeEvent>({
-    capacity: PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY,
-    byteCapacity: PROVIDER_RUNTIME_EVENT_QUEUE_BYTE_CAPACITY,
-    sizeOf: providerEventEncodedBytes,
-  });
+  const runtimeEventQueue = yield* makeProviderEventHub({ bufferUntilSubscribed: true });
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const randomUUIDv4 = crypto.randomUUIDv4.pipe(
@@ -2215,7 +2211,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const makeEventStamp = () => Effect.all({ eventId: nextEventId, createdAt: nowIso });
 
   const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
-    runtimeEventQueue.offer(event).pipe(Effect.asVoid);
+    runtimeEventQueue.publish(event).pipe(Effect.asVoid);
 
   const logNativeSdkMessage = Effect.fnUntraced(function* (
     context: ClaudeSessionContext,
@@ -4236,6 +4232,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     context: ClaudeSessionContext,
     message: SDKMessage,
   ) {
+    stampProviderIngress(message);
+    if (message.type === "stream_event") stampProviderIngress(message.event);
     yield* logNativeSdkMessage(context, message);
     yield* ensureThreadId(context, message);
 
@@ -4302,7 +4300,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     ).pipe(
       Stream.takeWhile(() => !context.stopped),
       Stream.runForEach((message) =>
-        handleSdkMessage(context, message).pipe(
+        withProviderEventIngress(message, handleSdkMessage(context, message)).pipe(
           Effect.mapError(
             (cause) =>
               new ProviderAdapterProcessError({
@@ -5036,11 +5034,32 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           } satisfies PermissionResult;
         }
 
-        if (runtimeMode === "full-access") {
+        if (
+          toolName.startsWith("mcp__t3-code__") &&
+          isBoundDeepPlanTool(context.session.threadId, toolName)
+        ) {
           return {
             behavior: "allow",
             updatedInput: toolInput,
           } satisfies PermissionResult;
+        }
+
+        const deepPlan = deepPlanContextForThread(context.session.threadId);
+        if (
+          (deepPlan?.phase === "planning" || deepPlan?.readOnly === true) &&
+          ["Write", "Edit", "MultiEdit", "NotebookEdit", "mcp__t3-code__workspace_edit"].includes(
+            toolName,
+          )
+        ) {
+          return {
+            behavior: "deny",
+            message:
+              "This Deep Plan turn is read-only. Use the bound Deep Plan tools to save planning state; workspace changes require an execution turn.",
+          } satisfies PermissionResult;
+        }
+
+        if (runtimeMode === "full-access") {
+          return { behavior: "allow", updatedInput: toolInput } satisfies PermissionResult;
         }
 
         const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
@@ -5684,7 +5703,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
     );
-    const message = yield* buildUserMessageEffect(input, {
+    const deepPlan = deepPlanContextForThread(input.threadId);
+    const turnInput = deepPlan
+      ? { ...input, input: `${input.input ?? ""}\n\n${buildDeepPlanInstructions(deepPlan)}` }
+      : input;
+    const message = yield* buildUserMessageEffect(turnInput, {
       fileSystem,
       attachmentsDir: serverConfig.attachmentsDir,
       boundInstanceId,
@@ -6148,6 +6171,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     provider: PROVIDER,
     capabilities: {
       sessionModelSwitch: "in-session",
+      deepPlan: DEEP_PLAN_PROVIDER_SUPPORT.claude,
       mcp: "sessionConfig",
     },
     compaction: { type: "slash-command", command: "/compact" },
@@ -6164,6 +6188,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     listSessions,
     hasSession,
     stopAll,
+    consumeEvents: runtimeEventQueue.consumeEvents,
+    subscribeEventStream: runtimeEventQueue.subscribeEventStream,
     get streamEvents() {
       return runtimeEventQueue.stream;
     },

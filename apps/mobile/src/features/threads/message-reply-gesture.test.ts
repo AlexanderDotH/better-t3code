@@ -19,8 +19,8 @@ describe.each([
         touchCount: 1,
       }),
     ).toBe("activate");
-    expect(acceptsMessageReplyGesture(direction * 31, 3, true, role)).toBe(false);
-    expect(acceptsMessageReplyGesture(direction * 32, 3, true, role)).toBe(true);
+    expect(acceptsMessageReplyGesture(direction * 15, 3, true, role)).toBe(false);
+    expect(acceptsMessageReplyGesture(direction * 16, 3, true, role)).toBe(true);
     expect(acceptsMessageReplyGesture(direction * 90, 3, false, role)).toBe(false);
     expect(messageReplyTranslation(direction * 160, role)).toBe(direction * 72);
     expect(messageReplyTranslation(0, role)).toBe(0);
@@ -36,6 +36,21 @@ describe.each([
       }),
     ).toBe("fail");
   });
+  it("allows a halfway swipe to activate and complete without a hold", () => {
+    expect(
+      classifyMessageReplyMovement({
+        role,
+        translationX: direction * 16,
+        translationY: 3,
+        elapsedMs: 50,
+        touchCount: 1,
+      }),
+    ).toBe("activate");
+    expect(acceptsMessageReplyGesture(direction * 16, 3, true, role)).toBe(true);
+    expect(acceptsMessageReplyGesture(direction * 16, 3, false, role)).toBe(false);
+    expect(acceptsMessageReplyGesture(0, 0, true, role)).toBe(false);
+  });
+
   it("tolerates a small initial wobble and vertical drift in a horizontal swipe", () => {
     expect(
       classifyMessageReplyMovement({

@@ -542,7 +542,8 @@ export interface ThreadStatusPill {
     | "Failed"
     | "Pending Approval"
     | "Awaiting Input"
-    | "Plan Ready";
+    | "Plan Ready"
+    | "Deep Plan Ready";
   colorClass: string;
   dotClass: string;
   pulse: boolean;
@@ -564,6 +565,7 @@ const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
   Working: 4,
   Connecting: 4,
   "Plan Ready": 3,
+  "Deep Plan Ready": 3,
   Monitoring: 2,
   Completed: 1,
 };
@@ -573,7 +575,10 @@ type ThreadStatusInput = Pick<
   "hasPendingApprovals" | "hasPendingUserInput" | "session" | "backgroundLiveness"
 > &
   Partial<
-    Pick<SidebarThreadSummary, "hasActionableProposedPlan" | "interactionMode" | "latestTurn">
+    Pick<
+      SidebarThreadSummary,
+      "hasActionableProposedPlan" | "interactionMode" | "latestTurn" | "deepPlan"
+    >
   > & {
     lastVisitedAt?: string | undefined;
   };
@@ -1095,9 +1100,16 @@ export function resolveThreadStatusPill(input: {
       };
     case "plan-ready":
       return {
-        label: "Plan Ready",
-        colorClass: "text-violet-600 dark:text-violet-300/90",
-        dotClass: "bg-violet-500 dark:bg-violet-300/90",
+        label:
+          input.thread.deepPlan?.phase === "awaitingApproval" ? "Deep Plan Ready" : "Plan Ready",
+        colorClass:
+          input.thread.deepPlan?.phase === "awaitingApproval"
+            ? "text-deep-plan"
+            : "text-violet-600 dark:text-violet-300/90",
+        dotClass:
+          input.thread.deepPlan?.phase === "awaitingApproval"
+            ? "bg-deep-plan"
+            : "bg-violet-500 dark:bg-violet-300/90",
         pulse: false,
       };
     case "monitoring":

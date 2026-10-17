@@ -1,3 +1,4 @@
+import { makeContextSummarizer } from "./ContextSummaryGeneration.ts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
@@ -52,6 +53,7 @@ const OpenCodeTextGenerationOperation = Schema.Literals([
   "translateTranscriptToEnglish",
   "improvePrompt",
   "reviewPlanParallelism",
+  "summarizeContext",
   "planFetchExploration",
 ]);
 
@@ -593,6 +595,13 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
 
   return {
     decisionGeneration,
+    summarizeContext: makeContextSummarizer((input) =>
+      runOpenCodeJson({
+        ...input,
+        operation: "summarizeContext",
+        outputSchemaJson: input.outputSchema,
+      }),
+    ),
     decideAutoReasoning,
     generateCommitMessage,
     generatePrContent,

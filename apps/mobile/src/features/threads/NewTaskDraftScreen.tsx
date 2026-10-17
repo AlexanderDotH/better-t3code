@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { resolveDeepPlanningAvailability } from "@t3tools/client-runtime/deep-planning";
 import { EnvironmentId, ProjectId, resolveBetterT3FeatureFlag } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -59,6 +60,7 @@ import {
 import {
   ComposerActionButton,
   ComposerInlineControl,
+  ComposerToolbarScroller,
   ComposerToolbarRow,
 } from "../../components/ComposerToolbar";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
@@ -143,6 +145,9 @@ import { selectIncomingShareAttachmentsForServer } from "../sharing/incoming-sha
 import { appAtomRegistry } from "../../state/atom-registry";
 import { serverEnvironment } from "../../state/server";
 import { fileRoutePathSegments } from "../files/filePath";
+import { ComposerModeControl } from "./ComposerModeControl";
+import { DeepPlanSources } from "./DeepPlanSources";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 function NewTaskWorkspaceIcon(props: {
   readonly workspaceMode: "local" | "worktree";
@@ -206,6 +211,7 @@ export function NewTaskDraftScreen(props: {
   readonly incomingShareId?: string;
 }) {
   const projects = useProjects();
+  const translator = useMobileInterfaceTranslator();
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
   const {
@@ -287,6 +293,15 @@ export function NewTaskDraftScreen(props: {
       (environment) => environment.environmentId === selectedProject.environmentId,
     )?.connectionState === "connected";
   const modelUnavailable = environmentConnected && flow.selectedModelOption?.isUnavailable === true;
+  const deepPlanningAvailability = resolveDeepPlanningAvailability({
+    capabilities: selectedEnvironmentServerConfig?.environment.capabilities,
+    provider: flow.selectedProviderStatus,
+    connected: environmentConnected,
+  });
+  const deepPlanningBlockedReason =
+    flow.composerMode === "deep-plan" && deepPlanningAvailability.reasonKey
+      ? translator.message(deepPlanningAvailability.reasonKey)
+      : null;
   // A project added by cloning exists before its files do: the prompt can be
   // written meanwhile, but Start waits for the clone.
   const projectCloneState = useProjectClone(
@@ -541,6 +556,7 @@ export function NewTaskDraftScreen(props: {
     enabled: isComposerFocused && !isComposerInteractionLocked,
     onChangeDraftMessage: flow.setPrompt,
     onUpdateInteractionMode: flow.planModeEnabled ? flow.setInteractionMode : undefined,
+    onUpdateComposerMode: flow.setComposerMode,
   });
   const voiceInput = useVoiceInputController({
     ownerKey: flow.draftKey,
@@ -1298,6 +1314,7 @@ export function NewTaskDraftScreen(props: {
       voiceInput.blocksSubmission ||
       voiceDictation.active ||
       isImprovingPrompt ||
+      deepPlanningBlockedReason !== null ||
       pendingPastedTextAttachmentCountRef.current > 0
     )
       return;
@@ -1390,6 +1407,7 @@ export function NewTaskDraftScreen(props: {
       // A task that waits in the outbox cannot know the checkout it will
       // drain against; one that sends now runs against the live one.
       currentCheckoutBranch: queuesInsteadOfStarting ? null : flow.currentCheckoutBranchName,
+      rememberSettings: true,
     });
     if (!pendingMessage) {
       return;
@@ -1428,8 +1446,7 @@ export function NewTaskDraftScreen(props: {
     if (editingPendingTask) {
       flow.finishEditingPendingTask();
     } else {
-      // Drop draft-local model/workspace selections with the content. The
-      // next task re-resolves project defaults before sticky app defaults.
+      // Drop draft-local selections with the content; the next task resolves its own settings.
       // The queued message owns the attachments now, so the sweep is deferred
       // until the write confirms it.
       clearComposerDraftContent(draftKey, {
@@ -1470,6 +1487,7 @@ export function NewTaskDraftScreen(props: {
 
   const isAndroid = Platform.OS === "android";
   const canStart =
+    deepPlanningBlockedReason === null &&
     !isImportingContext &&
     !cloneBlocksStart &&
     attachmentBlockReason === null &&
@@ -1726,6 +1744,21 @@ export function NewTaskDraftScreen(props: {
         </View>
       ) : null}
       <View className="pb-1">{workspaceControls}</View>
+      {flow.composerMode === "deep-plan" ? (
+        <DeepPlanSources
+          key={flow.draftKey}
+          environmentId={selectedProject.environmentId}
+          projectId={selectedProject.id}
+          selected={flow.deepPlanSourceRefs}
+          disabled={isComposerInteractionLocked || voiceInput.isBusy || voiceDictation.active}
+          onChange={flow.setDeepPlanSourceRefs}
+        />
+      ) : null}
+      {deepPlanningBlockedReason ? (
+        <Text accessibilityRole="alert" className="px-3 pb-2 text-xs text-foreground-muted">
+          {deepPlanningBlockedReason}
+        </Text>
+      ) : null}
 
       {modelUnavailable ? (
         <Pressable
@@ -1804,7 +1837,7 @@ export function NewTaskDraftScreen(props: {
                   onDismissError={voiceInput.cancel}
                 />
               ) : (
-                <>
+                <ComposerToolbarScroller fadeSurface="sheet">
                   <ComposerAttachmentButton
                     disabled={isComposerInteractionLocked}
                     supportsFiles={Boolean(
@@ -1849,7 +1882,7 @@ export function NewTaskDraftScreen(props: {
                       </Text>
                     </Pressable>
                   ) : null}
-                  <View className="min-w-0 flex-1 flex-row items-center justify-end gap-2">
+                  <View className="min-w-0 flex-row items-center gap-2">
                     <ComposerInlineControl
                       accessibilityLabel="Model and reasoning settings"
                       disabled={isComposerInteractionLocked}
@@ -1864,28 +1897,13 @@ export function NewTaskDraftScreen(props: {
                       maxWidth={152}
                       onPress={settingsSheetPresentation.open}
                     />
-                    {flow.planModeEnabled ? (
-                      <ComposerInlineControl
-                        accessibilityHint={`Switches to ${flow.interactionMode === "plan" ? "Build" : "Plan"} mode`}
-                        accessibilityLabel={`Interaction mode: ${flow.interactionMode === "plan" ? "Plan" : "Build"}`}
-                        disabled={isComposerInteractionLocked}
-                        emphasized
-                        icon={
-                          flow.interactionMode === "plan"
-                            ? { ios: "list.bullet.clipboard", android: "auto_awesome" }
-                            : { ios: "hammer", android: "construction" }
-                        }
-                        label={flow.interactionMode === "plan" ? "Plan" : "Build"}
-                        onPress={() =>
-                          flow.setInteractionMode(
-                            flow.interactionMode === "plan" ? "default" : "plan",
-                          )
-                        }
-                        showChevron={false}
-                      />
-                    ) : null}
+                    <ComposerModeControl
+                      mode={flow.composerMode}
+                      disabled={isComposerInteractionLocked}
+                      onChange={flow.setComposerMode}
+                    />
                   </View>
-                </>
+                </ComposerToolbarScroller>
               )}
               {voiceConfigured ? (
                 <NativeVoiceDictationControl
@@ -1913,6 +1931,7 @@ export function NewTaskDraftScreen(props: {
                 <ComposerActionButton
                   accessibilityLabel={
                     attachmentBlockReason ??
+                    deepPlanningBlockedReason ??
                     (cloneBlocksStart
                       ? projectClone === null || projectClone.phase === "running"
                         ? "Cloning repository"
@@ -1921,11 +1940,13 @@ export function NewTaskDraftScreen(props: {
                         ? "Attaching pasted text"
                         : flow.submitting
                           ? "Starting task"
-                          : attachmentsUploading
-                            ? "Queue task, sends when uploads finish"
-                            : environmentConnected
-                              ? "Start task"
-                              : "Queue task")
+                          : flow.composerMode === "deep-plan"
+                            ? translator.message("chat.deepPlan.startAnalysis")
+                            : attachmentsUploading
+                              ? "Queue task, sends when uploads finish"
+                              : environmentConnected
+                                ? "Start task"
+                                : "Queue task")
                   }
                   disabled={!canStart}
                   icon={queuesInsteadOfStarting ? "tray.and.arrow.up" : "arrow.up"}

@@ -71,6 +71,7 @@ import {
   useTheme,
 } from "../../hooks/useTheme";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
@@ -513,6 +514,7 @@ function AboutVersionSection() {
 }
 
 export function useSettingsRestore(onRestored?: () => void) {
+  const translate = useInterfaceTranslator().message;
   const {
     theme,
     setTheme,
@@ -614,8 +616,11 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.followUpBehavior !== DEFAULT_UNIFIED_SETTINGS.followUpBehavior
         ? ["Follow-up behavior"]
         : []),
+      ...(settings.responseMetricsEnabled !== DEFAULT_UNIFIED_SETTINGS.responseMetricsEnabled
+        ? [translate("settings.responseMetrics.label")]
+        : []),
       ...(settings.contextWindowMeterEnabled !== DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled
-        ? ["Context window indicator"]
+        ? [translate("settings.contextMeter.label")]
         : []),
       ...(responseStreamingMode !== defaultResponseStreamingMode ? ["Response streaming"] : []),
       ...(settings.enableProviderUpdateChecks !==
@@ -685,6 +690,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.proactivePanelsEnabled,
       settings.environmentIdentificationMode,
       settings.contextWindowMeterEnabled,
+      settings.responseMetricsEnabled,
       settings.fontFamilyCode,
       settings.fontFamilyComposer,
       settings.fontFamilySans,
@@ -713,6 +719,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       followSystem,
       theme,
       themeHalves,
+      translate,
     ],
   );
 
@@ -796,6 +803,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
       contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
+      responseMetricsEnabled: DEFAULT_UNIFIED_SETTINGS.responseMetricsEnabled,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       chatWidthAdjustmentPercent: DEFAULT_UNIFIED_SETTINGS.chatWidthAdjustmentPercent,
       chatWidthCustomizationEnabled: DEFAULT_UNIFIED_SETTINGS.chatWidthCustomizationEnabled,
@@ -2026,7 +2034,6 @@ function AutoSettleDaysInput({
 // expand the section before its target can mount and scroll.
 const LEGACY_FEATURE_TARGET_IDS: ReadonlySet<string> = new Set([
   "legacy-plan-mode",
-  "legacy-context-window-indicator",
   "legacy-sidebar",
 ]);
 
@@ -2082,19 +2089,6 @@ function LegacyFeaturesSection() {
               }
             />
             <SettingsRow
-              {...searchableSetting("legacy-context-window-indicator")}
-              description="Shows context window usage as a circular indicator in the composer."
-              control={
-                <Switch
-                  checked={settings.contextWindowMeterEnabled}
-                  onCheckedChange={(checked) =>
-                    updateSettings({ contextWindowMeterEnabled: Boolean(checked) })
-                  }
-                  aria-label="Context window indicator (legacy)"
-                />
-              }
-            />
-            <SettingsRow
               {...searchableSetting("legacy-sidebar")}
               description="Restore per-project thread trees instead of the default flat sidebar."
               control={
@@ -2115,6 +2109,7 @@ function LegacyFeaturesSection() {
 }
 
 export function GeneralSettingsPanel() {
+  const translate = useInterfaceTranslator().message;
   const modifierLabel = isMacPlatform(navigator.platform) ? "⌘" : "Ctrl";
   const sendShortcutOptions = [
     { value: "enter", label: "Enter" },

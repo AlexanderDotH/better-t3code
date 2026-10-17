@@ -1,3 +1,4 @@
+import { makeContextSummarizer } from "./ContextSummaryGeneration.ts";
 import {
   resolveClaudeEffort,
   normalizeClaudeCliEffort,
@@ -133,6 +134,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       | "translateTranscriptToEnglish"
       | "improvePrompt"
       | "reviewPlanParallelism"
+      | "summarizeContext"
       | "planFetchExploration",
     value: unknown,
     detail: string,
@@ -171,6 +173,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       | "translateTranscriptToEnglish"
       | "improvePrompt"
       | "reviewPlanParallelism"
+      | "summarizeContext"
       | "planFetchExploration";
     cwd: string;
     prompt: string;
@@ -597,6 +600,13 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
 
   return {
     decisionGeneration,
+    summarizeContext: makeContextSummarizer((input) =>
+      runClaudeJson({
+        ...input,
+        operation: "summarizeContext",
+        outputSchemaJson: input.outputSchema,
+      }),
+    ),
     decideAutoReasoning,
     generateCommitMessage,
     generatePrContent,

@@ -1,5 +1,7 @@
+import { selectResponseMetrics } from "@t3tools/client-runtime/response-metrics";
 import { resolveThreadAbortPresentation } from "@t3tools/client-runtime/state/thread-abort";
 import { mergeMessageReplyTimeline } from "@t3tools/client-runtime/messageReplies";
+import { selectedThreadContextWindowSnapshot } from "./context-meter-state";
 import { useThreadMessageReplies } from "./use-thread-message-replies";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -13,12 +15,14 @@ import {
   MessageId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  type ComposerMode,
+  type DeepPlanSourceRef,
   type EnvironmentId,
   type ModelSelection,
   type OrchestrationProposedPlan,
   type ProviderInteractionMode,
   type RuntimeMode,
-  type ThreadId,
+  ThreadId,
   type VoiceFileReference,
 } from "@t3tools/contracts";
 import {
@@ -29,6 +33,18 @@ import {
   buildPlanImplementationPrompt,
   type PlanImplementationStrategy,
 } from "@t3tools/client-runtime/plan-implementation";
+import {
+  approveDeepPlanImplementation,
+  buildDeepPlanImplementationPrompt,
+  getApprovedDeepPlanReference,
+  EMPTY_DEEP_PLAN_SOURCE_REFS,
+  getProviderInteractionMode,
+  parseDeepPlanComposerCommand,
+  resolveComposerMode,
+  resolveDeepPlanningAvailability,
+  uniqueDeepPlanSourceRefs,
+} from "@t3tools/client-runtime/deep-planning";
+import { proposedPlanTitle } from "@t3tools/client-runtime/proposed-plan";
 import { resolveOpenRouterBootstrapModelPatch } from "@t3tools/client-runtime/openrouter-model-selection";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { resolveCodexContextWindowTokens } from "@t3tools/shared/model";
@@ -47,6 +63,7 @@ import { uuidv4 } from "../lib/uuid";
 
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
 import { isModelSelectionUnavailable } from "../lib/modelOptions";
+import { resolveMobileComposerChatSettings } from "../lib/projectChatSettings";
 import { resolveProviderInteractionMode } from "./legacy-plan-mode";
 import {
   convertPastedImagesToAttachments,
@@ -92,7 +109,9 @@ import { dispatchingQueuedMessageIdAtom, useThreadOutboxMessages } from "./use-t
 import { useEnvironmentServerConfig } from "./entities";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "./preferences";
 import { serverEnvironment } from "./server";
+import { rememberMobileProjectChatSettings } from "./project-chat-settings";
 import { threadEnvironment } from "./threads";
+import { getMobileDeepPlanningApi } from "./deep-planning";
 import { useAtomCommand } from "./use-atom-command";
 import { resolveMobileAgentWorkflowSettings } from "./agent-workflow-settings";
 import {
@@ -162,6 +181,8 @@ export function useThreadComposerState() {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const improvePrompt = useAtomCommand(serverEnvironment.improvePrompt, { reportFailure: false });
+  const createThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
+  const implementingPlans = useRef(new Set<string>());
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -247,6 +268,29 @@ export function useThreadComposerState() {
   const selectedThreadReplyMessages = selectedThreadDetail?.replyMessages;
   const selectedThreadProposedPlans = selectedThreadDetail?.proposedPlans;
   const selectedThreadActivities = selectedThreadDetail?.activities;
+  const responseMetrics = useMemo(
+    () =>
+      preferences.responseMetricsEnabled === true &&
+      selectedThreadShell?.id === selectedThreadDetail?.id &&
+      selectedThreadActivities !== undefined
+        ? selectResponseMetrics(selectedThreadActivities)
+        : null,
+    [
+      preferences.responseMetricsEnabled,
+      selectedThreadShell?.id,
+      selectedThreadDetail?.id,
+      selectedThreadActivities,
+    ],
+  );
+  const contextWindowSnapshot = useMemo(
+    () =>
+      selectedThreadContextWindowSnapshot(
+        selectedThreadShell?.id,
+        selectedThreadDetail?.id,
+        selectedThreadActivities,
+      ),
+    [selectedThreadActivities, selectedThreadDetail?.id, selectedThreadShell?.id],
+  );
   // A thread whose creation has not delivered its turn yet: the prompt only
   // exists in the outbox, so it is appended to whatever the server has. The
   // detail is usually present but empty during a worktree checkout, so this
@@ -311,12 +355,36 @@ export function useThreadComposerState() {
   const selectedProvider = selectedEnvironmentRuntime?.serverConfig?.providers.find(
     (provider) => provider.instanceId === modelSelection?.instanceId,
   );
+  const composerMode = resolveComposerMode(
+    selectedDraft?.composerMode,
+    selectedDraft?.interactionMode ?? selectedThread?.interactionMode,
+  );
+  const deepPlanSourceRefs = selectedDraft?.deepPlanSourceRefs ?? EMPTY_DEEP_PLAN_SOURCE_REFS;
   const interactionMode = selectedThread
-    ? resolveProviderInteractionMode(
-        selectedProvider,
-        selectedDraft?.interactionMode ?? selectedThread.interactionMode,
-      )
+    ? composerMode === "deep-plan"
+      ? getProviderInteractionMode(composerMode)
+      : resolveProviderInteractionMode(selectedProvider, getProviderInteractionMode(composerMode))
     : null;
+  const rememberSettings = useCallback(() => {
+    if (!selectedThreadShell || !selectedThreadKey) return;
+    const thread = selectedThreadDetail ?? selectedThreadShell;
+    const settings = resolveMobileComposerChatSettings(
+      getComposerDraftSnapshot(selectedThreadKey),
+      {
+        modelSelection: thread.modelSelection,
+        runtimeMode: thread.runtimeMode,
+        composerMode: resolveComposerMode(undefined, thread.interactionMode),
+      },
+    );
+    if (settings.modelSelection === null) return;
+    rememberMobileProjectChatSettings(
+      {
+        environmentId: selectedThreadShell.environmentId,
+        projectId: selectedThreadShell.projectId,
+      },
+      { ...settings, modelSelection: settings.modelSelection },
+    );
+  }, [selectedThreadDetail, selectedThreadKey, selectedThreadShell]);
 
   const selectedThreadSessionActivity = useMemo(() => {
     const selectedThread = selectedThreadDetail ?? selectedThreadShell;
@@ -413,7 +481,16 @@ export function useThreadComposerState() {
     const draft = getComposerDraftSnapshot(threadKey);
     if (appAtomRegistry.get(composerContextImportsAtom)[threadKey]) return null;
     const thread = selectedThreadDetail ?? selectedThreadShell;
-    let text = draft.text.trim();
+    const deepPlanCommand = parseDeepPlanComposerCommand(draft.text.trim());
+    let text = deepPlanCommand?.prompt ?? draft.text.trim();
+    if (deepPlanCommand) {
+      updateComposerDraftSettings(threadKey, { composerMode: "deep-plan" });
+      setComposerDraftText(threadKey, text, draft.voiceFileReferences);
+      if (text.length === 0) {
+        rememberSettings();
+        return null;
+      }
+    }
     const attachments = draft.attachments;
     if (
       composerAttachmentUploadBlockReason({
@@ -446,6 +523,10 @@ export function useThreadComposerState() {
       return null;
     }
 
+    if (draft.messageReply && (deepPlanCommand || draft.composerMode === "deep-plan")) {
+      setPendingConnectionError("Cancel this reply before starting DeepPlan.");
+      return null;
+    }
     if (draft.messageReply) return replies.sendReply(draft);
 
     const modelSelection = draft.modelSelection ?? thread.modelSelection;
@@ -463,6 +544,20 @@ export function useThreadComposerState() {
     const provider = serverConfig?.providers.find(
       (entry) => entry.instanceId === modelSelection.instanceId,
     );
+    const sendComposerMode = deepPlanCommand
+      ? "deep-plan"
+      : resolveComposerMode(draft.composerMode, draft.interactionMode ?? thread.interactionMode);
+    if (sendComposerMode === "deep-plan") {
+      const availability = resolveDeepPlanningAvailability({
+        capabilities: serverConfig?.environment.capabilities,
+        provider,
+        connected: selectedEnvironmentRuntime?.connectionState === "connected",
+      });
+      if (!availability.supported) {
+        setPendingConnectionError(availability.reason);
+        return null;
+      }
+    }
     const feedbackCommand =
       attachments.length === 0 &&
       (provider?.driver === "codex" || thread.session?.providerName === "codex")
@@ -504,6 +599,18 @@ export function useThreadComposerState() {
       });
       return null;
     }
+
+    rememberMobileProjectChatSettings(
+      {
+        environmentId: selectedThreadShell.environmentId,
+        projectId: selectedThreadShell.projectId,
+      },
+      {
+        modelSelection,
+        runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
+        composerMode: sendComposerMode,
+      },
+    );
 
     const shouldImprovePromptBeforeSend =
       workflowSettings.supported &&
@@ -567,10 +674,12 @@ export function useThreadComposerState() {
         ? { improvePromptBeforeSend: true }
         : {}),
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
-      interactionMode: resolveProviderInteractionMode(
-        provider,
-        draft.interactionMode ?? thread.interactionMode,
-      ),
+      interactionMode:
+        sendComposerMode === "deep-plan"
+          ? getProviderInteractionMode(sendComposerMode)
+          : resolveProviderInteractionMode(provider, getProviderInteractionMode(sendComposerMode)),
+      composerMode: sendComposerMode,
+      deepPlanSourceRefs: draft.deepPlanSourceRefs,
       createdAt: metadata.createdAt,
     });
     clearComposerDraftContent(threadKey, { deferAttachmentCleanup: true });
@@ -600,13 +709,12 @@ export function useThreadComposerState() {
     return messageId;
   }, [
     isImprovingPrompt,
-    selectedEnvironmentRuntime?.connectionState,
-    selectedEnvironmentRuntime?.serverConfig,
+    rememberSettings,
+    selectedEnvironmentRuntime,
     selectedThreadCreation,
     improvePrompt,
     connectedEnvironments,
     preferences.improvePromptBeforeSend,
-    selectedEnvironmentRuntime?.serverConfig?.providers,
     selectedThreadDetail,
     selectedThreadShell,
     uploadThreadFeedback,
@@ -652,76 +760,160 @@ export function useThreadComposerState() {
     }
   }, [improvePrompt, isImprovingPrompt, selectedThreadShell, workflowSettings.supported]);
 
-  const onImplementPlan = useCallback(
+  const implementPlan = useCallback(
     async (
       proposedPlan: OrchestrationProposedPlan,
       strategy: PlanImplementationStrategy,
-    ): Promise<MessageId | null> => {
+      newThread: boolean,
+    ): Promise<{
+      messageId: MessageId;
+      threadId: ThreadId;
+      environmentId: EnvironmentId;
+    } | null> => {
       if (
         !selectedThreadShell ||
-        !workflowSettings.supported ||
+        (!workflowSettings.supported && !proposedPlan.deepPlan) ||
         proposedPlan.implementedAt !== null
-      ) {
+      )
         return null;
-      }
-      const thread = selectedThreadDetail ?? selectedThreadShell;
-      const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
-      const draft = getComposerDraftSnapshot(threadKey);
-      const durableModelSelection = draft.modelSelection ?? thread.modelSelection;
-      const provider = serverConfig?.providers.find(
-        (candidate) => candidate.instanceId === durableModelSelection.instanceId,
-      );
-      let text: string;
+      const key = proposedPlan.deepPlan?.runId ?? proposedPlan.id;
+      if (implementingPlans.current.has(key)) return null;
+      implementingPlans.current.add(key);
       try {
-        text = buildPlanImplementationPrompt(proposedPlan.planMarkdown, {
-          strategy,
-          ...(provider ? { provider } : {}),
-        });
-      } catch (error) {
-        setPendingConnectionError(
-          error instanceof Error ? error.message : "This provider cannot implement in parallel.",
+        const thread = selectedThreadDetail ?? selectedThreadShell;
+        const draft = getComposerDraftSnapshot(
+          scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id),
         );
-        return null;
-      }
-
-      const metadata = makeQueuedMessageMetadata();
-      const messageId = MessageId.make(metadata.messageId);
-      try {
+        const modelSelection = draft.modelSelection ?? thread.modelSelection;
+        const provider = serverConfig?.providers.find(
+          (candidate) => candidate.instanceId === modelSelection.instanceId,
+        );
+        const promptOptions = { strategy, ...(provider ? { provider } : {}) };
+        let text = buildPlanImplementationPrompt(proposedPlan.planMarkdown, promptOptions);
+        const api = getMobileDeepPlanningApi(selectedThreadShell.environmentId);
+        const run = proposedPlan.deepPlan
+          ? await api.getRun({
+              threadId: selectedThreadShell.id,
+              runId: proposedPlan.deepPlan.runId,
+            })
+          : null;
+        if (
+          proposedPlan.deepPlan &&
+          (!run?.plan || run.plan.version !== proposedPlan.deepPlan.planVersion)
+        ) {
+          throw new Error("DeepPlan changed. Review the latest plan before approving it.");
+        }
+        if (run) {
+          const availability = resolveDeepPlanningAvailability({
+            capabilities: serverConfig?.environment.capabilities,
+            provider,
+            connected: selectedEnvironmentRuntime?.connectionState === "connected",
+          });
+          if (!availability.supported)
+            throw new Error(availability.reason ?? "DeepPlan is unavailable.");
+        }
+        const implementationThreadId = newThread
+          ? (run?.approval?.implementationThreadId ?? ThreadId.make(uuidv4()))
+          : selectedThreadShell.id;
+        const metadata = makeQueuedMessageMetadata();
+        if (newThread && !run?.approval) {
+          const result = await createThread({
+            environmentId: selectedThreadShell.environmentId,
+            input: {
+              threadId: implementationThreadId,
+              projectId: thread.projectId,
+              title: `Implement: ${proposedPlanTitle(proposedPlan.planMarkdown) ?? thread.title}`,
+              modelSelection,
+              runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
+              interactionMode: "default",
+              branch: thread.branch,
+              worktreePath: thread.worktreePath,
+              createdAt: metadata.createdAt,
+            },
+          });
+          if (AsyncResult.isFailure(result)) throw Cause.squash(result.cause);
+        }
+        const approvedRun = run
+          ? await approveDeepPlanImplementation({
+              run,
+              implementation: {
+                instanceId: modelSelection.instanceId,
+                model: modelSelection.model,
+                ...(modelSelection.options ? { options: modelSelection.options } : {}),
+              },
+              implementationThreadId,
+              ...(strategy.kind === "subagents" ? { requestedParallelism: strategy.count } : {}),
+              commandId: CommandId.make(uuidv4()),
+              operationId: uuidv4(),
+              createdAt: metadata.createdAt,
+              getRun: api.getRun,
+              dispatchCommand: api.dispatchCommand,
+            })
+          : null;
+        if (approvedRun) text = buildDeepPlanImplementationPrompt(approvedRun, promptOptions);
+        const messageId = MessageId.make(metadata.messageId);
         await enqueueThreadOutboxMessage({
           environmentId: selectedThreadShell.environmentId,
-          threadId: selectedThreadShell.id,
+          threadId: implementationThreadId,
           messageId,
           commandId: CommandId.make(metadata.commandId),
           text,
           attachments: [],
-          modelSelection: durableModelSelection,
+          modelSelection,
           ...(workflowSettings.fetchMode === undefined
             ? {}
             : { fetchMode: workflowSettings.fetchMode }),
           runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
           interactionMode: "default",
           sourceProposedPlan: {
-            threadId: selectedThreadShell.id,
+            threadId: approvedRun?.threadId ?? selectedThreadShell.id,
             planId: proposedPlan.id,
+            ...(approvedRun ? { deepPlan: getApprovedDeepPlanReference(approvedRun) } : {}),
           },
           createdAt: metadata.createdAt,
         });
+        if (approvedRun && !newThread) {
+          updateComposerDraftSettings(
+            scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id),
+            { composerMode: "default" },
+          );
+        }
+        setPendingConnectionError(null);
+        return {
+          messageId,
+          threadId: implementationThreadId,
+          environmentId: selectedThreadShell.environmentId,
+        };
       } catch (error) {
         setPendingConnectionError(
           error instanceof Error ? error.message : "Failed to queue plan implementation.",
         );
         return null;
+      } finally {
+        implementingPlans.current.delete(key);
       }
-      setPendingConnectionError(null);
-      return messageId;
     },
     [
+      createThread,
+      selectedEnvironmentRuntime,
       selectedThreadDetail,
       selectedThreadShell,
       serverConfig,
       workflowSettings.fetchMode,
       workflowSettings.supported,
     ],
+  );
+  const onImplementPlan = useCallback(
+    async (
+      plan: OrchestrationProposedPlan,
+      strategy: PlanImplementationStrategy,
+    ): Promise<MessageId | null> => (await implementPlan(plan, strategy, false))?.messageId ?? null,
+    [implementPlan],
+  );
+  const onImplementPlanInNewThread = useCallback(
+    async (plan: OrchestrationProposedPlan, strategy: PlanImplementationStrategy) =>
+      implementPlan(plan, strategy, true),
+    [implementPlan],
   );
 
   const onChangeDraftMessage = useCallback(
@@ -995,10 +1187,12 @@ export function useThreadComposerState() {
       updateComposerDraftSettings(selectedThreadKey, {
         modelSelection: value,
         ...(serverConfig?.providers.find((candidate) => candidate.instanceId === value.instanceId)
-          ?.showInteractionModeToggle === false
+          ?.showInteractionModeToggle === false &&
+        getComposerDraftSnapshot(selectedThreadKey).composerMode !== "deep-plan"
           ? { interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE }
           : {}),
       });
+      rememberSettings();
 
       const provider = serverConfig?.providers.find(
         (candidate) => candidate.instanceId === value.instanceId,
@@ -1036,6 +1230,7 @@ export function useThreadComposerState() {
     },
     [
       modelSelection,
+      rememberSettings,
       selectedThreadKey,
       selectedThreadShell,
       serverConfig,
@@ -1050,8 +1245,9 @@ export function useThreadComposerState() {
         return;
       }
       updateComposerDraftSettings(selectedThreadKey, { runtimeMode: value });
+      rememberSettings();
     },
-    [selectedThreadKey],
+    [rememberSettings, selectedThreadKey],
   );
 
   const onUpdateInteractionMode = useCallback(
@@ -1068,8 +1264,65 @@ export function useThreadComposerState() {
       updateComposerDraftSettings(selectedThreadKey, {
         interactionMode: resolveProviderInteractionMode(provider, value),
       });
+      rememberSettings();
     },
-    [selectedEnvironmentRuntime?.serverConfig, selectedThread?.modelSelection, selectedThreadKey],
+    [
+      rememberSettings,
+      selectedEnvironmentRuntime?.serverConfig,
+      selectedThread?.modelSelection,
+      selectedThreadKey,
+    ],
+  );
+
+  const setComposerMode = useCallback(
+    (value: ComposerMode) => {
+      if (!selectedThreadKey) return;
+      updateComposerDraftSettings(selectedThreadKey, { composerMode: value });
+      rememberSettings();
+    },
+    [rememberSettings, selectedThreadKey],
+  );
+  const setDeepPlanSourceRefs = useCallback(
+    (refs: ReadonlyArray<DeepPlanSourceRef>) => {
+      if (!selectedThreadKey) return;
+      updateComposerDraftSettings(selectedThreadKey, {
+        deepPlanSourceRefs: uniqueDeepPlanSourceRefs(refs),
+      });
+    },
+    [selectedThreadKey],
+  );
+  const onReviseDeepPlan = useCallback(
+    async (plan: OrchestrationProposedPlan) => {
+      setComposerMode("deep-plan");
+      if (
+        !selectedThreadShell ||
+        !selectedThreadKey ||
+        !plan.deepPlan ||
+        getComposerDraftSnapshot(selectedThreadKey).deepPlanSourceRefs?.length
+      )
+        return;
+      try {
+        const run = await getMobileDeepPlanningApi(selectedThreadShell.environmentId).getRun({
+          threadId: selectedThreadShell.id,
+          runId: plan.deepPlan.runId,
+        });
+        if (!run) return;
+        setDeepPlanSourceRefs(
+          run.sources
+            .map((source) => source.origin)
+            .filter(
+              (source) =>
+                source.environmentId !== selectedThreadShell.environmentId ||
+                source.projectId !== selectedThreadShell.projectId,
+            ),
+        );
+      } catch (error) {
+        setPendingConnectionError(
+          error instanceof Error ? error.message : "Could not restore DeepPlan sources.",
+        );
+      }
+    },
+    [selectedThreadKey, selectedThreadShell, setComposerMode, setDeepPlanSourceRefs],
   );
 
   const onUpdateFetchEnabled = useCallback(
@@ -1088,6 +1341,8 @@ export function useThreadComposerState() {
       selectedThreadKey ? getComposerDraftSnapshot(selectedThreadKey).text : "",
     dismissFeedback,
     selectedThreadFeed,
+    contextWindowSnapshot,
+    responseMetrics,
     selectedThreadQueueCount,
     selectedThreadQueuedMessages,
     dispatchingQueuedMessageId,
@@ -1104,6 +1359,14 @@ export function useThreadComposerState() {
     modelSelection,
     runtimeMode,
     interactionMode,
+    providerInteractionMode: interactionMode,
+    composerMode,
+    deepPlanSourceRefs,
+    setComposerMode,
+    onUpdateComposerMode: setComposerMode,
+    setDeepPlanSourceRefs,
+    onUpdateDeepPlanSources: setDeepPlanSourceRefs,
+    onReviseDeepPlan,
     fetchSupported: workflowSettings.supported,
     fetchEnabled: workflowSettings.fetchEnabled,
     parallelPlanImplementationEnabled:
@@ -1120,6 +1383,7 @@ export function useThreadComposerState() {
     onSendMessage,
     onImproveDraft,
     onImplementPlan,
+    onImplementPlanInNewThread,
     onUpdateFetchEnabled,
     onUpdateModelSelection,
     onUpdateRuntimeMode,

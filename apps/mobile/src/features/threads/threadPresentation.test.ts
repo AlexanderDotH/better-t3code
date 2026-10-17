@@ -1,5 +1,13 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  DeepPlanRunId,
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  TurnId,
+} from "@t3tools/contracts";
+import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolveThreadStatus } from "./threadPresentation";
@@ -57,6 +65,60 @@ describe("resolveThreadStatus", () => {
       label: "Working",
       pulse: true,
     });
+  });
+
+  it("names a ready Deep Plan in the current language and keeps approval priority", () => {
+    const baseThread = makeStartingThread(null);
+    const thread: EnvironmentThreadShell = {
+      ...baseThread,
+      interactionMode: "plan",
+      session: null,
+      hasActionableProposedPlan: true,
+      latestTurn: {
+        turnId: TurnId.make("plan"),
+        state: "completed",
+        requestedAt: now,
+        startedAt: now,
+        completedAt: now,
+        assistantMessageId: null,
+      },
+      deepPlan: {
+        id: DeepPlanRunId.make("deep-plan"),
+        threadId: baseThread.id,
+        phase: "awaitingApproval",
+        revision: 1,
+        plan: null,
+        approval: null,
+        approvalKey: null,
+        sources: [],
+        sourceCoverage: [],
+        stepStates: [],
+        finalValidation: {
+          status: "pending",
+          evidence: [],
+          updatedAt: null,
+          attempt: 0,
+          requestId: null,
+          turnId: null,
+        },
+        procedureAdjustments: [],
+        operations: [],
+        createdAt: now,
+        updatedAt: now,
+        pauseReason: null,
+      },
+    };
+    expect(resolveThreadStatus(thread)).toMatchObject({
+      kind: "plan-ready",
+      label: "Deep Plan ready",
+      textClassName: "text-adaptive-orange-700-400",
+    });
+    const german = createInterfaceTranslator({ language: "de", locale: "de-DE" });
+    expect(resolveThreadStatus(thread, german)?.label).toBe("Deep Plan bereit");
+    expect(resolveThreadStatus({ ...thread, deepPlan: null }, german)?.label).toBe("Plan bereit");
+    expect(resolveThreadStatus({ ...thread, hasPendingApprovals: true })?.kind).toBe(
+      "pending-approval",
+    );
   });
 
   it("keeps connecting for a starting session with no active background work", () => {

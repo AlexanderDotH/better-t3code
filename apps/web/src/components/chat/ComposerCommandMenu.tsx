@@ -41,6 +41,7 @@ export type ComposerCommandItem =
       id: string;
       type: "slash-command";
       command: ComposerSlashCommand;
+      disabled?: boolean;
       label: string;
       description: string;
     }
@@ -159,6 +160,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
 
   return (
     <CommandItem
+      disabled={props.item.type === "slash-command" && props.item.disabled}
       value={props.item.id}
       data-composer-item-id={props.item.id}
       active={props.isActive}

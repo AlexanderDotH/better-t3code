@@ -19,6 +19,9 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { ProviderAdapterRequestError, ProviderAdapterValidationError } from "../Errors.ts";
+import { DEEP_PLAN_PROVIDER_SUPPORT } from "../DeepPlanSupport.ts";
+import { deepPlanContextForThread } from "../DeepPlanToolContext.ts";
+import type { DeepPlanInstructionContext } from "../DeepPlanInstructions.ts";
 import {
   makeNativeProviderAdapter,
   type NativeProviderHistoryStrategy,
@@ -347,14 +350,18 @@ export const decodeOpenRouterPersistedHistory = Effect.fn("decodeOpenRouterPersi
 );
 
 export function buildOpenRouterSystemInstructions(input: {
+  readonly deepPlan?: DeepPlanInstructionContext | undefined;
   readonly cwd: string;
   readonly sandboxMode: ProviderSandboxMode | undefined;
   readonly interactionMode: ProviderInteractionMode | undefined;
   readonly fetchWorker: boolean;
 }): string {
   const access =
-    input.interactionMode === "plan" || input.sandboxMode === "read-only" || input.fetchWorker
-      ? "Read-only: inspect the workspace but do not modify files or run commands."
+    input.interactionMode === "plan" ||
+    input.sandboxMode === "read-only" ||
+    input.fetchWorker ||
+    input.deepPlan?.readOnly === true
+      ? "Read-only: inspect the workspace but do not modify files or run mutating commands."
       : input.sandboxMode === "workspace-write"
         ? "Workspace-write: inspect and edit workspace files through T3 tools."
         : "Use only tools exposed by T3 and respect every approval boundary.";
@@ -363,8 +370,8 @@ export function buildOpenRouterSystemInstructions(input: {
     `The trusted workspace root is ${input.cwd}.`,
     access,
     nativeHarnessWorkspaceInstructions(input),
-    input.interactionMode === "plan"
-      ? "Plan mode is active: return a decision-complete plan and make no changes."
+    input.interactionMode === "plan" || input.deepPlan?.readOnly === true
+      ? "Plan mode is active: return a decision-complete plan without modifying the workspace."
       : "Carry the request through focused verification and preserve unrelated work.",
   ].join("\n");
 }
@@ -404,7 +411,11 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
     provider: PROVIDER,
     instanceId,
     ...(options.environment === undefined ? {} : { environment: options.environment }),
-    capabilities: { sessionModelSwitch: "in-session", mcp: "sessionConfig" },
+    capabilities: {
+      sessionModelSwitch: "in-session",
+      mcp: "sessionConfig",
+      deepPlan: DEEP_PLAN_PROVIDER_SUPPORT.openrouter,
+    },
     messages: {
       sessionStarted: "OpenRouter session owned by T3 Code",
       sessionReady: "OpenRouter session ready",
@@ -505,6 +516,7 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
           })),
           protocol: {
             instructions: buildOpenRouterSystemInstructions({
+              deepPlan: session.fetchWorker ? undefined : deepPlanContextForThread(input.threadId),
               cwd: session.cwd,
               sandboxMode: session.sandboxMode,
               interactionMode: input.interactionMode,

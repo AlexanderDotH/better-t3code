@@ -1,3 +1,4 @@
+import { makeContextSummarizer } from "./ContextSummaryGeneration.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -143,6 +144,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "translateTranscriptToEnglish"
       | "improvePrompt"
       | "reviewPlanParallelism"
+      | "summarizeContext"
       | "planFetchExploration",
     value: unknown,
   ): Effect.Effect<string, TextGenerationError> =>
@@ -177,6 +179,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "translateTranscriptToEnglish"
       | "improvePrompt"
       | "reviewPlanParallelism"
+      | "summarizeContext"
       | "planFetchExploration";
     cwd: string;
     prompt: string;
@@ -222,7 +225,9 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         effectiveConfig.binaryPath || "codex",
         codexExecArgs([
           ...codexExecLaunchArgs(launchArgs),
-          ...(operation === "planFetchExploration" || operation === "decideAutoReasoning"
+          ...(operation === "summarizeContext" ||
+          operation === "planFetchExploration" ||
+          operation === "decideAutoReasoning"
             ? [
                 "--disable",
                 "multi_agent",
@@ -632,6 +637,13 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
 
   return {
     decisionGeneration,
+    summarizeContext: makeContextSummarizer((input) =>
+      runCodexJson({
+        ...input,
+        operation: "summarizeContext",
+        outputSchemaJson: input.outputSchema,
+      }),
+    ),
     decideAutoReasoning,
     generateCommitMessage,
     generatePrContent,

@@ -312,29 +312,31 @@ const antigravityModels = [
   { modelId: "gemini-test-high", name: "Gemini Test High" },
 ] satisfies ReadonlyArray<AcpSchema.ModelInfo>;
 
-const availableModes: ReadonlyArray<AcpSchema.SessionMode> = antigravityProfile
-  ? [
-      { id: "default", name: "Default" },
-      { id: "auto_edit", name: "Auto edit" },
-      { id: "yolo", name: "YOLO" },
-    ]
-  : [
-      {
-        id: "ask",
-        name: "Ask",
-        description: "Request permission before making any changes",
-      },
-      {
-        id: "architect",
-        name: "Architect",
-        description: "Design and plan software systems without implementation",
-      },
-      {
-        id: "code",
-        name: "Code",
-        description: "Write and modify code with full tool access",
-      },
-    ];
+const availableModes: ReadonlyArray<AcpSchema.SessionMode> = (
+  antigravityProfile
+    ? [
+        { id: "default", name: "Default" },
+        { id: "auto_edit", name: "Auto edit" },
+        { id: "yolo", name: "YOLO" },
+      ]
+    : [
+        {
+          id: "ask",
+          name: "Ask",
+          description: "Request permission before making any changes",
+        },
+        {
+          id: "architect",
+          name: "Architect",
+          description: "Design and plan software systems without implementation",
+        },
+        {
+          id: "code",
+          name: "Code",
+          description: "Write and modify code with full tool access",
+        },
+      ]
+).filter((mode) => process.env.T3_ACP_NO_PLAN_MODE !== "1" || mode.id !== "architect");
 
 function modeState(): AcpSchema.SessionModeState {
   return {

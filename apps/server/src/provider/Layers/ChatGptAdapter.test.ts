@@ -110,7 +110,12 @@ describe("ChatGptAdapter", () => {
           },
         );
         const threadId = ThreadId.make("chatgpt-native-history");
-        const deltaFiber = yield* adapter.streamEvents.pipe(
+        const events = yield* adapter.subscribeEventStream!({
+          delivery: "lossless",
+          filter: { threadId, types: ["content.delta"] },
+        });
+        const deltaFiber = yield* events.pipe(
+          Stream.orDie,
           Stream.filter((event) => event.type === "content.delta"),
           Stream.runHead,
           Effect.forkChild,

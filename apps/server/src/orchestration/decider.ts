@@ -3,6 +3,7 @@ import {
   MAX_SCRIPT_ID_LENGTH,
   SCRIPT_RUN_COMMAND_PATTERN,
   MessageId,
+  OrchestrationProposedPlanId,
   ThreadLinkedPullRequest,
   UserInputRequestedPayload,
   isImportedAgentSessionMessageId,
@@ -53,8 +54,10 @@ import {
   prepareMessageReplySummary,
   validateMessageReplyCommand,
 } from "./messageReplyDecision.ts";
-import { threadHasQueuedTurnStart } from "./ThreadSettlementPolicy.ts";
+import { threadHasQueuedTurnStart, threadHasUnfinishedDeepPlan } from "./ThreadSettlementPolicy.ts";
 import { findProjectAgentClaimConflicts } from "../projectAgent/claimRules.ts";
+import { startDeepPlanRun, updateDeepPlanRun } from "../deepPlanning/deepPlanDecision.ts";
+import { deepPlanMarkdown } from "../deepPlanning/deepPlanMarkdown.ts";
 
 const monogramSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
@@ -336,6 +339,112 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
   Crypto.Crypto
 > {
   switch (command.type) {
+    case "thread.deep-plan.start":
+    case "thread.deep-plan.update": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (
+        command.type === "thread.deep-plan.start" &&
+        readModel.threads.some(
+          (candidate) =>
+            candidate.id !== thread.id &&
+            candidate.deepPlan?.id === command.runId &&
+            candidate.deepPlan.threadId === candidate.id,
+        )
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "The Deep Plan run ID is already owned by another thread.",
+        });
+      }
+      if (command.type === "thread.deep-plan.update" && command.mutation.type === "approve") {
+        const target = yield* requireThreadNotArchived({
+          readModel,
+          command,
+          threadId: command.mutation.implementationThreadId,
+        });
+        const occupied = readModel.threads.some(
+          (candidate) =>
+            candidate.id !== command.threadId &&
+            candidate.deepPlan?.threadId === candidate.id &&
+            candidate.deepPlan.approval?.implementationThreadId === target.id &&
+            candidate.deepPlan.id !== command.runId &&
+            candidate.deepPlan.phase !== "completed",
+        );
+        if (
+          occupied ||
+          (target.deepPlan != null &&
+            target.deepPlan.id !== command.runId &&
+            target.deepPlan.phase !== "completed")
+        ) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: "The implementation thread already belongs to another active Deep Plan.",
+          });
+        }
+      }
+      const run =
+        command.type === "thread.deep-plan.start"
+          ? yield* startDeepPlanRun(command, thread.deepPlan)
+          : yield* updateDeepPlanRun(thread.deepPlan, command);
+      const runEvent: PlannedOrchestrationEvent = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: thread.id,
+          commandId: command.commandId,
+          occurredAt: command.createdAt,
+        })),
+        type: "thread.deep-plan-updated",
+        payload: {
+          threadId: thread.id,
+          run,
+          updatedAt: run.updatedAt,
+          ...(thread.deepPlan?.approval?.implementationThreadId !== undefined &&
+          thread.deepPlan.approval.implementationThreadId !== run.approval?.implementationThreadId
+            ? { previousImplementationThreadId: thread.deepPlan.approval.implementationThreadId }
+            : {}),
+        },
+      };
+      if (
+        command.type === "thread.deep-plan.update" &&
+        run.plan !== null &&
+        (command.mutation.type === "publish-plan" || command.mutation.type === "approve")
+      ) {
+        const planId = OrchestrationProposedPlanId.make(`deep-plan:${run.id}`);
+        const previousPlan = thread.proposedPlans.find((candidate) => candidate.id === planId);
+        const proposedPlanEvent: PlannedOrchestrationEvent = {
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: thread.id,
+            commandId: command.commandId,
+            occurredAt: command.createdAt,
+          })),
+          type: "thread.proposed-plan-upserted",
+          payload: {
+            threadId: thread.id,
+            proposedPlan: {
+              id: planId,
+              turnId:
+                previousPlan?.turnId ??
+                thread.session?.activeTurnId ??
+                thread.latestTurn?.turnId ??
+                null,
+              planMarkdown: deepPlanMarkdown(run.plan),
+              deepPlan: { runId: run.id, planVersion: run.plan.version },
+              implementedAt: run.approval?.approvedAt ?? null,
+              implementationThreadId: run.approval?.implementationThreadId ?? null,
+              createdAt: previousPlan?.createdAt ?? command.createdAt,
+              updatedAt: run.updatedAt,
+            },
+          },
+        };
+        return [runEvent, proposedPlanEvent];
+      }
+      return runEvent;
+    }
     case "project.create": {
       yield* requireProjectAbsent({
         readModel,
@@ -953,6 +1062,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           commandType: command.type,
           detail: `thread ${command.threadId} changed before automatic settlement`,
         });
+      }
+      if (command.type === "thread.auto-settle" && threadHasUnfinishedDeepPlan(thread)) {
+        return yield* new OrchestrationThreadSettleBlockedError({ threadId: command.threadId });
       }
       // The server owns settle eligibility. A stale command must not settle
       // a thread whose session is coming alive or working.

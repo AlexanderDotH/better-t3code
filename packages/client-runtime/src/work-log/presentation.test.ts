@@ -4,6 +4,7 @@ import { ThreadId } from "@t3tools/contracts";
 
 import {
   commandDetailRepeatsCommand,
+  isCompactionConflictWorkEntry,
   extractCommandOutputText,
   resolveViewedImageAsset,
   resolveWorkEntryToolPresentation,
@@ -16,6 +17,44 @@ import {
   workEntryDisplayIndicatesToolFailure,
   workEntryIndicatesToolSuccess,
 } from "./presentation.js";
+
+describe("compaction conflicts", () => {
+  const conflict = "failed to submit turn input: ActiveTurnNotSteerable { turn_kind: Compact }";
+  it("hides only recoverable provider errors", () => {
+    const entry = {
+      label: conflict,
+      tone: "error" as const,
+      sourceActivityKind: "runtime.error",
+    };
+    expect(isCompactionConflictWorkEntry(entry)).toBe(true);
+    expect(
+      isCompactionConflictWorkEntry({
+        ...entry,
+        label: "Provider turn start failed",
+        detail: conflict,
+        sourceActivityKind: "provider.turn.start.failed",
+      }),
+    ).toBe(true);
+    expect(
+      isCompactionConflictWorkEntry({
+        ...entry,
+        label: conflict.replace("Compact", "Review"),
+      }),
+    ).toBe(false);
+    expect(
+      isCompactionConflictWorkEntry({
+        ...entry,
+        sourceActivityKind: "tool.completed",
+      }),
+    ).toBe(false);
+    expect(
+      isCompactionConflictWorkEntry({
+        ...entry,
+        label: "Authentication failed",
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("workEntryIndicatesToolFailure", () => {
   const base = {

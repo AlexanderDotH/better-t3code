@@ -63,36 +63,40 @@ describe("shouldUseCompactComposerFooter", () => {
 });
 
 describe("shouldUseCompactComposerControls", () => {
-  it("shows full controls when enabled and there is room, with a compact fallback", () => {
+  it("keeps expanded controls when wide plan actions use a compact footer", () => {
     expect(
-      shouldUseCompactComposerControls({
-        expandedControlsEnabled: true,
-        footerCompact: false,
-        inContextStrip: false,
-      }),
-    ).toBe(false);
-    expect(
-      shouldUseCompactComposerControls({
-        expandedControlsEnabled: true,
-        footerCompact: true,
-        inContextStrip: false,
+      shouldUseCompactComposerFooter(COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX - 1, {
+        hasWideActions: true,
       }),
     ).toBe(true);
     expect(
       shouldUseCompactComposerControls({
-        expandedControlsEnabled: false,
-        footerCompact: false,
+        expandedControlsEnabled: true,
         inContextStrip: false,
-      }),
-    ).toBe(true);
-    expect(
-      shouldUseCompactComposerControls({
-        expandedControlsEnabled: false,
-        footerCompact: true,
-        inContextStrip: true,
       }),
     ).toBe(false);
   });
+
+  it("respects the compact controls preference", () => {
+    expect(
+      shouldUseCompactComposerControls({
+        expandedControlsEnabled: false,
+        inContextStrip: false,
+      }),
+    ).toBe(true);
+  });
+
+  it.each([false, true])(
+    "keeps context strip controls expanded when expanded controls are %s",
+    (expandedControlsEnabled) => {
+      expect(
+        shouldUseCompactComposerControls({
+          expandedControlsEnabled,
+          inContextStrip: true,
+        }),
+      ).toBe(false);
+    },
+  );
 });
 
 describe("shouldUseCompactComposerPrimaryActions", () => {

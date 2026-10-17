@@ -65,6 +65,69 @@ function makeMemoryPreferenceDependencies() {
 }
 
 describe("sanitizeMobilePreferences", () => {
+  it.effect(
+    "keeps response details opt-in and retains the choice after unrelated edits and reload",
+    () => {
+      const dependencies = makeMemoryPreferenceDependencies();
+      return Effect.gen(function* () {
+        const first = yield* make();
+        expect((yield* first.load).responseMetricsEnabled ?? false).toBe(false);
+        yield* first.savePatch({ responseMetricsEnabled: true });
+        yield* first.savePatch({ baseFontSize: 20 });
+        const second = yield* make();
+        expect((yield* second.load).responseMetricsEnabled).toBe(true);
+        yield* second.savePatch({ responseMetricsEnabled: false });
+        const third = yield* make();
+        expect((yield* third.load).responseMetricsEnabled).toBe(false);
+        expect(
+          sanitizeMobilePreferences({ responseMetricsEnabled: "true" } as never),
+        ).not.toHaveProperty("responseMetricsEnabled");
+      }).pipe(
+        Effect.provideService(MobileDatabase, dependencies.database),
+        Effect.provideService(MobileSecureStorage, dependencies.secureStorage),
+      );
+    },
+  );
+
+  it("defaults context usage to visible while preserving explicit visibility preferences", () => {
+    expect(sanitizeMobilePreferences({}).contextWindowMeterEnabled ?? true).toBe(true);
+    for (const contextWindowMeterEnabled of [true, false]) {
+      expect(sanitizeMobilePreferences({ contextWindowMeterEnabled })).toEqual({
+        contextWindowMeterEnabled,
+      });
+    }
+    expect(
+      sanitizeMobilePreferences({ contextWindowMeterEnabled: "false" } as never),
+    ).not.toHaveProperty("contextWindowMeterEnabled");
+  });
+
+  it.effect("retains context visibility across preference patches and app reloads", () => {
+    const dependencies = makeMemoryPreferenceDependencies();
+    return Effect.gen(function* () {
+      yield* dependencies.database.savePreferencesJson(JSON.stringify({ baseFontSize: 18 }), 1);
+      const firstLaunch = yield* make();
+      expect((yield* firstLaunch.load).contextWindowMeterEnabled ?? true).toBe(true);
+      yield* firstLaunch.savePatch({ contextWindowMeterEnabled: false });
+
+      const secondLaunch = yield* make();
+      expect((yield* secondLaunch.load).contextWindowMeterEnabled).toBe(false);
+      const afterUnrelatedPatch = yield* secondLaunch.savePatch({ baseFontSize: 20 });
+      expect(afterUnrelatedPatch.contextWindowMeterEnabled).toBe(false);
+
+      const thirdLaunch = yield* make();
+      expect((yield* thirdLaunch.load).contextWindowMeterEnabled).toBe(false);
+      yield* thirdLaunch.update(() => ({ contextWindowMeterEnabled: true }));
+
+      const fourthLaunch = yield* make();
+      const restored = yield* fourthLaunch.load;
+      expect(restored.contextWindowMeterEnabled).toBe(true);
+      expect(restored.baseFontSize).toBe(20);
+    }).pipe(
+      Effect.provideService(MobileDatabase, dependencies.database),
+      Effect.provideService(MobileSecureStorage, dependencies.secureStorage),
+    );
+  });
+
   it("preserves pacing preferences and drops invalid workday lengths", () => {
     expect(
       sanitizeMobilePreferences({ usagePacingEnabled: false, usagePacingWorkdayHours: 24 }),

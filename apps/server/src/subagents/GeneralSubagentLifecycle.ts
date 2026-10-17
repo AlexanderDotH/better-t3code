@@ -11,10 +11,10 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
-import type * as Scope from "effect/Scope";
-import * as Stream from "effect/Stream";
+import * as Scope from "effect/Scope";
 
 import type { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
+import { consumeProviderEvents } from "../provider/providerEventHub.ts";
 import type { ThreadBackgroundLivenessService } from "../orchestration/ThreadBackgroundLiveness.ts";
 import {
   assistantTextFromCompletedItem,
@@ -218,16 +218,22 @@ export function makeGeneralSubagentLifecycle(dependencies: GeneralSubagentLifecy
     if (status) yield* settleWorker(worker, status, generalSubagentTerminalDetail(event));
   });
 
-  const startEventHandling = Stream.runForEach(transport.events, (event) =>
-    handleWorkerEvent(event).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("General subagent event handling failed", {
-          eventId: event.eventId,
-          cause: Cause.pretty(cause),
-        }),
+  const startEventHandling = consumeProviderEvents(
+    {
+      streamEvents: transport.events,
+      ...(transport.consumeEvents ? { consumeEvents: transport.consumeEvents } : {}),
+    },
+    (event) =>
+      handleWorkerEvent(event).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("General subagent event handling failed", {
+            eventId: event.eventId,
+            cause: Cause.pretty(cause),
+          }),
+        ),
       ),
-    ),
-  ).pipe(Effect.forkIn(coordinatorScope));
+    { delivery: "lossless" },
+  ).pipe(Effect.provideService(Scope.Scope, coordinatorScope));
 
   const disposeWorker = Effect.fn("GeneralSubagentLifecycle.disposeWorker")(function* (
     worker: ActiveGeneralSubagent,

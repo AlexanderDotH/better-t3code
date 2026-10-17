@@ -111,6 +111,24 @@ export function applyThreadDetailEvent(
     case "project.deleted":
       return { kind: "unchanged" };
 
+    case "thread.deep-plan-updated": {
+      const run = event.payload.run;
+      const ownsRun = event.payload.threadId === thread.id;
+      const implementsRun = run.approval?.implementationThreadId === thread.id;
+      if (!ownsRun && !implementsRun && thread.deepPlan?.id !== run.id)
+        return { kind: "unchanged" };
+      if (thread.deepPlan?.id === run.id && thread.deepPlan.revision >= run.revision)
+        return { kind: "unchanged" };
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          deepPlan: ownsRun || implementsRun ? run : null,
+          updatedAt: event.payload.updatedAt,
+        },
+      };
+    }
+
     // ── Thread lifecycle ────────────────────────────────────────────
     case "thread.created":
       return {

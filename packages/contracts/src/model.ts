@@ -145,7 +145,12 @@ export const ModelSelectionSupport = Schema.Struct({
 });
 export type ModelSelectionSupport = typeof ModelSelectionSupport.Type;
 
-export const ModelSelectionPurpose = Schema.Literals(["agent", "text-generation", "decision"]);
+export const ModelSelectionPurpose = Schema.Literals([
+  "agent",
+  "text-generation",
+  "decision",
+  "context-compaction",
+]);
 export type ModelSelectionPurpose = typeof ModelSelectionPurpose.Type;
 
 /** Capability assumptions for selectable models advertised by older servers. */

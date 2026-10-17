@@ -6,6 +6,7 @@ import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 
 import type { ProviderService } from "../provider/Services/ProviderService.ts";
+import { consumeProviderEvents, type ConsumeProviderEvents } from "../provider/providerEventHub.ts";
 import * as ResourceProtection from "../resourceProtection/SubagentResourceGovernor.ts";
 import type { ActiveFetchWorker } from "./FetchWorkerState.ts";
 
@@ -138,8 +139,17 @@ export function makeFetchWorkerTransport(dependencies: FetchWorkerTransportDepen
       decision,
     });
 
+  const consumeEvents: ConsumeProviderEvents | undefined =
+    (Object.hasOwn(dependencies.providerService, "consumeEvents") &&
+      dependencies.providerService.consumeEvents) ||
+    (Object.hasOwn(dependencies.providerService, "subscribeEvents") &&
+      dependencies.providerService.subscribeEvents)
+      ? (handler, options) => consumeProviderEvents(dependencies.providerService, handler, options)
+      : undefined;
+
   return {
     events: dependencies.providerService.streamEvents,
+    ...(consumeEvents ? { consumeEvents } : {}),
     awaitAdmission,
     interrupt,
     forceStop,

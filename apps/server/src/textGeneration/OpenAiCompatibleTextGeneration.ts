@@ -1,3 +1,4 @@
+import { makeContextSummarizer } from "./ContextSummaryGeneration.ts";
 import {
   type LmStudioSettings,
   type ModelSelection,
@@ -114,6 +115,12 @@ export function makeOpenAiCompatibleTextGeneration(
   });
 
   return {
+    summarizeContext: makeContextSummarizer((input) =>
+      runJson({
+        ...input,
+        operation: "summarizeContext",
+      }),
+    ),
     decisionGeneration: makePromptedDecisionProviderFromStructuredOutput((input) =>
       runJson({
         operation: "decisionGeneration",

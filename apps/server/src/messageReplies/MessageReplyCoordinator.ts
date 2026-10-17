@@ -32,13 +32,13 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
-import * as Stream from "effect/Stream";
 
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { findOpenPendingInteractions } from "../orchestration/pendingInteractionLifecycle.ts";
 import { ThreadBackgroundLivenessService } from "../orchestration/ThreadBackgroundLiveness.ts";
 import { ProviderService } from "../provider/Services/ProviderService.ts";
+import { consumeProviderEvents } from "../provider/providerEventHub.ts";
 import * as ResourceProtection from "../resourceProtection/SubagentResourceGovernor.ts";
 import { buildMessageReplyHandoff, formatMessageReplyAnswers } from "./MessageReplyPrompt.ts";
 import { makeMessageReplyProjection } from "./MessageReplyProjection.ts";
@@ -791,10 +791,11 @@ const make = Effect.gen(function* () {
           : undefined);
       if (text) {
         const previous = run.itemText.get(event.itemId ?? "assistant") ?? "";
+        // Completion summaries can trim whitespace that remains in streamed deltas.
         const missing =
           previous.length > 0 && text.startsWith(previous)
             ? text.slice(previous.length)
-            : previous.length > 0 && previous.endsWith(text)
+            : previous.length > 0 && previous.trimEnd().endsWith(text.trim())
               ? ""
               : `${run.assistantText.length > 0 ? "\n\n" : ""}${text}`;
         run.assistantText += missing;
@@ -855,21 +856,21 @@ const make = Effect.gen(function* () {
     if (outcome) yield* Deferred.succeed(run.terminal, outcome);
   });
 
-  const events = providerService.subscribeEvents
-    ? yield* providerService.subscribeEvents
-    : providerService.streamEvents;
-  yield* Stream.runForEach(events, (event) =>
-    handleEvent(event).pipe(
-      Effect.catchCause((cause) => {
-        const run = runs.get(event.threadId);
-        return run
-          ? Deferred.succeed(run.terminal, { status: "error", detail: Cause.pretty(cause) }).pipe(
-              Effect.asVoid,
-            )
-          : Effect.logWarning("Reply event handling failed", { cause: Cause.pretty(cause) });
-      }),
-    ),
-  ).pipe(Effect.forkIn(scope));
+  yield* consumeProviderEvents(
+    providerService,
+    (event) =>
+      handleEvent(event).pipe(
+        Effect.catchCause((cause) => {
+          const run = runs.get(event.threadId);
+          return run
+            ? Deferred.succeed(run.terminal, { status: "error", detail: Cause.pretty(cause) }).pipe(
+                Effect.asVoid,
+              )
+            : Effect.logWarning("Reply event handling failed", { cause: Cause.pretty(cause) });
+        }),
+      ),
+    { delivery: "lossless" },
+  ).pipe(Scope.provide(scope));
 
   const cancelThread: MessageReplyCoordinatorShape["cancelThread"] = (threadId) =>
     Effect.forEach(

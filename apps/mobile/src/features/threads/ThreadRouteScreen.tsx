@@ -1,4 +1,5 @@
 import { copyThreadTranscript } from "@t3tools/client-runtime/thread-transcript";
+import { selectDurableDeepPlan } from "@t3tools/client-runtime/deep-planning";
 
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
@@ -1218,6 +1219,8 @@ function ThreadRouteContent(
           feedbackSubmissions={composer.feedbackSubmissions}
           onDismissFeedback={composer.dismissFeedback}
           selectedThreadFeed={composer.selectedThreadFeed}
+          contextWindowSnapshot={composer.contextWindowSnapshot}
+          responseMetrics={composer.responseMetrics}
           subagents={selectedThreadDetail?.subagents ?? []}
           activeWorkStartedAt={composer.activeWorkStartedAt}
           isCompacting={composer.isCompacting}
@@ -1255,6 +1258,19 @@ function ThreadRouteContent(
           activePendingUserInputAnswers={requests.activePendingUserInputAnswers}
           respondingUserInputId={requests.respondingUserInputId}
           draftMessage={composer.draftMessage}
+          composerMode={composer.composerMode}
+          deepPlanSourceRefs={composer.deepPlanSourceRefs}
+          deepPlan={selectDurableDeepPlan(
+            {
+              ...(selectedThreadDetail ?? selectedThread),
+              environmentId: selectedThread.environmentId,
+            },
+            threadShells,
+          )}
+          onUpdateComposerMode={composer.onUpdateComposerMode}
+          onUpdateDeepPlanSources={composer.setDeepPlanSourceRefs}
+          onRefineDeepPlan={composer.onReviseDeepPlan}
+          onImplementPlanInNewThread={composer.onImplementPlanInNewThread}
           messageReply={composer.messageReply}
           messageRepliesEnabled={composer.messageRepliesEnabled}
           messageReplySending={composer.messageReplySending}

@@ -508,6 +508,28 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
+  it.effect("summarizes context with the selected Luna model and no MCP tools", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          summary: "Keep offline mode. The server change is verified; mobile remains.",
+        }),
+        stdinMustContain: "previousCheckpoint",
+        requireArg: "--disable multi_agent -c mcp_servers={}",
+      },
+      (generation) =>
+        Effect.gen(function* () {
+          const result = yield* generation.summarizeContext!({
+            cwd: process.cwd(),
+            modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.6-luna"),
+            previousSummary: "Keep offline mode.",
+            transcript: "The server change passed its tests.",
+          });
+          expect(result.summary).toContain("offline mode");
+        }),
+    ),
+  );
+
   it.effect("reviews plan parallelism through Codex structured output", () =>
     withFakeCodexEnv(
       {

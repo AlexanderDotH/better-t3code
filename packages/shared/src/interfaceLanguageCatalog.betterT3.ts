@@ -175,6 +175,162 @@ const betterT3SettingsCatalog = defineLocalizedInterfaceCatalog({
     "Prompt verbessert",
     "Prompt amélioré",
   ],
+  "settings.betterT3.preview.promptImprovement.original": [
+    "Send as written",
+    "Unverändert senden",
+    "Envoyer tel quel",
+  ],
+  "settings.betterT3.preview.promptImprovement.improved": [
+    "Improve wording",
+    "Formulierung verbessern",
+    "Améliorer la formulation",
+  ],
+  "settings.betterT3.preview.example": ["Example", "Beispiel", "Exemple"],
+  "settings.betterT3.preview.examples.agents.panel": [
+    "Native Agents panel",
+    "Natives Agents-Panel",
+    "Panneau Agents natif",
+  ],
+  "settings.betterT3.preview.examples.agents.floating": [
+    "Floating agent pills",
+    "Schwebende Agenten-Anzeigen",
+    "Pastilles flottantes",
+  ],
+  "settings.betterT3.preview.examples.context.title": [
+    "Model context",
+    "Modellkontext",
+    "Contexte du modèle",
+  ],
+  "settings.betterT3.preview.examples.context.summary": ["Checkpoint", "Zusammenfassung", "Résumé"],
+  "settings.betterT3.preview.examples.context.preserved": [
+    "The full chat stays available.",
+    "Der vollständige Chat bleibt erhalten.",
+    "L’historique complet est conservé.",
+  ],
+  "settings.betterT3.preview.examples.context.background": [
+    "Better T3 Code",
+    "Better T3 Code",
+    "Better T3 Code",
+  ],
+  "settings.betterT3.preview.examples.context.native": ["Codex", "Codex", "Codex"],
+  "settings.betterT3.compaction.codexDescription": [
+    "Uses Codex’s built-in context compaction.",
+    "Nutzt die integrierte Kontextkompaktierung von Codex.",
+    "Utilise la compression du contexte intégrée à Codex.",
+  ],
+  "settings.betterT3.compaction.betterT3Description": [
+    "Prepares summaries in the background. Codex takes over when no summary is ready.",
+    "Bereitet Zusammenfassungen im Hintergrund vor. Falls keine Zusammenfassung bereitsteht, übernimmt Codex.",
+    "Prépare des résumés en arrière-plan. Codex prend le relais si aucun résumé n’est prêt.",
+  ],
+  "settings.betterT3.preview.examples.git.compact": [
+    "Compact Git actions",
+    "Kompakte Git-Aktionen",
+    "Actions Git compactes",
+  ],
+  "settings.betterT3.preview.examples.divider.hidden": [
+    "Hide the divider",
+    "Trennlinie ausblenden",
+    "Masquer le séparateur",
+  ],
+  "settings.betterT3.preview.examples.divider.visible": [
+    "Show the divider",
+    "Trennlinie anzeigen",
+    "Afficher le séparateur",
+  ],
+  "settings.betterT3.preview.examples.chat.request": [
+    "Add login tests.",
+    "Ergänze Login-Tests.",
+    "Ajoute des tests de connexion.",
+  ],
+  "settings.betterT3.preview.examples.chat.reply": [
+    "Cover the error case too.",
+    "Prüfe auch den Fehlerfall.",
+    "Couvre aussi le cas d’erreur.",
+  ],
+  "settings.betterT3.preview.examples.flow.code": ["Code", "Code", "Code"],
+  "settings.betterT3.preview.examples.flow.tests": ["Tests", "Tests", "Tests"],
+  "settings.betterT3.preview.examples.voice.title": [
+    "Example: German dictation",
+    "Beispiel: deutsches Diktat",
+    "Exemple : dictée en allemand",
+  ],
+  "settings.betterT3.preview.examples.index.title": [
+    "How project context reaches the chat",
+    "So gelangt Projektkontext in den Chat",
+    "Du projet au contexte de discussion",
+  ],
+  "settings.betterT3.preview.examples.index.files": [
+    "Project files",
+    "Projektdateien",
+    "Fichiers du projet",
+  ],
+  "settings.betterT3.preview.examples.index.facts": [
+    "Project Index",
+    "Projektindex",
+    "Index du projet",
+  ],
+  "settings.betterT3.preview.examples.index.context": [
+    "Relevant context",
+    "Relevanter Kontext",
+    "Contexte pertinent",
+  ],
+  "settings.betterT3.preview.examples.index.description": [
+    "The index finds project facts that help with the current request.",
+    "Der Index findet Projektwissen, das zur aktuellen Anfrage passt.",
+    "L’index retrouve les informations utiles à la demande en cours.",
+  ],
+  "settings.betterT3.preview.examples.sidebar.title": [
+    "Sidebar preview",
+    "Sidebar-Vorschau",
+    "Aperçu de la barre latérale",
+  ],
+  "settings.betterT3.preview.examples.sidebar.recent": [
+    "Recently active",
+    "Kürzlich aktiv",
+    "Activité récente",
+  ],
+  "settings.betterT3.preview.examples.sidebar.earlier": [
+    "Created recently",
+    "Kürzlich erstellt",
+    "Créée récemment",
+  ],
+  "settings.betterT3.preview.examples.sidebar.inactive": [
+    "Inactive for 30 days",
+    "Seit 30 Tagen inaktiv",
+    "Inactive depuis 30 jours",
+  ],
+  "settings.betterT3.preview.examples.sidebar.merged": [
+    "Branch merged",
+    "Branch gemergt",
+    "Branche fusionnée",
+  ],
+  "settings.betterT3.preview.examples.sidebar.more": [
+    "{{count}} more",
+    "{{count}} weitere",
+    "{{count}} de plus",
+  ],
+  "settings.betterT3.preview.examples.sidebar.settled": [
+    "Settled: {{count}}",
+    "Abgelegt: {{count}}",
+    "Classées : {{count}}",
+  ],
+  "settings.betterT3.preview.examples.sidebar.description": [
+    "Example projects with up to {{count}} chat previews each. Updates with preview count, sorting, draft indicators, and settling settings.",
+    "Beispielprojekte mit jeweils bis zu {{count}} Chat-Vorschauen. Reagiert auf Vorschauanzahl, Sortierung, Entwurfsanzeigen und Ablage.",
+    "Projets fictifs avec au plus {{count}} aperçus chacun. Reflète le nombre d’aperçus, le tri, les brouillons et le classement.",
+  ],
+
+  "settings.betterT3.preview.promptImprovement.input": [
+    "fix login bug dont change api",
+    "mach den login fehler weg und lass api so",
+    "corrige bug connexion touche pas api",
+  ],
+  "settings.betterT3.preview.promptImprovement.output": [
+    "Fix the login bug. Keep the API unchanged.",
+    "Behebe den Login-Fehler. Lass die API unverändert.",
+    "Corrige le bug de connexion sans modifier l’API.",
+  ],
   "settings.betterT3.preview.agent.workflow": ["Workflow", "Workflow", "Flux de travail"],
   "settings.betterT3.preview.agent.coordinated": ["Coordinated", "Koordiniert", "Coordonné"],
   "settings.betterT3.preview.agent.agent": ["Agent", "Agent", "Agent"],
@@ -558,6 +714,16 @@ const betterT3SettingsCatalog = defineLocalizedInterfaceCatalog({
 type FeatureLabel = readonly [en: string, de: string, fr: string];
 
 const featureLabels = {
+  "agent.contextCompaction": [
+    "Context compaction engine",
+    "Engine für Kontextkompaktierung",
+    "Moteur de compression du contexte",
+  ],
+  "agent.contextCompactionModel": [
+    "Context compaction model",
+    "Modell für Kontextkomprimierung",
+    "Modèle de compression du contexte",
+  ],
   "chat.visualizations": [
     "Diagrams & data visualization",
     "Diagramme & Datenvisualisierung",
@@ -755,6 +921,21 @@ const featureLabels = {
 } as const satisfies Readonly<Record<BetterT3FeatureId, FeatureLabel>>;
 
 const featureDescriptionOverrides: Partial<Record<BetterT3FeatureId, FeatureLabel>> = {
+  "agent.promptImprovement": [
+    "Improve wording, grammar, and clarity before sending your prompt. Preserve its language and requirements.",
+    "Verbessert Formulierung, Grammatik und Klarheit vor dem Senden. Sprache und Anforderungen bleiben erhalten.",
+    "Améliore la formulation, la grammaire et la clarté avant l’envoi. La langue et les exigences sont conservées.",
+  ],
+  "agent.contextCompaction": [
+    "Choose the compaction engine for Codex chats in this environment. The full chat history stays available.",
+    "Wähle die Kontextkompaktierung für Codex-Chats in dieser Umgebung. Der vollständige Chatverlauf bleibt erhalten.",
+    "Choisissez le moteur de compression des conversations Codex dans cet environnement. L’historique complet reste disponible.",
+  ],
+  "agent.contextCompactionModel": [
+    "Used by Better T3 Code. A regular model selects relevant content and summarizes it. Optionally choose a Decision Model for selection; a regular model still summarizes. Automatic prefers Luna, then the text-generation model. Conversation content goes to the chosen providers.",
+    "Wird von Better T3 Code verwendet. Ein normales Modell wählt relevante Inhalte aus und fasst sie zusammen. Optional übernimmt ein Decision Model die Auswahl; ein normales Modell fasst weiterhin zusammen. Automatisch bevorzugt Luna, danach das Textgenerierungsmodell. Gesprächsinhalte gehen an die gewählten Provider.",
+    "Utilisé par Better T3 Code. Un modèle classique sélectionne le contenu utile et le résume. Un Decision Model peut assurer la sélection ; un modèle classique produit toujours le résumé. Automatique privilégie Luna, puis le modèle de génération de texte. Le contenu est envoyé aux fournisseurs choisis.",
+  ],
   "knowledge.projectIndexingMaster":
     projectIndexingFeatureCopy["knowledge.projectIndexingMaster"].description,
   "knowledge.projectIndexingDefaultModel":

@@ -7,7 +7,13 @@ import type {
 } from "@t3tools/contracts";
 
 export function isThreadAggregateEvent(event: OrchestrationEvent, threadId: ThreadId): boolean {
-  return event.aggregateKind === "thread" && event.aggregateId === threadId;
+  return (
+    event.aggregateKind === "thread" &&
+    (event.aggregateId === threadId ||
+      (event.type === "thread.deep-plan-updated" &&
+        (event.payload.run.approval?.implementationThreadId === threadId ||
+          event.payload.previousImplementationThreadId === threadId)))
+  );
 }
 
 function isRootThreadDetailEvent(event: OrchestrationEvent): boolean {
@@ -20,6 +26,7 @@ function isRootThreadDetailEvent(event: OrchestrationEvent): boolean {
       );
     case "thread.proposed-plan-upserted":
       return event.payload.subagentId === undefined;
+    case "thread.deep-plan-updated":
     case "thread.turn-abort-settled":
     case "thread.turn-diff-completed":
     case "thread.reverted":

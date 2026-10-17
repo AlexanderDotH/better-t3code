@@ -24,6 +24,8 @@ import {
   CommandId,
   ComposerContextId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  DeepPlanRunId,
+  RuntimeMode,
   EnvironmentId,
   EventId,
   MessageId,
@@ -40,6 +42,7 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { it as effectIt } from "@effect/vitest";
@@ -84,6 +87,8 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { ServerActivation } from "../../serverActivation.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
+
+const isRuntimeMode = Schema.is(RuntimeMode);
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
@@ -200,6 +205,8 @@ describe("ProviderCommandReactor", () => {
     readonly projectContext?: ProjectContextQuery["Service"];
     readonly decisionGeneration?: Partial<DecisionGeneration["Service"]>;
     readonly serverSettings?: Parameters<typeof ServerSettingsService.layerTest>[0];
+    readonly providerSnapshots?: ReadonlyArray<import("@t3tools/contracts").ServerProvider>;
+    readonly summarizeContext?: NonNullable<TextGeneration["Service"]["summarizeContext"]>;
   }) {
     const now = "2026-01-01T00:00:00.000Z";
     const baseDir =
@@ -254,7 +261,7 @@ describe("ProviderCommandReactor", () => {
           typeof input === "object" &&
           input !== null &&
           "runtimeMode" in input &&
-          (input.runtimeMode === "approval-required" || input.runtimeMode === "full-access")
+          isRuntimeMode(input.runtimeMode)
             ? input.runtimeMode
             : "full-access",
         ...(typeof input === "object" &&
@@ -359,7 +366,7 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
     );
-    const providerSnapshots = [
+    const providerSnapshots = input?.providerSnapshots ?? [
       {
         instanceId: modelSelection.instanceId,
         ...(input?.requiresNewThreadForModelChange === true
@@ -541,6 +548,7 @@ describe("ProviderCommandReactor", () => {
         Layer.mock(TextGeneration, {
           generateBranchName,
           generateThreadTitle,
+          ...(input?.summarizeContext ? { summarizeContext: input.summarizeContext } : {}),
         }),
       ),
       Layer.provideMerge(makeDecisionGenerationTestLayer(input?.decisionGeneration)),
@@ -555,7 +563,8 @@ describe("ProviderCommandReactor", () => {
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
-    const runEffect = <A, E>(effect: Effect.Effect<A, E>) => runtime!.runPromise(effect);
+    const runEffect = <A, E>(effect: Effect.Effect<A, E, SqlClient.SqlClient>) =>
+      runtime!.runPromise(effect);
 
     await Effect.runPromise(
       engine.dispatch({
@@ -794,6 +803,151 @@ describe("ProviderCommandReactor", () => {
     );
     expect(decideMany).not.toHaveBeenCalled();
   });
+
+  effectIt.effect.each(["approval-required", "auto-accept-edits", "auto", "full-access"] as const)(
+    "keeps the composer permission mode %s when starting a Deep Plan session",
+    (runtimeMode) =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() => createHarness());
+        yield* harness.engine.dispatch({
+          type: "thread.runtime-mode.set",
+          commandId: CommandId.make("set-composer-permissions"),
+          threadId: ThreadId.make("thread-1"),
+          runtimeMode,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.deep-plan.start",
+          commandId: CommandId.make("start-deep-plan"),
+          threadId: ThreadId.make("thread-1"),
+          runId: DeepPlanRunId.make("deep-run"),
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("start-deep-turn"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("deep-message"),
+            role: "user",
+            text: "Analyze the project",
+            attachments: [],
+          },
+          runtimeMode,
+          interactionMode: "plan",
+          createdAt: "2026-01-01T00:00:01.000Z",
+        });
+        yield* Effect.promise(harness.drain);
+        expect(harness.startSession).toHaveBeenCalledOnce();
+        expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({ runtimeMode });
+        expect(harness.startSession.mock.calls[0]?.[1]).not.toHaveProperty("sandboxMode");
+        expect(harness.sendTurn).toHaveBeenCalledOnce();
+        const model = yield* Effect.promise(harness.readModel);
+        const thread = model.threads.find((entry) => entry.id === "thread-1");
+        expect(thread?.runtimeMode).toBe(runtimeMode);
+        expect(thread?.session?.runtimeMode).toBe(runtimeMode);
+      }),
+  );
+
+  effectIt.effect("retains a full-access session when switching from Build to Deep Plan", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      yield* harness.engine.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.make("set-composer-permissions"),
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+      const startTurn = (suffix: string, interactionMode: "default" | "plan") =>
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`turn-${suffix}`),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId(`message-${suffix}`),
+            role: "user",
+            text: "Inspect the project",
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          interactionMode,
+          createdAt: "2026-01-01T00:00:01.000Z",
+        });
+      yield* startTurn("build", "default");
+      yield* Effect.promise(harness.drain);
+      yield* harness.engine.dispatch({
+        type: "thread.deep-plan.start",
+        commandId: CommandId.make("start-deep-plan"),
+        threadId: ThreadId.make("thread-1"),
+        runId: DeepPlanRunId.make("deep-run"),
+        createdAt: "2026-01-01T00:00:02.000Z",
+      });
+      yield* startTurn("deep", "plan");
+      yield* Effect.promise(harness.drain);
+      expect(harness.startSession).toHaveBeenCalledOnce();
+      expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({ runtimeMode: "full-access" });
+      expect(harness.sendTurn).toHaveBeenCalledTimes(2);
+      expect((yield* Effect.promise(harness.readModel)).threads[0]?.session?.runtimeMode).toBe(
+        "full-access",
+      );
+    }),
+  );
+
+  effectIt.effect(
+    "resumes a Deep Plan with Full Access after changing the composer permissions",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() => createHarness());
+        yield* harness.engine.dispatch({
+          type: "thread.deep-plan.start",
+          commandId: CommandId.make("deep-plan-before-permission-change"),
+          threadId: ThreadId.make("thread-1"),
+          runId: DeepPlanRunId.make("existing-deep-run"),
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        const startTurn = (suffix: string, runtimeMode: "approval-required" | "full-access") =>
+          harness.engine.dispatch({
+            type: "thread.turn.start",
+            commandId: CommandId.make(`start-${suffix}`),
+            threadId: ThreadId.make("thread-1"),
+            message: {
+              messageId: asMessageId(`message-${suffix}`),
+              role: "user",
+              text: "Continue analysis",
+              attachments: [],
+            },
+            runtimeMode,
+            interactionMode: "plan",
+            createdAt: "2026-01-01T00:00:01.000Z",
+          });
+        yield* startTurn("restricted", "approval-required");
+        yield* Effect.promise(harness.drain);
+        expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+          runtimeMode: "approval-required",
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.runtime-mode.set",
+          commandId: CommandId.make("grant-full-access"),
+          threadId: ThreadId.make("thread-1"),
+          runtimeMode: "full-access",
+          createdAt: "2026-01-01T00:00:02.000Z",
+        });
+        yield* Effect.promise(harness.drain);
+        yield* startTurn("resumed", "full-access");
+        yield* Effect.promise(harness.drain);
+        expect(harness.startSession).toHaveBeenCalledTimes(2);
+        expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
+          runtimeMode: "full-access",
+          resumeCursor: { opaque: "resume-1" },
+        });
+        expect(harness.startSession.mock.calls[1]?.[1]).not.toHaveProperty("sandboxMode");
+        expect(harness.sendTurn).toHaveBeenCalledTimes(2);
+        expect((yield* Effect.promise(harness.readModel)).threads[0]?.session?.runtimeMode).toBe(
+          "full-access",
+        );
+      }),
+  );
 
   it("gates retrieved Project Index context and fails open without persisting source text", async () => {
     const decisionModelSelection = createModelSelection(
@@ -1165,6 +1319,197 @@ describe("ProviderCommandReactor", () => {
     }),
   );
 
+  it.each([
+    { mode: "summary", stopDuringPreparation: false },
+    { mode: "selection", stopDuringPreparation: false },
+    { mode: "summary", stopDuringPreparation: true },
+    { mode: "selection", stopDuringPreparation: true },
+  ] as const)(
+    "preserves background context with $mode decisions (Stop: $stopDuringPreparation)",
+    async ({ mode, stopDuringPreparation }) => {
+      const codex = ProviderInstanceId.make("codex");
+      const summaryRequests: string[] = [];
+      const decisionRequests: string[] = [];
+      const summaryTranscripts: string[] = [];
+      const summaryStarted = Deferred.makeUnsafe<void>();
+      const releaseSummary = Deferred.makeUnsafe<void>();
+      const stopProcessed = Deferred.makeUnsafe<void>();
+      const harness = await createHarness({
+        interruptTurnEffect: () => Deferred.succeed(stopProcessed, undefined).pipe(Effect.asVoid),
+        serverSettings: {
+          contextCompactionModelSelection:
+            mode === "selection" ? { instanceId: codex, model: "test-classifier" } : null,
+        },
+        decisionGeneration: {
+          decide: (input) => {
+            decisionRequests.push(input.modelSelection.model);
+            return Effect.succeed({
+              model: input.modelSelection.model,
+              answers: Object.fromEntries(
+                Object.keys(input.questions).map((key) => [
+                  key,
+                  { choice: key === "0" ? "keep" : "omit" },
+                ]),
+              ),
+            });
+          },
+        },
+        providerSnapshots: [
+          {
+            instanceId: codex,
+            driver: ProviderDriverKind.make("codex"),
+            status: "ready",
+            enabled: true,
+            installed: true,
+            version: "test",
+            auth: { status: "authenticated" },
+            checkedAt: "2026-01-01T00:00:00.000Z",
+            skills: [],
+            slashCommands: [],
+            models: [
+              { slug: "test-luna", name: "Luna", isCustom: false, capabilities: null },
+              {
+                slug: "test-classifier",
+                name: "Decision Model",
+                isCustom: false,
+                capabilities: {
+                  selectionSupport: { agent: false, textGeneration: false, decision: "native" },
+                },
+              },
+            ],
+          },
+        ],
+        summarizeContext: (input) => {
+          summaryRequests.push(input.modelSelection.model);
+          summaryTranscripts.push(input.transcript);
+          return Effect.gen(function* () {
+            yield* Deferred.succeed(summaryStarted, undefined);
+            if (stopDuringPreparation) yield* Deferred.await(releaseSummary);
+            return { summary: "User requires offline operation. Earlier work is verified." };
+          });
+        },
+      });
+      const threadId = ThreadId.make("thread-1");
+      const createdAt = "2026-01-01T00:00:10.000Z";
+      await harness.runEffect(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          for (let index = 0; index < 6; index++) {
+            const id = `context-history-${index}`;
+            const role = index % 2 === 0 ? "user" : "assistant";
+            const text =
+              index === 0 ? "Keep this application offline." : `History message ${index}`;
+            const time = `2026-01-01T00:00:0${index}.000Z`;
+            yield* sql`INSERT INTO projection_thread_messages (
+          message_id, thread_id, turn_id, role, text, attachments_json, is_streaming, created_at, updated_at
+        ) VALUES (${id}, ${threadId}, NULL, ${role}, ${text}, '[]', 0, ${time}, ${time})`;
+          }
+        }),
+      );
+      await harness.engine
+        .dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("context-session-ready"),
+          threadId,
+          createdAt,
+          session: {
+            threadId,
+            status: "ready",
+            providerName: "codex",
+            providerInstanceId: codex,
+            runtimeSessionId: null,
+            abortState: null,
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: createdAt,
+          },
+        })
+        .pipe(Effect.runPromise);
+      await harness.engine
+        .dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make("context-usage"),
+          threadId,
+          createdAt,
+          activity: {
+            id: EventId.make("context-usage"),
+            kind: "context-window.updated",
+            tone: "info",
+            summary: "Context usage",
+            createdAt,
+            turnId: null,
+            payload: { usedTokens: 700, maxTokens: 1000 },
+          },
+        })
+        .pipe(Effect.runPromise);
+      if (stopDuringPreparation) {
+        await harness.runEffect(Deferred.await(summaryStarted));
+        await harness.runEffect(
+          harness.engine.dispatch({
+            type: "thread.turn.interrupt",
+            commandId: CommandId.make("context-stop-during-summary"),
+            threadId,
+            createdAt: "2026-01-01T00:00:10.500Z",
+          }),
+        );
+        await harness.runEffect(Deferred.await(stopProcessed));
+        expect(harness.sendTurn).not.toHaveBeenCalled();
+        await harness.runEffect(Deferred.succeed(releaseSummary, undefined));
+      }
+      await harness.drain();
+      expect(summaryRequests).toEqual(["test-luna"]);
+      expect(decisionRequests).toEqual([mode === "selection" ? "test-classifier" : "test-luna"]);
+      expect(summaryTranscripts[0]).toContain("Keep this application offline.");
+      expect(summaryTranscripts[0]).not.toContain("History message 1");
+      const prepared = await Effect.runPromise(
+        harness.snapshotQuery.getThreadDetailById(threadId, {
+          activityKinds: ["context-engine.prepared"],
+        }),
+      );
+      expect(Option.isSome(prepared) ? prepared.value.activities[0]?.payload : null).toMatchObject({
+        summary: expect.stringContaining("offline operation"),
+        summaryModelSelection: { instanceId: codex, model: "test-luna" },
+      });
+      await harness.engine
+        .dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("context-next-turn"),
+          threadId,
+          message: {
+            messageId: MessageId.make("context-next-message"),
+            role: "user",
+            text: "Continue with mobile.",
+            attachments: [],
+          },
+          interactionMode: "default",
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:11.000Z",
+        })
+        .pipe(Effect.runPromise);
+      await harness.drain();
+      expect(harness.startSession).toHaveBeenCalledWith(
+        threadId,
+        expect.objectContaining({ freshSession: true }),
+      );
+      expect(harness.sendTurn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          threadId,
+          input: "Continue with mobile.",
+          transcriptHandoff: expect.objectContaining({
+            text: expect.stringContaining("User requires offline operation."),
+          }),
+        }),
+      );
+      const thread = (await harness.readModel()).threads[0];
+      expect(thread?.messages).toHaveLength(7);
+      expect(thread?.messages[0]?.text).toBe("Keep this application offline.");
+      expect(
+        thread?.activities.some((activity) => activity.kind === "context-engine.applied"),
+      ).toBe(true);
+    },
+  );
+
   it("reacts to thread.turn.start by ensuring session and sending provider turn", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
@@ -1434,6 +1779,97 @@ describe("ProviderCommandReactor", () => {
       });
       yield* Effect.promise(() => harness.drain());
       expect(harness.compactThread).not.toHaveBeenCalled();
+    }),
+  );
+
+  effectIt.effect("keeps compacting after Stop and sends queued input after completion", () =>
+    Effect.gen(function* () {
+      const firstSent = yield* Deferred.make<void>();
+      const compacting = yield* Deferred.make<void>();
+      const releaseCompaction = yield* Deferred.make<void>();
+      const queuedSent = yield* Deferred.make<void>();
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          compactThreadEffect: () =>
+            Deferred.succeed(compacting, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseCompaction)),
+            ),
+        }),
+      );
+      const threadId = ThreadId.make("thread-1");
+      const now = "2026-01-01T00:00:00.000Z";
+      let sends = 0;
+      harness.sendTurn.mockImplementation(() =>
+        Deferred.succeed(sends++ === 0 ? firstSent : queuedSent, undefined).pipe(
+          Effect.as({ threadId, turnId: asTurnId("turn-background-compact") }),
+        ),
+      );
+      const send = (id: string, text: string) =>
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`cmd-background-compact-${id}`),
+          threadId,
+          message: {
+            messageId: asMessageId(`message-background-compact-${id}`),
+            role: "user",
+            text,
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        });
+      yield* send("first", "existing conversation");
+      yield* Deferred.await(firstSent);
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-background-compact-ready"),
+        threadId,
+        session: {
+          threadId,
+          status: "ready",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          runtimeSessionId: null,
+          abortState: null,
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      });
+      yield* send("compact", "/compact");
+      yield* Deferred.await(compacting);
+      const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+        (entry) => entry.id === threadId,
+      );
+      expect(thread?.session?.status).toBe("ready");
+      expect(thread?.session?.activeTurnId).toBeNull();
+      yield* harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-background-compact-stop"),
+        threadId,
+        createdAt: now,
+      });
+      yield* send("queued", "continue after compacting");
+      yield* Effect.promise(() => harness.drain());
+      expect(harness.interruptTurn).not.toHaveBeenCalled();
+      expect(harness.stopSession).not.toHaveBeenCalled();
+      expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+      yield* Deferred.succeed(releaseCompaction, undefined);
+      yield* Deferred.await(queuedSent);
+      yield* Effect.promise(() => harness.drain());
+      expect(harness.sendTurn).toHaveBeenLastCalledWith(
+        expect.objectContaining({ input: "continue after compacting" }),
+      );
+      const completed = (yield* Effect.promise(() => harness.readModel())).threads.find(
+        (entry) => entry.id === threadId,
+      );
+      expect(completed?.activities.filter((activity) => activity.tone === "error")).toEqual([]);
+      expect(
+        completed?.messages.filter((message) => message.text === "continue after compacting"),
+      ).toHaveLength(1);
     }),
   );
 
@@ -1721,7 +2157,7 @@ describe("ProviderCommandReactor", () => {
       const compactingThread = (yield* Effect.promise(() => harness.readModel())).threads.find(
         (entry) => entry.id === threadId,
       );
-      expect(compactingThread?.session?.status).toBe("starting");
+      expect(compactingThread?.session?.status).toBe("ready");
       yield* harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-queued-before-stop"),
@@ -1760,7 +2196,7 @@ describe("ProviderCommandReactor", () => {
       const stoppingThread = (yield* Effect.promise(() => harness.readModel())).threads.find(
         (entry) => entry.id === threadId,
       );
-      expect(stoppingThread?.session?.status).toBe("starting");
+      expect(stoppingThread?.session?.status).toBe("ready");
       yield* Deferred.succeed(releaseFailedStop, undefined);
       yield* Effect.promise(() => harness.drain());
 
@@ -1806,7 +2242,7 @@ describe("ProviderCommandReactor", () => {
       const restartedThread = (yield* Effect.promise(() => harness.readModel())).threads.find(
         (entry) => entry.id === threadId,
       );
-      expect(restartedThread?.session?.status).toBe("starting");
+      expect(restartedThread?.session?.status).toBe("ready");
       const restartedSession = restartedThread?.session;
       if (!restartedSession) return yield* Effect.die("Compaction session missing");
       yield* harness.engine.dispatch({

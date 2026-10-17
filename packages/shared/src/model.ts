@@ -7,6 +7,7 @@ import {
   type ModelSelectionPurpose,
   type ModelSelectionSupport,
   type ModelSelection,
+  type ServerProvider,
   ProviderDriverKind,
   ProviderInstanceId,
   T3_AUTO_REASONING_OPTION_ID,
@@ -71,7 +72,52 @@ export function supportsModelSelectionPurpose(
       return support.textGeneration;
     case "decision":
       return support.decision !== "none";
+    case "context-compaction":
+      return support.textGeneration || support.decision !== "none";
   }
+}
+
+export function resolveContextCompactionModel(input: {
+  readonly selection: ModelSelection | null;
+  readonly fallbackSelection: ModelSelection;
+  readonly providers: ReadonlyArray<ServerProvider>;
+}) {
+  const available = input.providers.filter(
+    (provider) => provider.enabled && provider.status === "ready",
+  );
+  const choices = available.flatMap((provider) =>
+    provider.models.map((model) => ({ provider, model })),
+  );
+  const automatic = choices.find(
+    ({ model }) =>
+      /luna/i.test(model.slug) && supportsModelSelectionPurpose(model, "text-generation"),
+  );
+  const summarySelection = stripAutoReasoning(
+    automatic
+      ? { instanceId: automatic.provider.instanceId, model: automatic.model.slug }
+      : input.fallbackSelection,
+  );
+  const selection = stripAutoReasoning(input.selection ?? summarySelection);
+  const selected = choices.find(
+    ({ provider, model }) =>
+      provider.instanceId === selection.instanceId &&
+      (model.slug === selection.model || model.aliases?.includes(selection.model)),
+  );
+  if (!selected) return undefined;
+  const mode = supportsModelSelectionPurpose(selected.model, "text-generation")
+    ? ("summary" as const)
+    : supportsModelSelectionPurpose(selected.model, "decision")
+      ? ("selection" as const)
+      : undefined;
+  if (mode === "summary") return { selection, mode };
+  if (mode !== "selection") return undefined;
+  const summarizer = choices.find(
+    ({ provider, model }) =>
+      provider.instanceId === summarySelection.instanceId &&
+      (model.slug === summarySelection.model || model.aliases?.includes(summarySelection.model)) &&
+      supportsModelSelectionPurpose(model, "text-generation"),
+  );
+  return summarizer ? { selection, mode, summarySelection } : undefined;
 }
 
 function getRawSelectionValueById(

@@ -21,6 +21,7 @@ import {
   extractCommandOutputText,
   extractWorkLogToolLifecycleStatus,
   isWorktreeSetupActivity,
+  isCompactionConflictWorkEntry,
   liveActivityToolStatus,
   normalizeCompactToolLabel,
   omitSupersededLifecycleMarkers,
@@ -450,12 +451,15 @@ function deriveWorkLogEntries(
     if (activity.kind === "task.started" && !isAgentTaskStartedActivity(activity)) continue;
     if (activity.kind === "task.updated" && !isTerminalTaskUpdate(activity)) continue;
     if (activity.kind === "tool.progress") continue;
-    if (activity.kind === "context-window.updated") continue;
+    if (activity.kind === "context-window.updated" || activity.kind === "response.metrics")
+      continue;
     if (activity.summary === "Checkpoint captured") continue;
     if (isNoContentRuntimeWarning(activity)) continue;
     if (isPlanBoundaryToolActivity(activity)) continue;
     if (isAgentInternalActivity(activity)) continue;
-    entries.push(toDerivedWorkLogEntry(activity));
+    const entry = toDerivedWorkLogEntry(activity);
+    if (isCompactionConflictWorkEntry(entry)) continue;
+    entries.push(entry);
   }
   return collapseDerivedWorkLogEntries(entries);
 }

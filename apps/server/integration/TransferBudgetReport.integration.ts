@@ -44,13 +44,13 @@ interface ProviderTransferBudget {
   readonly measuredTurnWebSocketMessages: number;
 }
 
-// These caps leave roughly 30% headroom above the client projection of the
-// deterministic 9 MB retained-result fixture. Full MCP results stay in
-// persistence, so accidentally shipping them again exceeds these caps by
-// orders of magnitude. The CI report preserves exact values for review.
+// These caps cover the client projection of the 9 MB retained-result fixture,
+// including saved response timing and usage. The total wire cap stays fixed;
+// full MCP results remain in persistence and would exceed it by orders of
+// magnitude. The CI report preserves exact values for review.
 const TRANSFER_BUDGET = {
   totalWireBytes: 15_500,
-  threadSnapshotWireBytes: 7_500,
+  threadSnapshotWireBytes: 8_000,
   measuredTurnWebSocketWireBytes: 8_000,
   measuredTurnWebSocketDecodedBytes: 68_000,
   measuredTurnWebSocketMessages: 21,

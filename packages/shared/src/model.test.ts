@@ -483,6 +483,24 @@ describe("readCustomModelEntries", () => {
 });
 
 describe("model selection purposes", () => {
+  it.each([
+    { textGeneration: true, decision: "none" as const, expected: true },
+    { textGeneration: false, decision: "native" as const, expected: true },
+    { textGeneration: false, decision: "prompted" as const, expected: true },
+    { textGeneration: false, decision: "none" as const, expected: false },
+  ])(
+    "accepts supported context compaction models: $textGeneration / $decision",
+    ({ expected, ...support }) => {
+      const model = {
+        capabilities: createModelCapabilities({
+          selectionSupport: { agent: false, ...support },
+          optionDescriptors: [],
+        }),
+      };
+      expect(supportsModelSelectionPurpose(model, "context-compaction")).toBe(expected);
+    },
+  );
+
   it("keeps legacy selectable models available for every non-native role", () => {
     const legacyModel = { isSelectable: true, capabilities: null };
     expect(resolveModelSelectionSupport(legacyModel)).toEqual({

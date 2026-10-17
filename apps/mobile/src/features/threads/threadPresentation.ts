@@ -1,6 +1,12 @@
 import type { StatusTone } from "../../components/StatusPill";
 import type { OrchestrationLatestTurn, OrchestrationSession } from "@t3tools/contracts";
 import { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import {
+  createInterfaceTranslator,
+  type InterfaceTranslator,
+} from "@t3tools/shared/interfaceLanguage";
+
+const englishTranslator = createInterfaceTranslator({ language: "en", locale: "en-US" });
 
 export type ThreadStatusKind =
   | "pending-approval"
@@ -37,6 +43,7 @@ function isLatestTurnSettled(
  */
 export function resolveThreadStatus(
   thread: EnvironmentThreadShell,
+  translator: InterfaceTranslator = englishTranslator,
 ): ThreadStatusPresentation | null {
   if (thread.hasPendingApprovals) {
     return {
@@ -103,13 +110,14 @@ export function resolveThreadStatus(
     isLatestTurnSettled(thread.latestTurn, thread.session) &&
     thread.hasActionableProposedPlan;
   if (hasPlanReadyPrompt) {
+    const deepPlanReady = thread.deepPlan?.phase === "awaitingApproval";
     return {
       kind: "plan-ready",
-      label: "Plan Ready",
-      pillClassName: "bg-primary/10",
-      textClassName: "text-foreground-secondary",
-      iconColor: "#bf5af2",
-      iconBackground: "rgba(191,90,242,0.22)",
+      label: translator.message(deepPlanReady ? "chat.deepPlan.ready" : "sidebar.status.planReady"),
+      pillClassName: deepPlanReady ? "bg-orange-500/10" : "bg-primary/10",
+      textClassName: deepPlanReady ? "text-adaptive-orange-700-400" : "text-foreground-secondary",
+      iconColor: deepPlanReady ? "#f97316" : "#bf5af2",
+      iconBackground: deepPlanReady ? "rgba(249,115,22,0.22)" : "rgba(191,90,242,0.22)",
       pulse: false,
     };
   }

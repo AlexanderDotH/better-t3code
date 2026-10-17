@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  DeepPlanRunId,
   McpCapabilityUnavailableError,
   PreviewAutomationUnavailableError,
   ProviderInstanceId,
@@ -40,6 +41,65 @@ it.effect("reports the scoped credential context when preview capability is unav
     expect(error.message).toContain("use a headless browser from the shell");
   });
 });
+
+it.effect(
+  "keeps old writable credentials readonly during Deep Plan planning and restores approved execution",
+  () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("deep-plan-owner");
+      const invocation: McpInvocationContext.McpInvocationScope = {
+        environmentId: EnvironmentId.make("local"),
+        ownerThreadId: threadId,
+        threadId,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        providerSessionId: "old-fullaccess-session",
+        capabilities: new Set(["workspace", "workspace-write", "deep-plan"]),
+        issuedAt: 1,
+        deepPlan: {
+          runId: DeepPlanRunId.make("run-1"),
+          runThreadId: threadId,
+          phase: "planning",
+          approvedPlanVersion: null,
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6" },
+        },
+      };
+      expect(
+        yield* McpInvocationContext.requireWorkspaceMcpCapability().pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+        ),
+      ).toBe(invocation);
+      expect(
+        yield* McpInvocationContext.requireWorkspaceWriteMcpCapability().pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.flip,
+        ),
+      ).toMatchObject({ _tag: "WorkspaceEditError", reason: "credential_not_authorized" });
+      const approved: McpInvocationContext.McpInvocationScope = {
+        ...invocation,
+        deepPlan: { ...invocation.deepPlan!, phase: "execution", approvedPlanVersion: 1 },
+      };
+      expect(
+        yield* McpInvocationContext.requireWorkspaceWriteMcpCapability().pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, approved),
+        ),
+      ).toBe(approved);
+      const review: McpInvocationContext.McpInvocationScope = {
+        ...approved,
+        deepPlan: { ...approved.deepPlan!, readOnly: true },
+      };
+      expect(
+        yield* McpInvocationContext.requireWorkspaceMcpCapability().pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, review),
+        ),
+      ).toBe(review);
+      expect(
+        yield* McpInvocationContext.requireWorkspaceWriteMcpCapability().pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, review),
+          Effect.flip,
+        ),
+      ).toMatchObject({ _tag: "WorkspaceEditError", reason: "credential_not_authorized" });
+    }),
+);
 
 it.effect("reports other missing capabilities with the neutral error", () => {
   const invocation: McpInvocationContext.McpInvocationScope = {

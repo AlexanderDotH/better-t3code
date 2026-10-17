@@ -1,11 +1,13 @@
 import { describe, expect, it } from "@effect/vitest";
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadId, DeepPlanRunId, EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as Effect from "effect/Effect";
 
 import type { ProcessRunner } from "../../processRunner.ts";
 import * as WorkspaceContext from "../../workspace/WorkspaceContext.ts";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import {
+  NATIVE_HARNESS_EXEC_COMMAND_TOOL,
   NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL,
   NATIVE_HARNESS_WORKSPACE_EDIT_TOOL,
   NATIVE_HARNESS_WORKSPACE_FIND_TOOL,
@@ -40,6 +42,87 @@ const unusedWorkspaceFileSystem = WorkspaceFileSystem.WorkspaceFileSystem.of({
 });
 
 describe("NativeProviderHarness", () => {
+  it.effect(
+    "honors Full Access for Deep Plan research commands while retaining plan and source boundaries",
+    () =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("deep-plan-command-permissions");
+        const config = {
+          threadId,
+          environmentId: EnvironmentId.make("local"),
+          providerSessionId: "deep-session",
+          providerInstanceId: ProviderInstanceId.make("openai"),
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer test",
+          capabilities: new Set(["deep-plan"]),
+          deepPlan: {
+            runId: DeepPlanRunId.make("run"),
+            runThreadId: threadId,
+            phase: "planning" as const,
+            approvedPlanVersion: null,
+            readOnly: true,
+            modelSelection: { instanceId: ProviderInstanceId.make("openai"), model: "test-model" },
+          },
+        };
+        const harness = yield* makeNativeProviderHarness(unusedProcessRunner);
+        const input = {
+          threadId,
+          cwd: process.cwd(),
+          interactionMode: "plan" as const,
+          sandboxMode: "danger-full-access" as const,
+          fetchWorker: false,
+        };
+        McpProviderSession.setMcpProviderSession(config);
+        try {
+          expect((yield* harness.declarations(input)).map((tool) => tool.name)).toEqual([
+            ...WORKSPACE_READ_TOOL_NAMES,
+            NATIVE_HARNESS_EXEC_COMMAND_TOOL,
+          ]);
+          expect(
+            yield* harness.isAvailable({ ...input, toolName: NATIVE_HARNESS_EXEC_COMMAND_TOOL }),
+          ).toBe(true);
+          expect(harness.requiresApproval(NATIVE_HARNESS_EXEC_COMMAND_TOOL, "full-access")).toBe(
+            false,
+          );
+          expect(
+            harness.requiresApproval(NATIVE_HARNESS_EXEC_COMMAND_TOOL, "approval-required"),
+          ).toBe(true);
+          expect(
+            yield* harness.isAvailable({ ...input, toolName: NATIVE_HARNESS_WORKSPACE_EDIT_TOOL }),
+          ).toBe(false);
+          expect(
+            yield* harness.isAvailable({
+              ...input,
+              sandboxMode: "read-only",
+              toolName: NATIVE_HARNESS_EXEC_COMMAND_TOOL,
+            }),
+          ).toBe(false);
+          expect(
+            yield* harness.isAvailable({
+              ...input,
+              fetchWorker: true,
+              toolName: NATIVE_HARNESS_EXEC_COMMAND_TOOL,
+            }),
+          ).toBe(false);
+          McpProviderSession.setMcpProviderSession({
+            ...config,
+            deepPlan: {
+              ...config.deepPlan,
+              sourceAnalysis: { workerThreadId: threadId, sourceIds: [] },
+            },
+          });
+          expect(
+            yield* harness.isAvailable({ ...input, toolName: NATIVE_HARNESS_EXEC_COMMAND_TOOL }),
+          ).toBe(false);
+        } finally {
+          McpProviderSession.clearMcpProviderSession(threadId);
+        }
+      }).pipe(
+        Effect.provideService(WorkspaceContext.WorkspaceContext, unusedWorkspaceContext),
+        Effect.provideService(WorkspaceFileSystem.WorkspaceFileSystem, unusedWorkspaceFileSystem),
+      ),
+  );
+
   it.effect(
     "omits configured MCP extensions from Fetch while retaining them for normal turns",
     () =>

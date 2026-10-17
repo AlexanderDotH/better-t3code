@@ -168,6 +168,7 @@ import {
   composerDraftsAtom,
   composerCloudDraftsAtom,
   createNewTaskDraft,
+  initializeNewTaskDraftChatSettings,
   createComposerDraftContextHistory,
   setComposerDraftContext,
   decodePersistedComposerState,
@@ -2005,6 +2006,59 @@ describe("mobile composer drafts", () => {
     expect(findNewTaskDraftKeys(appAtomRegistry.get(composerDraftsAtom), to)).toEqual([key]);
   });
 
+  it("initializes an independent task with configuration alone and preserves invested choices", () => {
+    const project = {
+      environmentId: EnvironmentId.make("environment-1"),
+      projectId: ProjectId.make("project-1"),
+    };
+    const source = {
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex-work"),
+        model: "gpt-test",
+        options: [
+          { id: "reasoningEffort", value: "xhigh" },
+          { id: "serviceTier", value: "priority" },
+          { id: "contextWindow", value: "1m" },
+        ],
+      },
+      runtimeMode: "approval-required" as const,
+      composerMode: "deep-plan" as const,
+      text: "Another task's prompt",
+      attachments: [{ id: "source-attachment" }],
+      context: { records: [{ label: "Another task's context" }] },
+      deepPlanSourceRefs: [{ environmentId: "other-environment", projectId: "other-project" }],
+      session: { providerSessionId: "source-session" },
+      workspaceSelection: { mode: "worktree", branch: "source-branch" },
+    };
+    const investedKey = createNewTaskDraft(project);
+    setComposerDraftText(investedKey, "My existing draft");
+    initializeNewTaskDraftChatSettings(investedKey, source);
+    const freshKey = createNewTaskDraft(project);
+    initializeNewTaskDraftChatSettings(freshKey, source);
+
+    expect(freshKey).not.toBe(investedKey);
+    expect(getComposerDraftSnapshot(freshKey)).toEqual({
+      text: "",
+      attachments: [],
+      project: expect.objectContaining(project),
+      modelSelection: source.modelSelection,
+      runtimeMode: source.runtimeMode,
+      composerMode: source.composerMode,
+      interactionMode: "plan",
+    });
+    initializeNewTaskDraftChatSettings(investedKey, {
+      modelSelection: { instanceId: ProviderInstanceId.make("claude"), model: "different-model" },
+      runtimeMode: "full-access",
+      composerMode: "default",
+    });
+    expect(getComposerDraftSnapshot(investedKey)).toMatchObject({
+      text: "My existing draft",
+      modelSelection: source.modelSelection,
+      runtimeMode: source.runtimeMode,
+      composerMode: source.composerMode,
+    });
+  });
+
   it("hydrates the global sticky model selection", () => {
     expect(
       decodePersistedComposerState({
@@ -2802,4 +2856,39 @@ it("preserves an edited Fetch setting while undoing an imported draft", () => {
   const result = undoComposerDraftMergeState({ draft: current }, "draft", snapshot, merged);
   expect(result.draft?.fetchMode).toBeUndefined();
   expect(result.draft?.text).toBe("original");
+});
+
+describe("DeepPlan mobile draft persistence", () => {
+  it("round-trips source selections by draft and preserves them when message content clears", () => {
+    const refs = [
+      {
+        environmentId: EnvironmentId.make("remote"),
+        projectId: ProjectId.make("remote-project"),
+        threadId: ThreadId.make("archived"),
+      },
+    ];
+    const restored = decodePersistedComposerState({
+      schemaVersion: 1,
+      drafts: {
+        "local:thread": {
+          text: "Inspect",
+          attachments: [],
+          composerMode: "deep-plan",
+          interactionMode: "plan",
+          deepPlanSourceRefs: refs,
+        },
+        "remote:thread": { text: "Other task", attachments: [], interactionMode: "default" },
+      },
+    }).drafts;
+    const cleared = clearComposerDraftContentState(restored, "local:thread");
+    const reloaded = decodePersistedComposerState({ schemaVersion: 1, drafts: cleared }).drafts;
+    expect(reloaded["local:thread"]).toMatchObject({
+      text: "",
+      composerMode: "deep-plan",
+      interactionMode: "plan",
+      deepPlanSourceRefs: refs,
+    });
+    expect(reloaded["remote:thread"]?.deepPlanSourceRefs).toBeUndefined();
+    expect(reloaded["remote:thread"]?.interactionMode).toBe("default");
+  });
 });

@@ -26,11 +26,13 @@ import type {
 } from "./BetterT3SettingsPreview.logic";
 
 import type { ReasoningDisplayMode } from "./BetterT3SettingsPanel.logic";
+import { BETTER_T3_EXAMPLE_FEATURE_IDS, BetterT3FeatureExample } from "./BetterT3SettingsExamples";
 
 type Translate = InterfaceTranslator["message"];
 
 export const BETTER_T3_VISUAL_FEATURE_IDS = [
   "agent.planMode",
+  "agent.promptImprovement",
   "agent.generalSubagents",
   "agent.reasoningVisibility",
   "agent.expandedComposerControls",
@@ -41,6 +43,9 @@ export const BETTER_T3_VISUAL_FEATURE_IDS = [
   "chat.workspaceCardDeck",
   "chat.classicBubbleOnly",
   "chat.characterStreamingMotion",
+  "chat.cardMorphing",
+  "chat.draftIndicators",
+  ...BETTER_T3_EXAMPLE_FEATURE_IDS,
 ] as const satisfies ReadonlyArray<BetterT3FeatureId>;
 
 export type BetterT3VisualFeatureId = (typeof BETTER_T3_VISUAL_FEATURE_IDS)[number];
@@ -77,6 +82,45 @@ function keyedCharacters(text: string) {
     occurrences.set(character, occurrence);
     return { character, key: `${character}:${occurrence}` };
   });
+}
+
+function PromptImprovementPreview(props: {
+  readonly enabled: boolean;
+  readonly translate: Translate;
+}) {
+  return (
+    <div className="flex h-full flex-col justify-between gap-1.5 rounded-lg border border-border/70 bg-card p-2.5 shadow-xs">
+      <div className="flex items-center gap-1.5 text-3xs text-muted-foreground">
+        <MessageSquareIcon className="size-3 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">
+          {props.translate("settings.betterT3.preview.agent.prompt")}
+        </span>
+        <span>{props.translate("settings.betterT3.preview.example")}</span>
+      </div>
+      <p
+        className={cn(
+          "line-clamp-2 text-3xs leading-relaxed",
+          props.enabled ? "text-muted-foreground" : "text-foreground",
+        )}
+      >
+        {props.translate("settings.betterT3.preview.promptImprovement.input")}
+      </p>
+      {props.enabled ? (
+        <div className="better-t3-preview-reveal flex items-start gap-1.5 rounded-md border border-primary/15 bg-primary/8 px-2 py-1.5">
+          <SparklesIcon className="mt-0.5 size-3 shrink-0 text-primary" />
+          <p className="line-clamp-3 text-3xs leading-snug text-foreground">
+            {props.translate("settings.betterT3.preview.promptImprovement.output")}
+          </p>
+        </div>
+      ) : (
+        <div className="flex justify-end">
+          <span className="flex size-5 items-center justify-center rounded-full bg-primary text-primary-foreground">
+            <ArrowUpIcon className="size-3" />
+          </span>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function AgentPromptPreview(props: {
@@ -306,6 +350,7 @@ function WorkspaceCardDeckPreview(props: {
     <div
       className="relative mx-auto flex h-full max-w-72 items-center justify-center"
       data-workspace-card-deck={props.model.workspaceCardDeck}
+      data-card-morphing={props.model.cardMorphing}
     >
       {props.model.workspaceCardDeck ? (
         <>
@@ -384,12 +429,14 @@ export type BetterT3VisualChoiceValue =
   | ChatVisualMode
   | SidebarPosition
   | ContextWindowSelector
-  | ReasoningDisplayMode;
+  | ReasoningDisplayMode
+  | "english";
 
 function visualChoiceValues(
   featureId: BetterT3VisualFeatureId,
 ): ReadonlyArray<BetterT3VisualChoiceValue> {
   if (featureId === "agent.reasoningVisibility") return ["none", "chat", "working"];
+  if (featureId === "voice.outputLanguage") return ["native", "english"];
   if (featureId === "chat.sidebarPosition") return ["left", "right"];
   if (featureId === "chat.presentation") return ["current", "classic"];
   if (featureId === "chat.contextWindowSelector") return ["native", "better-t3"];
@@ -401,6 +448,48 @@ function visualChoiceLabel(
   value: BetterT3VisualChoiceValue,
   translate: Translate,
 ): string {
+  if (featureId === "agent.nativeSubagentDisplay") {
+    return translate(
+      value === true
+        ? "settings.betterT3.preview.examples.agents.panel"
+        : "settings.betterT3.preview.examples.agents.floating",
+    );
+  }
+  if (featureId === "agent.contextCompaction") {
+    return translate(
+      value === true
+        ? "settings.betterT3.preview.examples.context.background"
+        : "settings.betterT3.preview.examples.context.native",
+    );
+  }
+  if (featureId === "voice.outputLanguage") {
+    return translate(
+      value === "english"
+        ? "settings.betterT3.value.english"
+        : "settings.betterT3.value.nativeLanguage",
+    );
+  }
+  if (featureId === "workspace.gitWorkbench") {
+    return translate(
+      value === true
+        ? "betterT3.workspace.gitWorkbench.label"
+        : "settings.betterT3.preview.examples.git.compact",
+    );
+  }
+  if (featureId === "chat.hideComposerDivider") {
+    return translate(
+      value === true
+        ? "settings.betterT3.preview.examples.divider.hidden"
+        : "settings.betterT3.preview.examples.divider.visible",
+    );
+  }
+  if (featureId === "agent.promptImprovement") {
+    return translate(
+      value === true
+        ? "settings.betterT3.preview.promptImprovement.improved"
+        : "settings.betterT3.preview.promptImprovement.original",
+    );
+  }
   if (featureId === "agent.reasoningVisibility") {
     return translate(
       value === "none"
@@ -449,6 +538,8 @@ function visualChoiceModel(
   switch (featureId) {
     case "agent.planMode":
       return { ...model, agent: { ...model.agent, planMode: value === true } };
+    case "agent.promptImprovement":
+      return { ...model, agent: { ...model.agent, promptImprovement: value === true } };
     case "agent.expandedComposerControls":
       return { ...model, chat: { ...model.chat, expandedComposerControls: value === true } };
     case "agent.generalSubagents":
@@ -469,6 +560,13 @@ function visualChoiceModel(
       };
     case "chat.classicSidebar":
       return { ...model, chat: { ...model.chat, classicSidebar: value === true } };
+    case "chat.cardMorphing":
+      return {
+        ...model,
+        chat: { ...model.chat, workspaceCardDeck: true, cardMorphing: value === true },
+      };
+    case "chat.draftIndicators":
+      return { ...model, chat: { ...model.chat, draftIndicators: value === true } };
     case "chat.presentation":
       return {
         ...model,
@@ -485,6 +583,8 @@ function visualChoiceModel(
         ...model,
         chat: { ...model.chat, contextWindowSelector: value === "native" ? "native" : "better-t3" },
       };
+    default:
+      return model;
   }
 }
 
@@ -508,9 +608,20 @@ export function BetterT3FeatureChoice(props: {
     >
       {visualChoiceValues(props.featureId).map((value) => {
         const selected = value === props.value;
+        const label = visualChoiceLabel(props.featureId, value, props.translate);
+        const description =
+          props.featureId === "agent.contextCompaction"
+            ? props.translate(
+                value === true
+                  ? "settings.betterT3.compaction.betterT3Description"
+                  : "settings.betterT3.compaction.codexDescription",
+              )
+            : undefined;
         return (
           <button
             aria-checked={selected}
+            aria-description={description}
+            aria-label={label}
             className={cn(
               "better-t3-feature-option min-w-0 cursor-pointer overflow-hidden rounded-xl border bg-card text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50",
               selected ? "border-primary/65" : "border-border/70 enabled:hover:border-primary/35",
@@ -526,10 +637,11 @@ export function BetterT3FeatureChoice(props: {
                 featureId={props.featureId}
                 model={visualChoiceModel(props.featureId, value, props.model)}
                 translate={props.translate}
+                value={value}
               />
             </div>
             <span className="flex min-h-10 items-center justify-between gap-3 border-t border-border/50 px-3 py-2 text-xs font-medium">
-              {visualChoiceLabel(props.featureId, value, props.translate)}
+              {label}
               <span
                 aria-hidden="true"
                 className={cn(
@@ -542,6 +654,11 @@ export function BetterT3FeatureChoice(props: {
                 {selected ? <CheckIcon className="size-2.5" strokeWidth={3} /> : null}
               </span>
             </span>
+            {description ? (
+              <span className="block px-3 pb-3 text-xs leading-relaxed text-muted-foreground">
+                {description}
+              </span>
+            ) : null}
           </button>
         );
       })}
@@ -553,9 +670,19 @@ function BetterT3FeatureVisual(props: {
   readonly featureId: BetterT3VisualFeatureId;
   readonly model: BetterT3SettingsPreviewModel;
   readonly translate: Translate;
+  readonly value: BetterT3VisualChoiceValue;
 }) {
   const { agent, chat } = props.model;
   switch (props.featureId) {
+    case "agent.promptImprovement":
+      return (
+        <FeatureVisualFrame
+          animationKey={`prompt-improvement:${agent.promptImprovement}`}
+          featureId={props.featureId}
+        >
+          <PromptImprovementPreview enabled={agent.promptImprovement} translate={props.translate} />
+        </FeatureVisualFrame>
+      );
     case "agent.planMode":
       return (
         <FeatureVisualFrame
@@ -679,6 +806,7 @@ function BetterT3FeatureVisual(props: {
         </FeatureVisualFrame>
       );
     case "chat.sidebarPosition":
+    case "chat.draftIndicators":
       return (
         <FeatureVisualFrame
           animationKey={`sidebar:${chat.sidebarPosition}:${chat.classicSidebar}:${chat.draftIndicators}`}
@@ -741,6 +869,7 @@ function BetterT3FeatureVisual(props: {
         </FeatureVisualFrame>
       );
     case "chat.workspaceCardDeck":
+    case "chat.cardMorphing":
       return (
         <FeatureVisualFrame
           animationKey={`cards:${chat.workspaceCardDeck}:${chat.cardMorphing}`}
@@ -757,6 +886,19 @@ function BetterT3FeatureVisual(props: {
         >
           <ContextWindowSelectorPreview
             selector={chat.contextWindowSelector}
+            translate={props.translate}
+          />
+        </FeatureVisualFrame>
+      );
+    default:
+      return (
+        <FeatureVisualFrame
+          animationKey={`${props.featureId}:${props.value}`}
+          featureId={props.featureId}
+        >
+          <BetterT3FeatureExample
+            featureId={props.featureId}
+            value={props.value}
             translate={props.translate}
           />
         </FeatureVisualFrame>

@@ -95,7 +95,15 @@ const declarationIsAvailable = (
   input: NativeHarnessToolAvailabilityInput,
 ): boolean => {
   if (declaration.availability === "read-only") return true;
-  if (input.interactionMode === "plan" || input.sandboxMode === "read-only") return false;
+  const planning =
+    input.interactionMode === "plan" ||
+    input.deepPlan?.readOnly === true ||
+    input.deepPlan?.phase === "planning";
+  const planningCommand =
+    declaration.name === NATIVE_HARNESS_EXEC_COMMAND_TOOL &&
+    input.deepPlan !== undefined &&
+    input.deepPlan.sourceAnalysis === undefined;
+  if ((planning && !planningCommand) || input.sandboxMode === "read-only") return false;
   if (declaration.availability === "default-only") return true;
   if (declaration.availability === "workspace-write") return true;
   return input.sandboxMode !== "workspace-write";

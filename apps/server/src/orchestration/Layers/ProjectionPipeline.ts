@@ -776,6 +776,19 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       "applyThreadsProjection",
     )(function* (event, attachmentSideEffects) {
       switch (event.type) {
+        case "thread.deep-plan-updated": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isSome(existingRow)) {
+            yield* projectionThreadRepository.upsert({
+              ...existingRow.value,
+              deepPlan: event.payload.run,
+              updatedAt: event.payload.updatedAt,
+            });
+          }
+          return;
+        }
         case "thread.created":
           // A draft retry can re-create this id; links belong to the old incarnation.
           yield* projectionThreadPullRequestRepository.deleteByThreadId({
@@ -1707,6 +1720,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             threadId: event.payload.threadId,
             turnId: event.payload.proposedPlan.turnId,
             planMarkdown: event.payload.proposedPlan.planMarkdown,
+            ...(event.payload.proposedPlan.deepPlan === undefined
+              ? {}
+              : { deepPlan: event.payload.proposedPlan.deepPlan }),
             implementedAt: event.payload.proposedPlan.implementedAt,
             implementationThreadId: event.payload.proposedPlan.implementationThreadId,
             createdAt: event.payload.proposedPlan.createdAt,

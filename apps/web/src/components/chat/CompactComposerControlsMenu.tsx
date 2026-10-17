@@ -1,4 +1,4 @@
-import { ProviderInteractionMode, RuntimeMode } from "@t3tools/contracts";
+import { type ComposerMode, type ProviderInteractionMode, RuntimeMode } from "@t3tools/contracts";
 import { memo, type ReactNode } from "react";
 import { EllipsisIcon } from "lucide-react";
 import {
@@ -16,6 +16,8 @@ import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 export const CompactComposerControlsMenu = memo(function CompactComposerControlsMenu(props: {
   interactionMode: ProviderInteractionMode;
+  composerMode?: ComposerMode;
+  deepPlanningDisabledReason?: string | null | undefined;
   runtimeMode: RuntimeMode;
   showInteractionModeToggle: boolean;
   traitsMenuContent?: ReactNode;
@@ -27,12 +29,14 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
    */
   hidden?: boolean;
   onToggleInteractionMode: () => void;
+  onComposerModeChange?: (mode: ComposerMode) => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
   const translate = useInterfaceTranslator().message;
   const composerFloatingLayerProps = useComposerMenuProps();
   const size = props.size ?? "sm";
   const [open, setOpen] = useComposerMenuState(props.hidden);
+  const composerMode = props.composerMode ?? props.interactionMode;
 
   return (
     <Menu open={open} onOpenChange={setOpen}>
@@ -64,14 +68,26 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
               {translate("chat.composer.mode")}
             </div>
             <MenuRadioGroup
-              value={props.interactionMode}
+              value={composerMode}
               onValueChange={(value) => {
-                if (!value || value === props.interactionMode) return;
-                props.onToggleInteractionMode();
+                if (!value || value === composerMode) return;
+                if (value !== "default" && value !== "plan" && value !== "deep-plan") return;
+                if (props.onComposerModeChange) props.onComposerModeChange(value);
+                else props.onToggleInteractionMode();
               }}
             >
               <MenuRadioItem value="default">{translate("chat.composer.mode.chat")}</MenuRadioItem>
               <MenuRadioItem value="plan">{translate("chat.composer.mode.plan")}</MenuRadioItem>
+              <MenuRadioItem value="deep-plan" disabled={!!props.deepPlanningDisabledReason}>
+                <span className="grid min-w-0 gap-0.5">
+                  <span>{translate("chat.deepPlan.label")}</span>
+                  {props.deepPlanningDisabledReason ? (
+                    <span className="whitespace-normal text-xs text-muted-foreground">
+                      {props.deepPlanningDisabledReason}
+                    </span>
+                  ) : null}
+                </span>
+              </MenuRadioItem>
             </MenuRadioGroup>
             <MenuDivider />
           </>

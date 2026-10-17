@@ -1103,6 +1103,40 @@ export const settingsInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Diffuser jeton par jeton (hérité)",
   ],
   "settings.general.title": ["General", "Allgemein", "Général"],
+  "settings.responseMetrics.label": ["Response details", "Antwortdetails", "Détails de la réponse"],
+  "settings.responseMetrics.description": [
+    "Show tokens/s, time to first token, and token usage beside completed agent responses.",
+    "Zeigt Token/s, Zeit bis zum ersten Token und Tokenverbrauch bei abgeschlossenen Agent-Antworten.",
+    "Affiche les jetons/s, le délai du premier jeton et l’utilisation des jetons des réponses terminées.",
+  ],
+  "settings.contextMeter.section": ["Composer", "Nachrichteneingabe", "Éditeur"],
+  "settings.contextMeter.label": [
+    "Context usage indicator",
+    "Kontextnutzungsanzeige",
+    "Indicateur d’utilisation du contexte",
+  ],
+  "settings.contextMeter.description": [
+    "Show context usage in the composer.",
+    "Zeigt die Kontextnutzung in der Nachrichteneingabe an.",
+    "Affiche l’utilisation du contexte dans l’éditeur.",
+  ],
+  "settings.contextMeter.preview.off": ["Off", "Aus", "Désactivé"],
+  "settings.contextMeter.preview.on": ["On", "An", "Activé"],
+  "settings.contextMeter.preview.example": [
+    "Example: {{used}} / {{limit}} tokens ({{percentage}} used)",
+    "Beispiel: {{used}} / {{limit}} Token ({{percentage}} genutzt)",
+    "Exemple : {{used}} / {{limit}} jetons ({{percentage}} utilisés)",
+  ],
+  "settings.contextMeter.preview.singleLine": [
+    "Single-line composer",
+    "Einzeilige Nachrichteneingabe",
+    "Éditeur sur une ligne",
+  ],
+  "settings.contextMeter.preview.expanded": [
+    "Expanded composer",
+    "Erweiterte Nachrichteneingabe",
+    "Éditeur développé",
+  ],
   "settings.general.projectGroupingDescription": [
     "Combine matching repositories across environments.",
     "Fasst passende Repositories über Umgebungen hinweg zusammen.",

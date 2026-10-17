@@ -54,6 +54,10 @@ import {
 } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { ServerConfig } from "../../config.ts";
+import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { TurnAbortCoordinator } from "../Services/TurnAbortCoordinator.ts";
+import { TurnAbortCoordinatorLive } from "./TurnAbortCoordinator.ts";
+import { findOpenPendingInteractions } from "../pendingInteractionLifecycle.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
@@ -110,6 +114,27 @@ async function createOrchestrationSystem(
     readThread: (threadId: ThreadId) =>
       runtime.runPromise(snapshotQuery.getThreadDetailById(threadId)),
     run: <A, E>(effect: Effect.Effect<A, E>) => runtime.runPromise(effect),
+    recoverOrphanedTurn: (threadId: ThreadId) =>
+      runtime.runPromise(
+        Effect.flatMap(TurnAbortCoordinator, (coordinator) =>
+          coordinator.requestAbort({ threadId, requestedAt: "2026-01-01T00:00:02.000Z" }),
+        ).pipe(
+          Effect.provide(
+            TurnAbortCoordinatorLive.pipe(
+              Layer.provide(
+                Layer.mock(ProviderService, {
+                  resolveAbortTarget: () => Effect.succeed(undefined),
+                }),
+              ),
+              Layer.provide(Layer.succeed(OrchestrationEngineService, engine)),
+              Layer.provide(Layer.succeed(ProjectionSnapshotQuery, snapshotQuery)),
+              Layer.provide(NodeServices.layer),
+            ),
+          ),
+        ),
+      ),
+    readShell: (threadId: ThreadId) =>
+      runtime.runPromise(snapshotQuery.getThreadShellById(threadId)),
     dispose: () => runtime.dispose(),
   };
 }
@@ -130,6 +155,138 @@ const hasMetricSnapshot = (
   );
 
 describe("OrchestrationEngine", () => {
+  it.each(["running", "stopped"] as const)(
+    "recovers orphaned questions and accepts another message with a %s session",
+    async (status) => {
+      const system = await createOrchestrationSystem();
+      const threadId = ThreadId.make("orphaned-question");
+      const turnId = TurnId.make("orphaned-turn");
+      try {
+        await system.run(
+          system.engine.dispatch({
+            type: "project.create",
+            commandId: CommandId.make("orphan-project"),
+            projectId: asProjectId("orphan-project"),
+            title: "Orphan project",
+            workspaceRoot: "/tmp/orphan-project",
+            createdAt: now(),
+          }),
+        );
+        await system.run(
+          system.engine.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("orphan-thread"),
+            threadId,
+            projectId: asProjectId("orphan-project"),
+            title: "Orphaned question",
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: now(),
+          }),
+        );
+        await system.run(
+          system.engine.dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make("orphan-session"),
+            threadId,
+            session: {
+              threadId,
+              status,
+              providerName: "codex",
+              runtimeSessionId: null,
+              runtimeMode: "full-access",
+              activeTurnId: status === "running" ? turnId : null,
+              abortState: null,
+              lastError: null,
+              updatedAt: now(),
+            },
+            createdAt: now(),
+          }),
+        );
+        for (const [index, kind] of [
+          "user-input.requested",
+          "user-input.requested",
+          "approval.requested",
+        ].entries()) {
+          await system.run(
+            system.engine.dispatch({
+              type: "thread.activity.append",
+              commandId: CommandId.make(`orphan-request-${index}`),
+              threadId,
+              activity: {
+                id: EventId.make(`orphan-request-${index}`),
+                kind,
+                tone: "approval",
+                summary: "Waiting for input",
+                turnId: index === 2 ? null : turnId,
+                payload: {
+                  requestId: `orphan-request-${index}`,
+                  ...(index === 0 ? { responseMode: "message" } : {}),
+                },
+                createdAt: now(),
+              },
+              createdAt: now(),
+            }),
+          );
+        }
+        await system.run(
+          system.engine.dispatch({
+            type: "thread.message.assistant.delta",
+            commandId: CommandId.make("orphan-partial"),
+            threadId,
+            turnId,
+            messageId: MessageId.make("orphan-partial"),
+            delta: "Partial response",
+            createdAt: now(),
+          }),
+        );
+
+        await system.recoverOrphanedTurn(threadId);
+
+        const detail = Option.getOrThrow(await system.readThread(threadId));
+        expect(detail.session).toMatchObject({
+          status: "stopped",
+          runtimeSessionId: null,
+          activeTurnId: null,
+          abortState: null,
+        });
+        expect(findOpenPendingInteractions({ activities: detail.activities })).toEqual({
+          approvals: [],
+          userInputs: [],
+        });
+        expect(detail.messages[0]).toMatchObject({ text: "Partial response", streaming: false });
+        expect(Option.getOrThrow(await system.readShell(threadId))).toMatchObject({
+          hasPendingUserInput: false,
+          hasPendingApprovals: false,
+        });
+
+        await system.run(
+          system.engine.dispatch({
+            type: "thread.turn.start",
+            commandId: CommandId.make("orphan-next-turn"),
+            threadId,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            message: {
+              messageId: MessageId.make("orphan-next-message"),
+              role: "user",
+              text: "Continue",
+              attachments: [],
+            },
+            createdAt: "2026-01-01T00:00:03.000Z",
+          }),
+        );
+        const continued = Option.getOrThrow(await system.readThread(threadId));
+        expect(continued.messages.at(-1)?.text).toBe("Continue");
+      } finally {
+        await system.dispose();
+      }
+    },
+  );
+
   it.each(["running", "stopped"] as const)(
     "sends async answers with a %s session and rejects old duplicate replies",
     async (status) => {

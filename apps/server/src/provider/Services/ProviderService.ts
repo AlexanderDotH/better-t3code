@@ -35,6 +35,7 @@ import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 import type * as Scope from "effect/Scope";
+import type { ConsumeProviderEvents, SubscribeProviderEventStream } from "../providerEventHub.ts";
 
 import type { ProviderServiceError } from "../Errors.ts";
 import type { ProviderAdapterCapabilities, ProviderForceStopResult } from "./ProviderAdapter.ts";
@@ -68,6 +69,7 @@ export interface ProviderTransientSessionOptions {
    * workspace-only Fetch profile.
    */
   readonly mcpMode?: "none" | "workspace-only" | "full";
+  readonly deepPlan?: import("../../mcp/McpInvocationContext.ts").McpDeepPlanContext;
   readonly messageReply?: {
     readonly replyTopicId: SubagentId;
     readonly interactionMode: ProviderInteractionMode;
@@ -78,6 +80,8 @@ export interface ProviderTransientSessionOptions {
  * ProviderServiceShape - Service API for provider session and turn orchestration.
  */
 export interface ProviderServiceShape {
+  readonly consumeEvents?: ConsumeProviderEvents;
+  readonly subscribeEventStream?: SubscribeProviderEventStream;
   /** Register before starting a transient session so synchronous early events cannot be lost. */
   readonly subscribeEvents?: Effect.Effect<Stream.Stream<ProviderRuntimeEvent>, never, Scope.Scope>;
   /**
@@ -124,9 +128,10 @@ export interface ProviderServiceShape {
     input: ProviderInterruptTurnInput,
   ) => Effect.Effect<void, ProviderServiceError>;
 
+  /** Missing runtime leases are already stopped; orchestration still needs to settle them. */
   readonly resolveAbortTarget: (
     input: ProviderInterruptTurnInput,
-  ) => Effect.Effect<ProviderAbortTarget, ProviderServiceError>;
+  ) => Effect.Effect<ProviderAbortTarget | undefined, ProviderServiceError>;
 
   readonly interruptAbortTarget: (
     target: ProviderAbortTarget,

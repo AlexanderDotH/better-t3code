@@ -2,6 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { ProjectId } from "./baseSchemas.ts";
+import { ExecutionEnvironmentCapabilities } from "./environment.ts";
 import {
   ChatVisualMode,
   ChatVisualModeSyncRecord,
@@ -27,6 +29,7 @@ import {
   DEFAULT_INTERFACE_LOCALE_PREFERENCE_V1,
   OpenAiSettings,
   OpenRouterSettings,
+  ProjectChatSettings,
   ProjectThreadPreviewCount,
   ProjectThreadPreviewSyncRecord,
   defaultEnabledForDriver,
@@ -40,6 +43,8 @@ const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
 const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
+const decodeProjectChatSettings = Schema.decodeSync(ProjectChatSettings);
+const decodeEnvironmentCapabilities = Schema.decodeUnknownSync(ExecutionEnvironmentCapabilities);
 const decodeProjectThreadPreviewCount = Schema.decodeUnknownSync(ProjectThreadPreviewCount);
 const decodeSidebarThreadPreviewCount = Schema.decodeUnknownSync(SidebarThreadPreviewCount);
 const decodeProjectThreadPreviewSyncRecord = Schema.decodeUnknownSync(
@@ -113,6 +118,54 @@ it("keeps environment project indexing opt-in with an explicit nullable default 
       projectIndexingDefaultModelSelection: { provider: "codex", model: "legacy-routing" },
     }),
   ).toThrow();
+});
+
+describe("project chat settings", () => {
+  const projectId = ProjectId.make("project-chat");
+
+  it("decodes older settings without remembered choices", () => {
+    expect(decodeServerSettings({}).projectChatSettings).toEqual({});
+    expect(DEFAULT_SERVER_SETTINGS.projectChatSettings).toEqual({});
+    expect(decodeEnvironmentCapabilities({}).projectChatSettings).toBeUndefined();
+    expect(decodeEnvironmentCapabilities({ projectChatSettings: true }).projectChatSettings).toBe(
+      true,
+    );
+  });
+
+  it("retains sparse and empty records through stored settings encoding", () => {
+    const selection = {
+      instanceId: ProviderInstanceId.make("codex-work"),
+      model: "gpt-5.4",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    };
+    for (const composerMode of ["default", "plan", "deep-plan"] as const) {
+      const settings = decodeServerSettings({
+        projectChatSettings: {
+          [projectId]: { modelSelection: selection, runtimeMode: "auto", composerMode },
+          empty: {},
+          sparse: { runtimeMode: "approval-required" },
+        },
+      });
+      expect(decodeServerSettings(encodeServerSettings(settings)).projectChatSettings).toEqual(
+        settings.projectChatSettings,
+      );
+    }
+    expect(decodeProjectChatSettings({})).toEqual({});
+  });
+
+  it("accepts complete entry replacements and deletion while rejecting invalid choices", () => {
+    const projectChatSettings = { [projectId]: { composerMode: "plan" }, deleted: null };
+    expect(decodeServerSettingsPatch({ projectChatSettings })).toEqual({ projectChatSettings });
+    for (const settings of [
+      { modelSelection: { instanceId: "codex-work" } },
+      { runtimeMode: "invalid" },
+      { composerMode: "invalid" },
+    ]) {
+      expect(() =>
+        decodeServerSettingsPatch({ projectChatSettings: { [projectId]: settings } }),
+      ).toThrow();
+    }
+  });
 });
 
 describe("storage cleanup settings", () => {
@@ -1079,15 +1132,48 @@ describe("ClientSettings sidebar", () => {
   });
 });
 
+describe("ClientSettings response details", () => {
+  it("stays opt-in and persists explicit choices across reloads", () => {
+    expect(decodeClientSettings({}).responseMetricsEnabled).toBe(false);
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("responseMetricsEnabled");
+    for (const responseMetricsEnabled of [true, false]) {
+      expect(decodeClientSettingsPatch({ responseMetricsEnabled })).toEqual({
+        responseMetricsEnabled,
+      });
+      const settings = decodeClientSettings({ responseMetricsEnabled });
+      const stored = encodeClientSettings(settings);
+      expect(decodeClientSettings(JSON.parse(JSON.stringify(stored))).responseMetricsEnabled).toBe(
+        responseMetricsEnabled,
+      );
+    }
+    expect(() => decodeClientSettings({ responseMetricsEnabled: "true" })).toThrow();
+  });
+});
+
 describe("ClientSettings context window meter", () => {
-  it("defaults off and preserves an explicit legacy opt-in", () => {
-    expect(decodeClientSettings({}).contextWindowMeterEnabled).toBe(false);
-    expect(
-      decodeClientSettings({ contextWindowMeterEnabled: true }).contextWindowMeterEnabled,
-    ).toBe(true);
-    expect(
-      decodeClientSettingsPatch({ contextWindowMeterEnabled: true }).contextWindowMeterEnabled,
-    ).toBe(true);
+  it("defaults on without adding the preference to unrelated patches", () => {
+    expect(DEFAULT_CLIENT_SETTINGS.contextWindowMeterEnabled).toBe(true);
+    expect(decodeClientSettings({}).contextWindowMeterEnabled).toBe(true);
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("contextWindowMeterEnabled");
+  });
+
+  it.each([true, false])("preserves explicit %s through patching and reload", (enabled) => {
+    const preference = { contextWindowMeterEnabled: enabled };
+    const patch = decodeClientSettingsPatch(preference);
+    const stored = encodeClientSettings(
+      decodeClientSettings({ ...DEFAULT_CLIENT_SETTINGS, ...patch }),
+    );
+
+    expect(patch).toEqual(preference);
+    expect(decodeClientSettings(preference).contextWindowMeterEnabled).toBe(enabled);
+    expect(decodeClientSettings(JSON.parse(JSON.stringify(stored))).contextWindowMeterEnabled).toBe(
+      enabled,
+    );
+  });
+
+  it("rejects malformed visibility values", () => {
+    expect(() => decodeClientSettings({ contextWindowMeterEnabled: "false" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ contextWindowMeterEnabled: "false" })).toThrow();
   });
 });
 

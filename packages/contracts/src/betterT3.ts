@@ -39,6 +39,8 @@ const featureIds = [
   "agent.fetchModel",
   "agent.parallelPlanImplementation",
   "agent.parallelPlanReviewer",
+  "agent.contextCompaction",
+  "agent.contextCompactionModel",
   "agent.autoReasoningModel",
   "agent.planMode",
   "agent.deepThinking",
@@ -99,6 +101,7 @@ export const BetterT3FeatureId = Schema.Literals(featureIds);
 export type BetterT3FeatureId = typeof BetterT3FeatureId.Type;
 
 const switchFeatureIds = [
+  "agent.contextCompaction",
   "chat.visualizations",
   "chat.messageEditing",
   "chat.messageReplies",
@@ -271,6 +274,24 @@ export const BETTER_T3_FEATURE_REGISTRY = [
     dependencies: [{ featureId: "agent.parallelPlanImplementation", condition: "enabled" }],
     capabilities: [capability("agentWorkflowVersion", 1)],
     mirrors: [serverMirror("parallelPlanReviewModelSelection")],
+  }),
+  descriptor({
+    id: "agent.contextCompaction",
+    section: "agent-workflows",
+    scope: "environment",
+    controlKind: "switch",
+    existing: true,
+    clean: true,
+    capabilities: [capability("contextCompactionVersion", 1)],
+  }),
+  descriptor({
+    id: "agent.contextCompactionModel",
+    section: "agent-workflows",
+    scope: "environment",
+    controlKind: "selector",
+    capabilities: [capability("contextCompactionVersion", 1)],
+    dependencies: [{ featureId: "agent.contextCompaction", condition: "enabled" }],
+    mirrors: [serverMirror("contextCompactionModelSelection")],
   }),
   descriptor({
     id: "agent.autoReasoningModel",

@@ -3,6 +3,7 @@ import type {
   ProviderInteractionMode,
   ProviderSandboxMode,
 } from "@t3tools/contracts";
+import type { DeepPlanInstructionContext } from "../DeepPlanInstructions.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -58,6 +59,7 @@ export interface NativeHarnessToolExecutor {
 }
 
 export interface NativeHarnessToolAvailabilityInput {
+  readonly deepPlan?: DeepPlanInstructionContext | undefined;
   readonly interactionMode: ProviderInteractionMode | undefined;
   readonly sandboxMode: ProviderSandboxMode | undefined;
 }

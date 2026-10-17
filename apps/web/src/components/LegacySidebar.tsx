@@ -269,6 +269,7 @@ function localizedThreadStatusLabel(
     "Pending Approval": "sidebar.status.pendingApproval",
     "Awaiting Input": "sidebar.status.awaitingInput",
     "Plan Ready": "sidebar.status.planReady",
+    "Deep Plan Ready": "chat.deepPlan.ready",
   } as const;
   return translator.message(messageId[status.label]);
 }

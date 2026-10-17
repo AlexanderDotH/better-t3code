@@ -24,6 +24,7 @@ import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
+import { streamingPipelineMetrics } from "../streamingPipelineMetrics.ts";
 import { ThreadSnapshotLoader, type ThreadSnapshotWindow } from "./threadSnapshotHttp.ts";
 import { parseThreadKey, threadKey } from "./entities.ts";
 import { applyThreadDetailEvent } from "./threadReducer.ts";
@@ -534,7 +535,21 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const applyItem = Effect.fn("EnvironmentThreadState.applyItem")(function* (
     item: OrchestrationThreadStreamItem,
   ) {
-    yield* applyLock.withPermits(1)(applyItemLocked(item).pipe(Effect.andThen(remember)));
+    yield* applyLock.withPermits(1)(
+      measureApply([item], applyItemLocked(item).pipe(Effect.andThen(remember))),
+    );
+  });
+
+  const measureApply = Effect.fnUntraced(function* (
+    items: ReadonlyArray<OrchestrationThreadStreamItem>,
+    apply: Effect.Effect<void>,
+  ) {
+    const complete = streamingPipelineMetrics.beginApply(
+      items,
+      yield* SubscriptionRef.get(lastSequence),
+    );
+    yield* apply;
+    complete(yield* SubscriptionRef.get(lastSequence));
   });
 
   const applyItems = Effect.fn("EnvironmentThreadState.applyItems")(function* (
@@ -590,7 +605,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         }
         if (synchronized) yield* applyItemLocked({ kind: "synchronized" });
         yield* remember;
-      }),
+      }).pipe((effect) => measureApply(items, effect)),
     );
   });
 
@@ -844,7 +859,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             supportsReasoningMessages,
           );
           if (Option.isSome(httpSnapshot)) {
-            yield* applyItem({ kind: "snapshot", snapshot: httpSnapshot.value });
+            yield* applyItem(
+              streamingPipelineMetrics.receive({ kind: "snapshot", snapshot: httpSnapshot.value }),
+            );
             current = yield* SubscriptionRef.get(state);
           }
         }
@@ -877,6 +894,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         resubscribe: foregroundResubscriptions,
       },
     ).pipe(
+      Stream.map(streamingPipelineMetrics.receive),
       Stream.runForEachArray((items) =>
         items.length === 1 ? applyItem(items[0]!) : applyItems(items),
       ),

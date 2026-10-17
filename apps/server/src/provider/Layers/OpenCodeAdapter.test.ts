@@ -732,7 +732,12 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
             properties: request,
           } satisfies OpenCodeEvent,
         ];
-        const openedFiber = yield* adapter.streamEvents.pipe(
+        const events = yield* adapter.subscribeEventStream!({
+          delivery: "lossless",
+          filter: { threadId, types: ["request.opened"] },
+        });
+        const openedFiber = yield* events.pipe(
+          Stream.orDie,
           Stream.filter((event) => event.threadId === threadId && event.type === "request.opened"),
           Stream.runHead,
           Effect.forkChild,

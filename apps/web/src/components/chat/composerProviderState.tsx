@@ -1,6 +1,7 @@
 import {
   type ContextWindowSelector,
   type ModelCapabilities,
+  type ModelSelection,
   type ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderOptionSelection,
@@ -63,6 +64,7 @@ type TraitsRenderInput = {
   hidden?: boolean;
   triggerClassName?: string;
   isComposerOwned?: boolean;
+  onManualModelSelectionChange?: (selection: ModelSelection) => void;
 };
 
 export function getComposerPromptInjectionState(prompt: string): ComposerPromptInjectionState {
@@ -186,6 +188,7 @@ function renderTraitsControl(
     hidden,
     triggerClassName,
     isComposerOwned,
+    onManualModelSelectionChange,
   } = input;
   const hasTarget = threadRef !== undefined || draftId !== undefined;
   const hideContextWindow =
@@ -229,6 +232,7 @@ function renderTraitsControl(
       {...(hidden !== undefined ? { hidden } : {})}
       {...(triggerClassName !== undefined ? { triggerClassName } : {})}
       {...(isComposerOwned ? { isComposerOwned } : {})}
+      {...(onManualModelSelectionChange ? { onManualModelSelectionChange } : {})}
     />
   );
 }
@@ -263,6 +267,9 @@ function renderContextWindowControl(
       {...(input.size ? { size: input.size } : {})}
       {...(input.hidden !== undefined ? { hidden: input.hidden } : {})}
       {...(input.isComposerOwned ? { isComposerOwned: true } : {})}
+      {...(input.onManualModelSelectionChange
+        ? { onManualModelSelectionChange: input.onManualModelSelectionChange }
+        : {})}
     />
   );
 }

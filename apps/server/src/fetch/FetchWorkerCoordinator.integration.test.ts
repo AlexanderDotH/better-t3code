@@ -39,6 +39,7 @@ import {
   ProviderService,
   type ProviderServiceShape,
 } from "../provider/Services/ProviderService.ts";
+import { makeProviderEventHub } from "../provider/providerEventHub.ts";
 import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
@@ -86,6 +87,8 @@ type EventMode =
 
 interface HarnessOptions {
   readonly workerCount?: number;
+  readonly sessionEvents?: boolean;
+  readonly blockFirstActivity?: boolean;
   readonly skip?: boolean;
   readonly gateStarts?: boolean;
   readonly neverStart?: boolean;
@@ -127,6 +130,8 @@ const makeHarness = (options: HarnessOptions = {}) =>
     const workerCount = options.workerCount ?? 1;
     const eventMode = options.eventMode ?? "normal";
     const events = yield* PubSub.unbounded<ProviderRuntimeEvent>();
+    const eventHub = options.sessionEvents ? yield* makeProviderEventHub() : undefined;
+    let subscriptionReady = false;
     const starts = yield* Ref.make<ReadonlyArray<ProviderSessionStartInput>>([]);
     const workspaceContextThreads = yield* Ref.make<ReadonlyArray<ThreadId | undefined>>([]);
     const sends = yield* Ref.make<ReadonlyArray<ProviderSendTurnInput>>([]);
@@ -150,6 +155,9 @@ const makeHarness = (options: HarnessOptions = {}) =>
     const releaseStarts = yield* Deferred.make<void>();
     const plannerEntered = yield* Deferred.make<void>();
     const stopEntered = yield* Deferred.make<void>();
+    const activityBlocked = yield* Deferred.make<void>();
+    const releaseActivity = yield* Deferred.make<void>();
+    let activityBlockedOnce = false;
     const runtimeByThread = new Map<
       ThreadId,
       { readonly runtimeSessionId: RuntimeSessionId; readonly instanceId: ProviderInstanceId }
@@ -176,7 +184,7 @@ const makeHarness = (options: HarnessOptions = {}) =>
     const backgroundLiveness = ThreadBackgroundLiveness.make();
 
     const publish = (event: ProviderRuntimeEvent) =>
-      PubSub.publish(events, event).pipe(Effect.asVoid);
+      (eventHub ? eventHub.publish(event) : PubSub.publish(events, event)).pipe(Effect.asVoid);
     const baseEvent = (
       threadId: ThreadId,
       runtimeSessionId: RuntimeSessionId,
@@ -379,6 +387,7 @@ const makeHarness = (options: HarnessOptions = {}) =>
       sessionOptions,
     ) =>
       Effect.gen(function* () {
+        if (eventHub) expect(subscriptionReady).toBe(true);
         yield* Ref.update(starts, (values) => [...values, input]);
         yield* Ref.update(workspaceContextThreads, (values) => [
           ...values,
@@ -388,6 +397,22 @@ const makeHarness = (options: HarnessOptions = {}) =>
         const runtimeSessionId = input.runtimeSessionId!;
         const instanceId = input.providerInstanceId!;
         runtimeByThread.set(threadId, { runtimeSessionId, instanceId });
+        if (eventHub) {
+          yield* publish({
+            ...baseEvent(threadId, runtimeSessionId, instanceId),
+            type: "request.opened",
+            requestId: RuntimeRequestId.make(`startup-read-${workerIndex(threadId)}`),
+            payload: { requestType: "file_read_approval", detail: "Read during startup" },
+          });
+          yield* publish({
+            ...baseEvent(threadId, runtimeSessionId, instanceId),
+            type: "content.delta",
+            payload: {
+              streamKind: "assistant_text",
+              delta: `Startup evidence ${workerIndex(threadId)}. `,
+            },
+          });
+        }
         const count = (yield* Ref.get(starts)).length;
         if (count === 1) yield* Deferred.succeed(firstStartEntered, undefined).pipe(Effect.ignore);
         if (count >= workerCount)
@@ -455,12 +480,36 @@ const makeHarness = (options: HarnessOptions = {}) =>
           Effect.andThen(Deferred.succeed(stopEntered, undefined).pipe(Effect.ignore)),
           Effect.andThen(options.neverStop === true ? Effect.never : Effect.void),
         ),
-      streamEvents: Stream.fromPubSub(events),
+      ...(eventHub
+        ? ({
+            consumeEvents: (handler, subscription) =>
+              eventHub.consumeEvents(handler, subscription).pipe(
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    subscriptionReady = true;
+                  }),
+                ),
+              ),
+          } satisfies Pick<ProviderServiceShape, "consumeEvents">)
+        : {}),
+      streamEvents: eventHub
+        ? Stream.die("Session event consumers must not use the aggregate stream")
+        : Stream.fromPubSub(events),
     } as unknown as ProviderServiceShape;
 
     const engine: OrchestrationEngineShape = {
       dispatch: (command) =>
         Effect.gen(function* () {
+          if (
+            options.blockFirstActivity &&
+            !activityBlockedOnce &&
+            command.type === "thread.activity.append" &&
+            String(command.subagentId).endsWith(":0")
+          ) {
+            activityBlockedOnce = true;
+            yield* Deferred.succeed(activityBlocked, undefined);
+            yield* Deferred.await(releaseActivity);
+          }
           yield* Ref.update(commands, (values) => [...values, command]);
           if (
             options.failActivityAppendOnce === true &&
@@ -568,6 +617,8 @@ const makeHarness = (options: HarnessOptions = {}) =>
       releaseStarts,
       plannerEntered,
       stopEntered,
+      activityBlocked,
+      releaseActivity,
     };
   });
 
@@ -585,6 +636,33 @@ function runInput(overrides: Partial<FetchRunInput> = {}): FetchRunInput {
 }
 
 describe("FetchWorkerCoordinator service", () => {
+  it.effect("registers session lanes before startup and isolates blocked worker projections", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ sessionEvents: true, blockFirstActivity: true });
+      yield* Effect.gen(function* () {
+        const coordinator = yield* FetchWorkerCoordinator;
+        const run = yield* Effect.forkChild(coordinator.run(runInput()));
+        yield* Deferred.await(harness.activityBlocked);
+        const secondParent = ThreadId.make("thread-fetch-second-parent");
+        const secondRun = yield* Effect.forkChild(
+          coordinator.run(runInput({ threadId: secondParent })),
+        );
+        yield* Deferred.await(harness.stopEntered);
+        const stopped = yield* Ref.get(harness.stops);
+        expect(stopped).toHaveLength(1);
+        expect(stopped[0]?.threadId).toContain(secondParent);
+        const second = yield* Fiber.join(secondRun);
+        expect(second.successfulWorkers).toBe(1);
+        expect(second.context).toContain("Startup evidence 0");
+
+        yield* Deferred.succeed(harness.releaseActivity, undefined);
+        const result = yield* Fiber.join(run);
+        expect(result.successfulWorkers).toBe(1);
+        expect(result.context).toContain("Startup evidence 0");
+        expect(yield* Ref.get(harness.responses)).toHaveLength(2);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
   it.effect("drains exact worker runtimes when coordinator ownership ends", () =>
     Effect.scoped(
       Effect.gen(function* () {

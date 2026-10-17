@@ -397,6 +397,15 @@ export const TurnTokenUsage = Schema.Union([
 ]);
 export type TurnTokenUsage = typeof TurnTokenUsage.Type;
 
+export const ResponseMetricsSnapshot = Schema.Struct({
+  timeToFirstTokenMs: Schema.optional(NonNegativeInt),
+  responseDurationMs: Schema.optional(NonNegativeInt),
+  tokenUsage: Schema.optional(TurnTokenUsage),
+  contextUsedTokens: Schema.optional(NonNegativeInt),
+  contextLimitTokens: Schema.optional(PositiveInt),
+});
+export type ResponseMetricsSnapshot = typeof ResponseMetricsSnapshot.Type;
+
 const TurnCompletedPayload = Schema.Struct({
   state: RuntimeTurnState,
   stopReason: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),

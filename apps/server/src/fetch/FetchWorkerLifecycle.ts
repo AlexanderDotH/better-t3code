@@ -14,10 +14,10 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Semaphore from "effect/Semaphore";
-import type * as Scope from "effect/Scope";
-import * as Stream from "effect/Stream";
+import * as Scope from "effect/Scope";
 
 import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
+import { consumeProviderEvents } from "../provider/providerEventHub.ts";
 import {
   buildFetchWorkerPrompt,
   fetchApprovalAction,
@@ -194,17 +194,25 @@ export const makeFetchWorkerLifecycle = Effect.fn("FetchWorkerLifecycle.make")(f
     );
   });
 
-  yield* Stream.runForEach(dependencies.transport.events, (event) =>
-    handleWorkerEvent(event).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("Fetch worker event projection failed", {
-          eventId: event.eventId,
-          threadId: event.threadId,
-          cause: Cause.pretty(cause),
-        }),
+  yield* consumeProviderEvents(
+    {
+      streamEvents: dependencies.transport.events,
+      ...(dependencies.transport.consumeEvents
+        ? { consumeEvents: dependencies.transport.consumeEvents }
+        : {}),
+    },
+    (event) =>
+      handleWorkerEvent(event).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Fetch worker event projection failed", {
+            eventId: event.eventId,
+            threadId: event.threadId,
+            cause: Cause.pretty(cause),
+          }),
+        ),
       ),
-    ),
-  ).pipe(Effect.forkIn(dependencies.coordinatorScope));
+    { delivery: "lossless" },
+  ).pipe(Effect.provideService(Scope.Scope, dependencies.coordinatorScope));
 
   const makeWorker = Effect.fn("FetchWorkerLifecycle.makeWorker")(function* (
     run: ActiveFetchRun,

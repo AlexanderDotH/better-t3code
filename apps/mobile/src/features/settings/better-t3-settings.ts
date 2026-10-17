@@ -200,6 +200,7 @@ export type MobileBetterT3SettingsDestination =
   | "SettingsProjects";
 
 export const MOBILE_BETTER_T3_DIRECT_CONTROL_IDS = [
+  "agent.contextCompactionModel",
   "agent.autoReasoningModel",
   "agent.cavemanMode",
   "chat.sorting",
@@ -277,6 +278,7 @@ export function createMobileBetterT3DeviceControlPatch(
 
 type MobileBetterT3EnvironmentControlUpdate =
   | { readonly id: "agent.cavemanMode"; readonly value: CavemanMode }
+  | { readonly id: "agent.contextCompactionModel"; readonly value: ModelSelection | null }
   | { readonly id: "agent.autoReasoningModel"; readonly value: ModelSelection | null };
 
 export function createMobileBetterT3EnvironmentControlPatch(
@@ -285,6 +287,11 @@ export function createMobileBetterT3EnvironmentControlPatch(
   switch (update.id) {
     case "agent.cavemanMode":
       return { agentEnhancement: { cavemanMode: update.value } };
+    case "agent.contextCompactionModel":
+      return {
+        contextCompactionModelSelection:
+          update.value === null ? null : stripAutoReasoning(update.value),
+      };
     case "agent.autoReasoningModel":
       return {
         autoReasoningModelSelection:

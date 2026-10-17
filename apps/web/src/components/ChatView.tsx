@@ -2,6 +2,23 @@ import { useThreadFork } from "../hooks/useThreadFork";
 import { InlineMessageEditor } from "./chat/InlineMessageEditor";
 import { resolveInterruptedTurnRetryTarget } from "@t3tools/client-runtime/state/thread-retry";
 import {
+  getNextComposerMode,
+  getProviderInteractionMode,
+  getDeepPlanProposalBlockReason,
+  resolveDeepPlanningAvailability,
+  selectDurableDeepPlan,
+  formatDeepPlanMarkdown,
+  buildDeepPlanImplementationPrompt,
+  continueDeepPlanForTurn,
+  prepareDeepPlanForTurn,
+} from "@t3tools/client-runtime/deepPlanning";
+import { approveWebDeepPlan, getWebDeepPlanningApi } from "../state/deepPlanning";
+import { useDeepPlanSources } from "../hooks/useDeepPlanSources";
+import { DeepPlanSourcePicker } from "./chat/DeepPlanSourcePicker";
+import { DeepPlanAnalysisProgress, DeepPlanChecklist } from "./chat/DeepPlanProgress";
+import { DeepPlanReviewCard } from "./chat/DeepPlanReviewCard";
+import { DeepPlanRunControls } from "./chat/DeepPlanRunControls";
+import {
   appendVoiceFileContext,
   extractVoiceFileContext,
   reconcileVoiceFileReferences,
@@ -28,6 +45,7 @@ import type { UsageLimitSourceSnapshots, VoiceFileReference } from "@t3tools/con
 import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { usageLimitsBannerItem } from "./chat/ComposerUsageLimits";
+import { selectResponseMetrics } from "@t3tools/client-runtime/response-metrics";
 import { useComposerUsageLimits } from "./chat/useComposerUsageLimits";
 import { derivePendingRequests } from "@t3tools/client-runtime/pending-requests";
 import { mergeMessageReplyTimeline } from "@t3tools/client-runtime/messageReplies";
@@ -64,6 +82,10 @@ import {
   OrchestrationThreadActivity,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProviderInteractionMode,
+  ComposerMode,
+  CommandId,
+  type DeepPlanSourceRef,
+  type DeepPlanRun,
   ProviderDriverKind,
   resolveEnvironmentMachineKind,
   RuntimeMode,
@@ -320,7 +342,12 @@ import {
   preventRepeatedTerminalCloseShortcut,
   preventTerminalCloseShortcut,
 } from "../lib/terminalCloseShortcut";
-import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
+import {
+  readComposerProjectChatSettings,
+  resolveAvailableComposerMode,
+  resolveNewDraftStartFromOrigin,
+} from "../lib/chatThreadActions";
+import type { ResolvedProjectChatSettings } from "@t3tools/client-runtime/project-chat-settings";
 import {
   derivePhysicalProjectKey,
   deriveLogicalProjectKeyFromSettings,
@@ -1568,6 +1595,10 @@ export default function ChatView(props: ChatViewProps) {
   const updateProjectScriptSettings = useAtomCommand(serverEnvironment.updateSettings, {
     reportFailure: false,
   });
+  const rememberProjectChatSettingsCommand = useAtomCommand(
+    serverEnvironment.rememberProjectChatSettings,
+    "save project chat settings",
+  );
   const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
     reportFailure: false,
   });
@@ -1706,6 +1737,13 @@ export default function ChatView(props: ChatViewProps) {
   const composerInteractionMode = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.interactionMode ?? null,
   );
+  const draftComposerMode = useComposerDraftStore(
+    (store) => store.getComposerDraft(composerDraftTarget)?.composerMode ?? null,
+  );
+  const deepPlanSourceRefs = useComposerDraftStore(
+    (store) => store.getComposerDraft(composerDraftTarget)?.deepPlanSourceRefs,
+  );
+  const setDeepPlanSourceRefs = useComposerDraftStore((store) => store.setDeepPlanSourceRefs);
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
   );
@@ -1736,9 +1774,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const setComposerDraftModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const setComposerDraftRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
-  const setComposerDraftInteractionMode = useComposerDraftStore(
-    (store) => store.setInteractionMode,
-  );
+  const setComposerDraftMode = useComposerDraftStore((store) => store.setComposerMode);
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const getDraftSessionByLogicalProjectKey = useComposerDraftStore(
@@ -3050,12 +3086,82 @@ export default function ChatView(props: ChatViewProps) {
   const selectedProvider = selectedProviderEntry?.driverKind ?? requestedDriverKind;
   const activeProviderInstanceId = selectedProviderEntry?.instanceId ?? null;
   const activeProviderStatus = selectedProviderEntry?.snapshot ?? null;
-  const { enabled: interactionModeEnabled, interactionMode } = resolveComposerInteractionMode({
+  const { enabled: interactionModeEnabled } = resolveComposerInteractionMode({
     planModeEnabled: settings.planModeEnabled,
     provider: activeProviderStatus,
-    interactionMode:
-      composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE,
+    interactionMode: getProviderInteractionMode(
+      draftComposerMode ??
+        composerInteractionMode ??
+        activeThread?.interactionMode ??
+        DEFAULT_INTERACTION_MODE,
+    ),
   });
+  const deepPlanningAvailability = resolveDeepPlanningAvailability({
+    capabilities: serverConfig?.environment.capabilities,
+    provider: activeProviderStatus,
+    connected: !activeEnvironmentUnavailable,
+  });
+  const composerMode = resolveAvailableComposerMode({
+    mode:
+      draftComposerMode ??
+      composerInteractionMode ??
+      activeThread?.interactionMode ??
+      DEFAULT_INTERACTION_MODE,
+    interactionModeEnabled,
+    deepPlanningSupported: deepPlanningAvailability.supported,
+  });
+  const interactionMode = getProviderInteractionMode(composerMode);
+  const deepPlanningDisabledReason = deepPlanningAvailability.reasonKey
+    ? translate(deepPlanningAvailability.reasonKey)
+    : deepPlanningAvailability.reason;
+  const activeDeepPlan = selectDurableDeepPlan(activeThread);
+  const deepPlanCurrentProject = useMemo(
+    () =>
+      activeProject
+        ? { environmentId: activeProject.environmentId, projectId: activeProject.id }
+        : null,
+    [activeProject?.environmentId, activeProject?.id],
+  );
+  const deepPlanSourceCatalog = useDeepPlanSources({
+    enabled:
+      composerMode === "deep-plan" &&
+      deepPlanningAvailability.supported &&
+      (!activeDeepPlan || activeDeepPlan.phase === "completed"),
+    currentProject: deepPlanCurrentProject,
+    projects: allProjects,
+    environments,
+  });
+  const deepPlanSourcesFrozen = activeDeepPlan !== null && activeDeepPlan.phase !== "completed";
+  const deepPlanProjectSourceCount =
+    deepPlanSourcesFrozen && activeDeepPlan.sources.length > 0
+      ? activeDeepPlan.sources.filter(
+          (source) =>
+            source.origin.environmentId === deepPlanCurrentProject?.environmentId &&
+            source.origin.projectId === deepPlanCurrentProject?.projectId,
+        ).length
+      : deepPlanSourceCatalog.projectSourceCount;
+  const deepPlanSourceOptions = useMemo(
+    () =>
+      deepPlanSourcesFrozen && activeDeepPlan.sources.length > 0
+        ? activeDeepPlan.sources.map((source) => ({
+            ref: source.origin,
+            environmentLabel:
+              source.environmentLabel ??
+              environmentById.get(source.origin.environmentId)?.label ??
+              String(source.origin.environmentId),
+            projectTitle: source.projectTitle,
+            title: source.threadTitle,
+            archived: source.archived,
+            available: true,
+          }))
+        : deepPlanSourceCatalog.options,
+    [
+      deepPlanSourcesFrozen,
+      activeDeepPlan?.sources,
+      deepPlanSourceCatalog.options,
+      environmentById,
+    ],
+  );
   const conversationProviderStatus =
     providerStatuses.find(
       (status) => status.instanceId === activeThread?.session?.providerInstanceId,
@@ -3089,8 +3195,38 @@ export default function ChatView(props: ChatViewProps) {
       : JSON.stringify([activityId, latestCheckpointCompletedAt]);
   }, [latestCheckpointCompletedAt, threadActivities]);
   const activeContextWindow = useMemo(
-    () => deriveLatestContextWindowSnapshot(threadActivities),
-    [threadActivities],
+    () =>
+      threadDetailLoading ||
+      activeThread?.id !== threadId ||
+      activeThread.environmentId !== environmentId
+        ? null
+        : deriveLatestContextWindowSnapshot(threadActivities),
+    [
+      threadDetailLoading,
+      activeThread?.id,
+      activeThread?.environmentId,
+      threadId,
+      environmentId,
+      threadActivities,
+    ],
+  );
+  const responseMetrics = useMemo(
+    () =>
+      settings.responseMetricsEnabled &&
+      !threadDetailLoading &&
+      activeThread?.id === threadId &&
+      activeThread.environmentId === environmentId
+        ? selectResponseMetrics(threadActivities)
+        : null,
+    [
+      settings.responseMetricsEnabled,
+      threadDetailLoading,
+      activeThread?.id,
+      activeThread?.environmentId,
+      threadId,
+      environmentId,
+      threadActivities,
+    ],
   );
   const activeTokenUsage = useThreadTokenUsage(routeThreadKey, liveThreadActivities);
   const workLogEntries = useMemo(
@@ -3263,6 +3399,12 @@ export default function ChatView(props: ChatViewProps) {
       activeLatestTurn?.turnId ?? null,
     );
   }, [activeLatestTurn?.turnId, activeThread?.proposedPlans, latestTurnSettled]);
+  const activeDeepPlanProposal =
+    activeDeepPlan?.plan &&
+    activeProposedPlan?.deepPlan?.runId === activeDeepPlan.id &&
+    activeProposedPlan.deepPlan.planVersion === activeDeepPlan.plan.version
+      ? activeDeepPlan
+      : null;
   const activePlan = useMemo(
     () => deriveActivePlanState(threadActivities, activeLatestTurn?.turnId ?? undefined),
     [activeLatestTurn?.turnId, threadActivities],
@@ -3270,7 +3412,9 @@ export default function ChatView(props: ChatViewProps) {
   const planAnalysisAvailability = {
     pendingUserInputCount: pendingUserInputs.length,
     latestTurnSettled,
-    hasActionableProposedPlan: hasActionableProposedPlan(activeProposedPlan),
+    hasActionableProposedPlan:
+      hasActionableProposedPlan(activeProposedPlan) &&
+      getDeepPlanProposalBlockReason(activeProposedPlan, activeDeepPlan) === null,
     hasComposerAttachments: composerHasAttachments,
   };
   const showPlanAnalysis = shouldShowPlanAnalysis(planAnalysisAvailability);
@@ -4629,6 +4773,55 @@ export default function ChatView(props: ChatViewProps) {
     [activeProject, activeProjectScripts, persistProjectScripts],
   );
 
+  const rememberProjectChatSettings = useCallback(
+    (changes?: Partial<ResolvedProjectChatSettings>) => {
+      const context = composerRef.current?.getSendContext();
+      if (!activeProject || !context || context.multipleModelSelections !== null) {
+        return;
+      }
+      const config = appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId);
+      if (config?.environment.capabilities.projectChatSettings !== true) return;
+      const snapshot = readComposerProjectChatSettings({
+        draft: useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
+        fallback: {
+          modelSelection: activeThread?.modelSelection ?? context.selectedModelSelection,
+          runtimeMode,
+          composerMode: activeThread?.interactionMode ?? context.composerMode,
+        },
+        ...(changes ? { changes } : {}),
+      });
+      const provider = providerInstanceEntries.find(
+        (entry) => entry.instanceId === snapshot.modelSelection.instanceId,
+      );
+      if (!provider?.enabled || !provider.isAvailable || !snapshot.modelSelection.model) return;
+      void rememberProjectChatSettingsCommand({
+        environmentId,
+        projectId: activeProject.id,
+        settings: snapshot,
+      });
+    },
+    [
+      activeProject,
+      activeThread,
+      composerDraftTarget,
+      composerRef,
+      environmentId,
+      providerInstanceEntries,
+      rememberProjectChatSettingsCommand,
+      runtimeMode,
+    ],
+  );
+  const handleManualModelSelectionChange = useCallback(
+    (modelSelection: ModelSelection) => {
+      setComposerDraftModelSelection(composerDraftTarget, modelSelection, {
+        explicit: true,
+        replaceOptions: true,
+      });
+      rememberProjectChatSettings({ modelSelection });
+    },
+    [composerDraftTarget, rememberProjectChatSettings, setComposerDraftModelSelection],
+  );
+
   const handleRuntimeModeChange = useCallback(
     (mode: RuntimeMode) => {
       if (mode === runtimeMode) return;
@@ -4636,11 +4829,13 @@ export default function ChatView(props: ChatViewProps) {
       if (isLocalDraftThread) {
         setDraftThreadContext(composerDraftTarget, { runtimeMode: mode });
       }
+      rememberProjectChatSettings({ runtimeMode: mode });
       scheduleComposerFocus();
     },
     [
       isLocalDraftThread,
       runtimeMode,
+      rememberProjectChatSettings,
       scheduleComposerFocus,
       composerDraftTarget,
       setComposerDraftRuntimeMode,
@@ -4649,29 +4844,49 @@ export default function ChatView(props: ChatViewProps) {
   );
 
   const handleInteractionModeChange = useCallback(
-    (mode: ProviderInteractionMode) => {
+    (mode: ComposerMode) => {
       if (mode === "plan" && !interactionModeEnabled) return;
-      if (mode === interactionMode) return;
-      setComposerDraftInteractionMode(composerDraftTarget, mode);
+      if (mode === "deep-plan" && !deepPlanningAvailability.supported) return;
+      const preferredMode =
+        useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.composerMode ??
+        activeThread?.interactionMode ??
+        composerMode;
+      if (mode === preferredMode) return;
+      setComposerDraftMode(composerDraftTarget, mode);
       if (isLocalDraftThread) {
-        setDraftThreadContext(composerDraftTarget, { interactionMode: mode });
+        setDraftThreadContext(composerDraftTarget, {
+          interactionMode: getProviderInteractionMode(mode),
+        });
       }
+      rememberProjectChatSettings({ composerMode: mode });
       scheduleComposerFocus();
     },
     [
-      interactionMode,
+      activeThread?.interactionMode,
+      composerMode,
+      deepPlanningAvailability.supported,
       interactionModeEnabled,
       isLocalDraftThread,
+      rememberProjectChatSettings,
       scheduleComposerFocus,
       composerDraftTarget,
-      setComposerDraftInteractionMode,
+      setComposerDraftMode,
       setDraftThreadContext,
     ],
   );
   const toggleInteractionMode = useCallback(() => {
-    if (!interactionModeEnabled) return;
-    handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
-  }, [handleInteractionModeChange, interactionMode, interactionModeEnabled]);
+    if (!interactionModeEnabled && composerMode !== "deep-plan") return;
+    handleInteractionModeChange(
+      getNextComposerMode(composerMode, {
+        deepPlanningSupported: deepPlanningAvailability.supported,
+      }),
+    );
+  }, [
+    handleInteractionModeChange,
+    composerMode,
+    deepPlanningAvailability.supported,
+    interactionModeEnabled,
+  ]);
   const openProviderSetup = useCallback(
     (instanceId: ProviderInstanceId) => {
       void navigate({
@@ -6671,10 +6886,10 @@ export default function ChatView(props: ChatViewProps) {
   const compactDisabledReason = compactDisabled
     ? (harnessSendDisabledReason ??
       (!activeProject
-        ? "Choose a project before compacting"
+        ? translate("chat.contextMeter.compactDisabledChooseProject")
         : !manualCompactionProviderAvailable
-          ? "Compaction is unavailable for this provider"
-          : "Compacting is unavailable right now"))
+          ? translate("chat.contextMeter.compactDisabledProvider")
+          : translate("chat.contextMeter.compactDisabledUnavailable")))
     : null;
   const resumeCompactionBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (
@@ -7522,6 +7737,8 @@ export default function ChatView(props: ChatViewProps) {
     modelSelection: sendCtx.selectedModelSelection,
     runtimeMode,
     interactionMode: sendCtx.interactionMode,
+    composerMode: sendCtx.composerMode,
+    deepPlanSourceRefs: sendCtx.deepPlanSourceRefs,
     promptEffort: resolvePromptInjectedEffort(
       getProviderModelCapabilities(
         sendCtx.selectedProviderModels,
@@ -7540,6 +7757,15 @@ export default function ChatView(props: ChatViewProps) {
       .map((prompt) => prompt.trim())
       .filter((prompt) => prompt.length > 0);
     const nextPrompt = prompts.join("\n\n");
+    if (firstMessage.sendSettings?.composerMode !== undefined) {
+      setComposerDraftMode(composerDraftTarget, firstMessage.sendSettings.composerMode);
+      useComposerDraftStore
+        .getState()
+        .setDeepPlanSourceRefs(
+          composerDraftTarget,
+          firstMessage.sendSettings.deepPlanSourceRefs ?? [],
+        );
+    }
     promptRef.current = nextPrompt;
     const existingVoiceFileReferences =
       useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.voiceFileReferences ??
@@ -7633,6 +7859,10 @@ export default function ChatView(props: ChatViewProps) {
   ) => {
     e?.preventDefault();
     if (composerReplyTarget) {
+      if (composerRef.current?.getSendContext().composerMode === "deep-plan") {
+        setThreadError(activeThreadId, translate("chat.deepPlan.replyUnavailable"));
+        return;
+      }
       await messageReplies.sendReply();
       return;
     }
@@ -7720,7 +7950,28 @@ export default function ChatView(props: ChatViewProps) {
       notifyDirectAnnotationAttached();
       return;
     }
+    if (sendCtx.composerMode === "deep-plan") {
+      const liveConfig = appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId);
+      const availability = resolveDeepPlanningAvailability({
+        capabilities: liveConfig?.environment.capabilities,
+        provider: liveConfig?.providers.find(
+          (provider) => provider.instanceId === sendCtx.selectedModelSelection.instanceId,
+        ),
+        connected: !activeEnvironmentUnavailable,
+      });
+      if (!availability.supported) {
+        setThreadError(
+          activeThread.id,
+          availability.reasonKey ? translate(availability.reasonKey) : availability.reason,
+        );
+        return;
+      }
+    }
     const multipleModelSelections = sendCtx.multipleModelSelections;
+    if (sendCtx.composerMode === "deep-plan" && multipleModelSelections !== null) {
+      setThreadError(activeThread.id, translate("chat.deepPlan.singleModel"));
+      return;
+    }
     if (
       multipleModelSelections !== null &&
       serverConfig?.environment.capabilities.requiredWorktreeBootstrap !== true
@@ -7869,6 +8120,7 @@ export default function ChatView(props: ChatViewProps) {
     }
     if (
       !directAnnotation &&
+      (activeDeepPlanProposal || sendCtx.composerMode !== "deep-plan") &&
       sendInteractionModeEnabled &&
       showPlanFollowUpPrompt &&
       activeProposedPlan &&
@@ -7928,6 +8180,7 @@ export default function ChatView(props: ChatViewProps) {
           previewAnnotations: composerPreviewAnnotations,
         }),
         interactionMode: followUp.interactionMode,
+        ...(activeDeepPlanProposal ? { deepPlanRun: activeDeepPlanProposal } : {}),
         ...(followUp.interactionMode === "default"
           ? { strategy: sendCtx.planImplementationSuggestion?.strategy ?? { kind: "standard" } }
           : {}),
@@ -8020,6 +8273,7 @@ export default function ChatView(props: ChatViewProps) {
       ) {
         return;
       }
+      rememberProjectChatSettings();
       useQueuedMessageStore.getState().enqueue(activeThreadKey, {
         prompt: promptForSend,
         voiceFileReferences:
@@ -8221,6 +8475,7 @@ export default function ChatView(props: ChatViewProps) {
       });
     }
 
+    rememberProjectChatSettings();
     sendInFlightRef.current = true;
     const sendGeneration = ++composerSendGenerationRef.current;
     const attachmentCapabilitiesBeforeUpload = readLiveAttachmentCapabilities();
@@ -8779,50 +9034,74 @@ export default function ChatView(props: ChatViewProps) {
       if (backgroundThreadRef) {
         beginBackgroundDraftSubmissionByRef(backgroundThreadRef);
       }
-      const startPromise = startThreadTurn({
-        environmentId,
-        input: {
-          threadId: threadIdForSend,
-          message: {
-            messageId: messageIdForSend,
-            role: "user",
-            text: outgoingMessageText,
-            attachments: turnAttachmentsResult.value,
-            ...(() => {
-              const context = buildOutgoingMessageContext(
-                turnAttachmentsResult.value.map((attachment, index) =>
-                  "id" in attachment && attachment.id !== undefined
-                    ? attachment.id
-                    : composerAttachmentsSnapshot[index]!.id,
-                ),
-              );
-              if (context === undefined) return {};
-              // Read the capability at dispatch time: the upload and persistence
-              // awaits above can span a server reconnect that changes it. Servers
-              // from before inline context drop the records and forward the links
-              // as literal text, so their turns carry the payload the legacy way.
-              const supportsInlineMessageContext =
-                appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
-                  .capabilities.inlineMessageContext === true;
-              if (!supportsInlineMessageContext) {
-                return {
-                  text: serializeLegacyContextMessage({
-                    text: outgoingMessageText,
-                    records: context.records,
-                  }),
-                };
-              }
-              return { context };
-            })(),
+      const startPromise = (async () => {
+        let dispatchBootstrap = bootstrap;
+        if (sendCtx.composerMode === "deep-plan") {
+          const api = getWebDeepPlanningApi(environmentId);
+          if (bootstrap?.createThread) {
+            await api.dispatchCommand({
+              type: "thread.create",
+              commandId: CommandId.make(randomUUID()),
+              threadId: threadIdForSend,
+              ...bootstrap.createThread,
+            });
+            const { createThread: _created, ...remainingBootstrap } = bootstrap;
+            dispatchBootstrap = remainingBootstrap.prepareWorktree ? remainingBootstrap : undefined;
+          }
+          await prepareDeepPlanForTurn({
+            environmentId,
+            projectId: activeProject.id,
+            threadId: threadIdForSend,
+            additionalSourceRefs: sendCtx.deepPlanSourceRefs,
+            apiForEnvironment: getWebDeepPlanningApi,
+            createId: randomUUID,
+          });
+        }
+        return startThreadTurn({
+          environmentId,
+          input: {
+            threadId: threadIdForSend,
+            message: {
+              messageId: messageIdForSend,
+              role: "user",
+              text: outgoingMessageText,
+              attachments: turnAttachmentsResult.value,
+              ...(() => {
+                const context = buildOutgoingMessageContext(
+                  turnAttachmentsResult.value.map((attachment, index) =>
+                    "id" in attachment && attachment.id !== undefined
+                      ? attachment.id
+                      : composerAttachmentsSnapshot[index]!.id,
+                  ),
+                );
+                if (context === undefined) return {};
+                // Read the capability at dispatch time: the upload and persistence
+                // awaits above can span a server reconnect that changes it. Servers
+                // from before inline context drop the records and forward the links
+                // as literal text, so their turns carry the payload the legacy way.
+                const supportsInlineMessageContext =
+                  appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
+                    .capabilities.inlineMessageContext === true;
+                if (!supportsInlineMessageContext) {
+                  return {
+                    text: serializeLegacyContextMessage({
+                      text: outgoingMessageText,
+                      records: context.records,
+                    }),
+                  };
+                }
+                return { context };
+              })(),
+            },
+            modelSelection: ctxSelectedModelSelection,
+            titleSeed: title,
+            runtimeMode,
+            interactionMode: sendInteractionMode,
+            ...(dispatchBootstrap ? { bootstrap: dispatchBootstrap } : {}),
+            createdAt: messageCreatedAt,
           },
-          modelSelection: ctxSelectedModelSelection,
-          titleSeed: title,
-          runtimeMode,
-          interactionMode: sendInteractionMode,
-          ...(bootstrap ? { bootstrap } : {}),
-          createdAt: messageCreatedAt,
-        },
-      });
+        });
+      })().catch((error: unknown) => AsyncResult.failure(Cause.fail(error)));
       if (backgroundThreadRef) {
         markPromotedDraftThreadByRef(backgroundThreadRef);
         try {
@@ -9283,12 +9562,14 @@ export default function ChatView(props: ChatViewProps) {
       context,
       interactionMode: nextInteractionMode,
       strategy,
+      deepPlanRun,
       voiceFileReferences = [],
     }: {
       text: string;
       context?: ReturnType<typeof buildMessageContext>;
       interactionMode: "default" | "plan";
       strategy?: PlanImplementationStrategy;
+      deepPlanRun?: DeepPlanRun;
       voiceFileReferences?: ReadonlyArray<VoiceFileReference>;
       // Whether the message actually went out. A `false` return tells the caller to put the
       // composer back, because it cleared it before awaiting this.
@@ -9322,18 +9603,50 @@ export default function ChatView(props: ChatViewProps) {
         selectedModelSelection: ctxSelectedModelSelection,
       } = sendCtx;
 
-      if (nextInteractionMode === "default" && activeProposedPlan) {
-        if (sendCtx.planParallelismReviewStatus === "reviewing") return false;
-        const dispatch = resolvePlanImplementationDispatch({
-          planMarkdown: activeProposedPlan.planMarkdown,
-          strategy: strategy ?? { kind: "standard" },
-          selectedProviderInstanceId: ctxSelectedModelSelection.instanceId,
-          providerStatuses,
-        });
-        if (dispatch._tag === "Blocked") {
-          setThreadError(activeThread.id, dispatch.error);
+      if (nextInteractionMode === "default" && sendCtx.planParallelismReviewStatus === "reviewing")
+        return false;
+      const dispatch =
+        nextInteractionMode === "default" && activeProposedPlan
+          ? resolvePlanImplementationDispatch({
+              planMarkdown: deepPlanRun?.plan
+                ? formatDeepPlanMarkdown(deepPlanRun.plan)
+                : activeProposedPlan.planMarkdown,
+              strategy: strategy ?? { kind: "standard" },
+              selectedProviderInstanceId: ctxSelectedModelSelection.instanceId,
+              providerStatuses,
+            })
+          : null;
+      if (dispatch?._tag === "Blocked") {
+        setThreadError(activeThread.id, dispatch.error);
+        return false;
+      }
+      sendInFlightRef.current = true;
+      let approvedDeepPlan: DeepPlanRun | null = null;
+      if (nextInteractionMode === "default" && deepPlanRun) {
+        try {
+          approvedDeepPlan = await approveWebDeepPlan({
+            environmentId,
+            run: deepPlanRun,
+            implementationThreadId: activeThread.id,
+            implementation: ctxSelectedModelSelection,
+            requestedParallelism: strategy?.kind === "subagents" ? strategy.count : 1,
+          });
+          const implementationProvider = providerStatuses.find(
+            (provider) => provider.instanceId === ctxSelectedModelSelection.instanceId,
+          );
+          trimmed = buildDeepPlanImplementationPrompt(approvedDeepPlan, {
+            strategy: strategy ?? { kind: "standard" },
+            ...(implementationProvider ? { provider: implementationProvider } : {}),
+          });
+        } catch (error) {
+          setThreadError(
+            activeThread.id,
+            error instanceof Error ? error.message : "Deep Plan approval failed.",
+          );
+          sendInFlightRef.current = false;
           return false;
         }
+      } else if (dispatch?._tag === "Ready") {
         trimmed = dispatch.prompt;
       }
 
@@ -9347,9 +9660,11 @@ export default function ChatView(props: ChatViewProps) {
         effort: ctxSelectedPromptEffort,
         text: appendVoiceFileContext(trimmed, voiceFileReferences),
       });
-      if (composerRef.current?.validateProviderInput(outgoingMessageText) === false) return false;
+      if (composerRef.current?.validateProviderInput(outgoingMessageText) === false) {
+        sendInFlightRef.current = false;
+        return false;
+      }
 
-      sendInFlightRef.current = true;
       beginLocalDispatch({ preparingWorktree: false });
       setThreadError(threadIdForSend, null);
 
@@ -9385,9 +9700,9 @@ export default function ChatView(props: ChatViewProps) {
       if (failure === null) {
         // Keep the mode toggle and plan-follow-up banner in sync immediately
         // while the same-thread implementation turn is starting.
-        setComposerDraftInteractionMode(
+        setComposerDraftMode(
           scopeThreadRef(activeThread.environmentId, threadIdForSend),
-          nextInteractionMode,
+          deepPlanRun && nextInteractionMode === "plan" ? "deep-plan" : nextInteractionMode,
         );
 
         const startResult = await startThreadTurn({
@@ -9412,11 +9727,21 @@ export default function ChatView(props: ChatViewProps) {
             titleSeed: activeThread.title,
             runtimeMode,
             interactionMode: nextInteractionMode,
-            ...(nextInteractionMode === "default" && activeProposedPlan
+            ...(nextInteractionMode === "default" &&
+            activeProposedPlan &&
+            (!approvedDeepPlan || activeProposedPlan.deepPlan?.runId === approvedDeepPlan.id)
               ? {
                   sourceProposedPlan: {
-                    threadId: activeThread.id,
+                    threadId: approvedDeepPlan?.threadId ?? activeThread.id,
                     planId: activeProposedPlan.id,
+                    ...(approvedDeepPlan?.plan
+                      ? {
+                          deepPlan: {
+                            runId: approvedDeepPlan.id,
+                            planVersion: approvedDeepPlan.plan.version,
+                          },
+                        }
+                      : {}),
                   },
                 }
               : {}),
@@ -9462,7 +9787,7 @@ export default function ChatView(props: ChatViewProps) {
       resetLocalDispatch,
       runtimeMode,
       scrollToEnd,
-      setComposerDraftInteractionMode,
+      setComposerDraftMode,
       setThreadError,
       startThreadTurn,
       environmentId,
@@ -9473,6 +9798,15 @@ export default function ChatView(props: ChatViewProps) {
 
   const onImplementPlan = useCallback(
     (strategy: PlanImplementationStrategy) => {
+      const deepPlanRun = activeDeepPlanProposal;
+      if (deepPlanRun?.plan) {
+        return onSubmitPlanFollowUp({
+          text: formatDeepPlanMarkdown(deepPlanRun.plan),
+          interactionMode: "default",
+          strategy,
+          deepPlanRun,
+        });
+      }
       if (!activeProposedPlan) return;
       return onSubmitPlanFollowUp({
         text: activeProposedPlan.planMarkdown,
@@ -9480,15 +9814,16 @@ export default function ChatView(props: ChatViewProps) {
         strategy,
       });
     },
-    [activeProposedPlan, onSubmitPlanFollowUp],
+    [activeDeepPlanProposal, activeProposedPlan, onSubmitPlanFollowUp],
   );
 
   const onImplementPlanInNewThread = useCallback(
     async (strategy: PlanImplementationStrategy) => {
+      const deepPlanRun = activeDeepPlanProposal;
       if (
         !activeThread ||
         !activeProject ||
-        !activeProposedPlan ||
+        (!activeProposedPlan && !deepPlanRun?.plan) ||
         !isServerThread ||
         isHarnessSessionActive ||
         isSendBusy ||
@@ -9513,7 +9848,9 @@ export default function ChatView(props: ChatViewProps) {
 
       const createdAt = new Date().toISOString();
       const nextThreadId = newThreadId();
-      const planMarkdown = activeProposedPlan.planMarkdown;
+      const planMarkdown = deepPlanRun?.plan
+        ? formatDeepPlanMarkdown(deepPlanRun.plan)
+        : activeProposedPlan!.planMarkdown;
       if (sendCtx.planParallelismReviewStatus === "reviewing") return;
       const dispatch = resolvePlanImplementationDispatch({
         planMarkdown,
@@ -9526,7 +9863,7 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
       const implementationPrompt = dispatch.prompt;
-      const outgoingImplementationPrompt = formatOutgoingPrompt({
+      let outgoingImplementationPrompt = formatOutgoingPrompt({
         provider: ctxSelectedProvider,
         model: ctxSelectedModel,
         models: ctxSelectedProviderModels,
@@ -9538,6 +9875,7 @@ export default function ChatView(props: ChatViewProps) {
       }
       const nextThreadTitle = truncate(buildPlanImplementationThreadTitle(planMarkdown));
       const nextThreadModelSelection: ModelSelection = ctxSelectedModelSelection;
+      const nextThreadRuntimeMode = deepPlanRun ? runtimeMode : defaultRuntimeMode;
 
       sendInFlightRef.current = true;
       beginLocalDispatch({ preparingWorktree: false });
@@ -9553,7 +9891,7 @@ export default function ChatView(props: ChatViewProps) {
           projectId: activeProject.id,
           title: nextThreadTitle,
           modelSelection: nextThreadModelSelection,
-          runtimeMode: defaultRuntimeMode,
+          runtimeMode: nextThreadRuntimeMode,
           interactionMode: "default",
           branch: activeThreadBranch,
           worktreePath: activeThread.worktreePath,
@@ -9562,6 +9900,39 @@ export default function ChatView(props: ChatViewProps) {
       });
       let failure: AtomCommandResult<unknown, unknown> | null =
         createResult._tag === "Failure" ? createResult : null;
+      let approvedDeepPlan: DeepPlanRun | null = null;
+
+      if (failure === null && deepPlanRun?.plan) {
+        const approvalResult = await settlePromise(async () => {
+          const approved = await approveWebDeepPlan({
+            environmentId,
+            run: deepPlanRun,
+            implementationThreadId: nextThreadId,
+            implementation: ctxSelectedModelSelection,
+            requestedParallelism: strategy.kind === "subagents" ? strategy.count : 1,
+          });
+          approvedDeepPlan = approved;
+          const implementationProvider = providerStatuses.find(
+            (provider) => provider.instanceId === ctxSelectedModelSelection.instanceId,
+          );
+          const prompt = buildDeepPlanImplementationPrompt(approved, {
+            strategy,
+            ...(implementationProvider ? { provider: implementationProvider } : {}),
+          });
+          outgoingImplementationPrompt = formatOutgoingPrompt({
+            provider: ctxSelectedProvider,
+            model: ctxSelectedModel,
+            models: ctxSelectedProviderModels,
+            effort: ctxSelectedPromptEffort,
+            text: prompt,
+          });
+          if (composerRef.current?.validateProviderInput(outgoingImplementationPrompt) === false)
+            throw new Error("The implementation prompt exceeds this provider's input limit.");
+          return approved;
+        });
+        if (approvalResult._tag === "Failure") failure = approvalResult;
+        else approvedDeepPlan = approvalResult.value;
+      }
 
       if (failure === null) {
         const startResult = await startThreadTurn({
@@ -9576,12 +9947,25 @@ export default function ChatView(props: ChatViewProps) {
             },
             modelSelection: ctxSelectedModelSelection,
             titleSeed: nextThreadTitle,
-            runtimeMode: defaultRuntimeMode,
+            runtimeMode: nextThreadRuntimeMode,
             interactionMode: "default",
-            sourceProposedPlan: {
-              threadId: activeThread.id,
-              planId: activeProposedPlan.id,
-            },
+            ...(activeProposedPlan &&
+            (!approvedDeepPlan || activeProposedPlan.deepPlan?.runId === approvedDeepPlan.id)
+              ? {
+                  sourceProposedPlan: {
+                    threadId: approvedDeepPlan?.threadId ?? activeThread.id,
+                    planId: activeProposedPlan.id,
+                    ...(approvedDeepPlan?.plan
+                      ? {
+                          deepPlan: {
+                            runId: approvedDeepPlan.id,
+                            planVersion: approvedDeepPlan.plan.version,
+                          },
+                        }
+                      : {}),
+                  },
+                }
+              : {}),
             createdAt,
           },
         });
@@ -9609,13 +9993,15 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       if (failure !== null) {
-        const cleanupResult = await deleteThread({
-          environmentId,
-          input: {
-            threadId: nextThreadId,
-          },
-        });
-        if (cleanupResult._tag === "Failure" && !isAtomCommandInterrupted(cleanupResult)) {
+        const cleanupResult = approvedDeepPlan
+          ? null
+          : await deleteThread({
+              environmentId,
+              input: {
+                threadId: nextThreadId,
+              },
+            });
+        if (cleanupResult?._tag === "Failure" && !isAtomCommandInterrupted(cleanupResult)) {
           console.warn(
             "Failed to clean up implementation thread after start failure.",
             squashAtomCommandFailure(cleanupResult),
@@ -9639,6 +10025,7 @@ export default function ChatView(props: ChatViewProps) {
     },
     [
       activeProject,
+      activeDeepPlanProposal,
       activeProposedPlan,
       providerStatuses,
       setThreadError,
@@ -9655,11 +10042,80 @@ export default function ChatView(props: ChatViewProps) {
       navigate,
       resetLocalDispatch,
       defaultRuntimeMode,
+      runtimeMode,
       startThreadTurn,
       environmentId,
       composerRef,
     ],
   );
+
+  const continueDeepPlan = useCallback(async () => {
+    if (
+      !activeDeepPlan ||
+      !activeThread ||
+      isSendBusy ||
+      isConnecting ||
+      activeEnvironmentUnavailable ||
+      sendInFlightRef.current
+    )
+      return;
+    const sendContext = composerRef.current?.getSendContext();
+    if (!sendContext?.providerAvailable)
+      throw new Error("Select an available provider before continuing this Deep Plan.");
+    sendInFlightRef.current = true;
+    beginLocalDispatch({ preparingWorktree: false });
+    try {
+      const run = await continueDeepPlanForTurn({
+        run: activeDeepPlan,
+        environmentId,
+        projectId: activeThread.projectId,
+        fallbackModelSelection: sendContext.selectedModelSelection,
+        runtimeMode,
+        providers: providerStatuses,
+        apiForEnvironment: getWebDeepPlanningApi,
+        createId: randomUUID,
+      });
+      const targetThreadId = run.approval?.implementationThreadId ?? run.threadId;
+      if (targetThreadId !== activeThread.id && currentRouteThreadKeyRef.current === routeThreadKey)
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: { environmentId, threadId: targetThreadId },
+        });
+    } finally {
+      sendInFlightRef.current = false;
+      resetLocalDispatch();
+    }
+  }, [
+    activeDeepPlan,
+    activeThread,
+    isSendBusy,
+    isConnecting,
+    activeEnvironmentUnavailable,
+    composerRef,
+    beginLocalDispatch,
+    environmentId,
+    providerStatuses,
+    runtimeMode,
+    routeThreadKey,
+    navigate,
+    resetLocalDispatch,
+  ]);
+  const deepPlanReview = useMemo(() => {
+    if (!activeDeepPlan?.plan) return null;
+    return {
+      runId: activeDeepPlan.id,
+      planVersion: activeDeepPlan.plan.version,
+      content: (
+        <DeepPlanReviewCard
+          key={`${environmentId}:${activeDeepPlan.id}:${activeDeepPlan.plan.version}`}
+          run={activeDeepPlan}
+          environmentId={environmentId}
+          threadRef={routeThreadRef}
+          workspaceRoot={activeProject?.workspaceRoot}
+        />
+      ),
+    };
+  }, [activeDeepPlan, environmentId, routeThreadRef, activeProject?.workspaceRoot]);
 
   const getModelDisabledReason = useCallback(
     (instanceId: ProviderInstanceId, model: string): string | null => {
@@ -9718,10 +10174,15 @@ export default function ChatView(props: ChatViewProps) {
         if (options?.focusComposer !== false) scheduleComposerFocus();
         return;
       }
-      const nextModelSelection: ModelSelection = {
+      const draftSelection = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)
+        ?.modelSelectionByProvider[instanceId];
+      const currentSelection = composerRef.current?.getSendContext().selectedModelSelection;
+      const nextModelSelection = createModelSelection(
         instanceId,
-        model: resolvedModel,
-      };
+        resolvedModel,
+        draftSelection?.options ??
+          (currentSelection?.instanceId === instanceId ? currentSelection.options : undefined),
+      );
       const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
         providers: providerStatuses,
         hasStartedSession: activeThread.session !== null,
@@ -9745,12 +10206,16 @@ export default function ChatView(props: ChatViewProps) {
         { explicit: true },
       );
       setStickyComposerModelSelection(nextModelSelection);
+      rememberProjectChatSettings({ modelSelection: nextModelSelection });
       if (options?.focusComposer !== false) scheduleComposerFocus();
     },
     [
       activeThread,
       allowMidChatProviderSwitching,
+      composerDraftTarget,
+      composerRef,
       lockedProvider,
+      rememberProjectChatSettings,
       scheduleComposerFocus,
       setComposerDraftModelSelection,
       setStickyComposerModelSelection,
@@ -10699,6 +11164,7 @@ export default function ChatView(props: ChatViewProps) {
             <div className="relative flex min-h-0 flex-1 flex-col window-surface bg-background">
               {/* Messages — LegendList handles virtualization and scrolling internally */}
               <MessagesTimeline
+                deepPlanReview={paintOnlyDisplayedTimeline ? null : deepPlanReview}
                 replyControlsEnabled={
                   !paintOnlyDisplayedTimeline &&
                   !activeEnvironmentUnavailable &&
@@ -10709,6 +11175,7 @@ export default function ChatView(props: ChatViewProps) {
                     ? messageReplies.onReply
                     : undefined
                 }
+                responseMetrics={paintOnlyDisplayedTimeline ? null : responseMetrics}
                 replyTopics={paintOnlyDisplayedTimeline ? undefined : activeThread?.subagents}
                 replyActivities={
                   paintOnlyDisplayedTimeline ? undefined : activeThread?.replyActivities
@@ -10981,8 +11448,14 @@ export default function ChatView(props: ChatViewProps) {
                                 replyError={messageReplies.error}
                                 isRevertingCheckpoint={isRevertingCheckpoint}
                                 sendDisabledReason={
+                                  (composerReplyTarget && composerMode === "deep-plan"
+                                    ? translate("chat.deepPlan.replyUnavailable")
+                                    : null) ??
                                   (composerReplyTarget && !messageRepliesEnabled
                                     ? translate("chat.reply.unavailable")
+                                    : null) ??
+                                  (composerMode === "deep-plan"
+                                    ? deepPlanningDisabledReason
                                     : null) ??
                                   harnessSendDisabledReason ??
                                   (isRevertingCheckpoint
@@ -11038,6 +11511,63 @@ export default function ChatView(props: ChatViewProps) {
                                 }
                                 runtimeMode={runtimeMode}
                                 interactionMode={interactionMode}
+                                composerMode={composerMode}
+                                deepPlanSourceRefs={deepPlanSourceRefs}
+                                deepPlanningDisabledReason={deepPlanningDisabledReason}
+                                deepPlanningContent={
+                                  <>
+                                    {!composerReplyTarget && composerMode === "deep-plan" ? (
+                                      <DeepPlanSourcePicker
+                                        currentProject={deepPlanCurrentProject}
+                                        projectSourceCount={deepPlanProjectSourceCount}
+                                        options={deepPlanSourceOptions}
+                                        selected={deepPlanSourceRefs ?? []}
+                                        loading={deepPlanSourceCatalog.loading}
+                                        error={deepPlanSourceCatalog.error}
+                                        disabled={
+                                          isSendBusy ||
+                                          phase === "running" ||
+                                          !deepPlanningAvailability.supported ||
+                                          deepPlanSourcesFrozen
+                                        }
+                                        frozen={deepPlanSourcesFrozen}
+                                        onOpen={deepPlanSourceCatalog.onOpen}
+                                        onChange={(sources: readonly DeepPlanSourceRef[]) =>
+                                          setDeepPlanSourceRefs(composerDraftTarget, sources)
+                                        }
+                                      />
+                                    ) : null}
+                                    {activeDeepPlan ? (
+                                      <DeepPlanAnalysisProgress
+                                        key={`analysis:${environmentId}:${activeDeepPlan.id}`}
+                                        run={activeDeepPlan}
+                                      />
+                                    ) : null}
+                                    {activeDeepPlan ? (
+                                      <DeepPlanRunControls
+                                        key={`controls:${environmentId}:${threadId}:${activeDeepPlan.id}`}
+                                        run={activeDeepPlan}
+                                        canContinue={
+                                          phase !== "running" && !isSendBusy && !isConnecting
+                                        }
+                                        disabled={
+                                          isSendBusy ||
+                                          isConnecting ||
+                                          activeEnvironmentUnavailable ||
+                                          phase === "running"
+                                        }
+                                        onResume={continueDeepPlan}
+                                        onFinalValidation={continueDeepPlan}
+                                      />
+                                    ) : null}
+                                    {activeDeepPlan?.approval ? (
+                                      <DeepPlanChecklist
+                                        key={`checklist:${environmentId}:${threadId}:${activeDeepPlan.id}`}
+                                        run={activeDeepPlan}
+                                      />
+                                    ) : null}
+                                  </>
+                                }
                                 lockedProvider={lockedProvider}
                                 providerStatuses={providerStatuses as ServerProvider[]}
                                 providerCatalogKnown={serverConfig !== null}
@@ -11099,6 +11629,7 @@ export default function ChatView(props: ChatViewProps) {
                                   onChangeActivePendingUserInputCustomAnswer
                                 }
                                 onProviderModelSelect={onProviderModelSelect}
+                                onManualModelSelectionChange={handleManualModelSelectionChange}
                                 onOpenProviderSetup={openProviderSetup}
                                 getModelDisabledReason={getModelDisabledReason}
                                 toggleInteractionMode={toggleInteractionMode}

@@ -2,7 +2,8 @@ import {
   isProviderDriverKind,
   isProviderAvailable,
   resolveProviderInstanceEnabled,
-  type ModelSelection,
+  ModelSelection,
+  type ProjectChatSettings,
   type ProjectId,
   type ProjectScopedServerSettingKey,
   type ProjectSettingsOverrides,
@@ -217,6 +218,38 @@ function mergeSettingsEntries<Value>(
   return Object.fromEntries(next);
 }
 
+const sameProjectDefaultModel = Schema.toEquivalence(
+  Schema.UndefinedOr(Schema.NullOr(ModelSelection)),
+);
+
+function applyProjectChatSettingsPatch(
+  current: ServerSettings,
+  patch: ServerSettingsPatch,
+): ServerSettings["projectChatSettings"] {
+  if (patch.projectSettingsOverrides === undefined && patch.projectChatSettings === undefined) {
+    return current.projectChatSettings;
+  }
+  const entries: Record<string, ProjectChatSettings> = { ...current.projectChatSettings };
+  for (const [projectId, overrides] of Object.entries(patch.projectSettingsOverrides ?? {})) {
+    const previous = current.projectSettingsOverrides[projectId as ProjectId];
+    const resetModel = !sameProjectDefaultModel(
+      previous?.defaultModelSelection,
+      overrides?.defaultModelSelection,
+    );
+    const resetRuntime = previous?.defaultRuntimeMode !== overrides?.defaultRuntimeMode;
+    if (!resetModel && !resetRuntime) continue;
+
+    const remembered = { ...entries[projectId] };
+    if (resetModel) delete remembered.modelSelection;
+    if (resetRuntime) delete remembered.runtimeMode;
+    // Keep an empty entry so clients do not bootstrap stale choices from old threads.
+    entries[projectId] = remembered;
+  }
+  return patch.projectChatSettings === undefined
+    ? entries
+    : mergeSettingsEntries(entries, patch.projectChatSettings);
+}
+
 type LegacyLocaleRecord = ServerSettings["interfaceLanguageSyncRecord"];
 type LocaleRecordV1 = ServerSettings["interfaceLocaleSyncRecordV1"];
 
@@ -382,6 +415,7 @@ export function applyServerSettingsPatch(
   const patch = translateLegacyProjectOverridePatch(current, rawPatch);
   const textGenerationSelectionPatch = patch.textGenerationModelSelection;
   const fetchModelSelectionPatch = patch.fetchModelSelection;
+  const contextCompactionSelectionPatch = patch.contextCompactionModelSelection;
   const voiceTranslationSelectionPatch = patch.voiceTranslationModelSelection;
   const knowledgeGraphSelectionPatch = patch.knowledgeGraphModelSelection;
   const projectIndexingSelectionPatch = patch.projectIndexingDefaultModelSelection;
@@ -407,12 +441,14 @@ export function applyServerSettingsPatch(
     speechTranscription: speechTranscriptionPatch,
     textGenerationModelSelection: _textGenerationModelSelection,
     fetchModelSelection: _fetchModelSelection,
+    contextCompactionModelSelection: _contextCompactionModelSelection,
     voiceTranslationModelSelection: _voiceTranslationModelSelection,
     knowledgeGraphModelSelection: _knowledgeGraphModelSelection,
     projectIndexingDefaultModelSelection: _projectIndexingDefaultModelSelection,
     parallelPlanReviewModelSelection: _parallelPlanReviewModelSelection,
     // Entry replacement: deepMerge would keep keys the client meant to clear.
     projectSettingsOverrides: projectSettingsOverridesPatch,
+    projectChatSettings: _projectChatSettings,
     // Already translated into `projectSettingsOverrides` above; the legacy
     // maps are derived views and must never be merged directly.
     projectAgentBrowserAccessOverrides: _legacyBrowserAccess,
@@ -563,6 +599,7 @@ export function applyServerSettingsPatch(
           ),
         }
       : {}),
+    projectChatSettings: applyProjectChatSettingsPatch(current, patch),
     ...(patch.defaultModelSelection !== undefined
       ? { defaultModelSelection: patch.defaultModelSelection }
       : {}),
@@ -587,6 +624,9 @@ export function applyServerSettingsPatch(
       : {}),
     ...(patch.sourceControlWriterModelSelection !== undefined
       ? { sourceControlWriterModelSelection: patch.sourceControlWriterModelSelection }
+      : {}),
+    ...(contextCompactionSelectionPatch !== undefined
+      ? { contextCompactionModelSelection: contextCompactionSelectionPatch }
       : {}),
     ...(fetchModelSelectionPatch !== undefined
       ? { fetchModelSelection: fetchModelSelectionPatch }

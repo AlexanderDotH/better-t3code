@@ -41,6 +41,7 @@ import {
   type ProjectId,
   type ProviderInstanceId,
   type ProviderDriverKind,
+  type ProviderInteractionMode,
   type ProviderSandboxMode,
   type ProviderSessionPurpose,
   type ProviderRuntimeEvent,
@@ -74,12 +75,8 @@ import * as ServerConfig from "../../config.ts";
 import * as DeviceService from "../../device/DeviceService.ts";
 import { ensureAgentDeviceShim } from "../../device/AgentDeviceShim.ts";
 import type * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
-import {
-  makeBoundedProviderEventBroadcast,
-  providerEventEncodedBytes,
-  PROVIDER_RUNTIME_EVENT_QUEUE_BYTE_CAPACITY,
-  PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY,
-} from "../boundedEventQueue.ts";
+import { makeProviderEventHub } from "../providerEventHub.ts";
+import { transferProviderIngress } from "../../observability/ProviderPipelineMetrics.ts";
 import {
   increment,
   providerMetricAttributes,
@@ -112,6 +109,8 @@ import { McpRuntimeRegistry } from "../../mcp/McpRuntimeRegistry.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
+import { deepPlanProviderContext } from "../../deepPlanning/DeepPlanProviderContext.ts";
 import { modelSelectionPurposeViolation } from "../ModelSelectionPurposePolicy.ts";
 const isModelSelection = Schema.is(ModelSelection);
 const isPastedTextAttachmentSource = Schema.is(PastedTextAttachmentSource);
@@ -543,7 +542,7 @@ const correlateRuntimeEventWithInstance = (
       `ProviderService.streamEvents: provider instance '${source.instanceId}' emitted event for instance '${event.providerInstanceId}'.`,
     );
   }
-  return { ...event, providerInstanceId: source.instanceId };
+  return transferProviderIngress(event, { ...event, providerInstanceId: source.instanceId });
 };
 
 const makeProviderService = Effect.fn("makeProviderService")(function* (
@@ -585,6 +584,39 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const projectionQuery = yield* Effect.serviceOption(
     ProjectionSnapshotQuery.ProjectionSnapshotQuery,
   );
+  const deepPlanThreads = yield* Effect.serviceOption(ProjectionThreadRepository);
+  const resolveDeepPlanBinding = Effect.fn("ProviderService.resolveDeepPlanBinding")(function* (
+    threadId: ThreadId,
+    selection?: ModelSelection,
+    interactionMode?: ProviderInteractionMode,
+  ) {
+    if (Option.isNone(projectionQuery)) return undefined;
+    const thread = yield* projectionQuery.value
+      .getThreadShellById(threadId)
+      .pipe(
+        Effect.mapError((error) => toValidationError("ProviderService.deepPlan", error.message)),
+      );
+    if (Option.isNone(thread)) return undefined;
+    const run =
+      thread.value.deepPlan ??
+      (Option.isSome(deepPlanThreads)
+        ? Option.getOrNull(
+            yield* deepPlanThreads.value
+              .getDeepPlanByImplementationThreadId(threadId)
+              .pipe(
+                Effect.mapError((error) =>
+                  toValidationError("ProviderService.deepPlan", error.message),
+                ),
+              ),
+          )
+        : null);
+    return deepPlanProviderContext(
+      run,
+      threadId,
+      selection ?? thread.value.modelSelection,
+      interactionMode,
+    );
+  });
   const issueMcpCredential =
     options?.issueMcpCredential ?? McpSessionRegistry.issueActiveMcpCredential;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -1021,14 +1053,25 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     ),
   );
   const mcpRuntimeRegistry = Option.getOrUndefined(yield* Effect.serviceOption(McpRuntimeRegistry));
-  const runtimeEventBroadcast = yield* makeBoundedProviderEventBroadcast<ProviderRuntimeEvent>({
-    capacity: PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY,
-    byteCapacity: PROVIDER_RUNTIME_EVENT_QUEUE_BYTE_CAPACITY,
-    sizeOf: providerEventEncodedBytes,
-  });
+  const runtimeEventBroadcast = yield* makeProviderEventHub();
   const serviceScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
     Scope.close(scope, Exit.void),
   );
+  if (canonicalEventLogger) {
+    yield* runtimeEventBroadcast.consumeEvents(
+      (event) => canonicalEventLogger.write(event, event.threadId),
+      { delivery: "lossless" },
+    );
+  }
+  if (mcpRuntimeRegistry) {
+    yield* runtimeEventBroadcast.consumeEvents(
+      (event) => mcpRuntimeRegistry.observeProviderEvent(event),
+      {
+        delivery: "lossless",
+        filter: { types: ["session.exited", "mcp.status.updated", "mcp.oauth.completed"] },
+      },
+    );
+  }
   const runtimeLeases = yield* Ref.make(new Map<ThreadId, ProviderRuntimeLease>());
   const transientBindings = yield* Ref.make(new Map<ThreadId, ProviderTransientBinding>());
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -1244,9 +1287,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     options?: {
       readonly workspaceContextThreadId?: ThreadId;
       readonly messageReply?: McpInvocationContext.McpMessageReplyContext;
+      readonly deepPlan?: McpInvocationContext.McpDeepPlanContext;
       readonly workspaceOnly?: boolean;
       readonly projectMemoryEnabled?: boolean;
       readonly workspaceWriteEnabled?: boolean;
+      readonly modelSelection?: ModelSelection;
+      readonly readOnly?: boolean;
     },
   ) =>
     Effect.gen(function* () {
@@ -1254,7 +1300,17 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         options?.workspaceContextThreadId ?? threadId,
       );
       const previewEnabled = capabilities.has("preview");
+      const deepPlan =
+        options?.messageReply === undefined
+          ? (options?.deepPlan ??
+            (yield* resolveDeepPlanBinding(
+              threadId,
+              options?.modelSelection,
+              options?.readOnly === true ? "plan" : undefined,
+            )))
+          : undefined;
       const credential = yield* issueMcpCredential({
+        ...(deepPlan === undefined ? {} : { deepPlan }),
         threadId,
         providerInstanceId,
         provider,
@@ -1316,6 +1372,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     readonly mountMcp?: boolean;
     readonly workspaceContextThreadId?: ThreadId;
     readonly messageReply?: McpInvocationContext.McpMessageReplyContext;
+    readonly deepPlan?: McpInvocationContext.McpDeepPlanContext;
     readonly workspaceOnlyMcp?: boolean;
     readonly sessionInput: Parameters<
       ProviderAdapterShape<ProviderAdapterError>["startSession"]
@@ -1355,7 +1412,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     }
     const prepareSession =
       input.mountMcp === false
-        ? Effect.void
+        ? Effect.undefined
         : prepareMcpSession(
             input.sessionInput.threadId,
             input.providerInstanceId,
@@ -1365,6 +1422,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
                 ? { workspaceContextThreadId: input.workspaceContextThreadId }
                 : {}),
               ...(input.messageReply === undefined ? {} : { messageReply: input.messageReply }),
+              ...(input.deepPlan === undefined ? {} : { deepPlan: input.deepPlan }),
+              readOnly: input.sessionInput.sandboxMode === "read-only",
+              ...(input.sessionInput.modelSelection === undefined
+                ? {}
+                : { modelSelection: input.sessionInput.modelSelection }),
               ...(input.workspaceOnlyMcp !== undefined
                 ? { workspaceOnly: input.workspaceOnlyMcp }
                 : {}),
@@ -1432,15 +1494,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   });
 
   const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
-    Effect.succeed(event).pipe(
-      Effect.tap((canonicalEvent) =>
-        canonicalEventLogger
-          ? canonicalEventLogger.write(canonicalEvent, canonicalEvent.threadId)
-          : Effect.void,
-      ),
-      Effect.flatMap((canonicalEvent) => runtimeEventBroadcast.publish(canonicalEvent)),
-      Effect.asVoid,
-    );
+    runtimeEventBroadcast.publish(event).pipe(Effect.asVoid);
 
   const budgetInterruptedTurns = new Map<ThreadId, string>();
   const enforceRunningUsageBudgets = Effect.gen(function* () {
@@ -1500,10 +1554,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   ): ProviderRuntimeEvent =>
     pending.requestId === undefined
       ? event
-      : {
+      : transferProviderIngress(event, {
           ...event,
           requestId: RuntimeRequestId.make(String(pending.requestId)),
-        };
+        });
   const compactionTerminal = (event: ProviderRuntimeEvent): string | null =>
     event.type === "turn.completed"
       ? event.payload.state
@@ -1530,7 +1584,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       if (!matchesTurn || terminal === null) return;
       const settled = yield* settleCompaction(event.threadId, pending, terminal);
       if (!settled || terminal !== "completed" || pending.compactedEventObserved) return;
-      const compactedEvent = {
+      const compactedEvent = transferProviderIngress(event, {
         ...event,
         eventId: EventId.make(`${event.eventId}:context-compaction`),
         type: "thread.state.changed",
@@ -1541,7 +1595,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         ...(pending.requestId !== undefined
           ? { requestId: RuntimeRequestId.make(String(pending.requestId)) }
           : {}),
-      } satisfies ProviderRuntimeEvent;
+      } satisfies ProviderRuntimeEvent);
       yield* increment(providerRuntimeEventsTotal, {
         provider: compactedEvent.provider,
         eventType: compactedEvent.type,
@@ -1616,11 +1670,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       provider: canonicalEvent.provider,
       eventType: canonicalEvent.type,
     });
-    if (mcpRuntimeRegistry !== undefined) {
-      yield* mcpRuntimeRegistry
-        .observeProviderEvent(canonicalEvent)
-        .pipe(Effect.forkIn(serviceScope));
-    }
     if (canonicalEvent.type === "turn.started") {
       yield* observeTurnStartedForAnalytics(source, canonicalEvent);
       yield* enforceRunningUsageBudgets.pipe(Effect.forkIn(serviceScope));
@@ -1726,15 +1775,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const adapter = adapterOption.value;
       next.set(id, adapter);
       if (previous.get(id) !== adapter) {
-        yield* Stream.runForEach(adapter.streamEvents, (event) =>
-          processRuntimeEvent(
-            {
-              instanceId: id,
-              provider: adapter.provider,
-            },
-            event,
-          ),
-        ).pipe(Effect.forkScoped);
+        const processEvent = (event: ProviderRuntimeEvent) =>
+          processRuntimeEvent({ instanceId: id, provider: adapter.provider }, event);
+        if (Object.hasOwn(adapter, "consumeEvents") && adapter.consumeEvents) {
+          yield* adapter.consumeEvents(processEvent, { delivery: "lossless" });
+        } else {
+          yield* Stream.runForEach(adapter.streamEvents, processEvent).pipe(Effect.forkScoped);
+        }
       }
     }
     yield* Ref.set(subscribedAdapters, next);
@@ -2358,6 +2405,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       providerInstanceId: resolvedInstanceId,
       runtimeSessionId: parsed.runtimeSessionId,
       persistence: "transient",
+      ...(options?.deepPlan === undefined ? {} : { deepPlan: options.deepPlan }),
       ...(options?.messageReply !== undefined && parsed.cwd !== undefined
         ? {
             messageReply: {
@@ -2600,6 +2648,29 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         "provider.kind": routed.adapter.provider,
         ...(input.modelSelection?.model ? { "provider.model": input.modelSelection.model } : {}),
       });
+      const deepPlanBinding = !routed.isTransient
+        ? yield* resolveDeepPlanBinding(input.threadId, input.modelSelection, input.interactionMode)
+        : undefined;
+      if (deepPlanBinding !== undefined) {
+        if (routed.adapter.capabilities.deepPlan?.supported !== true) {
+          return yield* toValidationError(
+            "ProviderService.deepPlan",
+            "This provider does not support read-only Deep Planning and its run-bound tools.",
+          );
+        }
+        if (deepPlanBinding.modelSelection.instanceId !== routed.instanceId) {
+          return yield* toValidationError(
+            "ProviderService.deepPlan",
+            "The approved Deep Plan must continue with its implementing provider.",
+          );
+        }
+        input.interactionMode = deepPlanBinding.readOnly === true ? "plan" : "default";
+        input.modelSelection = deepPlanBinding.modelSelection;
+      }
+      if (!routed.isTransient) {
+        yield* McpSessionRegistry.bindActiveMcpDeepPlan(input.threadId, deepPlanBinding);
+        McpProviderSession.bindMcpProviderDeepPlan(input.threadId, deepPlanBinding);
+      }
       // A turn is the clearest sign a session is still alive. The MCP
       // credential is minted once at session start and cannot be rotated into
       // an already-spawned agent process, so we keep the existing token valid
@@ -2838,10 +2909,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     });
     const lease = (yield* Ref.get(runtimeLeases)).get(input.threadId);
     if (!lease) {
-      return yield* toValidationError(
-        "ProviderService.resolveAbortTarget",
-        `Cannot abort thread '${input.threadId}' because it has no active runtime session.`,
-      );
+      return undefined;
     }
     return {
       threadId: input.threadId,
@@ -2950,6 +3018,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       let metricProvider = "unknown";
       return yield* Effect.gen(function* () {
         const target = yield* resolveAbortTarget(input);
+        if (target === undefined) return;
         const lease = (yield* Ref.get(runtimeLeases)).get(target.threadId);
         metricProvider = lease?.adapter.provider ?? "unknown";
         yield* Effect.annotateCurrentSpan({
@@ -3546,10 +3615,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     assertConversationRollbackSupported,
     rollbackConversation,
     uploadFeedback,
-    subscribeEvents: runtimeEventBroadcast.subscribeScoped,
-    // Each access creates a fresh PubSub subscription so that multiple
-    // consumers (ProviderRuntimeIngestion, CheckpointReactor, etc.) each
-    // independently receive all runtime events.
+    subscribeEvents: runtimeEventBroadcast.subscribeEvents,
+    consumeEvents: runtimeEventBroadcast.consumeEvents,
+    subscribeEventStream: runtimeEventBroadcast.subscribeEventStream,
+    // Compatibility observers terminate explicitly on overflow. Critical consumers
+    // register bounded per-session lanes with consumeEvents.
     get streamEvents(): ProviderServiceMethod<"streamEvents"> {
       return runtimeEventBroadcast.stream;
     },

@@ -32,9 +32,14 @@ import type {
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
+import type { ConsumeProviderEvents, SubscribeProviderEventStream } from "../providerEventHub.ts";
 
 export type ProviderSessionModelSwitchMode = "in-session" | "unsupported";
 export type ProviderMcpSupportMode = "unsupported" | "sessionConfig" | "nativeConfig";
+
+export type ProviderDeepPlanSupport =
+  | { readonly supported: true; readonly readOnlyPlan: "sandbox" | "native" | "harness" }
+  | { readonly supported: false; readonly reason: string };
 
 export type ProviderForceStopMechanism =
   | "process-tree"
@@ -84,6 +89,7 @@ export interface ProviderAdapterCapabilities {
    * Declares how this adapter consumes T3-owned MCP server settings.
    */
   readonly mcp?: ProviderMcpSupportMode;
+  readonly deepPlan?: ProviderDeepPlanSupport;
   /** Whether the adapter can fork a provider thread without replaying its transcript. */
   readonly nativeThreadFork?: boolean;
   /** Whether the adapter exposes provider-native manual compaction. */
@@ -264,5 +270,7 @@ export interface ProviderAdapterShape<TError> {
   /**
    * Canonical runtime event stream emitted by this adapter.
    */
+  readonly consumeEvents?: ConsumeProviderEvents;
+  readonly subscribeEventStream?: SubscribeProviderEventStream;
   readonly streamEvents: Stream.Stream<ProviderRuntimeEvent>;
 }

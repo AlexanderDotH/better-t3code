@@ -76,6 +76,11 @@ import * as ForgejoCli from "./sourceControl/ForgejoCli.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as DecisionGeneration from "./decisionGeneration/DecisionGeneration.ts";
 import * as PlanParallelismReview from "./plan/PlanParallelismReview.ts";
+import { DeepPlanSourcesLive } from "./deepPlanning/DeepPlanSources.ts";
+import { DeepPlanWorkflowLive } from "./deepPlanning/DeepPlanWorkflow.ts";
+import { DeepPlanApplicationLive } from "./deepPlanning/DeepPlanApplication.ts";
+import { DeepPlanValidationReactorLive } from "./deepPlanning/DeepPlanValidationReactor.ts";
+import { DeepPlanValidationDispatcherLive } from "./deepPlanning/DeepPlanValidationDispatcher.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
@@ -320,9 +325,17 @@ const HttpServerLive = Layer.unwrap(
 
 const PlatformServicesLive = NodeServices.layer;
 
+const DeepPlanServicesLayerLive = DeepPlanApplicationLive.pipe(
+  Layer.provideMerge(DeepPlanWorkflowLive),
+  Layer.provideMerge(DeepPlanSourcesLive),
+);
+
 const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(TurnQuiescenceNotifier.TurnQuiescenceNotifierLive),
   Layer.provideMerge(OrchestrationReactorLive),
+  Layer.provideMerge(DeepPlanValidationReactorLive),
+  Layer.provideMerge(DeepPlanValidationDispatcherLive),
+  Layer.provideMerge(DeepPlanServicesLayerLive),
   Layer.provideMerge(ProviderRuntimeIngestionLive),
   Layer.provideMerge(ProviderCommandReactorLive),
   Layer.provideMerge(FetchWorkerCoordinatorLive),

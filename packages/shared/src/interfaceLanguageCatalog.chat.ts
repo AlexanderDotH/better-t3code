@@ -54,6 +54,16 @@ export const chatInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Ca. {{min}}–{{max}} Min. ab Start",
     "Env. {{min}}–{{max}} min après le démarrage",
   ],
+  "chat.planEstimate.durationHours": [
+    "Approx. {{min}}–{{max}} h after starting",
+    "Ca. {{min}}–{{max}} Std. ab Start",
+    "Env. {{min}}–{{max}} h après le démarrage",
+  ],
+  "chat.planEstimate.durationDays": [
+    "Approx. {{min}}–{{max}} days after starting",
+    "Ca. {{min}}–{{max}} Tage ab Start",
+    "Env. {{min}}–{{max}} j après le démarrage",
+  ],
   "chat.planEstimate.scope": [
     { one: "{{count}} estimated work package", other: "{{count}} estimated work packages" },
     { one: "{{count}} geschätztes Arbeitspaket", other: "{{count}} geschätzte Arbeitspakete" },

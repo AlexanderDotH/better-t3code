@@ -1,8 +1,10 @@
-import { expect, it } from "@effect/vitest";
+import { expect, it, vi } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   EnvironmentId,
+  DeepPlanRunId,
+  DeepPlanSourceId,
   PreviewTabId,
   ProjectId,
   ProviderInstanceId,
@@ -10,6 +12,7 @@ import {
   WORKSPACE_CONTEXT_MAX_QUERIES,
   WORKSPACE_CONTEXT_MAX_READS,
   type WorkspaceContextResult,
+  type DeepPlanRun,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -23,6 +26,9 @@ import { McpProtocol, McpSchema, McpServer, Tool } from "effect/unstable/ai";
 import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http";
 
 import { DeviceService } from "../device/DeviceService.ts";
+import { DeepPlanWorkflow } from "../deepPlanning/DeepPlanWorkflow.ts";
+import { DeepPlanSources } from "../deepPlanning/DeepPlanSources.ts";
+import { DEEP_PLAN_TOOL_NAMES } from "./toolkits/deep-plan/toolNames.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ServerConfig from "../config.ts";
@@ -47,6 +53,9 @@ import {
 const decodeToolAnnotations = Schema.decodeUnknownSync(McpSchema.ToolAnnotations);
 const decodeListToolsResponse = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Struct({ result: McpSchema.ListToolsResult })),
+);
+const decodeCallToolResponse = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Struct({ result: McpSchema.CallToolResult })),
 );
 const encodeJsonText = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -313,6 +322,7 @@ it.effect("routes Codex resource reservations through their exact lifecycle", ()
         issue: () => Effect.die("unused"),
         resolve: (token) => Effect.succeed(token === "resource-token" ? invocation : undefined),
         touch: () => Effect.void,
+        bindDeepPlan: () => Effect.void,
         revokeProviderSession: () => Effect.void,
         revokeThread: () => Effect.void,
         revokeAll: Effect.void,
@@ -978,6 +988,66 @@ it.effect(
           truncated: false,
           warnings: [],
         };
+        const deepRunId = DeepPlanRunId.make("deep-plan-route-run");
+        const sourceId = DeepPlanSourceId.make("deep-plan-route-source");
+        const summary = {
+          requirements: ["Preserve behavior"],
+          decisions: [],
+          openIssues: [],
+          rejectedApproaches: [],
+          conflicts: [],
+          citedRecordIds: ["record-1"],
+        };
+        const coverage = {
+          sourceId,
+          status: "summarized" as const,
+          importedRecordCount: 1,
+          readRecordCount: 1,
+          summary,
+          error: null,
+          updatedAt: "2026-10-16T10:00:00.000Z",
+        };
+        const deepRun: DeepPlanRun = {
+          id: deepRunId,
+          threadId,
+          phase: "planning",
+          revision: 0,
+          plan: null,
+          approval: null,
+          approvalKey: null,
+          sources: [],
+          sourceCoverage: [],
+          stepStates: [],
+          procedureAdjustments: [],
+          operations: [],
+          finalValidation: {
+            status: "pending",
+            evidence: [],
+            updatedAt: null,
+            attempt: 0,
+            requestId: null,
+            turnId: null,
+          },
+          createdAt: "2026-10-16T10:00:00.000Z",
+          updatedAt: "2026-10-16T10:00:00.000Z",
+          pauseReason: null,
+        };
+        const deepPlanningInvocation: McpInvocationContext.McpInvocationScope = {
+          ...workspaceWriteInvocation,
+          ownerThreadId: threadId,
+          capabilities: new Set([...workspaceWriteInvocation.capabilities, "deep-plan"]),
+          deepPlan: {
+            runId: deepRunId,
+            runThreadId: threadId,
+            phase: "planning",
+            approvedPlanVersion: null,
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6" },
+          },
+        };
+        let currentDeepRun = deepRun;
+        let currentDeepInvocation = deepPlanningInvocation;
+        const summarizeSource = vi.fn(() => Effect.succeed(coverage));
+        const updateDeepRun = vi.fn(() => Effect.succeed({ ...currentDeepRun, revision: 1 }));
         const workspaceWriteTokens = new Set([
           "workspace-write-token",
           "workspace-write-no-memory-token",
@@ -990,26 +1060,29 @@ it.effect(
           issue: () => Effect.die("unused"),
           resolve: (token) =>
             Effect.succeed(
-              workspaceWriteTokens.has(token)
-                ? workspaceWriteInvocation
-                : token === "preview-token"
-                  ? invocation
-                  : token === "workspace-token"
-                    ? workspaceInvocation
-                    : token === "workspace-no-memory-token"
+              token === "deep-plan-token"
+                ? currentDeepInvocation
+                : workspaceWriteTokens.has(token)
+                  ? workspaceWriteInvocation
+                  : token === "preview-token"
+                    ? invocation
+                    : token === "workspace-token"
                       ? workspaceInvocation
-                      : token === "workspace-no-preview-token" ||
-                          token === "workspace-no-preview-no-memory-token"
-                        ? workspaceWithoutPreviewInvocation
-                        : token === "workspace-only-no-memory-token"
-                          ? workspaceOnlyInvocation
-                          : token === "coordination-token"
-                            ? coordinationInvocation
-                            : token === "workspace-only-token"
-                              ? workspaceOnlyInvocation
-                              : undefined,
+                      : token === "workspace-no-memory-token"
+                        ? workspaceInvocation
+                        : token === "workspace-no-preview-token" ||
+                            token === "workspace-no-preview-no-memory-token"
+                          ? workspaceWithoutPreviewInvocation
+                          : token === "workspace-only-no-memory-token"
+                            ? workspaceOnlyInvocation
+                            : token === "coordination-token"
+                              ? coordinationInvocation
+                              : token === "workspace-only-token"
+                                ? workspaceOnlyInvocation
+                                : undefined,
             ),
           touch: () => Effect.void,
+          bindDeepPlan: () => Effect.void,
           revokeProviderSession: () => Effect.void,
           revokeThread: () => Effect.void,
           revokeAll: Effect.void,
@@ -1034,12 +1107,31 @@ it.effect(
           editFiles: () => Effect.die("unused"),
         });
         const generalSubagentLayer = Layer.mock(GeneralSubagents.GeneralSubagentCoordinator)({});
-        const projectMemoryLayer = Layer.mock(ProjectMemoryStore.ProjectMemoryStore)({});
+        const forgetMemory = vi.fn(() =>
+          Effect.succeed({ mode: "project" as const, storage: null, applied: true, deleted: true }),
+        );
+        const projectMemoryLayer = Layer.mock(ProjectMemoryStore.ProjectMemoryStore)({
+          delete: forgetMemory,
+        });
         const routes = McpHttpServer.layer.pipe(
           Layer.provide(registryLayer),
           Layer.provide(projectionLayer),
           Layer.provide(Layer.mock(OrchestrationEngineService)({})),
           Layer.provide(Layer.mock(DeviceService)({})),
+          Layer.provide(
+            Layer.mock(DeepPlanWorkflow)({
+              getRun: () => Effect.succeed(currentDeepRun),
+              update: updateDeepRun,
+              withRunLock: (_runId, effect) => effect,
+            }),
+          ),
+          Layer.provide(
+            Layer.mock(DeepPlanSources)({
+              summarizeSource,
+              listSources: () =>
+                Effect.succeed({ runId: deepRunId, sources: [], coverage: [coverage] }),
+            }),
+          ),
           Layer.provide(workspaceLayer),
           Layer.provide(workspaceFileSystemLayer),
           Layer.provide(generalSubagentLayer),
@@ -1087,6 +1179,30 @@ it.effect(
             ),
           });
           return decodeListToolsResponse(yield* response.text).result.tools;
+        });
+        const callTool = Effect.fn("McpHttpServer.test.callTool")(function* (
+          sessionId: string,
+          name: string,
+          args: unknown,
+        ) {
+          const response = yield* httpClient.post("/mcp/workspace-write", {
+            headers: {
+              accept: "application/json, text/event-stream",
+              authorization: "Bearer deep-plan-token",
+              "mcp-session-id": sessionId,
+              "mcp-protocol-version": "2025-06-18",
+            },
+            body: HttpBody.text(
+              encodeJsonText({
+                jsonrpc: "2.0",
+                id: 3,
+                method: "tools/call",
+                params: { name, arguments: args },
+              }),
+              "application/json",
+            ),
+          });
+          return decodeCallToolResponse(yield* response.text).result;
         });
         const workspaceReadToolNames = [
           "workspace_context",
@@ -1229,14 +1345,17 @@ it.effect(
           "workspace-only-token",
           workspaceOnly.headers["mcp-session-id"]!,
         );
-        expect(workspaceOnlyTools.map(({ name }) => name).toSorted()).toEqual([
-          "project_context",
-          "project_memory",
-          "thread_context",
-          "workspace_context",
-          "workspace_find",
-          "workspace_read",
-        ]);
+        expect(workspaceOnlyTools.map(({ name }) => name).toSorted()).toEqual(
+          [
+            ...DEEP_PLAN_TOOL_NAMES,
+            "project_context",
+            "project_memory",
+            "thread_context",
+            "workspace_context",
+            "workspace_find",
+            "workspace_read",
+          ].toSorted(),
+        );
         const workspaceOnlyNoMemory = yield* initialize(
           "/mcp/workspace-only-no-memory",
           "workspace-only-no-memory-token",
@@ -1247,13 +1366,16 @@ it.effect(
           "workspace-only-no-memory-token",
           workspaceOnlyNoMemory.headers["mcp-session-id"]!,
         );
-        expect(workspaceOnlyNoMemoryTools.map(({ name }) => name).toSorted()).toEqual([
-          "project_context",
-          "thread_context",
-          "workspace_context",
-          "workspace_find",
-          "workspace_read",
-        ]);
+        expect(workspaceOnlyNoMemoryTools.map(({ name }) => name).toSorted()).toEqual(
+          [
+            ...DEEP_PLAN_TOOL_NAMES,
+            "project_context",
+            "thread_context",
+            "workspace_context",
+            "workspace_find",
+            "workspace_read",
+          ].toSorted(),
+        );
         const readOnlyProfiles = [
           ["/mcp", "preview-token"],
           ["/mcp/coordination", "coordination-token"],
@@ -1269,6 +1391,8 @@ it.effect(
           expect(initialized.status).toBe(200);
           const tools = yield* listTools(path, token, initialized.headers["mcp-session-id"]!);
           expect(tools.map(({ name }) => name)).not.toContain("workspace_edit");
+          for (const name of DEEP_PLAN_TOOL_NAMES)
+            expect(tools.filter((tool) => tool.name === name)).toHaveLength(1);
         }
         const writableProfiles = [
           ["/mcp/workspace-write", "workspace-write-token"],
@@ -1296,6 +1420,155 @@ it.effect(
             openWorldHint: false,
           });
         }
+        const planningSession = yield* initialize("/mcp/workspace-write", "deep-plan-token");
+        expect(planningSession.status).toBe(200);
+        const planningSessionId = planningSession.headers["mcp-session-id"]!;
+        const editResult = yield* callTool(planningSessionId, "workspace_edit", {
+          changes: [
+            {
+              path: "new-file.txt",
+              edits: [{ type: "write", mode: "create", content: "Not approved" }],
+            },
+          ],
+        });
+        expect(editResult.isError).toBe(true);
+        expect(editResult.structuredContent).toMatchObject({
+          error: { _tag: "DeepPlanReadonlyError", toolName: "workspace_edit" },
+        });
+        const memoryResult = yield* callTool(planningSessionId, "project_memory", {
+          action: "forget",
+          key: "fact-to-delete",
+        });
+        expect(memoryResult.isError).not.toBe(true);
+        expect(forgetMemory).toHaveBeenCalledOnce();
+        const readResult = yield* callTool(planningSessionId, "workspace_read", {
+          reads: [{ path: "README.md", startLine: 1, endLine: 1 }],
+        });
+        expect(readResult.isError).not.toBe(true);
+        const summaryResult = yield* callTool(planningSessionId, "deep_plan_summarize_source", {
+          expectedRunId: deepRunId,
+          expectedRevision: 0,
+          operationId: "summary-1",
+          sourceId,
+          expectedContentHash: "frozen-hash",
+          summary,
+        });
+        expect(summaryResult.isError).not.toBe(true);
+        expect(summarizeSource).toHaveBeenCalledOnce();
+        expect(updateDeepRun).toHaveBeenCalledWith({
+          threadId,
+          runId: deepRunId,
+          expectedRevision: 0,
+          operationId: "summary-1",
+          mutation: { type: "source-coverage", coverage: [coverage] },
+        });
+
+        currentDeepRun = {
+          ...deepRun,
+          phase: "implementing",
+          approvalKey: "approved-plan-hash",
+          plan: {
+            schemaVersion: 1,
+            version: 1,
+            goal: "Preserve behavior",
+            scope: ["Current feature"],
+            decisions: [],
+            affectedAreas: ["Feature implementation"],
+            steps: [
+              {
+                id: "step-1",
+                title: "Implement feature",
+                description: "Implement the approved behavior",
+                dependencies: [],
+                acceptanceCriteria: [
+                  {
+                    id: "criterion-1",
+                    description: "Focused check passes",
+                    checkMethod: "Run focused test",
+                  },
+                ],
+              },
+            ],
+            finalValidation: {
+              description: "Approved behavior works",
+              checkMethod: "Run integration check",
+            },
+          },
+          approval: {
+            planVersion: 1,
+            approvalKey: "approved-plan-hash",
+            approvedAt: deepRun.createdAt,
+            approvedBy: "user",
+            implementation: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6" },
+            implementationThreadId: threadId,
+            implementerId: `thread:${threadId}`,
+          },
+        };
+        currentDeepInvocation = {
+          ...deepPlanningInvocation,
+          deepPlan: {
+            ...deepPlanningInvocation.deepPlan!,
+            phase: "execution",
+            approvedPlanVersion: 1,
+            readOnly: true,
+          },
+        };
+        const reviewEdit = yield* callTool(planningSessionId, "workspace_edit", {
+          changes: [
+            {
+              path: "review-file.txt",
+              edits: [{ type: "write", mode: "create", content: "Not authorized during review" }],
+            },
+          ],
+        });
+        expect(reviewEdit.isError).toBe(true);
+        expect(reviewEdit.structuredContent).toMatchObject({
+          error: { _tag: "DeepPlanReadonlyError", toolName: "workspace_edit" },
+        });
+        const reviewMemory = yield* callTool(planningSessionId, "project_memory", {
+          action: "forget",
+          key: "preserve-this-fact",
+        });
+        expect(reviewMemory.isError).not.toBe(true);
+        expect(forgetMemory).toHaveBeenCalledTimes(2);
+        const reviewRead = yield* callTool(planningSessionId, "workspace_read", {
+          reads: [{ path: "README.md", startLine: 1, endLine: 1 }],
+        });
+        expect(reviewRead.isError).not.toBe(true);
+        const reviewAdjustment = {
+          expectedRunId: deepRunId,
+          expectedRevision: 0,
+          operationId: "review-adjustment-1",
+          reason: "Inspection found an outdated validation command",
+          changes: ["Use the current focused validation command"],
+        };
+        const reviewResult = yield* callTool(
+          planningSessionId,
+          "deep_plan_adjust_procedure",
+          reviewAdjustment,
+        );
+        expect(reviewResult.isError).not.toBe(true);
+        expect(reviewResult.structuredContent).toMatchObject({
+          runId: deepRunId,
+          phase: "implementing",
+          approvedPlanVersion: 1,
+        });
+        expect(updateDeepRun).toHaveBeenLastCalledWith({
+          threadId,
+          runId: deepRunId,
+          expectedRevision: 0,
+          operationId: "review-adjustment-1",
+          mutation: {
+            type: "procedure-adjust",
+            reason: reviewAdjustment.reason,
+            changes: reviewAdjustment.changes,
+            actor: {
+              implementerId: `thread:${threadId}`,
+              model: currentDeepInvocation.deepPlan!.modelSelection,
+            },
+          },
+        });
+
         const fullSchemaBytes = Buffer.byteLength(encodeJsonText(workspaceTools));
         const narrowSchemaBytes = Buffer.byteLength(encodeJsonText(workspaceOnlyTools));
         expect(narrowSchemaBytes).toBeLessThanOrEqual(fullSchemaBytes / 2);

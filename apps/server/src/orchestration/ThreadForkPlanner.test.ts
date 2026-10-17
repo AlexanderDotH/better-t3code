@@ -17,7 +17,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
+import { PersistenceSqlError } from "../persistence/Errors.ts";
 import { planThreadFork } from "./ThreadForkPlanner.ts";
 import { createEmptyReadModel, projectEvent } from "./projector.ts";
 
@@ -241,6 +243,78 @@ const seedReadModel = Effect.gen(function* () {
 });
 
 it.layer(NodeServices.layer)("thread fork planner", (it) => {
+  it.effect("preserves a failure while reading the source history", () =>
+    Effect.gen(function* () {
+      const failure = new PersistenceSqlError({ operation: "test.fork-source" });
+      const error = yield* planThreadFork({
+        command: forkCommand("boundary"),
+        readModel: yield* seedReadModel,
+        sourceEvents: Stream.concat(
+          Stream.succeed(threadCreatedEvent(sourceThreadId)),
+          Stream.fail(failure),
+        ),
+      }).pipe(Effect.flip);
+      expect(error).toBe(failure);
+    }),
+  );
+
+  it.effect(
+    "reconstructs a large streamed history while retaining only the final tool output",
+    () =>
+      Effect.gen(function* () {
+        function* sourceEvents(): Generator<OrchestrationEvent> {
+          yield threadCreatedEvent(sourceThreadId);
+          yield messageEvent({ sequence: 2, messageId: "goal", role: "user", text: "Goal" });
+          for (let index = 0; index < 1_024; index += 1) {
+            const event = activityEvent({ sequence: index + 3, activityId: "tool-output" });
+            if (event.type !== "thread.activity-appended") throw new Error("Expected activity");
+            yield {
+              ...event,
+              payload: {
+                ...event.payload,
+                activity: {
+                  ...event.payload.activity,
+                  payload: { output: String(JSON.parse(JSON.stringify("x".repeat(128 * 1_024)))) },
+                },
+              },
+            };
+          }
+          yield activityEvent({ sequence: 1_027, activityId: "tool-output" });
+          yield messageEvent({
+            sequence: 1_028,
+            messageId: "boundary",
+            role: "assistant",
+            text: "Done",
+          });
+          yield messageEvent({
+            sequence: 1_029,
+            messageId: "later",
+            role: "user",
+            text: "Excluded",
+          });
+          yield {
+            ...threadCreatedEvent(sourceThreadId, 1_030),
+            type: "thread.message-edited",
+            payload: {
+              threadId: sourceThreadId,
+              messageId: MessageId.make("goal"),
+              text: "Corrected goal",
+              updatedAt: now,
+            },
+          };
+        }
+        const events = yield* planThreadFork({
+          command: forkCommand("boundary"),
+          readModel: yield* seedReadModel,
+          sourceEvents: Stream.fromIterable(sourceEvents(), { chunkSize: 1 }),
+        });
+        const history = events[1].payload.history;
+        expect(history.messages.map((message) => message.text)).toEqual(["Corrected goal", "Done"]);
+        expect(history.activities).toHaveLength(1);
+        expect(history.activities[0]?.payload).toBeNull();
+      }),
+  );
+
   for (const role of ["user", "assistant"] as const) {
     it.effect(`restarts from an edited ${role} message without later history`, () =>
       Effect.gen(function* () {

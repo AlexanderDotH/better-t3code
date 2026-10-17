@@ -337,10 +337,16 @@ describe("BetterT3SettingsV1", () => {
 
     expect(
       switchFeatureIds.filter((featureId) => resolveBetterT3FeatureFlag(clean, featureId)),
-    ).toEqual(["agent.expandedComposerControls", "chat.messageEditing", "chat.messageReplies"]);
+    ).toEqual([
+      "agent.contextCompaction",
+      "agent.expandedComposerControls",
+      "chat.messageEditing",
+      "chat.messageReplies",
+    ]);
     expect(
       switchFeatureIds.filter((featureId) => resolveBetterT3FeatureFlag(existing, featureId)),
     ).toEqual([
+      "agent.contextCompaction",
       "agent.expandedComposerControls",
       "agent.generalSubagents",
       "agent.projectCoordination",

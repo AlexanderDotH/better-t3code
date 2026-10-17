@@ -245,7 +245,9 @@ const makeHarness = Effect.fn("makeAntigravityAdapterHarness")(function* (option
       }),
     },
   );
-  yield* adapter.streamEvents.pipe(
+  const events = yield* adapter.subscribeEventStream!({ delivery: "lossless" });
+  yield* events.pipe(
+    Stream.orDie,
     Stream.runForEach((event) =>
       Effect.sync(() => {
         seen.push(event);
@@ -941,7 +943,8 @@ it.layer(layer)("AntigravityAdapter", (it) => {
         }),
       );
       for (const launch of launches) yield* h.emitNative(launch);
-      yield* h.drainEvents;
+      yield* h.waitForEvent((event) => event.type === "task.progress");
+      yield* h.waitForEvent((event) => event.type === "task.progress");
       expect(h.seen.filter((event) => event.type === "task.progress")).toHaveLength(2);
       expect(h.seen.filter((event) => event.type === "task.completed")).toHaveLength(0);
       yield* Deferred.succeed(firstPrompt.result, { stopReason: "end_turn" });
@@ -999,7 +1002,7 @@ it.layer(layer)("AntigravityAdapter", (it) => {
           launch.toolCall,
         ),
       );
-      yield* h.drainEvents;
+      yield* h.waitForEvent((event) => event.type === "task.updated");
       expect(h.seen.filter((event) => event.type.startsWith("task."))).toMatchObject([
         {
           type: "task.updated",

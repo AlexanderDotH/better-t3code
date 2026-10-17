@@ -136,6 +136,8 @@ const makeHarness = (initialSession: OrchestrationSession | null = runningSessio
     } satisfies Partial<OrchestrationEngineShape>;
 
     const query = {
+      getThreadShellById: () =>
+        Ref.get(sessionRef).pipe(Effect.map((session) => Option.some(makeThread(session)))),
       getThreadDetailById: () =>
         Ref.get(sessionRef).pipe(Effect.map((session) => Option.some(makeThread(session)))),
     } as unknown as ProjectionSnapshotQueryShape;
@@ -287,6 +289,43 @@ it.effect("matching cooperative settlement cancels force escalation", () =>
 
       assert.strictEqual(harness.forceStopAbortTarget.mock.calls.length, 0);
       assert.strictEqual((yield* Ref.get(harness.sessionRef))?.abortState, null);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("settles an abort when the runtime disappears before the watchdog", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    yield* Effect.gen(function* () {
+      const coordinator = yield* TurnAbortCoordinator;
+      yield* coordinator.requestAbort({ threadId, turnId, requestedAt });
+      yield* Ref.set(harness.currentRuntimeRef, RuntimeSessionId.make("unavailable"));
+      harness.resolveAbortTarget.mockImplementation(() => Effect.succeed(undefined));
+
+      yield* TestClock.adjust("5 seconds");
+      yield* Effect.yieldNow;
+
+      assert.strictEqual(harness.forceStopAbortTarget.mock.calls.length, 0);
+      assert.strictEqual((yield* Ref.get(harness.sessionRef))?.status, "stopped");
+      assert.strictEqual((yield* Ref.get(harness.sessionRef))?.abortState, null);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("does not settle a replacement session discovered during orphan recovery", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    const replacementId = RuntimeSessionId.make("runtime-replacement");
+    harness.resolveAbortTarget.mockImplementation(() =>
+      Ref.set(harness.sessionRef, runningSession(replacementId)).pipe(Effect.as(undefined)),
+    );
+    yield* Effect.gen(function* () {
+      const coordinator = yield* TurnAbortCoordinator;
+      yield* coordinator.requestAbort({ threadId, turnId, requestedAt });
+
+      assert.strictEqual((yield* Ref.get(harness.sessionRef))?.runtimeSessionId, replacementId);
+      assert.strictEqual((yield* Ref.get(harness.sessionRef))?.status, "running");
+      assert.deepEqual(yield* Ref.get(harness.commandsRef), []);
     }).pipe(Effect.provide(harness.layer));
   }),
 );

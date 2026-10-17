@@ -5,6 +5,8 @@ import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import { stampProviderIngress } from "../../observability/ProviderPipelineMetrics.ts";
+import { withProviderEventIngress } from "../providerEventIngress.ts";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -582,8 +584,9 @@ export const make = (
         params: notification,
       });
 
-    yield* acp.handleSessionUpdate((notification) =>
-      notificationSemaphore.withPermit(
+    yield* acp.handleSessionUpdate((notification) => {
+      stampProviderIngress(notification);
+      return notificationSemaphore.withPermit(
         Effect.gen(function* () {
           if (Option.isSome(yield* Ref.get(terminationErrorRef))) {
             return;
@@ -637,10 +640,10 @@ export const make = (
           ) {
             return;
           }
-          yield* processSessionUpdate(notification);
+          yield* withProviderEventIngress(notification, processSessionUpdate(notification));
         }),
-      ),
-    );
+      );
+    });
     yield* Scope.addFinalizer(
       runtimeScope,
       Ref.set(stoppingRef, true).pipe(Effect.andThen(Deferred.succeed(runtimeClosed, undefined))),

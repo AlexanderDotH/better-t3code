@@ -14,8 +14,8 @@ describe("message reply gestures", () => {
     ["user", -1],
     ["assistant", 1],
   ] as const)("requires release at the threshold for %s messages", (role, direction) => {
-    expect(shouldTriggerMessageReply(direction * 31, 0, role)).toBe(false);
-    expect(shouldTriggerMessageReply(direction * 32, 0, role)).toBe(true);
+    expect(shouldTriggerMessageReply(direction * 15, 0, role)).toBe(false);
+    expect(shouldTriggerMessageReply(direction * 16, 0, role)).toBe(true);
     expect(shouldTriggerMessageReply(direction * 75, 10, role)).toBe(true);
     expect(shouldTriggerMessageReply(-direction * 100, 0, role)).toBe(false);
   });
@@ -54,15 +54,20 @@ describe.each([
 
   it("waits for evidence before taking a quick straight text swipe", () => {
     expect(classify({ deltaX: 12, elapsedMs: 20 })).toBe("wait");
-    expect(classify({ deltaX: 16, elapsedMs: 25 })).toBe("wait");
+    expect(classify({ deltaX: 16, elapsedMs: 25 })).toBe("reply");
     expect(classify({ deltaX: 20, elapsedMs: 35 })).toBe("reply");
     expect(classify({ deltaX: 28, elapsedMs: 55 })).toBe("reply");
     expect(classify({ deltaX: 56, deltaY: 2, elapsedMs: 70 })).toBe("reply");
   });
 
+  it("accepts a short stroke and a more relaxed text swipe", () => {
+    expect(classify({ deltaX: 16, elapsedMs: 50 })).toBe("reply");
+    expect(classify({ deltaX: 28, deltaY: 3, elapsedMs: 80 })).toBe("reply");
+  });
+
   it("keeps slow marking, holding and multi-line selection native", () => {
     expect(classify({ deltaX: 12, elapsedMs: 70 })).toBe("cancel");
-    expect(classify({ deltaX: 56, elapsedMs: 150 })).toBe("cancel");
+    expect(classify({ deltaX: 56, elapsedMs: 210 })).toBe("cancel");
     expect(classify({ deltaX: 90, elapsedMs: 280 })).toBe("cancel");
     expect(classify({ deltaX: 60, deltaY: 24, elapsedMs: 60 })).toBe("cancel");
     expect(classify({ deltaX: 15, pathLength: 30, elapsedMs: 20 })).toBe("cancel");

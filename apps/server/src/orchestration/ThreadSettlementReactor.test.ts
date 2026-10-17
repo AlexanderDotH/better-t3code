@@ -1,6 +1,8 @@
 import {
   DEFAULT_SERVER_SETTINGS,
   EventId,
+  CommandId,
+  DeepPlanRunId,
   ProjectId,
   ProviderInstanceId,
   ProviderDriverKind,
@@ -64,6 +66,7 @@ import { TerminalManager } from "../terminal/Manager.ts";
 import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
 import { ThreadDeletionReactor } from "./Services/ThreadDeletionReactor.ts";
 import { ProviderService } from "../provider/Services/ProviderService.ts";
+import { startDeepPlanRun } from "../deepPlanning/deepPlanDecision.ts";
 
 const NOW = "2026-08-28T12:00:00.000Z";
 const PROJECT_ID = ProjectId.make("settlement-project");
@@ -381,6 +384,35 @@ describe("ThreadSettlementReactor", () => {
     });
     assert.strictEqual(base, unrelated);
   });
+
+  it.effect("keeps unfinished Deep Plans active while ordinary inactive threads settle", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const thread = makeThread("unfinished-deep-plan", { branch: "saved-feature" });
+        const deepPlan = yield* startDeepPlanRun({
+          type: "thread.deep-plan.start",
+          commandId: CommandId.make("settlement-deep-plan-start"),
+          threadId: thread.id,
+          runId: DeepPlanRunId.make("settlement-deep-plan"),
+          createdAt: thread.createdAt,
+        });
+        const harness = yield* makeHarness({
+          snapshot: makeSnapshot([makeThread("ordinary-inactive"), { ...thread, deepPlan }]),
+          settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: 3 },
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+          yield* startHarness(reactor, harness.activation, harness.snapshotReads);
+          assert.deepStrictEqual(
+            (yield* Ref.get(harness.commands)).map((command) => command.threadId),
+            [ThreadId.make("ordinary-inactive")],
+          );
+          assert.deepStrictEqual(yield* Ref.get(harness.branchCalls), []);
+        }).pipe(Effect.provide(harness.layer));
+      }),
+    ),
+  );
 
   it.effect(
     "settles synced terminal links immediately while open, unsynced, or running threads wait",

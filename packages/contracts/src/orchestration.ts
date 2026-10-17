@@ -5,6 +5,14 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Struct from "effect/Struct";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { MessageReplyReference } from "./messageReplies.ts";
+import {
+  ClientDeepPlanMutation,
+  DeepPlanMutation,
+  DeepPlanRun,
+  DeepPlanRunId,
+  DeepPlanRunReference,
+  DeepPlanSourceSnapshot,
+} from "./deepPlanning.ts";
 import { ProviderOptionSelections } from "./model.ts";
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
 import {
@@ -679,6 +687,7 @@ export const OrchestrationProposedPlan = Schema.Struct({
   id: OrchestrationProposedPlanId,
   turnId: Schema.NullOr(TurnId),
   planMarkdown: TrimmedNonEmptyString,
+  deepPlan: Schema.optional(DeepPlanRunReference),
   implementedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   implementationThreadId: Schema.NullOr(ThreadId).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
@@ -692,6 +701,7 @@ export type OrchestrationProposedPlan = typeof OrchestrationProposedPlan.Type;
 const SourceProposedPlanReference = Schema.Struct({
   threadId: ThreadId,
   planId: OrchestrationProposedPlanId,
+  deepPlan: Schema.optional(DeepPlanRunReference),
 });
 
 export const OrchestrationSessionStatus = Schema.Literals([
@@ -1116,6 +1126,7 @@ export const OrchestrationThread = Schema.Struct({
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
+  deepPlan: Schema.optional(Schema.NullOr(DeepPlanRun)),
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
   ),
@@ -1215,6 +1226,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
+  deepPlan: Schema.optional(Schema.NullOr(DeepPlanRun)),
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
   ),
@@ -1950,7 +1962,49 @@ const ThreadSessionStopCommand = Schema.Struct({
   onlyIfSettled: Schema.optional(Schema.Boolean),
 });
 
+const DeepPlanUpdateCommandFields = {
+  commandId: CommandId,
+  threadId: ThreadId,
+  runId: DeepPlanRunId,
+  expectedRevision: NonNegativeInt,
+  operationId: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+};
+
+export const ThreadDeepPlanStartCommand = Schema.Struct({
+  type: Schema.Literal("thread.deep-plan.start"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  runId: DeepPlanRunId,
+  sources: Schema.optional(Schema.Array(DeepPlanSourceSnapshot)),
+  createdAt: IsoDateTime,
+});
+export type ThreadDeepPlanStartCommand = typeof ThreadDeepPlanStartCommand.Type;
+
+export const ThreadDeepPlanUpdateCommand = Schema.Struct({
+  type: Schema.Literal("thread.deep-plan.update"),
+  ...DeepPlanUpdateCommandFields,
+  mutation: DeepPlanMutation,
+});
+export type ThreadDeepPlanUpdateCommand = typeof ThreadDeepPlanUpdateCommand.Type;
+
+const ClientThreadDeepPlanUpdateCommand = Schema.Struct({
+  type: Schema.Literal("thread.deep-plan.update"),
+  ...DeepPlanUpdateCommandFields,
+  mutation: ClientDeepPlanMutation,
+});
+
+export const ThreadDeepPlanUpdatedPayload = Schema.Struct({
+  threadId: ThreadId,
+  previousImplementationThreadId: Schema.optional(ThreadId),
+  run: DeepPlanRun,
+  updatedAt: IsoDateTime,
+});
+export type ThreadDeepPlanUpdatedPayload = typeof ThreadDeepPlanUpdatedPayload.Type;
+
 const DispatchableClientOrchestrationCommand = Schema.Union([
+  ThreadDeepPlanStartCommand,
+  ThreadDeepPlanUpdateCommand,
   ThreadMessageEditCommand,
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
@@ -1994,6 +2048,8 @@ export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
 
 export const ClientOrchestrationCommand = Schema.Union([
+  ThreadDeepPlanStartCommand,
+  ClientThreadDeepPlanUpdateCommand,
   ThreadMessageEditCommand,
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
@@ -2412,6 +2468,7 @@ export const OrchestrationCommand = Schema.Union([
 export type OrchestrationCommand = typeof OrchestrationCommand.Type;
 
 export const OrchestrationEventType = Schema.Literals([
+  "thread.deep-plan-updated",
   "project.created",
   "project.meta-updated",
   "project.deleted",
@@ -2923,6 +2980,11 @@ const EventBaseFields = {
 } as const;
 
 export const OrchestrationEvent = Schema.Union([
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.deep-plan-updated"),
+    payload: ThreadDeepPlanUpdatedPayload,
+  }),
   Schema.Struct({
     ...EventBaseFields,
     type: Schema.Literal("thread.reply-start-requested"),

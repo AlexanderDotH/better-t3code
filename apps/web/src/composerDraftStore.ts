@@ -1,5 +1,7 @@
 import { elementContextToPreviewAnnotation } from "./lib/elementContext";
 import {
+  ComposerMode,
+  DeepPlanSourceRef,
   ElementContextDetails,
   DEFAULT_MODEL,
   DEFAULT_MODEL_BY_PROVIDER,
@@ -33,6 +35,10 @@ import {
   scopedThreadKey,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
+import {
+  getProviderInteractionMode,
+  uniqueDeepPlanSourceRefs,
+} from "@t3tools/client-runtime/deep-planning";
 import * as Schema from "effect/Schema";
 import * as Equal from "effect/Equal";
 import * as Effect from "effect/Effect";
@@ -80,6 +86,8 @@ import { replaceComposerContextReferences } from "@t3tools/shared/composerContex
 import { UnifiedSettings } from "@t3tools/contracts/settings";
 import { ReviewCommentContextSchema, type ReviewCommentContext } from "./reviewCommentContext";
 const isRuntimeMode = Schema.is(RuntimeMode);
+const isComposerMode = Schema.is(ComposerMode);
+const isDeepPlanSourceRef = Schema.is(DeepPlanSourceRef);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 const isReviewCommentContext = Schema.is(ReviewCommentContextSchema);
 const isSnapShotSource = Schema.is(SnapShotSource);
@@ -277,6 +285,8 @@ const PersistedComposerThreadDraftState = Schema.Struct({
   modelSelectionExplicit: Schema.optionalKey(Schema.Boolean),
   runtimeMode: Schema.optionalKey(RuntimeMode),
   interactionMode: Schema.optionalKey(ProviderInteractionMode),
+  composerMode: Schema.optionalKey(ComposerMode),
+  deepPlanSourceRefs: Schema.optionalKey(Schema.Array(DeepPlanSourceRef)),
 });
 type PersistedComposerThreadDraftState = typeof PersistedComposerThreadDraftState.Type;
 
@@ -430,6 +440,8 @@ export interface ComposerThreadDraftState {
   modelSelectionExplicit?: boolean;
   runtimeMode: RuntimeMode | null;
   interactionMode: ProviderInteractionMode | null;
+  composerMode?: ComposerMode | null;
+  deepPlanSourceRefs?: ReadonlyArray<DeepPlanSourceRef>;
 }
 
 /**
@@ -454,7 +466,8 @@ export function composerDraftHasUserContent(
     draft.persistedAttachments.length > 0 ||
     draft.terminalContexts.length > 0 ||
     draft.previewAnnotations.length > 0 ||
-    draft.reviewComments.length > 0
+    draft.reviewComments.length > 0 ||
+    (draft.deepPlanSourceRefs?.length ?? 0) > 0
   );
 }
 
@@ -620,6 +633,8 @@ interface ComposerDraftStoreState {
        * thread) rather than a model-only change.
        */
       replaceOptions?: boolean;
+      /** Drop choices from a previously reused draft when applying a new chat snapshot. */
+      replaceProviderSelections?: boolean;
     },
   ) => void;
   /** Replace the model options for one or more providers in the draft. */
@@ -648,6 +663,11 @@ interface ComposerDraftStoreState {
   setInteractionMode: (
     threadRef: ComposerThreadTarget,
     interactionMode: ProviderInteractionMode | null | undefined,
+  ) => void;
+  setComposerMode: (threadRef: ComposerThreadTarget, mode: ComposerMode | null | undefined) => void;
+  setDeepPlanSourceRefs: (
+    threadRef: ComposerThreadTarget,
+    refs: ReadonlyArray<DeepPlanSourceRef>,
   ) => void;
   addImage: (threadRef: ComposerThreadTarget, image: ComposerImageAttachment) => boolean;
   /** Returns the ids the draft accepted; duplicates and over-cap attachments are left out. */
@@ -826,6 +846,8 @@ const EMPTY_THREAD_DRAFT = Object.freeze<ComposerThreadDraftState>({
   activeProvider: null,
   runtimeMode: null,
   interactionMode: null,
+  composerMode: null,
+  deepPlanSourceRefs: [],
 });
 
 /**
@@ -849,6 +871,8 @@ export function createEmptyThreadDraft(): ComposerThreadDraftState {
     activeProvider: null,
     runtimeMode: null,
     interactionMode: null,
+    composerMode: null,
+    deepPlanSourceRefs: [],
   };
 }
 
@@ -943,7 +967,9 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
     Object.keys(draft.modelSelectionByProvider).length === 0 &&
     draft.activeProvider === null &&
     draft.runtimeMode === null &&
-    draft.interactionMode === null
+    draft.interactionMode === null &&
+    draft.composerMode == null &&
+    (draft.deepPlanSourceRefs?.length ?? 0) === 0
   );
 }
 
@@ -1952,6 +1978,12 @@ function normalizePersistedDraftsByThreadId(
       draftCandidate.interactionMode === "plan" || draftCandidate.interactionMode === "default"
         ? draftCandidate.interactionMode
         : null;
+    const composerMode = isComposerMode(draftCandidate.composerMode)
+      ? draftCandidate.composerMode
+      : interactionMode;
+    const deepPlanSourceRefs = Array.isArray(draftCandidate.deepPlanSourceRefs)
+      ? draftCandidate.deepPlanSourceRefs.filter(isDeepPlanSourceRef)
+      : [];
     const contextIds = new Map<string, string>();
     for (const [kind, entries] of [
       ["image", attachments],
@@ -2048,7 +2080,9 @@ function normalizePersistedDraftsByThreadId(
       previewAnnotations.length === 0 &&
       !hasModelData &&
       !runtimeMode &&
-      !interactionMode
+      !interactionMode &&
+      !composerMode &&
+      deepPlanSourceRefs.length === 0
     ) {
       continue;
     }
@@ -2084,6 +2118,8 @@ function normalizePersistedDraftsByThreadId(
         : {}),
       ...(runtimeMode ? { runtimeMode } : {}),
       ...(interactionMode ? { interactionMode } : {}),
+      ...(composerMode ? { composerMode } : {}),
+      ...(deepPlanSourceRefs.length > 0 ? { deepPlanSourceRefs } : {}),
     };
   }
 
@@ -2122,7 +2158,12 @@ function stripLegacyModelSeedsFromEmptyDraftSessions(
         modelSelectionExplicit: _modelSelectionExplicit,
         ...retained
       } = draft;
-      return retained.runtimeMode || retained.interactionMode ? [[threadKey, retained]] : [];
+      return retained.runtimeMode ||
+        retained.interactionMode ||
+        retained.composerMode ||
+        retained.deepPlanSourceRefs?.length
+        ? [[threadKey, retained]]
+        : [];
     }),
   );
 }
@@ -2186,7 +2227,9 @@ export function partializeComposerDraftStoreState(
       draft.reviewComments.length === 0 &&
       !hasModelData &&
       draft.runtimeMode === null &&
-      draft.interactionMode === null
+      draft.interactionMode === null &&
+      draft.composerMode == null &&
+      (draft.deepPlanSourceRefs?.length ?? 0) === 0
     ) {
       continue;
     }
@@ -2256,6 +2299,10 @@ export function partializeComposerDraftStoreState(
         : {}),
       ...(draft.runtimeMode ? { runtimeMode: draft.runtimeMode } : {}),
       ...(draft.interactionMode ? { interactionMode: draft.interactionMode } : {}),
+      ...(draft.composerMode ? { composerMode: draft.composerMode } : {}),
+      ...(draft.deepPlanSourceRefs?.length
+        ? { deepPlanSourceRefs: draft.deepPlanSourceRefs.map((ref) => ({ ...ref })) }
+        : {}),
     };
     persistedDraftsByThreadKey[threadKey] = persistedDraft;
   }
@@ -2527,6 +2574,8 @@ function toHydratedThreadDraft(
     ...(persistedDraft.modelSelectionExplicit ? { modelSelectionExplicit: true } : {}),
     runtimeMode: persistedDraft.runtimeMode ?? null,
     interactionMode: persistedDraft.interactionMode ?? null,
+    composerMode: persistedDraft.composerMode ?? persistedDraft.interactionMode ?? null,
+    deepPlanSourceRefs: persistedDraft.deepPlanSourceRefs?.map((ref) => ({ ...ref })) ?? [],
   };
 }
 
@@ -3146,7 +3195,8 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               return state;
             }
             const base = existing ?? createEmptyThreadDraft();
-            const nextMap = { ...base.modelSelectionByProvider };
+            const nextMap: Partial<Record<ProviderInstanceId, ModelSelection>> =
+              opts?.replaceProviderSelections ? {} : { ...base.modelSelectionByProvider };
             if (normalized) {
               const current = nextMap[normalized.instanceId];
               if (normalized.options !== undefined || opts?.replaceOptions) {
@@ -3370,12 +3420,16 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               return state;
             }
             const base = existing ?? createEmptyThreadDraft();
-            if (base.interactionMode === nextInteractionMode) {
+            if (
+              base.interactionMode === nextInteractionMode &&
+              base.composerMode === nextInteractionMode
+            ) {
               return state;
             }
             const nextDraft: ComposerThreadDraftState = {
               ...base,
               interactionMode: nextInteractionMode,
+              composerMode: nextInteractionMode,
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {
@@ -3384,6 +3438,43 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftsByThreadKey[threadKey] = nextDraft;
             }
             return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        setComposerMode: (threadRef, mode) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef);
+          if (!threadKey) return;
+          const composerMode = isComposerMode(mode) ? mode : null;
+          set((state) => {
+            const existing = state.draftsByThreadKey[threadKey];
+            if (!existing && composerMode === null) return state;
+            const base = existing ?? createEmptyThreadDraft();
+            if (base.composerMode === composerMode) return state;
+            const nextDraft = {
+              ...base,
+              composerMode,
+              interactionMode:
+                composerMode === null ? null : getProviderInteractionMode(composerMode),
+            };
+            const draftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) delete draftsByThreadKey[threadKey];
+            else draftsByThreadKey[threadKey] = nextDraft;
+            return { draftsByThreadKey };
+          });
+        },
+        setDeepPlanSourceRefs: (threadRef, refs) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef);
+          if (!threadKey) return;
+          const deepPlanSourceRefs = uniqueDeepPlanSourceRefs(refs.filter(isDeepPlanSourceRef)).map(
+            (ref) => ({ ...ref }),
+          );
+          set((state) => {
+            const existing = state.draftsByThreadKey[threadKey];
+            if (!existing && deepPlanSourceRefs.length === 0) return state;
+            const nextDraft = { ...(existing ?? createEmptyThreadDraft()), deepPlanSourceRefs };
+            const draftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) delete draftsByThreadKey[threadKey];
+            else draftsByThreadKey[threadKey] = nextDraft;
+            return { draftsByThreadKey };
           });
         },
         addImage: (threadRef, image) => {

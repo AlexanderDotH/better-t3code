@@ -45,10 +45,12 @@ const ReplyTopic = memo(function ReplyTopic(props: TopicProps) {
   return (
     <View className="mb-4 gap-2 border-l-2 border-border pl-3">
       <View className="flex-row flex-wrap items-center gap-3">
-        <Text accessibilityLiveRegion="polite" className="text-xs text-foreground-secondary">
-          {translator.message("chat.reply.topic")} ·{" "}
-          {translator.message(messageReplyStatusKey(props.topic))}
-        </Text>
+        {!active ? (
+          <Text accessibilityLiveRegion="polite" className="text-xs text-foreground-secondary">
+            {translator.message("chat.reply.topic")} ·{" "}
+            {translator.message(messageReplyStatusKey(props.topic))}
+          </Text>
+        ) : null}
         {active || retryable ? (
           <Pressable
             accessibilityRole="button"

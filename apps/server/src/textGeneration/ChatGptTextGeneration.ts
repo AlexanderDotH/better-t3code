@@ -1,3 +1,4 @@
+import { makeContextSummarizer } from "./ContextSummaryGeneration.ts";
 import { type ModelSelection, TextGenerationError } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
@@ -69,6 +70,7 @@ export const makeChatGptTextGeneration = (
       | "translateTranscriptToEnglish"
       | "improvePrompt"
       | "reviewPlanParallelism"
+      | "summarizeContext"
       | "planFetchExploration";
     readonly prompt: string;
     readonly outputSchema: S;
@@ -181,6 +183,12 @@ export const makeChatGptTextGeneration = (
     );
 
   return {
+    summarizeContext: makeContextSummarizer((input) =>
+      runJson({
+        ...input,
+        operation: "summarizeContext",
+      }),
+    ),
     decisionGeneration: makePromptedDecisionProviderFromStructuredOutput((input) =>
       runJson({
         operation: "decisionGeneration",

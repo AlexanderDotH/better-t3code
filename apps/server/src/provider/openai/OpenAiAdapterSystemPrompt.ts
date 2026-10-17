@@ -3,8 +3,11 @@ import { nativeHarnessWorkspaceInstructions } from "../nativeHarness/NativeHarne
 
 export function buildOpenAiSystemInstructions(input: OpenAiSystemInstructionInput): string {
   const access =
-    input.interactionMode === "plan" || input.sandboxMode === "read-only" || input.fetchWorker
-      ? "Read-only: inspect the workspace but do not modify files or run commands."
+    input.interactionMode === "plan" ||
+    input.sandboxMode === "read-only" ||
+    input.fetchWorker ||
+    input.deepPlan?.readOnly === true
+      ? "Read-only: inspect the workspace but do not modify files or run mutating commands."
       : input.sandboxMode === "workspace-write"
         ? "Workspace-write: inspect and edit workspace files through T3 tools."
         : "Use only tools exposed by T3 and respect every approval boundary.";
@@ -13,8 +16,8 @@ export function buildOpenAiSystemInstructions(input: OpenAiSystemInstructionInpu
     `The trusted workspace root is ${input.cwd}.`,
     access,
     nativeHarnessWorkspaceInstructions(input),
-    input.interactionMode === "plan"
-      ? "Plan mode is active: return a decision-complete plan and make no changes."
+    input.interactionMode === "plan" || input.deepPlan?.readOnly === true
+      ? "Plan mode is active: return a decision-complete plan without modifying the workspace."
       : "Carry the request through focused verification and preserve unrelated work.",
   ].join("\n");
 }

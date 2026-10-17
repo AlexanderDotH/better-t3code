@@ -60,6 +60,7 @@ import {
   ProviderAdapterValidationError,
 } from "../Errors.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
+import { DEEP_PLAN_PROVIDER_SUPPORT } from "../DeepPlanSupport.ts";
 import { type OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
 import type { ProviderMcpRuntimeTarget } from "../Services/ProviderAdapter.ts";
 import {
@@ -77,6 +78,12 @@ import {
   type OpenCodeServerConnection,
 } from "../opencodeRuntime.ts";
 import { bindProviderRuntimeEventOrigin } from "../runtimeEventOrigin.ts";
+import { makeProviderEventHub } from "../providerEventHub.ts";
+import { withProviderEventIngress } from "../providerEventIngress.ts";
+import {
+  stampProviderIngress,
+  transferProviderIngress,
+} from "../../observability/ProviderPipelineMetrics.ts";
 
 import * as Option from "effect/Option";
 
@@ -1188,7 +1195,7 @@ export function makeOpenCodeAdapter(
     // `options.nativeEventLogger`, they own its lifecycle.
     const managedNativeEventLogger =
       options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
-    const runtimeEvents = yield* Queue.unbounded<ProviderRuntimeEvent>();
+    const runtimeEvents = yield* makeProviderEventHub({ bufferUntilSubscribed: true });
     const sessions = new Map<ThreadId, OpenCodeSessionContext>();
     const deleteContextIfCurrent = (context: OpenCodeSessionContext) => {
       if (sessions.get(context.session.threadId) === context) {
@@ -1495,20 +1502,19 @@ export function makeOpenCodeAdapter(
         if (managedNativeEventLogger !== undefined) {
           yield* managedNativeEventLogger.close();
         }
-      }).pipe(Effect.ensuring(Queue.shutdown(runtimeEvents))),
+      }).pipe(Effect.ensuring(runtimeEvents.shutdown)),
     );
 
-    const emit = (event: ProviderRuntimeEvent) =>
-      Queue.offer(runtimeEvents, event).pipe(Effect.asVoid);
-    // Synchronous publish for callers that must not yield between a state
-    // check and the enqueue, e.g. reopening an approval only if its terminal
-    // event has not landed yet.
-    const emitUnsafe = (context: OpenCodeSessionContext, event: ProviderRuntimeEvent) => {
-      Queue.offerUnsafe(runtimeEvents, {
-        ...event,
-        runtimeSessionId: context.session.runtimeSessionId,
-      });
-    };
+    const emit = (event: ProviderRuntimeEvent) => runtimeEvents.publish(event).pipe(Effect.asVoid);
+    // Capture the runtime before publication can suspend. The hub serializes
+    // concurrent publications for this runtime, including approval resolution.
+    const emitForContext = (context: OpenCodeSessionContext, event: ProviderRuntimeEvent) =>
+      emit(
+        transferProviderIngress(event, {
+          ...event,
+          runtimeSessionId: context.session.runtimeSessionId,
+        }),
+      );
     const publishRuntimeEvent = emit;
     const writeNativeEvent = (
       threadId: ThreadId,
@@ -2184,7 +2190,7 @@ export function makeOpenCodeAdapter(
           : [request.permission.replaceAll("_", " "), ...patterns].join("\n");
       context.autoRepliedRequestIds.delete(request.id);
       context.pendingPermissions.set(request.id, request);
-      emitUnsafe(context, {
+      yield* emitForContext(context, {
         ...base,
         type: "request.opened",
         payload: {
@@ -2279,7 +2285,7 @@ export function makeOpenCodeAdapter(
         return;
       }
       context.pendingQuestions.set(request.id, request);
-      emitUnsafe(context, {
+      yield* emitForContext(context, {
         ...base,
         type: "user-input.requested",
         payload: { questions: normalizeQuestionRequest(request) },
@@ -2322,7 +2328,7 @@ export function makeOpenCodeAdapter(
       if (event.type === "permission.replied") {
         const request = context.pendingPermissions.get(requestId);
         context.pendingPermissions.delete(requestId);
-        emitUnsafe(context, {
+        yield* emitForContext(context, {
           ...base,
           type: "request.resolved",
           payload: {
@@ -2344,7 +2350,7 @@ export function makeOpenCodeAdapter(
               ]),
             )
           : {};
-      emitUnsafe(context, {
+      yield* emitForContext(context, {
         ...base,
         type: "user-input.resolved",
         payload: { answers },
@@ -2369,7 +2375,7 @@ export function makeOpenCodeAdapter(
         if (context.emittedTerminalRequestIds.has(request.id)) continue;
         context.pendingPermissions.delete(request.id);
         context.emittedTerminalRequestIds.add(request.id);
-        emitUnsafe(context, {
+        yield* emitForContext(context, {
           ...base,
           type: "request.resolved",
           payload: { requestType: mapPermissionToRequestType(request.permission) },
@@ -2387,7 +2393,11 @@ export function makeOpenCodeAdapter(
         if (context.emittedTerminalRequestIds.has(request.id)) continue;
         context.pendingQuestions.delete(request.id);
         context.emittedTerminalRequestIds.add(request.id);
-        emitUnsafe(context, { ...base, type: "user-input.resolved", payload: { answers: {} } });
+        yield* emitForContext(context, {
+          ...base,
+          type: "user-input.resolved",
+          payload: { answers: {} },
+        });
       }
     });
 
@@ -2609,6 +2619,7 @@ export function makeOpenCodeAdapter(
       context: OpenCodeSessionContext,
       event: OpenCodeSubscribedEvent,
     ) {
+      stampProviderIngress(event);
       if (event.type === "server.connected") {
         if (
           (yield* Ref.get(context.stopped)) ||
@@ -3039,7 +3050,7 @@ export function makeOpenCodeAdapter(
           });
           // Session-wide task updates must not reopen progress after a turn ends.
           if (context.activeTurnId !== turnId) break;
-          emitUnsafe(context, {
+          yield* emitForContext(context, {
             ...base,
             type: "turn.plan.updated",
             payload: {
@@ -3255,7 +3266,7 @@ export function makeOpenCodeAdapter(
             Stream.runForEach((event) => {
               if (event.type === "server.connected") lastStreamError = undefined;
               if (event.type === "server.connected") warnedAboutDisconnect = false;
-              return handleSubscribedEvent(context, event);
+              return withProviderEventIngress(event, handleSubscribedEvent(context, event));
             }),
           ),
       ).pipe(
@@ -4606,6 +4617,7 @@ export function makeOpenCodeAdapter(
       provider,
       capabilities: {
         sessionModelSwitch: "in-session",
+        deepPlan: DEEP_PLAN_PROVIDER_SUPPORT.opencode,
         mcp: "sessionConfig",
       },
       mcpRuntime,
@@ -4622,8 +4634,10 @@ export function makeOpenCodeAdapter(
       readThread,
       rollbackThread,
       stopAll,
+      consumeEvents: runtimeEvents.consumeEvents,
+      subscribeEventStream: runtimeEvents.subscribeEventStream,
       get streamEvents() {
-        return Stream.fromQueue(runtimeEvents);
+        return runtimeEvents.stream;
       },
     } satisfies OpenCodeAdapterShape;
   });

@@ -19,6 +19,8 @@ import {
   ASSISTANT_CITATION_MAX_TEXT_LENGTH,
   AssistantCitation,
   ApprovalRequestId,
+  DeepPlanRunId,
+  DeepPlanSourceId,
   EventId,
   MessageId,
   OrchestrationThreadShell,
@@ -83,6 +85,7 @@ import { makeAdapterRegistryMock } from "../testUtils/providerAdapterRegistryMoc
 import { makeProviderRegistryLayer } from "../testUtils/providerRegistryMock.ts";
 import { ProviderRegistry } from "../Services/ProviderRegistry.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import type { McpDeepPlanContext } from "../../mcp/McpInvocationContext.ts";
 import { replyContext, replyOwnerThreadId } from "../../mcp/testFixtures/messageReply.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -1804,6 +1807,17 @@ routing.layer("ProviderServiceLive routing", (it) => {
       routing.claude.startSession.mockClear();
       routing.claude.sendTurn.mockClear();
       routing.claude.stopSession.mockClear();
+    }),
+  );
+
+  it.effect("treats interruption without a runtime lease as already stopped", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-without-runtime");
+      assert.isUndefined(yield* provider.resolveAbortTarget({ threadId }));
+      yield* provider.interruptTurn({ threadId });
+      assert.equal(routing.codex.interruptTurn.mock.calls.length, 0);
+      assert.equal(routing.claude.interruptTurn.mock.calls.length, 0);
     }),
   );
 
@@ -5394,7 +5408,11 @@ describe("agent browser access", () => {
       | "provider"
       | "off"
       | { readonly browser?: boolean; readonly device?: boolean },
-    options?: { readonly withoutOrchestration?: boolean; readonly reply?: boolean },
+    options?: {
+      readonly withoutOrchestration?: boolean;
+      readonly reply?: boolean;
+      readonly deepPlan?: McpDeepPlanContext;
+    },
   ) =>
     Effect.gen(function* () {
       const enableAgentBrowserAccess = typeof access === "boolean" ? access : access.browser;
@@ -5406,6 +5424,7 @@ describe("agent browser access", () => {
         readonly projectMemoryEnabled?: boolean;
         readonly workspaceWriteEnabled?: boolean;
         readonly messageReply?: typeof replyContext;
+        readonly deepPlan?: McpDeepPlanContext;
         readonly workspaceContextThreadId?: ThreadId;
       }> = [];
       const codex = makeFakeCodexAdapter();
@@ -5472,6 +5491,7 @@ describe("agent browser access", () => {
           Effect.sync(() => {
             issued.push({
               threadId: request.threadId,
+              ...(request.deepPlan === undefined ? {} : { deepPlan: request.deepPlan }),
               ...(request.messageReply === undefined ? {} : { messageReply: request.messageReply }),
               ...(request.workspaceContextThreadId === undefined
                 ? {}
@@ -5528,7 +5548,7 @@ describe("agent browser access", () => {
 
       yield* Effect.gen(function* () {
         const provider = yield* ProviderService.ProviderService;
-        if (options?.reply) {
+        if (options?.reply || options?.deepPlan) {
           return yield* provider.startTransientSession(
             replyOwnerThreadId,
             {
@@ -5539,14 +5559,19 @@ describe("agent browser access", () => {
               cwd: fixtureCwdRoot,
               modelSelection: createModelSelection(codexInstanceId, "gpt-5.4"),
               runtimeMode: replyContext.runtimeMode,
+              ...(options.deepPlan ? { sandboxMode: "read-only" as const } : {}),
             },
             {
               workspaceContextThreadId: threadId,
               mcpMode: "full",
-              messageReply: {
-                replyTopicId: replyContext.replyTopicId,
-                interactionMode: replyContext.interactionMode,
-              },
+              ...(options.deepPlan
+                ? { deepPlan: options.deepPlan }
+                : {
+                    messageReply: {
+                      replyTopicId: replyContext.replyTopicId,
+                      interactionMode: replyContext.interactionMode,
+                    },
+                  }),
             },
           );
         }
@@ -5561,6 +5586,38 @@ describe("agent browser access", () => {
 
       return issued;
     });
+
+  it.effect("passes the assigned frozen source grant into a transient analysis runtime", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("deep-source-parent");
+      const deepPlan: McpDeepPlanContext = {
+        runId: DeepPlanRunId.make("source-run"),
+        runThreadId: threadId,
+        phase: "planning",
+        approvedPlanVersion: null,
+        readOnly: true,
+        sourceAnalysis: {
+          workerThreadId: replyOwnerThreadId,
+          sourceIds: [DeepPlanSourceId.make("source-1")],
+        },
+        modelSelection: createModelSelection(codexInstanceId, "gpt-5.4"),
+      };
+      const issued = yield* startSessionWith(
+        { browser: true, device: false },
+        threadId,
+        undefined,
+        { deepPlan },
+      );
+      assert.deepEqual(issued, [
+        {
+          threadId: replyOwnerThreadId,
+          workspaceContextThreadId: threadId,
+          deepPlan,
+          capabilities: ["preview", "pull-requests"],
+        },
+      ]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 
   it.effect(
     "inherits parent project browser and device access into an authenticated reply runtime",

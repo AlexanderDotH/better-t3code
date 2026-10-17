@@ -47,6 +47,8 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
+import { DEEP_PLAN_PROVIDER_SUPPORT } from "../DeepPlanSupport.ts";
+import { deepPlanContextForThread } from "../DeepPlanToolContext.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   ProviderAdapterProcessError,
@@ -73,12 +75,8 @@ import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import { applyCursorAcpModelSelection, makeCursorAcpRuntime } from "../acp/CursorAcpSupport.ts";
 import { CursorTransportFailure } from "../acp/CursorTransportFailure.ts";
 import { bindProviderRuntimeEventOrigin } from "../runtimeEventOrigin.ts";
-import {
-  makeBoundedProviderEventBroadcast,
-  providerEventEncodedBytes,
-  PROVIDER_RUNTIME_EVENT_QUEUE_BYTE_CAPACITY,
-  PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY,
-} from "../boundedEventQueue.ts";
+import { makeProviderEventHub } from "../providerEventHub.ts";
+import { withProviderEventIngress } from "../providerEventIngress.ts";
 import {
   CursorAskQuestionRequest,
   CursorCreatePlanRequest,
@@ -416,11 +414,7 @@ export function makeCursorAdapter(
 
     const sessions = new Map<ThreadId, CursorSessionContext>();
     const threadLocksRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
-    const runtimeEventBroadcast = yield* makeBoundedProviderEventBroadcast<ProviderRuntimeEvent>({
-      capacity: PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY,
-      byteCapacity: PROVIDER_RUNTIME_EVENT_QUEUE_BYTE_CAPACITY,
-      sizeOf: providerEventEncodedBytes,
-    });
+    const runtimeEventBroadcast = yield* makeProviderEventHub();
 
     const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
     const randomUUIDv4 = crypto.randomUUIDv4.pipe(
@@ -1056,6 +1050,7 @@ export function makeCursorAdapter(
                     return;
                 }
               }).pipe(
+                (effect) => withProviderEventIngress(event, effect),
                 Effect.catch((cause) =>
                   Effect.logError("Failed to process Cursor runtime notification.", { cause }),
                 ),
@@ -1104,6 +1099,18 @@ export function makeCursorAdapter(
     const sendTurn: CursorAdapterShape["sendTurn"] = (input) =>
       Effect.gen(function* () {
         const ctx = yield* requireSession(input.threadId);
+        const deepPlan = deepPlanContextForThread(input.threadId);
+        if (deepPlan?.phase === "planning" || deepPlan?.readOnly === true) {
+          const modes = yield* ctx.acp.getModeState;
+          if (!modes || !findModeByAliases(modes.availableModes, ACP_PLAN_MODE_ALIASES)) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "sendTurn",
+              issue:
+                "This Cursor runtime does not expose a read-only plan mode required by Deep Plan.",
+            });
+          }
+        }
         // A sendTurn while a prompt is in flight is a steer: the agent folds
         // the new prompt into the ongoing work, so the active turn id is
         // reused instead of opening a new turn.
@@ -1239,7 +1246,11 @@ export function makeCursorAdapter(
                     ...promptParts,
                     {
                       type: "text",
-                      text: buildRuntimeInstructions({ harness: "Cursor", model: resolvedModel }),
+                      text: buildRuntimeInstructions({
+                        harness: "Cursor",
+                        model: resolvedModel,
+                        deepPlan,
+                      }),
                     },
                   ],
             })
@@ -1475,6 +1486,7 @@ export function makeCursorAdapter(
       provider: PROVIDER,
       capabilities: {
         sessionModelSwitch: "in-session",
+        deepPlan: DEEP_PLAN_PROVIDER_SUPPORT.cursor,
         mcp: "sessionConfig",
         supportsConversationRollback: false,
       },
@@ -1492,6 +1504,8 @@ export function makeCursorAdapter(
       listSessions,
       hasSession,
       stopAll,
+      consumeEvents: runtimeEventBroadcast.consumeEvents,
+      subscribeEventStream: runtimeEventBroadcast.subscribeEventStream,
       streamEvents,
     } satisfies CursorAdapterShape;
   });

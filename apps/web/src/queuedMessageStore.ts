@@ -1,4 +1,6 @@
 import type {
+  ComposerMode,
+  DeepPlanSourceRef,
   ModelSelection,
   PreviewAnnotationPayload,
   ProviderInteractionMode,
@@ -22,6 +24,8 @@ export interface QueuedMessageSendSettings {
   modelSelection: ModelSelection;
   runtimeMode: RuntimeMode;
   interactionMode: ProviderInteractionMode;
+  composerMode?: ComposerMode;
+  deepPlanSourceRefs?: ReadonlyArray<DeepPlanSourceRef>;
   /** Effort written into the prompt text, for providers that read it there. */
   promptEffort: string | null;
 }
