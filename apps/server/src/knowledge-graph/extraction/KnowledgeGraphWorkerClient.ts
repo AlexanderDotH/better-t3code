@@ -79,7 +79,7 @@ interface PendingJob {
   readonly lastKeys: Map<string, string>;
 }
 
-export function resolveKnowledgeGraphExtractionWorker(moduleUrl = import.meta.url) {
+function resolveKnowledgeGraphExtractionWorker(moduleUrl = import.meta.url) {
   const sourceMode = moduleUrl.endsWith(".ts");
   const relativeEntry = sourceMode
     ? "./KnowledgeGraphExtractionWorker.ts"
