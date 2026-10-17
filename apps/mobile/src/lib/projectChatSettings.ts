@@ -7,9 +7,16 @@ import {
   resolveComposerMode,
   resolveDeepPlanningAvailability,
 } from "@t3tools/client-runtime/deep-planning";
-import type { ProjectChatSettings, ScopedProjectRef, ServerConfig } from "@t3tools/contracts";
+import type {
+  ComposerMode,
+  ModelSelection,
+  ProjectChatSettings,
+  ProviderInteractionMode,
+  RuntimeMode,
+  ScopedProjectRef,
+  ServerConfig,
+} from "@t3tools/contracts";
 
-import type { ComposerDraft } from "../state/use-composer-drafts";
 import {
   buildModelOptions,
   resolveDefaultableModelSelection,
@@ -17,10 +24,12 @@ import {
   resolveSelectableModelSelection,
 } from "./modelOptions";
 
-type ComposerChatSettings = Pick<
-  ComposerDraft,
-  "modelSelection" | "runtimeMode" | "interactionMode" | "composerMode"
->;
+type ComposerChatSettings = {
+  readonly modelSelection?: ModelSelection;
+  readonly runtimeMode?: RuntimeMode;
+  readonly interactionMode?: ProviderInteractionMode;
+  readonly composerMode?: ComposerMode;
+};
 
 /** Captures configuration without carrying a conversation or its context into another draft. */
 export function resolveMobileComposerChatSettings(

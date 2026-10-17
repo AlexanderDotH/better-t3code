@@ -1,7 +1,7 @@
 import { ChatGptUsageLimitNotice } from "./ChatGptUsageLimitNotice";
 import { MessageReplyPreview } from "./MessageReplyPreview";
 import { ThreadContextMeter } from "./ThreadContextMeter";
-import { visibleContextWindowSnapshot } from "./context-meter-state";
+import { visibleContextWindowSnapshot } from "../../state/context-meter-state";
 import type { ContextWindowSnapshot } from "@t3tools/client-runtime/context-window";
 import type { MessageReplyReference } from "@t3tools/contracts";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";

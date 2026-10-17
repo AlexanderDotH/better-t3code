@@ -1,7 +1,7 @@
 import { selectResponseMetrics } from "@t3tools/client-runtime/response-metrics";
 import { resolveThreadAbortPresentation } from "@t3tools/client-runtime/state/thread-abort";
 import { mergeMessageReplyTimeline } from "@t3tools/client-runtime/messageReplies";
-import { selectedThreadContextWindowSnapshot } from "../features/threads/context-meter-state";
+import { selectedThreadContextWindowSnapshot } from "./context-meter-state";
 import { useThreadMessageReplies } from "./use-thread-message-replies";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
