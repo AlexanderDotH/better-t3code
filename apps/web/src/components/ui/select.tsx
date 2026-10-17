@@ -90,6 +90,40 @@ function SelectButton({
   });
 }
 
+function NativeSelect({
+  className,
+  size = "default",
+  disabled,
+  children,
+  ...props
+}: Omit<React.ComponentProps<"select">, "size" | "multiple"> &
+  Pick<VariantProps<typeof selectTriggerVariants>, "size">) {
+  return (
+    <div className={cn("relative min-w-0", className)}>
+      <select
+        className={cn(selectTriggerVariants({ size }), "block w-full min-w-0 appearance-none pe-8")}
+        data-disabled={disabled ? "" : undefined}
+        data-slot="select-trigger"
+        disabled={disabled}
+        {...props}
+      >
+        {children}
+      </select>
+      <span
+        aria-hidden="true"
+        className={cn(
+          "pointer-events-none absolute inset-y-0 end-3 flex items-center justify-center",
+          (size === "compact" || size === "xs") && "end-2",
+          size === "sm" && "end-2.5",
+          disabled && "opacity-64",
+        )}
+      >
+        <ChevronDownIcon className="size-3 text-icon-muted opacity-50" />
+      </span>
+    </div>
+  );
+}
+
 function SelectValue({ className, ...props }: SelectPrimitive.Value.Props) {
   return (
     <SelectPrimitive.Value
@@ -210,6 +244,7 @@ function SelectGroupLabel(props: SelectPrimitive.GroupLabel.Props) {
 }
 
 export {
+  NativeSelect,
   Select,
   SelectTrigger,
   SelectButton,
