@@ -9,6 +9,9 @@ public final class T3KeyboardCommandsModule: Module {
       Prop("enabledCommands") { (view: T3KeyboardCommandsView, commands: [String]) in
         view.setEnabledCommands(commands)
       }
+      Prop("cycleComposerModeTitle") { (view: T3KeyboardCommandsView, title: String?) in
+        view.cycleComposerModeTitle = title ?? ""
+      }
       Events("onCommand")
     }
   }
@@ -17,11 +20,12 @@ public final class T3KeyboardCommandsModule: Module {
 public final class T3KeyboardCommandsView: ExpoView {
   let onCommand = EventDispatcher()
   private var enabledCommands = Set<String>()
+  var cycleComposerModeTitle = ""
 
   public override var canBecomeFirstResponder: Bool { true }
 
   public override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
-    if action == #selector(openCommandPalette) || action == #selector(paletteNext) || action == #selector(palettePrevious) || action == #selector(paletteDismiss),
+    if action == #selector(openCommandPalette) || action == #selector(paletteNext) || action == #selector(palettePrevious) || action == #selector(paletteDismiss) || action == #selector(cycleComposerMode),
        let input = window?.t3FirstResponder as? UITextInput,
        input.markedTextRange != nil {
       return false
@@ -44,6 +48,7 @@ public final class T3KeyboardCommandsView: ExpoView {
       enabledCommand("files", input: "f", modifiers: [.command, .shift], action: #selector(openFiles), title: "Open Files"),
       enabledCommand("terminal", input: "t", modifiers: [.command, .shift], action: #selector(openTerminal), title: "Open Terminal"),
       enabledCommand("review", input: "r", modifiers: [.command, .shift], action: #selector(openReview), title: "Open Review"),
+      enabledCommand("cycleComposerMode", input: "\t", modifiers: .shift, action: #selector(cycleComposerMode), title: cycleComposerModeTitle),
       enabledCommand(
         "copyThreadReference",
         input: "c",
@@ -149,6 +154,7 @@ public final class T3KeyboardCommandsView: ExpoView {
   @objc private func openTerminal() { emit("terminal") }
   @objc private func openReview() { emit("review") }
   @objc private func copyThreadReference() { emit("copyThreadReference") }
+  @objc private func cycleComposerMode() { emit("cycleComposerMode") }
   @objc private func handleToggleSidebar() { emit("toggleSidebar") }
 
   private func emit(_ command: String) {

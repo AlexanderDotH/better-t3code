@@ -6,6 +6,7 @@ import type { HardwareKeyboardCommand } from "../features/keyboard/hardwareKeybo
 export function T3KeyboardCommands(
   props: PropsWithChildren<{
     readonly enabledCommands: ReadonlyArray<HardwareKeyboardCommand>;
+    readonly cycleComposerModeTitle?: string;
     readonly onCommand: (command: HardwareKeyboardCommand) => void;
   }>,
 ) {
