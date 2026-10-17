@@ -1,11 +1,13 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type {
+  ComposerMode,
   EnvironmentId,
   ModelSelection,
   ProjectId,
   ScopedProjectRef,
 } from "@t3tools/contracts";
 import type { ComposerThreadDraftState, DraftThreadEnvMode } from "../composerDraftStore";
+import type { ResolvedProjectChatSettings } from "@t3tools/client-runtime/project-chat-settings";
 
 type ComposerModelSelectionState = Pick<
   ComposerThreadDraftState,
@@ -66,6 +68,35 @@ export function hasExplicitComposerModelSelection(
     activeProvider !== undefined &&
     draft.modelSelectionByProvider[activeProvider] !== undefined
   );
+}
+
+export function readComposerProjectChatSettings(input: {
+  readonly draft: ComposerThreadDraftState | null;
+  readonly fallback: ResolvedProjectChatSettings;
+  readonly changes?: Partial<ResolvedProjectChatSettings>;
+}): ResolvedProjectChatSettings {
+  const activeProvider = input.draft?.activeProvider;
+  const selection = activeProvider
+    ? input.draft?.modelSelectionByProvider[activeProvider]
+    : undefined;
+  return {
+    modelSelection: selection ?? input.fallback.modelSelection,
+    runtimeMode: input.draft?.runtimeMode ?? input.fallback.runtimeMode,
+    composerMode:
+      input.draft?.composerMode ?? input.draft?.interactionMode ?? input.fallback.composerMode,
+    ...input.changes,
+  };
+}
+
+export function resolveAvailableComposerMode(input: {
+  readonly mode: ComposerMode;
+  readonly interactionModeEnabled: boolean;
+  readonly deepPlanningSupported: boolean;
+}): ComposerMode {
+  if (input.mode === "deep-plan") {
+    return input.deepPlanningSupported ? "deep-plan" : "default";
+  }
+  return input.mode === "plan" && input.interactionModeEnabled ? "plan" : "default";
 }
 
 export function resolveThreadActionProjectRef(

@@ -7,6 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
+import { deepPlanContextForThread } from "../DeepPlanToolContext.ts";
 import type { ProcessRunner } from "../../processRunner.ts";
 import type { NativeProviderToolResult } from "./NativeProviderTypes.ts";
 import {
@@ -101,7 +102,11 @@ export const makeNativeProviderHarness = Effect.fn("makeNativeProviderHarness")(
     declarations: (input) =>
       Effect.gen(function* () {
         const extensions = yield* extensionsForThread(input.threadId, input.cwd, input.fetchWorker);
-        const declarations = yield* buildNativeHarnessToolCatalog({ ...input, extensions });
+        const declarations = yield* buildNativeHarnessToolCatalog({
+          ...input,
+          extensions,
+          deepPlan: input.fetchWorker ? undefined : deepPlanContextForThread(input.threadId),
+        });
         return declarations.map(({ name, description, inputSchema }) => ({
           name,
           description,
@@ -110,7 +115,13 @@ export const makeNativeProviderHarness = Effect.fn("makeNativeProviderHarness")(
       }),
     isAvailable: (input) =>
       extensionsForThread(input.threadId, input.cwd, input.fetchWorker).pipe(
-        Effect.map((extensions) => nativeHarnessToolIsAvailable({ ...input, extensions })),
+        Effect.map((extensions) =>
+          nativeHarnessToolIsAvailable({
+            ...input,
+            extensions,
+            deepPlan: input.fetchWorker ? undefined : deepPlanContextForThread(input.threadId),
+          }),
+        ),
       ),
     requiresApproval: (toolName, runtimeMode) => {
       const extensionRequiresApproval = extensionApprovalByToolName.get(toolName);

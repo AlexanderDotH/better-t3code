@@ -6,6 +6,9 @@ import {
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
 import {
   CommandId,
+  ComposerMode,
+  DeepPlanSourceRef,
+  DeepPlanRunReference,
   EnvironmentId,
   IsoDateTime,
   MessageId,
@@ -59,8 +62,14 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   improvePromptBeforeSend: Schema.optional(Schema.Boolean),
   runtimeMode: Schema.optional(RuntimeMode),
   interactionMode: Schema.optional(ProviderInteractionMode),
+  composerMode: Schema.optional(ComposerMode),
+  deepPlanSourceRefs: Schema.optional(Schema.Array(DeepPlanSourceRef)),
   sourceProposedPlan: Schema.optional(
-    Schema.Struct({ threadId: ThreadId, planId: OrchestrationProposedPlanId }),
+    Schema.Struct({
+      threadId: ThreadId,
+      planId: OrchestrationProposedPlanId,
+      deepPlan: Schema.optional(DeepPlanRunReference),
+    }),
   ),
   // Present when the queued item creates a brand-new thread (pending task)
   // instead of appending a turn to an existing one.
@@ -95,9 +104,12 @@ export interface QueuedThreadMessage {
   readonly improvePromptBeforeSend?: boolean;
   readonly runtimeMode?: RuntimeModeType;
   readonly interactionMode?: ProviderInteractionModeType;
+  readonly composerMode?: ComposerMode;
+  readonly deepPlanSourceRefs?: ReadonlyArray<DeepPlanSourceRef>;
   readonly sourceProposedPlan?: {
     readonly threadId: ThreadId;
     readonly planId: typeof OrchestrationProposedPlanId.Type;
+    readonly deepPlan?: DeepPlanRunReference;
   };
   readonly creation?: QueuedThreadCreation;
   readonly createdAt: string;
@@ -192,11 +204,16 @@ export function resolveThreadOutboxDeliveryAction(input: {
   readonly shellStatus: EnvironmentShellStatus;
   readonly environmentConnected: boolean;
   readonly threadBusy: boolean;
+  readonly deepPlanning?: boolean;
+  readonly threadHasTurn?: boolean;
 }): ThreadOutboxDeliveryAction {
   if (input.isCreation) {
     // A pending task creates its thread on delivery. If the thread already
     // exists the creation command went through and only cleanup remains.
     if (input.threadExists) {
+      if (input.deepPlanning && input.threadHasTurn === false) {
+        return input.environmentConnected && input.shellStatus === "live" ? "send" : "wait";
+      }
       return "remove";
     }
     // Wait for the shell to be live before sending: until the thread list has

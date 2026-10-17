@@ -43,6 +43,7 @@ export interface ContextWindowPickerProps {
   readonly modelOptions?: ReadonlyArray<ProviderOptionSelection> | null | undefined;
   readonly threadRef?: ScopedThreadRef;
   readonly draftId?: DraftId;
+  readonly onManualModelSelectionChange?: (selection: ModelSelection) => void;
   readonly onThreadModelSelectionChange?: (
     threadRef: ScopedThreadRef,
     modelSelection: ModelSelection,
@@ -188,6 +189,7 @@ function useContextWindowSelection(props: ContextWindowPickerProps): ContextWind
         model,
         persistSticky: false,
       });
+      props.onManualModelSelectionChange?.(createModelSelection(instanceId, model, nextOptions));
       if (notifyThread && props.threadRef && lastNotifiedValueRef.current !== option.id) {
         lastNotifiedValueRef.current = option.id;
         props.onThreadModelSelectionChange?.(

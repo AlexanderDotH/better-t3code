@@ -15,6 +15,9 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { ProviderAdapterRequestError, ProviderAdapterValidationError } from "../Errors.ts";
+import { DEEP_PLAN_PROVIDER_SUPPORT } from "../DeepPlanSupport.ts";
+import { deepPlanContextForThread } from "../DeepPlanToolContext.ts";
+import type { DeepPlanInstructionContext } from "../DeepPlanInstructions.ts";
 import {
   makeNativeProviderAdapter,
   type NativeProviderHistoryStrategy,
@@ -263,14 +266,18 @@ function parsePersistedSession(
 }
 
 function systemInstructions(input: {
+  readonly deepPlan?: DeepPlanInstructionContext | undefined;
   readonly cwd: string;
   readonly sandboxMode: "read-only" | "workspace-write" | "danger-full-access" | undefined;
   readonly interactionMode: "default" | "plan" | undefined;
   readonly fetchWorker: boolean;
 }): string {
   const access =
-    input.interactionMode === "plan" || input.sandboxMode === "read-only" || input.fetchWorker
-      ? "Read-only: inspect the workspace but do not modify files or run commands."
+    input.interactionMode === "plan" ||
+    input.sandboxMode === "read-only" ||
+    input.fetchWorker ||
+    input.deepPlan?.readOnly === true
+      ? "Read-only: inspect the workspace but do not modify files or run mutating commands."
       : input.sandboxMode === "workspace-write"
         ? "Workspace-write: inspect and edit workspace files through T3 tools."
         : "Use only tools exposed by T3 and respect every approval boundary.";
@@ -279,8 +286,8 @@ function systemInstructions(input: {
     `The trusted workspace root is ${input.cwd}.`,
     access,
     nativeHarnessWorkspaceInstructions(input),
-    input.interactionMode === "plan"
-      ? "Plan mode is active: return a decision-complete plan and make no changes."
+    input.interactionMode === "plan" || input.deepPlan?.readOnly === true
+      ? "Plan mode is active: return a decision-complete plan without modifying the workspace."
       : "Carry the request through focused verification and preserve unrelated work.",
   ].join("\n");
 }
@@ -453,7 +460,11 @@ export function makeChatGptAdapter(
     provider: PROVIDER,
     instanceId,
     ...(options.environment ? { environment: options.environment } : {}),
-    capabilities: { sessionModelSwitch: "in-session", mcp: "sessionConfig" },
+    capabilities: {
+      sessionModelSwitch: "in-session",
+      mcp: "sessionConfig",
+      deepPlan: DEEP_PLAN_PROVIDER_SUPPORT.chatgpt,
+    },
     messages: {
       sessionStarted: "ChatGPT Subscription session owned by T3 Code",
       sessionReady: "ChatGPT Subscription session ready",
@@ -596,6 +607,7 @@ export function makeChatGptAdapter(
           toolDeclarations: declarations,
           protocol: {
             instructions: systemInstructions({
+              deepPlan: session.fetchWorker ? undefined : deepPlanContextForThread(input.threadId),
               cwd: session.cwd,
               sandboxMode: session.sandboxMode,
               interactionMode: input.interactionMode,

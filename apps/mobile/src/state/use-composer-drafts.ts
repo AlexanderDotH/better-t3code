@@ -1,5 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
+  ComposerMode as ComposerModeSchema,
+  DeepPlanSourceRef as DeepPlanSourceRefSchema,
   EnvironmentId as EnvironmentIdSchema,
   ModelSelection as ModelSelectionSchema,
   ComposerContextId,
@@ -14,8 +16,11 @@ import {
   ProviderInteractionMode as ProviderInteractionModeSchema,
   RuntimeMode as RuntimeModeSchema,
   VoiceFileReference as VoiceFileReferenceSchema,
+  type ComposerMode,
+  type DeepPlanSourceRef,
   type EnvironmentId,
   type ModelSelection,
+  type ProjectChatSettings,
   type ProjectId,
   type ProviderInteractionMode,
   type RuntimeMode,
@@ -25,6 +30,7 @@ import {
   extractVoiceFileContext,
   reconcileVoiceFileReferences,
 } from "@t3tools/shared/voiceFileContext";
+import { getProviderInteractionMode } from "@t3tools/client-runtime/deep-planning";
 import * as Schema from "effect/Schema";
 import { useEffect } from "react";
 import { Atom } from "effect/unstable/reactivity";
@@ -342,6 +348,8 @@ export interface ComposerDraft {
   readonly modelSelection?: ModelSelection;
   readonly runtimeMode?: RuntimeMode;
   readonly interactionMode?: ProviderInteractionMode;
+  readonly composerMode?: ComposerMode;
+  readonly deepPlanSourceRefs?: ReadonlyArray<DeepPlanSourceRef>;
   readonly fetchMode?: "repository-exploration";
   readonly workspaceSelection?: ComposerDraftWorkspaceSelection;
   /**
@@ -378,6 +386,8 @@ export type ComposerDraftSettingsUpdate = Pick<
   | "modelSelection"
   | "runtimeMode"
   | "interactionMode"
+  | "composerMode"
+  | "deepPlanSourceRefs"
   | "fetchMode"
   | "workspaceSelection"
   | "project"
@@ -415,6 +425,8 @@ const ComposerDraftSchema = Schema.Struct({
   modelSelection: Schema.optional(ModelSelectionSchema),
   runtimeMode: Schema.optional(RuntimeModeSchema),
   interactionMode: Schema.optional(ProviderInteractionModeSchema),
+  composerMode: Schema.optional(ComposerModeSchema),
+  deepPlanSourceRefs: Schema.optional(Schema.Array(DeepPlanSourceRefSchema)),
   fetchMode: Schema.optional(Schema.Literal("repository-exploration")),
   workspaceSelection: Schema.optional(ComposerDraftWorkspaceSelectionSchema),
   project: Schema.optional(ComposerDraftProjectSchema),
@@ -571,6 +583,8 @@ function isEmptyDraft(draft: ComposerDraft): boolean {
     draft.modelSelection === undefined &&
     draft.runtimeMode === undefined &&
     draft.interactionMode === undefined &&
+    draft.composerMode === undefined &&
+    (draft.deepPlanSourceRefs?.length ?? 0) === 0 &&
     draft.fetchMode === undefined &&
     draft.messageReply === undefined &&
     draft.workspaceSelection === undefined
@@ -1158,6 +1172,8 @@ export async function removeDeliveredCloudQueuedMessage(
         archived.modelSelection,
         archived.runtimeMode,
         archived.interactionMode,
+        archived.composerMode,
+        archived.deepPlanSourceRefs,
         archived.fetchMode,
         archived.improvePromptBeforeSend,
         archived.turnModelSelection,
@@ -1168,6 +1184,8 @@ export async function removeDeliveredCloudQueuedMessage(
         message.modelSelection,
         message.runtimeMode,
         message.interactionMode,
+        message.composerMode,
+        message.deepPlanSourceRefs,
         message.fetchMode,
         message.improvePromptBeforeSend,
         message.turnModelSelection,
@@ -1187,6 +1205,9 @@ export async function removeDeliveredCloudQueuedMessage(
         (editor.runtimeMode !== undefined && editor.runtimeMode !== message.runtimeMode) ||
         (editor.interactionMode !== undefined &&
           editor.interactionMode !== message.interactionMode) ||
+        (editor.composerMode !== undefined && editor.composerMode !== message.composerMode) ||
+        JSON.stringify(editor.deepPlanSourceRefs ?? []) !==
+          JSON.stringify(message.deepPlanSourceRefs ?? []) ||
         editor.fetchMode !== message.fetchMode ||
         (editor.workspaceSelection !== undefined &&
           (editor.workspaceSelection.mode !== message.creation?.workspaceMode ||
@@ -1517,8 +1538,48 @@ export function updateComposerDraftSettings(
     const draft = {
       ...normalizeDraft(current[draftKey]),
       ...settings,
+      ...(settings.composerMode !== undefined
+        ? { interactionMode: getProviderInteractionMode(settings.composerMode) }
+        : settings.interactionMode !== undefined
+          ? { composerMode: settings.interactionMode }
+          : {}),
     };
     return withComposerDraft(current, draftKey, draft);
+  });
+}
+
+/** Keep a task's current configuration once the user invests content in its draft. */
+export function initializeNewTaskDraftChatSettings(
+  draftKey: string,
+  settings: ProjectChatSettings,
+): void {
+  if (!isNewTaskDraftKey(draftKey)) return;
+  updateComposerDrafts((current) => {
+    const draft = current[draftKey];
+    if (!draft?.project) return current;
+    const composerMode =
+      draft.composerMode ??
+      (draft.interactionMode === undefined ? settings.composerMode : draft.interactionMode);
+    const modelSelection = draft.modelSelection ?? settings.modelSelection;
+    const runtimeMode = draft.runtimeMode ?? settings.runtimeMode;
+    if (
+      modelSelection === draft.modelSelection &&
+      runtimeMode === draft.runtimeMode &&
+      composerMode === draft.composerMode
+    )
+      return current;
+    return {
+      ...current,
+      [draftKey]: {
+        ...draft,
+        modelSelection,
+        runtimeMode,
+        composerMode,
+        ...(composerMode === undefined
+          ? {}
+          : { interactionMode: getProviderInteractionMode(composerMode) }),
+      },
+    };
   });
 }
 
@@ -1744,6 +1805,8 @@ export function sameComposerDraftState(a: ComposerDraft, b: ComposerDraft): bool
     a.modelSelection === b.modelSelection &&
     a.runtimeMode === b.runtimeMode &&
     a.interactionMode === b.interactionMode &&
+    a.composerMode === b.composerMode &&
+    a.deepPlanSourceRefs === b.deepPlanSourceRefs &&
     a.fetchMode === b.fetchMode &&
     a.workspaceSelection === b.workspaceSelection
   );
@@ -1782,6 +1845,8 @@ export function undoComposerDraftMergeState(
       | "modelSelection"
       | "runtimeMode"
       | "interactionMode"
+      | "composerMode"
+      | "deepPlanSourceRefs"
       | "fetchMode"
       | "workspaceSelection",
   >(
@@ -1807,6 +1872,8 @@ export function undoComposerDraftMergeState(
     modelSelection: undoSetting("modelSelection"),
     runtimeMode: undoSetting("runtimeMode"),
     interactionMode: undoSetting("interactionMode"),
+    composerMode: undoSetting("composerMode"),
+    deepPlanSourceRefs: undoSetting("deepPlanSourceRefs"),
     fetchMode: undoSetting("fetchMode"),
     workspaceSelection: undoSetting("workspaceSelection"),
   };

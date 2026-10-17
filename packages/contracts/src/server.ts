@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { DeepPlanProviderCapability } from "./deepPlanning.ts";
 import {
   type EnvironmentMachineKind,
   ExecutionEnvironmentDescriptor,
@@ -8,6 +9,7 @@ import {
 import { ServerAuthDescriptor } from "./auth.ts";
 import {
   ForwardCompatibleArray,
+  ForwardCompatibleOptional,
   IsoDateTime,
   NonNegativeInt,
   PositiveInt,
@@ -382,6 +384,7 @@ export const ServerProviderRuntimeCapabilities = Schema.Struct({
 export type ServerProviderRuntimeCapabilities = typeof ServerProviderRuntimeCapabilities.Type;
 
 export const ServerProvider = Schema.Struct({
+  deepPlanning: ForwardCompatibleOptional(DeepPlanProviderCapability),
   // Routing key for the configured instance this snapshot represents. This
   // is the only stable identity consumers may use for provider routing.
   instanceId: ProviderInstanceId,

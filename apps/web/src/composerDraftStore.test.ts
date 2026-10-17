@@ -3466,3 +3466,73 @@ describe("composerDraftStore attachment references", () => {
     );
   });
 });
+
+describe("DeepPlan composer draft persistence", () => {
+  beforeEach(resetComposerDraftStore);
+  afterEach(resetComposerDraftStore);
+
+  it("retains mode and selected sources when content clears and storage reloads", () => {
+    const threadId = ThreadId.make("deep-draft");
+    const target = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+    const refs = [
+      {
+        environmentId: OTHER_TEST_ENVIRONMENT_ID,
+        projectId: ProjectId.make("other-project"),
+        threadId: ThreadId.make("archived-chat"),
+      },
+    ];
+    const store = useComposerDraftStore.getState();
+    store.setComposerMode(target, "deep-plan");
+    store.setDeepPlanSourceRefs(target, refs);
+    store.setPrompt(target, "Inspect the sources");
+    store.clearComposerContent(target);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toMatchObject({
+      prompt: "",
+      composerMode: "deep-plan",
+      interactionMode: "plan",
+      deepPlanSourceRefs: refs,
+    });
+    const persisted = partializeComposerDraftStoreState(useComposerDraftStore.getState());
+    const hydrated = useComposerDraftStore.persist.getOptions().merge!(
+      persisted,
+      useComposerDraftStore.getInitialState(),
+    );
+    expect(hydrated.draftsByThreadKey[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]).toMatchObject({
+      composerMode: "deep-plan",
+      deepPlanSourceRefs: refs,
+    });
+  });
+
+  it("keeps source choices separate for matching thread IDs on different environments", () => {
+    const threadId = ThreadId.make("same-id");
+    const local = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+    const remote = scopeThreadRef(OTHER_TEST_ENVIRONMENT_ID, threadId);
+    const refs = [
+      {
+        environmentId: OTHER_TEST_ENVIRONMENT_ID,
+        projectId: ProjectId.make("project"),
+        threadId: ThreadId.make("source"),
+      },
+    ];
+    useComposerDraftStore.getState().setComposerMode(local, "deep-plan");
+    useComposerDraftStore.getState().setDeepPlanSourceRefs(local, refs);
+    useComposerDraftStore.getState().setComposerMode(remote, "default");
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.deepPlanSourceRefs).toEqual(refs);
+    expect(draftFor(threadId, OTHER_TEST_ENVIRONMENT_ID)?.deepPlanSourceRefs).toEqual([]);
+    expect(draftFor(threadId, OTHER_TEST_ENVIRONMENT_ID)?.composerMode).toBe("default");
+  });
+
+  it("restores legacy Build and Plan values through composer modes", () => {
+    const hydrated = useComposerDraftStore.persist.getOptions().merge!(
+      {
+        draftsByThreadKey: {
+          legacyBuild: { prompt: "", attachments: [], interactionMode: "default" },
+          legacyPlan: { prompt: "", attachments: [], interactionMode: "plan" },
+        },
+      },
+      useComposerDraftStore.getInitialState(),
+    );
+    expect(hydrated.draftsByThreadKey.legacyBuild?.composerMode).toBe("default");
+    expect(hydrated.draftsByThreadKey.legacyPlan?.composerMode).toBe("plan");
+  });
+});

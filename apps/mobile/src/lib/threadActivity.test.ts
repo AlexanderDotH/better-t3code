@@ -292,6 +292,31 @@ function makeThread(
 }
 
 describe("buildThreadFeed", () => {
+  it("hides persisted compaction conflicts and keeps real provider errors", () => {
+    const conflict = "failed to submit turn input: ActiveTurnNotSteerable { turn_kind: Compact }";
+    const thread = makeThread({
+      id: ThreadId.make("context-recovery"),
+      projectId: ProjectId.make("project-1"),
+      title: "Context recovery",
+      activities: [
+        { kind: "runtime.error", payload: { message: conflict } },
+        { kind: "provider.turn.start.failed", payload: { detail: conflict } },
+        { kind: "runtime.error", payload: { message: "Authentication failed" } },
+      ].map((activity, index) =>
+        makeActivity({
+          ...activity,
+          id: EventId.make(`context-recovery-${index}`),
+          tone: "error",
+          summary: "Provider error",
+          createdAt: "2026-10-17T00:00:00.000Z",
+        }),
+      ),
+    });
+    const feed = JSON.stringify(buildThreadFeed(thread));
+    expect(feed).not.toContain("ActiveTurnNotSteerable");
+    expect(feed).toContain("Authentication failed");
+  });
+
   it("renders Project Index context decisions without exposing decision input", () => {
     const thread = makeThread({
       id: ThreadId.make("project-index-decisions"),

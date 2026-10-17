@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./codexContext": "./src/codexContext.ts",
     "./resetCredits": "./src/resetCredits.ts",
     "./projectIndexLanguages": "./src/projectIndexLanguages.ts",
     "./voiceFileContext": {
@@ -76,6 +77,10 @@
     "./DrainableWorker": {
       "types": "./src/DrainableWorker.ts",
       "import": "./src/DrainableWorker.ts"
+    },
+    "./KeyedDrainableWorker": {
+      "types": "./src/KeyedDrainableWorker.ts",
+      "import": "./src/KeyedDrainableWorker.ts"
     },
     "./KeyedCoalescingWorker": {
       "types": "./src/KeyedCoalescingWorker.ts",

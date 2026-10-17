@@ -15,6 +15,9 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { ProviderAdapterRequestError, ProviderAdapterValidationError } from "../Errors.ts";
+import { DEEP_PLAN_PROVIDER_SUPPORT } from "../DeepPlanSupport.ts";
+import { deepPlanContextForThread } from "../DeepPlanToolContext.ts";
+import type { DeepPlanInstructionContext } from "../DeepPlanInstructions.ts";
 import { nativeHarnessWorkspaceInstructions } from "../nativeHarness/NativeHarnessPrompt.ts";
 import {
   NATIVE_HARNESS_MAX_TOOL_DEFINITIONS,
@@ -216,22 +219,26 @@ function normalizeRoundEvent(
 }
 
 function systemInstructions(input: {
+  readonly deepPlan?: DeepPlanInstructionContext | undefined;
   readonly cwd: string;
   readonly sandboxMode: ProviderSandboxMode | undefined;
   readonly interactionMode: ProviderInteractionMode | undefined;
   readonly fetchWorker: boolean;
 }) {
   const readOnly =
-    input.interactionMode === "plan" || input.sandboxMode === "read-only" || input.fetchWorker;
+    input.interactionMode === "plan" ||
+    input.sandboxMode === "read-only" ||
+    input.fetchWorker ||
+    input.deepPlan?.readOnly === true;
   return [
     "You are a coding agent running inside T3 Code. T3 Code owns the session, transcript, tool loop, approvals, and filesystem boundary.",
     `The trusted workspace root is ${input.cwd}.`,
     readOnly
-      ? "Read-only: inspect the workspace but do not modify files or run commands."
+      ? "Read-only: inspect the workspace but do not modify files or run mutating commands."
       : "Use only tools exposed by T3 and respect every approval boundary.",
     nativeHarnessWorkspaceInstructions(input),
-    input.interactionMode === "plan"
-      ? "Plan mode is active: return a decision-complete plan and make no changes."
+    input.interactionMode === "plan" || input.deepPlan?.readOnly === true
+      ? "Plan mode is active: return a decision-complete plan without modifying the workspace."
       : "Carry the request through focused verification and preserve unrelated work.",
   ].join("\n");
 }
@@ -261,7 +268,11 @@ export const makeOpenAiCompatibleAdapter = Effect.fn("makeOpenAiCompatibleAdapte
     provider,
     instanceId,
     ...(options.environment === undefined ? {} : { environment: options.environment }),
-    capabilities: { sessionModelSwitch: "in-session", mcp: "sessionConfig" },
+    capabilities: {
+      sessionModelSwitch: "in-session",
+      mcp: "sessionConfig",
+      deepPlan: DEEP_PLAN_PROVIDER_SUPPORT[driverKind],
+    },
     messages: {
       sessionStarted: `${name} session owned by T3 Code`,
       sessionReady: `${name} session ready`,
@@ -321,6 +332,7 @@ export const makeOpenAiCompatibleAdapter = Effect.fn("makeOpenAiCompatibleAdapte
         });
       }
       const context = {
+        deepPlan: session.fetchWorker ? undefined : deepPlanContextForThread(input.threadId),
         threadId: input.threadId,
         cwd: session.cwd,
         interactionMode: input.interactionMode,

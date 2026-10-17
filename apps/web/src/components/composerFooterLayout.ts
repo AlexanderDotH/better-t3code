@@ -25,10 +25,9 @@ export function shouldUseCompactComposerFooter(
 
 export function shouldUseCompactComposerControls(input: {
   readonly expandedControlsEnabled: boolean;
-  readonly footerCompact: boolean;
   readonly inContextStrip: boolean;
 }): boolean {
-  return !input.inContextStrip && (!input.expandedControlsEnabled || input.footerCompact);
+  return !input.inContextStrip && !input.expandedControlsEnabled;
 }
 
 export function shouldUseRestingComposerLayout(input: {

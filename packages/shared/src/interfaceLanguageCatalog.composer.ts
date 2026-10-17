@@ -1,6 +1,111 @@
 import { defineLocalizedInterfaceCatalog } from "./interfaceLanguageCatalog.types.ts";
 
 export const composerInterfaceCatalog = defineLocalizedInterfaceCatalog({
+  "chat.responseMetrics.speedInline": ["{{speed}} tok/s", "{{speed}} Tok/s", "{{speed}} jetons/s"],
+  "chat.responseMetrics.firstTokenInline": ["TTFT {{time}}", "TTFT {{time}}", "TTFT {{time}}"],
+  "chat.responseMetrics.outputInline": [
+    "{{tokens}} Tokens",
+    "{{tokens}} Token",
+    "{{tokens}} jetons",
+  ],
+  "chat.responseMetrics.contextInline": [
+    "Context {{context}}",
+    "Kontext {{context}}",
+    "Contexte {{context}}",
+  ],
+  "chat.responseMetrics.speedTooltip": [
+    "Average output tokens per second, including tool waits.",
+    "Durchschnittliche Ausgabetoken pro Sekunde, inklusive Tool-Wartezeiten.",
+    "Jetons de sortie par seconde en moyenne, attentes des outils comprises.",
+  ],
+  "chat.responseMetrics.firstTokenTooltip": [
+    "Time from provider turn start to the first received token.",
+    "Zeit vom Turn-Start beim Provider bis zum ersten empfangenen Token.",
+    "Délai entre le début du tour chez le fournisseur et le premier jeton reçu.",
+  ],
+  "chat.responseMetrics.outputTooltip": [
+    "Output tokens for the whole turn, including reasoning.",
+    "Ausgabetoken für den gesamten Turn, inklusive Denken.",
+    "Jetons de sortie pour tout le tour, raisonnement compris.",
+  ],
+  "chat.responseMetrics.contextTooltip": [
+    "Final context tokens used and the model’s context limit.",
+    "Zuletzt genutzte Kontexttoken und das Kontextlimit des Modells.",
+    "Jetons de contexte utilisés à la fin et limite de contexte du modèle.",
+  ],
+  "chat.responseMetrics.seconds": ["{{seconds}} s", "{{seconds}} s", "{{seconds}} s"],
+  "chat.responseMetrics.contextValue": [
+    "{{used}} / {{limit}} ({{percentage}})",
+    "{{used}} / {{limit}} ({{percentage}})",
+    "{{used}} / {{limit}} ({{percentage}})",
+  ],
+  "chat.responseMetrics.contextValueUnknown": [
+    "{{used}} / {{limit}}",
+    "{{used}} / {{limit}}",
+    "{{used}} / {{limit}}",
+  ],
+  "chat.contextMeter.title": ["Context usage", "Kontextnutzung", "Utilisation du contexte"],
+  "chat.contextMeter.usedTokens": ["Used tokens", "Verwendete Token", "Jetons utilisés"],
+  "chat.contextMeter.limit": ["Limit", "Limit", "Limite"],
+  "chat.contextMeter.percentage": ["Percentage used", "Anteil genutzt", "Pourcentage utilisé"],
+  "chat.contextMeter.limitUnknown": ["Limit unknown", "Limit unbekannt", "Limite inconnue"],
+  "chat.contextMeter.processed": ["Total processed", "Insgesamt verarbeitet", "Total traité"],
+  "chat.contextMeter.compact": ["Compact context", "Kontext komprimieren", "Compacter le contexte"],
+  "chat.contextMeter.accessibleKnown": [
+    "Context usage: {{used}} of {{limit}} tokens ({{percentage}} used)",
+    "Kontextnutzung: {{used}} von {{limit}} Token ({{percentage}} genutzt)",
+    "Utilisation du contexte : {{used}} sur {{limit}} jetons ({{percentage}} utilisés)",
+  ],
+  "chat.contextMeter.accessibleUnknown": [
+    "Context usage: {{used}} tokens used. Limit unknown.",
+    "Kontextnutzung: {{used}} Token verwendet. Limit unbekannt.",
+    "Utilisation du contexte : {{used}} jetons utilisés. Limite inconnue.",
+  ],
+  "chat.contextMeter.autoCompactThreshold": [
+    "Compacts automatically at {{tokens}} tokens.",
+    "Wird bei {{tokens}} Token automatisch komprimiert.",
+    "Compactage automatique à {{tokens}} jetons.",
+  ],
+  "chat.contextMeter.autoCompactModel": [
+    "Context for {{model}} compacts automatically when needed.",
+    "Der Kontext für {{model}} wird bei Bedarf automatisch komprimiert.",
+    "Le contexte de {{model}} est compacté automatiquement si nécessaire.",
+  ],
+  "chat.contextMeter.autoCompact": [
+    "Context compacts automatically when needed.",
+    "Der Kontext wird bei Bedarf automatisch komprimiert.",
+    "Le contexte est compacté automatiquement si nécessaire.",
+  ],
+  "chat.contextMeter.compactDisabledBusy": [
+    "Wait for the current turn to finish before compacting context.",
+    "Warte, bis der aktuelle Durchlauf beendet ist, um den Kontext zu komprimieren.",
+    "Attendez la fin du tour en cours pour compacter le contexte.",
+  ],
+  "chat.contextMeter.compactDisabledNoSession": [
+    "Send a message before compacting context.",
+    "Sende eine Nachricht, bevor du den Kontext komprimierst.",
+    "Envoyez un message avant de compacter le contexte.",
+  ],
+  "chat.contextMeter.compactDisabledDisconnected": [
+    "Reconnect to compact context.",
+    "Verbinde dich erneut, um den Kontext zu komprimieren.",
+    "Reconnectez-vous pour compacter le contexte.",
+  ],
+  "chat.contextMeter.compactDisabledChooseProject": [
+    "Choose a project before compacting",
+    "Wähle vor dem Komprimieren ein Projekt aus",
+    "Choisissez un projet avant de compacter",
+  ],
+  "chat.contextMeter.compactDisabledProvider": [
+    "Compaction is unavailable for this provider",
+    "Komprimierung ist für diesen Provider nicht verfügbar",
+    "Le compactage n’est pas disponible pour ce fournisseur",
+  ],
+  "chat.contextMeter.compactDisabledUnavailable": [
+    "Compacting is unavailable right now",
+    "Komprimierung ist derzeit nicht verfügbar",
+    "Le compactage n’est pas disponible pour le moment",
+  ],
   "chat.composer.usageLimits.unavailable": [
     "Usage limits are unavailable for this provider",
     "Nutzungslimits sind für diesen Anbieter nicht verfügbar",

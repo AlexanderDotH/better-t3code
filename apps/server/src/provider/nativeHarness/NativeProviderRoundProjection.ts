@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
 import { ProviderAdapterRequestError } from "../Errors.ts";
+import { withProviderEventIngress } from "../providerEventIngress.ts";
 import {
   toNativeProviderSessionView,
   type NativeProviderSessionContext,
@@ -146,7 +147,7 @@ export function makeNativeProviderRoundProjection<
                 delta: event.delta,
               },
             });
-          }),
+          }).pipe((effect) => withProviderEventIngress(event, effect)),
         ),
         Effect.ensuring(
           Effect.sync(() => {

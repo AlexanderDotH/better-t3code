@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  DeepPlanRunId,
   McpServerDefinition,
   ProviderInstanceId,
   ThreadId,
@@ -38,6 +39,115 @@ const searchServer = decodeServer({
 });
 
 describe("ChatGptMcpToolBridge", () => {
+  it.effect(
+    "keeps bound planning tools and inherits composer approvals for other MCP actions",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const threadId = ThreadId.make("native-deep-plan");
+          const instanceId = ProviderInstanceId.make("openai");
+          const config = {
+            capabilities: new Set(["workspace"]),
+            environmentId: EnvironmentId.make("local"),
+            threadId,
+            providerSessionId: "native-deep-plan-session",
+            providerInstanceId: instanceId,
+            endpoint: "http://127.0.0.1:43123/mcp",
+            authorizationHeader: "Bearer test",
+          };
+          McpProviderSession.setMcpProviderSession(config);
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
+          );
+          let connections = 0;
+          const bridge = yield* makeNativeProviderMcpToolBridge({
+            instanceId,
+            environment: {},
+            resolveActiveServers: () => Effect.succeed([docsServer]),
+            clientFactory: {
+              connect: async () => {
+                connections += 1;
+                return {
+                  listTools: async () => ({
+                    tools: [
+                      { name: "deep_plan_publish", inputSchema: { type: "object" } },
+                      { name: "deep_plan_adjust_procedure", inputSchema: { type: "object" } },
+                      { name: "ordinary_write", inputSchema: { type: "object" } },
+                      { name: "workspace_edit", inputSchema: { type: "object" } },
+                    ],
+                  }),
+                  callTool: async () => ({ isError: false }),
+                  close: async () => {},
+                };
+              },
+            },
+          });
+          const initial = yield* bridge.extensionForThread({ threadId, cwd: "/workspace" });
+          const initialCatalog = yield* buildNativeHarnessToolCatalog({
+            interactionMode: "plan",
+            sandboxMode: "read-only",
+            extensions: [initial],
+          });
+          expect(initialCatalog.map((tool) => tool.name)).not.toContain("deep_plan_publish");
+
+          McpProviderSession.setMcpProviderSession({
+            ...config,
+            capabilities: new Set(["workspace", "deep-plan"]),
+            deepPlan: {
+              runId: DeepPlanRunId.make("run-1"),
+              runThreadId: threadId,
+              phase: "planning",
+              approvedPlanVersion: null,
+              modelSelection: { instanceId, model: "gpt-5.6" },
+            },
+          });
+          const bound = yield* bridge.extensionForThread({ threadId, cwd: "/workspace" });
+          const boundCatalog = yield* buildNativeHarnessToolCatalog({
+            interactionMode: "plan",
+            sandboxMode: "read-only",
+            extensions: [bound],
+          });
+          expect(boundCatalog.map((tool) => tool.name)).toContain("deep_plan_publish");
+          expect(boundCatalog.map((tool) => tool.name)).toContain("ordinary_write");
+          expect(boundCatalog.map((tool) => tool.name)).toContain("mcp__docs__ordinary_write");
+          expect(boundCatalog.map((tool) => tool.name)).not.toContain("workspace_edit");
+          expect(
+            bound.declarations.find((tool) => tool.name === "ordinary_write")?.requiresApproval,
+          ).toBe(true);
+          expect(boundCatalog.map((tool) => tool.name)).toContain("mcp__docs__deep_plan_publish");
+          expect(
+            bound.declarations.find((tool) => tool.name === "deep_plan_publish")?.requiresApproval,
+          ).toBe(false);
+          expect(connections).toBe(4);
+          McpProviderSession.setMcpProviderSession({
+            ...config,
+            capabilities: new Set(["workspace", "deep-plan"]),
+            deepPlan: {
+              runId: DeepPlanRunId.make("run-1"),
+              runThreadId: threadId,
+              phase: "execution",
+              approvedPlanVersion: 1,
+              readOnly: true,
+              modelSelection: { instanceId, model: "gpt-5.6" },
+            },
+          });
+          const review = yield* bridge.extensionForThread({ threadId, cwd: "/workspace" });
+          const reviewCatalog = yield* buildNativeHarnessToolCatalog({
+            interactionMode: "plan",
+            sandboxMode: "read-only",
+            extensions: [review],
+          });
+          expect(reviewCatalog.map((tool) => tool.name)).toContain("deep_plan_adjust_procedure");
+          expect(reviewCatalog.map((tool) => tool.name)).toContain("ordinary_write");
+          expect(reviewCatalog.map((tool) => tool.name)).not.toContain("workspace_edit");
+          expect(reviewCatalog.map((tool) => tool.name)).toContain(
+            "mcp__docs__deep_plan_adjust_procedure",
+          );
+          expect(connections).toBe(6);
+        }),
+      ),
+  );
+
   it.effect("exposes internal T3 tools by name and namespaces configured MCP tools", () =>
     Effect.scoped(
       Effect.gen(function* () {

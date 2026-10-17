@@ -1335,6 +1335,7 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
       NodeAssert.deepStrictEqual(adapter.capabilities, {
         sessionModelSwitch: "in-session",
         mcp: "nativeConfig",
+        deepPlan: { supported: true, readOnlyPlan: "native" },
         nativeThreadFork: true,
         manualCompaction: true,
         promptlessTurnContinuation: true,
@@ -2214,10 +2215,88 @@ function codexTurnEvent(method: "turn/started" | "turn/completed", turnId: strin
 }
 
 lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
+  for (const reason of ["full", "compacting"] as const) {
+    it.effect(`handles recoverable context errors without a chat error (${reason})`, () =>
+      Effect.gen(function* () {
+        const { adapter, runtime } = yield* startLifecycleRuntime();
+        const collected = yield* adapter.streamEvents.pipe(
+          Stream.filter(
+            (event) => event.type === "runtime.error" || event.type === "turn.completed",
+          ),
+          Stream.takeUntil(
+            (event) =>
+              event.type === "runtime.error" && event.payload.message === "Authentication failed",
+          ),
+          Stream.runCollect,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        const error = {
+          message:
+            reason === "full"
+              ? "The context window is full."
+              : "failed to submit turn input: ActiveTurnNotSteerable { turn_kind: Compact }",
+          codexErrorInfo:
+            reason === "full"
+              ? ("contextWindowExceeded" as const)
+              : { activeTurnNotSteerable: { turnKind: "compact" as const } },
+          additionalDetails: null,
+        };
+        yield* runtime.emit(
+          makeProviderNotification({
+            id: asEventId(`recoverable-${reason}`),
+            method: "error",
+            turnId: asTurnId("turn-recovery"),
+            payload: { threadId: "thread-1", turnId: "turn-recovery", willRetry: false, error },
+          }),
+        );
+        yield* runtime.emit(
+          makeProviderNotification({
+            id: asEventId(`recoverable-completed-${reason}`),
+            method: "turn/completed",
+            turnId: asTurnId("turn-recovery"),
+            payload: {
+              threadId: "thread-1",
+              turn: { id: "turn-recovery", status: "failed", items: [], error },
+            },
+          }),
+        );
+        yield* runtime.emit({
+          id: asEventId("real-provider-error"),
+          kind: "session",
+          provider: ProviderDriverKind.make("codex"),
+          threadId: asThreadId("thread-1"),
+          createdAt: "2026-01-01T00:00:00.000Z",
+          method: "session/error",
+          message: "Authentication failed",
+        });
+        const received = yield* Fiber.join(collected);
+        NodeAssert.deepEqual(
+          received
+            .filter((event) => event.type === "runtime.error")
+            .map((event) => event.payload.message),
+          ["Authentication failed"],
+        );
+        const terminal = received.find((event) => event.type === "turn.completed");
+        if (reason === "full") {
+          NodeAssert.ok(terminal?.type === "turn.completed");
+          NodeAssert.equal(terminal.payload.state, "interrupted");
+          NodeAssert.equal(terminal.payload.errorMessage, undefined);
+        } else {
+          NodeAssert.equal(terminal, undefined);
+        }
+      }),
+    );
+  }
+
   it.effect("calculates one Codex turn total from cumulative counters", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();
-      const completedFiber = yield* adapter.streamEvents.pipe(
+      const events = yield* adapter.subscribeEventStream!({
+        delivery: "lossless",
+        filter: { types: ["turn.completed"] },
+      });
+      const completedFiber = yield* events.pipe(
+        Stream.orDie,
         Stream.filter((event) => event.type === "turn.completed"),
         Stream.runHead,
         Effect.forkChild,
@@ -2276,6 +2355,11 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       yield* runtime.emit(codexTurnEvent("turn/completed", "turn-usage"));
 
       const completed = yield* Fiber.join(completedFiber);
+      const legacy = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "turn.completed"),
+        Stream.runHead,
+      );
+      NodeAssert.deepStrictEqual(legacy, completed);
       NodeAssert.equal(completed._tag, "Some");
       if (completed._tag === "Some" && completed.value.type === "turn.completed") {
         NodeAssert.deepStrictEqual(completed.value.payload.tokenUsage, {

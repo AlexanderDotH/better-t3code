@@ -11,6 +11,7 @@ export {
 } from "@t3tools/client-runtime/assembly-ai";
 
 import assemblyAiAudioWorkletUrl from "./assemblyAiAudioWorklet.ts?worker&url";
+import { requestVoiceMicrophone } from "./voiceMicrophone";
 
 const AUDIO_CHUNK_DURATION_MS = 50;
 const SOCKET_OPEN_TIMEOUT_MS = 10_000;
@@ -117,7 +118,7 @@ function addAssemblyAiSocketListener<Type extends keyof AssemblyAiSocketEventMap
 
 export interface AssemblyAiBrowserDependencies {
   readonly isSecureContext: boolean;
-  readonly getUserMedia: () => Promise<AssemblyAiMediaStream>;
+  readonly getUserMedia: (signal?: AbortSignal) => Promise<AssemblyAiMediaStream>;
   readonly createToken: () => Promise<AssemblyAiStreamingTokenResult>;
   readonly createAudioContext: () => AssemblyAiAudioContext;
   readonly createAudioWorkletNode: (
@@ -262,18 +263,11 @@ function defaultBrowserDependencies(): AssemblyAiBrowserDependencies {
   }
   return {
     isSecureContext: window.isSecureContext,
-    getUserMedia: async () => {
+    getUserMedia: async (signal) => {
       if (!navigator.mediaDevices?.getUserMedia) {
         throw new Error("Microphone access is not available in this browser.");
       }
-      return navigator.mediaDevices.getUserMedia({
-        audio: {
-          autoGainControl: true,
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-        },
-      });
+      return requestVoiceMicrophone(navigator.mediaDevices, signal);
     },
     createToken: () =>
       Promise.reject(new Error("Project context is required to start voice input.")),
@@ -374,7 +368,7 @@ export async function startAssemblyAiStreamingTranscription(
   const abortListener = () => cancelSession();
 
   try {
-    const permissionRequest = dependencies.getUserMedia();
+    const permissionRequest = dependencies.getUserMedia(input.signal);
     mediaStream = await withAbort(permissionRequest, input.signal, stopTracks).catch((error) => {
       if (input.signal?.aborted) throw cancelledError();
       throw describeAssemblyAiMicrophoneError(error);

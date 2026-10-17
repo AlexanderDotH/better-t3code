@@ -1,3 +1,4 @@
+import { makeContextSummarizer } from "./ContextSummaryGeneration.ts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -71,6 +72,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
       | "translateTranscriptToEnglish"
       | "improvePrompt"
       | "reviewPlanParallelism"
+      | "summarizeContext"
       | "planFetchExploration";
     cwd: string;
     prompt: string;
@@ -421,6 +423,13 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
 
   return {
     decisionGeneration,
+    summarizeContext: makeContextSummarizer((input) =>
+      runGrokJson({
+        ...input,
+        operation: "summarizeContext",
+        outputSchemaJson: input.outputSchema,
+      }),
+    ),
     decideAutoReasoning,
     generateCommitMessage,
     generatePrContent,

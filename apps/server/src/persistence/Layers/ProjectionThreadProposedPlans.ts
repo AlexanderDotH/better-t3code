@@ -4,7 +4,8 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
-import { OrchestrationHistoryOrigin } from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import { DeepPlanRunReference, OrchestrationHistoryOrigin } from "@t3tools/contracts";
 
 import { toPersistenceSqlError } from "../Errors.ts";
 import {
@@ -20,6 +21,7 @@ import {
 const ProjectionThreadProposedPlanDbRow = ProjectionThreadProposedPlan.mapFields(
   Struct.assign({
     historyOrigin: Schema.NullOr(Schema.fromJsonString(OrchestrationHistoryOrigin)),
+    deepPlan: Schema.NullOr(Schema.fromJsonString(DeepPlanRunReference)),
   }),
 );
 
@@ -31,6 +33,7 @@ function toProjectionThreadProposedPlan(
     threadId: row.threadId,
     turnId: row.turnId,
     planMarkdown: row.planMarkdown,
+    ...(row.deepPlan == null ? {} : { deepPlan: row.deepPlan }),
     implementedAt: row.implementedAt,
     implementationThreadId: row.implementationThreadId,
     createdAt: row.createdAt,
@@ -50,6 +53,7 @@ const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
         thread_id,
         turn_id,
         plan_markdown,
+        deep_plan_reference_json,
         implemented_at,
         implementation_thread_id,
         created_at,
@@ -61,6 +65,7 @@ const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
         ${row.threadId},
         ${row.turnId},
         ${row.planMarkdown},
+        ${row.deepPlan == null ? null : JSON.stringify(row.deepPlan)},
         ${row.implementedAt},
         ${row.implementationThreadId},
         ${row.createdAt},
@@ -72,6 +77,7 @@ const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
         thread_id = excluded.thread_id,
         turn_id = excluded.turn_id,
         plan_markdown = excluded.plan_markdown,
+        deep_plan_reference_json = excluded.deep_plan_reference_json,
         implemented_at = excluded.implemented_at,
         implementation_thread_id = excluded.implementation_thread_id,
         created_at = excluded.created_at,
@@ -85,17 +91,19 @@ const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
 
   const getProjectionThreadProposedPlanRow = SqlSchema.findOneOption({
     Request: GetProjectionThreadProposedPlanInput,
-    Result: ProjectionThreadProposedPlan,
+    Result: ProjectionThreadProposedPlanDbRow,
     execute: ({ threadId, planId }) => sql`
       SELECT
         plan_id AS "planId",
         thread_id AS "threadId",
         turn_id AS "turnId",
         plan_markdown AS "planMarkdown",
+        deep_plan_reference_json AS "deepPlan",
         implemented_at AS "implementedAt",
         implementation_thread_id AS "implementationThreadId",
         created_at AS "createdAt",
-        updated_at AS "updatedAt"
+        updated_at AS "updatedAt",
+        history_origin_json AS "historyOrigin"
       FROM projection_thread_proposed_plans
       WHERE thread_id = ${threadId} AND plan_id = ${planId}
     `,
@@ -110,6 +118,7 @@ const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
         thread_id AS "threadId",
         turn_id AS "turnId",
         plan_markdown AS "planMarkdown",
+        deep_plan_reference_json AS "deepPlan",
         implemented_at AS "implementedAt",
         implementation_thread_id AS "implementationThreadId",
         created_at AS "createdAt",
@@ -185,6 +194,7 @@ const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
 
   const getByPlanId: ProjectionThreadProposedPlanRepositoryShape["getByPlanId"] = (input) =>
     getProjectionThreadProposedPlanRow(input).pipe(
+      Effect.map(Option.map(toProjectionThreadProposedPlan)),
       Effect.mapError(
         toPersistenceSqlError("ProjectionThreadProposedPlanRepository.getByPlanId:query"),
       ),

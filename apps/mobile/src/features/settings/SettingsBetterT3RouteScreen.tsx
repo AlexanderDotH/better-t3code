@@ -55,6 +55,7 @@ import { ModelSelectionModal, modelSelectionLabel } from "./SettingsAgentEnviron
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { AutoSettleSettingsRows } from "./AutoSettleSettingsRows";
+import { ContextWindowMeterSettingsPreview } from "./ContextWindowMeterSettingsPreview";
 import {
   buildMobileGitWorkbenchThreadOptions,
   mobileGitWorkbenchCanActivate,
@@ -114,11 +115,12 @@ type BetterT3SettingsNavigation = NativeStackNavigationProp<{
     | undefined;
 }>;
 
-type BetterT3ChoiceValue = string | number | null;
+type BetterT3ChoiceValue = string | number | boolean | null;
 
 interface BetterT3Choice<T extends BetterT3ChoiceValue> {
   readonly value: T;
   readonly label: string;
+  readonly description?: string;
 }
 
 function BetterT3ChoiceModal<T extends BetterT3ChoiceValue>(props: {
@@ -160,7 +162,14 @@ function BetterT3ChoiceModal<T extends BetterT3ChoiceValue>(props: {
                     props.onClose();
                   }}
                 >
-                  <Text className="flex-1 text-base text-foreground">{choice.label}</Text>
+                  <View className="flex-1 gap-1">
+                    <Text className="text-base text-foreground">{choice.label}</Text>
+                    {choice.description ? (
+                      <Text className="text-sm leading-normal text-foreground-muted">
+                        {choice.description}
+                      </Text>
+                    ) : null}
+                  </View>
                   {selected ? (
                     <SymbolView
                       name="checkmark"
@@ -279,9 +288,10 @@ export function SettingsBetterT3RouteScreen() {
   const [selectedProjectId, setSelectedProjectId] = useState<ProjectId | null>(null);
   const [selectedGitThreadId, setSelectedGitThreadId] = useState<ThreadId | null>(null);
   const [activeChoice, setActiveChoice] = useState<
-    "caveman" | "project-sort" | "thread-sort" | null
+    "caveman" | "context-compaction" | "project-sort" | "thread-sort" | null
   >(null);
   const [autoReasoningModelPickerOpen, setAutoReasoningModelPickerOpen] = useState(false);
+  const [contextCompactionModelPickerOpen, setContextCompactionModelPickerOpen] = useState(false);
 
   useEffect(() => {
     if (
@@ -752,6 +762,27 @@ export function SettingsBetterT3RouteScreen() {
               messageKey(`settings.betterT3.section.${section.id}`, "settings.betterT3.title"),
             )}
           >
+            {section.id === "chat-layout" ? (
+              <SettingsSwitchRow
+                icon="chart.bar.xaxis"
+                label={translator.message("settings.responseMetrics.label")}
+                subtitle={translator.message("settings.responseMetrics.description")}
+                disabled={!deviceAvailable}
+                value={devicePreferences?.responseMetricsEnabled ?? false}
+                onValueChange={(responseMetricsEnabled) =>
+                  savePreferences({ responseMetricsEnabled })
+                }
+              />
+            ) : null}
+            {section.id === "composer" ? (
+              <ContextWindowMeterSettingsPreview
+                disabled={!deviceAvailable}
+                enabled={devicePreferences?.contextWindowMeterEnabled ?? true}
+                onValueChange={(contextWindowMeterEnabled) =>
+                  savePreferences({ contextWindowMeterEnabled })
+                }
+              />
+            ) : null}
             {section.controls.map((control) => {
               const label = translator.message(
                 messageKey(control.descriptor.labelMessageId, "settings.betterT3.title"),
@@ -790,6 +821,26 @@ export function SettingsBetterT3RouteScreen() {
                     onValueChange={(projectIndexingEnabled) => {
                       void updateEnvironmentSettings({ projectIndexingEnabled });
                     }}
+                  />
+                );
+              }
+              if (control.id === "agent.contextCompaction") {
+                return (
+                  <BetterT3ActionRow
+                    key={control.id}
+                    control={control}
+                    description={description}
+                    label={label}
+                    onPress={() => setActiveChoice("context-compaction")}
+                    status={
+                      available
+                        ? translator.message(
+                            control.value === true
+                              ? "settings.betterT3.preview.examples.context.background"
+                              : "settings.betterT3.preview.examples.context.native",
+                          )
+                        : status
+                    }
                   />
                 );
               }
@@ -864,6 +915,25 @@ export function SettingsBetterT3RouteScreen() {
                       available
                         ? translator.message(`settings.betterT3.value.${cavemanMode}`)
                         : status
+                    }
+                  />
+                );
+              }
+              if (control.id === "agent.contextCompactionModel") {
+                const selection = serverConfig?.settings.contextCompactionModelSelection ?? null;
+                return (
+                  <BetterT3ActionRow
+                    key={control.id}
+                    control={control}
+                    description={description}
+                    label={label}
+                    onPress={() => setContextCompactionModelPickerOpen(true)}
+                    status={
+                      !available || serverConfig === null
+                        ? status
+                        : selection === null
+                          ? translator.message("settings.betterT3.value.automatic")
+                          : modelSelectionLabel(serverConfig, selection)
                     }
                   />
                 );
@@ -949,6 +1019,34 @@ export function SettingsBetterT3RouteScreen() {
         title={translator.message("betterT3.agent.cavemanMode.label")}
         visible={activeChoice === "caveman"}
       />
+      <BetterT3ChoiceModal<boolean>
+        choices={[false, true].map((enabled) => ({
+          value: enabled,
+          label: translator.message(
+            enabled
+              ? "settings.betterT3.preview.examples.context.background"
+              : "settings.betterT3.preview.examples.context.native",
+          ),
+          description: translator.message(
+            enabled
+              ? "settings.betterT3.compaction.betterT3Description"
+              : "settings.betterT3.compaction.codexDescription",
+          ),
+        }))}
+        current={resolveBetterT3FeatureFlag(environmentSettings, "agent.contextCompaction")}
+        onClose={() => setActiveChoice(null)}
+        onSelect={(enabled) =>
+          void updateEnvironmentSettings(
+            createMobileBetterT3EnvironmentPatch({
+              settings: environmentSettings,
+              featureId: "agent.contextCompaction",
+              enabled,
+            }),
+          )
+        }
+        title={translator.message("betterT3.agent.contextCompaction.label")}
+        visible={activeChoice === "context-compaction"}
+      />
       <BetterT3ChoiceModal<"updated_at" | "created_at">
         choices={(["updated_at", "created_at"] as const).map((value) => ({
           value,
@@ -995,6 +1093,22 @@ export function SettingsBetterT3RouteScreen() {
       />
       {serverConfig === null ? null : (
         <>
+          <ModelSelectionModal
+            config={serverConfig}
+            current={serverConfig.settings.contextCompactionModelSelection ?? null}
+            defaultLabel={translator.message("settings.betterT3.value.automatic")}
+            visible={contextCompactionModelPickerOpen}
+            purpose="context-compaction"
+            onClose={() => setContextCompactionModelPickerOpen(false)}
+            onSelect={(selection: ModelSelection | null) =>
+              void updateEnvironmentSettings(
+                createMobileBetterT3EnvironmentControlPatch({
+                  id: "agent.contextCompactionModel",
+                  value: selection,
+                }),
+              )
+            }
+          />
           <ModelSelectionModal
             config={serverConfig}
             current={

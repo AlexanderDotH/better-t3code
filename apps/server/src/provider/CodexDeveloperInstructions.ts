@@ -5,6 +5,10 @@ import {
 } from "@t3tools/contracts";
 
 import type { V2TurnStartParams__AdditionalContextEntry } from "effect-codex-app-server/schema";
+import {
+  buildDeepPlanInstructions,
+  type DeepPlanInstructionContext,
+} from "./DeepPlanInstructions.ts";
 
 export interface T3CodeToolAvailability {
   readonly browser: boolean;
@@ -12,6 +16,7 @@ export interface T3CodeToolAvailability {
 }
 
 export interface CodexT3ToolAvailability {
+  readonly deepPlan?: DeepPlanInstructionContext;
   readonly device?: boolean;
   readonly preview: boolean;
   readonly workspace: boolean;
@@ -185,12 +190,16 @@ export function buildCodexAdditionalContext(
   interactionMode: ProviderInteractionMode = "default",
 ): Record<string, V2TurnStartParams__AdditionalContextEntry> {
   const attachedTools = toolInstructions(tools, interactionMode !== "plan");
+  const deepPlan = availability(tools).deepPlan;
   return {
     t3_code_runtime: {
       kind: "application",
       value: buildRuntimeInstructions({ harness: "Codex", ...runtime }),
     },
     t3_code_delegation: { kind: "application", value: delegationInstructions(tools) },
+    ...(deepPlan
+      ? { t3_code_deep_plan: { kind: "application", value: buildDeepPlanInstructions(deepPlan) } }
+      : {}),
     ...(attachedTools ? { t3_code_tools: { kind: "application", value: attachedTools } } : {}),
   };
 }

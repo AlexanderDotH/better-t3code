@@ -1,5 +1,6 @@
 import {
   IsoDateTime,
+  DeepPlanRunReference,
   OrchestrationHistoryOrigin,
   OrchestrationProposedPlanId,
   ThreadId,
@@ -18,6 +19,7 @@ export const ProjectionThreadProposedPlan = Schema.Struct({
   threadId: ThreadId,
   turnId: Schema.NullOr(TurnId),
   planMarkdown: TrimmedNonEmptyString,
+  deepPlan: Schema.optional(Schema.NullOr(DeepPlanRunReference)),
   implementedAt: Schema.NullOr(IsoDateTime),
   implementationThreadId: Schema.NullOr(ThreadId),
   createdAt: IsoDateTime,

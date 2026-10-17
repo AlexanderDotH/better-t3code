@@ -235,6 +235,7 @@ describe("OpenAI provider conformance", () => {
           expect(adapter.capabilities).toEqual({
             sessionModelSwitch: "in-session",
             mcp: "sessionConfig",
+            deepPlan: { supported: true, readOnlyPlan: "harness" },
           });
           expect(adapter.mcpRuntime).toBeDefined();
 

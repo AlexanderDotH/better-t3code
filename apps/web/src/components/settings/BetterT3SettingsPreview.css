@@ -34,7 +34,7 @@
 @utility better-t3-preview-deck-top {
   @media (prefers-reduced-motion: no-preference) {
     .better-t3-feature-option:is(:hover, :focus):not(:active, :disabled)
-      [data-workspace-card-deck="true"]
+      [data-workspace-card-deck="true"][data-card-morphing="true"]
       & {
       animation: better-t3-preview-deck-top 850ms var(--preview-ease) both;
     }
@@ -44,7 +44,7 @@
 @utility better-t3-preview-deck-bottom {
   @media (prefers-reduced-motion: no-preference) {
     .better-t3-feature-option:is(:hover, :focus):not(:active, :disabled)
-      [data-workspace-card-deck="true"]
+      [data-workspace-card-deck="true"][data-card-morphing="true"]
       & {
       animation: better-t3-preview-deck-bottom 850ms 70ms var(--preview-ease) both;
     }
@@ -54,7 +54,7 @@
 @utility better-t3-preview-active-card {
   @media (prefers-reduced-motion: no-preference) {
     .better-t3-feature-option:is(:hover, :focus):not(:active, :disabled)
-      [data-workspace-card-deck="true"]
+      [data-workspace-card-deck="true"][data-card-morphing="true"]
       & {
       animation: better-t3-preview-deck-front 650ms var(--preview-ease) both;
     }

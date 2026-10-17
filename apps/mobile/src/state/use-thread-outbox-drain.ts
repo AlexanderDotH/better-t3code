@@ -74,6 +74,7 @@ import {
   waitForComposerDraftsLoaded,
 } from "./use-composer-drafts";
 import { prepareQueuedPromptForDelivery } from "./thread-outbox-prompt-improvement";
+import { prepareQueuedDeepPlan } from "./deep-planning-delivery";
 import { useAtomCommand } from "./use-atom-command";
 import {
   dispatchingQueuedMessageIdAtom,
@@ -408,6 +409,10 @@ export async function recoverEditedCreationAfterDelivery(
       ...(kept.modelSelection !== undefined ? { modelSelection: kept.modelSelection } : {}),
       ...(kept.runtimeMode !== undefined ? { runtimeMode: kept.runtimeMode } : {}),
       ...(kept.interactionMode !== undefined ? { interactionMode: kept.interactionMode } : {}),
+      ...(kept.composerMode !== undefined ? { composerMode: kept.composerMode } : {}),
+      ...(kept.deepPlanSourceRefs !== undefined
+        ? { deepPlanSourceRefs: kept.deepPlanSourceRefs }
+        : {}),
     });
     // The append only schedules a debounced write; the queue entry is the
     // only durable copy until the draft lands, so flush before removing.
@@ -500,6 +505,12 @@ export async function restoreRejectedQueuedMessage(
       ...(queuedMessage.modelSelection ? { modelSelection: queuedMessage.modelSelection } : {}),
       ...(queuedMessage.runtimeMode ? { runtimeMode: queuedMessage.runtimeMode } : {}),
       ...(queuedMessage.interactionMode ? { interactionMode: queuedMessage.interactionMode } : {}),
+      ...(queuedMessage.composerMode !== undefined
+        ? { composerMode: queuedMessage.composerMode }
+        : {}),
+      ...(queuedMessage.deepPlanSourceRefs !== undefined
+        ? { deepPlanSourceRefs: queuedMessage.deepPlanSourceRefs }
+        : {}),
       ...(queuedMessage.creation
         ? {
             workspaceSelection: {
@@ -934,6 +945,22 @@ export function useThreadOutboxDrain(): void {
         settings,
         currentConfig.providers,
       );
+      try {
+        await prepareQueuedDeepPlan({
+          message: persistedMessage,
+          projectId: currentThread.projectId,
+          capabilities: currentConfig.environment.capabilities,
+          provider: currentConfig.providers.find(
+            (provider) => provider.instanceId === sendSettings.modelSelection.instanceId,
+          ),
+        });
+      } catch (error) {
+        if (shouldRetryThreadOutboxDelivery(error)) return false;
+        return restoreQueuedMessage(
+          persistedMessage,
+          error instanceof Error ? error.message : "Deep Planning could not start.",
+        );
+      }
       const deliveryResult = await startTurn({
         environmentId: queuedMessage.environmentId,
         input: {
@@ -999,11 +1026,15 @@ export function useThreadOutboxDrain(): void {
       if (preparation._tag !== "ready") return preparation._tag === "removed";
       const queuedMessage = preparation.message;
       if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[queuedMessage.messageId]) return true;
+      const existingCreationThread = findThread(
+        appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
+        queuedMessage,
+      );
       if (
-        findThread(appAtomRegistry.get(environmentThreadShells.threadShellsAtom), queuedMessage)
-      ) {
+        existingCreationThread &&
+        (queuedMessage.composerMode !== "deep-plan" || existingCreationThread.latestTurn !== null)
+      )
         return true;
-      }
       const modelSelection = queuedMessage.modelSelection;
       if (modelSelection === undefined) {
         return false;
@@ -1076,38 +1107,60 @@ export function useThreadOutboxDrain(): void {
         settings,
         currentConfig.providers,
       );
+      const creationTurnInput = buildProjectThreadStartTurnInput({
+        projectId: creation.projectId,
+        projectCwd,
+        threadId: queuedMessage.threadId,
+        commandId: queuedMessage.commandId,
+        messageId: queuedMessage.messageId,
+        createdAt: queuedMessage.createdAt,
+        ...serializeComposerMessageForServer(
+          queuedMessage.text.trim(),
+          uploadedComposerContext(
+            queuedMessage.context,
+            queuedMessage.attachments,
+            prepared.attachments,
+          ),
+          currentConfig.environment.capabilities.inlineMessageContext === true,
+        ),
+        uploadedAttachments: prepared.attachments,
+        modelSelection: sendSettings.modelSelection,
+        runtimeMode: sendSettings.runtimeMode,
+        interactionMode: sendSettings.interactionMode,
+        ...(queuedMessage.turnModelSelection === undefined
+          ? {}
+          : { turnModelSelection: queuedMessage.turnModelSelection }),
+        ...(queuedMessage.fetchMode === undefined ? {} : { fetchMode: queuedMessage.fetchMode }),
+        workspaceMode: creation.workspaceMode,
+        branch: creation.branch,
+        worktreePath: creation.worktreePath,
+        startFromOrigin: creation.startFromOrigin ?? false,
+        worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
+      });
+      try {
+        await prepareQueuedDeepPlan({
+          message: persistedMessage,
+          projectId: creation.projectId,
+          creation: creationTurnInput.bootstrap.createThread,
+          capabilities: currentConfig.environment.capabilities,
+          provider: currentConfig.providers.find(
+            (provider) => provider.instanceId === sendSettings.modelSelection.instanceId,
+          ),
+        });
+      } catch (error) {
+        if (shouldRetryThreadOutboxDelivery(error)) return false;
+        return restoreQueuedMessage(
+          persistedMessage,
+          error instanceof Error ? error.message : "Deep Planning could not start.",
+        );
+      }
+      const { createThread: _createdThread, ...remainingBootstrap } = creationTurnInput.bootstrap;
       const deliveryResult = await startTurn({
         environmentId: queuedMessage.environmentId,
-        input: buildProjectThreadStartTurnInput({
-          projectId: creation.projectId,
-          projectCwd,
-          threadId: queuedMessage.threadId,
-          commandId: queuedMessage.commandId,
-          messageId: queuedMessage.messageId,
-          createdAt: queuedMessage.createdAt,
-          ...serializeComposerMessageForServer(
-            queuedMessage.text.trim(),
-            uploadedComposerContext(
-              queuedMessage.context,
-              queuedMessage.attachments,
-              prepared.attachments,
-            ),
-            currentConfig.environment.capabilities.inlineMessageContext === true,
-          ),
-          uploadedAttachments: prepared.attachments,
-          modelSelection: sendSettings.modelSelection,
-          runtimeMode: sendSettings.runtimeMode,
-          interactionMode: sendSettings.interactionMode,
-          ...(queuedMessage.turnModelSelection === undefined
-            ? {}
-            : { turnModelSelection: queuedMessage.turnModelSelection }),
-          ...(queuedMessage.fetchMode === undefined ? {} : { fetchMode: queuedMessage.fetchMode }),
-          workspaceMode: creation.workspaceMode,
-          branch: creation.branch,
-          worktreePath: creation.worktreePath,
-          startFromOrigin: creation.startFromOrigin ?? false,
-          worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
-        }),
+        input:
+          queuedMessage.composerMode === "deep-plan"
+            ? { ...creationTurnInput, bootstrap: remainingBootstrap }
+            : creationTurnInput,
       });
       const { reportFailure } = makeDeliveryHelpers(queuedMessage);
       const failure = reportFailure(deliveryResult, "start-turn");
@@ -1243,6 +1296,8 @@ export function useThreadOutboxDrain(): void {
         shellStatus,
         environmentConnected: environment?.connectionState === "connected",
         threadBusy: thread?.session?.status === "running" || thread?.session?.status === "starting",
+        deepPlanning: nextQueuedMessage.composerMode === "deep-plan",
+        threadHasTurn: thread?.latestTurn != null,
       });
       // The delivery action resolves first; capability checks apply only to
       // a message that will send. Checking earlier would restore a

@@ -6,6 +6,8 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { ProviderAdapterRequestError, ProviderAdapterValidationError } from "../Errors.ts";
+import { DEEP_PLAN_PROVIDER_SUPPORT } from "../DeepPlanSupport.ts";
+import { deepPlanContextForThread } from "../DeepPlanToolContext.ts";
 import { makeNativeProviderAdapter } from "../nativeHarness/NativeProviderAdapter.ts";
 import {
   NATIVE_HARNESS_MAX_TOOL_DEFINITIONS,
@@ -73,7 +75,11 @@ export const makeOpenAiAdapter = Effect.fn("makeOpenAiAdapter")(function* (
     provider: PROVIDER,
     instanceId,
     ...(options.environment === undefined ? {} : { environment: options.environment }),
-    capabilities: { sessionModelSwitch: "in-session", mcp: "sessionConfig" },
+    capabilities: {
+      sessionModelSwitch: "in-session",
+      mcp: "sessionConfig",
+      deepPlan: DEEP_PLAN_PROVIDER_SUPPORT.openai,
+    },
     messages: {
       sessionStarted: "OpenAI Responses session owned by T3 Code",
       sessionReady: "OpenAI Responses session ready",
@@ -188,6 +194,7 @@ export const makeOpenAiAdapter = Effect.fn("makeOpenAiAdapter")(function* (
           })),
           protocol: {
             instructions: buildOpenAiSystemInstructions({
+              deepPlan: session.fetchWorker ? undefined : deepPlanContextForThread(input.threadId),
               cwd: session.cwd,
               sandboxMode: session.sandboxMode,
               interactionMode: input.interactionMode,

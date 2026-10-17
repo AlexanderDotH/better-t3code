@@ -52,6 +52,7 @@ import {
 import type { RpcSession } from "../rpc/session.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 import { createAiEndpointDiscoveryAtoms } from "./aiEndpoints.ts";
+import { createProjectChatSettingsState } from "./projectChatSettings.ts";
 import {
   applyServerConfigProjection,
   type ServerConfigProjection,
@@ -969,6 +970,22 @@ export function createServerEnvironmentAtoms<R, E>(
       Atom.withLabel(`environment-data:server:settings:${environmentId}`),
     ),
   );
+  const updateSettingsRequest = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:server:update-settings",
+    tag: WS_METHODS.serverUpdateSettings,
+  });
+  const updateSettings: typeof updateSettingsRequest = {
+    label: updateSettingsRequest.label,
+    run: (registry, target) =>
+      configScheduler.schedule(registry, configConcurrency, target, () =>
+        updateSettingsRequest.run(registry, target),
+      ),
+  };
+  const projectChatSettings = createProjectChatSettingsState({
+    configValueAtom,
+    updateSettings: updateSettingsRequest,
+    scheduler: configScheduler,
+  });
   const usagePricesAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => {
       const overrides = get(settingsValueAtom(environmentId))?.usagePriceOverrides ?? {};
@@ -1088,6 +1105,7 @@ export function createServerEnvironmentAtoms<R, E>(
     configValueAtom,
     updateStateAtom,
     settingsValueAtom,
+    ...projectChatSettings,
     providersValueAtom,
     providerAuthState: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:provider:auth-state",
@@ -1276,12 +1294,7 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
-    updateSettings: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:update-settings",
-      tag: WS_METHODS.serverUpdateSettings,
-      scheduler: configScheduler,
-      concurrency: configConcurrency,
-    }),
+    updateSettings,
     compactThread: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:provider:compact-thread",
       tag: WS_METHODS.providerCompactThread,
@@ -1369,6 +1382,42 @@ export function createServerEnvironmentAtoms<R, E>(
     improvePrompt: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:prompt:improve",
       tag: WS_METHODS.promptImprove,
+    }),
+    getDeepPlanRun: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:deep-plan:get-run",
+      tag: WS_METHODS.deepPlanGetRun,
+    }),
+    catalogDeepPlanSources: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:deep-plan:catalog",
+      tag: WS_METHODS.deepPlanCatalogSources,
+    }),
+    exportDeepPlanSources: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:deep-plan:export",
+      tag: WS_METHODS.deepPlanExportSources,
+    }),
+    readDeepPlanExportChunk: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:deep-plan:read-export",
+      tag: WS_METHODS.deepPlanReadExportChunk,
+    }),
+    initializeDeepPlanSources: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:deep-plan:initialize",
+      tag: WS_METHODS.deepPlanInitializeSources,
+    }),
+    importDeepPlanSourceChunk: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:deep-plan:import",
+      tag: WS_METHODS.deepPlanImportSourceChunk,
+    }),
+    listDeepPlanSources: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:deep-plan:list",
+      tag: WS_METHODS.deepPlanListSources,
+    }),
+    readDeepPlanSourceChunk: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:deep-plan:read-source",
+      tag: WS_METHODS.deepPlanReadSourceChunk,
+    }),
+    summarizeDeepPlanSource: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:deep-plan:summarize",
+      tag: WS_METHODS.deepPlanSummarizeSource,
     }),
     reviewPlanParallelism: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:plan:review-parallelism",

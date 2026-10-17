@@ -3,6 +3,22 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./project-chat-settings": {
+      "types": "./src/projectChatSettings.ts",
+      "default": "./src/projectChatSettings.ts"
+    },
+    "./state/project-chat-settings": {
+      "types": "./src/state/projectChatSettings.ts",
+      "default": "./src/state/projectChatSettings.ts"
+    },
+    "./response-metrics": {
+      "types": "./src/responseMetrics.ts",
+      "default": "./src/responseMetrics.ts"
+    },
+    "./context-window": {
+      "types": "./src/contextWindow.ts",
+      "default": "./src/contextWindow.ts"
+    },
     "./messageReplies": {
       "types": "./src/messageReplies.ts",
       "default": "./src/messageReplies.ts"
@@ -414,6 +430,14 @@
     "./device/duo-control": {
       "types": "./src/device/duoControl.ts",
       "default": "./src/device/duoControl.ts"
+    },
+    "./deepPlanning": {
+      "types": "./src/deepPlanning.ts",
+      "default": "./src/deepPlanning.ts"
+    },
+    "./deep-planning": {
+      "types": "./src/deepPlanning.ts",
+      "default": "./src/deepPlanning.ts"
     }
   },
   "scripts": {

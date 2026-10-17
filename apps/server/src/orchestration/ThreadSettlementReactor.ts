@@ -333,6 +333,20 @@ export const make = Effect.gen(function* () {
 
   const processEvent = (event: OrchestrationEvent) => {
     switch (event.type) {
+      case "thread.deep-plan-updated":
+        if (event.payload.run.phase === "completed") {
+          return Effect.gen(function* () {
+            yield* worker.enqueue(event.payload.threadId);
+            const implementationThreadId = event.payload.run.approval?.implementationThreadId;
+            if (
+              implementationThreadId !== undefined &&
+              implementationThreadId !== event.payload.threadId
+            ) {
+              yield* worker.enqueue(implementationThreadId);
+            }
+          });
+        }
+        break;
       case "thread.pull-request-linked":
       case "thread.pull-request-synced":
       case "thread.pull-request-unlinked":

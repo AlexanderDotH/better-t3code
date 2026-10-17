@@ -164,6 +164,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     macOnly: true,
   },
   {
+    id: "response-metrics",
+    title: "Response details",
+    to: "/settings/better-t3",
+    category: "Chat",
+    searchTerms: [
+      "tokens per second speed throughput latency TTFT time to first token context response usage",
+      "Antwortdetails Token Geschwindigkeit Kontext Zeit erster Token",
+    ],
+  },
+  {
     id: "show-reasoning",
     title: "Thinking trace display",
     to: "/settings/better-t3",
@@ -496,6 +506,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["composer rich text tiptap bold italic markdown styled wysiwyg"],
   },
   {
+    id: "legacy-context-window-indicator",
+    title: "Context usage indicator",
+    to: "/settings/better-t3",
+    category: "Composer",
+    searchTerms: [
+      "context window composer meter usage tokens circle ring limit",
+      "Kontextnutzung Kontextanzeige jetons utilisation contexte indicateur",
+    ],
+  },
+  {
     id: "composer-collapse",
     title: "Collapse composer on scroll",
     to: "/settings/general",
@@ -599,6 +619,31 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["generated thread titles source control content default provider"],
   },
   {
+    id: "context-compaction-engine",
+    title: "Context compaction engine",
+    to: "/settings/better-t3",
+    targetId: "agent.contextCompaction",
+    category: "Agents",
+    scope: "environment",
+    searchTerms: [
+      "codex compact compaction custom context engine native background summaries Better T3 Code",
+      "Kontextkompaktierung Kontextkomprimierung Zusammenfassung Hintergrund eigene Engine",
+      "compression contexte moteur résumé",
+    ],
+  },
+  {
+    id: "context-compaction-model",
+    title: "Context compaction model",
+    to: "/settings/better-t3",
+    targetId: "agent.contextCompactionModel",
+    category: "Agents",
+    scope: "environment",
+    searchTerms: [
+      "Better T3 Code context compact compaction summary decision model automatic Luna",
+      "Modell Kontextkompaktierung Kontextkomprimierung Zusammenfassung automatisch",
+    ],
+  },
+  {
     id: "diagnostics",
     title: "Diagnostics",
     to: "/settings/general",
@@ -614,12 +659,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Plan mode (legacy)",
     to: "/settings/general",
     searchTerms: ["build plan composer old"],
-  },
-  {
-    id: "legacy-context-window-indicator",
-    title: "Context window indicator (legacy)",
-    to: "/settings/general",
-    searchTerms: ["composer meter usage tokens circle old"],
   },
   {
     id: "legacy-sidebar",

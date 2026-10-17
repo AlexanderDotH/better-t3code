@@ -1,5 +1,6 @@
 import {
   classifyTaskAgentKind,
+  DeepPlanRunId,
   EventId,
   MessageId,
   OrchestrationProposedPlanId,
@@ -492,6 +493,33 @@ describe("deriveActivePlanState", () => {
 });
 
 describe("findLatestProposedPlan", () => {
+  it("preserves the active Deep Plan binding without applying it to later ordinary plans", () => {
+    const deepPlan = {
+      id: OrchestrationProposedPlanId.make("deep-plan"),
+      turnId: TurnId.make("deep-turn"),
+      planMarkdown: "# Deep Plan",
+      deepPlan: { runId: DeepPlanRunId.make("run"), planVersion: 2 },
+      implementedAt: null,
+      implementationThreadId: null,
+      createdAt: "2026-10-16T10:00:00.000Z",
+      updatedAt: "2026-10-16T10:00:00.000Z",
+    };
+    const ordinaryPlan = {
+      id: OrchestrationProposedPlanId.make("ordinary-plan"),
+      turnId: TurnId.make("ordinary-turn"),
+      planMarkdown: "# Ordinary Plan",
+      implementedAt: null,
+      implementationThreadId: null,
+      createdAt: "2026-10-16T11:00:00.000Z",
+      updatedAt: "2026-10-16T11:00:00.000Z",
+    };
+    expect(findLatestProposedPlan([deepPlan, ordinaryPlan], deepPlan.turnId)?.deepPlan).toEqual(
+      deepPlan.deepPlan,
+    );
+    expect(
+      findLatestProposedPlan([deepPlan, ordinaryPlan], ordinaryPlan.turnId)?.deepPlan,
+    ).toBeUndefined();
+  });
   it("prefers the latest proposed plan for the active turn", () => {
     expect(
       findLatestProposedPlan(
@@ -636,6 +664,25 @@ describe("workEntryIndicatesToolNeutralStatus", () => {
 });
 
 describe("deriveWorkLogEntries", () => {
+  it("hides persisted compaction conflicts while preserving real errors", () => {
+    const conflict = "failed to submit turn input: ActiveTurnNotSteerable { turn_kind: Compact }";
+    const entries = deriveWorkLogEntries([
+      makeActivity({ kind: "runtime.error", tone: "error", payload: { message: conflict } }),
+      makeActivity({
+        kind: "provider.turn.start.failed",
+        tone: "error",
+        payload: { detail: conflict },
+      }),
+      makeActivity({
+        kind: "runtime.error",
+        tone: "error",
+        payload: { message: "Authentication failed" },
+      }),
+    ]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.detail).toContain("Authentication failed");
+  });
+
   it("renders Project Index context decisions without exposing decision inputs", () => {
     const entries = deriveWorkLogEntries([
       makeActivity({

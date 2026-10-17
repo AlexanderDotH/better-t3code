@@ -43,6 +43,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
+import { DEEP_PLAN_PROVIDER_SUPPORT } from "../DeepPlanSupport.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   ProviderAdapterProcessError,
@@ -71,12 +72,8 @@ import {
   resolveGrokAcpBaseModelId,
 } from "../acp/GrokAcpSupport.ts";
 import { bindProviderRuntimeEventOrigin } from "../runtimeEventOrigin.ts";
-import {
-  makeBoundedProviderEventBroadcast,
-  providerEventEncodedBytes,
-  PROVIDER_RUNTIME_EVENT_QUEUE_BYTE_CAPACITY,
-  PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY,
-} from "../boundedEventQueue.ts";
+import { makeProviderEventHub } from "../providerEventHub.ts";
+import { withProviderEventIngress } from "../providerEventIngress.ts";
 import {
   buildGrokBackgroundTaskEvents,
   type GrokBackgroundTaskRecord,
@@ -379,11 +376,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
 
     const sessions = new Map<ThreadId, GrokSessionContext>();
     const threadLocksRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
-    const runtimeEventBroadcast = yield* makeBoundedProviderEventBroadcast<ProviderRuntimeEvent>({
-      capacity: PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY,
-      byteCapacity: PROVIDER_RUNTIME_EVENT_QUEUE_BYTE_CAPACITY,
-      sizeOf: providerEventEncodedBytes,
-    });
+    const runtimeEventBroadcast = yield* makeProviderEventHub();
     const requestedTurnInactivityTimeoutMs = options?.turnInactivityTimeoutMs;
     const turnInactivityTimeoutMs =
       typeof requestedTurnInactivityTimeoutMs === "number" &&
@@ -1554,7 +1547,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                     );
                     return;
                 }
-              }),
+              }).pipe((effect) => withProviderEventIngress(event, effect)),
             ),
           ).pipe(
             Effect.catch((cause) =>
@@ -2328,6 +2321,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       provider: PROVIDER,
       capabilities: {
         sessionModelSwitch: "in-session",
+        deepPlan: DEEP_PLAN_PROVIDER_SUPPORT.grok,
         mcp: "unsupported",
         supportsConversationRollback: false,
       },
@@ -2345,6 +2339,8 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       listSessions,
       hasSession,
       stopAll,
+      consumeEvents: runtimeEventBroadcast.consumeEvents,
+      subscribeEventStream: runtimeEventBroadcast.subscribeEventStream,
       streamEvents,
     } satisfies GrokAdapterShape;
   });

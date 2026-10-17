@@ -585,7 +585,11 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       const adapter = yield* makeTestAdapter(wrapperPath);
       const requestOpened =
         yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "request.opened" }>>();
-      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+      const events = yield* adapter.subscribeEventStream!({
+        delivery: "lossless",
+        filter: { threadId, types: ["request.opened"] },
+      });
+      const eventsFiber = yield* Stream.runForEach(events.pipe(Stream.orDie), (event) =>
         event.type === "request.opened"
           ? Deferred.succeed(requestOpened, event).pipe(Effect.ignore)
           : Effect.void,

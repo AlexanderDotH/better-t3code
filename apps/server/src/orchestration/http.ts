@@ -27,6 +27,8 @@ import { makeOrchestrationCommandDispatcher } from "./orchestrationCommandDispat
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import { ProjectSetupScriptRunner } from "../project/ProjectSetupScriptRunner.ts";
 import { VcsStatusBroadcaster } from "../vcs/VcsStatusBroadcaster.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
+import { syncProjectChatSettingsForCommand } from "./projectChatSettingsSync.ts";
 
 export const orchestrationHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
@@ -34,6 +36,7 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
     const orchestrationEngine = yield* OrchestrationEngineService;
+    const serverSettings = yield* ServerSettingsService;
     const threadDeletionReactor = yield* ThreadDeletionReactor;
     const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
 
@@ -201,6 +204,7 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
             }
             return yield* orchestrationEngine.dispatch(normalizedCommand);
           }).pipe(
+            Effect.tap(() => syncProjectChatSettingsForCommand(serverSettings, normalizedCommand)),
             Effect.tapError(() =>
               cleanupFailedUploadedAttachments(args.payload, normalizedCommand),
             ),

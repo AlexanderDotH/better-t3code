@@ -130,7 +130,9 @@ import {
   normalizeDispatchCommand,
 } from "./orchestration/Normalizer.ts";
 import { makeOrchestrationCommandDispatcher } from "./orchestration/orchestrationCommandDispatcher.ts";
+import { syncProjectChatSettingsForCommand } from "./orchestration/projectChatSettingsSync.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
+import { DeepPlanApplication } from "./deepPlanning/DeepPlanApplication.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor.ts";
 import { ThreadTranscriptExport } from "./orchestration/Services/ThreadTranscriptExport.ts";
@@ -606,13 +608,10 @@ const makeWsRpcLayer = (
       // the client's request caused them.
       const hasClientOrigin =
         clientOrigin.surface !== undefined || clientOrigin.appVersion !== undefined;
-      const dispatchFromClient: OrchestrationEngine.OrchestrationEngineShape["dispatch"] = (
-        command,
-      ) =>
-        orchestrationEngine.dispatch(
-          command,
-          hasClientOrigin ? { origin: clientOrigin } : undefined,
-        );
+      const dispatchFromClient = (command: OrchestrationCommand) =>
+        orchestrationEngine
+          .dispatch(command, hasClientOrigin ? { origin: clientOrigin } : undefined)
+          .pipe(Effect.tap(() => syncProjectChatSettingsForCommand(serverSettings, command)));
       const recordClientCommandAnalytics = (command: OrchestrationCommand) => {
         switch (command.type) {
           case "thread.create":
@@ -806,6 +805,7 @@ const makeWsRpcLayer = (
       );
       const projectTextTransforms = yield* ProjectTextTransforms.make;
       const planParallelismReview = yield* PlanParallelismReview.PlanParallelismReview;
+      const deepPlanApplication = yield* DeepPlanApplication;
       const mcpConfigEngine = yield* McpConfigEngine;
       const mcpConfigurationReconciler = yield* McpConfigurationReconciler;
       const mcpRuntimeRegistry = yield* McpRuntimeRegistry;
@@ -864,6 +864,15 @@ const makeWsRpcLayer = (
             providerService.getCapabilities(provider.instanceId).pipe(
               Effect.map((capabilities) => ({
                 ...provider,
+                ...(capabilities.deepPlan?.supported === true
+                  ? {
+                      deepPlanning: {
+                        version: 1 as const,
+                        structuredPlans: true,
+                        durableExecution: true,
+                      },
+                    }
+                  : {}),
                 runtimeCapabilities: {
                   nativeThreadFork: capabilities.nativeThreadFork === true,
                   manualCompaction: capabilities.manualCompaction === true,
@@ -1996,17 +2005,34 @@ const makeWsRpcLayer = (
       const dispatchNormalizedCommand = (
         normalizedCommand: OrchestrationCommand,
       ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> =>
-        startup
-          .enqueueCommand(
-            normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap
-              ? dispatchBootstrapTurnStart(normalizedCommand)
-              : commandDispatcher.dispatch(normalizedCommand),
-          )
-          .pipe(
-            Effect.mapError((cause) =>
-              toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
-            ),
-          );
+        Effect.gen(function* () {
+          if (normalizedCommand.type === "thread.turn.interrupt")
+            yield* deepPlanApplication.pauseForInterrupt(normalizedCommand.threadId);
+          return yield* startup
+            .enqueueCommand(
+              normalizedCommand.type === "thread.deep-plan.start" ||
+                normalizedCommand.type === "thread.deep-plan.update"
+                ? deepPlanApplication
+                    .dispatch(normalizedCommand)
+                    .pipe(
+                      Effect.mapError((cause) =>
+                        toDispatchCommandError(cause, "Could not update Deep Plan."),
+                      ),
+                    )
+                : normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap
+                  ? dispatchBootstrapTurnStart(normalizedCommand)
+                  : commandDispatcher.dispatch(normalizedCommand),
+            )
+            .pipe(
+              Effect.mapError((cause) =>
+                toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
+              ),
+            );
+        }).pipe(
+          Effect.mapError((cause) =>
+            toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
+          ),
+        );
 
       // Only clients that answer /usage-limits themselves see it in the catalogs;
       // an older client would send the injected command to the provider.
@@ -3259,6 +3285,17 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.promptImprove, projectTextTransforms.improvePrompt(input), {
             "rpc.aggregate": "prompt",
           }),
+        [WS_METHODS.deepPlanGetRun]: (input) => deepPlanApplication.getRun(input),
+        [WS_METHODS.deepPlanCatalogSources]: (input) => deepPlanApplication.catalogSources(input),
+        [WS_METHODS.deepPlanExportSources]: (input) => deepPlanApplication.exportSources(input),
+        [WS_METHODS.deepPlanReadExportChunk]: (input) => deepPlanApplication.readExportChunk(input),
+        [WS_METHODS.deepPlanInitializeSources]: (input) =>
+          deepPlanApplication.initializeSources(input),
+        [WS_METHODS.deepPlanImportSourceChunk]: (input) =>
+          deepPlanApplication.importSourceChunk(input),
+        [WS_METHODS.deepPlanListSources]: (input) => deepPlanApplication.listSources(input),
+        [WS_METHODS.deepPlanReadSourceChunk]: (input) => deepPlanApplication.readSourceChunk(input),
+        [WS_METHODS.deepPlanSummarizeSource]: (input) => deepPlanApplication.summarizeSource(input),
         [WS_METHODS.planReviewParallelism]: (input) =>
           observeRpcEffect(WS_METHODS.planReviewParallelism, planParallelismReview.review(input), {
             "rpc.aggregate": "plan",

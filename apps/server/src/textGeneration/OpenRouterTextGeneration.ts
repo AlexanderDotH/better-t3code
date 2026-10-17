@@ -1,3 +1,4 @@
+import { makeContextSummarizer } from "./ContextSummaryGeneration.ts";
 import {
   type OpenRouterSettings,
   type ModelSelection,
@@ -69,6 +70,7 @@ type TextGenerationOperation =
   | "translateTranscriptToEnglish"
   | "improvePrompt"
   | "reviewPlanParallelism"
+  | "summarizeContext"
   | "planFetchExploration";
 
 export function makeOpenRouterTextGeneration(
@@ -178,6 +180,12 @@ export function makeOpenRouterTextGeneration(
 
   return {
     decisionGeneration,
+    summarizeContext: makeContextSummarizer((input) =>
+      runJson({
+        ...input,
+        operation: "summarizeContext",
+      }),
+    ),
     decideAutoReasoning: Effect.fn("OpenRouterTextGeneration.decideAutoReasoning")(
       function* (input) {
         const { prompt, outputSchema } = buildAutoReasoningPrompt(input);

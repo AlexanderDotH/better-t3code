@@ -21,7 +21,8 @@ export type McpCapability =
   | "workspace-write"
   | "coordination"
   | "device"
-  | "pull-requests";
+  | "pull-requests"
+  | "deep-plan";
 
 export interface McpMessageReplyContext {
   readonly replyTopicId: SubagentId;
@@ -31,11 +32,25 @@ export interface McpMessageReplyContext {
   readonly workspacePath: string;
 }
 
+export interface McpDeepPlanContext {
+  readonly runId: import("@t3tools/contracts").DeepPlanRunId;
+  readonly runThreadId: ThreadId;
+  readonly approvedPlanVersion: number | null;
+  readonly phase: "planning" | "execution" | "validation";
+  readonly readOnly?: boolean;
+  readonly sourceAnalysis?: {
+    readonly workerThreadId: ThreadId;
+    readonly sourceIds: ReadonlyArray<import("@t3tools/contracts").DeepPlanSourceId>;
+  };
+  readonly modelSelection: import("@t3tools/contracts").ModelSelection;
+}
+
 export interface McpInvocationScope {
   readonly environmentId: EnvironmentId;
   /** Authenticated runtime thread that owns this MCP credential. */
   readonly ownerThreadId?: ThreadId;
   readonly messageReply?: McpMessageReplyContext;
+  readonly deepPlan?: McpDeepPlanContext;
   readonly threadId: ThreadId;
   readonly providerSessionId: string;
   readonly providerInstanceId: ProviderInstanceId;
@@ -94,7 +109,11 @@ export const requireWorkspaceMcpCapability = Effect.fn("mcp.requireWorkspaceCapa
 export const requireWorkspaceWriteMcpCapability = Effect.fn("mcp.requireWorkspaceWriteCapability")(
   function* () {
     const invocation = yield* McpInvocationContext;
-    if (!invocation.capabilities.has("workspace-write")) {
+    if (
+      !invocation.capabilities.has("workspace-write") ||
+      invocation.deepPlan?.phase === "planning" ||
+      invocation.deepPlan?.readOnly === true
+    ) {
       return yield* new WorkspaceEditError({ reason: "credential_not_authorized" });
     }
     return invocation;

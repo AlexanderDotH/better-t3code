@@ -1,3 +1,4 @@
+import { makeContextSummarizer } from "./ContextSummaryGeneration.ts";
 import { type ModelSelection, type OpenAiSettings, TextGenerationError } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
@@ -73,6 +74,7 @@ type TextGenerationOperation =
   | "translateTranscriptToEnglish"
   | "improvePrompt"
   | "reviewPlanParallelism"
+  | "summarizeContext"
   | "planFetchExploration";
 
 const responseFormatName: Record<TextGenerationOperation, string> = {
@@ -86,6 +88,7 @@ const responseFormatName: Record<TextGenerationOperation, string> = {
   translateTranscriptToEnglish: "transcript_translation",
   improvePrompt: "improved_prompt",
   reviewPlanParallelism: "plan_parallelism_review",
+  summarizeContext: "context_summary",
   planFetchExploration: "fetch_exploration_plan",
 };
 
@@ -231,6 +234,12 @@ export function makeOpenAiTextGeneration(
   });
 
   return {
+    summarizeContext: makeContextSummarizer((input) =>
+      runJson({
+        ...input,
+        operation: "summarizeContext",
+      }),
+    ),
     decisionGeneration: makePromptedDecisionProviderFromStructuredOutput((input) =>
       runJson({
         operation: "decisionGeneration",

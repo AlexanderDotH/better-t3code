@@ -8,6 +8,7 @@
  */
 import {
   CommandId,
+  DeepPlanRun,
   IsoDateTime,
   ModelSelection,
   NonNegativeInt,
@@ -32,6 +33,7 @@ export const ProjectionThread = Schema.Struct({
   projectId: ProjectId,
   title: Schema.String,
   titleState: Schema.optional(Schema.NullOr(ThreadTitleState)),
+  deepPlan: Schema.optional(Schema.NullOr(DeepPlanRun)),
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
@@ -72,6 +74,14 @@ export type GetProjectionThreadInput = typeof GetProjectionThreadInput.Type;
  * ProjectionThreadRepositoryShape - Service API for projected thread records.
  */
 export interface ProjectionThreadRepositoryShape {
+  readonly listDeepPlans: () => Effect.Effect<
+    ReadonlyArray<DeepPlanRun>,
+    ProjectionRepositoryError
+  >;
+  readonly getDeepPlanByImplementationThreadId: (
+    threadId: ThreadId,
+  ) => Effect.Effect<Option.Option<DeepPlanRun>, ProjectionRepositoryError>;
+
   /**
    * Insert or replace a projected thread row.
    *

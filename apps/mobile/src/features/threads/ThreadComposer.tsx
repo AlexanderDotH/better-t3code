@@ -1,5 +1,8 @@
 import { ChatGptUsageLimitNotice } from "./ChatGptUsageLimitNotice";
 import { MessageReplyPreview } from "./MessageReplyPreview";
+import { ThreadContextMeter } from "./ThreadContextMeter";
+import { visibleContextWindowSnapshot } from "./context-meter-state";
+import type { ContextWindowSnapshot } from "@t3tools/client-runtime/context-window";
 import type { MessageReplyReference } from "@t3tools/contracts";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
@@ -15,6 +18,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { resolveThreadAbortPresentation } from "@t3tools/client-runtime/state/thread-abort";
+import { resolveDeepPlanningAvailability } from "@t3tools/client-runtime/deep-planning";
 import type { ForkComposerBudget } from "./thread-fork";
 import { filterStartedThreadModelOptions } from "../../lib/modelOptions";
 import { resolveBetterT3FeatureFlag } from "@t3tools/contracts";
@@ -27,6 +31,8 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type EnvironmentId,
+  type ComposerMode,
+  type DeepPlanSourceRef,
   type MessageId,
   type ModelSelection,
   type OrchestrationThreadShell,
@@ -94,6 +100,7 @@ import { fileRoutePathSegments } from "../files/filePath";
 import {
   ComposerActionButton,
   ComposerInlineControl,
+  ComposerToolbarScroller,
   ComposerToolbarRow,
 } from "../../components/ComposerToolbar";
 import { ProviderIcon } from "../../components/ProviderIcon";
@@ -112,6 +119,9 @@ import type { RemoteClientConnectionState } from "../../lib/connection";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
+import { ComposerModeControl } from "./ComposerModeControl";
+import { DeepPlanSources } from "./DeepPlanSources";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import {
   ComposerDictationCancelAction,
   ComposerDictationDraftContent,
@@ -157,6 +167,7 @@ export interface ThreadComposerProps {
   readonly connectionState: RemoteClientConnectionState;
   readonly environmentLabel: string | null;
   readonly selectedThread: OrchestrationThreadShell;
+  readonly contextWindowSnapshot: ContextWindowSnapshot | null;
   readonly hasCompactableConversation: boolean;
   readonly serverConfig: T3ServerConfig | null;
   readonly queueCount: number;
@@ -181,6 +192,10 @@ export interface ThreadComposerProps {
   readonly onUpdateModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateRuntimeMode: (runtimeMode: RuntimeMode) => void;
   readonly onUpdateInteractionMode: (interactionMode: ProviderInteractionMode) => void;
+  readonly composerMode: ComposerMode;
+  readonly deepPlanSourceRefs: ReadonlyArray<DeepPlanSourceRef>;
+  readonly onUpdateComposerMode: (mode: ComposerMode) => void;
+  readonly onUpdateDeepPlanSources: (sources: ReadonlyArray<DeepPlanSourceRef>) => void;
   readonly fetchSupported: boolean;
   readonly fetchEnabled: boolean;
   readonly isImprovingPrompt: boolean;
@@ -310,6 +325,7 @@ export function ComposerSurface(props: {
 }
 
 export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposerProps) {
+  const translator = useMobileInterfaceTranslator();
   const project = useProject(scopeProjectRef(props.environmentId, props.selectedThread.projectId));
   const { themeVariables: materialTheme } = useAppearancePreferences();
   const composerPanel = materialTheme["--color-composer-panel"];
@@ -338,6 +354,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const showStopAction =
     !props.replyTo && stopAction.showStopAction && (!hasContent || stopAction.phase !== null);
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const contextWindowMeterEnabled =
+    !AsyncResult.isSuccess(preferencesResult) ||
+    (preferencesResult.value.contextWindowMeterEnabled ?? true);
+  const contextWindowSnapshot = visibleContextWindowSnapshot(props.contextWindowSnapshot, {
+    enabled: contextWindowMeterEnabled,
+    loading: props.threadSyncPhase === "loading",
+  });
   const { interfaceLanguage } = useAppearancePreferences();
   const resourceProtectionQuery = useEnvironmentQuery(
     serverEnvironment.resourceProtection({ environmentId: props.environmentId, input: {} }),
@@ -414,9 +437,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   // Every send goes through the outbox; the label says whether it leaves now
   // or waits (for the connection, an earlier queued message, or an upload).
   const sendLabel =
-    props.connectionState !== "connected" || props.queueCount > 0 || attachmentsUploading
-      ? "Queue"
-      : "Send";
+    props.composerMode === "deep-plan" && !props.replyTo
+      ? translator.message("chat.deepPlan.startAnalysis")
+      : props.connectionState !== "connected" || props.queueCount > 0 || attachmentsUploading
+        ? "Queue"
+        : "Send";
   const currentModelSelection = props.selectedThread.modelSelection;
   const currentRuntimeMode = props.selectedThread.runtimeMode;
   const modelUnavailable =
@@ -485,6 +510,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       selectedProviderStatus?.showInteractionModeToggle === false
         ? undefined
         : props.onUpdateInteractionMode,
+    onUpdateComposerMode: props.replyTo ? undefined : props.onUpdateComposerMode,
     offersUsageLimits: usageLimitsOffered,
     // With attachments aboard the pick just inserts the text, so it sends as a prompt.
     onUsageLimits:
@@ -510,6 +536,15 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     voiceDictation.active;
   const showsCompactDictation = isVoiceInputPresented && !isExpanded;
   const isToolbarVisible = isExpanded || isVoiceInputPresented;
+  const deepPlanningAvailability = resolveDeepPlanningAvailability({
+    capabilities: props.serverConfig?.environment.capabilities,
+    provider: selectedProviderStatus,
+    connected: props.connectionState === "connected",
+  });
+  const deepPlanningBlockedReason =
+    props.composerMode === "deep-plan" && !props.replyTo && deepPlanningAvailability.reasonKey
+      ? translator.message(deepPlanningAvailability.reasonKey)
+      : null;
   const attachmentBlockReason = composerAttachmentUploadBlockReason({
     environmentId: props.environmentId,
     attachments: props.draftAttachments,
@@ -520,6 +555,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const contextImports = useAtomValue(composerContextImportsAtom);
   const sendBlockedReason =
     props.sendBlockedReason ??
+    deepPlanningBlockedReason ??
     (pendingPastedTextAttachmentCount > 0 ? "Attaching pasted text" : null) ??
     attachmentBlockReason;
   const canSend =
@@ -773,6 +809,21 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         className="relative w-full self-center"
         style={{ maxWidth: props.contentMaxWidth }}
       >
+        {props.composerMode === "deep-plan" && !props.replyTo ? (
+          <DeepPlanSources
+            key={composerOwnerKey}
+            environmentId={props.environmentId}
+            projectId={props.selectedThread.projectId}
+            selected={props.deepPlanSourceRefs}
+            disabled={voiceInput.isBusy || voiceDictation.active || props.isImprovingPrompt}
+            onChange={props.onUpdateDeepPlanSources}
+          />
+        ) : null}
+        {deepPlanningBlockedReason ? (
+          <Text accessibilityRole="alert" className="px-3 pb-2 text-xs text-foreground-muted">
+            {deepPlanningBlockedReason}
+          </Text>
+        ) : null}
         <ChatGptUsageLimitNotice
           environmentId={props.environmentId}
           thread={props.selectedThread}
@@ -866,7 +917,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   minHeight: 140,
                   overflow: "hidden" as const,
                   paddingBottom: 6,
-                  paddingTop: 14,
                 }
               : {
                   // Keep the numeric radius close to the expanded card so the
@@ -878,7 +928,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           }
         >
           <ComposerDictationDraftContent
-            className={isExpanded ? undefined : "flex-row items-center"}
+            className={
+              isExpanded
+                ? contextWindowSnapshot
+                  ? "pt-3.5 pr-11"
+                  : "pt-3.5"
+                : "flex-row items-center"
+            }
             compact={!isExpanded}
             hidden={showsCompactDictation}
           >
@@ -1068,6 +1124,21 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 ) : null}
               </View>
             ) : null}
+            {contextWindowSnapshot ? (
+              <View
+                style={
+                  isExpanded
+                    ? {
+                        position: "absolute",
+                        top: 0,
+                        right: 0,
+                      }
+                    : undefined
+                }
+              >
+                <ThreadContextMeter key={composerOwnerKey} snapshot={contextWindowSnapshot} />
+              </View>
+            ) : null}
             {!isExpanded ? (
               <View className="flex-row items-center">
                 {voiceConfigured ? (
@@ -1150,7 +1221,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     onDismissError={voiceInput.cancel}
                   />
                 ) : (
-                  <View className="min-w-0 flex-1 flex-row items-center justify-between">
+                  <ComposerToolbarScroller>
                     <ComposerAttachmentButton
                       supportsFiles={Boolean(
                         props.serverConfig?.environment.capabilities.fileAttachments,
@@ -1196,7 +1267,14 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                         onPress={openSettings}
                       />
                     </View>
-                  </View>
+                    {!props.replyTo ? (
+                      <ComposerModeControl
+                        mode={props.composerMode}
+                        disabled={voiceDictation.active || props.isImprovingPrompt}
+                        onChange={props.onUpdateComposerMode}
+                      />
+                    ) : null}
+                  </ComposerToolbarScroller>
                 )}
                 <View className="shrink-0 flex-row items-center">
                   {voiceConfigured ? (

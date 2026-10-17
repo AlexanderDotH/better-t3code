@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
+  ComposerMode,
+  DeepPlanSourceRef,
   EnvironmentId,
   ModelSelection,
   ProjectReadFileResult,
@@ -10,6 +12,14 @@ import type {
   ServerProvider,
   VoiceFileReference,
 } from "@t3tools/contracts";
+import {
+  EMPTY_DEEP_PLAN_SOURCE_REFS,
+  getProviderInteractionMode,
+  parseDeepPlanComposerCommand,
+  resolveDeepPlanningAvailability,
+  resolveComposerMode,
+  uniqueDeepPlanSourceRefs,
+} from "@t3tools/client-runtime/deep-planning";
 import { appendVoiceFileContext } from "@t3tools/shared/voiceFileContext";
 import {
   CommandId,
@@ -37,6 +47,7 @@ import {
   resolveNewTaskModelSelection,
   resolveSelectableModelSelection,
 } from "../../lib/modelOptions";
+import { resolveMobileNewTaskChatSettings } from "../../lib/projectChatSettings";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { projectEnvironment } from "../../state/projects";
@@ -48,6 +59,7 @@ import {
   composerDraftsAtom,
   createNewTaskDraft,
   getComposerDraftSnapshot,
+  initializeNewTaskDraftChatSettings,
   isComposerDraftEmpty,
   isNewTaskDraftKey,
   removeComposerDraftAttachment,
@@ -80,6 +92,7 @@ import {
 import {
   setPendingConnectionError,
   useSavedRemoteConnections,
+  useRemoteEnvironmentRuntime,
 } from "../../state/use-remote-environment-registry";
 import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { type VcsRef } from "@t3tools/client-runtime/state/vcs";
@@ -95,6 +108,11 @@ import {
   resolveProviderInteractionMode,
 } from "../../state/legacy-plan-mode";
 import { serverEnvironment } from "../../state/server";
+import {
+  getRememberedProjectChatSettings,
+  rememberMobileProjectChatSettings,
+  useRememberedProjectChatSettings,
+} from "../../state/project-chat-settings";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useLegacyPlanModeState } from "./use-legacy-plan-mode-enabled";
 import {
@@ -169,6 +187,9 @@ type NewTaskFlowContextValue = {
   readonly currentCheckoutBranchName: string | null;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
+  readonly providerInteractionMode: ProviderInteractionMode;
+  readonly composerMode: ComposerMode;
+  readonly deepPlanSourceRefs: ReadonlyArray<DeepPlanSourceRef>;
   readonly fetchMode: "repository-exploration" | undefined;
   readonly planModeEnabled: boolean;
   readonly expandedProvider: string | null;
@@ -207,6 +228,7 @@ type NewTaskFlowContextValue = {
     options?: {
       /** The live checkout, recorded as a local task's branch when it sends now. */
       readonly currentCheckoutBranch?: string | null;
+      readonly rememberSettings?: boolean;
     },
   ) => QueuedThreadMessage | null;
   readonly setPrompt: (value: string, references?: ReadonlyArray<VoiceFileReference>) => void;
@@ -224,6 +246,8 @@ type NewTaskFlowContextValue = {
   readonly loadMoreBranches: () => void;
   readonly setRuntimeMode: (value: RuntimeMode) => void;
   readonly setInteractionMode: (value: ProviderInteractionMode) => void;
+  readonly setComposerMode: (value: ComposerMode) => void;
+  readonly setDeepPlanSourceRefs: (refs: ReadonlyArray<DeepPlanSourceRef>) => void;
   readonly setFetchMode: (value: "repository-exploration" | undefined) => void;
   readonly setSelectedModelOptions: (
     value: ReadonlyArray<ProviderOptionSelection> | undefined,
@@ -407,6 +431,19 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const selectedEnvironmentServerConfig = useEnvironmentServerConfig(
     selectedProject?.environmentId ?? null,
   );
+  const selectedEnvironmentRuntime = useRemoteEnvironmentRuntime(
+    selectedProject?.environmentId ?? null,
+  );
+  const selectedProjectRef = useMemo(
+    () =>
+      selectedProject
+        ? { environmentId: selectedProject.environmentId, projectId: selectedProject.id }
+        : null,
+    [selectedProject],
+  );
+  const rememberedProjectChatSettings = useRememberedProjectChatSettings(selectedProjectRef);
+  const projectChatSettingsSupported =
+    selectedEnvironmentServerConfig?.environment.capabilities.projectChatSettings === true;
   // While a queued pending task is being edited its draft lives under a key
   // scoped to the queued message, so new-task drafts stay intact.
   const selectedProjectDraftKey = editingPendingTask
@@ -486,16 +523,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const defaultRuntimeMode = editingPendingTask
     ? (editingPendingTask.runtimeMode ?? DEFAULT_RUNTIME_MODE)
     : projectSettings.settings.defaultRuntimeMode;
-  const runtimeMode = selectedProjectDraft.runtimeMode ?? defaultRuntimeMode;
   const fetchMode = selectedProjectDraft.fetchMode;
 
   // Antigravity keeps unavailable selections so sign-out or a catalog change
   // cannot switch the user's model. Other providers retain their fallback
   // rules. Implicit defaults also exclude legacy models for those providers.
-  const draftModelSelection = resolveSelectableModelSelection(
-    selectedEnvironmentServerConfig,
-    selectedProjectDraft.modelSelection ?? null,
-  );
   const projectDefaultModelSelection = resolveDefaultableModelSelection(
     selectedEnvironmentServerConfig,
     projectSettings.settings.defaultModelSelection,
@@ -503,30 +535,60 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const storedStickyModelSelection = useStickyComposerModelSelection();
   const stickyModelSelection = resolveDefaultableModelSelection(
     selectedEnvironmentServerConfig,
-    storedStickyModelSelection,
+    projectChatSettingsSupported ? null : storedStickyModelSelection,
   );
-  const modelOptions = useMemo(
+  const defaultModelOptions = useMemo(
     () =>
       buildModelOptions(
         selectedEnvironmentServerConfig,
-        draftModelSelection ?? projectDefaultModelSelection ?? stickyModelSelection,
+        projectDefaultModelSelection ?? stickyModelSelection,
       ),
-    [
-      selectedEnvironmentServerConfig,
-      draftModelSelection,
-      projectDefaultModelSelection,
-      stickyModelSelection,
-    ],
+    [selectedEnvironmentServerConfig, projectDefaultModelSelection, stickyModelSelection],
   );
 
-  // An unsent draft keeps its explicit pick. Fresh drafts resolve the project
-  // default before the last manual app-wide selection and provider default.
-  const selectedModel = resolveNewTaskModelSelection({
-    draftSelection: draftModelSelection,
+  const defaultModelSelection = resolveNewTaskModelSelection({
+    draftSelection: null,
     projectDefaultSelection: projectDefaultModelSelection,
     stickySelection: stickyModelSelection,
-    modelOptions,
+    modelOptions: defaultModelOptions,
   });
+  const chatSettingsDefaults = useMemo(
+    () => ({
+      modelSelection: defaultModelSelection,
+      runtimeMode: defaultRuntimeMode,
+      composerMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+    }),
+    [defaultModelSelection, defaultRuntimeMode],
+  );
+  const newTaskChatSettings = useMemo(
+    () =>
+      resolveMobileNewTaskChatSettings({
+        target: selectedProjectRef,
+        remembered: editingPendingTask ? {} : rememberedProjectChatSettings,
+        threads: editingPendingTask ? [] : threads,
+        config: selectedEnvironmentServerConfig,
+        defaults: chatSettingsDefaults,
+        draft: {
+          modelSelection: selectedProjectDraft.modelSelection,
+          runtimeMode: selectedProjectDraft.runtimeMode,
+          interactionMode: selectedProjectDraft.interactionMode,
+          composerMode: selectedProjectDraft.composerMode,
+        },
+      }),
+    [
+      chatSettingsDefaults,
+      editingPendingTask,
+      rememberedProjectChatSettings,
+      selectedEnvironmentServerConfig,
+      selectedProjectDraft.modelSelection,
+      selectedProjectDraft.runtimeMode,
+      selectedProjectDraft.interactionMode,
+      selectedProjectDraft.composerMode,
+      selectedProjectRef,
+      threads,
+    ],
+  );
+  const { modelSelection: selectedModel, modelOptions, runtimeMode } = newTaskChatSettings;
   const selectedModelKey = selectedModel
     ? `${selectedModel.instanceId}:${selectedModel.model}`
     : null;
@@ -547,9 +609,77 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   );
   const planModeEnabled =
     legacyPlanModeEnabled && selectedProviderStatus?.showInteractionModeToggle !== false;
-  const interactionMode = planModeEnabled
-    ? (selectedProjectDraft.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE)
-    : DEFAULT_PROVIDER_INTERACTION_MODE;
+  const composerMode = projectChatSettingsSupported
+    ? newTaskChatSettings.composerMode
+    : resolveComposerMode(
+        selectedProjectDraft.composerMode,
+        planModeEnabled ? selectedProjectDraft.interactionMode : DEFAULT_PROVIDER_INTERACTION_MODE,
+      );
+  const deepPlanSourceRefs = selectedProjectDraft.deepPlanSourceRefs ?? EMPTY_DEEP_PLAN_SOURCE_REFS;
+  const interactionMode = getProviderInteractionMode(composerMode);
+  const getCurrentDraftChatSettings = useCallback(() => {
+    if (!selectedProjectRef || !selectedProjectDraftKey || !projectChatSettingsSupported)
+      return null;
+    const { preferredSettings } = resolveMobileNewTaskChatSettings({
+      target: selectedProjectRef,
+      remembered: editingPendingTask ? {} : getRememberedProjectChatSettings(selectedProjectRef),
+      threads: editingPendingTask ? [] : threads,
+      config: selectedEnvironmentServerConfig,
+      defaults: chatSettingsDefaults,
+      draft: getComposerDraftSnapshot(selectedProjectDraftKey),
+    });
+    return preferredSettings;
+  }, [
+    chatSettingsDefaults,
+    editingPendingTask,
+    projectChatSettingsSupported,
+    selectedEnvironmentServerConfig,
+    selectedProjectDraftKey,
+    selectedProjectRef,
+    threads,
+  ]);
+  const retainDraftSettings = useCallback(() => {
+    if (!selectedProjectDraftKey || editingPendingTask) return;
+    const draft = getComposerDraftSnapshot(selectedProjectDraftKey);
+    if (
+      draft.modelSelection !== undefined &&
+      draft.runtimeMode !== undefined &&
+      draft.composerMode !== undefined
+    )
+      return;
+    const settings = getCurrentDraftChatSettings();
+    if (!settings) return;
+    initializeNewTaskDraftChatSettings(selectedProjectDraftKey, {
+      ...(settings.modelSelection === null ? {} : { modelSelection: settings.modelSelection }),
+      runtimeMode: settings.runtimeMode,
+      composerMode: settings.composerMode,
+    });
+  }, [editingPendingTask, getCurrentDraftChatSettings, selectedProjectDraftKey]);
+  const rememberSettings = useCallback(() => {
+    if (!selectedProjectRef) return;
+    retainDraftSettings();
+    const settings = getCurrentDraftChatSettings();
+    if (!settings?.modelSelection) return;
+    rememberMobileProjectChatSettings(selectedProjectRef, {
+      ...settings,
+      modelSelection: settings.modelSelection,
+    });
+  }, [getCurrentDraftChatSettings, retainDraftSettings, selectedProjectRef]);
+  useEffect(() => {
+    if (
+      selectedProjectDraft.text.length > 0 ||
+      selectedProjectDraft.attachments.length > 0 ||
+      (selectedProjectDraft.context?.records.length ?? 0) > 0 ||
+      (selectedProjectDraft.deepPlanSourceRefs?.length ?? 0) > 0
+    )
+      retainDraftSettings();
+  }, [
+    retainDraftSettings,
+    selectedProjectDraft.text,
+    selectedProjectDraft.attachments.length,
+    selectedProjectDraft.context?.records.length,
+    selectedProjectDraft.deepPlanSourceRefs?.length,
+  ]);
   const setSelectedModelKey = useCallback(
     // Options ride along in the same write: a follow-up setSelectedModelOptions
     // call would rebuild the selection from the stale pre-switch model.
@@ -581,37 +711,47 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       }
       updateComposerDraftSettings(selectedProjectDraftKey, {
         modelSelection: selection,
-        ...(provider?.showInteractionModeToggle === false
+        ...(provider?.showInteractionModeToggle === false &&
+        getComposerDraftSnapshot(selectedProjectDraftKey).composerMode !== "deep-plan"
           ? { interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE }
           : {}),
       });
       setStickyComposerModelSelection(selection);
+      rememberSettings();
     },
     [
       modelOptions,
       selectedEnvironmentServerConfig,
       selectedProjectDraftKey,
       selectedProject,
+      rememberSettings,
       updateServerSettings,
     ],
   );
   const setSelectedModelOptions = useCallback(
     (options: ReadonlyArray<ProviderOptionSelection> | undefined) => {
-      if (!selectedModel || !selectedProjectDraftKey) {
+      if (!selectedProjectDraftKey) {
         return;
       }
+      const currentSelection =
+        resolveSelectableModelSelection(
+          selectedEnvironmentServerConfig,
+          getComposerDraftSnapshot(selectedProjectDraftKey).modelSelection ?? null,
+        ) ?? selectedModel;
+      if (!currentSelection) return;
       const nextSelection: ModelSelection = options
-        ? { ...selectedModel, options }
+        ? { ...currentSelection, options }
         : {
-            instanceId: selectedModel.instanceId,
-            model: selectedModel.model,
+            instanceId: currentSelection.instanceId,
+            model: currentSelection.model,
           };
       updateComposerDraftSettings(selectedProjectDraftKey, {
         modelSelection: nextSelection,
       });
       setStickyComposerModelSelection(nextSelection);
+      rememberSettings();
     },
-    [selectedModel, selectedProjectDraftKey],
+    [rememberSettings, selectedEnvironmentServerConfig, selectedModel, selectedProjectDraftKey],
   );
 
   const providerGroups = useMemo(() => groupByProvider(modelOptions), [modelOptions]);
@@ -620,18 +760,20 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       if (!selectedProjectDraftKey) {
         return;
       }
+      if (value.length > 0) retainDraftSettings();
       setComposerDraftText(selectedProjectDraftKey, value, references);
     },
-    [selectedProjectDraftKey],
+    [retainDraftSettings, selectedProjectDraftKey],
   );
   const replaceAttachments = useCallback(
     (nextAttachments: ReadonlyArray<DraftComposerAttachment>) => {
       if (!selectedProjectDraftKey) {
         return;
       }
+      if (nextAttachments.length > 0) retainDraftSettings();
       replaceComposerDraftAttachments(selectedProjectDraftKey, nextAttachments);
     },
-    [selectedProjectDraftKey],
+    [retainDraftSettings, selectedProjectDraftKey],
   );
   // Returns how many attachments the live cap rejected so the caller can
   // tell the user (a concurrent add can fill the draft mid-pick).
@@ -643,12 +785,13 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       if (!selectedProjectDraftKey) {
         return 0;
       }
+      if (nextAttachments.length > 0) retainDraftSettings();
       return appendComposerDraftAttachments(selectedProjectDraftKey, nextAttachments, {
         appendReference: true,
         insertion,
       });
     },
-    [selectedProjectDraftKey],
+    [retainDraftSettings, selectedProjectDraftKey],
   );
   const removeAttachment = useCallback(
     (imageId: string) => {
@@ -936,9 +1079,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     (value: RuntimeMode) => {
       if (selectedProjectDraftKey) {
         updateComposerDraftSettings(selectedProjectDraftKey, { runtimeMode: value });
+        rememberSettings();
       }
     },
-    [selectedProjectDraftKey],
+    [rememberSettings, selectedProjectDraftKey],
   );
   const setInteractionMode = useCallback(
     (value: ProviderInteractionMode) => {
@@ -946,9 +1090,30 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         updateComposerDraftSettings(selectedProjectDraftKey, {
           interactionMode: resolveProviderInteractionMode(selectedProviderStatus, value),
         });
+        rememberSettings();
       }
     },
-    [selectedProjectDraftKey, selectedProviderStatus],
+    [rememberSettings, selectedProjectDraftKey, selectedProviderStatus],
+  );
+  const setComposerMode = useCallback(
+    (value: ComposerMode) => {
+      if (selectedProjectDraftKey) {
+        updateComposerDraftSettings(selectedProjectDraftKey, { composerMode: value });
+        rememberSettings();
+      }
+    },
+    [rememberSettings, selectedProjectDraftKey],
+  );
+  const setDeepPlanSourceRefs = useCallback(
+    (refs: ReadonlyArray<DeepPlanSourceRef>) => {
+      if (selectedProjectDraftKey) {
+        if (refs.length > 0) retainDraftSettings();
+        updateComposerDraftSettings(selectedProjectDraftKey, {
+          deepPlanSourceRefs: uniqueDeepPlanSourceRefs(refs),
+        });
+      }
+    },
+    [retainDraftSettings, selectedProjectDraftKey],
   );
   const setFetchMode = useCallback(
     (value: "repository-exploration" | undefined) => {
@@ -974,6 +1139,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         modelSelection: message.modelSelection,
         runtimeMode: message.runtimeMode,
         interactionMode: message.interactionMode,
+        composerMode: message.composerMode,
+        deepPlanSourceRefs: message.deepPlanSourceRefs,
         fetchMode: message.fetchMode,
         workspaceSelection: {
           mode: message.creation.workspaceMode,
@@ -997,22 +1164,67 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const buildPendingTaskMessage = useCallback(
     (
       metadata: TurnCommandMetadata,
-      options?: { readonly currentCheckoutBranch?: string | null },
+      options?: {
+        readonly currentCheckoutBranch?: string | null;
+        readonly rememberSettings?: boolean;
+      },
     ): QueuedThreadMessage | null => {
       if (!selectedProject || !selectedProjectDraftKey) {
         return null;
       }
       const draft = getComposerDraftSnapshot(selectedProjectDraftKey);
-      const text = draft.text.trim();
+      const currentChatSettings = projectChatSettingsSupported
+        ? resolveMobileNewTaskChatSettings({
+            target: selectedProjectRef,
+            remembered: editingPendingTask
+              ? {}
+              : selectedProjectRef
+                ? getRememberedProjectChatSettings(selectedProjectRef)
+                : undefined,
+            threads: editingPendingTask ? [] : threads,
+            config: selectedEnvironmentServerConfig,
+            defaults: chatSettingsDefaults,
+            draft,
+          })
+        : null;
+      const deepPlanCommand = parseDeepPlanComposerCommand(draft.text.trim());
+      const text = deepPlanCommand?.prompt ?? draft.text.trim();
+      const sendComposerMode = deepPlanCommand
+        ? "deep-plan"
+        : (currentChatSettings?.composerMode ?? draft.composerMode);
+      if (deepPlanCommand) {
+        updateComposerDraftSettings(selectedProjectDraftKey, { composerMode: "deep-plan" });
+        setComposerDraftText(selectedProjectDraftKey, text, draft.voiceFileReferences);
+        if (text.length === 0) {
+          if (options?.rememberSettings) rememberSettings();
+          return null;
+        }
+      }
       // Use the displayed selection rules without substituting an unavailable
       // Antigravity model while the task is queued.
       const draftModelSelection =
+        currentChatSettings?.modelSelection ??
         resolveSelectableModelSelection(
           selectedEnvironmentServerConfig,
           draft.modelSelection ?? null,
-        ) ?? selectedModel;
+        ) ??
+        selectedModel;
       if (text.length === 0 || !draftModelSelection) {
         return null;
+      }
+      const sendProvider = selectedEnvironmentServerConfig?.providers.find(
+        (provider) => provider.instanceId === draftModelSelection.instanceId,
+      );
+      if (sendComposerMode === "deep-plan") {
+        const availability = resolveDeepPlanningAvailability({
+          capabilities: selectedEnvironmentServerConfig?.environment.capabilities,
+          provider: sendProvider,
+          connected: selectedEnvironmentRuntime?.connectionState === "connected",
+        });
+        if (!availability.supported) {
+          setPendingConnectionError(availability.reason);
+          return null;
+        }
       }
       const workspaceSelection = draft.workspaceSelection;
       // Fall back to the resolved mode (server default) so queued tasks drain
@@ -1029,7 +1241,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       const projectCwd = usingPendingSnapshot
         ? editingPendingTask?.creation?.projectCwd
         : selectedProject.workspaceRoot;
-      return {
+      const message: QueuedThreadMessage = {
         environmentId: selectedProject.environmentId,
         threadId: ThreadId.make(metadata.threadId),
         messageId: MessageId.make(metadata.messageId),
@@ -1038,16 +1250,26 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         attachments: draft.attachments,
         context: draft.context,
         modelSelection: draftModelSelection,
-        runtimeMode: draft.runtimeMode ?? defaultRuntimeMode,
-        interactionMode: resolvePendingTaskInteractionMode({
-          preferenceLoaded: planModePreferenceLoaded,
-          planModeEnabled: legacyPlanModeEnabled,
-          draftInteractionMode: draft.interactionMode,
-          queuedInteractionMode: editingPendingTask?.interactionMode,
-          provider: selectedEnvironmentServerConfig?.providers.find(
-            (candidate) => candidate.instanceId === draftModelSelection.instanceId,
-          ),
-        }),
+        runtimeMode: currentChatSettings?.runtimeMode ?? draft.runtimeMode ?? runtimeMode,
+        composerMode: sendComposerMode,
+        deepPlanSourceRefs: sendComposerMode === "deep-plan" ? draft.deepPlanSourceRefs : undefined,
+        interactionMode:
+          sendComposerMode !== undefined
+            ? sendComposerMode === "deep-plan"
+              ? getProviderInteractionMode(sendComposerMode)
+              : resolveProviderInteractionMode(
+                  sendProvider,
+                  getProviderInteractionMode(sendComposerMode),
+                )
+            : resolvePendingTaskInteractionMode({
+                preferenceLoaded: planModePreferenceLoaded,
+                planModeEnabled: legacyPlanModeEnabled,
+                draftInteractionMode: draft.interactionMode,
+                queuedInteractionMode: editingPendingTask?.interactionMode,
+                provider: selectedEnvironmentServerConfig?.providers.find(
+                  (candidate) => candidate.instanceId === draftModelSelection.instanceId,
+                ),
+              }),
         ...(draft.fetchMode === undefined ? {} : { fetchMode: draft.fetchMode }),
         ...(editingPendingTask?.improvePromptBeforeSend === true
           ? { improvePromptBeforeSend: true }
@@ -1076,15 +1298,38 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         },
         createdAt: metadata.createdAt,
       };
+      if (options?.rememberSettings) {
+        const preferredSettings = currentChatSettings?.preferredSettings;
+        rememberMobileProjectChatSettings(
+          { environmentId: selectedProject.environmentId, projectId: selectedProject.id },
+          {
+            modelSelection: preferredSettings?.modelSelection ?? draftModelSelection,
+            runtimeMode:
+              preferredSettings?.runtimeMode ?? message.runtimeMode ?? defaultRuntimeMode,
+            composerMode: deepPlanCommand
+              ? "deep-plan"
+              : (preferredSettings?.composerMode ??
+                resolveComposerMode(message.composerMode, message.interactionMode)),
+          },
+        );
+      }
+      return message;
     },
     [
       defaultRuntimeMode,
+      chatSettingsDefaults,
       editingPendingProject,
       editingPendingTask,
       selectedEnvironmentServerConfig,
+      selectedEnvironmentRuntime,
       selectedModel,
       selectedProject,
       selectedProjectDraftKey,
+      selectedProjectRef,
+      projectChatSettingsSupported,
+      rememberSettings,
+      runtimeMode,
+      threads,
       legacyPlanModeEnabled,
       planModePreferenceLoaded,
       startFromOrigin,
@@ -1219,6 +1464,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       currentCheckoutBranchName,
       runtimeMode,
       interactionMode,
+      providerInteractionMode: interactionMode,
+      composerMode,
+      deepPlanSourceRefs,
+      setComposerMode,
+      setDeepPlanSourceRefs,
       fetchMode,
       planModeEnabled,
       expandedProvider,
@@ -1273,6 +1523,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       expandedProvider,
       filteredBranches,
       finishEditingPendingTask,
+      composerMode,
+      deepPlanSourceRefs,
+      setComposerMode,
+      setDeepPlanSourceRefs,
       interactionMode,
       fetchMode,
       planModeEnabled,

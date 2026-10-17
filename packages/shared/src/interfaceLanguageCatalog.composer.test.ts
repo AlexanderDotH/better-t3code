@@ -61,4 +61,28 @@ describe("composer interface catalog", () => {
     expect(pseudo).toMatch(/^⟦.+⟧$/u);
     expect(pseudo.length).toBeLessThan(100);
   });
+
+  it("localizes context usage details and accessible values with complete percentages", () => {
+    expect(
+      translateInterfaceMessage("de", "chat.contextMeter.accessibleKnown", {
+        used: "80.000",
+        limit: "200.000",
+        percentage: "40 %",
+      }),
+    ).toBe("Kontextnutzung: 80.000 von 200.000 Token (40 % genutzt)");
+    expect(
+      translateInterfaceMessage("fr", "chat.contextMeter.accessibleUnknown", { used: "80 000" }),
+    ).toBe("Utilisation du contexte : 80 000 jetons utilisés. Limite inconnue.");
+    expect(
+      translateInterfaceMessage("fr", "chat.contextMeter.autoCompactThreshold", {
+        tokens: "160 000",
+      }),
+    ).toBe("Compactage automatique à 160 000 jetons.");
+    expect(translateInterfaceMessage("de", "settings.contextMeter.label")).toBe(
+      "Kontextnutzungsanzeige",
+    );
+    expect(translateInterfaceMessage("fr", "settings.contextMeter.description")).toBe(
+      "Affiche l’utilisation du contexte dans l’éditeur.",
+    );
+  });
 });

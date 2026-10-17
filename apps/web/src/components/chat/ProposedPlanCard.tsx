@@ -7,6 +7,7 @@ import {
   resolveBetterT3FeatureFlag,
   type EnvironmentId,
   type ScopedThreadRef,
+  type DeepPlanRun,
 } from "@t3tools/contracts";
 import {
   buildCollapsedProposedPlanPreviewMarkdown,
@@ -17,6 +18,11 @@ import {
   stripDisplayedPlanMarkdown,
 } from "../../proposedPlan";
 import ChatMarkdown from "../ChatMarkdown";
+import {
+  formatDeepPlanForDisplay,
+  deepPlanSourceTitle,
+} from "@t3tools/client-runtime/deep-planning";
+import { DeepPlanChecklist } from "./DeepPlanProgress";
 import { EllipsisIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -46,6 +52,8 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   cwd,
   workspaceRoot,
   actions,
+  deepPlan,
+  variant = "plan",
 }: {
   planMarkdown: string;
   environmentId: EnvironmentId;
@@ -53,11 +61,16 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   cwd: string | undefined;
   workspaceRoot: string | undefined;
   actions?: ReactNode;
+  deepPlan?: DeepPlanRun;
+  variant?: "plan" | "deep-plan";
 }) {
-  const translate = useInterfaceTranslator().message;
+  const translator = useInterfaceTranslator();
+  const translate = translator.message;
+  const isDeepPlan = variant === "deep-plan" || Boolean(deepPlan);
   const bluePlanBubble = useClientSettings((settings) =>
     resolveBetterT3FeatureFlag(settings.betterT3Device, "chat.classicBubbleOnly"),
   );
+  const accentedPlanBubble = isDeepPlan || bluePlanBubble;
   const [expanded, setExpanded] = useState(false);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
   const [savePath, setSavePath] = useState("");
@@ -78,12 +91,16 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
     },
   });
   const savePathInputId = useId();
-  const title = proposedPlanTitle(planMarkdown) ?? translate("chat.agent.proposedPlan");
-  const lineCount = planMarkdown.split("\n").length;
-  const canCollapse = planMarkdown.length > 900 || lineCount > 20;
-  const displayedPlanMarkdown = stripDisplayedPlanMarkdown(planMarkdown);
+  const title =
+    deepPlan?.plan?.goal ?? proposedPlanTitle(planMarkdown) ?? translate("chat.agent.proposedPlan");
+  const bodyMarkdown = deepPlan?.plan
+    ? formatDeepPlanForDisplay(deepPlan, translator, { includeImplementation: false })
+    : planMarkdown;
+  const lineCount = bodyMarkdown.split("\n").length;
+  const canCollapse = bodyMarkdown.length > 900 || lineCount > 20;
+  const displayedPlanMarkdown = stripDisplayedPlanMarkdown(bodyMarkdown);
   const collapsedPreview = canCollapse
-    ? buildCollapsedProposedPlanPreviewMarkdown(planMarkdown, { maxLines: 10 })
+    ? buildCollapsedProposedPlanPreviewMarkdown(bodyMarkdown, { maxLines: 10 })
     : null;
   const downloadFilename = buildProposedPlanMarkdownFilename(planMarkdown);
   const saveContents = normalizePlanMarkdownForExport(planMarkdown);
@@ -161,25 +178,42 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
     <div
       className={cn(
         "rounded-3xl border p-4 sm:p-5",
-        bluePlanBubble ? "border-primary/35 bg-primary/10" : "border-border/80 bg-card/70",
+        accentedPlanBubble ? "border-primary/35 bg-primary/10" : "border-border/80 bg-card/70",
       )}
+      data-plan-kind={isDeepPlan ? "deep-plan" : "plan"}
+      style={
+        isDeepPlan
+          ? ({
+              "--primary": "var(--deep-plan)",
+              "--primary-foreground": "var(--deep-plan-foreground)",
+              "--ring": "var(--deep-plan)",
+            } as CSSProperties)
+          : undefined
+      }
     >
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <Badge
-            variant={bluePlanBubble ? "label" : "secondary"}
-            style={bluePlanBubble ? ({ "--label": "var(--primary)" } as CSSProperties) : undefined}
+            variant={accentedPlanBubble ? "label" : "secondary"}
+            style={
+              accentedPlanBubble ? ({ "--label": "var(--primary)" } as CSSProperties) : undefined
+            }
           >
-            {translate("chat.plan.label")}
+            {translate(isDeepPlan ? "chat.deepPlan.label" : "chat.plan.label")}
           </Badge>
           <h3
             className={cn(
               "truncate text-sm font-medium",
-              bluePlanBubble ? "text-primary" : "text-foreground",
+              accentedPlanBubble ? "text-primary" : "text-foreground",
             )}
           >
             {title}
           </h3>
+          {deepPlan?.plan ? (
+            <span className="shrink-0 text-xs text-muted-foreground">
+              {translate("chat.deepPlan.planVersion", { version: deepPlan.plan.version })}
+            </span>
+          ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
           {actions}
@@ -211,6 +245,26 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
           </Menu>
         </div>
       </div>
+      {deepPlan ? (
+        <details className="mt-3 rounded-lg border border-border/70 px-3 text-xs">
+          <summary className="min-h-11 cursor-pointer py-3 font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            {translate("chat.deepPlan.sources")} ·{" "}
+            {translate("chat.deepPlan.sourceCount", { count: deepPlan.sources.length })}
+          </summary>
+          <ul className="max-h-48 space-y-2 overflow-y-auto overscroll-contain pb-3">
+            {deepPlan.sources.map((source) => (
+              <li key={source.sourceId} className="break-words">
+                <span className="font-medium">{deepPlanSourceTitle(source)}</span>
+                {source.archived ? (
+                  <span className="block text-muted-foreground">
+                    {translate("chat.deepPlan.archived")}
+                  </span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
       <div className="mt-4">
         <div
           className={cn("relative", canCollapse && !expanded && "max-h-104 overflow-hidden")}
@@ -251,6 +305,11 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
           </div>
         ) : null}
       </div>
+      {deepPlan?.plan ? (
+        <div className="mt-4 border-t border-primary/20 pt-3">
+          <DeepPlanChecklist run={deepPlan} placement="plan" />
+        </div>
+      ) : null}
 
       <Dialog
         open={isSaveDialogOpen}

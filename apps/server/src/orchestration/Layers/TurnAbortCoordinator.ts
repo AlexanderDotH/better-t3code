@@ -1,5 +1,6 @@
 import {
   CommandId,
+  EventId,
   type OrchestrationSession,
   type RuntimeSessionId,
   type ThreadId,
@@ -27,9 +28,12 @@ import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
   TurnAbortCoordinator,
+  type RequestTurnAbortInput,
   type SettleCooperativeTurnAbortInput,
   type TurnAbortCoordinatorShape,
 } from "../Services/TurnAbortCoordinator.ts";
+
+import { findOpenPendingInteractions } from "../pendingInteractionLifecycle.ts";
 
 const TURN_ABORT_FORCE_DELAY = Duration.seconds(5);
 
@@ -111,7 +115,7 @@ const make = Effect.gen(function* () {
   const resolveThread = Effect.fn("TurnAbortCoordinator.resolveThread")(function* (
     threadId: ThreadId,
   ) {
-    return Option.getOrUndefined(yield* projectionSnapshotQuery.getThreadDetailById(threadId));
+    return Option.getOrUndefined(yield* projectionSnapshotQuery.getThreadShellById(threadId));
   });
 
   const resolveSession = Effect.fn("TurnAbortCoordinator.resolveSession")(function* (
@@ -199,6 +203,16 @@ const make = Effect.gen(function* () {
       }
       const providerTargetIsCurrent = yield* providerService.isAbortTargetCurrent(target);
       if (!providerTargetIsCurrent) {
+        const replacement = yield* providerService.resolveAbortTarget({
+          threadId: target.threadId,
+        });
+        if (replacement === undefined) {
+          yield* dispatchSettlement({
+            target,
+            outcome: "force-detached",
+            settledAt: DateTime.formatIso(yield* DateTime.now),
+          });
+        }
         yield* cleanupAttempt(yield* removeAttempt(target));
         return;
       }
@@ -276,6 +290,99 @@ const make = Effect.gen(function* () {
       ),
   );
 
+  const settleOrphanedSession = Effect.fn("TurnAbortCoordinator.settleOrphanedSession")(function* (
+    input: RequestTurnAbortInput,
+    previousSession: OrchestrationSession | null,
+  ) {
+    const thread = Option.getOrUndefined(
+      yield* projectionSnapshotQuery.getThreadDetailById(input.threadId, {
+        activityKinds: [
+          "approval.requested",
+          "approval.resolved",
+          "provider.approval.respond.failed",
+          "user-input.requested",
+          "user-input.resolved",
+          "provider.user-input.respond.failed",
+        ],
+      }),
+    );
+    if (
+      thread === undefined ||
+      thread.session?.runtimeSessionId !== previousSession?.runtimeSessionId ||
+      thread.session?.activeTurnId !== previousSession?.activeTurnId ||
+      (input.turnId !== undefined &&
+        thread.session?.activeTurnId != null &&
+        thread.session.activeTurnId !== input.turnId)
+    ) {
+      return;
+    }
+
+    yield* updateSession(
+      {
+        threadId: thread.id,
+        providerName: thread.session?.providerName ?? null,
+        ...(thread.session?.providerInstanceId !== undefined
+          ? { providerInstanceId: thread.session.providerInstanceId }
+          : {}),
+        runtimeMode: thread.runtimeMode,
+        status: "stopped",
+        runtimeSessionId: null,
+        activeTurnId: null,
+        abortState: null,
+        lastError: null,
+        updatedAt: input.requestedAt,
+      },
+      input.requestedAt,
+    );
+
+    const pending = findOpenPendingInteractions({ activities: thread.activities });
+    for (const [kind, interactions] of [
+      ["approval", pending.approvals],
+      ["user-input", pending.userInputs],
+    ] as const) {
+      for (const interaction of interactions) {
+        yield* orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId: yield* commandId("orphaned-interaction"),
+          threadId: thread.id,
+          activity: {
+            id: EventId.make(yield* crypto.randomUUIDv4),
+            kind: `${kind}.resolved`,
+            tone: "approval",
+            summary:
+              kind === "approval"
+                ? "Approval cancelled because the agent interaction stopped."
+                : "Question cancelled because the agent interaction stopped.",
+            turnId: interaction.turnId,
+            payload: {
+              requestId: interaction.requestId,
+              reason: "provider-runtime-unavailable",
+              ...(kind === "approval" ? { decision: "cancel" } : { answers: {} }),
+            },
+            createdAt: input.requestedAt,
+          },
+          createdAt: input.requestedAt,
+        });
+      }
+    }
+    for (const message of thread.messages) {
+      if (!message.streaming || (message.role !== "assistant" && message.role !== "reasoning")) {
+        continue;
+      }
+      yield* orchestrationEngine.dispatch({
+        type:
+          message.role === "assistant"
+            ? "thread.message.assistant.complete"
+            : "thread.message.reasoning.complete",
+        commandId: yield* commandId("orphaned-message"),
+        threadId: thread.id,
+        messageId: message.id,
+        ...(message.turnId !== null ? { turnId: message.turnId } : {}),
+        createdAt: input.requestedAt,
+      });
+    }
+  });
+
   const requestAbort: TurnAbortCoordinatorShape["requestAbort"] = Effect.fn(
     "TurnAbortCoordinator.requestAbort",
   )(function* (input) {
@@ -285,6 +392,11 @@ const make = Effect.gen(function* () {
       threadId: input.threadId,
       ...(targetTurnId !== undefined && targetTurnId !== null ? { turnId: targetTurnId } : {}),
     });
+
+    if (target === undefined) {
+      yield* lock.withPermits(1)(settleOrphanedSession(input, initialThread?.session ?? null));
+      return;
+    }
 
     const action = yield* lock.withPermits(1)(
       Effect.gen(function* () {

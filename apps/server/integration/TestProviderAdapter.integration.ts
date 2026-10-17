@@ -11,8 +11,7 @@ import {
   ProviderDriverKind,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Queue from "effect/Queue";
-import * as Stream from "effect/Stream";
+import { makeProviderEventHub } from "../src/provider/providerEventHub.ts";
 
 import {
   ProviderAdapterSessionNotFoundError,
@@ -177,6 +176,7 @@ function normalizeFixtureEvent(rawEvent: Record<string, unknown>): ProviderRunti
 }
 
 export interface TestProviderAdapterHarness {
+  readonly publishEvent: (event: ProviderRuntimeEvent) => Effect.Effect<boolean>;
   readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
   readonly provider: ProviderDriverKind;
   readonly queueTurnResponse: (
@@ -225,7 +225,7 @@ function missingSessionEffect(
 export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapterHarnessOptions) =>
   Effect.gen(function* () {
     const provider = options?.provider ?? ProviderDriverKind.make("codex");
-    const runtimeEvents = yield* Queue.unbounded<ProviderRuntimeEvent>();
+    const runtimeEvents = yield* makeProviderEventHub({ bufferUntilSubscribed: true });
     let sessionCount = 0;
     let eventCount = 0;
     const sessions = new Map<ThreadId, SessionState>();
@@ -243,7 +243,7 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
     const emit = (event: ProviderRuntimeEvent) => {
       const runtimeSessionId =
         event.runtimeSessionId ?? sessions.get(event.threadId)?.session.runtimeSessionId;
-      return Queue.offer(runtimeEvents, {
+      return runtimeEvents.publish({
         ...event,
         ...(runtimeSessionId ? { runtimeSessionId } : {}),
       });
@@ -524,7 +524,9 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
       readThread,
       rollbackThread,
       stopAll,
-      streamEvents: Stream.fromQueue(runtimeEvents),
+      streamEvents: runtimeEvents.stream,
+      consumeEvents: runtimeEvents.consumeEvents,
+      subscribeEventStream: runtimeEvents.subscribeEventStream,
     };
 
     const queueTurnResponse = (
@@ -585,6 +587,7 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
 
     return {
       adapter,
+      publishEvent: emit,
       provider,
       queueTurnResponse,
       queueTurnResponseForNextSession,

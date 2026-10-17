@@ -8,6 +8,28 @@ import {
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
+import { DeepPlanError, DeepPlanGetRunInput, DeepPlanGetRunResult } from "./deepPlanning.ts";
+import {
+  DEEP_PLAN_WS_METHODS,
+  DeepPlanCatalogSourcesInput,
+  DeepPlanCatalogSourcesResult,
+  DeepPlanExportSourcesInput,
+  DeepPlanExportSourcesResult,
+  DeepPlanReadExportChunkInput,
+  DeepPlanReadExportChunkResult,
+  DeepPlanInitializeSourcesInput,
+  DeepPlanInitializeSourcesResult,
+  DeepPlanImportSourceChunkInput,
+  DeepPlanImportSourceChunkResult,
+  DeepPlanListSourcesInput,
+  DeepPlanListSourcesResult,
+  DeepPlanReadSourceChunkInput,
+  DeepPlanReadSourceChunkResult,
+  DeepPlanSummarizeSourceInput,
+  DeepPlanSummarizeSourceResult,
+  DeepPlanSourceError,
+} from "./deepPlanningSources.ts";
+
 import {
   ProjectIndexGetSettingsInput,
   ProjectIndexSettings,
@@ -484,6 +506,15 @@ import {
 } from "./harnessChatSync.ts";
 
 export const WS_METHODS = {
+  deepPlanGetRun: DEEP_PLAN_WS_METHODS.getRun,
+  deepPlanCatalogSources: DEEP_PLAN_WS_METHODS.catalogSources,
+  deepPlanExportSources: DEEP_PLAN_WS_METHODS.exportSources,
+  deepPlanReadExportChunk: DEEP_PLAN_WS_METHODS.readExportChunk,
+  deepPlanInitializeSources: DEEP_PLAN_WS_METHODS.initializeSources,
+  deepPlanImportSourceChunk: DEEP_PLAN_WS_METHODS.importSourceChunk,
+  deepPlanListSources: DEEP_PLAN_WS_METHODS.listSources,
+  deepPlanReadSourceChunk: DEEP_PLAN_WS_METHODS.readSourceChunk,
+  deepPlanSummarizeSource: DEEP_PLAN_WS_METHODS.summarizeSource,
   // Project registry methods
   projectsList: "projects.list",
   projectsAdd: "projects.add",
@@ -2477,7 +2508,65 @@ export const WsEnvironmentRpcGroup = RpcGroup.make(
   WsSubscribeProjectClonesRpc,
 );
 
+const DeepPlanRpcError = Schema.Union([DeepPlanError, EnvironmentAuthorizationError]);
+const DeepPlanSourcesRpcError = Schema.Union([DeepPlanSourceError, EnvironmentAuthorizationError]);
+
+const WsDeepPlanGetRunRpc = Rpc.make(DEEP_PLAN_WS_METHODS.getRun, {
+  payload: DeepPlanGetRunInput,
+  success: DeepPlanGetRunResult,
+  error: DeepPlanRpcError,
+});
+const WsDeepPlanCatalogSourcesRpc = Rpc.make(DEEP_PLAN_WS_METHODS.catalogSources, {
+  payload: DeepPlanCatalogSourcesInput,
+  success: DeepPlanCatalogSourcesResult,
+  error: DeepPlanSourcesRpcError,
+});
+const WsDeepPlanExportSourcesRpc = Rpc.make(DEEP_PLAN_WS_METHODS.exportSources, {
+  payload: DeepPlanExportSourcesInput,
+  success: DeepPlanExportSourcesResult,
+  error: DeepPlanSourcesRpcError,
+});
+const WsDeepPlanReadExportChunkRpc = Rpc.make(DEEP_PLAN_WS_METHODS.readExportChunk, {
+  payload: DeepPlanReadExportChunkInput,
+  success: DeepPlanReadExportChunkResult,
+  error: DeepPlanSourcesRpcError,
+});
+const WsDeepPlanInitializeSourcesRpc = Rpc.make(DEEP_PLAN_WS_METHODS.initializeSources, {
+  payload: DeepPlanInitializeSourcesInput,
+  success: DeepPlanInitializeSourcesResult,
+  error: DeepPlanSourcesRpcError,
+});
+const WsDeepPlanImportSourceChunkRpc = Rpc.make(DEEP_PLAN_WS_METHODS.importSourceChunk, {
+  payload: DeepPlanImportSourceChunkInput,
+  success: DeepPlanImportSourceChunkResult,
+  error: DeepPlanSourcesRpcError,
+});
+const WsDeepPlanListSourcesRpc = Rpc.make(DEEP_PLAN_WS_METHODS.listSources, {
+  payload: DeepPlanListSourcesInput,
+  success: DeepPlanListSourcesResult,
+  error: DeepPlanSourcesRpcError,
+});
+const WsDeepPlanReadSourceChunkRpc = Rpc.make(DEEP_PLAN_WS_METHODS.readSourceChunk, {
+  payload: DeepPlanReadSourceChunkInput,
+  success: DeepPlanReadSourceChunkResult,
+  error: DeepPlanSourcesRpcError,
+});
+const WsDeepPlanSummarizeSourceRpc = Rpc.make(DEEP_PLAN_WS_METHODS.summarizeSource, {
+  payload: DeepPlanSummarizeSourceInput,
+  success: DeepPlanSummarizeSourceResult,
+  error: DeepPlanSourcesRpcError,
+});
+
 export const WsWorkspaceRpcGroup = RpcGroup.make(
+  WsDeepPlanGetRunRpc,
+  WsDeepPlanCatalogSourcesRpc,
+  WsDeepPlanExportSourcesRpc,
+  WsDeepPlanReadExportChunkRpc,
+  WsDeepPlanInitializeSourcesRpc,
+  WsDeepPlanImportSourceChunkRpc,
+  WsDeepPlanListSourcesRpc,
+  WsDeepPlanReadSourceChunkRpc,
+  WsDeepPlanSummarizeSourceRpc,
   WsProjectsListEntriesRpc,
   WsProjectsReadFileRpc,
   WsProjectsSearchContentsRpc,

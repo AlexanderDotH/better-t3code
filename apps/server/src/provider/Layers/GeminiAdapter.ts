@@ -22,6 +22,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { ProviderAdapterRequestError, ProviderAdapterValidationError } from "../Errors.ts";
+import { DEEP_PLAN_PROVIDER_SUPPORT } from "../DeepPlanSupport.ts";
 import {
   makeGeminiClient,
   resolveGeminiApiKey,
@@ -351,7 +352,11 @@ export function makeGeminiAdapter(settings: GeminiSettings, options: GeminiAdapt
     provider: PROVIDER,
     instanceId,
     environment,
-    capabilities: { sessionModelSwitch: "in-session", mcp: "unsupported" },
+    capabilities: {
+      sessionModelSwitch: "in-session",
+      mcp: "unsupported",
+      deepPlan: DEEP_PLAN_PROVIDER_SUPPORT.gemini,
+    },
     messages: {
       sessionStarted: "Gemini SDK session owned by T3 Code",
       sessionReady: "Gemini SDK session ready",

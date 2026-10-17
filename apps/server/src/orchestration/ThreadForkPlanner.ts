@@ -20,6 +20,9 @@ import {
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
+
+import type { OrchestrationEventStoreError } from "../persistence/Errors.ts";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import { measureProviderForkHandoff } from "./providerTranscriptHandoff.ts";
@@ -39,7 +42,7 @@ type PlannedEvent<Type extends OrchestrationEvent["type"]> = Omit<
 interface MutableHistoryState {
   messages: ThreadForkHistoryMessage[];
   proposedPlans: ThreadForkHistoryProposedPlan[];
-  activities: ThreadForkHistory["activities"][number][];
+  activities: Map<EventId, ThreadForkHistory["activities"][number]>;
   subagents: ThreadForkHistorySubagent[];
   turns: ThreadForkHistoryTurn[];
   checkpoints: ThreadForkHistoryCheckpoint[];
@@ -102,7 +105,7 @@ function mutableHistory(history?: ThreadForkHistory): MutableHistoryState {
   return {
     messages: [...initial.messages],
     proposedPlans: [...initial.proposedPlans],
-    activities: [...initial.activities],
+    activities: new Map(initial.activities.map((activity) => [activity.id, activity])),
     subagents: [...initial.subagents],
     turns: [...initial.turns],
     checkpoints: [...initial.checkpoints],
@@ -122,7 +125,9 @@ function forkHistory(state: MutableHistoryState): ThreadForkHistory {
   return {
     messages: state.messages.map((message) => ({ ...message, streaming: false })),
     proposedPlans: state.proposedPlans,
-    activities: state.activities,
+    activities: Array.from(state.activities.values()).toSorted(
+      (left, right) => left.historyOrigin.ordinal - right.historyOrigin.ordinal,
+    ),
     subagents: state.subagents,
     turns: state.turns,
     checkpoints: state.checkpoints,
@@ -157,41 +162,22 @@ function inheritedBoundaryOrdinal(
   );
 }
 
-function nativeBoundaryIndex(
-  events: ReadonlyArray<OrchestrationEvent>,
+function matchesBoundary(
+  event: OrchestrationEvent,
   boundary: ThreadForkCommand["boundary"],
-): number {
-  if (boundary.kind === "message") {
-    return events.findIndex(
-      (event) =>
-        (event.type === "thread.message-sent" ||
-          event.type === "thread.harness-sync-message-imported") &&
-        event.payload.subagentId === undefined &&
-        event.payload.messageId === boundary.messageId &&
-        !event.payload.streaming,
-    );
-  }
-  return events.findIndex(
-    (event) =>
-      event.type === "thread.proposed-plan-upserted" &&
-      event.payload.subagentId === undefined &&
-      event.payload.proposedPlan.id === boundary.planId,
-  );
-}
-
-function hasStreamingBoundary(
-  events: ReadonlyArray<OrchestrationEvent>,
-  command: ThreadForkCommand,
 ): boolean {
-  if (command.boundary.kind !== "message") return false;
-  const messageId = command.boundary.messageId;
-  return events.some(
-    (event) =>
+  if (boundary.kind === "message") {
+    return (
       (event.type === "thread.message-sent" ||
         event.type === "thread.harness-sync-message-imported") &&
       event.payload.subagentId === undefined &&
-      event.payload.messageId === messageId &&
-      event.payload.streaming,
+      event.payload.messageId === boundary.messageId
+    );
+  }
+  return (
+    event.type === "thread.proposed-plan-upserted" &&
+    event.payload.subagentId === undefined &&
+    event.payload.proposedPlan.id === boundary.planId
   );
 }
 
@@ -261,16 +247,12 @@ function upsertActivity(
   payload: Extract<OrchestrationEvent, { readonly type: "thread.activity-appended" }>["payload"],
 ) {
   if (payload.subagentId !== undefined) return;
-  const existing = state.activities.find((activity) => activity.id === payload.activity.id);
-  const next = {
+  const existing = state.activities.get(payload.activity.id);
+  state.activities.set(payload.activity.id, {
     ...payload.activity,
     historyOrigin:
       existing?.historyOrigin ?? nextOrigin(state, sourceThreadId, payload.activity.id),
-  };
-  state.activities = [
-    ...state.activities.filter((activity) => activity.id !== payload.activity.id),
-    next,
-  ].toSorted((left, right) => left.historyOrigin.ordinal - right.historyOrigin.ordinal);
+  });
 }
 
 function upsertSubagent(
@@ -693,77 +675,106 @@ function applyRevert(state: MutableHistoryState, turnCount: number) {
   state.proposedPlans = [
     ...retainThreadProposedPlansAfterRevert(state.proposedPlans, retainedTurnIds, isFrozen),
   ];
-  state.activities = [
-    ...retainThreadActivitiesAfterRevert(state.activities, retainedTurnIds, isFrozen),
-  ];
+  const retainedActivities = retainThreadActivitiesAfterRevert(
+    Array.from(state.activities.values()),
+    retainedTurnIds,
+    isFrozen,
+  );
+  state.activities = new Map(retainedActivities.map((activity) => [activity.id, activity]));
 }
 
-function reconstructPrefix(
-  command: ThreadForkCommand,
-  sourceEvents: ReadonlyArray<OrchestrationEvent>,
-): Effect.Effect<ThreadForkHistory, OrchestrationCommandInvariantError> {
-  const sortedEvents = [...sourceEvents].toSorted((left, right) => left.sequence - right.sequence);
-  const inherited = sortedEvents.find((event) => event.type === "thread.forked");
-  const inheritedHistory =
-    inherited?.type === "thread.forked" ? inherited.payload.history : undefined;
-  if (inheritedHistory !== undefined) {
-    const ordinal = inheritedBoundaryOrdinal(inheritedHistory, command.boundary);
-    if (ordinal !== null) {
-      return Effect.succeed(filterHistoryAtOrdinal(inheritedHistory, ordinal));
-    }
-  }
+type ThreadForkSourceEvents =
+  | ReadonlyArray<OrchestrationEvent>
+  | Stream.Stream<OrchestrationEvent, OrchestrationEventStoreError>;
 
-  const boundaryIndex = nativeBoundaryIndex(sortedEvents, command.boundary);
-  if (boundaryIndex < 0) {
+const reconstructPrefix = Effect.fn("reconstructThreadForkPrefix")(function* (
+  command: ThreadForkCommand,
+  sourceEvents: ThreadForkSourceEvents,
+) {
+  const events = Stream.isStream(sourceEvents)
+    ? sourceEvents
+    : Stream.fromIterable(sourceEvents.toSorted((left, right) => left.sequence - right.sequence));
+  let state = mutableHistory();
+  let boundaryFound = false;
+  let streamingBoundaryFound = false;
+  const savedEdits = new Map<
+    MessageId,
+    Extract<OrchestrationEvent, { type: "thread.message-edited" }>["payload"]
+  >();
+
+  // Keep canonical rows, not every provider update. Large transcripts contain
+  // many replacements of the same tool output and can exceed the JS heap.
+  yield* Stream.runForEach(events, (event) =>
+    Effect.sync(() => {
+      if (event.type === "thread.message-edited") {
+        savedEdits.set(event.payload.messageId, event.payload);
+      }
+      if (boundaryFound) return;
+      if (event.type === "thread.forked") {
+        const ordinal = inheritedBoundaryOrdinal(event.payload.history, command.boundary);
+        state = mutableHistory(
+          ordinal === null
+            ? event.payload.history
+            : filterHistoryAtOrdinal(event.payload.history, ordinal),
+        );
+        boundaryFound = ordinal !== null;
+        return;
+      }
+
+      switch (event.type) {
+        case "thread.message-sent":
+        case "thread.harness-sync-message-imported":
+          applyAssistantMessageToTurn(state, command.sourceThreadId, event);
+          upsertMessage(state, command.sourceThreadId, event.payload);
+          break;
+        case "thread.proposed-plan-upserted":
+          upsertPlan(state, command.sourceThreadId, event.payload);
+          break;
+        case "thread.activity-appended":
+          upsertActivity(state, command.sourceThreadId, event.payload);
+          break;
+        case "thread.subagent-upserted":
+          upsertSubagent(state, command.sourceThreadId, event.payload.subagent);
+          break;
+        case "thread.subagent-state-set":
+          updateSubagentState(state, command.sourceThreadId, event.payload);
+          break;
+        case "thread.subagent-progress-set":
+          updateSubagentProgress(state, command.sourceThreadId, event.payload);
+          break;
+        case "thread.reverted":
+          applyRevert(state, event.payload.turnCount);
+          break;
+        default:
+          applyTurnEvent(state, command.sourceThreadId, event);
+          break;
+      }
+
+      if (matchesBoundary(event, command.boundary)) {
+        const streaming =
+          (event.type === "thread.message-sent" ||
+            event.type === "thread.harness-sync-message-imported") &&
+          event.payload.streaming;
+        streamingBoundaryFound ||= streaming;
+        boundaryFound = !streaming;
+      }
+    }),
+  );
+
+  if (!boundaryFound) {
     const boundaryLabel =
       command.boundary.kind === "message"
         ? `Message '${command.boundary.messageId}'`
         : `Proposed plan '${command.boundary.planId}'`;
-    return Effect.fail(
-      invariant(
-        command,
-        hasStreamingBoundary(sortedEvents, command)
-          ? `${boundaryLabel} is not complete and cannot be used as a fork boundary.`
-          : `${boundaryLabel} does not exist on source thread '${command.sourceThreadId}'.`,
-      ),
+    return yield* invariant(
+      command,
+      streamingBoundaryFound
+        ? `${boundaryLabel} is not complete and cannot be used as a fork boundary.`
+        : `${boundaryLabel} does not exist on source thread '${command.sourceThreadId}'.`,
     );
   }
-
-  const state = mutableHistory(inheritedHistory);
-  const inheritedSequence = inherited?.sequence ?? 0;
-  for (const event of sortedEvents.slice(0, boundaryIndex + 1)) {
-    if (event.sequence <= inheritedSequence) continue;
-    switch (event.type) {
-      case "thread.message-sent":
-      case "thread.harness-sync-message-imported":
-        applyAssistantMessageToTurn(state, command.sourceThreadId, event);
-        upsertMessage(state, command.sourceThreadId, event.payload);
-        break;
-      case "thread.proposed-plan-upserted":
-        upsertPlan(state, command.sourceThreadId, event.payload);
-        break;
-      case "thread.activity-appended":
-        upsertActivity(state, command.sourceThreadId, event.payload);
-        break;
-      case "thread.subagent-upserted":
-        upsertSubagent(state, command.sourceThreadId, event.payload.subagent);
-        break;
-      case "thread.subagent-state-set":
-        updateSubagentState(state, command.sourceThreadId, event.payload);
-        break;
-      case "thread.subagent-progress-set":
-        updateSubagentProgress(state, command.sourceThreadId, event.payload);
-        break;
-      case "thread.reverted":
-        applyRevert(state, event.payload.turnCount);
-        break;
-      default:
-        applyTurnEvent(state, command.sourceThreadId, event);
-        break;
-    }
-  }
-  return Effect.succeed(forkHistory(state));
-}
+  return { history: forkHistory(state), savedEdits };
+});
 
 const remapHistory = Effect.fn("remapThreadForkHistory")(function* (input: {
   readonly sourceThreadId: ThreadId;
@@ -940,7 +951,7 @@ function makeEventBase(input: {
 export const planThreadFork = Effect.fn("planThreadFork")(function* (input: {
   readonly command: ThreadForkCommand;
   readonly readModel: OrchestrationReadModel;
-  readonly sourceEvents: ReadonlyArray<OrchestrationEvent>;
+  readonly sourceEvents: ThreadForkSourceEvents;
 }) {
   const sourceThread = input.readModel.threads.find(
     (thread) => thread.id === input.command.sourceThreadId,
@@ -977,17 +988,13 @@ export const planThreadFork = Effect.fn("planThreadFork")(function* (input: {
     );
   }
 
-  let sourceHistory = yield* reconstructPrefix(input.command, input.sourceEvents);
+  const { history: reconstructedHistory, savedEdits } = yield* reconstructPrefix(
+    input.command,
+    input.sourceEvents,
+  );
+  let sourceHistory = reconstructedHistory;
   // Edits change retained messages, never the boundary's position in the transcript.
   let hasEdits = false;
-  const savedEdits = new Map<
-    MessageId,
-    Extract<OrchestrationEvent, { type: "thread.message-edited" }>["payload"]
-  >();
-  for (const event of input.sourceEvents.toSorted((a, b) => a.sequence - b.sequence)) {
-    if (event.type === "thread.message-edited")
-      savedEdits.set(event.payload.messageId, event.payload);
-  }
   sourceHistory = {
     ...sourceHistory,
     messages: sourceHistory.messages.map((message) => {

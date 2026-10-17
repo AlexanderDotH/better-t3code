@@ -16,6 +16,7 @@ import type {
 import {
   ApprovalRequestId,
   EnvironmentId,
+  DeepPlanRunId,
   ClaudeSettings,
   ProviderDriverKind,
   ProviderItemId,
@@ -360,10 +361,11 @@ const sendCompletedClaudeTurn = (
       input,
       attachments: [],
     });
-    const completedFiber = yield* Stream.filter(
-      adapter.streamEvents,
-      (event) => event.type === "turn.completed",
-    ).pipe(Stream.runHead, Effect.forkChild);
+    const events = yield* adapter.subscribeEventStream!({
+      delivery: "lossless",
+      filter: { threadId, types: ["turn.completed"] },
+    });
+    const completedFiber = yield* events.pipe(Stream.orDie, Stream.runHead, Effect.forkChild);
     harness.queries.at(-1)!.emit({
       type: "result",
       subtype: "success",
@@ -7620,6 +7622,79 @@ describe("ClaudeAdapterLive", () => {
       Effect.provide(harness.layer),
     );
   });
+
+  it.effect.each(["planning", "execution"] as const)(
+    "keeps Deep Plan tools available in a readonly Claude %s turn",
+    (phase) => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+        McpProviderSession.setMcpProviderSession({
+          environmentId: EnvironmentId.make("local"),
+          threadId: THREAD_ID,
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          providerSessionId: "claude-deep-plan",
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer test",
+          capabilities: new Set(["deep-plan"]),
+          deepPlan: {
+            runId: DeepPlanRunId.make("run-1"),
+            runThreadId: THREAD_ID,
+            phase,
+            approvedPlanVersion: phase === "planning" ? null : 1,
+            readOnly: true,
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: SYNTHETIC_CLAUDE_CAPABLE_MODEL,
+            },
+          },
+        });
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => McpProviderSession.clearMcpProviderSession(THREAD_ID)),
+        );
+        yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: "Plan this change",
+          interactionMode: "plan",
+          attachments: [],
+        });
+        const createInput = harness.getLastCreateQueryInput();
+        const prompt = yield* Effect.promise(() => readFirstPromptText(createInput));
+        assert.include(prompt, "deep_plan_publish");
+        assert.deepEqual(harness.query.setPermissionModeCalls, ["plan"]);
+        const canUseTool = createInput?.options.canUseTool;
+        assert.isDefined(canUseTool);
+        if (!canUseTool) return;
+        const callback = {
+          signal: new AbortController().signal,
+          toolUseID: "deep-plan-tool",
+          requestId: "deep-plan-permission",
+        };
+        const allowed = yield* Effect.promise(() =>
+          canUseTool("mcp__t3-code__deep_plan_publish", {}, callback),
+        );
+        assert.equal(allowed?.behavior, "allow");
+        const denied = yield* Effect.promise(() =>
+          canUseTool("Edit", { file_path: "/workspace/file.ts", new_string: "mutate" }, callback),
+        );
+        assert.equal(denied?.behavior, "deny");
+        const external = yield* Effect.promise(() => canUseTool("mcp__docs__query", {}, callback));
+        assert.equal(external?.behavior, "allow");
+        const command = yield* Effect.promise(() =>
+          canUseTool("Bash", { command: "git status" }, callback),
+        );
+        assert.equal(command?.behavior, "allow");
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
 
   it.effect("sets plan permission mode on sendTurn when interactionMode is plan", () => {
     const harness = makeHarness();

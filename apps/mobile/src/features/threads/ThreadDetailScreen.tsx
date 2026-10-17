@@ -10,6 +10,7 @@ import type {
   EnvironmentThreadStatus,
 } from "@t3tools/client-runtime/state/threads";
 import type { PlanImplementationStrategy } from "@t3tools/client-runtime/plan-implementation";
+import { resolveDeepPlanningAvailability } from "@t3tools/client-runtime/deep-planning";
 import { useKeyboardChatComposerInset, useKeyboardScrollToEnd } from "@legendapp/list/keyboard";
 import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
 import type { LegendListRef } from "@legendapp/list/react-native";
@@ -17,6 +18,9 @@ import { HeaderHeightContext } from "@react-navigation/elements";
 import { useNavigation } from "@react-navigation/native";
 import type {
   ApprovalRequestId,
+  ComposerMode,
+  DeepPlanRun,
+  DeepPlanSourceRef,
   EnvironmentId,
   MessageId,
   ModelSelection,
@@ -101,6 +105,8 @@ import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerUsageLimits } from "./ComposerUsageLimits";
 import { PendingUserInputCard } from "./PendingUserInputCard";
 import { ThreadCreationFailedCard } from "./ThreadCreationFailedCard";
+import { DeepPlanChecklist } from "./DeepPlanChecklist";
+import { resumeMobileDeepPlan } from "../../state/deep-planning";
 import {
   FLOATING_WORKING_CONTROL_COVERAGE,
   FloatingWorkingControl,
@@ -128,6 +134,8 @@ import { useMobilePlanParallelismReview } from "./use-plan-parallelism-review";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 import { resolveForkComposerBudget } from "./thread-fork";
+import type { ResponseMetricsSnapshot, TurnId } from "@t3tools/contracts";
+import type { ContextWindowSnapshot } from "@t3tools/client-runtime/context-window";
 
 export interface ThreadDetailScreenProps {
   readonly messageReply?: ComposerDraft["messageReply"];
@@ -145,6 +153,8 @@ export interface ThreadDetailScreenProps {
   readonly feedbackSubmissions: ReadonlyArray<CodexFeedbackSubmission>;
   readonly onDismissFeedback: (id: MessageId) => void;
   readonly selectedThreadFeed: ReadonlyArray<ThreadFeedEntry>;
+  readonly contextWindowSnapshot: ContextWindowSnapshot | null;
+  readonly responseMetrics?: ReadonlyMap<TurnId, ResponseMetricsSnapshot> | null;
   readonly subagents: ReadonlyArray<OrchestrationSubagentSummary>;
   readonly activeWorkStartedAt: string | null;
   readonly isCompacting: boolean;
@@ -167,6 +177,16 @@ export interface ThreadDetailScreenProps {
   readonly readDraftText?: () => string;
   readonly draftVoiceFileReferences?: ReadonlyArray<VoiceFileReference>;
   readonly draftAttachments: ReadonlyArray<DraftComposerAttachment>;
+  readonly composerMode: ComposerMode;
+  readonly deepPlanSourceRefs: ReadonlyArray<DeepPlanSourceRef>;
+  readonly deepPlan: DeepPlanRun | null;
+  readonly onUpdateComposerMode: (mode: ComposerMode) => void;
+  readonly onUpdateDeepPlanSources: (sources: ReadonlyArray<DeepPlanSourceRef>) => void;
+  readonly onRefineDeepPlan: (plan: OrchestrationProposedPlan) => void;
+  readonly onImplementPlanInNewThread: (
+    plan: OrchestrationProposedPlan,
+    strategy: PlanImplementationStrategy,
+  ) => Promise<{ readonly threadId: ThreadId; readonly environmentId: EnvironmentId } | null>;
   readonly connectionStateLabel: EnvironmentConnectionPhase;
   /** Message sync status for the selected thread (drives the composer status pill). */
   readonly threadSyncStatus?: EnvironmentThreadStatus;
@@ -569,6 +589,19 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     composerOverlapHeight: composerBottomInset,
   });
   const estimatedOverlayHeight = composerOverlapHeight;
+  const deepPlanChecklistMaxHeight = Math.max(
+    0,
+    Math.min(
+      240,
+      windowHeight -
+        navigationHeaderHeight -
+        (lastKnownKeyboardHeight > 0 ? lastKnownKeyboardHeight : ESTIMATED_KEYBOARD_HEIGHT) -
+        COMPOSER_EXPANDED_CHROME -
+        composerBottomInset -
+        60 -
+        (props.composerMode === "deep-plan" ? (props.deepPlanSourceRefs.length > 0 ? 88 : 44) : 0),
+    ),
+  );
   // The overlay's measured height includes the home-indicator inset (the
   // composer pads it), but contentInsetAdjustmentBehavior="automatic" makes
   // UIKit add the safe-area bottom to the content inset AGAIN — leaving a
@@ -744,6 +777,14 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   );
   const workflowActionsSupported =
     (props.serverConfig?.environment.capabilities.agentWorkflowVersion ?? 0) >= 1;
+  const deepPlanningAvailability = resolveDeepPlanningAvailability({
+    capabilities: props.serverConfig?.environment.capabilities,
+    provider: selectedProvider,
+    connected: props.connectionStateLabel === "connected",
+  });
+  const deepPlanningBlockedReason = deepPlanningAvailability.reasonKey
+    ? translator.message(deepPlanningAvailability.reasonKey)
+    : null;
   const latestActionablePlan = useMemo(() => {
     for (let index = props.selectedThreadFeed.length - 1; index >= 0; index -= 1) {
       const entry = props.selectedThreadFeed[index];
@@ -924,6 +965,37 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     },
     [props.onImplementPlan, selectedThreadKey, workflowActionsSupported],
   );
+  const handleImplementPlanInNewThread = useCallback(
+    async (plan: OrchestrationProposedPlan, strategy: PlanImplementationStrategy) => {
+      if (!workflowActionsSupported) return;
+      const targetThreadKey = selectedThreadKey;
+      const target = await props.onImplementPlanInNewThread(plan, strategy);
+      if (target && selectedThreadKeyRef.current === targetThreadKey) {
+        navigation.navigate("Thread", {
+          environmentId: String(target.environmentId),
+          threadId: String(target.threadId),
+        });
+      }
+    },
+    [navigation, props.onImplementPlanInNewThread, selectedThreadKey, workflowActionsSupported],
+  );
+  const handleRefineDeepPlan = useCallback(
+    (plan: OrchestrationProposedPlan) => {
+      props.onRefineDeepPlan(plan);
+      composerEditorRef.current?.focus();
+    },
+    [props.onRefineDeepPlan],
+  );
+  const handleResumeDeepPlan = useCallback(async () => {
+    const run = props.deepPlan;
+    if (run)
+      await resumeMobileDeepPlan(props.environmentId, run, {
+        projectId: props.selectedThread.projectId,
+        fallbackModelSelection: props.selectedThread.modelSelection,
+        runtimeMode: props.selectedThread.runtimeMode,
+        providers: props.serverConfig?.providers,
+      });
+  }, [props.deepPlan, props.environmentId, props.selectedThread, props.serverConfig?.providers]);
 
   const collapseComposer = useCallback(() => {
     composerEditorRef.current?.blur();
@@ -1034,6 +1106,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               threadId={props.selectedThread.id}
               workspaceRoot={props.threadCwd}
               feed={props.selectedThreadFeed}
+              responseMetrics={props.responseMetrics}
               worktreeSetup={props.worktreeSetup}
               setupWorkingStartedAt={props.setupWorkingStartedAt}
               queuedMessages={props.queuedMessages}
@@ -1065,6 +1138,12 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               parallelPlanImplementationEnabled={props.parallelPlanImplementationEnabled}
               reviewedPlanSubagentCounts={reviewedPlanSubagentCounts}
               onImplementPlan={workflowActionsSupported ? handleImplementPlan : undefined}
+              deepPlan={props.deepPlan}
+              deepPlanningBlockedReason={deepPlanningBlockedReason}
+              onRefineDeepPlan={handleRefineDeepPlan}
+              onImplementPlanInNewThread={
+                workflowActionsSupported ? handleImplementPlanInNewThread : undefined
+              }
               forkActionSupported={props.forkActionSupported}
               forkActionEnabled={props.forkActionEnabled}
               pendingForkBoundaryKey={props.pendingForkBoundaryKey}
@@ -1123,6 +1202,18 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 onScrollToEnd={handleScrollToEnd}
               />
               <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
+                {props.deepPlan ? (
+                  <DeepPlanChecklist
+                    key={`${props.environmentId}:${props.selectedThread.id}:${props.deepPlan.id}`}
+                    run={props.deepPlan}
+                    maxHeight={deepPlanChecklistMaxHeight}
+                    onResume={handleResumeDeepPlan}
+                    canContinue={!props.activeThreadBusy}
+                    resumeDisabled={
+                      props.connectionStateLabel !== "connected" || props.activeThreadBusy
+                    }
+                  />
+                ) : null}
                 <ThreadSubagentStack
                   environmentId={props.environmentId}
                   threadId={props.selectedThread.id}
@@ -1238,6 +1329,10 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   transcriptExportBusy={props.transcriptExportBusy}
                   forkComposerBudget={forkComposerBudget}
                   draftMessage={props.draftMessage}
+                  composerMode={props.composerMode}
+                  deepPlanSourceRefs={props.deepPlanSourceRefs}
+                  onUpdateComposerMode={props.onUpdateComposerMode}
+                  onUpdateDeepPlanSources={props.onUpdateDeepPlanSources}
                   replyTo={props.messageReply?.replyTo}
                   replySending={props.messageReplySending}
                   onCancelReply={props.onCancelMessageReply}
@@ -1249,6 +1344,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   connectionState={props.connectionStateLabel}
                   environmentLabel={props.environmentLabel}
                   selectedThread={props.selectedThread}
+                  contextWindowSnapshot={props.contextWindowSnapshot}
                   hasCompactableConversation={hasCompactableConversation && !props.isCompacting}
                   serverConfig={props.serverConfig}
                   queueCount={props.selectedThreadQueueCount}

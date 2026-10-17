@@ -1,4 +1,5 @@
 import type { ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
+import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 
 export type PlanSubagentCount = number;
 export type PlanParallelismReviewStatus = "idle" | "reviewing" | "ready" | "fallback";
@@ -122,6 +123,25 @@ export function estimatePlanImplementationWorkUnits(planMarkdown: string): numbe
   }
 
   return Math.max(1, eligibleHeadingCount, topLevelListItemCount);
+}
+
+const MINUTES_PER_HOUR = 60;
+const MINUTES_PER_DAY = 24 * MINUTES_PER_HOUR;
+
+export function formatPlanExecutionDuration(
+  estimate: { readonly minMinutes: number; readonly maxMinutes: number },
+  translator: InterfaceTranslator,
+): string {
+  const { divisor, messageKey } =
+    estimate.maxMinutes >= MINUTES_PER_DAY
+      ? { divisor: MINUTES_PER_DAY, messageKey: "chat.planEstimate.durationDays" as const }
+      : estimate.maxMinutes >= MINUTES_PER_HOUR
+        ? { divisor: MINUTES_PER_HOUR, messageKey: "chat.planEstimate.durationHours" as const }
+        : { divisor: 1, messageKey: "chat.planEstimate.duration" as const };
+  return translator.message(messageKey, {
+    min: translator.number(estimate.minMinutes / divisor, { maximumFractionDigits: 1 }),
+    max: translator.number(estimate.maxMinutes / divisor, { maximumFractionDigits: 1 }),
+  });
 }
 
 function planSubagentCeiling(

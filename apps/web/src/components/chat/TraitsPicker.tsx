@@ -13,6 +13,7 @@ import {
 import {
   applyClaudePromptEffortPrefix,
   buildProviderOptionSelectionsFromDescriptors,
+  createModelSelection,
   enableAutoReasoning,
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
@@ -322,6 +323,7 @@ export interface TraitsMenuContentProps {
   triggerVariant?: "ghost" | "outline";
   triggerClassName?: string;
   isComposerOwned?: boolean;
+  onManualModelSelectionChange?: (selection: ModelSelection) => void;
 }
 
 export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
@@ -335,6 +337,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   allowPromptInjectedEffort = true,
   planModeEnabled,
   hideContextWindow = false,
+  onManualModelSelectionChange,
   ...persistence
 }: TraitsMenuContentProps & TraitsPersistence) {
   const translate = useInterfaceTranslator().message;
@@ -354,8 +357,24 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
         model,
         persistSticky: true,
       });
+      if (model) {
+        onManualModelSelectionChange?.(
+          createModelSelection(
+            instanceId ?? defaultInstanceIdForDriver(provider),
+            model,
+            nextOptions,
+          ),
+        );
+      }
     },
-    [instanceId, model, persistence, provider, setProviderModelOptions],
+    [
+      instanceId,
+      model,
+      onManualModelSelectionChange,
+      persistence,
+      provider,
+      setProviderModelOptions,
+    ],
   );
   const {
     descriptors,
@@ -638,6 +657,7 @@ export const TraitsPicker = memo(function TraitsPicker({
   triggerVariant,
   triggerClassName,
   isComposerOwned,
+  onManualModelSelectionChange,
   size = "sm",
   hidden = false,
   ...persistence
@@ -788,6 +808,7 @@ export const TraitsPicker = memo(function TraitsPicker({
           allowPromptInjectedEffort={allowPromptInjectedEffort}
           planModeEnabled={planModeEnabled}
           hideContextWindow={hideContextWindow}
+          {...(onManualModelSelectionChange ? { onManualModelSelectionChange } : {})}
           {...persistence}
         />
       </MenuPopup>

@@ -1,3 +1,4 @@
+import { makeContextSummarizer } from "./ContextSummaryGeneration.ts";
 import { type GeminiSettings, type ModelSelection, TextGenerationError } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
@@ -64,6 +65,7 @@ export const makeGeminiTextGeneration = Effect.fn("makeGeminiTextGeneration")((
       | "translateTranscriptToEnglish"
       | "improvePrompt"
       | "reviewPlanParallelism"
+      | "summarizeContext"
       | "planFetchExploration";
     cwd: string;
     prompt: string;
@@ -329,6 +331,13 @@ export const makeGeminiTextGeneration = Effect.fn("makeGeminiTextGeneration")((
 
   return Effect.succeed({
     decisionGeneration,
+    summarizeContext: makeContextSummarizer((input) =>
+      runGeminiJson({
+        ...input,
+        operation: "summarizeContext",
+        outputSchemaJson: input.outputSchema,
+      }),
+    ),
     decideAutoReasoning,
     generateCommitMessage,
     generatePrContent,

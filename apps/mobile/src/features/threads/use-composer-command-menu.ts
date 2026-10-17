@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  ComposerMode,
   ProjectId,
   ProviderInteractionMode,
   ServerProvider,
@@ -42,6 +43,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useComposerPathSearch, useComposerPullRequestSearch } from "../../state/queries";
 import type { ComposerCommandItem } from "./ComposerCommandPopover";
 import { matchesSlashSkillQuery } from "./composerSlashSkillSearch";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 const WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS = 10_000;
 
@@ -57,6 +59,8 @@ export function buildComposerSlashCommandItems(input: {
   /** Whether T3 itself offers /usage-limits for the selected provider. */
   readonly offersUsageLimits?: boolean;
   readonly allowInteractionMode: boolean;
+  readonly allowDeepPlan?: boolean;
+  readonly deepPlanDescription?: string;
   readonly selectedProviderStatus: Pick<
     ServerProvider,
     "driver" | "slashCommands" | "showInteractionModeToggle"
@@ -91,11 +95,21 @@ export function buildComposerSlashCommandItems(input: {
   const items: ComposerCommandItem[] = builtIn.filter(
     (item) => item.command.includes(query) && (item.command === "model" || allowInteractionMode),
   );
+  if (input.allowDeepPlan && "deep-plan".includes(query)) {
+    items.push({
+      id: "cmd:deep-plan",
+      type: "slash-command",
+      command: "deep-plan",
+      label: "/deep-plan",
+      description: input.deepPlanDescription ?? "",
+    });
+  }
 
   // Providers expand commands only at the start of a message. T3 commands
   // change local state and do not have this restriction.
   if (!input.atMessageStart) return items;
   for (const command of input.selectedProviderStatus?.slashCommands ?? []) {
+    if (input.allowDeepPlan && command.name.toLowerCase() === "deep-plan") continue;
     if (!command.name.toLowerCase().includes(query)) continue;
     if (command.name === "compact" && !input.hasCompactableConversation) continue;
     // T3's own limits command is answered by the thread composer; New Task has
@@ -126,12 +140,21 @@ export function resolveComposerCommandSelection(input: {
   readonly trigger: Pick<ComposerTrigger, "rangeStart" | "rangeEnd">;
   readonly item: ComposerCommandItem;
   readonly allowInteractionMode: boolean;
+  readonly allowDeepPlan?: boolean;
 }): {
   readonly text: string;
   readonly cursor: number;
   readonly interactionMode: ProviderInteractionMode | null;
+  readonly composerMode?: ComposerMode;
 } {
   const { draftMessage, trigger, item } = input;
+  if (input.allowDeepPlan && item.type === "slash-command" && item.command === "deep-plan") {
+    return {
+      ...replaceTextRange(draftMessage, trigger.rangeStart, trigger.rangeEnd, ""),
+      interactionMode: null,
+      composerMode: "deep-plan",
+    };
+  }
   if (
     input.allowInteractionMode &&
     item.type === "slash-command" &&
@@ -174,6 +197,7 @@ export function useComposerCommandMenu({
   enabled = true,
   onChangeDraftMessage,
   onUpdateInteractionMode,
+  onUpdateComposerMode,
   onUsageLimits,
 }: {
   readonly draftMessage: string;
@@ -190,9 +214,11 @@ export function useComposerCommandMenu({
   readonly enabled?: boolean;
   readonly onChangeDraftMessage: (value: string) => void;
   readonly onUpdateInteractionMode?: (mode: ProviderInteractionMode) => void;
+  readonly onUpdateComposerMode?: (mode: ComposerMode) => void;
   /** Picking /usage-limits is the action itself; the draft keeps nothing of it. */
   readonly onUsageLimits?: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const [selection, setSelection] = useState(() => composerSelectionAtEnd(draftMessage));
   const previousOwnerKeyRef = useRef(ownerKey);
   const onSelectionChange = useCallback((nextSelection: ComposerEditorSelection) => {
@@ -339,6 +365,8 @@ export function useComposerCommandMenu({
         hasCompactableConversation,
         offersUsageLimits,
         allowInteractionMode: onUpdateInteractionMode !== undefined,
+        allowDeepPlan: onUpdateComposerMode !== undefined,
+        deepPlanDescription: translator.message("chat.deepPlan.slashDescription"),
         selectedProviderStatus: selectedProviderStatus
           ? {
               ...selectedProviderStatus,
@@ -465,6 +493,7 @@ export function useComposerCommandMenu({
     hasThread,
     hasCompactableConversation,
     onUpdateInteractionMode,
+    onUpdateComposerMode,
     pathSearch.entries,
     pullRequestSearch.entries,
     projectCwd,
@@ -472,6 +501,7 @@ export function useComposerCommandMenu({
     skills,
     trigger,
     offersUsageLimits,
+    translator,
   ]);
 
   const onSelect = useCallback(
@@ -530,12 +560,15 @@ export function useComposerCommandMenu({
         allowInteractionMode:
           onUpdateInteractionMode !== undefined &&
           selectedProviderStatus?.showInteractionModeToggle !== false,
+        allowDeepPlan: onUpdateComposerMode !== undefined,
       });
       setSelection({ start: result.cursor, end: result.cursor });
       onChangeDraftMessage(result.text);
       if (result.interactionMode !== null) {
         onUpdateInteractionMode?.(result.interactionMode);
+        onUpdateComposerMode?.(result.interactionMode);
       }
+      if (result.composerMode) onUpdateComposerMode?.(result.composerMode);
     },
     [
       draftMessage,
@@ -543,6 +576,7 @@ export function useComposerCommandMenu({
       items,
       onChangeDraftMessage,
       onUpdateInteractionMode,
+      onUpdateComposerMode,
       onUsageLimits,
       selectedProviderStatus?.showInteractionModeToggle,
       trigger,

@@ -62,7 +62,10 @@ export interface OrchestrationEventStoreShape {
 
   /** Read one aggregate through a captured global head, without decoding other streams. */
   readonly readAggregateRange: (
-    input: OrchestrationAggregateReplayRange & { readonly limit?: number },
+    input: OrchestrationAggregateReplayRange & {
+      readonly limit?: number;
+      readonly pageSize?: number;
+    },
   ) => Stream.Stream<OrchestrationEvent, OrchestrationEventStoreError>;
 
   /**

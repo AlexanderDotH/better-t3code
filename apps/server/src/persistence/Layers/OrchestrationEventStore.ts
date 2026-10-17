@@ -88,6 +88,7 @@ const AggregateReplayStatsRowSchema = Schema.Struct({
 });
 const DEFAULT_READ_FROM_SEQUENCE_LIMIT = 1_000;
 const READ_PAGE_SIZE = 500;
+const THREAD_HISTORY_READ_PAGE_SIZE = 16;
 
 function inferActorKind(
   event: Omit<OrchestrationEvent, "sequence">,
@@ -364,7 +365,10 @@ const makeEventStore = Effect.gen(function* () {
     return Stream.paginate(
       { cursor: input.fromSequenceExclusive, remaining: limit },
       ({ cursor, remaining }) => {
-        const pageSize = Math.min(remaining, READ_PAGE_SIZE);
+        const pageSize = Math.min(
+          remaining,
+          Math.max(1, Math.min(READ_PAGE_SIZE, Math.floor(input.pageSize ?? READ_PAGE_SIZE))),
+        );
         return readAggregateEventRows({
           ...input,
           fromSequenceExclusive: cursor,
@@ -425,6 +429,7 @@ const makeEventStore = Effect.gen(function* () {
       fromSequenceExclusive: 0,
       toSequenceInclusive: Number.MAX_SAFE_INTEGER,
       limit: Number.MAX_SAFE_INTEGER,
+      pageSize: THREAD_HISTORY_READ_PAGE_SIZE,
     });
 
   return {

@@ -39,6 +39,7 @@ afterEach(() => {
 describe("client settings hydration", () => {
   const savedSettings = {
     ...DEFAULT_CLIENT_SETTINGS,
+    contextWindowMeterEnabled: false,
     timestampFormat: "12-hour" as const,
     favorites: [{ provider: ProviderInstanceId.make("codex_work"), model: "gpt-5.6" }],
   };

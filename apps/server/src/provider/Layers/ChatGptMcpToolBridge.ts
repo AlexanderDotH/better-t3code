@@ -9,6 +9,8 @@ import * as Schema from "effect/Schema";
 
 import type { McpConfigEngineShape } from "../../mcp/McpConfigEngine.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { isDeepPlanToolName } from "../../mcp/toolkits/deep-plan/toolNames.ts";
+import { deepPlanContextForThread, isBoundDeepPlanTool } from "../DeepPlanToolContext.ts";
 import {
   NATIVE_HARNESS_MAX_TOOL_DEFINITIONS,
   NativeHarnessToolPolicyError,
@@ -402,7 +404,10 @@ export const makeNativeProviderMcpToolBridge = Effect.fn("makeNativeProviderMcpT
     readonly clientFactory?: NativeProviderMcpClientFactory;
   }) {
     const factory = input.clientFactory ?? defaultClientFactory;
-    const sessions = new Map<ThreadId, Promise<SessionTools>>();
+    const sessions = new Map<
+      ThreadId,
+      { readonly credentialKey: string; readonly prepared: Promise<SessionTools> }
+    >();
     const runtimeContext = yield* Effect.context<never>();
     const runPromise = Effect.runPromiseWith(runtimeContext);
 
@@ -440,6 +445,19 @@ export const makeNativeProviderMcpToolBridge = Effect.fn("makeNativeProviderMcpT
           const { client, listed } = prepared;
           clients.push(client);
           for (const tool of listed.tools) {
+            if (
+              connection.kind === "internal" &&
+              isDeepPlanToolName(tool.name) &&
+              !isBoundDeepPlanTool(threadId, tool.name)
+            )
+              continue;
+            const deepPlanTool =
+              connection.kind === "internal" && isBoundDeepPlanTool(threadId, tool.name);
+            const deepPlan = deepPlanContextForThread(threadId);
+            const inheritsComposerPermissions =
+              deepPlan !== undefined &&
+              deepPlan.sourceAnalysis === undefined &&
+              !(connection.kind === "internal" && tool.name === "workspace_edit");
             const exposedName =
               connection.kind === "internal"
                 ? tool.name
@@ -461,12 +479,21 @@ export const makeNativeProviderMcpToolBridge = Effect.fn("makeNativeProviderMcpT
                   `Run ${tool.name} on the configured MCP server ${connection.displayName}.`,
                 inputSchema: inputSchema(tool.inputSchema),
                 availability:
-                  tool.annotations?.readOnlyHint === true ? "read-only" : "default-only",
-                requiresApproval: tool.annotations?.readOnlyHint !== true,
+                  tool.annotations?.readOnlyHint === true ||
+                  deepPlanTool ||
+                  inheritsComposerPermissions
+                    ? "read-only"
+                    : "default-only",
+                requiresApproval: tool.annotations?.readOnlyHint !== true && !deepPlanTool,
               },
             });
           }
         }
+        connectedTools.sort(
+          (left, right) =>
+            Number(isBoundDeepPlanTool(threadId, right.exposedName)) -
+            Number(isBoundDeepPlanTool(threadId, left.exposedName)),
+        );
         const byName = new Map(connectedTools.map((tool) => [tool.exposedName, tool]));
         const catalog = mcpExtensionCatalog(connectedTools);
         const executeConnectedTool = (
@@ -565,12 +592,29 @@ export const makeNativeProviderMcpToolBridge = Effect.fn("makeNativeProviderMcpT
     };
 
     const getSession = (threadId: ThreadId, cwd: string) => {
+      const credential = McpProviderSession.readMcpProviderSession(threadId);
+      const credentialKey = JSON.stringify([
+        cwd,
+        credential?.providerSessionId,
+        credential?.endpoint,
+        credential?.deepPlan,
+      ]);
       const existing = sessions.get(threadId);
-      if (existing) return existing;
-      const created = buildSession(threadId, cwd);
-      sessions.set(threadId, created);
+      if (existing?.credentialKey === credentialKey) return existing.prepared;
+      const created = (async () => {
+        if (existing) {
+          try {
+            await closeClients((await existing.prepared).clients);
+          } catch {
+            /* A failed setup already closed its clients. */
+          }
+        }
+        return buildSession(threadId, cwd);
+      })();
+      const entry = { credentialKey, prepared: created };
+      sessions.set(threadId, entry);
       void created.catch(() => {
-        if (sessions.get(threadId) === created) sessions.delete(threadId);
+        if (sessions.get(threadId) === entry) sessions.delete(threadId);
       });
       return created;
     };
@@ -581,7 +625,7 @@ export const makeNativeProviderMcpToolBridge = Effect.fn("makeNativeProviderMcpT
         sessions.delete(threadId);
         if (!session) return;
         try {
-          await closeClients((await session).clients);
+          await closeClients((await session.prepared).clients);
         } catch {
           // A failed setup closes the clients it created before rejecting.
         }
@@ -593,7 +637,7 @@ export const makeNativeProviderMcpToolBridge = Effect.fn("makeNativeProviderMcpT
       await Promise.all(
         pending.map(async (session) => {
           try {
-            await closeClients((await session).clients);
+            await closeClients((await session.prepared).clients);
           } catch {
             // A failed setup closes the clients it created before rejecting.
           }

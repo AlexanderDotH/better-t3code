@@ -141,6 +141,7 @@ import {
 import type { QueuedThreadMessage } from "./thread-outbox-model";
 import * as composerDrafts from "./use-composer-drafts";
 import { recoverFailedThreadDraft } from "./recover-failed-thread-draft";
+import { restoredNewTaskDraftKey } from "./new-task-draft-key";
 import { editingQueuedMessageIdsAtom } from "./use-thread-outbox";
 import {
   completeQueuedMessageDelivery,
@@ -726,6 +727,68 @@ describe("thread outbox recovery rollback", () => {
 
     clearPendingThreadCreationOutcome(key);
     expect(appAtomRegistry.get(pendingThreadCreationOutcomesAtom)[key]).toBeUndefined();
+  });
+
+  it("keeps Deep Planning choices through a failed restore and persists them on retry", async () => {
+    const sources = [
+      {
+        environmentId: EnvironmentId.make("remote-source"),
+        projectId: ProjectId.make("remote-project"),
+        threadId: ThreadId.make("archived-source"),
+      },
+    ];
+    const previousSources = [{ ...sources[0]!, threadId: ThreadId.make("previous-source") }];
+    const message: QueuedThreadMessage = {
+      ...queuedMessage({ messageId: "message-deep-restore", text: "Analyze these chats" }),
+      composerMode: "deep-plan",
+      interactionMode: "plan",
+      deepPlanSourceRefs: sources,
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
+      creation: {
+        projectId: ProjectId.make("project-1"),
+        workspaceMode: "local",
+        branch: null,
+        worktreePath: null,
+      },
+    };
+    const draftKey = restoredNewTaskDraftKey(message.messageId);
+    appAtomRegistry.set(composerDrafts.composerDraftsAtom, {
+      [draftKey]: {
+        text: "Offline edits",
+        attachments: [],
+        composerMode: "plan",
+        deepPlanSourceRefs: previousSources,
+      },
+    });
+    await harness.manager.enqueue(message);
+    harness.draftFile.setWriteError(new Error("disk full"));
+
+    await expect(restoreRejectedQueuedMessage(message, "Remote source unavailable")).resolves.toBe(
+      "retry",
+    );
+    expect(remainingMessages()).toEqual([message]);
+    expect(composerDrafts.getComposerDraftSnapshot(draftKey)).toMatchObject({
+      text: "Offline edits",
+      composerMode: "plan",
+      deepPlanSourceRefs: previousSources,
+    });
+
+    harness.draftFile.setWriteError(null);
+    await expect(restoreRejectedQueuedMessage(message, "Remote source unavailable")).resolves.toBe(
+      "restored",
+    );
+    const expected = {
+      text: "Offline edits\n\nAnalyze these chats",
+      composerMode: "deep-plan",
+      interactionMode: "plan",
+      deepPlanSourceRefs: sources,
+    };
+    expect(composerDrafts.getComposerDraftSnapshot(draftKey)).toMatchObject(expected);
+    const persisted = composerDrafts.decodePersistedComposerState(
+      JSON.parse(await new harness.draftFile.File().text()),
+    );
+    expect(persisted.drafts[draftKey]).toMatchObject(expected);
+    expect(remainingMessages()).toEqual([]);
   });
 
   it("does not record a creation outcome for a rejected follow-up message", async () => {

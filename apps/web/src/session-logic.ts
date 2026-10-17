@@ -14,6 +14,7 @@ import {
   extractCommandOutputText,
   extractWorkLogToolLifecycleStatus,
   isWorktreeSetupActivity,
+  isCompactionConflictWorkEntry,
   workEntryIndicatesToolFailure,
   workEntryIndicatesToolSuccess,
   workLogEntryIsToolLike,
@@ -124,6 +125,7 @@ export interface ActivePlanState {
 }
 
 export interface LatestProposedPlanState {
+  deepPlan?: ProposedPlan["deepPlan"];
   id: OrchestrationProposedPlanId;
   createdAt: string;
   updatedAt: string;
@@ -550,13 +552,15 @@ export function deriveWorkLogEntries(
     if (activity.kind === "task.started" && !isAgentTaskStartedActivity(activity)) continue;
     if (activity.kind === "task.updated") continue;
     if (activity.kind === "tool.progress") continue;
-    if (activity.kind === "context-window.updated") continue;
+    if (activity.kind === "context-window.updated" || activity.kind === "response.metrics")
+      continue;
     if (activity.kind === "turn.plan.updated") continue;
     if (activity.summary === "Checkpoint captured") continue;
     if (isNoContentRuntimeWarning(activity)) continue;
     if (isPlanBoundaryToolActivity(activity)) continue;
     if (isAgentInternalActivity(activity)) continue;
     const entry = toDerivedWorkLogEntry(activity);
+    if (isCompactionConflictWorkEntry(entry)) continue;
     // Native agent launches get their visible row from task.started. Defer
     // their active tool row so another launch cannot duplicate the batch.
     if (
@@ -1015,6 +1019,7 @@ function normalizeCompactToolLabel(value: string): string {
 
 function toLatestProposedPlanState(proposedPlan: ProposedPlan): LatestProposedPlanState {
   return {
+    ...(proposedPlan.deepPlan ? { deepPlan: proposedPlan.deepPlan } : {}),
     id: proposedPlan.id,
     createdAt: proposedPlan.createdAt,
     updatedAt: proposedPlan.updatedAt,

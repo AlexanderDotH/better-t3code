@@ -2,10 +2,17 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
   EventId,
+  DeepPlanRunId,
+  DeepPlanSourceId,
+  EnvironmentId,
+  ProjectId,
+  type DeepPlanSourceSnapshot,
+  type RuntimeMode,
   makeBetterT3SettingsV1,
   ProviderDriverKind,
   ProviderInstanceId,
   RuntimeSessionId,
+  RuntimeRequestId,
   ThreadId,
   TurnId,
   type OrchestrationCommand,
@@ -40,6 +47,7 @@ import {
   type ProviderServiceShape,
 } from "../provider/Services/ProviderService.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
+import { makeProviderEventHub } from "../provider/providerEventHub.ts";
 import * as ResourceProtection from "../resourceProtection/SubagentResourceGovernor.ts";
 import {
   GeneralSubagentCoordinator,
@@ -97,10 +105,17 @@ function provider(input: {
 
 const makeHarness = Effect.fn("GeneralSubagentCoordinator.test.makeHarness")(function* (options?: {
   readonly failMessageImport?: boolean;
+  readonly runtimeMode?: RuntimeMode;
   readonly completeTurn?: boolean;
+  readonly sessionEvents?: boolean;
+  readonly blockFirstActivity?: boolean;
   readonly resourceGovernor?: ResourceProtection.SubagentResourceGovernor["Service"];
 }) {
   const events = yield* PubSub.unbounded<ProviderRuntimeEvent>();
+  const eventHub = options?.sessionEvents ? yield* makeProviderEventHub() : undefined;
+  let subscriptionReady = false;
+  let blockedThreadId: ThreadId | undefined;
+  let activityBlockedOnce = false;
   const starts = yield* Ref.make<
     ReadonlyArray<{
       readonly input: ProviderSessionStartInput;
@@ -119,13 +134,15 @@ const makeHarness = Effect.fn("GeneralSubagentCoordinator.test.makeHarness")(fun
   const startedSignal = yield* Deferred.make<void>();
   const secondTurnSentSignal = yield* Deferred.make<void>();
   const stoppedSignal = yield* Deferred.make<void>();
+  const activityBlocked = yield* Deferred.make<void>();
+  const releaseActivity = yield* Deferred.make<void>();
   const bindings = new Map<ThreadId, RuntimeSessionId>();
   const providerBindings = new Map<ThreadId, ProviderInstanceId>();
   let eventSequence = 0;
   let commandSequence = 0;
 
   const publish = (event: ProviderRuntimeEvent) =>
-    PubSub.publish(events, event).pipe(Effect.asVoid);
+    (eventHub ? eventHub.publish(event) : PubSub.publish(events, event)).pipe(Effect.asVoid);
   const eventBase = (threadId: ThreadId, runtimeSessionId: RuntimeSessionId) => ({
     eventId: EventId.make(`general-event-${++eventSequence}`),
     provider: codexDriver,
@@ -151,11 +168,31 @@ const makeHarness = Effect.fn("GeneralSubagentCoordinator.test.makeHarness")(fun
   const providerService: Partial<ProviderServiceShape> = {
     startTransientSession: (threadId, input, options) =>
       Effect.gen(function* () {
+        if (eventHub) expect(subscriptionReady).toBe(true);
+        if (blockedThreadId === undefined) blockedThreadId = threadId;
         yield* Ref.update(starts, (values) => [...values, { input, options }]);
         yield* Deferred.succeed(startedSignal, undefined).pipe(Effect.ignore);
         const runtimeSessionId = input.runtimeSessionId!;
         bindings.set(threadId, runtimeSessionId);
         providerBindings.set(threadId, input.providerInstanceId!);
+        if (eventHub) {
+          yield* publish({
+            ...eventBase(threadId, runtimeSessionId),
+            type: "request.opened",
+            requestId: RuntimeRequestId.make(`startup-read-${threadId}`),
+            payload: { requestType: "file_read_approval", detail: "Read during startup" },
+          });
+          yield* publish({
+            ...eventBase(threadId, runtimeSessionId),
+            type: "thread.started",
+            payload: { providerThreadId: "provider-startup-worker" },
+          });
+          yield* publish({
+            ...eventBase(threadId, runtimeSessionId),
+            type: "content.delta",
+            payload: { streamKind: "assistant_text", delta: "Session startup output. " },
+          });
+        }
         return {
           provider: codexDriver,
           providerInstanceId: securityInstance,
@@ -241,7 +278,21 @@ const makeHarness = Effect.fn("GeneralSubagentCoordinator.test.makeHarness")(fun
       Ref.update(stops, (values) => [...values, target.threadId]).pipe(
         Effect.andThen(Deferred.succeed(stoppedSignal, undefined).pipe(Effect.ignore)),
       ),
-    streamEvents: Stream.fromPubSub(events),
+    ...(eventHub
+      ? ({
+          consumeEvents: (handler, subscription) =>
+            eventHub.consumeEvents(handler, subscription).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  subscriptionReady = true;
+                }),
+              ),
+            ),
+        } satisfies Pick<ProviderServiceShape, "consumeEvents">)
+      : {}),
+    streamEvents: eventHub
+      ? Stream.die("Session event consumers must not use the aggregate stream")
+      : Stream.fromPubSub(events),
   };
 
   const providerRegistry = ProviderRegistry.of({
@@ -273,7 +324,7 @@ const makeHarness = Effect.fn("GeneralSubagentCoordinator.test.makeHarness")(fun
       model: "gpt-5.6-sol",
       options: [{ id: "reasoningEffort", value: "high" }],
     },
-    runtimeMode: "full-access",
+    runtimeMode: options?.runtimeMode ?? "full-access",
     archivedAt: null,
     deletedAt: null,
     session: {
@@ -282,7 +333,7 @@ const makeHarness = Effect.fn("GeneralSubagentCoordinator.test.makeHarness")(fun
       providerName: "codex",
       providerInstanceId: codexInstance,
       runtimeSessionId: RuntimeSessionId.make("runtime-parent"),
-      runtimeMode: "full-access",
+      runtimeMode: options?.runtimeMode ?? "full-access",
       activeTurnId: parentTurnId,
       abortState: null,
       lastError: null,
@@ -305,13 +356,23 @@ const makeHarness = Effect.fn("GeneralSubagentCoordinator.test.makeHarness")(fun
   } as unknown as ProjectionSnapshotQueryShape;
   const engine: Partial<OrchestrationEngineShape> = {
     dispatch: (command) =>
-      Ref.update(commands, (values) => [...values, command]).pipe(
-        Effect.andThen(
-          options?.failMessageImport && command.type === "thread.message.import"
-            ? Effect.die(new Error("synthetic import failure"))
-            : Effect.succeed({ sequence: ++commandSequence }),
-        ),
-      ),
+      Effect.gen(function* () {
+        if (
+          options?.blockFirstActivity &&
+          !activityBlockedOnce &&
+          command.type === "thread.activity.append" &&
+          String(command.subagentId) === blockedThreadId
+        ) {
+          activityBlockedOnce = true;
+          yield* Deferred.succeed(activityBlocked, undefined);
+          yield* Deferred.await(releaseActivity);
+        }
+        yield* Ref.update(commands, (values) => [...values, command]);
+        if (options?.failMessageImport && command.type === "thread.message.import") {
+          return yield* Effect.die(new Error("synthetic import failure"));
+        }
+        return { sequence: ++commandSequence };
+      }),
     readEvents: () => Stream.empty,
     streamDomainEvents: Stream.empty,
     latestSequence: Effect.succeed(0),
@@ -364,6 +425,8 @@ const makeHarness = Effect.fn("GeneralSubagentCoordinator.test.makeHarness")(fun
     secondTurnSentSignal,
     stoppedSignal,
     publishParentCompletion,
+    activityBlocked,
+    releaseActivity,
   };
 });
 
@@ -409,7 +472,178 @@ const makeResourceGovernorHarness = Effect.fn(
   };
 });
 
+const sourceAnalysisBinding = {
+  runId: DeepPlanRunId.make("deep-batch-run"),
+  runThreadId: parentThreadId,
+  phase: "planning" as const,
+  approvedPlanVersion: null,
+  readOnly: true,
+  modelSelection: {
+    instanceId: codexInstance,
+    model: "gpt-5.6-sol",
+    options: [{ id: "reasoningEffort", value: "high" }],
+  },
+};
+
+function frozenSources(count: number): Array<DeepPlanSourceSnapshot> {
+  return Array.from({ length: count }, (_, index) => ({
+    sourceId: DeepPlanSourceId.make(`source-${index}`),
+    origin: {
+      environmentId: EnvironmentId.make("local"),
+      projectId: ProjectId.make("project"),
+      threadId: ThreadId.make(`chat-${index}`),
+    },
+    projectTitle: "Project",
+    threadTitle: `Chat ${index}`,
+    archived: index % 2 === 0,
+    capturedAt: createdAt,
+    contentVersion: "version-1",
+    contentHash: `hash-${index}`,
+    messageCount: index + 1,
+    activityCount: 0,
+    attachmentCount: 0,
+    recordCount: index + 1,
+    forkOrigin: null,
+  }));
+}
+
 describe("GeneralSubagentCoordinator", () => {
+  it.effect(
+    "registers session lanes before startup and isolates blocked subagent projections",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({ sessionEvents: true, blockFirstActivity: true });
+        yield* Effect.gen(function* () {
+          const coordinator = yield* GeneralSubagentCoordinator;
+          const caller = { parentThreadId, callerProviderInstanceId: codexInstance };
+          const first = yield* coordinator.spawn({ ...caller, task: "Inspect the first area." });
+          yield* Deferred.await(harness.activityBlocked);
+          const second = yield* coordinator.spawn({ ...caller, task: "Inspect the second area." });
+          yield* Deferred.await(harness.stoppedSignal);
+          expect(yield* Ref.get(harness.stops)).toEqual([second.agentId]);
+          const completedSecond = yield* coordinator.wait({
+            ...caller,
+            agentIds: [second.agentId],
+            timeoutSeconds: 5,
+          });
+          expect(completedSecond.agents[0]?.status).toBe("completed");
+
+          yield* Deferred.succeed(harness.releaseActivity, undefined);
+          const completedFirst = yield* coordinator.wait({
+            ...caller,
+            agentIds: [first.agentId],
+            timeoutSeconds: 5,
+          });
+          expect(completedFirst.agents[0]?.status).toBe("completed");
+          expect(
+            (yield* Ref.get(harness.commands)).some(
+              (command) =>
+                command.type === "thread.message.assistant.delta" &&
+                command.delta.includes("Session startup output"),
+            ),
+          ).toBe(true);
+        }).pipe(Effect.provide(harness.layer));
+      }),
+  );
+  it.effect(
+    "analyzes all 33 chats in parallel waves and binds each child to its own source IDs",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* Effect.gen(function* () {
+          const coordinator = yield* GeneralSubagentCoordinator;
+          const caller = { parentThreadId, callerProviderInstanceId: codexInstance };
+          const sources = frozenSources(33);
+          let pending = sources;
+          const covered: string[] = [];
+          while (pending.length > 0) {
+            const agents = yield* coordinator.analyzeDeepPlanSources({
+              ...caller,
+              binding: sourceAnalysisBinding,
+              sources: pending,
+            });
+            expect(agents.length).toBeLessThanOrEqual(4);
+            const waited = yield* coordinator.wait({
+              ...caller,
+              agentIds: agents.map((agent) => agent.agentId),
+            });
+            expect(waited.allTerminal).toBe(true);
+            const ids = agents.flatMap((agent) => agent.sourceIds);
+            expect(new Set(ids).size).toBe(ids.length);
+            covered.push(...ids);
+            pending = pending.filter((source) => !ids.includes(source.sourceId));
+          }
+          expect(covered).toEqual(sources.map((source) => source.sourceId));
+          const starts = yield* Ref.get(harness.starts);
+          expect(starts).toHaveLength(9);
+          for (const start of starts) {
+            expect(start.input).toMatchObject({
+              runtimeMode: "full-access",
+              modelSelection: sourceAnalysisBinding.modelSelection,
+            });
+            expect(start.input).not.toHaveProperty("sandboxMode");
+            expect(start.options?.deepPlan).toMatchObject({
+              runId: sourceAnalysisBinding.runId,
+              sourceAnalysis: { workerThreadId: start.input.threadId },
+            });
+            expect(start.options?.deepPlan?.sourceAnalysis?.sourceIds.length).toBeLessThanOrEqual(
+              4,
+            );
+          }
+          expect(
+            (yield* Ref.get(harness.sends)).every((send) => send.interactionMode === "plan"),
+          ).toBe(true);
+        }).pipe(Effect.provide(harness.layer));
+      }),
+  );
+
+  it.effect(
+    "reuses active batches and does not duplicate assignments on repeated analysis calls",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({ completeTurn: false });
+        yield* Effect.gen(function* () {
+          const coordinator = yield* GeneralSubagentCoordinator;
+          const input = {
+            parentThreadId,
+            callerProviderInstanceId: codexInstance,
+            binding: sourceAnalysisBinding,
+            sources: frozenSources(33),
+          };
+          const first = yield* coordinator.analyzeDeepPlanSources(input);
+          const repeated = yield* coordinator.analyzeDeepPlanSources(input);
+          expect(first).toHaveLength(4);
+          expect(repeated.map((agent) => agent.agentId)).toEqual(
+            first.map((agent) => agent.agentId),
+          );
+          expect(repeated.flatMap((agent) => agent.sourceIds)).toEqual(
+            first.flatMap((agent) => agent.sourceIds),
+          );
+        }).pipe(Effect.provide(harness.layer));
+      }),
+  );
+
+  it.effect.each(["approval-required", "auto-accept-edits", "auto", "full-access"] as const)(
+    "inherits %s from the composer for analysis workers",
+    (runtimeMode) =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({ runtimeMode });
+        yield* Effect.gen(function* () {
+          const coordinator = yield* GeneralSubagentCoordinator;
+          const caller = { parentThreadId, callerProviderInstanceId: codexInstance };
+          const agents = yield* coordinator.analyzeDeepPlanSources({
+            ...caller,
+            binding: sourceAnalysisBinding,
+            sources: frozenSources(1),
+          });
+          yield* coordinator.wait({ ...caller, agentIds: agents.map((agent) => agent.agentId) });
+          const start = (yield* Ref.get(harness.starts))[0];
+          expect(start?.input.runtimeMode).toBe(runtimeMode);
+          expect(start?.input).not.toHaveProperty("sandboxMode");
+        }).pipe(Effect.provide(harness.layer));
+      }),
+  );
+
   it.effect("fences concurrent cancel and feature-off cleanup to the exact child runtime", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ completeTurn: false });

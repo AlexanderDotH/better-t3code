@@ -19,6 +19,7 @@ import {
   isInterfaceMessageKey,
   type InterfaceMessageKey,
 } from "./interfaceLanguageCatalog.ts";
+import { translateInterfaceMessage } from "./interfaceLanguage.ts";
 
 const representativeKeys = [
   "settings.common.search",
@@ -118,5 +119,26 @@ describe("settings interface language catalog", () => {
         /providerOutput|serverPayload|toolResult|errorDetail|userValue/u.test(key),
       ),
     ).toBe(false);
+  });
+
+  it("labels context previews as examples with every localized value", () => {
+    const values = { used: "64,000", limit: "128,000", percentage: "50%" };
+    expect(translateInterfaceMessage("en", "settings.contextMeter.preview.example", values)).toBe(
+      "Example: 64,000 / 128,000 tokens (50% used)",
+    );
+    expect(translateInterfaceMessage("de", "settings.contextMeter.preview.example", values)).toBe(
+      "Beispiel: 64,000 / 128,000 Token (50% genutzt)",
+    );
+    expect(translateInterfaceMessage("fr", "settings.contextMeter.preview.example", values)).toBe(
+      "Exemple : 64,000 / 128,000 jetons (50% utilisés)",
+    );
+    for (const language of ["en", "de", "fr"] as const) {
+      expect(
+        translateInterfaceMessage(language, "settings.contextMeter.preview.singleLine"),
+      ).not.toBe("settings.contextMeter.preview.singleLine");
+      expect(
+        translateInterfaceMessage(language, "settings.contextMeter.preview.expanded"),
+      ).not.toBe("settings.contextMeter.preview.expanded");
+    }
   });
 });

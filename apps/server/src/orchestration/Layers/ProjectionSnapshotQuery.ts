@@ -3,6 +3,8 @@ import {
   AgentSessionImportSource,
   ApprovalRequestId,
   ChatAttachment,
+  DeepPlanRun,
+  DeepPlanRunReference,
   OrchestrationMessageContext,
   OrchestrationEvent,
   CheckpointRef,
@@ -168,6 +170,7 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
 const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan.mapFields(
   Struct.assign({
     historyOrigin: Schema.NullOr(Schema.fromJsonString(OrchestrationHistoryOrigin)),
+    deepPlan: Schema.NullOr(Schema.fromJsonString(DeepPlanRunReference)),
   }),
 );
 const ProjectionTurnStartMessageDbRowSchema = ProjectionThreadMessageDbRowSchema.mapFields(
@@ -219,6 +222,7 @@ const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
   Struct.assign({
     modelSelection: Schema.fromJsonString(ModelSelection),
     titleState: Schema.NullOr(Schema.fromJsonString(ThreadTitleState)),
+    deepPlan: Schema.NullOr(Schema.fromJsonString(DeepPlanRun)),
     linkedPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
     branchPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
     fork: Schema.NullOr(Schema.fromJsonString(ThreadForkState)),
@@ -544,6 +548,7 @@ function mapProposedPlanRow(
     id: row.planId,
     turnId: row.turnId,
     planMarkdown: row.planMarkdown,
+    ...(row.deepPlan == null ? {} : { deepPlan: row.deepPlan }),
     implementedAt: row.implementedAt,
     implementationThreadId: row.implementationThreadId,
     createdAt: row.createdAt,
@@ -907,6 +912,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           project_id AS "projectId",
           title,
           title_state_json AS "titleState",
+          COALESCE((
+            SELECT owner.deep_plan_json FROM projection_threads owner
+            WHERE owner.deep_plan_json IS NOT NULL AND owner.deleted_at IS NULL AND owner.archived_at IS NULL
+              AND json_extract(owner.deep_plan_json, '$.approval.implementationThreadId') = projection_threads.thread_id
+            ORDER BY CASE json_extract(owner.deep_plan_json, '$.phase') WHEN 'completed' THEN 1 ELSE 0 END,
+              owner.updated_at DESC LIMIT 1
+          ), deep_plan_json) AS "deepPlan",
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
@@ -956,6 +968,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           project_id AS "projectId",
           title,
           title_state_json AS "titleState",
+          COALESCE((
+            SELECT owner.deep_plan_json FROM projection_threads owner
+            WHERE owner.deep_plan_json IS NOT NULL AND owner.deleted_at IS NULL AND owner.archived_at IS NULL
+              AND json_extract(owner.deep_plan_json, '$.approval.implementationThreadId') = threads.thread_id
+            ORDER BY CASE json_extract(owner.deep_plan_json, '$.phase') WHEN 'completed' THEN 1 ELSE 0 END,
+              owner.updated_at DESC LIMIT 1
+          ), deep_plan_json) AS "deepPlan",
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
@@ -1032,6 +1051,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           project_id AS "projectId",
           title,
           title_state_json AS "titleState",
+          COALESCE((
+            SELECT owner.deep_plan_json FROM projection_threads owner
+            WHERE owner.deep_plan_json IS NOT NULL AND owner.deleted_at IS NULL AND owner.archived_at IS NULL
+              AND json_extract(owner.deep_plan_json, '$.approval.implementationThreadId') = projection_threads.thread_id
+            ORDER BY CASE json_extract(owner.deep_plan_json, '$.phase') WHEN 'completed' THEN 1 ELSE 0 END,
+              owner.updated_at DESC LIMIT 1
+          ), deep_plan_json) AS "deepPlan",
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
@@ -1099,6 +1125,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           thread_id AS "threadId",
           turn_id AS "turnId",
           plan_markdown AS "planMarkdown",
+          deep_plan_reference_json AS "deepPlan",
           implemented_at AS "implementedAt",
           implementation_thread_id AS "implementationThreadId",
           created_at AS "createdAt",
@@ -1845,6 +1872,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           project_id AS "projectId",
           title,
           title_state_json AS "titleState",
+          COALESCE((
+            SELECT owner.deep_plan_json FROM projection_threads owner
+            WHERE owner.deep_plan_json IS NOT NULL AND owner.deleted_at IS NULL AND owner.archived_at IS NULL
+              AND json_extract(owner.deep_plan_json, '$.approval.implementationThreadId') = projection_threads.thread_id
+            ORDER BY CASE json_extract(owner.deep_plan_json, '$.phase') WHEN 'completed' THEN 1 ELSE 0 END,
+              owner.updated_at DESC LIMIT 1
+          ), deep_plan_json) AS "deepPlan",
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
@@ -1981,6 +2015,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           project_id AS "projectId",
           title,
           title_state_json AS "titleState",
+          COALESCE((
+            SELECT owner.deep_plan_json FROM projection_threads owner
+            WHERE owner.deep_plan_json IS NOT NULL AND owner.deleted_at IS NULL AND owner.archived_at IS NULL
+              AND json_extract(owner.deep_plan_json, '$.approval.implementationThreadId') = projection_threads.thread_id
+            ORDER BY CASE json_extract(owner.deep_plan_json, '$.phase') WHEN 'completed' THEN 1 ELSE 0 END,
+              owner.updated_at DESC LIMIT 1
+          ), deep_plan_json) AS "deepPlan",
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
@@ -2081,6 +2122,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           thread_id AS "threadId",
           turn_id AS "turnId",
           plan_markdown AS "planMarkdown",
+          deep_plan_reference_json AS "deepPlan",
           implemented_at AS "implementedAt",
           implementation_thread_id AS "implementationThreadId",
           created_at AS "createdAt",
@@ -3416,6 +3458,7 @@ pending_approval_requests AS (
                 autoSettleDisabledAt: row.autoSettleDisabledAt ?? null,
                 titleRegeneration: mapTitleRegeneration(row),
                 titleState: row.titleState,
+                ...(row.deepPlan == null ? {} : { deepPlan: row.deepPlan }),
                 deletedAt: row.deletedAt,
                 messages: messagesByThread.get(row.threadId) ?? [],
                 ...(replyMessagesByThread.has(row.threadId)
@@ -3736,6 +3779,7 @@ pending_approval_requests AS (
                   autoSettleDisabledAt: row.autoSettleDisabledAt ?? null,
                   titleRegeneration: mapTitleRegeneration(row),
                   titleState: row.titleState,
+                  ...(row.deepPlan == null ? {} : { deepPlan: row.deepPlan }),
                   deletedAt: row.deletedAt,
                   messages: [],
                   proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
@@ -3904,6 +3948,7 @@ pending_approval_requests AS (
                         autoSettleDisabledAt: row.autoSettleDisabledAt ?? null,
                         titleRegeneration: mapTitleRegeneration(row),
                         titleState: row.titleState,
+                        ...(row.deepPlan == null ? {} : { deepPlan: row.deepPlan }),
                         session: sessionByThread.get(row.threadId) ?? null,
                         ...optionalHarnessSyncState(harnessSyncByThread.get(row.threadId)),
                         ...optionalForkState(row.fork),
@@ -4096,6 +4141,7 @@ pending_approval_requests AS (
                   autoSettleDisabledAt: row.autoSettleDisabledAt ?? null,
                   titleRegeneration: mapTitleRegeneration(row),
                   titleState: row.titleState,
+                  ...(row.deepPlan == null ? {} : { deepPlan: row.deepPlan }),
                   session: sessionByThread.get(row.threadId) ?? null,
                   ...optionalHarnessSyncState(harnessSyncByThread.get(row.threadId)),
                   ...optionalForkState(row.fork),
@@ -4459,6 +4505,7 @@ pending_approval_requests AS (
         autoSettleDisabledAt: threadRow.value.autoSettleDisabledAt ?? null,
         titleRegeneration: mapTitleRegeneration(threadRow.value),
         titleState: threadRow.value.titleState,
+        ...(threadRow.value.deepPlan == null ? {} : { deepPlan: threadRow.value.deepPlan }),
         session: Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null,
         ...(Option.isSome(harnessSyncLink)
           ? { harnessSync: mapHarnessSyncLink(harnessSyncLink.value) }
@@ -4797,6 +4844,7 @@ pending_approval_requests AS (
         autoSettleDisabledAt: threadRow.value.autoSettleDisabledAt ?? null,
         titleRegeneration: mapTitleRegeneration(threadRow.value),
         titleState: threadRow.value.titleState,
+        ...(threadRow.value.deepPlan == null ? {} : { deepPlan: threadRow.value.deepPlan }),
         deletedAt: null,
         messages: messageRows.map(mapMessageRow),
         ...(subagentRows.some((row) => row.messageReply !== undefined)

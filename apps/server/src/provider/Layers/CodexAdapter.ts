@@ -52,6 +52,7 @@ import {
 } from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { DEEP_PLAN_PROVIDER_SUPPORT } from "../DeepPlanSupport.ts";
 import * as ResourceProtection from "../../resourceProtection/SubagentResourceGovernor.ts";
 import {
   codexResourceGovernorHookLaunchConfiguration,
@@ -89,12 +90,9 @@ import {
   mergeCodexRateLimits,
 } from "./codexUsageLimits.ts";
 import { stampProviderRuntimeEventOrigin } from "../runtimeEventOrigin.ts";
-import {
-  makeBoundedProviderEventQueue,
-  providerEventEncodedBytes,
-  PROVIDER_RUNTIME_EVENT_QUEUE_BYTE_CAPACITY,
-  PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY,
-} from "../boundedEventQueue.ts";
+import { makeProviderEventHub } from "../providerEventHub.ts";
+import { withProviderEventIngress } from "../providerEventIngress.ts";
+import { transferProviderIngress } from "../../observability/ProviderPipelineMetrics.ts";
 import {
   type CodexMcpStartupObservation,
   codexManagedMcpServers,
@@ -107,6 +105,7 @@ import {
   type CodexSubagentRuntimeMetadata,
 } from "./CodexRuntimeEventShared.ts";
 import { makeCodexMcpRuntime } from "./CodexMcpRuntime.ts";
+import { isCodexCompactionConflict, isCodexContextFull } from "./codexContextRecovery.ts";
 import { makeCodexAdapterSessionStore } from "./CodexAdapterSession.ts";
 
 export { sanitizeCodexMcpNativeEvent } from "./CodexMcpRuntimeView.ts";
@@ -1639,13 +1638,15 @@ function mapToRuntimeEvents(
     if (!payload) {
       return [];
     }
-    const errorMessage = trimText(payload.turn.error?.message);
+    if (payload.turn.error && isCodexCompactionConflict(payload.turn.error)) return [];
+    const contextFull = payload.turn.error && isCodexContextFull(payload.turn.error);
+    const errorMessage = contextFull ? undefined : trimText(payload.turn.error?.message);
     return [
       {
         ...runtimeEventBase(event, canonicalThreadId),
         type: "turn.completed",
         payload: {
-          state: toTurnStatus(payload.turn.status),
+          state: contextFull ? "interrupted" : toTurnStatus(payload.turn.status),
           ...(errorMessage ? { errorMessage } : {}),
         },
       },
@@ -2275,11 +2276,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       : undefined);
   const managedNativeEventLogger =
     options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
-  const runtimeEventQueue = yield* makeBoundedProviderEventQueue<ProviderRuntimeEvent>({
-    capacity: PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY,
-    byteCapacity: PROVIDER_RUNTIME_EVENT_QUEUE_BYTE_CAPACITY,
-    sizeOf: providerEventEncodedBytes,
-  });
+  const runtimeEventQueue = yield* makeProviderEventHub({ bufferUntilSubscribed: true });
   const sessionStore = makeCodexAdapterSessionStore({
     boundInstanceId,
     ...(resourceGovernor ? { resourceGovernor } : {}),
@@ -2530,7 +2527,13 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               );
               // The failed `turn/completed` repeats this sentence and is answered
               // below; relaying both would show the limit twice.
-              if (errorPayload?.error.codexErrorInfo === "usageLimitExceeded") return;
+              if (
+                errorPayload &&
+                (errorPayload.error.codexErrorInfo === "usageLimitExceeded" ||
+                  isCodexCompactionConflict(errorPayload.error) ||
+                  isCodexContextFull(errorPayload.error))
+              )
+                return;
             }
 
             const managedError = options?.resolveRuntime
@@ -2549,6 +2552,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                 completedPayload?.turn.status === "failed"
                   ? completedPayload.turn.error
                   : undefined;
+              if (turnError && isCodexCompactionConflict(turnError)) return;
               if (turnError && managedError) {
                 usageLimitMessage = managedError.message;
                 usageLimitError = {
@@ -2637,12 +2641,15 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               });
               return;
             }
-            yield* runtimeEventQueue.offerAll(
+            yield* runtimeEventQueue.publishAll(
               runtimeEvents.map((runtimeEvent) =>
-                stampProviderRuntimeEventOrigin(runtimeSessionId, runtimeEvent),
+                transferProviderIngress(
+                  event,
+                  stampProviderRuntimeEventOrigin(runtimeSessionId, runtimeEvent),
+                ),
               ),
             );
-          }),
+          }).pipe((effect) => withProviderEventIngress(event, effect)),
         ).pipe(Effect.forkIn(sessionScope));
 
         const started = yield* runtime.start().pipe(
@@ -2953,6 +2960,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     provider: PROVIDER,
     capabilities: {
       sessionModelSwitch: "in-session",
+      deepPlan: DEEP_PLAN_PROVIDER_SUPPORT.codex,
       promptlessTurnContinuation: true,
       mcp: "nativeConfig",
       nativeThreadFork: true,
@@ -2975,6 +2983,8 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     listSessions,
     hasSession,
     stopAll,
+    consumeEvents: runtimeEventQueue.consumeEvents,
+    subscribeEventStream: runtimeEventQueue.subscribeEventStream,
     get streamEvents() {
       return runtimeEventQueue.stream;
     },

@@ -76,7 +76,7 @@ export function ReplyTopicControls({
   return (
     <div className="mt-2 space-y-2 text-xs" data-reply-topic-id={topic.id}>
       <div className="flex flex-wrap items-center gap-2 text-muted-foreground" role="status">
-        <span>{translate(`chat.reply.status.${status}`)}</span>
+        {!active ? <span>{translate(`chat.reply.status.${status}`)}</span> : null}
         {active ? (
           <Button
             size="xs"

@@ -1,4 +1,5 @@
 import type { ProviderRuntimeEvent, RuntimeSessionId } from "@t3tools/contracts";
+import { transferProviderIngress } from "../observability/ProviderPipelineMetrics.ts";
 
 /**
  * Captures a provider runtime lease at session creation so delayed callbacks
@@ -15,8 +16,8 @@ export function stampProviderRuntimeEventOrigin(
   runtimeSessionId: RuntimeSessionId,
   event: ProviderRuntimeEvent,
 ): ProviderRuntimeEvent {
-  return {
+  return transferProviderIngress(event, {
     ...event,
     runtimeSessionId,
-  };
+  });
 }

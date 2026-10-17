@@ -27,6 +27,7 @@ export interface McpCredentialRequest {
   readonly threadId: ThreadId;
   readonly workspaceContextThreadId?: ThreadId;
   readonly messageReply?: McpInvocationContext.McpMessageReplyContext;
+  readonly deepPlan?: McpInvocationContext.McpDeepPlanContext;
   /** True selects core-only; explicit false requests the full optional profile. */
   readonly workspaceOnly?: boolean;
   /** False omits project memory when memory is disabled or provider-managed. */
@@ -54,6 +55,10 @@ export interface McpSessionRegistryShape {
    * credential even when it goes a long time without touching an MCP tool.
    */
   readonly touch: (threadId: ThreadId) => Effect.Effect<void>;
+  readonly bindDeepPlan: (
+    threadId: ThreadId,
+    binding: McpInvocationContext.McpDeepPlanContext | undefined,
+  ) => Effect.Effect<void>;
   readonly revokeProviderSession: (providerSessionId: string) => Effect.Effect<void>;
   readonly revokeThread: (threadId: ThreadId) => Effect.Effect<void>;
   readonly revokeAll: Effect.Effect<void>;
@@ -241,11 +246,17 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         ...(request.messageReply === undefined
           ? {}
           : { messageReply: { ...request.messageReply } }),
+        ...(request.deepPlan === undefined || request.messageReply !== undefined
+          ? {}
+          : { deepPlan: request.deepPlan }),
         threadId: ThreadId.make(request.workspaceContextThreadId ?? request.threadId),
         providerSessionId,
         providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
         capabilities: new Set<McpInvocationContext.McpCapability>([
           ...capabilities,
+          ...(request.deepPlan !== undefined && request.messageReply === undefined
+            ? (["deep-plan"] as const)
+            : []),
           ...(coreWorkspaceOnly ? [] : (request.capabilities ?? [])),
         ]),
         issuedAt,
@@ -269,6 +280,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           endpoint: `${endpointBase}${endpointPath}`,
           authorizationHeader: `Bearer ${rawToken}`,
           capabilities: scope.capabilities,
+          ...(scope.deepPlan === undefined ? {} : { deepPlan: scope.deepPlan }),
         },
       };
     },
@@ -315,6 +327,27 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     issue,
     resolve,
     touch,
+    bindDeepPlan: (threadId, binding) =>
+      SynchronizedRef.update(state, ({ records }) => {
+        const next = new Map(records);
+        for (const [tokenHash, record] of records) {
+          if (record.ownerThreadId !== threadId || record.scope.messageReply !== undefined)
+            continue;
+          const capabilities = new Set(record.scope.capabilities);
+          const { deepPlan: _previous, ...scope } = record.scope;
+          if (binding === undefined) capabilities.delete("deep-plan");
+          else capabilities.add("deep-plan");
+          next.set(tokenHash, {
+            ...record,
+            scope: {
+              ...scope,
+              capabilities,
+              ...(binding === undefined ? {} : { deepPlan: binding }),
+            },
+          });
+        }
+        return { records: next };
+      }),
     revokeProviderSession: Effect.fn("McpSessionRegistry.revokeProviderSession")(
       function* (providerSessionId) {
         yield* revokeWhere((record) => record.scope.providerSessionId === providerSessionId);
@@ -362,6 +395,12 @@ export const issueActiveMcpCredential = (
  */
 export const touchActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>
   activeMcpSessionRegistry ? activeMcpSessionRegistry.touch(threadId) : Effect.void;
+
+export const bindActiveMcpDeepPlan = (
+  threadId: ThreadId,
+  binding: McpInvocationContext.McpDeepPlanContext | undefined,
+): Effect.Effect<void> =>
+  activeMcpSessionRegistry ? activeMcpSessionRegistry.bindDeepPlan(threadId, binding) : Effect.void;
 
 export const revokeActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>
   activeMcpSessionRegistry ? activeMcpSessionRegistry.revokeThread(threadId) : Effect.void;

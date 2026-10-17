@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { ProviderDriverKind } from "@t3tools/contracts";
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
+vi.mock("../../localization/useMobileInterfaceTranslator", () => ({
+  useMobileInterfaceTranslator: () => ({ message: (key: string) => key }),
+}));
 
 vi.mock("../../state/queries", () => ({
   useComposerPathSearch: () => ({ entries: [], isPending: false }),
@@ -24,6 +27,34 @@ import {
 } from "./use-composer-command-menu";
 
 describe("mobile slash commands", () => {
+  it("selects Deep Plan locally in both existing and new-task drafts", () => {
+    for (const hasThread of [true, false]) {
+      const items = buildComposerSlashCommandItems({
+        query: "deep",
+        atMessageStart: true,
+        hasThread,
+        allowInteractionMode: false,
+        allowDeepPlan: true,
+        selectedProviderStatus: null,
+      });
+      const item = items[0];
+      if (!item) throw new Error("Expected the Deep Plan command");
+      expect(
+        resolveComposerCommandSelection({
+          draftMessage: "/deep-plan review the project",
+          trigger: { rangeStart: 0, rangeEnd: 10 },
+          item,
+          allowInteractionMode: false,
+          allowDeepPlan: true,
+        }),
+      ).toEqual({
+        text: " review the project",
+        cursor: 0,
+        interactionMode: null,
+        composerMode: "deep-plan",
+      });
+    }
+  });
   const antigravity = {
     driver: ProviderDriverKind.make("antigravity"),
     showInteractionModeToggle: false,

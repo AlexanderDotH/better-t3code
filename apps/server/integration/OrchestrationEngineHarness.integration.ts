@@ -8,6 +8,7 @@ import {
   ProviderDriverKind,
   type OrchestrationEvent,
   type OrchestrationThread,
+  type ServerSettings,
   type ProviderApprovalDecision,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -97,6 +98,7 @@ import { FetchWorkerCoordinator } from "../src/fetch/FetchWorkerCoordinator.ts";
 import { NoOpSkillEngineLayer } from "../src/skills/testUtils/NoOpSkillEngine.ts";
 import { ProjectMemoryStore } from "../src/projectMemory/ProjectMemoryStore.ts";
 import { makeDecisionGenerationTestLayer } from "../src/decisionGeneration/testUtils.ts";
+import { DeepPlanValidationReactor } from "../src/deepPlanning/DeepPlanValidationReactor.ts";
 
 const decodeCodexSettings = Schema.decodeEffect(CodexSettings);
 
@@ -239,6 +241,7 @@ export interface OrchestrationIntegrationHarness {
 }
 
 interface MakeOrchestrationIntegrationHarnessOptions {
+  readonly serverSettings?: Partial<ServerSettings>;
   readonly provider?: ProviderDriverKind;
   readonly realCodex?: boolean;
   /** Tracer for every fiber the harness runtime runs, including reactors. */
@@ -362,7 +365,7 @@ export const makeOrchestrationIntegrationHarness = (
           }),
       }),
     );
-    const serverSettingsLayer = ServerSettingsService.layerTest();
+    const serverSettingsLayer = ServerSettingsService.layerTest(options?.serverSettings);
     const runtimeIngestionLayer = ProviderRuntimeIngestionLive.pipe(
       Layer.provideMerge(runtimeServicesLayer),
       Layer.provideMerge(serverSettingsLayer),
@@ -427,6 +430,13 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(VcsProcess.layer),
     );
     const orchestrationReactorLayer = OrchestrationReactorLive.pipe(
+      Layer.provideMerge(
+        Layer.mock(DeepPlanValidationReactor)({
+          start: () => Effect.void,
+          drainThrough: () => Effect.void,
+          streamReceiptsForTest: Stream.empty,
+        }),
+      ),
       Layer.provideMerge(
         Layer.succeed(StorageCleanup.StorageCleanup, {
           start: () => Effect.void,

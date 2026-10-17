@@ -22,6 +22,7 @@ import {
   CursorSettings,
   McpRuntimeServerKey,
   EnvironmentId,
+  DeepPlanRunId,
   ProviderDriverKind,
   type ProviderRuntimeEvent,
   ThreadId,
@@ -165,6 +166,55 @@ const cursorAdapterTestLayer = it.layer(
 );
 
 cursorAdapterTestLayer("CursorAdapterLive", (it) => {
+  it.effect.each(["planning", "execution"] as const)(
+    "rejects readonly Deep Plan %s before dispatch when the Cursor runtime has no native plan mode",
+    (phase) =>
+      Effect.gen(function* () {
+        const adapter = yield* CursorAdapter;
+        const settings = yield* ServerSettingsService;
+        const threadId = ThreadId.make("cursor-deep-plan-unsupported-runtime");
+        const wrapperPath = yield* Effect.promise(() =>
+          makeMockAgentWrapper({ T3_ACP_NO_PLAN_MODE: "1" }),
+        );
+        yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+        yield* adapter.startSession({ threadId, runtimeMode: "full-access", cwd: process.cwd() });
+        McpProviderSession.setMcpProviderSession({
+          environmentId: EnvironmentId.make("local"),
+          threadId,
+          providerInstanceId: ProviderInstanceId.make("cursor"),
+          providerSessionId: "cursor-deep-plan-session",
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer test",
+          capabilities: new Set(["deep-plan"]),
+          deepPlan: {
+            runId: DeepPlanRunId.make("run-1"),
+            runThreadId: threadId,
+            phase,
+            approvedPlanVersion: phase === "planning" ? null : 1,
+            readOnly: true,
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("cursor"),
+              model: "gemini-test-low",
+            },
+          },
+        });
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
+        );
+        const error = yield* adapter
+          .sendTurn({
+            threadId,
+            input: "Plan this change",
+            interactionMode: "plan",
+            attachments: [],
+          })
+          .pipe(Effect.flip);
+        assert.equal(error._tag, "ProviderAdapterValidationError");
+        assert.include(error.message, "read-only plan mode");
+        assert.deepEqual((yield* adapter.readThread(threadId)).turns, []);
+        yield* adapter.stopSession(threadId);
+      }),
+  );
   it.effect("rejects rollback without discarding the provider conversation", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
@@ -198,7 +248,9 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         }),
       );
       yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
-      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+      const events = yield* adapter.subscribeEventStream!({ delivery: "lossless" });
+      const runtimeEventsFiber = yield* events.pipe(
+        Stream.orDie,
         Stream.takeUntil((event) => event.type === "session.exited"),
         Stream.runCollect,
         Effect.forkChild,

@@ -25,6 +25,7 @@ import {
   createModelSelection,
   stripAutoReasoning,
   supportsModelSelectionPurpose,
+  resolveContextCompactionModel,
 } from "@t3tools/shared/model";
 import { Link } from "@tanstack/react-router";
 import { useMemo, type ReactNode } from "react";
@@ -47,6 +48,7 @@ type BetterT3SettingsPatch = ClientSettingsPatch & ServerSettingsPatch;
 type Translate = InterfaceTranslator["message"];
 
 const WEB_BETTER_T3_PREPARED_CONTROL_IDS = [
+  "agent.contextCompactionModel",
   "agent.fetchModel",
   "agent.autoReasoningModel",
   "knowledge.projectIndexingDecisionModel",
@@ -448,6 +450,32 @@ export function useBetterT3PreparedControls(input: {
         predicate={isFetchCapableProvider}
         translate={input.translate}
         onChange={(fetchModelSelection) => input.updateSettings({ fetchModelSelection })}
+      />
+    ),
+    "agent.contextCompactionModel": (
+      <BetterT3ModelSelectionControl
+        featureId="agent.contextCompactionModel"
+        settings={input.settings}
+        providers={input.providers}
+        selection={input.settings.contextCompactionModelSelection}
+        fallbackSelection={
+          resolveContextCompactionModel({
+            selection: null,
+            fallbackSelection: input.settings.textGenerationModelSelection,
+            providers: input.providers,
+          })?.selection ?? null
+        }
+        allowAutomatic
+        purpose="context-compaction"
+        disabled={scalarControlDisabled("agent.contextCompactionModel")}
+        predicate={acceptsAnyProvider}
+        translate={input.translate}
+        onChange={(selection) =>
+          input.updateSettings({
+            contextCompactionModelSelection:
+              selection === null ? null : stripAutoReasoning(selection),
+          })
+        }
       />
     ),
     "agent.autoReasoningModel": (

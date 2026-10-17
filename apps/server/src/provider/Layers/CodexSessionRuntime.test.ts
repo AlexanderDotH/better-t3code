@@ -259,6 +259,100 @@ describe("buildTurnStartParams", () => {
     });
   });
 
+  it.effect.each([
+    {
+      mode: "approval-required" as const,
+      policy: "untrusted",
+      reviewer: "user",
+      sandbox: "readOnly",
+    },
+    {
+      mode: "auto-accept-edits" as const,
+      policy: "on-request",
+      reviewer: "user",
+      sandbox: "workspaceWrite",
+    },
+    {
+      mode: "auto" as const,
+      policy: "on-request",
+      reviewer: "auto_review",
+      sandbox: "workspaceWrite",
+    },
+    {
+      mode: "full-access" as const,
+      policy: "never",
+      reviewer: "user",
+      sandbox: "dangerFullAccess",
+    },
+  ])(
+    "inherits $mode approvals and sandbox permissions for Deep Plan",
+    ({ mode, policy, reviewer, sandbox }) =>
+      Effect.gen(function* () {
+        const params = yield* buildTurnStartParams({
+          threadId: "provider-thread",
+          runtimeMode: mode,
+          interactionMode: "plan",
+          t3ToolAvailability: {
+            ...configuredT3ToolAvailability(undefined),
+            deepPlan: { phase: "planning" },
+          },
+        });
+        NodeAssert.equal(params.approvalPolicy, policy);
+        NodeAssert.equal(params.approvalsReviewer, reviewer);
+        NodeAssert.equal(params.sandboxPolicy?.type, sandbox);
+      }),
+  );
+
+  it.effect(
+    "keeps Deep Plan planning intent without downgrading full-access command permissions",
+    () =>
+      Effect.gen(function* () {
+        const params = yield* buildTurnStartParams({
+          threadId: "provider-thread-1",
+          runtimeMode: "full-access",
+          prompt: "Make a Deep Plan",
+          interactionMode: "plan",
+          t3ToolAvailability: {
+            ...configuredT3ToolAvailability(undefined),
+            deepPlan: { phase: "planning" },
+          },
+        });
+        NodeAssert.deepEqual(params.sandboxPolicy, { type: "dangerFullAccess" });
+        NodeAssert.equal(params.approvalPolicy, "never");
+        NodeAssert.equal(params.collaborationMode?.mode, "plan");
+        NodeAssert.match(
+          params.additionalContext?.t3_code_deep_plan?.value ?? "",
+          /deep_plan_publish/,
+        );
+      }),
+  );
+
+  it.effect("keeps approved review instructions and inherits full-access permissions", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        prompt: "Review the approved work",
+        interactionMode: "plan",
+        t3ToolAvailability: {
+          ...configuredT3ToolAvailability(undefined),
+          deepPlan: { phase: "execution", readOnly: true },
+        },
+      });
+      NodeAssert.deepEqual(params.sandboxPolicy, { type: "dangerFullAccess" });
+      NodeAssert.equal(params.approvalPolicy, "never");
+      NodeAssert.equal(params.collaborationMode?.mode, "plan");
+      NodeAssert.match(
+        params.additionalContext?.t3_code_deep_plan?.value ?? "",
+        /read-only review/,
+      );
+      NodeAssert.doesNotMatch(
+        params.additionalContext?.t3_code_deep_plan?.value ?? "",
+        /Implement only the approved plan version/,
+      );
+    }),
+  );
+
   it("includes default collaboration mode and image attachments", () => {
     const params = Effect.runSync(
       buildTurnStartParams({
@@ -1467,24 +1561,27 @@ describe("Codex native thread lifecycle", () => {
     }),
   );
 
-  it.effect("treats a native compaction request failure as nonfatal", () =>
+  it.effect("reports native compaction request failures to waiting messages", () =>
     Effect.gen(function* () {
       const requests: Array<{ readonly method: string; readonly payload: unknown }> = [];
 
-      yield* compactCodexThread({
-        client: {
-          request: (method, payload) => {
-            requests.push({ method, payload });
-            return Effect.fail(
-              new CodexErrors.CodexAppServerRequestError({
-                code: -32603,
-                errorMessage: "compaction unavailable",
-              }),
-            );
+      const failure = yield* Effect.flip(
+        compactCodexThread({
+          client: {
+            request: (method, payload) => {
+              requests.push({ method, payload });
+              return Effect.fail(
+                new CodexErrors.CodexAppServerRequestError({
+                  code: -32603,
+                  errorMessage: "compaction unavailable",
+                }),
+              );
+            },
           },
-        },
-        providerThreadId: "provider-thread-1",
-      });
+          providerThreadId: "provider-thread-1",
+        }),
+      );
+      NodeAssert.equal(failure.message, "compaction unavailable");
 
       NodeAssert.deepStrictEqual(requests, [
         {

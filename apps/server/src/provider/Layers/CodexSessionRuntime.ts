@@ -27,6 +27,10 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import {
+  stampProviderIngress,
+  transferProviderIngress,
+} from "../../observability/ProviderPipelineMetrics.ts";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -47,6 +51,7 @@ import {
 import * as ResourceProtection from "../../resourceProtection/SubagentResourceGovernor.ts";
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
+import { isCodexCompactionConflict, isCodexContextFull } from "./codexContextRecovery.ts";
 import { managedMcpProviderKey } from "../../mcp/McpConfigEngine.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import {
@@ -55,6 +60,7 @@ import {
   type CodexT3ToolAvailability,
   type T3CodeToolAvailability,
 } from "../CodexDeveloperInstructions.ts";
+import { deepPlanContextForThread } from "../DeepPlanToolContext.ts";
 import { codexManagedFeatureArgs } from "../CodexProcessArgs.ts";
 import {
   makeBoundedProviderEventQueue,
@@ -130,16 +136,10 @@ export function compactCodexThread<E>(input: {
     ) => Effect.Effect<CodexRpc.ClientRequestResponsesByMethod["thread/compact/start"], E>;
   };
   readonly providerThreadId: string;
-}): Effect.Effect<void> {
-  return input.client.request("thread/compact/start", { threadId: input.providerThreadId }).pipe(
-    Effect.asVoid,
-    Effect.catch((cause) =>
-      Effect.logWarning("codex app-server thread compaction failed nonfatally", {
-        providerThreadId: input.providerThreadId,
-        cause,
-      }),
-    ),
-  );
+}): Effect.Effect<void, E> {
+  return input.client
+    .request("thread/compact/start", { threadId: input.providerThreadId })
+    .pipe(Effect.asVoid);
 }
 
 export function listCodexMcpServerStatuses<E>(
@@ -1648,6 +1648,37 @@ export const makeCodexSessionRuntime = (
     const collabChildLiveTurnsRef = yield* Ref.make(new Map<string, string>());
     const suppressMemoryConsolidationNotification = makeMemoryConsolidationNotificationFilter();
     const closedRef = yield* Ref.make(false);
+    // Native compaction has turn receipts but does not own a foreground run.
+    let compaction:
+      | {
+          readonly done: Deferred.Deferred<void, CodexSessionRuntimeError>;
+          readonly manual: boolean;
+          turnId: TurnId | undefined;
+        }
+      | undefined;
+    let detachedTurn:
+      | {
+          readonly turnId: TurnId;
+          readonly done: Deferred.Deferred<void, CodexSessionRuntimeError>;
+        }
+      | undefined;
+    let compactionRevision = 0;
+    let contextFull = false;
+    const failContextWaiters = (error: CodexSessionRuntimeError) =>
+      Effect.gen(function* () {
+        if (compaction) yield* Deferred.fail(compaction.done, error);
+        if (detachedTurn) yield* Deferred.fail(detachedTurn.done, error);
+        compaction = undefined;
+        detachedTurn = undefined;
+      });
+    yield* Scope.addFinalizer(
+      runtimeScope,
+      failContextWaiters(
+        CodexErrors.CodexAppServerRequestError.internalError(
+          "Codex session closed during context compaction.",
+        ),
+      ),
+    );
     /** The `additionalContext` of the latest `turn/start`, restored after compaction. */
     const lastAdditionalContextRef =
       yield* Ref.make<CodexTurnStartParamsWithCollaborationMode["additionalContext"]>(undefined);
@@ -1747,7 +1778,11 @@ export const makeCodexSessionRuntime = (
       updatedAt: sessionCreatedAt,
     } satisfies ProviderSession;
     const sessionRef = yield* Ref.make<ProviderSession>(initialSession);
-    const offerEvent = (event: ProviderEvent) => events.offer(event).pipe(Effect.asVoid);
+    const offerEvent = (event: ProviderEvent) => {
+      if (typeof event.payload === "object" && event.payload !== null)
+        transferProviderIngress(event.payload, event);
+      return events.offer(event).pipe(Effect.asVoid);
+    };
 
     const emitEvent = (event: Omit<ProviderEvent, "id" | "provider" | "createdAt">) =>
       Effect.gen(function* () {
@@ -1771,9 +1806,9 @@ export const makeCodexSessionRuntime = (
     const clientContext = yield* CodexClient.layerChildProcess(child, {
       onTermination: (error) =>
         Effect.gen(function* () {
-          if ((yield* Ref.get(closedRef)) || error._tag === "CodexAppServerProcessExitedError") {
-            return;
-          }
+          if (yield* Ref.get(closedRef)) return;
+          yield* failContextWaiters(error);
+          if (error._tag === "CodexAppServerProcessExitedError") return;
           const session = yield* Ref.get(sessionRef);
           yield* updateSession(sessionRef, {
             status: "error",
@@ -2423,6 +2458,131 @@ export const makeCodexSessionRuntime = (
           yield* restoreAdditionalContext(notification.params.threadId);
         }
 
+        if (
+          notification.params &&
+          "threadId" in notification.params &&
+          notification.params.threadId === rootProviderThreadId
+        ) {
+          if (
+            notification.method === "item/started" &&
+            notification.params.item.type === "contextCompaction"
+          ) {
+            if (!compaction) {
+              compaction = {
+                done: yield* Deferred.make<void, CodexSessionRuntimeError>(),
+                manual: false,
+                turnId: TurnId.make(notification.params.turnId),
+              };
+            } else if (compaction.turnId === undefined) {
+              compaction.turnId = TurnId.make(notification.params.turnId);
+            }
+          }
+          if (
+            notification.method === "item/completed" &&
+            notification.params.item.type === "contextCompaction"
+          ) {
+            contextFull = false;
+            compactionRevision += 1;
+            if (compaction && !compaction.manual) {
+              yield* Deferred.succeed(compaction.done, undefined);
+              compaction = undefined;
+            }
+          }
+          if (
+            notification.method === "error" &&
+            (isCodexCompactionConflict(notification.params.error) ||
+              isCodexContextFull(notification.params.error))
+          )
+            return;
+          if (
+            notification.method === "turn/completed" &&
+            notification.params.turn.error &&
+            isCodexCompactionConflict(notification.params.turn.error)
+          )
+            return;
+          if (
+            notification.method === "turn/completed" &&
+            compaction &&
+            !compaction.manual &&
+            compaction.turnId === notification.params.turn.id
+          ) {
+            const pending = compaction;
+            compaction = undefined;
+            if (notification.params.turn.status === "failed") {
+              yield* Deferred.fail(
+                pending.done,
+                CodexErrors.CodexAppServerRequestError.internalError(
+                  notification.params.turn.error?.message ?? "Context compaction failed.",
+                ),
+              );
+            } else {
+              yield* Deferred.succeed(pending.done, undefined);
+            }
+          }
+          if (
+            notification.method === "thread/compacted" &&
+            compaction?.manual &&
+            (compaction.turnId === undefined || compaction.turnId === notification.params.turnId)
+          ) {
+            const pending = compaction;
+            compaction = undefined;
+            contextFull = false;
+            compactionRevision += 1;
+            yield* Deferred.succeed(pending.done, undefined);
+          }
+          if (
+            notification.method === "turn/completed" &&
+            detachedTurn?.turnId === notification.params.turn.id
+          ) {
+            const waiting = detachedTurn;
+            detachedTurn = undefined;
+            if (notification.params.turn.status === "failed") {
+              yield* Deferred.fail(
+                waiting.done,
+                CodexErrors.CodexAppServerRequestError.internalError(
+                  notification.params.turn.error?.message ?? "Context compaction failed.",
+                ),
+              );
+            } else {
+              yield* Deferred.succeed(waiting.done, undefined);
+            }
+            return;
+          }
+          if (
+            (notification.method === "turn/started" || notification.method === "turn/completed") &&
+            compaction?.manual &&
+            compaction.turnId === notification.params.turn.id
+          ) {
+            if (notification.method === "turn/completed") {
+              const pending = compaction;
+              compaction = undefined;
+              if (notification.params.turn.status === "failed") {
+                yield* Deferred.fail(
+                  pending.done,
+                  CodexErrors.CodexAppServerRequestError.internalError(
+                    notification.params.turn.error?.message ?? "Context compaction failed.",
+                  ),
+                );
+              } else {
+                contextFull = false;
+                compactionRevision += 1;
+                yield* Deferred.succeed(pending.done, undefined);
+              }
+            }
+            return;
+          }
+          if (
+            detachedTurn &&
+            route.turnId === detachedTurn.turnId &&
+            !(
+              (notification.method === "item/started" ||
+                notification.method === "item/completed") &&
+              notification.params.item.type === "contextCompaction"
+            )
+          )
+            return;
+        }
+
         let requestId: ApprovalRequestId | undefined;
         let requestKind: ProviderRequestKind | undefined;
         let turnId = route.turnId;
@@ -2484,6 +2644,14 @@ export const makeCodexSessionRuntime = (
           if (providerThreadId && payload.threadId !== providerThreadId) {
             return Effect.void;
           }
+          if (compaction?.manual && compaction.turnId === undefined) {
+            compaction.turnId = TurnId.make(payload.turn.id);
+          }
+          if (
+            (compaction?.manual && compaction.turnId === payload.turn.id) ||
+            detachedTurn?.turnId === payload.turn.id
+          )
+            return Effect.void;
           return updateSession(sessionRef, {
             status: "running",
             activeTurnId: TurnId.make(payload.turn.id),
@@ -2498,14 +2666,16 @@ export const makeCodexSessionRuntime = (
           if (providerThreadId && payload.threadId !== providerThreadId) {
             return Effect.void;
           }
-          const lastError =
-            payload.turn.status === "failed" && "error" in payload.turn && payload.turn.error
-              ? payload.turn.error.message
-              : undefined;
+          const turnError = payload.turn.error;
+          if (turnError && isCodexCompactionConflict(turnError)) return Effect.void;
+          const recoverable =
+            turnError !== undefined && turnError !== null && isCodexContextFull(turnError);
+          if (recoverable) contextFull = true;
           return updateSession(sessionRef, {
-            status: payload.turn.status === "failed" ? "error" : "ready",
+            status: payload.turn.status === "failed" && !recoverable ? "error" : "ready",
             activeTurnId: undefined,
-            ...(lastError ? { lastError } : {}),
+            lastError:
+              payload.turn.status === "failed" && !recoverable ? turnError?.message : undefined,
           });
         }),
       ),
@@ -2518,12 +2688,28 @@ export const makeCodexSessionRuntime = (
           if (providerThreadId && payloadThreadId && payloadThreadId !== providerThreadId) {
             return Effect.void;
           }
+          if (isCodexCompactionConflict(payload.error)) return Effect.void;
+          if (isCodexContextFull(payload.error)) {
+            contextFull = true;
+            return Effect.void;
+          }
           const errorMessage = payload.error.message;
           const willRetry = payload.willRetry;
           return updateSession(sessionRef, {
             status: willRetry ? "running" : "error",
             ...(errorMessage ? { lastError: errorMessage } : {}),
           });
+        }),
+      ),
+    );
+
+    yield* client.handleServerNotification("thread/tokenUsage/updated", (payload) =>
+      currentSessionProviderThreadId.pipe(
+        Effect.flatMap((providerThreadId) => {
+          if (payload.threadId !== providerThreadId) return Effect.void;
+          const limit = payload.tokenUsage.modelContextWindow ?? options.contextWindow;
+          if (limit && payload.tokenUsage.last.totalTokens >= limit) contextFull = true;
+          return Effect.void;
         }),
       ),
     );
@@ -2846,7 +3032,9 @@ export const makeCodexSessionRuntime = (
 
     const registerServerNotification = <M extends CodexRpc.ServerNotificationMethod>(method: M) =>
       client.handleServerNotification(method, (params) =>
-        serverNotifications.offer(makeCodexServerNotification(method, params)).pipe(Effect.asVoid),
+        serverNotifications
+          .offer(makeCodexServerNotification(method, stampProviderIngress(params)))
+          .pipe(Effect.asVoid),
       );
 
     yield* Effect.forEach(
@@ -2969,6 +3157,26 @@ export const makeCodexSessionRuntime = (
       return providerThreadId;
     });
 
+    const compactThread = Effect.gen(function* () {
+      if (compaction) return yield* Deferred.await(compaction.done);
+      const providerThreadId = yield* readProviderThreadId;
+      const pending = {
+        done: yield* Deferred.make<void, CodexSessionRuntimeError>(),
+        manual: true,
+        turnId: undefined as TurnId | undefined,
+      };
+      compaction = pending;
+      yield* compactCodexThread({ client, providerThreadId }).pipe(
+        Effect.onError((cause) =>
+          Effect.gen(function* () {
+            if (compaction === pending) compaction = undefined;
+            yield* Deferred.failCause(pending.done, cause);
+          }),
+        ),
+      );
+      yield* Deferred.await(pending.done);
+    });
+
     const close = Effect.gen(function* () {
       const alreadyClosed = yield* Ref.getAndSet(closedRef, true);
       if (alreadyClosed) {
@@ -3016,12 +3224,16 @@ export const makeCodexSessionRuntime = (
       getSession: Ref.get(sessionRef),
       sendTurn: (input) =>
         Effect.gen(function* () {
+          if (detachedTurn) yield* Deferred.await(detachedTurn.done);
+          if (compaction) yield* Deferred.await(compaction.done);
+          if (contextFull) yield* compactThread;
           const providerThreadId = yield* readProviderThreadId;
           const normalizedModel = normalizeCodexModelSlug(
             input.model ?? (yield* Ref.get(sessionRef)).model,
           );
           const models = options.models ? yield* options.models : [];
           const modelName = models.find((model) => model.slug === normalizedModel)?.name;
+          const deepPlan = deepPlanContextForThread(options.threadId);
           const params = yield* buildTurnStartParams({
             threadId: providerThreadId,
             runtimeMode: options.runtimeMode,
@@ -3035,14 +3247,36 @@ export const makeCodexSessionRuntime = (
             // Derived from the session's own credential rather than the
             // setting, so the prompt describes the tools this turn actually
             // has even if the setting changed after the session started.
-            t3ToolAvailability: configuredMcpToolAvailability(
-              options.appServerArgs,
-              options.mcpCapabilities,
-            ),
+            t3ToolAvailability: {
+              ...configuredMcpToolAvailability(options.appServerArgs, options.mcpCapabilities),
+              ...(deepPlan ? { deepPlan } : {}),
+            },
           });
           yield* Ref.set(lastAdditionalContextRef, params.additionalContext);
           const sessionBeforeStart = yield* Ref.get(sessionRef);
-          const rawResponse = yield* client.raw.request("turn/start", params);
+          const revisionBeforeStart = compactionRevision;
+          const rawResponse = yield* client.raw.request("turn/start", params).pipe(
+            Effect.catch((error) =>
+              Effect.gen(function* () {
+                if (isCodexContextFull(error)) {
+                  contextFull = true;
+                  yield* compactThread;
+                } else if (isCodexCompactionConflict(error)) {
+                  if (compactionRevision === revisionBeforeStart) {
+                    compaction ??= {
+                      done: yield* Deferred.make<void, CodexSessionRuntimeError>(),
+                      manual: true,
+                      turnId: (yield* Ref.get(sessionRef)).activeTurnId,
+                    };
+                    yield* Deferred.await(compaction.done);
+                  }
+                } else {
+                  return yield* Effect.fail(error);
+                }
+                return yield* client.raw.request("turn/start", params);
+              }),
+            ),
+          );
           const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(
             Effect.mapError((error) =>
               CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
@@ -3088,27 +3322,73 @@ export const makeCodexSessionRuntime = (
           yield* settlePendingApprovals("cancel");
           // Pending user-input prompts block the same way; settle them too.
           yield* settlePendingUserInputs({});
-          // Stop-everything: children are full threads with their own turns;
-          // interrupting only the parent leaves the fleet running. Interrupt
-          // each live child turn first, best-effort per child, BOUNDED: the
-          // transport awaits an unbounded Deferred per request, so a wedged
-          // child would otherwise block the parent interrupt forever —
-          // exactly during the runaway fleet where Stop matters most
-          // (review finding). Per-child and overall deadlines guarantee the
-          // parent interrupt below always runs.
-          const liveChildTurns = yield* Ref.get(collabChildLiveTurnsRef);
-          yield* Effect.forEach(
-            Array.from(liveChildTurns.entries()),
-            ([childThreadId, childTurnId]) =>
-              client
-                .request("turn/interrupt", {
-                  threadId: childThreadId,
-                  turnId: childTurnId,
-                })
-                .pipe(Effect.timeoutOption("3 seconds"), Effect.ignore),
-            { concurrency: 8, discard: true },
-          ).pipe(Effect.timeoutOption("10 seconds"), Effect.ignore);
+          // Child turns need their own interrupts. Bound each request and
+          // the batch so an unresponsive child cannot block the parent.
+          const interruptChildren = Ref.get(collabChildLiveTurnsRef).pipe(
+            Effect.flatMap((liveChildTurns) =>
+              Effect.forEach(
+                Array.from(liveChildTurns.entries()),
+                ([childThreadId, childTurnId]) =>
+                  client
+                    .request("turn/interrupt", {
+                      threadId: childThreadId,
+                      turnId: childTurnId,
+                    })
+                    .pipe(Effect.timeoutOption("3 seconds"), Effect.ignore),
+                { concurrency: 8, discard: true },
+              ),
+            ),
+            Effect.timeoutOption("10 seconds"),
+            Effect.ignore,
+          );
           const effectiveTurnId = turnId ?? session.activeTurnId;
+          if (compaction?.manual || detachedTurn?.turnId === effectiveTurnId) return;
+          if (compaction && effectiveTurnId) {
+            // Settle Stop immediately and interrupt the user turn after compaction.
+            const waiting = {
+              turnId: effectiveTurnId,
+              done: yield* Deferred.make<void, CodexSessionRuntimeError>(),
+            };
+            detachedTurn = waiting;
+            yield* updateSession(sessionRef, { status: "ready", activeTurnId: undefined });
+            yield* Effect.all(
+              [
+                interruptChildren,
+                Deferred.await(compaction.done).pipe(
+                  Effect.andThen(
+                    client.request("turn/interrupt", {
+                      threadId: providerThreadId,
+                      turnId: effectiveTurnId,
+                    }),
+                  ),
+                  Effect.catch((cause) =>
+                    Effect.gen(function* () {
+                      if (detachedTurn === waiting) {
+                        detachedTurn = undefined;
+                        yield* Deferred.fail(waiting.done, cause);
+                      }
+                      yield* Effect.logWarning(
+                        "Could not interrupt Codex after background compaction.",
+                        {
+                          cause,
+                        },
+                      );
+                    }),
+                  ),
+                ),
+              ],
+              { concurrency: "unbounded", discard: true },
+            ).pipe(Effect.forkIn(runtimeScope));
+            yield* emitEvent({
+              kind: "notification",
+              threadId: options.threadId,
+              method: "turn/aborted",
+              turnId: effectiveTurnId,
+              message: "Turn stopped",
+            });
+            return;
+          }
+          yield* interruptChildren;
           if (!effectiveTurnId) {
             return;
           }
@@ -3139,9 +3419,7 @@ export const makeCodexSessionRuntime = (
             ? { lastProviderTurnId: input.lastProviderTurnId }
             : {}),
         }),
-      compactThread: readProviderThreadId.pipe(
-        Effect.flatMap((providerThreadId) => compactCodexThread({ client, providerThreadId })),
-      ),
+      compactThread,
       uploadFeedback: (reason) =>
         Effect.gen(function* () {
           const providerThreadId = yield* readProviderThreadId;

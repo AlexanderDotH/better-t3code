@@ -51,6 +51,8 @@ const MOBILE_BETTER_T3_BOOLEAN_MIRRORS = [
 
 export interface Preferences {
   readonly composerUsageLimitsVisible?: boolean;
+  readonly contextWindowMeterEnabled?: boolean;
+  readonly responseMetricsEnabled?: boolean;
   readonly usagePacingEnabled?: boolean;
   readonly usagePacingWorkdayHours?: 8 | 24;
   /** Device-local Better T3 registry values, including clean/existing migration provenance. */
@@ -159,6 +161,8 @@ export function sanitizeMobilePreferences(
 ): Preferences {
   const preferences: {
     composerUsageLimitsVisible?: boolean;
+    contextWindowMeterEnabled?: boolean;
+    responseMetricsEnabled?: boolean;
     usagePacingEnabled?: boolean;
     usagePacingWorkdayHours?: 8 | 24;
     betterT3Device?: BetterT3SettingsV1Type;
@@ -203,6 +207,12 @@ export function sanitizeMobilePreferences(
 
   if (typeof parsed.composerUsageLimitsVisible === "boolean") {
     preferences.composerUsageLimitsVisible = parsed.composerUsageLimitsVisible;
+  }
+  if (typeof parsed.responseMetricsEnabled === "boolean") {
+    preferences.responseMetricsEnabled = parsed.responseMetricsEnabled;
+  }
+  if (typeof parsed.contextWindowMeterEnabled === "boolean") {
+    preferences.contextWindowMeterEnabled = parsed.contextWindowMeterEnabled;
   }
   if (typeof parsed.usagePacingEnabled === "boolean") {
     preferences.usagePacingEnabled = parsed.usagePacingEnabled;

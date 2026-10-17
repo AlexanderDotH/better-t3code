@@ -60,6 +60,7 @@ import {
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
 import {
+  DeepPlanRunId,
   EnvironmentId,
   OrchestrationLatestTurn,
   ProjectId,
@@ -2207,6 +2208,59 @@ describe("resolveThreadStatusPill", () => {
     ).toMatchObject({ label: "Plan Ready", pulse: false });
   });
 
+  it("distinguishes a ready Deep Plan without hiding higher-priority statuses", () => {
+    const deepPlan: NonNullable<SidebarThreadSummary["deepPlan"]> = {
+      id: DeepPlanRunId.make("deep-plan"),
+      threadId: baseThread.session.threadId,
+      phase: "awaitingApproval",
+      revision: 1,
+      plan: null,
+      approval: null,
+      approvalKey: null,
+      sources: [],
+      sourceCoverage: [],
+      stepStates: [],
+      finalValidation: {
+        status: "pending",
+        evidence: [],
+        updatedAt: null,
+        attempt: 0,
+        requestId: null,
+        turnId: null,
+      },
+      procedureAdjustments: [],
+      operations: [],
+      createdAt: baseThread.session.updatedAt,
+      updatedAt: baseThread.session.updatedAt,
+      pauseReason: null,
+    };
+    const thread = {
+      ...baseThread,
+      deepPlan,
+      hasActionableProposedPlan: true,
+      latestTurn: makeLatestTurn(),
+      session: { ...baseThread.session, status: "ready" as const, activeTurnId: null },
+    };
+    const status = resolveThreadStatusPill({ thread });
+    expect(status).toMatchObject({
+      label: "Deep Plan Ready",
+      colorClass: "text-deep-plan",
+      pulse: false,
+    });
+    expect(
+      resolveProjectStatusIndicator([
+        { label: "Completed", colorClass: "", dotClass: "", pulse: false },
+        status,
+      ]),
+    ).toBe(status);
+    expect(
+      resolveThreadStatusPill({ thread: { ...thread, hasPendingApprovals: true } }),
+    ).toMatchObject({ label: "Pending Approval" });
+    expect(resolveThreadStatusPill({ thread: { ...thread, deepPlan: null } })).toMatchObject({
+      label: "Plan Ready",
+    });
+  });
+
   it("shows a failed provider session before passive background status", () => {
     expect(
       resolveThreadStatusPill({
@@ -2310,6 +2364,7 @@ describe("isThreadStatusAlwaysVisibleInProjectPreview", () => {
     expect(status("Awaiting Input")).toBe(true);
     expect(status("Failed")).toBe(true);
     expect(status("Plan Ready")).toBe(true);
+    expect(status("Deep Plan Ready")).toBe(true);
     expect(status("Completed")).toBe(true);
     expect(status(null)).toBe(false);
   });

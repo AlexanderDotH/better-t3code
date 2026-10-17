@@ -6,6 +6,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
+import type { DeepPlanInstructionContext } from "../DeepPlanInstructions.ts";
 
 import type { NativeProviderHarness } from "../nativeHarness/NativeProviderHarness.ts";
 import type { NativeProviderTurnAdmission } from "../nativeHarness/NativeProviderTypes.ts";
@@ -44,6 +45,7 @@ export interface OpenAiProtocolState {
 }
 
 export interface OpenAiSystemInstructionInput {
+  readonly deepPlan?: DeepPlanInstructionContext | undefined;
   readonly cwd: string;
   readonly sandboxMode: ProviderSandboxMode | undefined;
   readonly interactionMode: ProviderInteractionMode | undefined;

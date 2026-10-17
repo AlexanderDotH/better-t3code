@@ -39,6 +39,7 @@ import {
 } from "../../state/environments";
 import {
   useClientSettings,
+  useUpdateClientSettings,
   useEnvironmentSettings,
   useUpdateEnvironmentSettings,
 } from "../../hooks/useSettings";
@@ -69,6 +70,8 @@ import {
   type BetterT3VisualChoiceValue,
 } from "./BetterT3SettingsPreview";
 import { buildBetterT3SettingsPreviewModel } from "./BetterT3SettingsPreview.logic";
+import { ProjectIndexingPreview, SidebarSettingsPreview } from "./BetterT3SettingsExamples";
+import { useProjectThreadPreviewCount } from "../../projectThreadPreviewSync";
 import { InterfaceLanguageSettings } from "./InterfaceLanguageSettings";
 import { UsagePacingSettings } from "./UsagePacingSettings";
 import { VoiceInputSettings } from "./VoiceInputSettings";
@@ -76,6 +79,7 @@ import { ProjectIndexingGlobalSettings } from "../project-indexing/ProjectIndexi
 import { searchableSetting } from "./settingsSearch";
 import { BetterT3SettingsNavigation } from "./BetterT3SettingsNavigation";
 import { ChatWidthPreview } from "./ChatWidthPreview";
+import { ContextWindowMeterChoice } from "./ContextWindowMeterPreview";
 
 type Translate = InterfaceTranslator["message"];
 
@@ -170,6 +174,8 @@ export interface BetterT3SettingsPanelViewProps {
   readonly languageControl?: ReactNode;
   readonly usagePacingControl?: ReactNode;
   readonly chatWidthSettings?: ReactNode;
+  readonly chatSettings?: ReactNode;
+  readonly composerSettings?: ReactNode;
   readonly voiceSettings?: ReactNode;
   readonly projectIndexingSettings?: ReactNode;
   readonly visualSettings?: ReactNode;
@@ -412,6 +418,61 @@ function BetterT3AppearanceSettings(props: {
   );
 }
 
+function ResponseMetricsSettings() {
+  const enabled = useClientSettings((settings) => settings.responseMetricsEnabled);
+  const updateSettings = useUpdateClientSettings();
+  const translate = useInterfaceTranslator().message;
+  return (
+    <SettingsRow
+      {...searchableSetting("response-metrics")}
+      title={translate("settings.responseMetrics.label")}
+      description={translate("settings.responseMetrics.description")}
+      control={
+        <Switch
+          checked={enabled}
+          onCheckedChange={(checked) =>
+            updateSettings({ responseMetricsEnabled: Boolean(checked) })
+          }
+          aria-label={translate("settings.responseMetrics.label")}
+        />
+      }
+    />
+  );
+}
+
+export function ContextWindowMeterSettings() {
+  const enabled = useClientSettings((settings) => settings.contextWindowMeterEnabled);
+  const updateSettings = useUpdateClientSettings();
+  const translator = useInterfaceTranslator();
+  const translate = translator.message;
+
+  return (
+    <SettingsRow
+      {...searchableSetting("legacy-context-window-indicator")}
+      title={translate("settings.contextMeter.label")}
+      description={translate("settings.contextMeter.description")}
+      resetAction={
+        enabled !== DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled ? (
+          <SettingResetButton
+            label={translate("settings.contextMeter.label")}
+            onClick={() =>
+              updateSettings({
+                contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
+              })
+            }
+          />
+        ) : null
+      }
+    >
+      <ContextWindowMeterChoice
+        enabled={enabled}
+        onChange={(contextWindowMeterEnabled) => updateSettings({ contextWindowMeterEnabled })}
+        translator={translator}
+      />
+    </SettingsRow>
+  );
+}
+
 export function BetterT3SettingsContent(props: BetterT3SettingsPanelViewProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const renderFeatureRows = (visibleFeatures: ReadonlyArray<BetterT3FeatureControlStateV1>) =>
@@ -484,6 +545,7 @@ export function BetterT3SettingsContent(props: BetterT3SettingsPanelViewProps) {
           {group.id !== "usage" ? (
             <SettingsSection title={props.translate(group.labelMessageId)} hideTitle>
               {group.id === "appearance" ? props.visualSettings : null}
+              {group.id === "composer" ? props.composerSettings : null}
               {renderFeatureRows(
                 props.features.filter(({ descriptor }) => {
                   const override = BETTER_T3_FEATURE_GROUP_OVERRIDES[descriptor.id];
@@ -492,6 +554,7 @@ export function BetterT3SettingsContent(props: BetterT3SettingsPanelViewProps) {
                     : group.sections.some((section) => descriptor.section === section);
                 }),
               )}
+              {group.id === "chat" ? props.chatSettings : null}
               {group.id === "chat" ? props.chatWidthSettings : null}
             </SettingsSection>
           ) : null}
@@ -863,6 +926,7 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
   );
   const chatVisualMode = useChatVisualMode();
   const setChatVisualMode = useSetChatVisualMode();
+  const { count: sidebarPreviewCount } = useProjectThreadPreviewCount();
   const previewModel = useMemo(
     () =>
       buildBetterT3SettingsPreviewModel({
@@ -906,6 +970,11 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
         }
         return;
       }
+      if (featureId === "voice.outputLanguage") {
+        if (value === "native" || value === "english")
+          updateSettings({ voiceInputOutputLanguage: value });
+        return;
+      }
       if (typeof value === "boolean") onSwitchChange(featureId, value);
     },
     [onSwitchChange, setChatVisualMode, updateSettings],
@@ -915,23 +984,33 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
     for (const featureId of BETTER_T3_VISUAL_FEATURE_IDS) {
       const feature = features.find((entry) => entry.descriptor.id === featureId);
       if (!feature) continue;
-      const value =
-        featureId === "agent.reasoningVisibility"
-          ? !previewModel.agent.reasoningVisibility
+      let value: BetterT3VisualChoiceValue;
+      switch (featureId) {
+        case "voice.outputLanguage":
+          value = settings.voiceInputOutputLanguage;
+          break;
+        case "agent.reasoningVisibility":
+          value = !previewModel.agent.reasoningVisibility
             ? "none"
             : previewModel.agent.reasoningWorkingOverlay
               ? "working"
-              : "chat"
-          : featureId === "chat.sidebarPosition"
-            ? settings.sidebarPosition
-            : featureId === "chat.presentation"
-              ? chatVisualMode
-              : featureId === "chat.contextWindowSelector"
-                ? settings.contextWindowSelector
-                : featureId === "chat.classicBubbleOnly" &&
-                    feature.availability.state !== "available"
-                  ? false
-                  : feature.value === true;
+              : "chat";
+          break;
+        case "chat.sidebarPosition":
+          value = previewModel.chat.sidebarPosition;
+          break;
+        case "chat.presentation":
+          value = previewModel.chat.presentation;
+          break;
+        case "chat.contextWindowSelector":
+          value = previewModel.chat.contextWindowSelector;
+          break;
+        case "chat.classicBubbleOnly":
+          value = feature.availability.state === "available" && feature.value === true;
+          break;
+        default:
+          value = feature.value === true;
+      }
       choices[featureId] = (
         <BetterT3FeatureChoice
           disabled={feature.availability.state !== "available"}
@@ -945,15 +1024,7 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
       );
     }
     return choices;
-  }, [
-    chatVisualMode,
-    features,
-    onVisualChoiceChange,
-    previewModel,
-    settings.contextWindowSelector,
-    settings.sidebarPosition,
-    translate,
-  ]);
+  }, [features, onVisualChoiceChange, previewModel, settings.voiceInputOutputLanguage, translate]);
   const preparedControls = useBetterT3PreparedControls({
     environmentId: props.environment.environmentId,
     settings,
@@ -1069,9 +1140,27 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
       translate={translate}
       controls={controls}
       featureChoices={featureChoices}
+      featureVisuals={{
+        "chat.previewCount": (
+          <SidebarSettingsPreview
+            previewCount={sidebarPreviewCount}
+            projectOrder={settings.sidebarProjectSortOrder}
+            threadOrder={settings.sidebarThreadSortOrder}
+            settleAfterDays={settings.sidebarAutoSettleAfterDays}
+            settleOnMerge={settings.sidebarAutoSettleOnMerge}
+            draftIndicators={previewModel.chat.draftIndicators}
+            translate={translate}
+          />
+        ),
+      }}
+      composerSettings={<ContextWindowMeterSettings />}
+      chatSettings={<ResponseMetricsSettings />}
       usagePacingControl={<UsagePacingSettings environmentId={props.environment.environmentId} />}
       projectIndexingSettings={
-        <ProjectIndexingGlobalSettings environmentId={props.environment.environmentId} />
+        <div className="space-y-4">
+          <ProjectIndexingPreview translate={translate} />
+          <ProjectIndexingGlobalSettings environmentId={props.environment.environmentId} />
+        </div>
       }
       voiceSettings={
         <VoiceInputSettings
@@ -1175,6 +1264,12 @@ export function BetterT3SettingsPanel() {
           }
           translate={translator.message}
         />
+        <SettingsSection title={translator.message("settings.betterT3.tab.chat")}>
+          <ResponseMetricsSettings />
+        </SettingsSection>
+        <SettingsSection title={translator.message("settings.contextMeter.section")}>
+          <ContextWindowMeterSettings />
+        </SettingsSection>
       </SettingsPageContainer>
     );
   }

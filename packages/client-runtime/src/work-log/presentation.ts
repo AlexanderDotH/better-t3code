@@ -9,6 +9,7 @@ import {
 import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-images";
 import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
+import { isCodexCompactionConflictMessage } from "@t3tools/shared/codexContext";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 
 /**
@@ -43,6 +44,16 @@ export interface WorkLogPresentationEntry {
   readonly sourceActivityKind?: string;
   readonly taskId?: string;
   readonly toolSource?: ToolActivitySource;
+}
+
+export function isCompactionConflictWorkEntry(entry: WorkLogPresentationEntry) {
+  return (
+    entry.tone === "error" &&
+    (entry.sourceActivityKind === "runtime.error" ||
+      entry.sourceActivityKind === "provider.turn.start.failed") &&
+    (isCodexCompactionConflictMessage(entry.label) ||
+      isCodexCompactionConflictMessage(entry.detail ?? ""))
+  );
 }
 
 export type ToolGroupAction =

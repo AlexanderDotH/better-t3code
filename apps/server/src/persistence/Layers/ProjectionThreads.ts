@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
+import * as Option from "effect/Option";
 
 import { toPersistenceSqlError } from "../Errors.ts";
 import {
@@ -14,6 +15,7 @@ import {
 } from "../Services/ProjectionThreads.ts";
 import {
   ModelSelection,
+  DeepPlanRun,
   ThreadForkState,
   ThreadLinkedPullRequest,
   ThreadTitleState,
@@ -23,6 +25,7 @@ const ProjectionThreadDbRow = ProjectionThread.mapFields(
   Struct.assign({
     modelSelection: Schema.fromJsonString(ModelSelection),
     titleState: Schema.NullOr(Schema.fromJsonString(ThreadTitleState)),
+    deepPlan: Schema.NullOr(Schema.fromJsonString(DeepPlanRun)),
     linkedPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
     branchPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
     fork: Schema.NullOr(Schema.fromJsonString(ThreadForkState)),
@@ -31,6 +34,42 @@ const ProjectionThreadDbRow = ProjectionThread.mapFields(
 
 const makeProjectionThreadRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+
+  const getImplementationRun = SqlSchema.findOneOption({
+    Request: Schema.Struct({ threadId: GetProjectionThreadInput.fields.threadId }),
+    Result: Schema.Struct({ run: Schema.fromJsonString(DeepPlanRun) }),
+    execute: ({ threadId }) => sql`
+      SELECT deep_plan_json AS run FROM projection_threads
+      WHERE deep_plan_json IS NOT NULL AND deleted_at IS NULL AND archived_at IS NULL
+        AND json_extract(deep_plan_json, '$.approval.implementationThreadId') = ${threadId}
+      ORDER BY CASE json_extract(deep_plan_json, '$.phase') WHEN 'completed' THEN 1 ELSE 0 END,
+        updated_at DESC LIMIT 1
+    `,
+  });
+  const getDeepPlanByImplementationThreadId: ProjectionThreadRepositoryShape["getDeepPlanByImplementationThreadId"] =
+    (threadId) =>
+      getImplementationRun({ threadId }).pipe(
+        Effect.map(Option.map((row) => row.run)),
+        Effect.mapError(
+          toPersistenceSqlError(
+            "ProjectionThreadRepository.getDeepPlanByImplementationThreadId:query",
+          ),
+        ),
+      );
+
+  const listDeepPlanRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: Schema.Struct({ run: Schema.fromJsonString(DeepPlanRun) }),
+    execute: () => sql`
+      SELECT deep_plan_json AS run FROM projection_threads
+      WHERE deep_plan_json IS NOT NULL AND deleted_at IS NULL AND archived_at IS NULL
+    `,
+  });
+  const listDeepPlans: ProjectionThreadRepositoryShape["listDeepPlans"] = () =>
+    listDeepPlanRows(undefined).pipe(
+      Effect.map((rows) => rows.map((row) => row.run)),
+      Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.listDeepPlans:query")),
+    );
 
   const upsertProjectionThreadRow = SqlSchema.void({
     Request: ProjectionThread,
@@ -41,6 +80,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           project_id,
           title,
           title_state_json,
+          deep_plan_json,
           model_selection_json,
           runtime_mode,
           interaction_mode,
@@ -75,6 +115,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.projectId},
           ${row.title},
           ${row.titleState == null ? null : JSON.stringify(row.titleState)},
+          ${row.deepPlan == null ? null : JSON.stringify(row.deepPlan)},
           ${JSON.stringify(row.modelSelection)},
           ${row.runtimeMode},
           ${row.interactionMode},
@@ -109,6 +150,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           project_id = excluded.project_id,
           title = excluded.title,
           title_state_json = excluded.title_state_json,
+          deep_plan_json = excluded.deep_plan_json,
           model_selection_json = excluded.model_selection_json,
           runtime_mode = excluded.runtime_mode,
           interaction_mode = excluded.interaction_mode,
@@ -150,6 +192,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           project_id AS "projectId",
           title,
           title_state_json AS "titleState",
+          deep_plan_json AS "deepPlan",
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
@@ -194,6 +237,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
     );
 
   return {
+    getDeepPlanByImplementationThreadId,
+    listDeepPlans,
     upsert,
     getById,
   } satisfies ProjectionThreadRepositoryShape;

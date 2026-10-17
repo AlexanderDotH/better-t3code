@@ -116,16 +116,47 @@ describe.each([
     expect(container.querySelector<HTMLElement>("[style*='translateX']")).toBeNull();
   });
 
-  it.each(["mouse", "pen", "touch"])("accepts a short 32px reply with %s", (pointerType) => {
+  it.each(["mouse", "pen", "touch"])("accepts a halfway 16px reply with %s", (pointerType) => {
     const { onReply, text, renderContent } = renderGesture(role);
     pointer(text, "pointerdown", 0, 0, pointerType);
-    vi.mocked(performance.now).mockReturnValue(35);
-    pointer(text, "pointermove", direction * 20, 2, pointerType);
+    vi.mocked(performance.now).mockReturnValue(50);
+    pointer(text, "pointermove", direction * 16, 2, pointerType);
     expect(container.querySelector<HTMLElement>("[style*='translateX']")).not.toBeNull();
-    vi.mocked(performance.now).mockReturnValue(65);
-    pointer(text, "pointerup", direction * 32, 3, pointerType);
+    expect(onReply).not.toHaveBeenCalled();
+    pointer(text, "pointerup", direction * 16, 3, pointerType);
     expect(onReply).toHaveBeenCalledTimes(1);
     expect(renderContent).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["mouse", "pen", "touch"])(
+    "recognizes a halfway release without an intermediate movement event with %s",
+    (pointerType) => {
+      const { onReply, text } = renderGesture(role);
+      pointer(text, "pointerdown", 0, 0, pointerType);
+      vi.mocked(performance.now).mockReturnValue(50);
+      pointer(text, "pointerup", direction * 16, 2, pointerType);
+      expect(onReply).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("keeps a short reply ready while holding and easing back before release", () => {
+    const { onReply, text } = renderGesture(role);
+    pointer(text, "pointerdown", 0, 0, "mouse");
+    vi.mocked(performance.now).mockReturnValue(60);
+    pointer(text, "pointermove", direction * 20, 2, "mouse");
+    expect(onReply).not.toHaveBeenCalled();
+    vi.mocked(performance.now).mockReturnValue(1000);
+    pointer(text, "pointerup", direction * 16, 3, "mouse");
+    expect(onReply).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels a recognized short reply when dragged back to its origin", () => {
+    const { onReply, text } = renderGesture(role);
+    pointer(text, "pointerdown", 0, 0, "mouse");
+    vi.mocked(performance.now).mockReturnValue(50);
+    pointer(text, "pointermove", direction * 16, 2, "mouse");
+    pointer(text, "pointerup", 0, 0, "mouse");
+    expect(onReply).not.toHaveBeenCalled();
   });
 
   it("continues a pending drag outside the message and releases there", () => {
@@ -187,7 +218,7 @@ describe.each([
     const now = vi.spyOn(performance, "now").mockReturnValue(0);
     const { onReply, text } = renderGesture(role);
     pointer(text, "pointerdown", 0, 0, "mouse");
-    now.mockReturnValue(55);
+    now.mockReturnValue(80);
     pointer(text, "pointermove", direction * 28, 3, "mouse");
     now.mockReturnValue(135);
     pointer(text, "pointerup", direction * 68, 6, "mouse");
@@ -224,7 +255,7 @@ describe.each([
     const { onReply, text } = renderGesture(role);
     pointer(text, "pointerdown", 0, 0, "mouse");
     pointer(text, "pointermove", direction * 12, 0, "mouse");
-    pointer(document.body, "pointerup", direction * 31, 0, "mouse");
+    pointer(document.body, "pointerup", direction * 15, 0, "mouse");
     expect(onReply).not.toHaveBeenCalled();
   });
 
@@ -241,8 +272,8 @@ describe.each([
   it("resets below the release threshold", () => {
     const { onReply, text } = renderGesture(role);
     pointer(text, "pointerdown", 0);
-    pointer(text, "pointermove", direction * 31);
-    pointer(text, "pointerup", direction * 31);
+    pointer(text, "pointermove", direction * 15);
+    pointer(text, "pointerup", direction * 15);
     expect(onReply).not.toHaveBeenCalled();
   });
 
@@ -376,9 +407,9 @@ describe.each([
     const { onReply, text } = renderGesture(role);
     pointer(text, "pointerdown", 0, 0, "mouse");
     now.mockReturnValue(15);
-    pointer(text, "pointermove", direction * 18, 0, "mouse");
+    pointer(text, "pointermove", direction * 14, 0, "mouse");
     now.mockReturnValue(20);
-    pointer(text, "pointermove", direction * 8, 0, "mouse");
+    pointer(text, "pointermove", direction * 6, 0, "mouse");
     now.mockReturnValue(45);
     pointer(text, "pointermove", direction * 70, 0, "mouse");
     pointer(text, "pointerup", direction * 70, 0, "mouse");

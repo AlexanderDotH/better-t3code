@@ -1730,7 +1730,7 @@ it.effect("accepts a source proposed plan reference in thread.turn.start", () =>
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     assert.deepStrictEqual(parsed.sourceProposedPlan, {
-      threadId: "thread-1",
+      threadId: ThreadId.make("thread-1"),
       planId: "plan-1",
     });
   }),
@@ -1793,7 +1793,7 @@ it.effect("decodes thread.turn-start-requested source proposed plan metadata whe
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     assert.deepStrictEqual(parsed.sourceProposedPlan, {
-      threadId: "thread-1",
+      threadId: ThreadId.make("thread-1"),
       planId: "plan-1",
     });
   }),
@@ -1826,7 +1826,7 @@ it.effect("decodes latest turn source proposed plan metadata when present", () =
       },
     });
     assert.deepStrictEqual(parsed.sourceProposedPlan, {
-      threadId: "thread-1",
+      threadId: ThreadId.make("thread-1"),
       planId: "plan-1",
     });
   }),

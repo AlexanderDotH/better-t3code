@@ -27,7 +27,9 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as PubSub from "effect/PubSub";
+import { makeProviderEventHub } from "../providerEventHub.ts";
+import { withProviderEventIngress } from "../providerEventIngress.ts";
+import { transferProviderIngress } from "../../observability/ProviderPipelineMetrics.ts";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -38,6 +40,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { ServerConfig } from "../../config.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
+import { DEEP_PLAN_PROVIDER_SUPPORT } from "../DeepPlanSupport.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type { AntigravityAuth } from "../AntigravityAuth.ts";
 import {
@@ -325,7 +328,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
   const makeNativeLoggers = yield* makeAcpNativeLoggerFactory();
   const sessions = new Map<ThreadId, SessionContext>();
   const locks = yield* SynchronizedRef.make(new Map<ThreadId, Semaphore.Semaphore>());
-  const events = yield* PubSub.unbounded<ProviderRuntimeEvent>();
+  const events = yield* makeProviderEventHub();
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const randomId = crypto.randomUUIDv4.pipe(
     Effect.mapError(
@@ -343,11 +346,15 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
     createdAt: nowIso,
   });
   const emit = (event: ProviderRuntimeEvent) =>
-    PubSub.publish(events, {
-      ...event,
-      runtimeSessionId:
-        event.runtimeSessionId ?? sessions.get(event.threadId)?.session.runtimeSessionId,
-    }).pipe(Effect.asVoid);
+    events
+      .publish(
+        transferProviderIngress(event, {
+          ...event,
+          runtimeSessionId:
+            event.runtimeSessionId ?? sessions.get(event.threadId)?.session.runtimeSessionId,
+        }),
+      )
+      .pipe(Effect.asVoid);
 
   const withThreadLock = <A, E, R>(threadId: ThreadId, task: Effect.Effect<A, E, R>) =>
     SynchronizedRef.modifyEffect(locks, (current) => {
@@ -905,7 +912,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
               const running = context;
               sessions.set(input.threadId, running);
               yield* Stream.runForEach(runtime.getEvents(), (event) =>
-                handleEvent(running, event),
+                withProviderEventIngress(event, handleEvent(running, event)),
               ).pipe(
                 Effect.catchCause(() =>
                   Effect.logError("Could not process an Antigravity runtime event."),
@@ -1306,7 +1313,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
           ? Effect.void
           : Effect.logError("Could not stop an Antigravity session."),
       ),
-      Effect.ensuring(PubSub.shutdown(events)),
+      Effect.ensuring(events.shutdown),
     ),
   );
 
@@ -1314,6 +1321,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
     provider: PROVIDER,
     capabilities: {
       sessionModelSwitch: "in-session",
+      deepPlan: DEEP_PLAN_PROVIDER_SUPPORT.antigravity,
       supportsConversationRollback: false,
       mcp: "unsupported",
     },
@@ -1344,6 +1352,8 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
           issue: "Antigravity does not support conversation rewind. Start a new thread instead.",
         }),
       ),
-    streamEvents: Stream.fromPubSub(events),
+    consumeEvents: events.consumeEvents,
+    subscribeEventStream: events.subscribeEventStream,
+    streamEvents: events.stream,
   } satisfies Adapter;
 });

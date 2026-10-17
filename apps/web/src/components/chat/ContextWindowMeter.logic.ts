@@ -1,4 +1,5 @@
 import type { ModelSelection, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import {
   CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
   isClaudeResumeCompactionQuestion,
@@ -98,28 +99,23 @@ export function resolveContextWindowModelDisplayName(
 }
 
 export function formatContextWindowCompactionMessage(
+  translator: InterfaceTranslator,
   modelDisplayName: string | null | undefined,
   autoCompactThreshold?: number | null,
 ): string {
   if (typeof autoCompactThreshold === "number" && autoCompactThreshold > 0) {
-    return `Compacts automatically at ${autoCompactThreshold.toLocaleString("en-US")} tokens.`;
+    return translator.message("chat.contextMeter.autoCompactThreshold", {
+      tokens: translator.number(autoCompactThreshold),
+    });
   }
   return modelDisplayName
-    ? `Context for ${modelDisplayName} compacts automatically when needed.`
-    : "Context compacts automatically when needed.";
+    ? translator.message("chat.contextMeter.autoCompactModel", { model: modelDisplayName })
+    : translator.message("chat.contextMeter.autoCompact");
 }
 
 /**
- * Whether the footer should hold the meter's slot before a snapshot exists.
- *
- * The snapshot comes from thread activities, which load after the shell.
- * Reserving the slot while the detail loads, for a started thread, keeps the
- * attach button still until the meter mounts. Once the detail is in, a
- * missing snapshot means there is no usage to show and nothing is reserved.
- *
- * The meter renders from stored activities whatever the provider's state, so
- * only a provider known not to stream usage skips the reservation. An unknown
- * provider (catalog still loading, or the thread's provider disabled) reserves.
+ * Hold the meter's space while an existing thread loads its usage. Once loaded,
+ * an absent snapshot leaves no slot; providers without usage never reserve one.
  */
 export function shouldReserveContextWindowMeter(input: {
   readonly meterEnabled: boolean;

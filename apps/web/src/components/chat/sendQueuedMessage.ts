@@ -1,6 +1,12 @@
 import { appendVoiceFileContext } from "@t3tools/shared/voiceFileContext";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
+  getProviderInteractionMode,
+  prepareDeepPlanForTurn,
+  resolveComposerMode,
+  resolveDeepPlanningAvailability,
+} from "@t3tools/client-runtime/deep-planning";
+import {
   runAtomCommand,
   squashAtomCommandFailure,
   type AtomCommand,
@@ -17,12 +23,13 @@ import {
   releaseDraftAttachments,
   startAttachmentUpload,
 } from "../../lib/attachmentUploadQueue";
-import { newMessageId } from "../../lib/utils";
+import { newMessageId, randomUUID } from "../../lib/utils";
 import { latestCompletedToolActivityId, useQueuedMessageStore } from "../../queuedMessageStore";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { readThread, readThreadShell } from "../../state/entities";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { threadEnvironment } from "../../state/threads";
+import { getWebDeepPlanningApi } from "../../state/deepPlanning";
 import {
   createLocalDispatchSnapshot,
   deriveComposerSendState,
@@ -60,6 +67,11 @@ export async function sendQueuedMessage(
   );
   if (!message) return;
   const { sendSettings } = message;
+  const composerMode = resolveComposerMode(sendSettings.composerMode, sendSettings.interactionMode);
+  const interactionMode =
+    composerMode === "deep-plan"
+      ? getProviderInteractionMode(composerMode)
+      : sendSettings.interactionMode;
   const attachments = [...message.images, ...message.files];
   const readConfig = () => appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId);
   const assertFilesAllowed = () => {
@@ -102,6 +114,50 @@ export async function sendQueuedMessage(
       ),
       sendSettings.promptEffort,
     );
+
+    if (composerMode === "deep-plan") {
+      const shell = readThreadShell(threadRef);
+      if (!shell) throw new Error("The queued DeepPlan thread is unavailable.");
+      const config = readConfig();
+      const availability = resolveDeepPlanningAvailability({
+        capabilities: config?.environment.capabilities,
+        provider: config?.providers.find(
+          (provider) => provider.instanceId === sendSettings.modelSelection.instanceId,
+        ),
+      });
+      if (!availability.supported)
+        throw new Error(availability.reason ?? "DeepPlan is unavailable.");
+      const controller = new AbortController();
+      const unsubscribe = useQueuedMessageStore.subscribe((state) => {
+        if (
+          !state.queuesByThreadKey[threadKey]?.some(
+            (entry) => entry.id === message.id && entry.sending === "preparing",
+          )
+        )
+          controller.abort();
+      });
+      try {
+        await prepareDeepPlanForTurn({
+          environmentId,
+          projectId: shell.projectId,
+          threadId,
+          additionalSourceRefs: sendSettings.deepPlanSourceRefs,
+          apiForEnvironment: getWebDeepPlanningApi,
+          createId: randomUUID,
+          signal: controller.signal,
+        });
+      } finally {
+        unsubscribe();
+      }
+      if (
+        !useQueuedMessageStore
+          .getState()
+          .queuesByThreadKey[threadKey]?.some(
+            (entry) => entry.id === message.id && entry.sending === "preparing",
+          )
+      )
+        return;
+    }
 
     assertFilesAllowed();
     const useUploads = readConfig()?.environment.capabilities.attachmentUploads === true;
@@ -157,10 +213,10 @@ export async function sendQueuedMessage(
         input: { threadId, runtimeMode: sendSettings.runtimeMode, createdAt },
       });
     }
-    if (shell && shell.interactionMode !== sendSettings.interactionMode) {
+    if (shell && shell.interactionMode !== interactionMode) {
       await run(threadEnvironment.setInteractionMode, {
         environmentId,
-        input: { threadId, interactionMode: sendSettings.interactionMode, createdAt },
+        input: { threadId, interactionMode, createdAt },
       });
     }
 
@@ -196,7 +252,7 @@ export async function sendQueuedMessage(
         },
         modelSelection: sendSettings.modelSelection,
         runtimeMode: sendSettings.runtimeMode,
-        interactionMode: sendSettings.interactionMode,
+        interactionMode,
         createdAt,
       },
     });

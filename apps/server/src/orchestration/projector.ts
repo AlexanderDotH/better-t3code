@@ -735,6 +735,24 @@ export function projectEvent(
         })),
       );
 
+    case "thread.deep-plan-updated": {
+      const previous = nextBase.threads.find(
+        (thread) => thread.id === event.payload.threadId,
+      )?.deepPlan;
+      const targetId = event.payload.run.approval?.implementationThreadId;
+      return Effect.succeed({
+        ...nextBase,
+        threads: nextBase.threads.map((thread) => {
+          if (thread.id === event.payload.threadId || thread.id === targetId) {
+            return { ...thread, deepPlan: event.payload.run, updatedAt: event.payload.updatedAt };
+          }
+          return previous != null && thread.deepPlan?.id === previous.id
+            ? { ...thread, deepPlan: null }
+            : thread;
+        }),
+      });
+    }
+
     case "thread.fork-workspace-updated":
       return decodeForEvent(
         ThreadForkWorkspaceUpdatedPayload,

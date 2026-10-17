@@ -1,5 +1,6 @@
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
   formatContextWindowCompactionMessage,
@@ -120,20 +121,22 @@ describe("resolveContextWindowModelDisplayName", () => {
 });
 
 describe("formatContextWindowCompactionMessage", () => {
+  const translator = createInterfaceTranslator({ language: "en", locale: "en-US" });
+
   it("describes compaction in terms of the selected model", () => {
-    expect(formatContextWindowCompactionMessage("GPT-5.6 Sol")).toBe(
+    expect(formatContextWindowCompactionMessage(translator, "GPT-5.6 Sol")).toBe(
       "Context for GPT-5.6 Sol compacts automatically when needed.",
     );
   });
 
   it("uses neutral copy when the model is unavailable", () => {
-    expect(formatContextWindowCompactionMessage(null)).toBe(
+    expect(formatContextWindowCompactionMessage(translator, null)).toBe(
       "Context compacts automatically when needed.",
     );
   });
 
   it("shows the configured auto-compaction threshold", () => {
-    expect(formatContextWindowCompactionMessage("Claude Sonnet 5", 300_000)).toBe(
+    expect(formatContextWindowCompactionMessage(translator, "Claude Sonnet 5", 300_000)).toBe(
       "Compacts automatically at 300,000 tokens.",
     );
   });

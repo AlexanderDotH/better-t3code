@@ -724,6 +724,10 @@ describe("isCollapsedCursorAdjacentToInlineToken", () => {
 });
 
 describe("parseStandaloneComposerSlashCommand", () => {
+  it("recognizes Deep Planning without treating an ordinary prompt as a mode switch", () => {
+    expect(parseStandaloneComposerSlashCommand(" /deep-plan ")).toBe("deep-plan");
+    expect(parseStandaloneComposerSlashCommand("/deep-plan analyze this")).toBeNull();
+  });
   it("parses standalone /plan command", () => {
     expect(parseStandaloneComposerSlashCommand(" /plan ")).toBe("plan");
   });

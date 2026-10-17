@@ -1,4 +1,5 @@
 import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import type { McpDeepPlanContext } from "./McpInvocationContext.ts";
 
 export interface McpProviderSessionConfig {
   readonly environmentId: EnvironmentId;
@@ -9,6 +10,7 @@ export interface McpProviderSessionConfig {
   readonly authorizationHeader: string;
   /** Capabilities the credential grants ("preview", "device"). */
   readonly capabilities: ReadonlySet<string>;
+  readonly deepPlan?: McpDeepPlanContext;
   /**
    * Set when the session may drive devices. Adapters spread this into the
    * provider subprocess environment so the `agent-device` CLI is on PATH and
@@ -42,6 +44,23 @@ export function setMcpProviderSession(config: McpProviderSessionConfig): void {
 
 export function readMcpProviderSession(threadId: ThreadId): McpProviderSessionConfig | undefined {
   return sessionsByThread.get(threadId);
+}
+
+export function bindMcpProviderDeepPlan(
+  threadId: ThreadId,
+  binding: McpDeepPlanContext | undefined,
+): void {
+  const current = sessionsByThread.get(threadId);
+  if (current === undefined) return;
+  const { deepPlan: _previous, ...config } = current;
+  const capabilities = new Set(current.capabilities);
+  if (binding === undefined) capabilities.delete("deep-plan");
+  else capabilities.add("deep-plan");
+  sessionsByThread.set(threadId, {
+    ...config,
+    capabilities,
+    ...(binding === undefined ? {} : { deepPlan: binding }),
+  });
 }
 
 export function clearMcpProviderSession(threadId: ThreadId): void {

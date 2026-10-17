@@ -27,6 +27,7 @@ it.effect("binds subagent creation to the authenticated parent thread and provid
     }),
   );
   const coordinator = GeneralSubagentCoordinator.of({
+    analyzeDeepPlanSources: () => Effect.die("unused"),
     listModels: () => Effect.succeed({ providers: [] }),
     spawn,
     wait: () => Effect.succeed({ agents: [], allTerminal: true, timedOut: false }),
@@ -91,6 +92,7 @@ it.effect(
       }),
     );
     const coordinator = GeneralSubagentCoordinator.of({
+      analyzeDeepPlanSources: () => Effect.die("unused"),
       listModels: () => Effect.succeed({ providers: [] }),
       spawn: () => Effect.die("unused"),
       wait: () => Effect.die("unused"),

@@ -3,6 +3,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { CheckpointReactor } from "../Services/CheckpointReactor.ts";
@@ -17,6 +18,7 @@ import { makeOrchestrationReactor } from "./OrchestrationReactor.ts";
 import { MessageReplyReactor } from "./MessageReplyReactor.ts";
 import * as AgentAwarenessRelay from "../../relay/AgentAwarenessRelay.ts";
 import { StorageCleanup } from "../../storageCleanup.ts";
+import { DeepPlanValidationReactor } from "../../deepPlanning/DeepPlanValidationReactor.ts";
 
 describe("OrchestrationReactor", () => {
   let runtime: ManagedRuntime.ManagedRuntime<OrchestrationReactor, never> | null = null;
@@ -58,6 +60,16 @@ describe("OrchestrationReactor", () => {
               return Effect.void;
             },
             drain: Effect.void,
+          }),
+        ),
+        Layer.provideMerge(
+          Layer.succeed(DeepPlanValidationReactor, {
+            start: () => {
+              started.push("deep-plan-validation-reactor");
+              return Effect.void;
+            },
+            drainThrough: () => Effect.void,
+            streamReceiptsForTest: Stream.empty,
           }),
         ),
         Layer.provideMerge(
@@ -135,6 +147,7 @@ describe("OrchestrationReactor", () => {
     expect(started).toEqual([
       "provider-runtime-ingestion",
       "provider-command-reactor",
+      "deep-plan-validation-reactor",
       "message-reply-reactor",
       "checkpoint-reactor",
       "thread-deletion-reactor",

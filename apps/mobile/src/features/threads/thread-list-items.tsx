@@ -578,7 +578,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
     onRegenerateThreadTitle,
     onNewThreadOnBranch,
   } = props;
-  const status = resolveThreadStatus(thread);
+  const status = resolveThreadStatus(thread, translator);
   const { themeAppearance: colorScheme } = useAppearancePreferences();
   const pr = useThreadPr(thread);
   const prState = pr?.state ?? null;

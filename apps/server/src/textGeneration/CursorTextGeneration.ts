@@ -1,3 +1,4 @@
+import { makeContextSummarizer } from "./ContextSummaryGeneration.ts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -71,6 +72,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       | "translateTranscriptToEnglish"
       | "improvePrompt"
       | "reviewPlanParallelism"
+      | "summarizeContext"
       | "planFetchExploration";
     cwd: string;
     prompt: string;
@@ -418,6 +420,13 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
 
   return {
     decisionGeneration,
+    summarizeContext: makeContextSummarizer((input) =>
+      runCursorJson({
+        ...input,
+        operation: "summarizeContext",
+        outputSchemaJson: input.outputSchema,
+      }),
+    ),
     decideAutoReasoning,
     generateCommitMessage,
     generatePrContent,

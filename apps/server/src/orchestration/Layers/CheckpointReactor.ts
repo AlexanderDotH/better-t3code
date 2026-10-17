@@ -30,6 +30,7 @@ import {
 } from "../../checkpointing/Utils.ts";
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { consumeProviderEvents } from "../../provider/providerEventHub.ts";
 import { CheckpointReactor, type CheckpointReactorShape } from "../Services/CheckpointReactor.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -1120,18 +1121,13 @@ const make = Effect.gen(function* () {
       }),
     );
 
-    yield* forkParked(
-      Stream.runForEach(providerService.streamEvents, (event) => {
-        if (
-          event.type !== "turn.started" &&
-          event.type !== "turn.completed" &&
-          event.type !== "turn.aborted" &&
-          event.type !== "session.exited"
-        ) {
-          return Effect.void;
-        }
-        return worker.enqueue({ source: "runtime", event });
-      }),
+    yield* consumeProviderEvents(
+      providerService,
+      (event) => worker.enqueue({ source: "runtime", event }),
+      {
+        delivery: "lossless",
+        filter: { types: ["turn.started", "turn.completed", "turn.aborted", "session.exited"] },
+      },
     );
   });
 

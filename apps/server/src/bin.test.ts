@@ -37,6 +37,7 @@ import {
   SERVICE_LAUNCHER_PROTOCOL,
 } from "./cloud/serviceProtocol.ts";
 import * as ServerConfig from "./config.ts";
+import { ServerSettingsService } from "./serverSettings.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
@@ -379,6 +380,7 @@ const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Ef
     const routesLayer = HttpApiBuilder.layer(ProjectCliHttpApi).pipe(
       Layer.provide(
         orchestrationHttpApiLayer.pipe(
+          Layer.provide(ServerSettingsService.layerTest()),
           Layer.provide(
             Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({
               get: () => Effect.succeed(null),

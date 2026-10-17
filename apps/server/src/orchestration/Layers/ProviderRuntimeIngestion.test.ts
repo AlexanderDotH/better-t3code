@@ -1,4 +1,5 @@
 import { TurnAbortCoordinator } from "../Services/TurnAbortCoordinator.ts";
+import { stampProviderIngress } from "../../observability/ProviderPipelineMetrics.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -15,6 +16,10 @@ import {
 import {
   ApprovalRequestId,
   CommandId,
+  DeepPlanRunId,
+  type DeepPlanMutation,
+  type DeepPlanDocument,
+  type DeepPlanRunPhase,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
   MessageId,
@@ -71,6 +76,8 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { makeSqlStatementCounter } from "../../../integration/SqlStatementCounter.integration.ts";
+import { deepPlanApprovalKey } from "../../deepPlanning/deepPlanDecision.ts";
+import { finalValidationRequestId } from "../../deepPlanning/DeepPlanValidationReactor.ts";
 
 function makeTestServerSettingsLayer(overrides: Partial<ServerSettings> = {}) {
   return ServerSettingsService.layerTest(overrides);
@@ -188,10 +195,10 @@ function createProviderServiceHarness() {
           ...(typeof event.errorMessage === "string" ? { errorMessage: event.errorMessage } : {}),
         },
       };
-      return normalized;
+      return stampProviderIngress(normalized);
     }
 
-    return event as ProviderRuntimeEvent;
+    return stampProviderIngress(event as ProviderRuntimeEvent);
   };
 
   const emit = (event: LegacyProviderRuntimeEvent): void => {
@@ -430,6 +437,7 @@ describe("ProviderRuntimeIngestion", () => {
       engine,
       dispatch,
       readModel: () => testRuntime.runPromise(snapshotQuery.getSnapshot()),
+      readEvents: () => testRuntime.runPromise(Stream.runCollect(engine.readEvents(0))),
       readTurn: (turnId: TurnId) =>
         testRuntime.runPromise(
           Effect.flatMap(ProjectionTurnRepository, (turns) =>
@@ -452,6 +460,203 @@ describe("ProviderRuntimeIngestion", () => {
       drain,
     };
   }
+
+  it.each([
+    {
+      name: "tool start",
+      type: "item.started",
+      payload: { itemType: "command_execution", status: "inProgress", title: "Run command" },
+      completes: false,
+    },
+    {
+      name: "tool update",
+      type: "item.updated",
+      payload: { itemType: "command_execution", status: "inProgress", detail: "Command output" },
+      completes: false,
+    },
+    {
+      name: "approval",
+      type: "request.opened",
+      payload: { requestType: "command_execution_approval", detail: "pwd" },
+      completes: true,
+    },
+    {
+      name: "user input",
+      type: "user-input.requested",
+      payload: {
+        questions: [
+          {
+            id: "choice",
+            header: "Choice",
+            question: "Pick one",
+            options: [{ label: "A", description: "Option A" }],
+          },
+        ],
+      },
+      completes: true,
+    },
+    {
+      name: "message completion",
+      type: "item.completed",
+      payload: { itemType: "assistant_message", status: "completed" },
+      completes: true,
+    },
+    {
+      name: "turn completion",
+      type: "turn.completed",
+      payload: { state: "completed" },
+      completes: true,
+    },
+    {
+      name: "turn failure",
+      type: "turn.completed",
+      payload: { state: "failed", errorMessage: "Failed" },
+      completes: true,
+    },
+    {
+      name: "turn abort",
+      type: "turn.aborted",
+      payload: { reason: "Interrupted" },
+      completes: true,
+    },
+    {
+      name: "runtime error",
+      type: "runtime.error",
+      payload: { message: "Provider failed" },
+      completes: false,
+    },
+    { name: "session exit", type: "session.exited", payload: {}, completes: true },
+  ])("persists pending token text before $name", async (boundary) => {
+    const harness = await createHarness({ serverSettings: { responseStreamingMode: "token" } });
+    const base = {
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-token-boundary"),
+      itemId: asItemId("item-token-boundary"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    const boundaryId = asEventId("token-boundary");
+    await harness.emitAndDrain([
+      { ...base, type: "turn.started", eventId: asEventId("token-start") },
+      ...["First", " second", " third"].map((text, index) => ({
+        ...base,
+        type: "content.delta",
+        eventId: asEventId(`token-delta-${index}`),
+        payload: { streamKind: "assistant_text", delta: text },
+      })),
+      {
+        ...base,
+        type: boundary.type,
+        eventId: boundaryId,
+        requestId: RuntimeRequestId.make("token-boundary-request"),
+        payload: boundary.payload,
+      },
+    ]);
+    const events = await harness.readEvents();
+    const textEvents = events.flatMap((event) =>
+      event.type === "thread.message-sent" &&
+      event.payload.role === "assistant" &&
+      event.payload.text.length > 0
+        ? [event]
+        : [],
+    );
+    expect(textEvents.map((event) => event.payload.text)).toEqual(["First", " second third"]);
+    const lastTextSequence = textEvents.at(-1)!.sequence;
+    const boundaryEvents = events.filter((event) =>
+      event.commandId?.startsWith(`provider:${boundaryId}:`),
+    );
+    expect(boundaryEvents.length).toBeGreaterThan(0);
+    expect(boundaryEvents.every((event) => event.sequence > lastTextSequence)).toBe(true);
+    const thread = (await harness.readModel()).threads.find((entry) => entry.id === base.threadId);
+    expect(thread?.messages).toContainEqual(
+      expect.objectContaining({
+        id: "assistant:item-token-boundary",
+        text: "First second third",
+        streaming: !boundary.completes,
+      }),
+    );
+  });
+
+  it("drains scheduled token batches and deduplicates replayed batch commands", async () => {
+    const harness = await createHarness({ serverSettings: { responseStreamingMode: "token" } });
+    const base = {
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-token-drain"),
+      itemId: asItemId("item-token-drain"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    const deltas = ["One", " two", " three"].map((text, index) => ({
+      ...base,
+      type: "content.delta",
+      eventId: asEventId(`token-drain-delta-${index}`),
+      payload: { streamKind: "assistant_text", delta: text },
+    }));
+    await harness.emitAndDrain([
+      { ...base, type: "turn.started", eventId: asEventId("token-drain-start") },
+      ...deltas,
+    ]);
+    const batches = (await harness.readEvents()).flatMap((event) =>
+      event.type === "thread.message-sent" && event.payload.text.length > 0 ? [event] : [],
+    );
+    expect(batches.map((event) => event.payload.text)).toEqual(["One", " two three"]);
+    const completion = {
+      ...base,
+      type: "item.completed",
+      eventId: asEventId("token-drain-complete"),
+      payload: { itemType: "assistant_message", status: "completed" },
+    };
+    await harness.emitAndDrain([completion]);
+    await harness.emitAndDrain([...deltas, completion]);
+    const messages = (await harness.readModel()).threads.find(
+      (entry) => entry.id === base.threadId,
+    )?.messages;
+    expect(messages).toEqual([
+      expect.objectContaining({ text: "One two three", streaming: false }),
+    ]);
+    expect(
+      (await harness.readEvents()).filter(
+        (event) => event.type === "thread.message-sent" && event.payload.text.length > 0,
+      ),
+    ).toHaveLength(2);
+  });
+
+  it.each(["paragraph", "turn"] as const)(
+    "keeps %s delivery buffered when token batches are drained",
+    async (responseStreamingMode) => {
+      const harness = await createHarness({ serverSettings: { responseStreamingMode } });
+      const base = {
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-buffer-preserved"),
+        itemId: asItemId("item-buffer-preserved"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+      };
+      await harness.emitAndDrain([
+        { ...base, type: "turn.started", eventId: asEventId("buffer-preserved-start") },
+        ...["Hello", " world"].map((text, index) => ({
+          ...base,
+          type: "content.delta",
+          eventId: asEventId(`buffer-preserved-delta-${index}`),
+          payload: { streamKind: "assistant_text", delta: text },
+        })),
+      ]);
+      expect(
+        (await harness.readModel()).threads.find((entry) => entry.id === base.threadId)?.messages,
+      ).toEqual([]);
+      await harness.emitAndDrain([
+        {
+          ...base,
+          type: "item.completed",
+          eventId: asEventId("buffer-preserved-complete"),
+          payload: { itemType: "assistant_message", status: "completed", detail: "Hello world" },
+        },
+      ]);
+      expect(
+        (await harness.readModel()).threads.find((entry) => entry.id === base.threadId)?.messages,
+      ).toEqual([expect.objectContaining({ text: "Hello world", streaming: false })]);
+    },
+  );
 
   it("maps turn started/completed events into thread session updates", async () => {
     const harness = await createHarness();
@@ -1961,6 +2166,188 @@ describe("ProviderRuntimeIngestion", () => {
     expect(activity?.summary).toBe("Read file");
     expect(payload?.detail).toBe("/tmp/app.ts");
   });
+
+  effectIt.effect(
+    "keeps native proposed plans out of active Deep Plans and restores ordinary plans after completion",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() => createHarness());
+        const threadId = asThreadId("thread-1");
+        const runId = DeepPlanRunId.make("native-plan-guard-run");
+        const createdAt = "2026-01-01T00:00:01.000Z";
+        const model = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" };
+        const actor = { implementerId: `thread:${threadId}`, model };
+        const evidence = [
+          { kind: "test" as const, summary: "The focused behavior check passed.", createdAt },
+        ];
+        const structuredPlan: DeepPlanDocument = {
+          schemaVersion: 1,
+          version: 1,
+          goal: "Preserve structured Deep Plan approval",
+          scope: ["Plan persistence"],
+          decisions: [],
+          affectedAreas: ["Provider runtime ingestion"],
+          steps: [
+            {
+              id: "persist",
+              title: "Persist the structured plan",
+              description: "Keep native plan output from creating another approval path.",
+              dependencies: [],
+              acceptanceCriteria: [
+                {
+                  id: "single-plan",
+                  description: "Only the versioned plan is available for approval",
+                  checkMethod: "Read the persisted thread after native plan events",
+                },
+              ],
+            },
+          ],
+          finalValidation: {
+            description: "Ordinary plans work after Deep Plan completes",
+            checkMethod: "Ingest a new native plan after final validation",
+          },
+        };
+        yield* harness.engine.dispatch({
+          type: "thread.deep-plan.start",
+          commandId: CommandId.make("native-plan-guard-start"),
+          threadId,
+          runId,
+          createdAt,
+        });
+        const readRun = Effect.gen(function* () {
+          const shell = yield* Effect.promise(harness.readThreadShell);
+          if (shell.deepPlan == null)
+            return yield* Effect.die("Expected a persisted Deep Plan run");
+          return shell.deepPlan;
+        });
+        let operation = 0;
+        const updateRun = Effect.fnUntraced(function* (mutation: DeepPlanMutation) {
+          const current = yield* readRun;
+          const operationId = `native-plan-guard-${operation++}`;
+          yield* harness.engine.dispatch({
+            type: "thread.deep-plan.update",
+            commandId: CommandId.make(operationId),
+            threadId,
+            runId,
+            expectedRevision: current.revision,
+            operationId,
+            mutation,
+            createdAt,
+          });
+          return yield* readRun;
+        });
+        const assertNativePlansSuppressed = Effect.fnUntraced(function* (phase: DeepPlanRunPhase) {
+          const turnId = asTurnId(`native-plan-${phase}`);
+          const base = { provider: ProviderDriverKind.make("codex"), threadId, turnId, createdAt };
+          yield* Effect.promise(() =>
+            harness.emitAndDrain([
+              { ...base, type: "turn.started", eventId: asEventId(`native-plan-start-${phase}`) },
+              {
+                ...base,
+                type: "turn.proposed.delta",
+                eventId: asEventId(`native-plan-delta-${phase}`),
+                payload: { delta: `# Buffered native plan during ${phase}` },
+              },
+              {
+                ...base,
+                type: "turn.proposed.completed",
+                eventId: asEventId(`native-plan-complete-${phase}`),
+                payload: {
+                  planMarkdown: `<proposed_plan>\n# Native plan during ${phase}\n</proposed_plan>`,
+                },
+              },
+              {
+                ...base,
+                type: "turn.completed",
+                eventId: asEventId(`native-plan-turn-complete-${phase}`),
+                payload: { state: "completed" },
+              },
+            ]),
+          );
+          const snapshot = yield* Effect.promise(harness.readModel);
+          const proposals = snapshot.threads.find(
+            (thread) => thread.id === threadId,
+          )?.proposedPlans;
+          expect(proposals?.filter((proposal) => proposal.deepPlan === undefined)).toEqual([]);
+          const persisted = yield* readRun;
+          expect(persisted.phase).toBe(phase);
+          if (persisted.plan !== null) {
+            expect(persisted.plan).toEqual(structuredPlan);
+            expect(proposals?.filter((proposal) => proposal.deepPlan?.runId === runId)).toEqual([
+              expect.objectContaining({
+                id: `deep-plan:${runId}`,
+                deepPlan: { runId, planVersion: structuredPlan.version },
+              }),
+            ]);
+          }
+          return turnId;
+        });
+
+        yield* assertNativePlansSuppressed("collecting");
+        yield* updateRun({ type: "sources-set", sources: [] });
+        yield* assertNativePlansSuppressed("planning");
+        const published = yield* updateRun({ type: "publish-plan", plan: structuredPlan });
+        expect(published.plan).toEqual(structuredPlan);
+        yield* assertNativePlansSuppressed("awaitingApproval");
+        yield* updateRun({
+          type: "approve",
+          planVersion: 1,
+          approvalKey: deepPlanApprovalKey(structuredPlan),
+          implementation: model,
+          implementationThreadId: threadId,
+          implementerId: actor.implementerId,
+        });
+        yield* assertNativePlansSuppressed("implementing");
+        for (const status of ["inProgress", "implemented", "verified"] as const) {
+          yield* updateRun({
+            type: "step-update",
+            stepId: "persist",
+            status,
+            evidence: status === "verified" ? evidence : [],
+            actor,
+          });
+        }
+        const finalTurnId = yield* assertNativePlansSuppressed("validating");
+        const requestId = finalValidationRequestId(yield* readRun);
+        yield* updateRun({ type: "validation-start", requestId, actor });
+        yield* updateRun({
+          type: "validation-complete",
+          requestId,
+          status: "passed",
+          evidence,
+          actor,
+        });
+
+        yield* Effect.promise(() =>
+          harness.emitAndDrain([
+            {
+              type: "turn.proposed.completed",
+              eventId: asEventId("ordinary-plan-after-deep-completion"),
+              provider: ProviderDriverKind.make("codex"),
+              threadId,
+              turnId: finalTurnId,
+              createdAt,
+              payload: { planMarkdown: "# New ordinary plan after Deep Plan" },
+            },
+          ]),
+        );
+        const snapshot = yield* Effect.promise(harness.readModel);
+        const completed = snapshot.threads.find((thread) => thread.id === threadId);
+        expect(completed?.deepPlan).toMatchObject({
+          phase: "completed",
+          plan: structuredPlan,
+          finalValidation: { status: "passed" },
+        });
+        expect(
+          completed?.proposedPlans.filter((proposal) => proposal.deepPlan === undefined),
+        ).toEqual([
+          expect.objectContaining({
+            turnId: finalTurnId,
+            planMarkdown: "# New ordinary plan after Deep Plan",
+          }),
+        ]);
+      }),
+  );
 
   it("projects completed plan items into first-class proposed plans", async () => {
     const harness = await createHarness();
@@ -4490,6 +4877,71 @@ describe("ProviderRuntimeIngestion", () => {
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.title).toBe("User-set title");
+  });
+
+  it("persists full response measurements once per turn and enriches late context usage", async () => {
+    const harness = await createHarness();
+    const base = {
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("metrics-turn"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    await harness.emitAndDrain([
+      {
+        ...base,
+        type: "turn.started",
+        eventId: asEventId("metrics-start"),
+      },
+    ]);
+    harness.advanceClock(250);
+    await harness.emitAndDrain([
+      {
+        ...base,
+        type: "content.delta",
+        eventId: asEventId("metrics-first"),
+        itemId: asItemId("metrics-message"),
+        payload: { delta: "Measured answer", streamKind: "assistant_text" },
+      },
+    ]);
+    harness.advanceClock(1000);
+    await harness.emitAndDrain([
+      {
+        ...base,
+        type: "turn.completed",
+        eventId: asEventId("metrics-complete"),
+        payload: {
+          state: "completed",
+          tokenUsage: {
+            usageStatus: "complete",
+            usageScope: "main_agent",
+            inputTokens: 1000,
+            outputTokens: 300,
+            reasoningTokens: 100,
+            hasSubagents: false,
+          },
+        },
+      },
+    ]);
+    await harness.emitAndDrain([
+      {
+        ...base,
+        type: "thread.token-usage.updated",
+        eventId: asEventId("metrics-context"),
+        payload: { usage: { usedTokens: 1300, maxTokens: 2000 } },
+      },
+    ]);
+    const thread = (await harness.readModel()).threads.find((entry) => entry.id === base.threadId)!;
+    const rows = thread.activities.filter((activity) => activity.kind === "response.metrics");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.turnId).toBe(base.turnId);
+    expect(rows[0]?.payload).toMatchObject({
+      tokenUsage: { outputTokens: 300, reasoningTokens: 100, usageStatus: "complete" },
+      contextUsedTokens: 1300,
+      contextLimitTokens: 2000,
+      timeToFirstTokenMs: expect.any(Number),
+      responseDurationMs: expect.any(Number),
+    });
   });
 
   it("projects context window updates into normalized thread activities", async () => {

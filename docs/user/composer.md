@@ -62,17 +62,26 @@ On web and desktop, use Settings → Providers → **Models** to add an unlisted
 name and options. Only options supported by the provider integration affect turns. Antigravity
 uses its account catalog and does not support custom models.
 
-## Model defaults
+## New thread defaults
 
-T3 Code remembers your provider, model, and model options for new threads. A
-project's configured model takes precedence; resetting that project setting
-returns to the remembered selection.
+New threads remember the last provider, model and model options, permissions, and
+planning mode you used for that project in the current environment. Changing a
+composer choice or sending a message remembers these choices; opening an older
+thread does not. They survive restarts and are shared across web, desktop, and
+mobile connected to that environment.
+
+Remembered choices take precedence over initial defaults. Changing or resetting
+the project's model or permission default makes that setting apply again. Branch
+and worktree choices still use the project's workspace defaults.
+
+A new thread starts with empty history. Attachments, message context, Deep Plan
+sources, and agent sessions do not carry over.
 
 Leaving reasoning level or service tier unset uses the provider's own configuration.
 
 On web and desktop, a Codex model that advertises context choices offers **Context window** in the
 composer's model controls. Choose from that model's supported sizes, or return to its default.
-The choice belongs to the current thread and does not become a global default for new threads.
+The choice is remembered with the project's other model options.
 
 ## Quote an assistant response
 
@@ -126,6 +135,11 @@ up the whole dictation, including corrections you made after a pause. It removes
 retracted statements, and unrelated digressions while preserving requirements, details, and negations.
 Review and edit the result before sending. **Restore original** returns the dictated section to its
 uncleaned transcript; canceling restores the draft you had before recording. Errors retain the original.
+
+Voice input prefers the device's built-in microphone when it can identify one, so Bluetooth
+headphones can keep playing music in their high-quality mode. Speak toward the computer or phone.
+If no built-in microphone is available, web and desktop use the system's default input.
+In a browser, playback may briefly change during the first microphone permission request.
 
 Voice settings let you choose separate speech-recognition and cleanup models, tune language hints
 and pauses, add vocabulary, or turn cleanup off. Environment defaults apply to each project until you
@@ -182,6 +196,26 @@ Provider commands must start the message to run. T3 Code commands such as
 
 Send `/compact` in an existing conversation to reduce context usage when the
 provider supports it. Web and desktop also offer compaction from the context meter.
+
+## Choose a context compaction engine
+
+In **Settings → Better T3 → Agents**, choose the **Context compaction engine** for
+Codex chats in the selected environment:
+
+- **Codex** uses Codex's built-in compaction.
+- **Better T3 Code** prepares summaries in the background and uses them for later
+  turns. Codex's own compaction remains the fallback when no prepared summary can
+  be used.
+
+Both options keep the full visible chat history. The choice applies to every
+client connected to that environment. Switching to Codex preserves your selected
+**Context compaction model** for when you switch back.
+
+With **Better T3 Code**, a regular model selects relevant content and summarizes
+it. Optionally choose a Decision Model to select the excerpts; an automatic
+regular model still summarizes them. **Automatic** prefers an available Luna
+model, then your text-generation model. If selection fails, the regular model
+summarizes the complete segment. Conversation content goes to the chosen providers.
 
 ## Context in your message
 
@@ -259,6 +293,28 @@ automatically. HTML previews cannot access your T3 Code session.
 
 On mobile, select a PDF attachment or link to open it. iOS uses the native viewer;
 Android opens a compatible installed file viewer.
+
+## Create a deep plan
+
+Choose **Deep Plan** in the composer’s mode menu or use `/deep-plan` to plan from
+your project’s conversations. All chats in the current project are included,
+including archived chats. Sources are analyzed in parallel batches, with progress
+saved after each chat. Other tools follow the permission mode selected in the
+composer; planning itself stays read-only. Use **Add chats** to include conversations
+from other projects or connected environments. Sources stay fixed once analysis starts.
+
+Wait for source analysis, then review the plan and its requirements. Deep Plans use
+the same composer actions as other plans: type feedback to refine, or choose
+**Implement** and its menu to use the suggested agent count or start in a new thread.
+The parallel implementation setting and review model apply to Deep Plans too.
+Resolve missing sources before implementing. Changing the plan requires approving
+its new version before implementation continues.
+
+The implementation checklist keeps each step’s requirements, checks, and evidence.
+Progress survives reconnecting and reopening the thread. Choose **Resume** after a
+pause or failed check. Work finishes after every step is verified and final
+validation passes. Deep Plan is available only when the connected environment and
+selected provider support it.
 
 ## Implement a proposed plan
 

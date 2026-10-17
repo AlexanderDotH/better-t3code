@@ -44,6 +44,7 @@ export interface ActiveGeneralSubagent {
   readonly providerDriver: ProviderDriverKind;
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
+  readonly deepPlan?: import("../mcp/McpInvocationContext.ts").McpDeepPlanContext;
   terminal: Deferred.Deferred<GeneralSubagentOutcome>;
   completed: Deferred.Deferred<void>;
   wake: Deferred.Deferred<void>;
@@ -78,6 +79,7 @@ export interface GeneralSubagentWorkerInput {
   readonly providerDriver: ProviderDriverKind;
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
+  readonly deepPlan?: import("../mcp/McpInvocationContext.ts").McpDeepPlanContext;
   readonly retainSession: boolean;
   readonly task: string;
   readonly name?: string;
@@ -134,6 +136,7 @@ export const makeActiveGeneralSubagent = Effect.fn("GeneralSubagentState.makeWor
     providerDriver: input.providerDriver,
     cwd: input.cwd,
     runtimeMode: input.runtimeMode,
+    ...(input.deepPlan ? { deepPlan: input.deepPlan } : {}),
     terminal: yield* Deferred.make<GeneralSubagentOutcome>(),
     completed: yield* Deferred.make<void>(),
     wake: yield* Deferred.make<void>(),

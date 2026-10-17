@@ -1150,3 +1150,27 @@ describe("serverSettings helpers", () => {
     expect(applyServerSettingsPatch(current, { mcp: { servers } }).mcp.servers).toEqual(servers);
   });
 });
+
+it("replaces and clears the context compaction model without carrying traits across providers", () => {
+  const first = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+    contextCompactionModelSelection: {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "test-luna",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    },
+  });
+  const next = applyServerSettingsPatch(first, {
+    contextCompactionModelSelection: {
+      instanceId: ProviderInstanceId.make("openrouter"),
+      model: "labs/system-one",
+    },
+  });
+  expect(next.contextCompactionModelSelection).toEqual({
+    instanceId: ProviderInstanceId.make("openrouter"),
+    model: "labs/system-one",
+  });
+  expect(
+    applyServerSettingsPatch(next, { contextCompactionModelSelection: null })
+      .contextCompactionModelSelection,
+  ).toBeNull();
+});

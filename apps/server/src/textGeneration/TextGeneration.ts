@@ -14,6 +14,8 @@ import * as ThreadTitleLinks from "./ThreadTitleLinks.ts";
 import type { TextGenerationPolicy } from "./TextGenerationPolicy.ts";
 import type { AutoReasoningMessage } from "./AutoReasoning.ts";
 
+import type { ContextSummaryInput, ContextSummaryResult } from "./ContextSummaryGeneration.ts";
+
 export type TextGenerationProvider =
   | "codex"
   | "claudeAgent"
@@ -185,6 +187,9 @@ export class TextGeneration extends Context.Service<
   TextGeneration,
   {
     readonly decisionGeneration?: DecisionGenerationProvider;
+    readonly summarizeContext?: (
+      input: ContextSummaryInput,
+    ) => Effect.Effect<ContextSummaryResult, TextGenerationError>;
     readonly decideAutoReasoning: (
       input: AutoReasoningGenerationInput,
     ) => Effect.Effect<AutoReasoningGenerationResult, TextGenerationError>;
@@ -239,6 +244,7 @@ export class TextGeneration extends Context.Service<
 >()("t3/textGeneration/TextGeneration") {}
 
 type TextGenerationOp =
+  | "summarizeContext"
   | "decideAutoReasoning"
   | "generateCommitMessage"
   | "generatePrContent"
@@ -295,6 +301,19 @@ export const makeTextGenerationFromRegistry = (
       ),
     );
   return TextGeneration.of({
+    summarizeContext: (input) =>
+      resolve("summarizeContext", input.modelSelection).pipe(
+        Effect.flatMap((generation) =>
+          generation.summarizeContext
+            ? generation.summarizeContext(input)
+            : Effect.fail(
+                new TextGenerationError({
+                  operation: "summarizeContext",
+                  detail: "This provider does not support context summaries.",
+                }),
+              ),
+        ),
+      ),
     decideAutoReasoning: (input) =>
       resolve("decideAutoReasoning", input.modelSelection).pipe(
         Effect.flatMap((textGeneration) => textGeneration.decideAutoReasoning(input)),

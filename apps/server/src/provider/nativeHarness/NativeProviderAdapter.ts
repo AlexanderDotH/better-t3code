@@ -6,12 +6,7 @@ import * as Option from "effect/Option";
 
 import * as ResourceProtection from "../../resourceProtection/SubagentResourceGovernor.ts";
 import { ProviderAdapterRequestError, type ProviderAdapterError } from "../Errors.ts";
-import {
-  makeBoundedProviderEventBroadcast,
-  providerEventEncodedBytes,
-  PROVIDER_RUNTIME_EVENT_QUEUE_BYTE_CAPACITY,
-  PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY,
-} from "../boundedEventQueue.ts";
+import { makeProviderEventHub } from "../providerEventHub.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import { makeNativeProviderMcpRuntime } from "./NativeProviderMcpRuntime.ts";
 import { makeNativeProviderSessionLifecycle } from "./NativeProviderSessionLifecycle.ts";
@@ -71,11 +66,7 @@ export const makeNativeProviderAdapter = Effect.fn("makeNativeProviderAdapter")(
         makeSharedNativeProviderTurnAdmission({ provider: definition.provider, governor }),
     });
   const crypto = yield* Crypto.Crypto;
-  const runtimeEventBroadcast = yield* makeBoundedProviderEventBroadcast<ProviderRuntimeEvent>({
-    capacity: PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY,
-    byteCapacity: PROVIDER_RUNTIME_EVENT_QUEUE_BYTE_CAPACITY,
-    sizeOf: providerEventEncodedBytes,
-  });
+  const runtimeEventBroadcast = yield* makeProviderEventHub();
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const randomUuid = crypto.randomUUIDv4.pipe(
     Effect.mapError(
@@ -156,6 +147,8 @@ export const makeNativeProviderAdapter = Effect.fn("makeNativeProviderAdapter")(
     readThread,
     rollbackThread,
     stopAll,
+    consumeEvents: runtimeEventBroadcast.consumeEvents,
+    subscribeEventStream: runtimeEventBroadcast.subscribeEventStream,
     streamEvents: runtimeEventBroadcast.stream,
   } satisfies ProviderAdapterShape<ProviderAdapterError>;
 });

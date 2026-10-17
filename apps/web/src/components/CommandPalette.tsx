@@ -77,6 +77,7 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { useClientSettings } from "../hooks/useSettings";
+import { useInterfaceTranslator } from "../hooks/useInterfaceTranslator";
 import { useTheme } from "../hooks/useTheme";
 import { useCustomThemes } from "../hooks/useCustomThemes";
 import { useEnvironmentThemeDefinitions } from "../hooks/useEnvironmentTheme";
@@ -694,6 +695,8 @@ function OpenCommandPaletteDialog(props: {
   readonly openOverlayMode: (mode: SearchOverlayMode) => void;
   readonly clearOpenIntent: () => void;
 }) {
+  const composerHandleRef = useComposerHandleContext();
+  const translate = useInterfaceTranslator().message;
   const navigate = useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
   const { clearOpenIntent, openIntent, openOverlayMode, setOpen } = props;
@@ -1979,6 +1982,32 @@ function OpenCommandPaletteDialog(props: {
     ],
   };
   actionItems.push(changeAppearanceItem);
+  const composerModeState = composerHandleRef?.current?.getComposerModeState();
+  if (composerModeState?.enabled) {
+    for (const mode of ["default", "plan", "deep-plan"] as const) {
+      const title =
+        mode === "deep-plan"
+          ? translate("chat.deepPlan.label")
+          : mode === "plan"
+            ? translate("chat.composer.mode.plan")
+            : translate("chat.composer.interaction.build");
+      actionItems.push({
+        kind: "action",
+        value: `action:composer-mode:${mode}`,
+        title,
+        description:
+          mode === "deep-plan"
+            ? (composerModeState.deepPlanningDisabledReason ?? undefined)
+            : undefined,
+        searchTerms: [title, "composer", "mode", mode, "planning"],
+        icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+        disabled: mode === "deep-plan" && !!composerModeState.deepPlanningDisabledReason,
+        run: async () => {
+          composerHandleRef?.current?.setComposerMode(mode);
+        },
+      });
+    }
+  }
 
   useLayoutEffect(() => {
     if (openIntent?.kind !== "change-theme") return;
