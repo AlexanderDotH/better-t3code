@@ -1016,4 +1016,3 @@ export * from "./threadReducer.ts";
 export * from "./threadShell.ts";
 export * from "./threadState.ts";
 export * from "./subagents.ts";
-export { streamingPipelineMetrics } from "../streamingPipelineMetrics.ts";

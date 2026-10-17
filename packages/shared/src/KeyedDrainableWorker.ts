@@ -4,7 +4,7 @@ import * as Scope from "effect/Scope";
 import * as TxQueue from "effect/TxQueue";
 import * as TxRef from "effect/TxRef";
 
-export const KEYED_DRAINABLE_WORKER_DEFAULTS = {
+const KEYED_DRAINABLE_WORKER_DEFAULTS = {
   concurrency: 8,
   maxItemsPerKey: 256,
   maxBytesPerKey: 32 * 1024 * 1024,

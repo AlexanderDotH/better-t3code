@@ -250,7 +250,7 @@ export function createProviderPipelineMetrics(options?: {
   };
 }
 
-export const providerPipelineMetrics = createProviderPipelineMetrics();
+const providerPipelineMetrics = createProviderPipelineMetrics();
 
 /** Stamp at the native adapter callback, before any provider publication queue. */
 export const stampProviderIngress = providerPipelineMetrics.stampIngress;

@@ -11,7 +11,7 @@ import * as Fiber from "effect/Fiber";
 
 type ContentDeltaEvent = Extract<ProviderRuntimeEvent, { type: "content.delta" }>;
 
-export const ASSISTANT_TEXT_BATCH_WINDOW_MS = 50;
+const ASSISTANT_TEXT_BATCH_WINDOW_MS = 50;
 export const ASSISTANT_TEXT_BATCH_MAX_BYTES = 16 * 1024;
 
 export interface AssistantTextFlushInput {

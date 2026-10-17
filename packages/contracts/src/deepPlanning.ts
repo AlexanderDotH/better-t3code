@@ -14,7 +14,7 @@ import {
 import { ProviderOptionSelections } from "./model.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
-export const DEEP_PLAN_VERSION = 1;
+const DEEP_PLAN_VERSION = 1;
 export const DEEP_PLAN_MAX_PAGE_SIZE = 200;
 export const DEEP_PLAN_MAX_CHUNK_RECORDS = 100;
 export const DEEP_PLAN_MAX_RECORD_BYTES = 128 * 1024;

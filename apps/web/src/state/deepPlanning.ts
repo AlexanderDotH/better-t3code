@@ -20,7 +20,7 @@ import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { randomUUID } from "../lib/utils";
 
-export const deepPlanningEnvironment = {
+const deepPlanningEnvironment = {
   catalogSources: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "web:deep-plan:catalog-sources",
     tag: DEEP_PLAN_WS_METHODS.catalogSources,

@@ -25,7 +25,7 @@ interface ContextSummaryRequest {
   readonly outputSchema: typeof ContextSummaryResult;
 }
 
-export function buildContextSummaryRequest(input: ContextSummaryInput): ContextSummaryRequest {
+function buildContextSummaryRequest(input: ContextSummaryInput): ContextSummaryRequest {
   return {
     cwd: input.cwd,
     modelSelection: input.modelSelection,

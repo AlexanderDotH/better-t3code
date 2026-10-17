@@ -8,7 +8,7 @@ export { resolveContextCompactionModel } from "@t3tools/shared/model";
 
 export const CONTEXT_PREPARATION_RATIO = 0.45;
 export const CONTEXT_REPLACEMENT_RATIO = 0.6;
-export const CONTEXT_RETAINED_USER_TURNS = 2;
+const CONTEXT_RETAINED_USER_TURNS = 2;
 export const CONTEXT_SEGMENT_MAX_CHARS = 24_000;
 const CONTEXT_SEGMENT_MAX_MESSAGES = 16;
 export const CONTEXT_CHECKPOINT_ACTIVITY = "context-engine.prepared";
@@ -53,7 +53,7 @@ export function contextPrefixFingerprint(
   return hash.digest("hex");
 }
 
-export function renderContextMessage(message: OrchestrationMessage) {
+function renderContextMessage(message: OrchestrationMessage) {
   return JSON.stringify({
     messageId: message.id,
     role: message.role,

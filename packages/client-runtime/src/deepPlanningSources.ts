@@ -54,7 +54,7 @@ interface FrozenDeepPlanSourceCatalog {
   readonly sources: ReadonlyArray<DeepPlanSourceSnapshot>;
 }
 
-export class DeepPlanSourceTransferError extends Error {
+class DeepPlanSourceTransferError extends Error {
   override readonly name = "DeepPlanSourceTransferError";
 
   readonly code: "aborted" | "unavailable" | "stale" | "incomplete" | "failed";

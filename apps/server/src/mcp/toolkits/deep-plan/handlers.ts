@@ -419,7 +419,7 @@ export const invokeDeepPlanPublish = (input: DeepPlanPublishInput) =>
   withBoundRunLock(input.expectedRunId, publish(input)).pipe(Effect.map(updateReceipt));
 export const invokeDeepPlanStepUpdate = (input: DeepPlanStepUpdateInput) =>
   withBoundRunLock(input.expectedRunId, stepUpdate(input)).pipe(Effect.map(updateReceipt));
-export const invokeDeepPlanAdjustProcedure = (input: DeepPlanAdjustProcedureInput) =>
+const invokeDeepPlanAdjustProcedure = (input: DeepPlanAdjustProcedureInput) =>
   withBoundRunLock(input.expectedRunId, adjustProcedure(input)).pipe(Effect.map(updateReceipt));
 export const invokeDeepPlanValidation = (input: DeepPlanValidationInput) =>
   withBoundRunLock(input.expectedRunId, validation(input)).pipe(Effect.map(updateReceipt));

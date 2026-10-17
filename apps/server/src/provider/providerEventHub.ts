@@ -41,7 +41,7 @@ export type SubscribeProviderEventStream = (
   options: ProviderEventStreamOptions,
 ) => Effect.Effect<Stream.Stream<ProviderRuntimeEvent, ProviderEventOverflow>, never, Scope.Scope>;
 
-export function providerEventMatchesFilter(
+function providerEventMatchesFilter(
   event: ProviderRuntimeEvent,
   filter?: ProviderEventFilter,
 ): boolean {
@@ -52,7 +52,7 @@ export function providerEventMatchesFilter(
   );
 }
 
-export function providerEventSessionKey(event: ProviderRuntimeEvent): string {
+function providerEventSessionKey(event: ProviderRuntimeEvent): string {
   return `${event.providerInstanceId ?? event.provider}\u0000${event.threadId}\u0000${event.runtimeSessionId ?? ""}`;
 }
 
