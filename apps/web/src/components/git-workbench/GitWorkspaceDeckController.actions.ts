@@ -1,5 +1,7 @@
 import {
+  executeAtomQuery,
   isAtomCommandInterrupted,
+  type AtomCommandResult,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type {
@@ -11,7 +13,16 @@ import type {
   TurnId,
 } from "@t3tools/contracts";
 import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
-import { useCallback, type Dispatch, type SetStateAction } from "react";
+import { RegistryContext } from "@effect/atom-react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 
 import { requestGitActionsControl } from "~/components/gitActionsControlBus";
 import { toastManager } from "~/components/ui/toast";
@@ -33,8 +44,38 @@ import {
   mapOperation,
 } from "./GitWorkspaceDeckController.model";
 import { bufferedFileEdits, workspaceFileBufferKey } from "./GitWorkspaceDeckSessionState";
+import { setGitFilesStaged } from "./gitStagingBatch";
 
 type DiffState = Readonly<Record<string, ReturnType<typeof mapDiff>>>;
+
+function commandValue<A, E>(result: AtomCommandResult<A, E>): A {
+  if (result._tag === "Success") return result.value;
+  if (isAtomCommandInterrupted(result)) throw new DOMException("Request interrupted", "AbortError");
+  throw squashAtomCommandFailure(result);
+}
+
+function staleGitState(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "_tag" in error &&
+    error._tag === "GitWorkbenchStaleStateError"
+  );
+}
+
+function withoutPathDiffs(current: DiffState, path: string): DiffState {
+  const next = { ...current };
+  for (const source of ["index", "worktree", "conflict"]) delete next[`${path}::${source}`];
+  return next;
+}
+
+function indexEditingBlocked(input: {
+  readonly activeTurn: boolean;
+  readonly readOnly?: boolean | undefined;
+  readonly snapshot: GitWorkbenchSnapshot | null;
+}): boolean {
+  return Boolean(input.readOnly || input.activeTurn || !input.snapshot || input.snapshot.stale);
+}
 
 export function useGitWorkspaceDeckActions(input: {
   readonly activeTurn: boolean;
@@ -44,6 +85,7 @@ export function useGitWorkspaceDeckActions(input: {
   readonly cwd: string | null;
   readonly environmentId: EnvironmentId;
   readonly queuedWorkflow: GitQueuedWorkflow | null;
+  readonly readOnly?: boolean | undefined;
   readonly refreshChangesDiff: () => void;
   readonly refreshFile: () => void;
   readonly refreshWorkbenchQuery: () => void;
@@ -80,60 +122,207 @@ export function useGitWorkspaceDeckActions(input: {
     reportFailure: false,
   });
 
+  const registry = useContext(RegistryContext);
+  const latestInputRef = useRef(input);
+  const stagingRequestRef = useRef<{ readonly scope: string } | null>(null);
+  const scope = JSON.stringify([input.environmentId, input.cwd]);
+  const [stagingState, setStagingState] = useState<{
+    readonly scope: string;
+    readonly pending: boolean;
+    readonly error: string | null;
+  }>({ scope, pending: false, error: null });
+  if (stagingState.scope !== scope) setStagingState({ scope, pending: false, error: null });
+
+  useEffect(() => {
+    latestInputRef.current = input;
+  }, [input]);
+
+  useEffect(() => {
+    return () => {
+      if (stagingRequestRef.current?.scope === scope) stagingRequestRef.current = null;
+    };
+  }, [scope]);
+
+  const beginStaging = useCallback(() => {
+    if (stagingRequestRef.current?.scope === scope) return null;
+    const request = { scope };
+    stagingRequestRef.current = request;
+    setStagingState({ scope, pending: true, error: null });
+    return request;
+  }, [scope]);
+
+  const finishStaging = useCallback((request: { readonly scope: string }, error: string | null) => {
+    if (stagingRequestRef.current !== request) return;
+    stagingRequestRef.current = null;
+    setStagingState({ scope: request.scope, pending: false, error });
+  }, []);
+
   const applyChangeSelection = useCallback<GitWorkbenchPanelProps["onApplySelection"]>(
     (selection) => {
+      if (stagingRequestRef.current?.scope === scope) return;
       if (!input.cwd || !selection.expectedPatchId) return;
       const change = input.changes.find((candidate) => candidate.id === selection.changeId);
       if (!change) return;
-      void (async () => {
-        const result = await applySelection({
-          environmentId: input.environmentId,
-          input: {
-            action: selection.action,
-            ...(selection.action === "discard" && change.untracked
-              ? { confirmedUntrackedDeletion: true }
-              : {}),
-            cwd: input.cwd!,
-            expectedPatchId: selection.expectedPatchId!,
-            expectedStateToken: selection.expectedStateToken,
-            path: selection.path,
-            selection:
-              selection.lineIds.length > 0
-                ? { ids: selection.lineIds, kind: "lines" as const }
-                : selection.hunkIds.length > 0
-                  ? { ids: selection.hunkIds, kind: "hunks" as const }
-                  : { kind: "file" as const },
-            source: selection.source === "index" ? "staged" : "unstaged",
-          },
+      const operationActive = input.contractSnapshot?.operation.kind !== "none";
+      if (indexEditingBlocked(input) || (selection.action === "discard" && operationActive)) {
+        setStagingState({
+          scope,
+          pending: false,
+          error: input.translate("git.changes.stagingBlocked"),
         });
-        if (result._tag === "Success") {
-          input.setDiffs((current) => {
-            const next = { ...current };
-            delete next[selection.changeId];
-            return next;
+        return;
+      }
+      if (selection.expectedStateToken !== input.snapshot?.stateToken) {
+        input.setDiffs({});
+        setStagingState({
+          scope,
+          pending: false,
+          error: input.translate("git.changes.stagingStateChanged"),
+        });
+        input.refreshChangesDiff();
+        input.refreshWorkbenchQuery();
+        return;
+      }
+      const request = beginStaging();
+      if (!request) return;
+      const isCurrent = () =>
+        stagingRequestRef.current === request &&
+        JSON.stringify([latestInputRef.current.environmentId, latestInputRef.current.cwd]) ===
+          scope;
+      void (async () => {
+        let failure: string | null = null;
+        try {
+          const result = await applySelection({
+            environmentId: input.environmentId,
+            input: {
+              action: selection.action,
+              ...(selection.action === "discard" && change.untracked
+                ? { confirmedUntrackedDeletion: true }
+                : {}),
+              cwd: input.cwd!,
+              expectedPatchId: selection.expectedPatchId!,
+              expectedStateToken: selection.expectedStateToken,
+              path: selection.path,
+              selection:
+                selection.lineIds.length > 0
+                  ? { ids: selection.lineIds, kind: "lines" as const }
+                  : selection.hunkIds.length > 0
+                    ? { ids: selection.hunkIds, kind: "hunks" as const }
+                    : { kind: "file" as const },
+              source: selection.source === "index" ? "staged" : "unstaged",
+            },
           });
-          input.refreshChangesDiff();
-          return;
-        }
-        if (isAtomCommandInterrupted(result)) return;
-        const error = squashAtomCommandFailure(result);
-        if (
-          typeof error === "object" &&
-          error !== null &&
-          "_tag" in error &&
-          error._tag === "GitWorkbenchStaleStateError"
-        ) {
-          input.setDiffs((current) => {
-            const existing = current[selection.changeId];
-            return existing
-              ? { ...current, [selection.changeId]: { ...existing, stale: true } }
-              : current;
-          });
-          input.refreshChangesDiff();
+          commandValue(result);
+          if (!isCurrent()) return;
+          input.setDiffs((current) => withoutPathDiffs(current, selection.path));
+        } catch (error) {
+          if (!isCurrent() || (error instanceof DOMException && error.name === "AbortError"))
+            return;
+          failure = staleGitState(error)
+            ? input.translate("git.changes.stagingStateChanged")
+            : error instanceof Error
+              ? error.message
+              : input.translate("git.changes.stagingFailed");
+          if (staleGitState(error)) input.setDiffs({});
+        } finally {
+          if (isCurrent()) {
+            input.refreshChangesDiff();
+            input.refreshWorkbenchQuery();
+            finishStaging(request, failure);
+          }
         }
       })();
     },
-    [applySelection, input],
+    [applySelection, beginStaging, input, scope],
+  );
+
+  const setFilesStaged = useCallback(
+    (paths: readonly string[], staged: boolean) => {
+      if (stagingRequestRef.current?.scope === scope) return;
+      if (!input.cwd || paths.length === 0) return;
+      if (indexEditingBlocked(input) || input.contractSnapshot?.operation.kind !== "none") {
+        setStagingState({
+          scope,
+          pending: false,
+          error: input.translate("git.changes.stagingBlocked"),
+        });
+        return;
+      }
+      const request = beginStaging();
+      if (!request) return;
+      const isCurrent = () =>
+        stagingRequestRef.current === request &&
+        JSON.stringify([latestInputRef.current.environmentId, latestInputRef.current.cwd]) ===
+          scope;
+      const canContinue = () =>
+        isCurrent() &&
+        !indexEditingBlocked(latestInputRef.current) &&
+        latestInputRef.current.contractSnapshot?.operation.kind === "none";
+
+      void (async () => {
+        const result = await setGitFilesStaged({
+          paths,
+          staged,
+          expectedStateToken: input.snapshot!.stateToken,
+          canContinue,
+          refreshSnapshot: async () =>
+            commandValue(
+              await refreshWorkbench({
+                environmentId: input.environmentId,
+                input: { cwd: input.cwd! },
+              }),
+            ),
+          readDiff: async (diffInput) =>
+            commandValue(
+              await executeAtomQuery(
+                registry,
+                gitWorkbenchEnvironment.changesDiff({
+                  environmentId: input.environmentId,
+                  input: { ...diffInput, cwd: input.cwd! },
+                }),
+                { refresh: true, reportFailure: false },
+              ),
+            ),
+          applyFile: async (fileInput) => {
+            const applied = commandValue(
+              await applySelection({
+                environmentId: input.environmentId,
+                input: { ...fileInput, cwd: input.cwd! },
+              }),
+            );
+            if (isCurrent()) input.setDiffs((current) => withoutPathDiffs(current, fileInput.path));
+            return applied;
+          },
+        });
+        if (!isCurrent()) return;
+        let failure: string | null = null;
+        if (
+          result.status === "stopped" &&
+          result.reason !== "cancelled" &&
+          !(result.error instanceof DOMException && result.error.name === "AbortError")
+        ) {
+          const stale = result.reason === "stale" || staleGitState(result.error);
+          if (stale) input.setDiffs({});
+          const message = stale
+            ? input.translate("git.changes.stagingStateChanged")
+            : result.reason === "operation"
+              ? input.translate("git.changes.stagingBlocked")
+              : result.reason === "conflicted"
+                ? input.translate("git.quick.resolveConflicts")
+                : result.error instanceof Error
+                  ? result.error.message
+                  : input.translate("git.changes.stagingFailed");
+          failure = `${input.translate("git.changes.stagingStopped", {
+            path: result.path,
+            count: result.completedPaths.length,
+          })} ${message}`;
+        }
+        input.refreshChangesDiff();
+        input.refreshWorkbenchQuery();
+        finishStaging(request, failure);
+      })();
+    },
+    [applySelection, beginStaging, finishStaging, input, refreshWorkbench, registry, scope],
   );
 
   const runWorkbenchOperation = useCallback<GitWorkbenchPanelProps["onRunOperation"]>(
@@ -374,6 +563,9 @@ export function useGitWorkspaceDeckActions(input: {
     runOperation,
     runWorkbenchOperation,
     saveCurrentFile,
+    setFilesStaged,
+    stagingPending: stagingState.scope === scope && stagingState.pending,
+    stagingError: stagingState.scope === scope ? stagingState.error : null,
     upsertQueue,
     writeFile,
   };

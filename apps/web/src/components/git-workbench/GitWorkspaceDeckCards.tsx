@@ -39,6 +39,7 @@ export interface UseGitWorkspaceDeckCardsInput {
   readonly selectionBlocked: boolean;
   readonly status: GitCompactStatus;
   readonly onExpandedCardChange: (card: ChatWorkspaceCardId | null) => void;
+  readonly onOpenChanges: () => void;
   readonly selectCard: (card: ChatWorkspaceCardId) => void;
 }
 
@@ -77,6 +78,7 @@ export function useGitWorkspaceDeckCards(
     const mcpCard: WorkspaceDeckCardDefinition<ChatWorkspaceCardId> = {
       id: "mcp",
       label: translate("git.cards.mcpWorkspace"),
+      compactSizing: "content",
       renderBody: ({ active }) => (
         <McpWorkspaceCardController
           active={active}
@@ -128,13 +130,13 @@ export function useGitWorkspaceDeckCards(
       id: "git",
       label: translate("git.cards.gitWorkspace"),
       renderBody: () => input.gitCard,
-      renderPeek: ({ blocked, position, requestActivation }) => (
+      renderPeek: ({ blocked, position }) => (
         <WorkspaceCardPeek
-          blocked={blocked}
+          blocked={blocked || input.selectionBlocked}
           cardId="git"
           label={translate("git.cards.gitWorkspace")}
           position={position}
-          onActivate={requestActivation}
+          onActivate={input.onOpenChanges}
         >
           {controller.renderGitPeek({
             blocked: blocked || input.selectionBlocked,
@@ -151,6 +153,7 @@ export function useGitWorkspaceDeckCards(
     input.gitCard,
     input.mcpExpanded,
     input.onExpandedCardChange,
+    input.onOpenChanges,
     input.selectCard,
     input.selectionBlocked,
     input.status,

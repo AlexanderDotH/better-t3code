@@ -24,12 +24,17 @@ export function useGitWorkspaceDeckQueries(input: {
   readonly session: ReturnType<typeof useGitWorkspaceDeckSession>;
 }) {
   const { props, session } = input;
-  const gitExpanded = session.expandedCard === "git";
-  const wantsWorkbenchData = shouldLoadGitWorkbenchData({
-    activeCard: input.resolvedActiveCard,
-    expandedCard: session.expandedCard,
-    gitAvailable: input.gitAvailable,
-  });
+  const scopeReady =
+    session.currentSelection.scopeKey ===
+    `${props.environmentId}:${props.cwd ?? ""}:${props.threadId ?? ""}`;
+  const gitExpanded = scopeReady && session.expandedCard === "git";
+  const wantsWorkbenchData =
+    scopeReady &&
+    shouldLoadGitWorkbenchData({
+      activeCard: input.resolvedActiveCard,
+      expandedCard: session.expandedCard,
+      gitAvailable: input.gitAvailable,
+    });
   const workbenchQuery = useEnvironmentQuery(
     wantsWorkbenchData && props.cwd
       ? gitWorkbenchEnvironment.workbench({
@@ -45,11 +50,13 @@ export function useGitWorkspaceDeckQueries(input: {
     [contractSnapshot, props.legacyStatus],
   );
   const insightsQuery = useEnvironmentQuery(
-    shouldLoadGitRepositoryInsights({
-      activeTab: session.activeTab,
-      expandedCard: session.expandedCard,
-      gitAvailable: input.gitAvailable,
-    }) && props.cwd
+    scopeReady &&
+      shouldLoadGitRepositoryInsights({
+        activeTab: session.activeTab,
+        expandedCard: session.expandedCard,
+        gitAvailable: input.gitAvailable,
+      }) &&
+      props.cwd
       ? gitWorkbenchEnvironment.insights({
           environmentId: props.environmentId,
           input: { cwd: props.cwd },
@@ -83,7 +90,11 @@ export function useGitWorkspaceDeckQueries(input: {
       : null,
   );
   const fileQuery = useEnvironmentQuery(
-    wantsWorkbenchData && gitExpanded && props.cwd && session.selectedFilePath
+    wantsWorkbenchData &&
+      gitExpanded &&
+      session.activeTab === "changes" &&
+      props.cwd &&
+      session.selectedFilePath
       ? projectEnvironment.readFile({
           environmentId: props.environmentId,
           input: { cwd: props.cwd, relativePath: session.selectedFilePath },
@@ -92,7 +103,7 @@ export function useGitWorkspaceDeckQueries(input: {
   );
   const flushBufferedPath = session.bufferFlushQueue[0] ?? null;
   const bufferedFileQuery = useEnvironmentQuery(
-    input.isDesktop && !props.activeTurn && props.cwd && flushBufferedPath
+    scopeReady && input.isDesktop && !props.activeTurn && props.cwd && flushBufferedPath
       ? projectEnvironment.readFile({
           environmentId: props.environmentId,
           input: { cwd: props.cwd, relativePath: flushBufferedPath },
@@ -139,7 +150,9 @@ export function useGitWorkspaceDeckQueries(input: {
   const refsQuery = useEnvironmentQuery(
     wantsWorkbenchData &&
       gitExpanded &&
-      (session.activeTab === "branches" || session.activeTab === "history") &&
+      (session.activeTab === "branches" ||
+        session.activeTab === "history" ||
+        session.activeTab === "operations") &&
       props.cwd
       ? vcsEnvironment.listRefs({
           environmentId: props.environmentId,
@@ -148,7 +161,11 @@ export function useGitWorkspaceDeckQueries(input: {
       : null,
   );
   const interactiveRebasePlanQuery = useEnvironmentQuery(
-    wantsWorkbenchData && gitExpanded && props.cwd && session.rebasePlanTarget
+    wantsWorkbenchData &&
+      gitExpanded &&
+      session.activeTab === "operations" &&
+      props.cwd &&
+      session.rebasePlanTarget
       ? gitWorkbenchEnvironment.interactiveRebasePlan({
           environmentId: props.environmentId,
           input: { cwd: props.cwd, upstreamRef: session.rebasePlanTarget },

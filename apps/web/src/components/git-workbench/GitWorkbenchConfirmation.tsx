@@ -75,8 +75,9 @@ export function GitWorkbenchConfirmation({
             {translate("common.cancel")}
           </Button>
           <Button
-            disabled={!confirmed}
+            disabled={disabled || !confirmed}
             onClick={() => {
+              if (disabled || !confirmed) return;
               onConfirm();
               setOpen(false);
               setConfirmation("");

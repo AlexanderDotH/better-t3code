@@ -20,6 +20,7 @@ export function GitWorkspaceDeckGitCard(props: {
   readonly panel: ReactNode;
   readonly quickAction: Exclude<ComponentProps<typeof GitCompactCard>["quickAction"], undefined>;
   readonly repositoryLabel: string;
+  readonly returnFocusRef?: RefObject<HTMLElement | null>;
   readonly showOperationsTab: boolean;
   readonly status: GitCompactStatus;
 }) {
@@ -43,7 +44,7 @@ export function GitWorkspaceDeckGitCard(props: {
           onOpenChange={props.onExpandedChange}
           open={props.expanded}
           repositoryLabel={props.repositoryLabel}
-          returnFocusRef={props.expandButtonRef}
+          returnFocusRef={props.returnFocusRef ?? props.expandButtonRef}
           showOperationsTab={props.showOperationsTab}
         >
           {props.panel}

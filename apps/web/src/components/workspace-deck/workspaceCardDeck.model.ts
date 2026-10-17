@@ -11,6 +11,7 @@ import {
 export interface WorkspaceDeckCardDefinition<CardId extends string> {
   readonly id: CardId;
   readonly label: string;
+  readonly compactSizing?: "reference" | "content";
   readonly renderBody: (context: {
     readonly active: boolean;
     readonly expanded: boolean;
@@ -33,6 +34,7 @@ export interface PreparedWorkspaceCardDeckView<CardId extends string> {
   readonly activeCardDefinition: WorkspaceDeckCardDefinition<CardId>;
   readonly cardIds: readonly CardId[];
   readonly compactHeightReferenceCard: CardId;
+  readonly compactHeightCard: CardId;
   readonly peekCards: readonly PreparedWorkspaceDeckPeek<CardId>[];
 }
 
@@ -83,6 +85,8 @@ export function prepareWorkspaceCardDeckView<CardId extends string>(input: {
     activeCardDefinition,
     cardIds,
     compactHeightReferenceCard,
+    compactHeightCard:
+      activeCardDefinition.compactSizing === "content" ? activeCard : compactHeightReferenceCard,
     peekCards,
   };
 }

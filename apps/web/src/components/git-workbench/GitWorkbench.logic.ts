@@ -1,5 +1,8 @@
+import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
+
 import type {
   GitChangeSelectionInput,
+  GitOperationState,
   GitWorkbenchChange,
   GitWorkbenchRebaseNode,
 } from "./GitWorkbench.types";
@@ -34,35 +37,80 @@ export function groupGitChanges(changes: readonly GitWorkbenchChange[]): readonl
     .filter((group) => group.changes.length > 0);
 }
 
-interface GitPrimaryActionCounts {
+export interface GitPrimaryActionInput {
   readonly ahead: number;
+  readonly behind: number;
+  readonly blocked?: boolean;
   readonly conflicts: number;
+  readonly operation?: Pick<GitOperationState, "kind"> | null | undefined;
+  readonly operationRunning?: boolean;
+  readonly pullRequest?: { readonly url: string } | null | undefined;
+  readonly readOnly?: boolean;
+  readonly pushAvailable?: boolean | undefined;
+  readonly pullAvailable?: boolean | undefined;
   readonly staged: number;
   readonly unstaged: number;
   readonly untracked: number;
 }
 
 export type GitPrimaryActionId =
-  | "commit-staged"
+  | "guided-sync"
+  | "prepare-commit"
+  | "pull"
   | "push"
   | "resolve-conflicts"
-  | "stage-all-and-commit"
-  | "view-history";
+  | "review-operation"
+  | "unavailable"
+  | "view-history"
+  | "view-pull-request";
 
-export function deriveGitPrimaryAction(counts: GitPrimaryActionCounts): {
+export interface GitPrimaryAction {
+  readonly disabled: boolean;
   readonly id: GitPrimaryActionId;
   readonly label: string;
-} {
-  if (counts.conflicts > 0) return { id: "resolve-conflicts", label: "Resolve conflicts" };
-  if (counts.staged > 0) {
-    const suffix = counts.staged === 1 ? "file" : "files";
-    return { id: "commit-staged", label: `Commit ${counts.staged} staged ${suffix}` };
+}
+
+const primaryActionLabelKeys = {
+  "guided-sync": "git.workbench.nextAction.guidedSync",
+  "prepare-commit": "git.workbench.nextAction.prepareCommit",
+  pull: "git.workbench.nextAction.pull",
+  push: "git.overview.action.push",
+  "resolve-conflicts": "git.overview.action.resolveConflicts",
+  "review-operation": "git.workbench.nextAction.reviewOperation",
+  unavailable: "git.workbench.nextAction.unavailable",
+  "view-history": "git.overview.action.viewHistory",
+  "view-pull-request": "git.workbench.nextAction.viewPullRequest",
+} as const;
+
+export function deriveGitPrimaryAction(
+  input: GitPrimaryActionInput,
+  translate?: InterfaceTranslator["message"],
+): GitPrimaryAction {
+  const recommend = (id: GitPrimaryActionId, label: string): GitPrimaryAction => ({
+    disabled:
+      input.blocked === true ||
+      (input.readOnly === true && (id === "pull" || id === "push")) ||
+      (id === "pull" && input.pullAvailable === false) ||
+      (id === "push" && input.pushAvailable === false),
+    id,
+    label: translate?.(primaryActionLabelKeys[id], { count: input.ahead }) ?? label,
+  });
+  if (input.blocked) return recommend("unavailable", "Git status unavailable");
+  if (input.conflicts > 0) return recommend("resolve-conflicts", "Resolve conflicts");
+  if (input.operation || input.operationRunning) {
+    return recommend("review-operation", "Review Git operation");
   }
-  if (counts.unstaged + counts.untracked > 0) {
-    return { id: "stage-all-and-commit", label: "Stage all & commit" };
+  if (input.staged + input.unstaged + input.untracked > 0) {
+    return recommend("prepare-commit", "Prepare commit");
   }
-  if (counts.ahead > 0) return { id: "push", label: `Push ${counts.ahead} commits` };
-  return { id: "view-history", label: "View history" };
+  if (input.ahead > 0 && input.behind > 0) return recommend("guided-sync", "Sync branches");
+  if (input.behind > 0) return recommend("pull", "Pull");
+  if (input.ahead > 0) {
+    const suffix = input.ahead === 1 ? "commit" : "commits";
+    return recommend("push", `Push ${input.ahead} ${suffix}`);
+  }
+  if (input.pullRequest) return recommend("view-pull-request", "View pull request");
+  return recommend("view-history", "View history");
 }
 
 interface HistoryWindowInput {

@@ -20,6 +20,7 @@ import {
   rememberDeckSelection,
   workspaceFileBufferKey,
 } from "./GitWorkspaceDeckSessionState";
+import { useGitFileDraftStore } from "./gitFileDraftStore";
 import { resolveWorkspaceDeckActiveCard } from "../workspace-deck/workspaceCardDeck.logic";
 
 export function useGitWorkspaceDeckEffects(input: {
@@ -33,6 +34,8 @@ export function useGitWorkspaceDeckEffects(input: {
   readonly session: ReturnType<typeof useGitWorkspaceDeckSession>;
 }): void {
   const { actions, props, queries, session } = input;
+  const { setDiffs } = session;
+  const stateToken = queries.contractSnapshot?.stateToken;
 
   useEffect(() => {
     const rememberedCard = deckSelectionByThread.get(input.scopeKey) ?? "chat";
@@ -66,6 +69,10 @@ export function useGitWorkspaceDeckEffects(input: {
   );
 
   useEffect(() => {
+    if (stateToken) setDiffs({});
+  }, [stateToken, setDiffs]);
+
+  useEffect(() => {
     const result = queries.changesDiffQuery.data;
     const selectedChange = queries.selectedChange;
     if (!result || !selectedChange || result.path !== selectedChange.path) return;
@@ -76,14 +83,26 @@ export function useGitWorkspaceDeckEffects(input: {
     ) {
       return;
     }
-    session.setDiffs((current) => ({ ...current, [selectedChange.id]: mapDiff(result) }));
-  }, [queries.changesDiffQuery.data, queries.contractSnapshot?.stateToken, queries.selectedChange]);
+    setDiffs((current) => {
+      const existing = current[selectedChange.id];
+      return existing?.patchId === result.patchId && !existing.stale
+        ? current
+        : { ...current, [selectedChange.id]: mapDiff(result) };
+    });
+  }, [
+    queries.changesDiffQuery.data,
+    queries.contractSnapshot?.stateToken,
+    queries.selectedChange,
+    setDiffs,
+  ]);
 
   useEffect(() => {
     const data = queries.fileQuery.data;
     if (!data || !props.cwd || data.relativePath !== session.selectedFilePath) return;
     const key = workspaceFileBufferKey(props.environmentId, props.cwd, data.relativePath);
     const buffered = bufferedFileEdits.get(key);
+    const drafts = useGitFileDraftStore.getState();
+    if (drafts.drafts.get(key)?.content === data.contents) drafts.setDraft(key, null);
     if (buffered?.conflict) {
       session.setCurrentFile({
         baseContent: buffered.baseContent,
@@ -307,6 +326,7 @@ export function useGitWorkspaceDeckEffects(input: {
     if (!prepared || prepared.upstreamRef !== session.rebasePlanTarget) return;
     session.setRebasePlan(mapInteractiveRebasePlan(prepared.items));
     session.setRebaseUpstreamRef(prepared.upstreamOid);
+    session.setRebasePreparedTarget(prepared.upstreamRef);
     session.setRebasePlanTarget(null);
     session.setActiveTab("operations");
   }, [queries.interactiveRebasePlanQuery.data, session.rebasePlanTarget]);

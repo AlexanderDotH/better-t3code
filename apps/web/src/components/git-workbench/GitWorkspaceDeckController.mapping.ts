@@ -189,6 +189,7 @@ export function mapDiff(result: GitChangesDiffResult): {
   readonly hunks: readonly GitWorkbenchDiffHunk[];
   readonly patchId: string;
   readonly source: "index" | "worktree";
+  readonly stale?: boolean;
   readonly truncated: boolean;
   readonly conflictVersions?: {
     readonly base: string | null;

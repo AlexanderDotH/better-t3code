@@ -12,6 +12,7 @@ import type {
   EnvironmentId,
   GitActionProgressEvent,
   GitResolvePullRequestResult,
+  GitRunStackedActionInput,
   GitStackedAction,
   SourceControlCloneProtocol,
   SourceControlRepositoryVisibility,
@@ -216,6 +217,7 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
       actionId: string;
       action: GitStackedAction;
       commitMessage?: string;
+      commitSelection?: GitRunStackedActionInput["commitSelection"];
       featureBranch?: boolean;
       filePaths?: string[];
       threadId?: ThreadId;
@@ -236,6 +238,7 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
         actionId: input.actionId,
         action: input.action,
         ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
+        ...(input.commitSelection !== undefined ? { commitSelection: input.commitSelection } : {}),
         ...(input.featureBranch ? { featureBranch: true } : {}),
         ...(input.filePaths?.length ? { filePaths: input.filePaths } : {}),
         ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),

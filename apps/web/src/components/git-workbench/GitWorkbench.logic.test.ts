@@ -7,6 +7,7 @@ import {
   groupGitChanges,
   retainValidSelectionIds,
   validateRebasePlan,
+  type GitPrimaryActionInput,
 } from "./GitWorkbench.logic";
 import type { GitWorkbenchChange, GitWorkbenchRebaseNode } from "./GitWorkbench.types";
 
@@ -43,22 +44,94 @@ describe("groupGitChanges", () => {
 });
 
 describe("deriveGitPrimaryAction", () => {
-  it("prioritizes conflict resolution over delivery actions", () => {
-    expect(
-      deriveGitPrimaryAction({ ahead: 2, conflicts: 1, staged: 3, unstaged: 2, untracked: 0 }),
-    ).toEqual({ id: "resolve-conflicts", label: "Resolve conflicts" });
+  const clean: GitPrimaryActionInput = {
+    ahead: 0,
+    behind: 0,
+    conflicts: 0,
+    staged: 0,
+    unstaged: 0,
+    untracked: 0,
+  };
+
+  it("prioritizes conflicts and ongoing operations over dirty work and delivery", () => {
+    const input = {
+      ...clean,
+      ahead: 2,
+      behind: 3,
+      staged: 2,
+      operation: { kind: "rebase" as const },
+    };
+    expect(deriveGitPrimaryAction({ ...input, conflicts: 1 })).toEqual({
+      disabled: false,
+      id: "resolve-conflicts",
+      label: "Resolve conflicts",
+    });
+    expect(deriveGitPrimaryAction(input).id).toBe("review-operation");
+    expect(deriveGitPrimaryAction({ ...clean, operationRunning: true }).id).toBe(
+      "review-operation",
+    );
   });
 
-  it("commits the existing index without implying it will reset staged work", () => {
-    expect(
-      deriveGitPrimaryAction({ ahead: 0, conflicts: 0, staged: 2, unstaged: 4, untracked: 1 }),
-    ).toEqual({ id: "commit-staged", label: "Commit 2 staged files" });
+  it.each([
+    { staged: 2, unstaged: 4, untracked: 1 },
+    { staged: 0, unstaged: 4, untracked: 1 },
+    { staged: 0, unstaged: 0, untracked: 1 },
+  ])("prepares dirty work for review before remote work: %j", (changes) => {
+    expect(deriveGitPrimaryAction({ ...clean, ...changes, ahead: 1, behind: 2 })).toEqual({
+      disabled: false,
+      id: "prepare-commit",
+      label: "Prepare commit",
+    });
   });
 
-  it("offers stage all when only worktree changes exist", () => {
+  it.each([
+    { ahead: 0, behind: 2, id: "pull" },
+    { ahead: 2, behind: 0, id: "push" },
+    { ahead: 2, behind: 3, id: "guided-sync" },
+  ])("chooses the clean branch action for $ahead ahead and $behind behind", (input) => {
+    expect(deriveGitPrimaryAction({ ...clean, ...input })).toMatchObject({
+      disabled: false,
+      id: input.id,
+    });
+  });
+
+  it("shows the pull request when synchronized and otherwise offers history", () => {
     expect(
-      deriveGitPrimaryAction({ ahead: 0, conflicts: 0, staged: 0, unstaged: 4, untracked: 1 }),
-    ).toEqual({ id: "stage-all-and-commit", label: "Stage all & commit" });
+      deriveGitPrimaryAction({ ...clean, pullRequest: { url: "https://example.com/pull/1" } }).id,
+    ).toBe("view-pull-request");
+    expect(deriveGitPrimaryAction(clean).id).toBe("view-history");
+  });
+
+  it("keeps inspection available read-only and blocks actual mutations", () => {
+    expect(deriveGitPrimaryAction({ ...clean, ahead: 1, readOnly: true }).disabled).toBe(true);
+    expect(deriveGitPrimaryAction({ ...clean, behind: 1, readOnly: true }).disabled).toBe(true);
+    expect(deriveGitPrimaryAction({ ...clean, staged: 1, readOnly: true })).toMatchObject({
+      disabled: false,
+      id: "prepare-commit",
+    });
+    expect(deriveGitPrimaryAction({ ...clean, conflicts: 1, readOnly: true }).disabled).toBe(false);
+  });
+
+  it("keeps remote and branch availability guards on the common recommendation", () => {
+    expect(deriveGitPrimaryAction({ ...clean, ahead: 1, pushAvailable: false })).toMatchObject({
+      id: "push",
+      disabled: true,
+    });
+    expect(deriveGitPrimaryAction({ ...clean, behind: 1, pullAvailable: false })).toMatchObject({
+      id: "pull",
+      disabled: true,
+    });
+    expect(deriveGitPrimaryAction({ ...clean, ahead: 1, pushAvailable: true }).disabled).toBe(
+      false,
+    );
+  });
+
+  it("does not suggest mutations while repository status is unavailable", () => {
+    expect(deriveGitPrimaryAction({ ...clean, ahead: 2, staged: 3, blocked: true })).toEqual({
+      disabled: true,
+      id: "unavailable",
+      label: "Git status unavailable",
+    });
   });
 });
 

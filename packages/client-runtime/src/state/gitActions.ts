@@ -39,7 +39,7 @@ export type DefaultBranchConfirmableAction =
 
 export type GitActionRequestInput = Pick<
   GitRunStackedActionInput,
-  "action" | "commitMessage" | "featureBranch" | "filePaths"
+  "action" | "commitMessage" | "commitSelection" | "featureBranch" | "filePaths"
 >;
 
 export function buildMenuItems(

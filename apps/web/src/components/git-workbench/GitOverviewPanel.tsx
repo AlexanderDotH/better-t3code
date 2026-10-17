@@ -9,6 +9,7 @@ import { deriveGitPrimaryAction } from "./GitWorkbench.logic";
 import { GitWorkbenchConfirmation } from "./GitWorkbenchConfirmation";
 import type {
   GitRepositoryInsights,
+  GitOperationState,
   GitUndoSnapshot,
   GitWorkbenchOperationInput,
   GitWorkbenchSnapshot,
@@ -28,11 +29,16 @@ const statePresentation = {
 } as const;
 
 interface GitOverviewPanelProps {
+  readonly blocked?: boolean;
   readonly insights: GitRepositoryInsights | null;
   readonly onCancelQueue: (queueId: string) => void;
   readonly onNavigate: (tab: GitWorkbenchTabId) => void;
   readonly onRestoreUndo: (snapshotId: string) => void;
   readonly onRunOperation: (input: GitWorkbenchOperationInput) => void;
+  readonly operation?: GitOperationState | null;
+  readonly operationRunning?: boolean;
+  readonly pushAvailable?: boolean | undefined;
+  readonly pullAvailable?: boolean | undefined;
   readonly queue: GitQueuedWorkflow | null;
   readonly readOnly: boolean;
   readonly snapshot: GitWorkbenchSnapshot;
@@ -40,11 +46,16 @@ interface GitOverviewPanelProps {
 }
 
 export function GitOverviewPanel({
+  blocked = false,
   insights,
   onCancelQueue,
   onNavigate,
   onRestoreUndo,
   onRunOperation,
+  operation,
+  operationRunning = false,
+  pushAvailable,
+  pullAvailable,
   queue,
   readOnly,
   snapshot,
@@ -53,17 +64,23 @@ export function GitOverviewPanel({
   const translator = useInterfaceTranslator();
   const translate = translator.message;
   const presentation = statePresentation[snapshot.repositoryState];
-  const primaryAction = deriveGitPrimaryAction(snapshot);
-  const primaryActionLabel =
-    primaryAction.id === "resolve-conflicts"
-      ? translate("git.overview.action.resolveConflicts")
-      : primaryAction.id === "commit-staged"
-        ? translate("git.overview.action.commitStaged", { count: snapshot.staged })
-        : primaryAction.id === "stage-all-and-commit"
-          ? translate("git.overview.action.stageAllCommit")
-          : primaryAction.id === "push"
-            ? translate("git.overview.action.push", { count: snapshot.ahead })
-            : translate("git.overview.action.viewHistory");
+  const primaryAction = deriveGitPrimaryAction(
+    {
+      ...snapshot,
+      blocked:
+        blocked ||
+        snapshot.stale ||
+        snapshot.repositoryState === "stale" ||
+        snapshot.repositoryState === "unavailable" ||
+        snapshot.repositoryState === "disconnected",
+      operation,
+      operationRunning,
+      pushAvailable,
+      pullAvailable,
+      readOnly,
+    },
+    translate,
+  );
   const parsedGeneratedAt = new Date(snapshot.generatedAt);
   const updatedLabel = Number.isNaN(parsedGeneratedAt.getTime())
     ? translate("git.overview.updatedUnavailable")
@@ -71,9 +88,27 @@ export function GitOverviewPanel({
         time: translator.date(parsedGeneratedAt, { timeStyle: "short" }),
       });
   const runPrimaryAction = () => {
-    if (primaryAction.id === "resolve-conflicts") return onNavigate("changes");
-    if (primaryAction.id === "view-history") return onNavigate("history");
-    onRunOperation({ kind: primaryAction.id });
+    if (primaryAction.disabled) return;
+    switch (primaryAction.id) {
+      case "resolve-conflicts":
+      case "prepare-commit":
+        onNavigate("changes");
+        return;
+      case "review-operation":
+      case "guided-sync":
+        onNavigate("operations");
+        return;
+      case "view-history":
+        onNavigate("history");
+        return;
+      case "pull":
+      case "push":
+        onRunOperation({ kind: primaryAction.id });
+        return;
+      case "view-pull-request":
+      case "unavailable":
+        return;
+    }
   };
 
   return (
@@ -105,10 +140,15 @@ export function GitOverviewPanel({
               <p className="mt-1 text-muted-foreground text-xs">{updatedLabel}</p>
             </div>
             <Button
-              disabled={readOnly && primaryAction.id !== "view-history"}
+              disabled={primaryAction.disabled}
               onClick={runPrimaryAction}
+              {...(primaryAction.id === "view-pull-request" && snapshot.pullRequest
+                ? {
+                    render: <a href={snapshot.pullRequest.url} rel="noreferrer" target="_blank" />,
+                  }
+                : {})}
             >
-              {primaryActionLabel}
+              {primaryAction.label}
             </Button>
           </div>
 
@@ -169,9 +209,9 @@ export function GitOverviewPanel({
 
       <div className="space-y-4">
         <ContributorPanel insights={insights} />
-        <QueuePanel disabled={readOnly} onCancel={onCancelQueue} queue={queue} />
+        <QueuePanel disabled={readOnly || blocked} onCancel={onCancelQueue} queue={queue} />
         <UndoPanel
-          disabled={readOnly}
+          disabled={readOnly || blocked}
           onRestore={onRestoreUndo}
           snapshots={undoSnapshots.slice(0, 5)}
         />

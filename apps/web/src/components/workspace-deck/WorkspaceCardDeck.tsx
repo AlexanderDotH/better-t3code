@@ -83,14 +83,14 @@ export function WorkspaceCardDeck<CardId extends string>(props: WorkspaceCardDec
   const navigation = useWorkspaceCardDeckNavigation<CardId>();
   const measurements = useWorkspaceCardDeckMeasurements({
     cardIds: view.cardIds,
-    compactHeightReferenceCard: view.compactHeightReferenceCard,
+    compactHeightReferenceCard: view.compactHeightCard,
     expandedCard: props.expandedCard,
     resetKey: props.resetKey,
   });
   const lifecycle = useWorkspaceCardDeckMorphLifecycle({
     activeCard: view.activeCard,
     cardIds: view.cardIds,
-    compactHeightReferenceCard: view.compactHeightReferenceCard,
+    compactHeightReferenceCard: view.compactHeightCard,
     expandedCard: props.expandedCard,
     focusDestination: navigation.focusDestination,
     intrinsicElementRefs: measurements.intrinsicElementRefs,
@@ -116,7 +116,7 @@ export function WorkspaceCardDeck<CardId extends string>(props: WorkspaceCardDec
     activeCard: view.activeCard,
     cardIds: view.cardIds,
     frozenHeight: lifecycle.frozenCompactHeight,
-    referenceCard: view.compactHeightReferenceCard,
+    referenceCard: view.compactHeightCard,
     measurements: measurements.measurements,
   });
   const activeExpandedHeight =
@@ -146,7 +146,7 @@ export function WorkspaceCardDeck<CardId extends string>(props: WorkspaceCardDec
         className="workspace-card-deck__viewport"
         data-height-ready={compactHeight !== null ? "true" : undefined}
         data-natural-height={
-          (view.activeCard === view.compactHeightReferenceCard &&
+          (view.activeCard === view.compactHeightCard &&
             props.expandedCard !== view.activeCard &&
             lifecycle.collapsingCard === null &&
             lifecycle.transition === null) ||

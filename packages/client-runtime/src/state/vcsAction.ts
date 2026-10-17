@@ -75,6 +75,7 @@ export interface RunVcsStackedActionInput {
   readonly actionId: string;
   readonly action: GitStackedAction;
   readonly commitMessage?: string;
+  readonly commitSelection?: GitRunStackedActionInput["commitSelection"];
   readonly featureBranch?: boolean;
   readonly filePaths?: ReadonlyArray<string>;
   /** The thread the action runs beside; the server links a pull request it creates to it. */
@@ -464,6 +465,9 @@ export function createVcsActionManager<R, E>(
           cwd: target.cwd,
           action: input.action,
           ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
+          ...(input.commitSelection !== undefined
+            ? { commitSelection: input.commitSelection }
+            : {}),
           ...(input.featureBranch ? { featureBranch: true } : {}),
           ...(input.filePaths?.length ? { filePaths: [...input.filePaths] } : {}),
           ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),

@@ -5,14 +5,11 @@ import {
   WorkspaceCardDrawerShell,
   type WorkspaceCardDrawerTab,
 } from "../workspace-deck/WorkspaceCardDrawerShell";
+import { GIT_WORKBENCH_TAB_ORDER } from "./GitWorkbenchTabs";
+import type { GitWorkbenchTabId } from "./GitWorkbench.types";
 import "./GitWorkspaceDeck.css";
 
-export type GitWorkbenchDrawerTabId =
-  | "overview"
-  | "changes"
-  | "history"
-  | "branches"
-  | "operations";
+export type GitWorkbenchDrawerTabId = GitWorkbenchTabId;
 
 export interface GitWorkbenchDrawerShellProps {
   readonly open: boolean;
@@ -33,17 +30,8 @@ export interface GitWorkbenchDrawerShellProps {
 
 export function GitWorkbenchDrawerShell(props: GitWorkbenchDrawerShellProps) {
   const translate = useInterfaceTranslator().message;
-  const workbenchTabs: readonly WorkspaceCardDrawerTab<GitWorkbenchDrawerTabId>[] = [
-    { id: "overview", label: translate("git.workbench.tab.overview") },
-    { id: "changes", label: translate("git.workbench.tab.changes") },
-    { id: "history", label: translate("git.workbench.tab.history") },
-    { id: "branches", label: translate("git.workbench.tab.branches") },
-    { id: "operations", label: translate("git.workbench.tab.operations") },
-  ];
-  const tabs =
-    props.showOperationsTab === false && props.activeTab !== "operations"
-      ? workbenchTabs.slice(0, -1)
-      : workbenchTabs;
+  const tabs: readonly WorkspaceCardDrawerTab<GitWorkbenchDrawerTabId>[] =
+    GIT_WORKBENCH_TAB_ORDER.map((id) => ({ id, label: translate(`git.workbench.tab.${id}`) }));
   return (
     <WorkspaceCardDrawerShell
       activeTab={props.activeTab}
