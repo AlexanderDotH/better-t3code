@@ -158,7 +158,7 @@ export function McpWorkspacePanel(props: McpWorkspacePanelProps) {
                 >
                   <div className="min-w-0 w-full">
                     <SelectTrigger
-                      size="lg"
+                      size={props.activeSection === "runtime" ? "sm" : "lg"}
                       aria-label={translate("settings.mcp.workspace.providers")}
                     >
                       <SelectValue>{selectedProvider?.label}</SelectValue>
@@ -199,7 +199,7 @@ export function McpWorkspacePanel(props: McpWorkspacePanelProps) {
                 >
                   <div className="min-w-0 w-full">
                     <SelectTrigger
-                      size="lg"
+                      size={props.activeSection === "runtime" ? "sm" : "lg"}
                       aria-label={translate("settings.mcp.workspace.runtimeSession")}
                     >
                       <SelectValue>{selectedContextLabel}</SelectValue>

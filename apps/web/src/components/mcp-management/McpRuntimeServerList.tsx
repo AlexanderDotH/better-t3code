@@ -12,14 +12,20 @@ import {
   LockKeyholeIcon,
   WrenchIcon,
 } from "lucide-react";
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useId, useMemo, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 
 import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { McpServerRowControls, type McpRuntimeActionPending } from "./McpServerRowControls";
-import { aggregateMcpRuntimeStatus, type McpAggregateTone } from "./mcpRuntimePresentation";
+import {
+  aggregateMcpRuntimeStatus,
+  mcpRuntimeServerNeedsAttention,
+  orderMcpRuntimeServers,
+  type McpAggregateTone,
+} from "./mcpRuntimePresentation";
 
 export type { McpRuntimeActionPending } from "./McpServerRowControls";
 
@@ -48,12 +54,6 @@ const SERVER_STATE_DOT_CLASS: Record<McpRuntimeServer["state"], string> = {
   unsupported: "bg-muted-foreground/35",
   unknown: "bg-muted-foreground/45",
   stale: "bg-amber-500",
-};
-
-const SERVER_SOURCE_ORDER: Record<McpRuntimeServer["source"], number> = {
-  "t3-managed": 0,
-  "provider-native": 1,
-  "t3-built-in": 2,
 };
 
 export interface McpRuntimeServerListProps {
@@ -89,6 +89,7 @@ export function McpRuntimeServerList({
 }: McpRuntimeServerListProps) {
   const translate = useInterfaceTranslator().message;
   const [expandedKeys, setExpandedKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const listId = useId();
   const aggregate = aggregateMcpRuntimeStatus(servers);
   const aggregateLabel =
     aggregate.expectedCount === 0
@@ -99,15 +100,7 @@ export function McpRuntimeServerList({
             connected: aggregate.connectedCount,
             expected: aggregate.expectedCount,
           });
-  const orderedServers = useMemo(
-    () =>
-      [...servers].sort((left, right) => {
-        const sourceOrder = SERVER_SOURCE_ORDER[left.source] - SERVER_SOURCE_ORDER[right.source];
-        if (sourceOrder !== 0) return sourceOrder;
-        return left.name.localeCompare(right.name);
-      }),
-    [servers],
-  );
+  const orderedServers = useMemo(() => orderMcpRuntimeServers(servers), [servers]);
 
   const toggleServer = (server: McpRuntimeServer) => {
     const nextExpanded = !expandedKeys.has(server.providerKey);
@@ -124,17 +117,17 @@ export function McpRuntimeServerList({
   };
 
   return (
-    <div className="flex w-full min-w-0 flex-col">
-      <div className="flex items-start justify-between gap-3 border-b border-border/55 px-3.5 py-3">
-        <div className="min-w-0">
-          <div className="truncate font-medium text-sm">{providerDisplayName}</div>
-          <div className="mt-0.5 text-2xs text-muted-foreground">{aggregateLabel}</div>
-        </div>
-        <span
-          aria-hidden="true"
-          className={cn("mt-1.5 size-2 shrink-0 rounded-full", STATUS_DOT_CLASS[aggregate.tone])}
-        />
-      </div>
+    <div className="mcp-runtime-list" data-mcp-runtime-list="true">
+      <header className="mcp-runtime-list__header">
+        <strong className="min-w-0 truncate font-medium text-sm">{providerDisplayName}</strong>
+        <span className="mcp-runtime-list__status" data-tone={aggregate.tone}>
+          <span
+            aria-hidden="true"
+            className={cn("size-1.5 shrink-0 rounded-full", STATUS_DOT_CLASS[aggregate.tone])}
+          />
+          {aggregateLabel}
+        </span>
+      </header>
 
       <section aria-label={translate("settings.mcp.runtime.servers")} className="min-h-0">
         {orderedServers.length === 0 ? (
@@ -151,11 +144,12 @@ export function McpRuntimeServerList({
               const expanded = expandedKeys.has(server.providerKey);
               const isBuiltIn = server.source === "t3-built-in";
               const details = detailsByProviderKey[server.providerKey];
+              const detailsId = `${listId}-${encodeURIComponent(server.providerKey)}`;
               return (
                 <Fragment key={server.providerKey}>
                   {orderedServers[index - 1]?.source !== server.source ? (
-                    <li className="bg-muted/20 px-3.5 py-1.5">
-                      <h3 className="font-medium text-3xs text-muted-foreground uppercase tracking-wide">
+                    <li className="bg-muted/25 px-4 py-2">
+                      <h3 className="font-medium text-2xs text-muted-foreground">
                         {translate(
                           server.source === "t3-managed"
                             ? "settings.mcp.runtime.source.t3Managed"
@@ -166,83 +160,104 @@ export function McpRuntimeServerList({
                       </h3>
                     </li>
                   ) : null}
-                  <li key={server.providerKey} className="px-3.5 py-2.5">
-                    <button
-                      type="button"
-                      aria-expanded={expanded}
-                      className="group flex w-full items-start gap-2 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      onClick={() => toggleServer(server)}
-                    >
-                      <span
-                        aria-hidden="true"
-                        className={cn(
-                          "mt-1.5 size-1.5 shrink-0 rounded-full",
-                          SERVER_STATE_DOT_CLASS[server.state],
-                        )}
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span className="flex min-w-0 items-center gap-1.5">
-                          {isBuiltIn ? (
-                            <LockKeyholeIcon
-                              aria-hidden="true"
-                              className="size-3 shrink-0 text-muted-foreground/70"
-                            />
-                          ) : null}
-                          <span className="truncate font-medium text-xs">
-                            {isBuiltIn
-                              ? translate("settings.mcp.runtime.source.system")
-                              : server.name}
+                  <li
+                    className="mcp-runtime-server"
+                    data-mcp-server-key={server.providerKey}
+                    data-needs-attention={
+                      mcpRuntimeServerNeedsAttention(server) ? "true" : undefined
+                    }
+                  >
+                    <div className="mcp-runtime-server__header">
+                      <button
+                        type="button"
+                        aria-expanded={expanded}
+                        aria-controls={expanded ? detailsId : undefined}
+                        className="group flex min-w-0 w-full items-center gap-2 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        onClick={() => toggleServer(server)}
+                      >
+                        <span
+                          aria-hidden="true"
+                          className={cn(
+                            "size-1.5 shrink-0 rounded-full",
+                            SERVER_STATE_DOT_CLASS[server.state],
+                          )}
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            {isBuiltIn ? (
+                              <LockKeyholeIcon
+                                aria-hidden="true"
+                                className="size-3 shrink-0 text-muted-foreground/70"
+                              />
+                            ) : null}
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={<span className="truncate font-medium text-xs" />}
+                              >
+                                {isBuiltIn
+                                  ? translate("settings.mcp.runtime.source.system")
+                                  : server.name}
+                              </TooltipTrigger>
+                              <TooltipPopup>{server.name}</TooltipPopup>
+                            </Tooltip>
+                          </span>
+                          <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-2xs text-muted-foreground">
+                            <span className="mcp-runtime-server__state" data-state={server.state}>
+                              {translate(`settings.mcp.runtime.state.${server.state}`)}
+                            </span>
+                            {server.toolCount !== undefined ? (
+                              <>
+                                <span aria-hidden="true">·</span>
+                                <span>
+                                  {translate("settings.mcp.runtime.toolCount", {
+                                    count: server.toolCount,
+                                  })}
+                                </span>
+                              </>
+                            ) : null}
+                            {server.transport ? (
+                              <>
+                                <span aria-hidden="true">·</span>
+                                <span className="uppercase">{server.transport}</span>
+                              </>
+                            ) : null}
+                            {server.configDrift !== "none" ? (
+                              <>
+                                <span aria-hidden="true">·</span>
+                                <span>{translate("settings.mcp.runtime.appliesNextSession")}</span>
+                              </>
+                            ) : null}
                           </span>
                         </span>
-                        <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-2xs text-muted-foreground">
-                          <span>{translate(`settings.mcp.runtime.state.${server.state}`)}</span>
-                          {server.toolCount !== undefined ? (
-                            <>
-                              <span aria-hidden="true">·</span>
-                              <span>
-                                {translate("settings.mcp.runtime.toolCount", {
-                                  count: server.toolCount,
-                                })}
-                              </span>
-                            </>
-                          ) : null}
-                          {server.transport ? (
-                            <>
-                              <span aria-hidden="true">·</span>
-                              <span className="uppercase">{server.transport}</span>
-                            </>
-                          ) : null}
-                          {server.configDrift !== "none" ? (
-                            <>
-                              <span aria-hidden="true">·</span>
-                              <span>{translate("settings.mcp.runtime.appliesNextSession")}</span>
-                            </>
-                          ) : null}
-                        </span>
-                      </span>
-                      <ChevronDownIcon
-                        aria-hidden="true"
-                        className={cn(
-                          "mt-0.5 size-3.5 shrink-0 text-muted-foreground transition-transform duration-150",
-                          expanded && "rotate-180",
-                        )}
-                      />
-                    </button>
-
-                    {!isBuiltIn ? (
-                      <div className="mt-2 pl-3.5">
-                        <McpServerRowControls
-                          serverKey={server.providerKey}
-                          serverName={server.name}
-                          state={server.state}
-                          availableRuntimeActions={server.availableActions}
-                          disabledRuntimeActions={authorizationAvailable ? [] : ["authorize"]}
-                          pendingAction={pendingAction}
-                          readOnly={readOnly}
-                          onRuntimeAction={(action) => onAction(server, action)}
-                          onEdit={() => onOpenSettings(server.providerKey)}
+                        <ChevronDownIcon
+                          aria-hidden="true"
+                          className={cn(
+                            "size-3.5 shrink-0 text-muted-foreground transition-transform duration-150",
+                            expanded && "rotate-180",
+                          )}
                         />
-                      </div>
+                      </button>
+
+                      {!isBuiltIn ? (
+                        <div className="mcp-runtime-server__actions">
+                          <McpServerRowControls
+                            serverKey={server.providerKey}
+                            serverName={server.name}
+                            state={server.state}
+                            availableRuntimeActions={server.availableActions}
+                            disabledRuntimeActions={authorizationAvailable ? [] : ["authorize"]}
+                            pendingAction={pendingAction}
+                            readOnly={readOnly}
+                            onRuntimeAction={(action) => onAction(server, action)}
+                            onEdit={() => onOpenSettings(server.providerKey)}
+                          />
+                        </div>
+                      ) : null}
+                    </div>
+                    {!expanded && server.issue?.message ? (
+                      <p className="mt-2 line-clamp-2 wrap-anywhere pl-3.5 text-destructive text-2xs">
+                        {server.issue.message}
+                      </p>
                     ) : null}
                     {readOnly && !isBuiltIn && server.availableActions.length > 0 ? (
                       <p className="mt-2 pl-3.5 text-muted-foreground text-2xs">
@@ -259,7 +274,10 @@ export function McpRuntimeServerList({
                     ) : null}
 
                     {expanded ? (
-                      <div className="mt-2.5 rounded-md border border-border/50 bg-muted/25 p-2.5 text-2xs">
+                      <div
+                        id={detailsId}
+                        className="mt-3 rounded-lg border border-border/50 bg-muted/25 p-3 text-2xs"
+                      >
                         {server.serverInfo?.version ||
                         server.resourceCount !== undefined ||
                         server.templateCount !== undefined ? (
@@ -309,12 +327,17 @@ export function McpRuntimeServerList({
                           </div>
                         )}
                         {server.issue?.message ? (
-                          <p className="mt-2 text-destructive">{server.issue.message}</p>
+                          <p className="mt-2 wrap-anywhere whitespace-pre-wrap text-destructive">
+                            {server.issue.message}
+                          </p>
                         ) : null}
                       </div>
                     ) : null}
                     {actionErrorByProviderKey[server.providerKey] ? (
-                      <p role="alert" className="mt-2 pl-3.5 text-destructive text-2xs">
+                      <p
+                        role="alert"
+                        className="mt-2 wrap-anywhere pl-3.5 text-destructive text-2xs"
+                      >
                         {actionErrorByProviderKey[server.providerKey]}
                       </p>
                     ) : null}
@@ -326,14 +349,8 @@ export function McpRuntimeServerList({
         )}
       </section>
 
-      <div className="border-t border-border/55 p-2">
-        <Button
-          type="button"
-          variant="ghost"
-          size="compact"
-          className="w-full justify-between"
-          onClick={() => onOpenSettings()}
-        >
+      <div className="flex justify-end border-t border-border/55 px-3 py-2">
+        <Button type="button" variant="ghost" size="compact" onClick={() => onOpenSettings()}>
           <span>{translate("settings.mcp.runtime.manage")}</span>
           <ExternalLinkIcon aria-hidden="true" className="size-3.5" />
         </Button>
