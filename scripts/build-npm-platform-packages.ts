@@ -121,6 +121,7 @@ export function npmPlatformPackageManifest(
       "resource-monitor",
       "project-indexer",
       "project-indexer-typescript-compatible.mjs",
+      "knowledge-graph-extraction-worker.mjs",
       "node_modules",
     ],
     preferUnplugged: true,

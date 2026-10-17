@@ -290,11 +290,15 @@ export const stageCliRuntimeAssets = Effect.fn("stageCliRuntimeAssets")(function
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const assets = ["project-indexer", "project-indexer-typescript-compatible.mjs"];
+  const assets = [
+    "project-indexer",
+    "project-indexer-typescript-compatible.mjs",
+    "knowledge-graph-extraction-worker.mjs",
+  ];
   for (const asset of assets) {
     yield* requireInput(
       path.join(input.serverDistDir, asset),
-      "Run `vp run --filter t3 build` to build the project indexer runtime assets.",
+      "Run `vp run --filter t3 build` to build the server runtime assets.",
     );
   }
   for (const asset of assets) {

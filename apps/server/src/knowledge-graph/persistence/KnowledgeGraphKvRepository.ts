@@ -34,7 +34,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { ServerConfig } from "../../config.ts";
-import { openKnowledgeKvDatabase } from "../../knowledge/KvKeys.ts";
+import { iterateKvItems, openKnowledgeKvDatabase } from "../../knowledge/KvKeys.ts";
 import {
   KnowledgeGraphRepository,
   KnowledgeGraphRepositoryError,
@@ -82,8 +82,25 @@ function repositoryError(operation: string, cause: unknown): KnowledgeGraphRepos
     : new KnowledgeGraphRepositoryError({ operation, reason: "query-failed", cause });
 }
 
-function run<A>(operation: string, task: () => Promise<A>) {
-  return Effect.tryPromise({ try: task, catch: (cause) => repositoryError(operation, cause) });
+function run<A>(operation: string, task: (signal: AbortSignal) => Promise<A>) {
+  return Effect.suspend(() => {
+    let running: Promise<A> | undefined;
+    return Effect.tryPromise({
+      try: (signal) => (running = task(signal)),
+      catch: (cause) => repositoryError(operation, cause),
+    }).pipe(
+      // Closing the database must wait until an interrupted native transaction rolls back.
+      Effect.onInterrupt(() =>
+        Effect.promise(
+          () =>
+            running?.then(
+              () => undefined,
+              () => undefined,
+            ) ?? Promise.resolve(),
+        ),
+      ),
+    );
+  });
 }
 
 function defaultTruncation() {
@@ -584,8 +601,10 @@ function makeRepository(database: RocksDatabase): KnowledgeGraphRepositoryShape 
     });
 
   const applyDeterministicPatch = (patch: KnowledgeGraphDeterministicPatchV1) =>
-    run("apply-deterministic-patch", async () => {
+    run("apply-deterministic-patch", async (signal) => {
       const commit = await database.transaction(async (transaction) => {
+        signal.throwIfAborted();
+        const patchItems = <A>(items: Iterable<A>) => iterateKvItems(items, signal);
         const previous =
           (await readGraphScope(transaction, patch.scope.scopeId)) ??
           graphScopeState(patch.scope, patch.committedAt);
@@ -604,7 +623,7 @@ function makeRepository(database: RocksDatabase): KnowledgeGraphRepositoryShape 
         const removedEdges = new Set(patch.removals.edgeIds);
         const removedEvidence = new Set(patch.removals.evidenceIds);
         const removedFingerprints = new Set(patch.removals.fingerprintPaths);
-        for (const nodeId of removedNodes) {
+        for await (const nodeId of patchItems(removedNodes)) {
           for (const edge of await readAdjacentGraphEdges(transaction, scopeId, nodeId, "both"))
             removedEdges.add(edge.edgeId);
         }
@@ -612,26 +631,32 @@ function makeRepository(database: RocksDatabase): KnowledgeGraphRepositoryShape 
         const priorEdges = new Map<KnowledgeGraphEdgeId, boolean>();
         const priorEvidence = new Map<KnowledgeGraphEvidenceId, boolean>();
         const priorFingerprints = new Map<string, boolean>();
-        for (const id of new Set([...removedNodes, ...upsertedNodes]))
+        for await (const id of patchItems(new Set([...removedNodes, ...upsertedNodes])))
           priorNodes.set(id, (await readGraphNode(transaction, scopeId, id)) !== undefined);
-        for (const id of new Set([...removedEdges, ...upsertedEdges]))
+        for await (const id of patchItems(new Set([...removedEdges, ...upsertedEdges])))
           priorEdges.set(id, (await readGraphEdge(transaction, scopeId, id)) !== undefined);
-        for (const id of new Set([...removedEvidence, ...upsertedEvidence]))
+        for await (const id of patchItems(new Set([...removedEvidence, ...upsertedEvidence])))
           priorEvidence.set(id, (await readGraphEvidence(transaction, scopeId, id)) !== undefined);
-        for (const path of new Set([...removedFingerprints, ...upsertedFingerprints]))
+        for await (const path of patchItems(
+          new Set([...removedFingerprints, ...upsertedFingerprints]),
+        ))
           priorFingerprints.set(
             path,
             (await readGraphFingerprint(transaction, scopeId, path)) !== undefined,
           );
 
-        for (const id of removedEdges) await removeGraphEdge(transaction, scopeId, id);
-        for (const id of removedNodes) await removeGraphNode(transaction, scopeId, id);
-        for (const id of removedEvidence) await removeGraphEvidence(transaction, scopeId, id);
-        for (const path of removedFingerprints)
+        for await (const id of patchItems(removedEdges))
+          await removeGraphEdge(transaction, scopeId, id);
+        for await (const id of patchItems(removedNodes))
+          await removeGraphNode(transaction, scopeId, id);
+        for await (const id of patchItems(removedEvidence))
+          await removeGraphEvidence(transaction, scopeId, id);
+        for await (const path of patchItems(removedFingerprints))
           await removeGraphFingerprint(transaction, scopeId, path);
-        for (const item of patch.evidence) await writeGraphEvidence(transaction, item);
-        for (const item of patch.nodes) await writeGraphNode(transaction, item);
-        for (const item of patch.edges) {
+        for await (const item of patchItems(patch.evidence))
+          await writeGraphEvidence(transaction, item);
+        for await (const item of patchItems(patch.nodes)) await writeGraphNode(transaction, item);
+        for await (const item of patchItems(patch.edges)) {
           if (
             !(await readGraphNode(transaction, scopeId, item.sourceNodeId)) ||
             !(await readGraphNode(transaction, scopeId, item.targetNodeId))
@@ -639,7 +664,7 @@ function makeRepository(database: RocksDatabase): KnowledgeGraphRepositoryShape 
             throw new Error("A graph edge references a missing node.");
           await writeGraphEdge(transaction, item);
         }
-        for (const item of patch.fileFingerprints)
+        for await (const item of patchItems(patch.fileFingerprints))
           await writeGraphFingerprint(transaction, scopeId, item);
 
         const revision = patch.baseRevision + 1;
@@ -699,6 +724,7 @@ function makeRepository(database: RocksDatabase): KnowledgeGraphRepositoryShape 
           changedNodeIds: patch.changedNodeIds.slice(0, KNOWLEDGE_GRAPH_MAX_VISIBLE_NODES),
           status,
         };
+        signal.throwIfAborted();
         await writeGraphScope(transaction, {
           scope: patch.scope,
           status,
@@ -706,6 +732,7 @@ function makeRepository(database: RocksDatabase): KnowledgeGraphRepositoryShape 
         });
         if (!requiresSnapshot) await writeGraphPatch(transaction, visiblePatch);
         await removeOldGraphPatches(transaction, scopeId, revision - MAX_REPLAY_PATCHES);
+        signal.throwIfAborted();
         const changedNodeIds = new Set(patch.changedNodeIds);
         return {
           version: 1,

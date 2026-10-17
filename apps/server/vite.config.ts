@@ -156,6 +156,21 @@ export default mergeConfig(
           ]
         : []),
       {
+        // CLI archives copy this worker alone, so it must not import shared build chunks.
+        entry: {
+          "knowledge-graph-extraction-worker":
+            "src/knowledge-graph/extraction/KnowledgeGraphExtractionWorker.ts",
+        },
+        outDir: "dist",
+        clean: false,
+        sourcemap: true,
+        deps: {
+          alwaysBundle: shouldBundleCliDependency,
+          neverBundle: isExternalCliDependency,
+          onlyBundle: false as const,
+        },
+      },
+      {
         // The installer copies this file alone into the runtime directory.
         // A separate build prevents shared chunks from making that copy unloadable.
         entry: { "service-launcher": "src/service-launcher.ts" },

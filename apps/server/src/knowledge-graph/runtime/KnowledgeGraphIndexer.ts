@@ -1,8 +1,10 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeTimersPromises from "node:timers/promises";
+
 import {
   type KnowledgeGraphEdgeV1,
   type KnowledgeGraphEvidenceV1,
   type KnowledgeGraphFileFingerprintV1,
-  type KnowledgeGraphNodeId,
   type KnowledgeGraphNodeV1,
   KnowledgeGraphOperationError,
   type KnowledgeGraphScopeV1,
@@ -14,7 +16,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { extractKnowledgeGraphInventory } from "../extraction/KnowledgeGraphInventory.ts";
+import { makeKnowledgeGraphInventory } from "../extraction/KnowledgeGraphInventory.ts";
 import * as KnowledgeGraphRepository from "../persistence/KnowledgeGraphRepository.ts";
 
 export interface KnowledgeGraphIndexerShape {
@@ -131,12 +133,56 @@ function operationError(input: {
   return new KnowledgeGraphOperationError(input);
 }
 
+const yieldToIo = Effect.promise((signal) =>
+  NodeTimersPromises.setImmediate(undefined, { signal }),
+);
+
+const indexBy = Effect.fnUntraced(function* <A, K>(values: readonly A[], keyOf: (value: A) => K) {
+  const entries = new Map<K, A>();
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index]!;
+    entries.set(keyOf(value), value);
+    if ((index + 1) % 512 === 0) yield* yieldToIo;
+  }
+  return entries;
+});
+
+const collectKeys = Effect.fnUntraced(function* <A, K>(
+  values: readonly A[],
+  keyOf: (value: A) => K,
+) {
+  const keys = new Set<K>();
+  for (let index = 0; index < values.length; index += 1) {
+    keys.add(keyOf(values[index]!));
+    if ((index + 1) % 512 === 0) yield* yieldToIo;
+  }
+  return keys;
+});
+
+const missingKeys = Effect.fnUntraced(function* <A, K>(
+  values: readonly A[],
+  keyOf: (value: A) => K,
+  nextKeys: ReadonlySet<K>,
+) {
+  const removed: K[] = [];
+  for (let index = 0; index < values.length; index += 1) {
+    const key = keyOf(values[index]!);
+    if (!nextKeys.has(key)) removed.push(key);
+    if ((index + 1) % 512 === 0) yield* yieldToIo;
+  }
+  return removed;
+});
+
 const make = Effect.gen(function* () {
   const repository = yield* KnowledgeGraphRepository.KnowledgeGraphRepository;
+  const inventory = yield* makeKnowledgeGraphInventory;
+  let nextGeneration = 0;
+  const generations = new Map<KnowledgeGraphScopeV1["scopeId"], number>();
 
-  const indexScope: KnowledgeGraphIndexerShape["indexScope"] = Effect.fn(
-    "KnowledgeGraphIndexer.indexScope",
-  )(function* (scope) {
+  const extractAndCommit = Effect.fn("KnowledgeGraphIndexer.indexScope")(function* (
+    scope: KnowledgeGraphScopeV1,
+    generation: number,
+  ) {
     yield* repository.ensureScope(scope).pipe(
       Effect.mapError(() =>
         operationError({
@@ -203,29 +249,32 @@ const make = Effect.gen(function* () {
         ),
       );
 
-    const extraction = yield* extractKnowledgeGraphInventory({
-      scope,
-      workspaceRoot: scope.effectiveWorkspaceRoot,
-      seenGeneration: current.revision + 1,
-    }).pipe(
-      Effect.mapError(() =>
-        operationError({
-          operation: "index",
-          code: "internal",
-          retryable: true,
-          detail: "The project inventory could not be extracted.",
-          scopeId: scope.scopeId,
-        }),
-      ),
-    );
+    const extraction = yield* inventory
+      .extract({
+        generation,
+        scope,
+        workspaceRoot: scope.effectiveWorkspaceRoot,
+        seenGeneration: current.revision + 1,
+      })
+      .pipe(
+        Effect.mapError(() =>
+          operationError({
+            operation: "index",
+            code: "internal",
+            retryable: true,
+            detail: "The project inventory could not be extracted.",
+            scopeId: scope.scopeId,
+          }),
+        ),
+      );
+    if (generations.get(scope.scopeId) !== generation) return Option.none();
     const nextRevision = current.revision + 1;
-    const currentNodes = new Map(current.nodes.map((node) => [node.nodeId, node] as const));
-    const currentEdges = new Map(current.edges.map((edge) => [edge.edgeId, edge] as const));
-    const currentEvidence = new Map(
-      current.evidence.map((evidence) => [evidence.evidenceId, evidence] as const),
-    );
-    const currentFingerprints = new Map(
-      current.fileFingerprints.map((fingerprint) => [fingerprint.path, fingerprint] as const),
+    const currentNodes = yield* indexBy(current.nodes, (node) => node.nodeId);
+    const currentEdges = yield* indexBy(current.edges, (edge) => edge.edgeId);
+    const currentEvidence = yield* indexBy(current.evidence, (evidence) => evidence.evidenceId);
+    const currentFingerprints = yield* indexBy(
+      current.fileFingerprints,
+      (fingerprint) => fingerprint.path,
     );
 
     const nextNodes: KnowledgeGraphNodeV1[] = [];
@@ -239,6 +288,7 @@ const make = Effect.gen(function* () {
       };
       nextNodes.push(nextNode);
       if (changed) upsertedNodes.push(nextNode);
+      if (nextNodes.length % 512 === 0) yield* yieldToIo;
     }
     const nextEdges: KnowledgeGraphEdgeV1[] = [];
     const upsertedEdges: KnowledgeGraphEdgeV1[] = [];
@@ -251,6 +301,7 @@ const make = Effect.gen(function* () {
       };
       nextEdges.push(nextEdge);
       if (changed) upsertedEdges.push(nextEdge);
+      if (nextEdges.length % 512 === 0) yield* yieldToIo;
     }
     const nextEvidence: KnowledgeGraphEvidenceV1[] = [];
     const upsertedEvidence: KnowledgeGraphEvidenceV1[] = [];
@@ -263,39 +314,47 @@ const make = Effect.gen(function* () {
       };
       nextEvidence.push(nextEntry);
       if (changed) upsertedEvidence.push(nextEntry);
+      if (nextEvidence.length % 512 === 0) yield* yieldToIo;
     }
-    const nextNodeIds = new Set(nextNodes.map(({ nodeId }) => nodeId));
-    const nextEdgeIds = new Set(nextEdges.map(({ edgeId }) => edgeId));
-    const nextEvidenceIds = new Set(nextEvidence.map(({ evidenceId }) => evidenceId));
-    const nextFingerprintPaths = new Set(extraction.fileFingerprints.map(({ path }) => path));
-    const removedNodeIds = current.nodes
-      .filter(({ nodeId }) => !nextNodeIds.has(nodeId))
-      .map(({ nodeId }) => nodeId);
-    const removedEdgeIds = current.edges
-      .filter(({ edgeId }) => !nextEdgeIds.has(edgeId))
-      .map(({ edgeId }) => edgeId);
-    const removedEvidenceIds = current.evidence
-      .filter(({ evidenceId }) => !nextEvidenceIds.has(evidenceId))
-      .map(({ evidenceId }) => evidenceId);
-    const removedFingerprintPaths = current.fileFingerprints
-      .filter(({ path }) => !nextFingerprintPaths.has(path))
-      .map(({ path }) => path);
+    const nextNodeIds = yield* collectKeys(nextNodes, (node) => node.nodeId);
+    const nextEdgeIds = yield* collectKeys(nextEdges, (edge) => edge.edgeId);
+    const nextEvidenceIds = yield* collectKeys(nextEvidence, (evidence) => evidence.evidenceId);
+    const nextFingerprintPaths = yield* collectKeys(
+      extraction.fileFingerprints,
+      (item) => item.path,
+    );
+    const removedNodeIds = yield* missingKeys(current.nodes, (node) => node.nodeId, nextNodeIds);
+    const removedEdgeIds = yield* missingKeys(current.edges, (edge) => edge.edgeId, nextEdgeIds);
+    const removedEvidenceIds = yield* missingKeys(
+      current.evidence,
+      (item) => item.evidenceId,
+      nextEvidenceIds,
+    );
+    const removedFingerprintPaths = yield* missingKeys(
+      current.fileFingerprints,
+      (item) => item.path,
+      nextFingerprintPaths,
+    );
     const fingerprintsChanged =
       removedFingerprintPaths.length > 0 ||
       extraction.fileFingerprints.some((fingerprint) => {
         const previous = currentFingerprints.get(fingerprint.path);
         return previous === undefined || !sameFingerprint(previous, fingerprint);
       });
-    const changedEvidenceIds = new Set(upsertedEvidence.map(({ evidenceId }) => evidenceId));
-    const changedNodeIds = new Set<KnowledgeGraphNodeId>(upsertedNodes.map(({ nodeId }) => nodeId));
-    for (const node of nextNodes) {
+    const changedEvidenceIds = yield* collectKeys(upsertedEvidence, (item) => item.evidenceId);
+    const changedNodeIds = yield* collectKeys(upsertedNodes, (node) => node.nodeId);
+    for (let index = 0; index < nextNodes.length; index += 1) {
+      const node = nextNodes[index]!;
       if (node.evidenceIds.some((evidenceId) => changedEvidenceIds.has(evidenceId))) {
         changedNodeIds.add(node.nodeId);
       }
+      if ((index + 1) % 512 === 0) yield* yieldToIo;
     }
-    for (const edge of upsertedEdges) {
+    for (let index = 0; index < upsertedEdges.length; index += 1) {
+      const edge = upsertedEdges[index]!;
       changedNodeIds.add(edge.sourceNodeId);
       changedNodeIds.add(edge.targetNodeId);
+      if ((index + 1) % 512 === 0) yield* yieldToIo;
     }
     const graphChanged =
       current.hasLegacySemanticData ||
@@ -308,6 +367,7 @@ const make = Effect.gen(function* () {
       fingerprintsChanged ||
       !sameTruncation(current.truncation, extraction.truncation);
 
+    if (generations.get(scope.scopeId) !== generation) return Option.none();
     if (!graphChanged) {
       const {
         errorMessage: _staleErrorMessage,
@@ -393,6 +453,19 @@ const make = Effect.gen(function* () {
       );
     return Option.some(committed);
   });
+
+  const indexScope: KnowledgeGraphIndexerShape["indexScope"] = (scope) =>
+    Effect.suspend(() => {
+      const generation = ++nextGeneration;
+      generations.set(scope.scopeId, generation);
+      return extractAndCommit(scope, generation).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (generations.get(scope.scopeId) === generation) generations.delete(scope.scopeId);
+          }),
+        ),
+      );
+    });
 
   return KnowledgeGraphIndexer.of({ indexScope });
 });
