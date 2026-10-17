@@ -10,6 +10,14 @@ public final class T3NativeControlsModule: Module {
   public func definition() -> ModuleDefinition {
     Name("T3NativeControls")
 
+    AsyncFunction("configureVoiceRecordingAudio") {
+      try T3VoiceRecordingAudio.configure()
+    }.runOnQueue(.main)
+
+    AsyncFunction("clearVoiceRecordingInput") {
+      try T3VoiceRecordingAudio.clearPreferredInput()
+    }.runOnQueue(.main)
+
     AsyncFunction("presentVideo") { (url: URL, title: String, sourceIdentifier: String, identifier: String, promise: Promise) in
       try self.presentVideo(
         url: url,

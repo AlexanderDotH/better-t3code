@@ -5,13 +5,16 @@ import {
 import type { EnvironmentId, ProjectId, ThreadId, VoiceFileReference } from "@t3tools/contracts";
 import {
   requestRecordingPermissionsAsync,
-  setAudioModeAsync,
   useAudioStream,
   type AudioStreamBuffer,
 } from "expo-audio";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { serverEnvironment } from "../../state/server";
+import {
+  configureVoiceRecordingAudio,
+  releaseVoiceRecordingAudio,
+} from "../voice-input/voiceRecordingAudio";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
   createNativeServerSpeechSession,
@@ -112,7 +115,7 @@ export function useNativeAssemblyAiDictation(input: {
 
   const releaseAudio = useCallback(() => {
     audioStream.stream.stop();
-    void setAudioModeAsync({ allowsRecording: false }).catch(() => undefined);
+    void releaseVoiceRecordingAudio().catch(() => undefined);
   }, [audioStream.stream]);
 
   const deactivate = useCallback(() => {
@@ -153,7 +156,7 @@ export function useNativeAssemblyAiDictation(input: {
       draftSessionRef.current?.invalidate();
       abortRef.current?.abort();
       audioStream.stream.stop();
-      void setAudioModeAsync({ allowsRecording: false }).catch(() => undefined);
+      void releaseVoiceRecordingAudio().catch(() => undefined);
       sessionRef.current?.cancel();
     };
   }, [audioStream.stream]);
@@ -194,11 +197,7 @@ export function useNativeAssemblyAiDictation(input: {
       const permission = await requestRecordingPermissionsAsync();
       if (!permission.granted) throw new Error("Microphone permission was denied.");
       if (abortController.signal.aborted) return;
-      await setAudioModeAsync({
-        allowsRecording: true,
-        playsInSilentMode: true,
-        interruptionMode: "doNotMix",
-      });
+      await configureVoiceRecordingAudio(abortController.signal);
       if (abortController.signal.aborted) return;
       const session = createNativeServerSpeechSession({
         startSession: async () => {
