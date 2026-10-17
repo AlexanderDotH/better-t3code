@@ -1,7 +1,12 @@
 import { McpRuntimeServerKey, type McpRuntimeServer } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { aggregateMcpRuntimeStatus, mcpRuntimeStateLabel } from "./mcpRuntimePresentation";
+import {
+  aggregateMcpRuntimeStatus,
+  mcpRuntimeServerNeedsAttention,
+  mcpRuntimeStateLabel,
+  orderMcpRuntimeServers,
+} from "./mcpRuntimePresentation";
 
 function runtimeServer(
   state: McpRuntimeServer["state"],
@@ -90,5 +95,55 @@ describe("mcpRuntimeStateLabel", () => {
     expect(mcpRuntimeStateLabel("auth-required")).toBe("Authorization required");
     expect(mcpRuntimeStateLabel("setup-required")).toBe("Setup required");
     expect(mcpRuntimeStateLabel("failed")).toBe("Failed");
+  });
+});
+
+describe("MCP diagnostics ordering", () => {
+  it("shows failures before warnings and healthy servers within each source group", () => {
+    const servers = [
+      runtimeServer("connected", { name: "1password", source: "provider-native" }),
+      runtimeServer("failed", { name: "notebooklm", source: "provider-native" }),
+      runtimeServer("auth-required", { name: "atlassian", source: "provider-native" }),
+      runtimeServer("stale", { name: "gitlab", source: "provider-native" }),
+      runtimeServer("connected", {
+        name: "codex_apps",
+        source: "provider-native",
+        configDrift: "pending-disable",
+      }),
+    ];
+
+    expect(orderMcpRuntimeServers(servers).map((server) => server.name)).toEqual([
+      "atlassian",
+      "notebooklm",
+      "codex_apps",
+      "gitlab",
+      "1password",
+    ]);
+    expect(servers[0]?.name).toBe("1password");
+  });
+
+  it("keeps configured, provider-managed, and built-in servers in separate groups", () => {
+    const servers = [
+      runtimeServer("failed", { name: "system", source: "t3-built-in" }),
+      runtimeServer("failed", { name: "notebooklm", source: "provider-native" }),
+      runtimeServer("connected", { name: "configured", source: "t3-managed" }),
+    ];
+    expect(orderMcpRuntimeServers(servers).map((server) => server.source)).toEqual([
+      "t3-managed",
+      "provider-native",
+      "t3-built-in",
+    ]);
+  });
+
+  it("highlights pending changes without treating disabled servers as failures", () => {
+    expect(
+      mcpRuntimeServerNeedsAttention(
+        runtimeServer("connected", { configDrift: "pending-disable" }),
+      ),
+    ).toBe(true);
+    expect(
+      mcpRuntimeServerNeedsAttention(runtimeServer("disabled", { configDrift: "pending-enable" })),
+    ).toBe(false);
+    expect(mcpRuntimeServerNeedsAttention(runtimeServer("connected"))).toBe(false);
   });
 });

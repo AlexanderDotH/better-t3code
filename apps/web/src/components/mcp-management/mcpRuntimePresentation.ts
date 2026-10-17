@@ -18,6 +18,36 @@ const TERMINAL_PROBLEM_STATES = new Set<McpRuntimeState>([
 
 const UNOBSERVED_STATES = new Set<McpRuntimeState>(["not-started", "unknown", "unsupported"]);
 
+const SERVER_SOURCE_ORDER: Record<McpRuntimeServer["source"], number> = {
+  "t3-managed": 0,
+  "provider-native": 1,
+  "t3-built-in": 2,
+};
+
+export function mcpRuntimeServerNeedsAttention(server: McpRuntimeServer): boolean {
+  if (server.state === "disabled" || server.state === "unsupported") return false;
+  return (
+    TERMINAL_PROBLEM_STATES.has(server.state) ||
+    server.state === "stale" ||
+    server.configDrift !== "none"
+  );
+}
+
+export function orderMcpRuntimeServers(
+  servers: ReadonlyArray<McpRuntimeServer>,
+): McpRuntimeServer[] {
+  return [...servers].sort((left, right) => {
+    const sourceOrder = SERVER_SOURCE_ORDER[left.source] - SERVER_SOURCE_ORDER[right.source];
+    if (sourceOrder !== 0) return sourceOrder;
+    const attentionOrder =
+      Number(mcpRuntimeServerNeedsAttention(right)) - Number(mcpRuntimeServerNeedsAttention(left));
+    const problemOrder =
+      Number(TERMINAL_PROBLEM_STATES.has(right.state)) -
+      Number(TERMINAL_PROBLEM_STATES.has(left.state));
+    return problemOrder || attentionOrder || left.name.localeCompare(right.name);
+  });
+}
+
 function isExpectedUserServer(server: McpRuntimeServer): boolean {
   return (
     server.source !== "t3-built-in" && server.state !== "disabled" && server.state !== "unsupported"

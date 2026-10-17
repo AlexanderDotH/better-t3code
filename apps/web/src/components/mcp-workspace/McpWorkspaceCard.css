@@ -2,6 +2,7 @@
   position: relative;
   container-name: mcp-workspace-card;
   container-type: inline-size;
+  align-self: start;
   min-width: 0;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
@@ -22,11 +23,9 @@
 }
 @utility mcp-workspace-card__content {
   display: grid;
-  height: 100%;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 0.5rem;
 }
 @utility mcp-workspace-card__header {
@@ -318,5 +317,86 @@
     color: var(--muted-foreground);
     font-size: var(--text-xs);
     line-height: 1.5;
+  }
+}
+
+@utility mcp-runtime-list {
+  container-name: mcp-runtime;
+  container-type: inline-size;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  overflow: hidden;
+  margin: 0.25rem 1.25rem 1.25rem;
+  border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+  border-radius: 0.875rem;
+  background: color-mix(in srgb, var(--card) 45%, transparent);
+}
+@utility mcp-runtime-list__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  border-block-end: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  padding: 0.875rem 1rem;
+}
+@utility mcp-runtime-list__status {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 0.375rem;
+  background: color-mix(in srgb, var(--muted) 55%, transparent);
+  padding: 0.25rem 0.5rem;
+  color: var(--muted-foreground);
+  font-size: var(--text-2xs);
+  line-height: 1.5;
+  text-wrap: pretty;
+  &[data-tone="orange"] {
+    background: var(--warning-surface);
+    color: var(--warning-foreground);
+  }
+  &[data-tone="red"] {
+    background: color-mix(in srgb, var(--destructive) 10%, transparent);
+    color: var(--destructive-foreground);
+  }
+}
+@utility mcp-runtime-server {
+  min-width: 0;
+  padding: 0.75rem 1rem;
+  &:hover {
+    background: color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+}
+@utility mcp-runtime-server__header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  @container mcp-runtime (max-width: 26rem) {
+    .mcp-runtime-server[data-needs-attention="true"] & {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+}
+@utility mcp-runtime-server__actions {
+  min-width: 0;
+  @container mcp-runtime (max-width: 26rem) {
+    .mcp-runtime-server[data-needs-attention="true"] & {
+      padding-inline-start: 0.875rem;
+    }
+  }
+}
+@utility mcp-runtime-server__state {
+  font-weight: 500;
+  &[data-state="failed"],
+  &[data-state="auth-required"],
+  &[data-state="setup-required"] {
+    color: var(--destructive-foreground);
+  }
+  &[data-state="starting"],
+  &[data-state="stale"] {
+    color: var(--warning-foreground);
   }
 }

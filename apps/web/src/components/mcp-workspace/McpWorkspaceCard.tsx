@@ -2,7 +2,6 @@ import type { ProviderDriverKind } from "@t3tools/contracts";
 import { ArrowUpIcon, ServerIcon } from "lucide-react";
 import type { ReactNode, RefObject } from "react";
 
-import { cn } from "~/lib/utils";
 import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
@@ -36,7 +35,7 @@ export function McpWorkspaceCard({
   const live = summary.state === "live";
   return (
     <article
-      className={cn("mcp-workspace-card", !expanded && "h-full")}
+      className="mcp-workspace-card"
       data-expanded={expanded ? "true" : undefined}
       data-mcp-workspace-card="true"
       data-mcp-workspace-state={summary.state}
