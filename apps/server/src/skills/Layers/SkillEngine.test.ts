@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { ProjectId } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -13,6 +14,8 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { SkillEngine } from "../Services/SkillEngine.ts";
 import { SkillEngineLive } from "./SkillEngine.ts";
+
+const supportsExecutablePermissions = HostProcessPlatform.defaultValue() !== "win32";
 
 const makeSkillEngineLayer = () =>
   SkillEngineLive.pipe(
@@ -124,7 +127,7 @@ it.layer(NodeServices.layer)("SkillEngineLive", (it) => {
           [137, 80, 78, 71, 255, 0],
         );
         // Windows exposes read/write bits, so check executable permissions on POSIX hosts.
-        if (process.platform !== "win32") {
+        if (supportsExecutablePermissions) {
           assert.equal(
             (yield* fs.stat(path.join(directory, "scripts/check.sh"))).mode & 0o111,
             0o111,
