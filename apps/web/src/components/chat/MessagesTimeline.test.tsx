@@ -24,12 +24,16 @@ import {
 import { renderToStaticMarkup } from "react-dom/server";
 import { createRoot } from "react-dom/client";
 import { create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef, MaintainScrollAtEndOptions } from "@legendapp/list/react";
 import { shouldUseRestingComposerLayout } from "../composerFooterLayout";
 import { useComposerFocusState } from "./useComposerFocusState";
 import type { TimelineEntry } from "../../session-logic";
-let InlineMessageEditor: typeof import("./InlineMessageEditor").InlineMessageEditor;
+import { InlineMessageEditor } from "./InlineMessageEditor";
+import { MessagesTimeline, resolvePreviewAnnotationImage } from "./MessagesTimeline";
+import { WorkingReasoningDialogProvider } from "./WorkingReasoningDialog";
+import { deriveUnsettledTurnId } from "./MessagesTimeline.logic";
+import { useClientSettings } from "../../hooks/useSettings";
 
 const visualPreference = vi.hoisted(() => ({ mode: "current" as "current" | "classic" }));
 vi.mock("../../chatVisualModeSync", () => ({ useChatVisualMode: () => visualPreference.mode }));
@@ -155,43 +159,30 @@ vi.mock("../DiffWorkerPoolProvider", () => ({
   DiffWorkerPoolProvider: ({ children }: { children?: ReactNode }) => children,
 }));
 
-function matchMedia() {
-  return {
-    matches: false,
-    media: "",
-    onchange: null,
-    addListener: () => {},
-    removeListener: () => {},
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    dispatchEvent: () => false,
-  };
-}
+// Install browser globals before the static imports initialize settings and media-query stores.
+const { configureTestDom } = vi.hoisted(() => {
+  function configureTestDom() {
+    window.matchMedia = () => ({
+      matches: false,
+      media: "",
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    });
+    vi.stubGlobal("localStorage", {
+      getItem: () => null,
+      setItem: () => {},
+      removeItem: () => {},
+      clear: () => {},
+    });
+  }
 
-let MessagesTimeline: typeof import("./MessagesTimeline").MessagesTimeline;
-let WorkingReasoningDialogProvider: typeof import("./WorkingReasoningDialog").WorkingReasoningDialogProvider;
-let deriveUnsettledTurnId: typeof import("./MessagesTimeline.logic").deriveUnsettledTurnId;
-let useClientSettings: typeof import("../../hooks/useSettings").useClientSettings;
-let resolvePreviewAnnotationImage: typeof import("./MessagesTimeline").resolvePreviewAnnotationImage;
-
-function configureTestDom() {
-  window.matchMedia = matchMedia;
-  vi.stubGlobal("localStorage", {
-    getItem: () => null,
-    setItem: () => {},
-    removeItem: () => {},
-    clear: () => {},
-  });
-}
-
-beforeAll(async () => {
   configureTestDom();
-  ({ MessagesTimeline, resolvePreviewAnnotationImage } = await import("./MessagesTimeline"));
-  ({ WorkingReasoningDialogProvider } = await import("./WorkingReasoningDialog"));
-  ({ deriveUnsettledTurnId } = await import("./MessagesTimeline.logic"));
-  ({ useClientSettings } = await import("../../hooks/useSettings"));
-  ({ InlineMessageEditor } = await import("./InlineMessageEditor"));
-}, 30_000);
+  return { configureTestDom };
+});
 
 beforeEach(configureTestDom);
 
