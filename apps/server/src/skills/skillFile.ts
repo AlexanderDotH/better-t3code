@@ -1,3 +1,7 @@
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
+import { parse as parseYaml } from "yaml";
+
 const FRONTMATTER_BOUNDARY = "---";
 const SKILL_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
 
@@ -20,21 +24,21 @@ export function isValidSkillName(name: string): boolean {
   return SKILL_NAME_PATTERN.test(name) && name !== "." && name !== "..";
 }
 
-function parseScalar(rawValue: string): string {
-  const value = rawValue.trim();
-  if (value.startsWith('"') && value.endsWith('"')) {
-    try {
-      const parsed = JSON.parse(value);
-      return typeof parsed === "string" ? parsed : value.slice(1, -1);
-    } catch {
-      return value.slice(1, -1);
-    }
-  }
-  if (value.startsWith("'") && value.endsWith("'")) {
-    return value.slice(1, -1).replaceAll("''", "'");
-  }
-  return value;
-}
+const SkillMetadata = Schema.Struct({
+  name: Schema.optional(Schema.String),
+  description: Schema.optional(Schema.String),
+  displayName: Schema.optional(Schema.String),
+  shortDescription: Schema.optional(Schema.String),
+  metadata: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        "display-name": Schema.optional(Schema.String),
+        "short-description": Schema.optional(Schema.String),
+      }),
+    ),
+  ),
+});
+const decodeSkillMetadata = Schema.decodeUnknownResult(SkillMetadata);
 
 function readFrontmatter(contents: string): {
   readonly frontmatter: string | null;
@@ -58,44 +62,20 @@ function readFrontmatter(contents: string): {
 
 export function parseSkillFile(contents: string): ParsedSkillFile {
   const { frontmatter, body } = readFrontmatter(contents);
-  const metadata = new Map<string, string>();
-  const nestedMetadata = new Map<string, string>();
-  let section: string | null = null;
-
+  let metadata: typeof SkillMetadata.Type = {};
   if (frontmatter) {
-    for (const line of frontmatter.split("\n")) {
-      if (!line.trim() || line.trimStart().startsWith("#")) {
-        continue;
-      }
-
-      const nestedMatch = /^\s{2,}([A-Za-z0-9_-]+):\s*(.*)$/.exec(line);
-      if (nestedMatch && section === "metadata") {
-        nestedMetadata.set(nestedMatch[1]!, parseScalar(nestedMatch[2] ?? ""));
-        continue;
-      }
-
-      section = null;
-      const match = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line);
-      if (!match) {
-        continue;
-      }
-
-      const key = match[1]!;
-      const rawValue = match[2] ?? "";
-      if (rawValue.trim().length === 0) {
-        section = key;
-        continue;
-      }
-      metadata.set(key, parseScalar(rawValue));
+    try {
+      const decoded = decodeSkillMetadata(parseYaml(frontmatter, { maxAliasCount: 10 }));
+      if (Result.isSuccess(decoded)) metadata = decoded.success;
+    } catch {
+      // Invalid community metadata must not make the instruction body unreadable.
     }
   }
-
   return {
-    name: metadata.get("name") ?? null,
-    description: metadata.get("description") ?? null,
-    displayName: metadata.get("displayName") ?? nestedMetadata.get("display-name") ?? null,
-    shortDescription:
-      metadata.get("shortDescription") ?? nestedMetadata.get("short-description") ?? null,
+    name: metadata.name ?? null,
+    description: metadata.description ?? null,
+    displayName: metadata.displayName ?? metadata.metadata?.["display-name"] ?? null,
+    shortDescription: metadata.shortDescription ?? metadata.metadata?.["short-description"] ?? null,
     body,
   };
 }

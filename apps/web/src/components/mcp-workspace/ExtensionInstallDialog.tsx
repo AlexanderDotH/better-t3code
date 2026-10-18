@@ -39,7 +39,9 @@ export function ExtensionInstallDialog(props: {
   readOnly: boolean;
   installed: boolean;
   onClose: () => void;
-  onInstalled: () => void;
+  onInstalled: (resolvedSource?: string) => void;
+  isSkillInstalled?: (name: string) => boolean;
+  onBrowseRepository?: () => void;
 }) {
   const t = useInterfaceTranslator().message;
   const projects = useProjects();
@@ -87,6 +89,14 @@ export function ExtensionInstallDialog(props: {
         })
       : null,
   );
+  const renamed = Boolean(skill && preview.data && preview.data.source !== props.entry.id);
+  const installed =
+    props.installed ||
+    Boolean(skill && preview.data && props.isSkillInstalled?.(preview.data.name));
+  const sourceUrl =
+    renamed && preview.data
+      ? "https://github.com/" + preview.data.source.split("/").slice(0, 2).join("/")
+      : props.entry.sourceUrl;
   const installSkill = useSettingsCommand(agentSettingsEnvironment.skills.installRegistry);
   const addServer = useSettingsCommand(agentSettingsEnvironment.mcp.create);
   const install = useSettingsMutation({
@@ -104,7 +114,7 @@ export function ExtensionInstallDialog(props: {
         await installSkill({
           environmentId: props.environmentId,
           input: {
-            source: props.entry.id,
+            source: preview.data.source,
             contentHash: preview.data.contentHash,
             scope,
             ...projectScope,
@@ -131,7 +141,7 @@ export function ExtensionInstallDialog(props: {
       }
     },
     onMutate: () => setError(null),
-    onSuccess: props.onInstalled,
+    onSuccess: () => props.onInstalled(skill ? preview.data?.source : undefined),
     onError: (error) => setError(error instanceof Error ? error.message : String(error)),
   });
   const missingRequired = connection?.inputs.some(
@@ -139,7 +149,7 @@ export function ExtensionInstallDialog(props: {
   );
   const canInstall =
     !props.readOnly &&
-    !props.installed &&
+    !installed &&
     !install.isPending &&
     (skill
       ? Boolean(preview.data) && !preview.isPending && !preview.error
@@ -157,13 +167,15 @@ export function ExtensionInstallDialog(props: {
     >
       <DialogPopup className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{props.entry.name}</DialogTitle>
+          <DialogTitle>
+            {renamed && preview.data ? preview.data.name : props.entry.name}
+          </DialogTitle>
           <DialogDescription>{props.entry.description || props.entry.source}</DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <div className="space-y-5">
             <a
-              href={props.entry.sourceUrl}
+              href={sourceUrl}
               target="_blank"
               rel="noreferrer"
               className="text-primary text-sm underline underline-offset-4"
@@ -248,6 +260,11 @@ export function ExtensionInstallDialog(props: {
             </div>
             {skill ? (
               <>
+                {renamed && preview.data ? (
+                  <p role="status" className="text-sm">
+                    {t("settings.mcp.store.renamed", { name: preview.data.name })}
+                  </p>
+                ) : null}
                 {preview.isPending ? (
                   <p role="status" className="text-muted-foreground text-sm">
                     {t("settings.mcp.store.previewLoading")}
@@ -256,9 +273,16 @@ export function ExtensionInstallDialog(props: {
                 {preview.error ? (
                   <div role="alert" className="space-y-2 text-sm text-destructive">
                     <p>{preview.error}</p>
-                    <Button variant="outline" size="sm" onClick={preview.refresh}>
-                      {t("settings.mcp.store.retry")}
-                    </Button>
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="outline" size="sm" onClick={preview.refresh}>
+                        {t("settings.mcp.store.retry")}
+                      </Button>
+                      {props.onBrowseRepository ? (
+                        <Button variant="outline" size="sm" onClick={props.onBrowseRepository}>
+                          {t("settings.mcp.store.browseRepository")}
+                        </Button>
+                      ) : null}
+                    </div>
                   </div>
                 ) : null}
                 {preview.data ? (
@@ -376,7 +400,7 @@ export function ExtensionInstallDialog(props: {
           </Button>
           <Button disabled={!canInstall} onClick={() => install.mutate()}>
             {t(
-              props.installed
+              installed
                 ? "settings.mcp.store.installed"
                 : install.isPending
                   ? "settings.mcp.store.installing"

@@ -9,6 +9,7 @@ import {
   previewRegistrySkill,
 } from "./extensionCatalog.ts";
 import { mcpCatalogEntry } from "./mcpCatalog.ts";
+import { skillArchive } from "./testUtils/skillArchive.ts";
 
 const isCatalogSearchResult = Schema.is(ExtensionCatalogSearchResult);
 const isRegistrySource = Schema.is(SkillRegistrySource);
@@ -42,6 +43,46 @@ describe("extension registry packages", () => {
         Object.assign(
           async () => {
             throw new Error("Registry is offline");
+          },
+          { preconnect: () => {} },
+        ),
+      ),
+    ),
+  );
+
+  it.effect("pages through more than 24 public skill search results", () =>
+    Effect.gen(function* () {
+      const ids: string[] = [];
+      let cursor: string | undefined;
+      do {
+        const result = yield* searchExtensionCatalog({
+          kind: "skill",
+          query: "review",
+          ...(cursor ? { cursor } : {}),
+        });
+        ids.push(...result.entries.map((entry) => entry.id));
+        cursor = result.nextCursor;
+      } while (cursor);
+      expect(ids).toHaveLength(55);
+      expect(new Set(ids).size).toBe(55);
+      expect(ids.at(-1)).toBe("example/skills/review-54");
+    }).pipe(
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provideService(
+        FetchHttpClient.Fetch,
+        Object.assign(
+          async (request: Parameters<typeof fetch>[0]) => {
+            const url = new URL(String(request));
+            expect(url.host).toBe("skills.sh");
+            expect(url.searchParams.get("limit")).toBe("100");
+            return Response.json({
+              skills: Array.from({ length: 55 }, (_, index) => ({
+                id: "example/skills/review-" + index,
+                name: "review-" + index,
+                source: "example/skills",
+                skillId: "review-" + index,
+              })),
+            });
           },
           { preconnect: () => {} },
         ),
@@ -91,9 +132,15 @@ describe("extension registry packages", () => {
     expect(() =>
       validateRegistrySkillFiles([
         ...files,
-        { path: "large", contents: "x".repeat(4 * 1024 * 1024) },
+        { path: "large", contents: "x".repeat(8 * 1024 * 1024) },
       ]),
-    ).toThrow("4 MB");
+    ).toThrow("8 MB");
+    expect(() =>
+      validateRegistrySkillFiles([
+        ...files,
+        { path: "assets/font", contents: "x".repeat(5 * 1024 * 1024) },
+      ]),
+    ).not.toThrow();
   });
 
   it("maps pinned npm packages and prompts for required values without inventing a command", () => {
@@ -175,7 +222,10 @@ describe("extension registry packages", () => {
         Object.assign(
           async (request: Parameters<typeof fetch>[0]) => {
             const url = String(request);
-            if (url.includes("registry.modelcontextprotocol.io"))
+            if (
+              url.includes("registry.modelcontextprotocol.io") ||
+              url.includes("api.mcp.github.com")
+            )
               return Response.json({
                 servers: [
                   {
@@ -200,8 +250,17 @@ describe("extension registry packages", () => {
                   },
                 ],
               });
-            expect(url).toBe("https://skills.sh/api/download/example/skills/review");
-            return Response.json({ files });
+            expect(url).toBe("https://codeload.github.com/example/skills/zip/HEAD");
+            return new Response(
+              new Uint8Array(
+                skillArchive(
+                  files.map((file) => ({
+                    ...file,
+                    path: "skills/review/" + file.path,
+                  })),
+                ),
+              ),
+            );
           },
           { preconnect: () => {} },
         ),

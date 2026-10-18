@@ -16,6 +16,7 @@ import * as Result from "effect/Result";
 import * as Exit from "effect/Exit";
 import { FetchHttpClient } from "effect/unstable/http";
 import { downloadRegistrySkill } from "../extensionCatalog.ts";
+import { registrySkillFileBytes } from "../skillPackage.ts";
 
 import {
   discoverAgentImportSources,
@@ -700,7 +701,8 @@ function makeSkillEngine(): Effect.Effect<
                     if (file.path === "SKILL.md") continue;
                     const destination = path.join(target.skillDir, file.path);
                     yield* fs.makeDirectory(path.dirname(destination), { recursive: true });
-                    yield* fs.writeFileString(destination, file.contents);
+                    yield* fs.writeFile(destination, registrySkillFileBytes(file));
+                    if (file.executable) yield* fs.chmod(destination, 0o755);
                   }
                   yield* writeFileStringAtomically({
                     filePath: target.skillPath,

@@ -46,6 +46,24 @@ Check changed files first.
     });
   });
 
+  it("reads folded and literal descriptions from public skill frontmatter", () => {
+    const folded = parseSkillFile(
+      "---\nname: investigate-anything\ndescription: >-\n  Start an investigation.\n  Choose a workflow.\n---\n# Instructions",
+    );
+    expect(folded.description).toBe("Start an investigation. Choose a workflow.");
+    const literal = parseSkillFile(
+      "---\nname: review\ndescription: |\n  First line.\n  Second line.\n---\n# Instructions",
+    );
+    expect(literal.description).toBe("First line.\nSecond line.\n");
+  });
+
+  it("keeps the body readable when frontmatter is invalid", () => {
+    expect(parseSkillFile("---\nname: [unfinished\n---\n# Instructions")).toMatchObject({
+      name: null,
+      body: "# Instructions",
+    });
+  });
+
   it("accepts only directory-safe skill names", () => {
     expect(isValidSkillName("review-follow-up")).toBe(true);
     expect(isValidSkillName("review_follow_up2")).toBe(true);

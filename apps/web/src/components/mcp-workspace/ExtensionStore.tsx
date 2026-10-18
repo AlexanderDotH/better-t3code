@@ -116,7 +116,14 @@ export function ExtensionStore(props: ExtensionStoreProps) {
           <div className="extension-store__topics">
             {(kind === "mcp"
               ? ["GitHub", "Playwright", "Postgres", "Context7"]
-              : ["React", "Testing", "Design", "Code review"]
+              : [
+                  "React",
+                  "Testing",
+                  "Design",
+                  "Code review",
+                  "anthropics/skills",
+                  "useosint/skills",
+                ]
             ).map((topic) => (
               <Button key={topic} size="xs" variant="outline" onClick={() => updateSearch(topic)}>
                 {topic}
@@ -132,6 +139,12 @@ export function ExtensionStore(props: ExtensionStoreProps) {
                   : "settings.mcp.store.skillDescription",
             )}
           </p>
+          {!searching &&
+            search.data?.warnings?.map((warning) => (
+              <p key={warning} role="status" className="extension-store__description">
+                {warning}
+              </p>
+            ))}
           {notice ? (
             <p role="status" className="extension-store__notice">
               <CheckIcon className="size-4 shrink-0" />
@@ -265,8 +278,16 @@ export function ExtensionStore(props: ExtensionStoreProps) {
           entry={selected}
           readOnly={readOnly}
           installed={isInstalled(selected)}
+          isSkillInstalled={(name) =>
+            skills.data?.skills.some((skill) => skill.name === name) === true
+          }
           onClose={() => setSelected(null)}
-          onInstalled={() => {
+          onBrowseRepository={() => {
+            updateSearch(selected.source);
+            setSelected(null);
+          }}
+          onInstalled={(resolvedSource) => {
+            if (resolvedSource && resolvedSource !== selected.id) search.refresh();
             setNotice(selected.kind);
             setSelected(null);
             skills.refresh();
