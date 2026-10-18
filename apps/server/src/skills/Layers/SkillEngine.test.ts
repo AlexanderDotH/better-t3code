@@ -123,10 +123,13 @@ it.layer(NodeServices.layer)("SkillEngineLive", (it) => {
           [...(yield* fs.readFile(path.join(directory, "assets/icon.png")))],
           [137, 80, 78, 71, 255, 0],
         );
-        assert.equal(
-          (yield* fs.stat(path.join(directory, "scripts/check.sh"))).mode & 0o111,
-          0o111,
-        );
+        // Windows exposes read/write bits, so check executable permissions on POSIX hosts.
+        if (process.platform !== "win32") {
+          assert.equal(
+            (yield* fs.stat(path.join(directory, "scripts/check.sh"))).mode & 0o111,
+            0o111,
+          );
+        }
         const prompt = yield* engine.rewritePromptForProvider({
           providerInstanceId: "codex",
           prompt: "/registry-review changes",
