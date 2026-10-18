@@ -5,11 +5,16 @@ Choose the environment first through a project, or use the primary environment f
 Global skills apply across projects; project skills belong to the selected workspace.
 
 On web and desktop, open **Browse** from Skills settings or the **Tools & skills** chat card to
-search the public [skills.sh catalog](https://skills.sh). Preview the instructions and source,
+search the public [skills.sh catalog](https://skills.sh), or enter a public GitHub repository such as
+`anthropics/skills` or its GitHub URL to browse its current skills. Search and installation require
+no registry account or API key. Preview the instructions and source,
 choose this project or all projects in the environment, then install. Skills are shared across
 providers in that scope; the install dialog shows active providers. Supporting files are included.
 Manage installed skills in the card's **Installed > Skills** view or in Settings, and use `/skill-name` in chat.
-If the source changes after previewing, reopen the preview before installing.
+If the source changes after previewing, reopen the preview before installing. When a publisher
+lists an old-to-new skill name in its GitHub release notes, the preview resolves the new name and
+shows the current version before installation. If no confirmed replacement exists, browse the
+repository's current skills from the preview.
 
 **Import** discovers existing agent skills on that environment. Select the sources to import and
 whether to skip duplicates. Imported skills remain editable in T3 Code. Provider-owned or read-only

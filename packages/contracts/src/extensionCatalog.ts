@@ -47,6 +47,7 @@ export type ExtensionCatalogEntry = typeof ExtensionCatalogEntry.Type;
 export const ExtensionCatalogSearchResult = Schema.Struct({
   entries: Schema.Array(ExtensionCatalogEntry),
   nextCursor: Schema.optional(Schema.String),
+  warnings: Schema.optional(Schema.Array(Schema.String)),
 });
 export type ExtensionCatalogSearchResult = typeof ExtensionCatalogSearchResult.Type;
 

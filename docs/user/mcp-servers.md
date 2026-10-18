@@ -26,7 +26,9 @@ supported provider account when you need these tools.
 ## Find and install servers
 
 Open **Browse** in the chat card or MCP settings to search the
-[official MCP Registry](https://registry.modelcontextprotocol.io). Choose **Set up**, review the
+[official MCP Registry](https://registry.modelcontextprotocol.io) and the
+[GitHub MCP Registry](https://github.com/mcp). Discovery requires no registry account or API key.
+Choose **Set up**, review the
 source, select a connection and provider, and fill in the requested configuration. Catalog setup
 offers active providers only; **All active providers** selects the accounts available at install time.
 Remote servers

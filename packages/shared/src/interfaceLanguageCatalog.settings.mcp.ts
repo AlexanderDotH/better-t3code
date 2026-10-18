@@ -48,14 +48,14 @@ export const settingsMcpInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Explorez le catalogue et ajoutez des outils et compétences à votre collection.",
   ],
   "settings.mcp.store.mcpDescription": [
-    "Connect services, data, and tools from the official MCP Registry.",
-    "Verbinde Dienste, Daten und Tools aus dem offiziellen MCP-Register.",
-    "Connectez des services, des données et des outils du registre MCP officiel.",
+    "Search the official MCP Registry and GitHub without a registry account. Individual servers may require credentials.",
+    "Durchsuche das offizielle MCP-Register und GitHub ohne Registry-Konto. Einzelne Server können Zugangsdaten benötigen.",
+    "Recherchez dans le registre MCP officiel et GitHub sans compte de registre. Certains serveurs peuvent nécessiter des identifiants.",
   ],
   "settings.mcp.store.skillDescription": [
-    "Discover reusable instructions from the skills.sh community catalog.",
-    "Entdecke wiederverwendbare Anleitungen im Community-Katalog von skills.sh.",
-    "Découvrez les instructions réutilisables du catalogue communautaire skills.sh.",
+    "Search skills.sh or enter a public GitHub repository (owner/repo). No account or API key needed.",
+    "Durchsuche skills.sh oder gib ein öffentliches GitHub-Repository ein (owner/repo). Kein Konto oder API-Schlüssel nötig.",
+    "Recherchez sur skills.sh ou entrez un dépôt GitHub public (owner/repo). Aucun compte ni clé API nécessaire.",
   ],
   "settings.mcp.store.search": [
     "Search the registry",
@@ -68,9 +68,9 @@ export const settingsMcpInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Rechercher des serveurs, par ex. GitHub ou Playwright",
   ],
   "settings.mcp.store.searchSkills": [
-    "Search skills, e.g. React or code review",
-    "Skills suchen, z. B. React oder Code-Review",
-    "Rechercher des compétences, par ex. React ou revue de code",
+    "Search skills or enter owner/repo",
+    "Skills suchen oder owner/repo eingeben",
+    "Rechercher une compétence ou saisir owner/repo",
   ],
   "settings.mcp.store.suggestions": [
     "Suggested skills to get started. Choose one to preview and install.",
@@ -86,6 +86,11 @@ export const settingsMcpInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "No matches. Try a different search.",
     "Keine Treffer. Versuche einen anderen Suchbegriff.",
     "Aucun résultat. Essayez une autre recherche.",
+  ],
+  "settings.mcp.store.browseRepository": [
+    "Browse repository skills",
+    "Skills im Repository durchsuchen",
+    "Parcourir les compétences du dépôt",
   ],
   "settings.mcp.store.retry": ["Try again", "Erneut versuchen", "Réessayer"],
   "settings.mcp.store.next": ["More results", "Weitere Ergebnisse", "Plus de résultats"],
@@ -151,6 +156,11 @@ export const settingsMcpInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Includes {{count}} files, with supporting resources.",
     "Enthält {{count}} Dateien einschließlich unterstützender Ressourcen.",
     "Inclut {{count}} fichiers avec les ressources associées.",
+  ],
+  "settings.mcp.store.renamed": [
+    "This skill is now called {{name}}. The preview shows its current version.",
+    "Dieser Skill heißt jetzt {{name}}. Die Vorschau zeigt die aktuelle Version.",
+    "Cette compétence s’appelle désormais {{name}}. L’aperçu montre sa version actuelle.",
   ],
   "settings.mcp.store.previewLoading": [
     "Loading skill preview…",
