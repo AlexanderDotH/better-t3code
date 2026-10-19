@@ -24,11 +24,17 @@ import {
 } from "@t3tools/shared/interfaceLanguage";
 import { stripAutoReasoning } from "@t3tools/shared/model";
 import { prepareBetterT3StatusModel } from "@t3tools/client-runtime/better-t3-status";
+import {
+  getBetterT3SettingsSubgroupForTarget,
+  getBetterT3SettingsSubgroupForFeature,
+  sanitizeBetterT3ExpandedSettingsGroups,
+  type BetterT3SettingsSubgroupId,
+} from "@t3tools/client-runtime/better-t3-settings-layout";
 import { projectIndexingDefaultsSupported } from "@t3tools/client-runtime/project-indexing";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Modal, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
 import {
   isAtomCommandInterrupted,
@@ -50,6 +56,7 @@ import { environmentSession } from "../../state/session";
 import { mobileProjectIndexPermissions } from "../project-indexing/mobile-project-indexing";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "./components/SettingsSection";
+import { BetterT3SettingsSubgroup } from "./components/BetterT3SettingsSubgroup";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { ModelSelectionModal, modelSelectionLabel } from "./SettingsAgentEnvironmentsRouteScreen";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
@@ -69,6 +76,7 @@ import {
   createMobileBetterT3EnvironmentControlPatch,
   createMobileBetterT3EnvironmentPatch,
   mobileBetterT3PreparedStatusDetail,
+  mobileBetterT3SubgroupSummary,
   mobileBetterT3PreparedStatusInput,
   mobileBetterT3PreparedStatusMessageKey,
   mobileLifecycleReceiptFromWelcome,
@@ -330,6 +338,25 @@ export function SettingsBetterT3RouteScreen() {
   const devicePreferences = AsyncResult.isSuccess(preferencesResult)
     ? preferencesResult.value
     : undefined;
+  const expandedSettingsGroups = useMemo(
+    () => sanitizeBetterT3ExpandedSettingsGroups(devicePreferences?.betterT3ExpandedSettingsGroups),
+    [devicePreferences?.betterT3ExpandedSettingsGroups],
+  );
+  const expandedSettingsGroupsRef = useRef(expandedSettingsGroups);
+  useEffect(() => {
+    expandedSettingsGroupsRef.current = expandedSettingsGroups;
+  }, [expandedSettingsGroups]);
+  const setGroupExpanded = useCallback(
+    (id: BetterT3SettingsSubgroupId, expanded: boolean) => {
+      const current = expandedSettingsGroupsRef.current;
+      const next = expanded
+        ? sanitizeBetterT3ExpandedSettingsGroups([...current, id])
+        : current.filter((candidate) => candidate !== id);
+      expandedSettingsGroupsRef.current = next;
+      savePreferences({ betterT3ExpandedSettingsGroups: next });
+    },
+    [savePreferences],
+  );
   const deviceSettings = devicePreferences?.betterT3Device
     ? devicePreferences.betterT3Device
     : DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1;
@@ -444,7 +471,7 @@ export function SettingsBetterT3RouteScreen() {
   );
 
   const updateEnvironmentSettings = useCallback(
-    async (patch: ServerSettingsPatch): Promise<boolean> => {
+    async (patch: ServerSettingsPatch, featureId?: BetterT3FeatureId): Promise<boolean> => {
       if (environmentTargetId === null) return false;
       const result = await updateServerSettings({
         environmentId: environmentTargetId,
@@ -452,6 +479,8 @@ export function SettingsBetterT3RouteScreen() {
       });
       if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return true;
       const error = squashAtomCommandFailure(result);
+      const group = getBetterT3SettingsSubgroupForFeature(featureId ?? "");
+      if (group?.collapsible) setGroupExpanded(group.id, true);
       Alert.alert(
         translator.message("mobile.settings.betterT3.updateFailedTitle"),
         translator.message("mobile.settings.betterT3.updateFailedDescription", {
@@ -463,7 +492,7 @@ export function SettingsBetterT3RouteScreen() {
       );
       return false;
     },
-    [environmentTargetId, translator, updateServerSettings],
+    [environmentTargetId, setGroupExpanded, translator, updateServerSettings],
   );
 
   const setSwitch = useCallback(
@@ -485,6 +514,7 @@ export function SettingsBetterT3RouteScreen() {
           featureId,
           enabled,
         }),
+        featureId,
       );
     },
     [deviceSettings, environmentSettings, savePreferences, updateEnvironmentSettings],
@@ -537,6 +567,204 @@ export function SettingsBetterT3RouteScreen() {
     }
   };
 
+  const renderControl = (control: MobileBetterT3Control, sectionId: BetterT3FeatureSection) => {
+    const label = translator.message(
+      messageKey(control.descriptor.labelMessageId, "settings.betterT3.title"),
+    );
+    const description = translator.message(
+      messageKey(control.descriptor.descriptionMessageId, "settings.betterT3.description"),
+    );
+    const status = translator.message(
+      messageKey(
+        control.availability.reasonMessageId ??
+          `settings.betterT3.availability.${control.availability.state}`,
+        "settings.betterT3.availability.unavailable",
+      ),
+    );
+    const preparedStatus = mobileBetterT3PreparedStatusInput(preparedStatusModel, control.id);
+    const preparedStatusLabel =
+      preparedStatus === null ? null : preparedStatusText(preparedStatus, translator.message);
+    const available = control.availability.state === "available";
+    if (control.id === "knowledge.projectIndexingMaster") {
+      return (
+        <SettingsSwitchRow
+          key={control.id}
+          disabled={!available || !indexingCanOperate}
+          icon={SECTION_ICONS[sectionId]}
+          label={label}
+          subtitle={available ? description : `${description} · ${status}`}
+          value={serverConfig?.settings.projectIndexingEnabled ?? false}
+          onValueChange={(projectIndexingEnabled) => {
+            void updateEnvironmentSettings({ projectIndexingEnabled });
+          }}
+        />
+      );
+    }
+    if (control.id === "agent.contextCompaction") {
+      return (
+        <BetterT3ActionRow
+          key={control.id}
+          control={control}
+          description={description}
+          label={label}
+          onPress={() => setActiveChoice("context-compaction")}
+          status={
+            available
+              ? translator.message(
+                  control.value === true
+                    ? "settings.betterT3.preview.examples.context.background"
+                    : "settings.betterT3.preview.examples.context.native",
+                )
+              : status
+          }
+        />
+      );
+    }
+    if (control.controlKind === "switch") {
+      if (control.id === "workspace.gitWorkbench") {
+        const ownerAvailable = mobileGitWorkbenchCanActivate(gitWorkbenchOwnerAvailability);
+        const ownerStatusKey = mobileGitWorkbenchStatusMessageKey(gitWorkbenchOwnerAvailability);
+        const ownerControl: MobileBetterT3Control = {
+          ...control,
+          controlKind: "link",
+          availability: ownerAvailable
+            ? { state: "available" }
+            : {
+                state:
+                  gitWorkbenchOwnerAvailability.state === "unsupported"
+                    ? "unsupported"
+                    : "unavailable",
+                reasonMessageId: ownerStatusKey,
+              },
+        };
+        return (
+          <View key={control.id}>
+            <SettingsSwitchRow
+              disabled={!available}
+              icon={SECTION_ICONS[sectionId]}
+              label={label}
+              onValueChange={(enabled) => void setSwitch(control, enabled)}
+              subtitle={available ? description : `${description} · ${status}`}
+              value={control.value === true}
+            />
+            {control.value === true ? (
+              <BetterT3ActionRow
+                control={ownerControl}
+                description={translator.message("mobile.git.moreDetail")}
+                label={translator.message("mobile.thread.openGit")}
+                onPress={() => navigateToControl(control.id)}
+                status={translator.message(ownerStatusKey)}
+              />
+            ) : null}
+          </View>
+        );
+      }
+      return (
+        <SettingsSwitchRow
+          key={control.id}
+          disabled={control.availability.state !== "available"}
+          icon={SECTION_ICONS[sectionId]}
+          label={label}
+          onValueChange={(enabled) => void setSwitch(control, enabled)}
+          subtitle={
+            control.availability.state === "available" ? description : `${description} · ${status}`
+          }
+          value={control.value === true}
+        />
+      );
+    }
+    if (control.id === "agent.cavemanMode") {
+      return (
+        <BetterT3ActionRow
+          key={control.id}
+          control={control}
+          description={description}
+          label={label}
+          onPress={() => setActiveChoice("caveman")}
+          status={available ? translator.message(`settings.betterT3.value.${cavemanMode}`) : status}
+        />
+      );
+    }
+    if (control.id === "agent.contextCompactionModel") {
+      const selection = serverConfig?.settings.contextCompactionModelSelection ?? null;
+      return (
+        <BetterT3ActionRow
+          key={control.id}
+          control={control}
+          description={description}
+          label={label}
+          onPress={() => setContextCompactionModelPickerOpen(true)}
+          status={
+            !available || serverConfig === null
+              ? status
+              : selection === null
+                ? translator.message("settings.betterT3.value.automatic")
+                : modelSelectionLabel(serverConfig, selection)
+          }
+        />
+      );
+    }
+    if (control.id === "agent.autoReasoningModel") {
+      return (
+        <BetterT3ActionRow
+          key={control.id}
+          control={control}
+          description={description}
+          label={label}
+          onPress={() => setAutoReasoningModelPickerOpen(true)}
+          status={
+            !available || serverConfig === null
+              ? status
+              : autoReasoningModelSelection === null
+                ? translator.message("settings.betterT3.value.automatic")
+                : modelSelectionLabel(serverConfig, autoReasoningModelSelection)
+          }
+        />
+      );
+    }
+    if (control.id === "chat.sorting") {
+      return (
+        <View key={control.id}>
+          <BetterT3ActionRow
+            control={control}
+            description={description}
+            label={translator.message("settings.betterT3.value.projectSort")}
+            onPress={() => setActiveChoice("project-sort")}
+            status={translator.message(
+              projectSortOrder === "updated_at"
+                ? "settings.betterT3.value.updated"
+                : "settings.betterT3.value.created",
+            )}
+          />
+          <BetterT3ActionRow
+            control={control}
+            description={description}
+            label={translator.message("settings.betterT3.value.threadSort")}
+            onPress={() => setActiveChoice("thread-sort")}
+            status={translator.message(
+              threadSortOrder === "updated_at"
+                ? "settings.betterT3.value.updated"
+                : "settings.betterT3.value.created",
+            )}
+          />
+        </View>
+      );
+    }
+    if (control.id === "chat.settling") {
+      return <AutoSettleSettingsRows key={control.id} />;
+    }
+    return (
+      <BetterT3ActionRow
+        key={control.id}
+        control={control}
+        description={description}
+        label={label}
+        onPress={() => navigateToControl(control.id)}
+        status={preparedStatusLabel ?? status}
+      />
+    );
+  };
+
   return (
     <AndroidScreenScaffold title={translator.message("settings.betterT3.title")}>
       <NativeStackScreenOptions
@@ -548,34 +776,58 @@ export function SettingsBetterT3RouteScreen() {
         </Text>
 
         <SettingsSection card title="Usage limits and pacing">
-          <SettingsSwitchRow
-            icon="clock"
-            label="Show usage pace"
-            subtitle="Daily quota allowance and pace guidance, saved on this device."
-            disabled={!deviceAvailable}
-            value={devicePreferences?.usagePacingEnabled ?? true}
-            onValueChange={(usagePacingEnabled) => savePreferences({ usagePacingEnabled })}
-          />
-          <SettingsSwitchRow
-            icon="clock"
-            label="8-hour workday"
-            subtitle="Starts with first observed usage each day. Turn off for a full 24-hour calendar day. Weekends are included."
-            disabled={!deviceAvailable || devicePreferences?.usagePacingEnabled === false}
-            value={(devicePreferences?.usagePacingWorkdayHours ?? 8) === 8}
-            onValueChange={(enabled) =>
-              savePreferences({ usagePacingWorkdayHours: enabled ? 8 : 24 })
-            }
-          />
-          <SettingsSwitchRow
-            icon="lock"
-            label="Hard daily budget"
-            subtitle="Stop requests at the daily allowance, including catch-up. Uses the selected environment's calendar day and applies to all its clients. Blocks requests if weekly usage cannot be verified. Provider reporting can delay the stop."
-            disabled={!environmentAvailable}
-            value={serverConfig?.settings.usageHardBudgetEnabled ?? false}
-            onValueChange={(usageHardBudgetEnabled) => {
-              void updateEnvironmentSettings({ usageHardBudgetEnabled });
-            }}
-          />
+          <BetterT3SettingsSubgroup
+            title={translator.message(
+              getBetterT3SettingsSubgroupForTarget("usage-pacing")?.titleMessageId ??
+                "settings.betterT3.title",
+            )}
+            showTitle={false}
+          >
+            <SettingsSwitchRow
+              icon="clock"
+              label="Show usage pace"
+              subtitle="Daily quota allowance and pace guidance, saved on this device."
+              disabled={!deviceAvailable}
+              value={devicePreferences?.usagePacingEnabled ?? true}
+              onValueChange={(usagePacingEnabled) => savePreferences({ usagePacingEnabled })}
+            />
+          </BetterT3SettingsSubgroup>
+          <BetterT3SettingsSubgroup
+            title={translator.message(
+              getBetterT3SettingsSubgroupForTarget("usage-hard-budget")?.titleMessageId ??
+                "settings.betterT3.title",
+            )}
+            showTitle={false}
+          >
+            <SettingsSwitchRow
+              icon="lock"
+              label="Hard daily budget"
+              subtitle="Stop requests at the daily allowance, including catch-up. Uses the selected environment's calendar day and applies to all its clients. Blocks requests if weekly usage cannot be verified. Provider reporting can delay the stop."
+              disabled={!environmentAvailable}
+              value={serverConfig?.settings.usageHardBudgetEnabled ?? false}
+              onValueChange={(usageHardBudgetEnabled) => {
+                void updateEnvironmentSettings({ usageHardBudgetEnabled });
+              }}
+            />
+          </BetterT3SettingsSubgroup>
+          <BetterT3SettingsSubgroup
+            title={translator.message(
+              getBetterT3SettingsSubgroupForTarget("usage-workday")?.titleMessageId ??
+                "settings.betterT3.title",
+            )}
+            showTitle={false}
+          >
+            <SettingsSwitchRow
+              icon="clock"
+              label="8-hour workday"
+              subtitle="Starts with first observed usage each day. Turn off for a full 24-hour calendar day. Weekends are included."
+              disabled={!deviceAvailable || devicePreferences?.usagePacingEnabled === false}
+              value={(devicePreferences?.usagePacingWorkdayHours ?? 8) === 8}
+              onValueChange={(enabled) =>
+                savePreferences({ usagePacingWorkdayHours: enabled ? 8 : 24 })
+              }
+            />
+          </BetterT3SettingsSubgroup>
         </SettingsSection>
 
         <SettingsSection card title={translator.message("settings.betterT3.environmentScope")}>
@@ -762,242 +1014,58 @@ export function SettingsBetterT3RouteScreen() {
               messageKey(`settings.betterT3.section.${section.id}`, "settings.betterT3.title"),
             )}
           >
-            {section.id === "chat-layout" ? (
-              <SettingsSwitchRow
-                icon="chart.bar.xaxis"
-                label={translator.message("settings.responseMetrics.label")}
-                subtitle={translator.message("settings.responseMetrics.description")}
-                disabled={!deviceAvailable}
-                value={devicePreferences?.responseMetricsEnabled ?? false}
-                onValueChange={(responseMetricsEnabled) =>
-                  savePreferences({ responseMetricsEnabled })
+            {section.groups.map((group) => (
+              <BetterT3SettingsSubgroup
+                key={group.definition.id}
+                title={translator.message(group.definition.titleMessageId)}
+                summary={
+                  group.definition.collapsible
+                    ? mobileBetterT3SubgroupSummary({
+                        group: group.definition,
+                        controls: group.controls,
+                        config: serverConfig,
+                        outputLanguage: devicePreferences?.voiceInputOutputLanguage,
+                        message: translator.message,
+                      })
+                    : undefined
                 }
-              />
-            ) : null}
-            {section.id === "composer" ? (
-              <ContextWindowMeterSettingsPreview
-                disabled={!deviceAvailable}
-                enabled={devicePreferences?.contextWindowMeterEnabled ?? true}
-                onValueChange={(contextWindowMeterEnabled) =>
-                  savePreferences({ contextWindowMeterEnabled })
+                collapsible={group.definition.collapsible}
+                expanded={expandedSettingsGroups.includes(group.definition.id)}
+                showTitle={
+                  group.controls.length > 1 ||
+                  group.controls.some((control) =>
+                    ["chat.sorting", "chat.settling", "workspace.gitWorkbench"].includes(
+                      control.id,
+                    ),
+                  ) ||
+                  (group.definition.id === "context-display" && group.controls.length > 0)
                 }
-              />
-            ) : null}
-            {section.controls.map((control) => {
-              const label = translator.message(
-                messageKey(control.descriptor.labelMessageId, "settings.betterT3.title"),
-              );
-              const description = translator.message(
-                messageKey(
-                  control.descriptor.descriptionMessageId,
-                  "settings.betterT3.description",
-                ),
-              );
-              const status = translator.message(
-                messageKey(
-                  control.availability.reasonMessageId ??
-                    `settings.betterT3.availability.${control.availability.state}`,
-                  "settings.betterT3.availability.unavailable",
-                ),
-              );
-              const preparedStatus = mobileBetterT3PreparedStatusInput(
-                preparedStatusModel,
-                control.id,
-              );
-              const preparedStatusLabel =
-                preparedStatus === null
-                  ? null
-                  : preparedStatusText(preparedStatus, translator.message);
-              const available = control.availability.state === "available";
-              if (control.id === "knowledge.projectIndexingMaster") {
-                return (
+                onExpandedChange={(expanded) => setGroupExpanded(group.definition.id, expanded)}
+              >
+                {group.definition.id === "response-metrics" ? (
                   <SettingsSwitchRow
-                    key={control.id}
-                    disabled={!available || !indexingCanOperate}
-                    icon={SECTION_ICONS[section.id]}
-                    label={label}
-                    subtitle={available ? description : `${description} · ${status}`}
-                    value={serverConfig?.settings.projectIndexingEnabled ?? false}
-                    onValueChange={(projectIndexingEnabled) => {
-                      void updateEnvironmentSettings({ projectIndexingEnabled });
-                    }}
-                  />
-                );
-              }
-              if (control.id === "agent.contextCompaction") {
-                return (
-                  <BetterT3ActionRow
-                    key={control.id}
-                    control={control}
-                    description={description}
-                    label={label}
-                    onPress={() => setActiveChoice("context-compaction")}
-                    status={
-                      available
-                        ? translator.message(
-                            control.value === true
-                              ? "settings.betterT3.preview.examples.context.background"
-                              : "settings.betterT3.preview.examples.context.native",
-                          )
-                        : status
+                    icon="chart.bar.xaxis"
+                    label={translator.message("settings.responseMetrics.label")}
+                    subtitle={translator.message("settings.responseMetrics.description")}
+                    disabled={!deviceAvailable}
+                    value={devicePreferences?.responseMetricsEnabled ?? false}
+                    onValueChange={(responseMetricsEnabled) =>
+                      savePreferences({ responseMetricsEnabled })
                     }
                   />
-                );
-              }
-              if (control.controlKind === "switch") {
-                if (control.id === "workspace.gitWorkbench") {
-                  const ownerAvailable = mobileGitWorkbenchCanActivate(
-                    gitWorkbenchOwnerAvailability,
-                  );
-                  const ownerStatusKey = mobileGitWorkbenchStatusMessageKey(
-                    gitWorkbenchOwnerAvailability,
-                  );
-                  const ownerControl: MobileBetterT3Control = {
-                    ...control,
-                    controlKind: "link",
-                    availability: ownerAvailable
-                      ? { state: "available" }
-                      : {
-                          state:
-                            gitWorkbenchOwnerAvailability.state === "unsupported"
-                              ? "unsupported"
-                              : "unavailable",
-                          reasonMessageId: ownerStatusKey,
-                        },
-                  };
-                  return (
-                    <View key={control.id}>
-                      <SettingsSwitchRow
-                        disabled={!available}
-                        icon={SECTION_ICONS[section.id]}
-                        label={label}
-                        onValueChange={(enabled) => void setSwitch(control, enabled)}
-                        subtitle={available ? description : `${description} · ${status}`}
-                        value={control.value === true}
-                      />
-                      {control.value === true ? (
-                        <BetterT3ActionRow
-                          control={ownerControl}
-                          description={translator.message("mobile.git.moreDetail")}
-                          label={translator.message("mobile.thread.openGit")}
-                          onPress={() => navigateToControl(control.id)}
-                          status={translator.message(ownerStatusKey)}
-                        />
-                      ) : null}
-                    </View>
-                  );
-                }
-                return (
-                  <SettingsSwitchRow
-                    key={control.id}
-                    disabled={control.availability.state !== "available"}
-                    icon={SECTION_ICONS[section.id]}
-                    label={label}
-                    onValueChange={(enabled) => void setSwitch(control, enabled)}
-                    subtitle={
-                      control.availability.state === "available"
-                        ? description
-                        : `${description} · ${status}`
-                    }
-                    value={control.value === true}
-                  />
-                );
-              }
-              if (control.id === "agent.cavemanMode") {
-                return (
-                  <BetterT3ActionRow
-                    key={control.id}
-                    control={control}
-                    description={description}
-                    label={label}
-                    onPress={() => setActiveChoice("caveman")}
-                    status={
-                      available
-                        ? translator.message(`settings.betterT3.value.${cavemanMode}`)
-                        : status
+                ) : null}
+                {group.definition.id === "context-display" ? (
+                  <ContextWindowMeterSettingsPreview
+                    disabled={!deviceAvailable}
+                    enabled={devicePreferences?.contextWindowMeterEnabled ?? true}
+                    onValueChange={(contextWindowMeterEnabled) =>
+                      savePreferences({ contextWindowMeterEnabled })
                     }
                   />
-                );
-              }
-              if (control.id === "agent.contextCompactionModel") {
-                const selection = serverConfig?.settings.contextCompactionModelSelection ?? null;
-                return (
-                  <BetterT3ActionRow
-                    key={control.id}
-                    control={control}
-                    description={description}
-                    label={label}
-                    onPress={() => setContextCompactionModelPickerOpen(true)}
-                    status={
-                      !available || serverConfig === null
-                        ? status
-                        : selection === null
-                          ? translator.message("settings.betterT3.value.automatic")
-                          : modelSelectionLabel(serverConfig, selection)
-                    }
-                  />
-                );
-              }
-              if (control.id === "agent.autoReasoningModel") {
-                return (
-                  <BetterT3ActionRow
-                    key={control.id}
-                    control={control}
-                    description={description}
-                    label={label}
-                    onPress={() => setAutoReasoningModelPickerOpen(true)}
-                    status={
-                      !available || serverConfig === null
-                        ? status
-                        : autoReasoningModelSelection === null
-                          ? translator.message("settings.betterT3.value.automatic")
-                          : modelSelectionLabel(serverConfig, autoReasoningModelSelection)
-                    }
-                  />
-                );
-              }
-              if (control.id === "chat.sorting") {
-                return (
-                  <View key={control.id}>
-                    <BetterT3ActionRow
-                      control={control}
-                      description={description}
-                      label={translator.message("settings.betterT3.value.projectSort")}
-                      onPress={() => setActiveChoice("project-sort")}
-                      status={translator.message(
-                        projectSortOrder === "updated_at"
-                          ? "settings.betterT3.value.updated"
-                          : "settings.betterT3.value.created",
-                      )}
-                    />
-                    <BetterT3ActionRow
-                      control={control}
-                      description={description}
-                      label={translator.message("settings.betterT3.value.threadSort")}
-                      onPress={() => setActiveChoice("thread-sort")}
-                      status={translator.message(
-                        threadSortOrder === "updated_at"
-                          ? "settings.betterT3.value.updated"
-                          : "settings.betterT3.value.created",
-                      )}
-                    />
-                  </View>
-                );
-              }
-              if (control.id === "chat.settling") {
-                return <AutoSettleSettingsRows key={control.id} />;
-              }
-              return (
-                <BetterT3ActionRow
-                  key={control.id}
-                  control={control}
-                  description={description}
-                  label={label}
-                  onPress={() => navigateToControl(control.id)}
-                  status={preparedStatusLabel ?? status}
-                />
-              );
-            })}
+                ) : null}
+                {group.controls.map((control) => renderControl(control, section.id))}
+              </BetterT3SettingsSubgroup>
+            ))}
           </SettingsSection>
         ))}
       </ScreenScaffoldScrollView>
@@ -1014,6 +1082,7 @@ export function SettingsBetterT3RouteScreen() {
               id: "agent.cavemanMode",
               value,
             }),
+            "agent.cavemanMode",
           )
         }
         title={translator.message("betterT3.agent.cavemanMode.label")}
@@ -1042,6 +1111,7 @@ export function SettingsBetterT3RouteScreen() {
               featureId: "agent.contextCompaction",
               enabled,
             }),
+            "agent.contextCompaction",
           )
         }
         title={translator.message("betterT3.agent.contextCompaction.label")}
@@ -1106,6 +1176,7 @@ export function SettingsBetterT3RouteScreen() {
                   id: "agent.contextCompactionModel",
                   value: selection,
                 }),
+                "agent.contextCompactionModel",
               )
             }
           />
@@ -1125,6 +1196,7 @@ export function SettingsBetterT3RouteScreen() {
                   id: "agent.autoReasoningModel",
                   value: selection,
                 }),
+                "agent.autoReasoningModel",
               )
             }
             visible={autoReasoningModelPickerOpen}

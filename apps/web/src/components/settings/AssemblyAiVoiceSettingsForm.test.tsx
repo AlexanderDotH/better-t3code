@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { DEFAULT_ASSEMBLY_AI_VOICE_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
 import { act, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -9,6 +11,8 @@ vi.mock("../../hooks/useInterfaceTranslator", async () => {
   return { useInterfaceTranslator: () => translator };
 });
 vi.mock("./settingsLayout", () => ({
+  useSettingsSearchTargetId: () => null,
+  useRetrySettingsSearchTarget: () => () => undefined,
   SettingsRow: ({
     title,
     description,
@@ -109,6 +113,7 @@ vi.mock("../chat/ProviderModelPicker", () => ({
 }));
 
 import { AssemblyAiVoiceSettingsForm } from "./AssemblyAiVoiceSettingsForm";
+import { Collapsible } from "../ui/collapsible";
 
 describe("AssemblyAI voice settings editing", () => {
   let renderer: ReactTestRenderer | undefined;
@@ -122,15 +127,23 @@ describe("AssemblyAI voice settings editing", () => {
     renderer!.root.findAll(
       (node) => typeof node.type === "string" && node.props["aria-label"] === label,
     )[0]!;
+  const expandCleanup = (expanded: boolean) =>
+    act(() =>
+      renderer!.root
+        .findAllByType(Collapsible)
+        .find((node) => node.props["data-better-t3-subgroup"] === "voice-cleanup")!
+        .props.onOpenChange(expanded),
+    );
   const submit = () =>
     act(() => renderer!.root.findByType("form").props.onSubmit({ preventDefault: vi.fn() }));
   const mount = async (
     onSave: (settings: typeof DEFAULT_ASSEMBLY_AI_VOICE_SETTINGS) => Promise<boolean>,
+    value = DEFAULT_ASSEMBLY_AI_VOICE_SETTINGS,
   ) => {
     await act(() => {
       renderer = create(
         <AssemblyAiVoiceSettingsForm
-          value={DEFAULT_ASSEMBLY_AI_VOICE_SETTINGS}
+          value={value}
           models={[{ id: "claude-haiku-4-5-20251001", name: "Haiku 4.5" }]}
           t3Models={{
             fallbackSelection: {
@@ -147,9 +160,63 @@ describe("AssemblyAI voice settings editing", () => {
     });
   };
 
+  it("preserves the complete unsaved voice draft when cleanup details are folded", async () => {
+    const save = vi.fn().mockResolvedValue(true);
+    await mount(save, { ...DEFAULT_ASSEMBLY_AI_VOICE_SETTINGS, cleanupMode: "custom" });
+    expect(
+      renderer!.root.findAllByProps({ "aria-label": "Additional cleanup instructions" }),
+    ).toHaveLength(0);
+    await expandCleanup(true);
+    const instructions = renderer!.root
+      .findAllByType("textarea")
+      .find((node) => node.props.maxLength === 4000)!;
+    await act(() =>
+      instructions.props.onChange({ target: { value: "Keep project names intact" } }),
+    );
+    await act(() => field("Minimum pause (ms)").props.onChange({ target: { value: "500" } }));
+    await expandCleanup(false);
+    expect(save).not.toHaveBeenCalled();
+    await expandCleanup(true);
+    expect(
+      renderer!.root.findAllByType("textarea").find((node) => node.props.maxLength === 4000)!.props
+        .value,
+    ).toBe("Keep project names intact");
+    expect(field("Minimum pause (ms)").props.value).toBe(500);
+    await submit();
+    expect(save).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        cleanupMode: "custom",
+        cleanupInstructions: "Keep project names intact",
+        minTurnSilence: 500,
+      }),
+    );
+  });
+
+  it("reveals hidden cleanup details when a new validation error prevents saving", async () => {
+    const save = vi.fn().mockResolvedValue(true);
+    await mount(save, { ...DEFAULT_ASSEMBLY_AI_VOICE_SETTINGS, cleanupMode: "custom" });
+    await expandCleanup(true);
+    await act(() =>
+      renderer!.root
+        .findAllByType("textarea")
+        .find((node) => node.props.maxLength === 4000)!
+        .props.onChange({ target: { value: "x".repeat(4001) } }),
+    );
+    await expandCleanup(false);
+    await submit();
+    expect(save).not.toHaveBeenCalled();
+    expect(
+      renderer!.root
+        .findAllByType(Collapsible)
+        .find((node) => node.props["data-better-t3-subgroup"] === "voice-cleanup")!.props.open,
+    ).toBe(true);
+    expect(JSON.stringify(renderer!.toJSON())).toContain("Check the values");
+  });
+
   it("keeps the voice cleanup model choice scoped to this setting", async () => {
     const save = vi.fn().mockResolvedValue(true);
     await mount(save);
+    await expandCleanup(true);
     await act(() => renderer!.root.findByProps({ children: "T3 model" }).props.onClick());
     await submit();
     expect(save).toHaveBeenCalledWith(

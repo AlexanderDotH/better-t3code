@@ -19,6 +19,7 @@ import {
   type UnifiedSettings,
   type VoiceInputOutputLanguage,
 } from "@t3tools/contracts";
+import type { BetterT3SettingsSubgroupId } from "@t3tools/client-runtime/better-t3-settings-layout";
 import { isFetchCapableProvider } from "@t3tools/shared/fetchMode";
 import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import {
@@ -420,6 +421,78 @@ function ChatSettlingControl(props: {
       </label>
     </div>
   );
+}
+
+export function buildBetterT3SubgroupSummaries(input: {
+  readonly settings: UnifiedSettings;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly features: ReadonlyArray<BetterT3FeatureControlStateV1>;
+  readonly translate: Translate;
+}): Partial<Record<BetterT3SettingsSubgroupId, string>> {
+  const enabled = (id: BetterT3FeatureId) =>
+    input.translate(
+      input.features.find((feature) => feature.descriptor.id === id)?.value === true
+        ? "settings.betterT3.summary.on"
+        : "settings.betterT3.summary.off",
+    );
+  const model = (
+    selection: ModelSelection | null,
+    purpose: ModelSelectionPurpose,
+    predicate: (provider: ServerProvider) => boolean = acceptsAnyProvider,
+    automatic = true,
+  ) => {
+    if (selection === null && automatic)
+      return input.translate("settings.betterT3.value.automatic");
+    const entries = selectableProviderEntries(input.settings, input.providers, predicate, purpose);
+    const entry = entries.find((candidate) => candidate.instanceId === selection?.instanceId);
+    const selectedModel = entry?.models.find(
+      (candidate) =>
+        candidate.slug === selection?.model && supportsModelSelectionPurpose(candidate, purpose),
+    );
+    const label = selectedModel?.name ?? selection?.model;
+    const available =
+      entry &&
+      entry.installed &&
+      entry.isAvailable &&
+      entry.status !== "error" &&
+      entry.status !== "disabled" &&
+      entry.snapshot.auth.status !== "unauthenticated" &&
+      selectedModel;
+    if (available && selectedModel) return selectedModel.name;
+    return [label, input.translate("settings.betterT3.value.unavailable")]
+      .filter(Boolean)
+      .join(" · ");
+  };
+  const withAvailability = (id: BetterT3FeatureId, summary: string) => {
+    const availability = input.features.find((feature) => feature.descriptor.id === id)
+      ?.availability.state;
+    return availability === "unavailable" || availability === "unsupported"
+      ? `${summary} · ${input.translate(`settings.betterT3.availability.${availability}`)}`
+      : summary;
+  };
+  const betterT3Compaction =
+    input.features.find((feature) => feature.descriptor.id === "agent.contextCompaction")?.value ===
+    true;
+  return {
+    fetch: withAvailability(
+      "agent.fetchModel",
+      `${enabled("agent.fetch")} · ${model(input.settings.fetchModelSelection, "text-generation", isFetchCapableProvider)}`,
+    ),
+    "parallel-plan": withAvailability(
+      "agent.parallelPlanReviewer",
+      `${enabled("agent.parallelPlanImplementation")} · ${model(input.settings.parallelPlanReviewModelSelection, "text-generation", supportsAutoReasoningEvaluationProvider, false)}`,
+    ),
+    "context-compaction": betterT3Compaction
+      ? withAvailability(
+          "agent.contextCompactionModel",
+          `Better T3 Code · ${model(input.settings.contextCompactionModelSelection, "context-compaction")}`,
+        )
+      : withAvailability("agent.contextCompaction", "Codex"),
+    "auto-reasoning": withAvailability(
+      "agent.autoReasoningModel",
+      model(input.settings.autoReasoningModelSelection, "decision"),
+    ),
+  };
 }
 
 export function useBetterT3PreparedControls(input: {

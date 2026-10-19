@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import type { ProjectIndexClientApi } from "@t3tools/client-runtime/project-indexing";
 import {
   DEFAULT_UNIFIED_SETTINGS,
@@ -22,6 +24,8 @@ const fixture = vi.hoisted(() => ({
   settings: null as UnifiedSettings | null,
   api: null as ProjectIndexClientApi | null,
   defaultsVersion: 1,
+  session: null as { authenticated: boolean; scopes: string[] } | null,
+  sessionError: null as string | null,
   save: vi.fn(),
   navigate: vi.fn(),
 }));
@@ -51,8 +55,8 @@ vi.mock("../../state/session", () => ({
 }));
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: () => ({
-    data: { authenticated: true, scopes: ["orchestration:read", "orchestration:operate"] },
-    error: null,
+    data: fixture.session,
+    error: fixture.sessionError,
     isPending: false,
     refresh: vi.fn(),
   }),
@@ -192,6 +196,7 @@ vi.mock("./ProjectIndexEntityBrowser", () => ({ ProjectIndexEntityBrowser: () =>
 vi.mock("./ProjectIndexSourceDialog", () => ({ ProjectIndexSourceDialog: () => null }));
 
 import { ProjectIndexingGlobalSettings } from "./ProjectIndexingGlobalSettings";
+import { Collapsible } from "../ui/collapsible";
 import { ProjectIndexingSettingsController } from "./ProjectIndexingSettingsController";
 
 const environmentId = EnvironmentId.make("environment");
@@ -300,7 +305,13 @@ function Harness({ withProjects = false }: { withProjects?: boolean }) {
 let renderer: ReactTestRenderer | undefined;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  localStorage.removeItem("t3code.better-t3-settings-expanded.v1");
   fixture.defaultsVersion = 1;
+  fixture.session = {
+    authenticated: true,
+    scopes: ["orchestration:read", "orchestration:operate"],
+  };
+  fixture.sessionError = null;
   fixture.settings = {
     ...DEFAULT_UNIFIED_SETTINGS,
     projectIndexingEnabled: false,
@@ -376,6 +387,14 @@ function button(panel: ReactTestInstance, label: string) {
 function checkbox(panel: ReactTestInstance, label: string) {
   return panel.findAllByType("input").find((input) => input.props["aria-label"] === label)!;
 }
+function expandModels() {
+  return act(() =>
+    globalPanel()
+      .findAllByType(Collapsible)
+      .find((node) => node.props["data-better-t3-subgroup"] === "indexing-models")!
+      .props.onOpenChange(true),
+  );
+}
 function picker(panel: ReactTestInstance, label: string) {
   return panel.findAllByType("select").find((select) => select.props["aria-label"] === label)!;
 }
@@ -398,6 +417,7 @@ describe("global project indexing defaults", () => {
         currentTarget: { checked: true },
       }),
     );
+    await expandModels();
     await act(() =>
       picker(globalPanel(), "Default AI review model").props.onChange({
         currentTarget: { value: "model-a" },
@@ -442,6 +462,76 @@ describe("global project indexing defaults", () => {
       expect(button(projectPanel(project.id), "Index project").props.disabled).toBe(true);
     }
     expect(fixture.api!.start).not.toHaveBeenCalled();
+  });
+
+  it.each(["legacy", "loading", "denied"] as const)(
+    "preserves the independent decision model while defaults are %s",
+    async (state) => {
+      if (state === "legacy") fixture.defaultsVersion = 0;
+      else fixture.session = state === "loading" ? null : { authenticated: true, scopes: [] };
+      const selectDecision = vi.fn();
+      await act(() => {
+        renderer = create(
+          <ProjectIndexingGlobalSettings
+            environmentId={environmentId}
+            decisionModelSettings={<button onClick={selectDecision}>Decision model</button>}
+          />,
+        );
+      });
+      await expandModels();
+      const decisions = globalPanel()
+        .findAllByType("button")
+        .filter((candidate) => candidate.children.includes("Decision model"));
+      expect(decisions).toHaveLength(1);
+      expect(picker(globalPanel(), "Default AI review model")).toBeUndefined();
+      await act(() => decisions[0]!.props.onClick());
+      expect(selectDecision).toHaveBeenCalledExactlyOnceWith();
+      expect(fixture.save).not.toHaveBeenCalled();
+      expect(fixture.api!.checkModel).not.toHaveBeenCalled();
+    },
+  );
+
+  it("shows the saved default-model failure in the closed header without starting indexing", async () => {
+    fixture.settings = {
+      ...fixture.settings!,
+      projectIndexingDefaultModelSelection: model("retired-model"),
+    };
+    vi.mocked(fixture.api!.checkModel).mockResolvedValue({
+      supported: false,
+      reason: "This model was removed",
+    });
+    await act(() => {
+      renderer = create(<Harness />);
+    });
+    expect(picker(globalPanel(), "Default AI review model")).toBeUndefined();
+    expect(JSON.stringify(renderer!.toJSON())).toContain("retired-model");
+    expect(JSON.stringify(renderer!.toJSON())).toContain("This model was removed");
+    expect(fixture.api!.checkModel).toHaveBeenCalledExactlyOnceWith({
+      modelSelection: model("retired-model"),
+    });
+    expect(fixture.api!.start).not.toHaveBeenCalled();
+    expect(fixture.save).not.toHaveBeenCalled();
+  });
+
+  it("keeps default-model scope restrictions separate from the injected decision control", async () => {
+    fixture.session = { authenticated: true, scopes: ["orchestration:read"] };
+    await act(() => {
+      renderer = create(
+        <ProjectIndexingGlobalSettings
+          environmentId={environmentId}
+          decisionModelSettings={<button disabled>Decision model</button>}
+        />,
+      );
+    });
+    await expandModels();
+    expect(picker(globalPanel(), "Default AI review model").props.disabled).toBe(true);
+    expect(button(globalPanel(), "Decision model").props.disabled).toBe(true);
+    await act(() =>
+      picker(globalPanel(), "Default AI review model").props.onChange({
+        currentTarget: { value: "model-a" },
+      }),
+    );
+    expect(fixture.save).not.toHaveBeenCalled();
   });
 
   it("requires explicit project selection when environment defaults are unavailable", async () => {

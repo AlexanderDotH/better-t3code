@@ -11,6 +11,8 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useReducer,
+  useRef,
   useState,
 } from "react";
 
@@ -48,14 +50,22 @@ declare module "@tanstack/react-router" {
 interface SettingsSearchTargetContextValue {
   readonly targetId: string | null;
   readonly highlightTarget: boolean;
+  readonly visibilityRevision: number;
+  readonly requestKey: object;
   readonly onTargetHandled: () => void;
+  readonly requestTarget: (targetId: string) => void;
+  readonly retryTarget: () => void;
 }
 
 const noop = () => undefined;
 const SettingsSearchTargetContext = createContext<SettingsSearchTargetContextValue>({
   targetId: null,
   highlightTarget: true,
+  visibilityRevision: 0,
+  requestKey: {},
   onTargetHandled: noop,
+  requestTarget: noop,
+  retryTarget: noop,
 });
 
 export function SettingsSearchTargetProvider({
@@ -69,11 +79,51 @@ export function SettingsSearchTargetProvider({
   onTargetHandled?: () => void;
   children: ReactNode;
 }) {
+  const externalRequest = useMemo(() => ({ targetId }), [targetId]);
+  const [requestedTarget, setRequestedTarget] = useState<{
+    readonly targetId: string | null;
+    readonly externalRequest: object;
+  } | null>(null);
+  const [visibilityRevision, retryTarget] = useReducer((revision: number) => revision + 1, 0);
+  const requestTarget = useCallback(
+    (nextTargetId: string) => {
+      setRequestedTarget({ targetId: nextTargetId, externalRequest });
+    },
+    [externalRequest],
+  );
+  const handleTarget = useCallback(() => {
+    if (requestedTarget?.targetId) {
+      setRequestedTarget({ ...requestedTarget, targetId: null });
+    }
+    if (requestedTarget?.targetId == null || targetId !== null) onTargetHandled();
+  }, [onTargetHandled, requestedTarget, targetId]);
   const value = useMemo(
-    () => ({ targetId, highlightTarget, onTargetHandled }),
-    [highlightTarget, onTargetHandled, targetId],
+    () => ({
+      targetId:
+        requestedTarget?.targetId ??
+        (requestedTarget?.externalRequest === externalRequest ? null : targetId),
+      highlightTarget: requestedTarget?.targetId != null || highlightTarget,
+      visibilityRevision,
+      requestKey: requestedTarget?.targetId != null ? requestedTarget : externalRequest,
+      onTargetHandled: handleTarget,
+      requestTarget,
+      retryTarget,
+    }),
+    [
+      externalRequest,
+      handleTarget,
+      highlightTarget,
+      requestTarget,
+      requestedTarget,
+      targetId,
+      visibilityRevision,
+    ],
   );
   return <SettingsSearchTargetContext value={value}>{children}</SettingsSearchTargetContext>;
+}
+
+function isSettingsTargetVisible(target: HTMLElement): boolean {
+  return !target.closest?.('[hidden], [inert], [aria-hidden="true"]');
 }
 
 function scrollAndFocusSettingsTarget(
@@ -113,17 +163,35 @@ export function useSettingsSearchTargetId(): string | null {
   return useContext(SettingsSearchTargetContext).targetId;
 }
 
+/** Requests an inline jump through the same reveal and mount lifecycle as a hash link. */
+export function useRequestSettingsSearchTarget(): (targetId: string) => void {
+  return useContext(SettingsSearchTargetContext).requestTarget;
+}
+
+/** Retry a pending jump after its subgroup has committed visible content. */
+export function useRetrySettingsSearchTarget(): () => void {
+  return useContext(SettingsSearchTargetContext).retryTarget;
+}
+
 export function useSettingsSearchTarget<T extends HTMLElement>(id: string | undefined) {
-  const { targetId, highlightTarget, onTargetHandled } = useContext(SettingsSearchTargetContext);
-  const isSearchTarget = id !== undefined && id === targetId;
+  const context = useContext(SettingsSearchTargetContext);
+  const handledRequest = useRef<object | null>(null);
   const targetRef = useCallback(
     (target: T | null) => {
-      if (target && isSearchTarget) {
+      const { targetId, highlightTarget, requestKey, onTargetHandled } = context;
+      if (
+        target &&
+        id !== undefined &&
+        id === targetId &&
+        handledRequest.current !== requestKey &&
+        isSettingsTargetVisible(target)
+      ) {
+        handledRequest.current = requestKey;
         scrollAndFocusSettingsTarget(target, highlightTarget);
         onTargetHandled();
       }
     },
-    [highlightTarget, isSearchTarget, onTargetHandled],
+    [context, id],
   );
 
   return targetRef;
@@ -570,7 +638,7 @@ export function scrollToSettingsTarget(
   } = {},
 ): boolean {
   const target = document.getElementById(targetId);
-  if (!target) return false;
+  if (!target || !isSettingsTargetVisible(target)) return false;
   scrollAndFocusSettingsTarget(target, highlight, behavior);
   return true;
 }

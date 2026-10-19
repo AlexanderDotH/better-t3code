@@ -9,13 +9,7 @@ import {
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { resolveVoiceTranslationModelSelection } from "@t3tools/shared/serverSettings";
-import {
-  ChevronDownIcon,
-  FolderSearchIcon,
-  MicIcon,
-  RefreshCwIcon,
-  TriangleAlertIcon,
-} from "lucide-react";
+import { ChevronDownIcon, MicIcon, RefreshCwIcon, TriangleAlertIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -31,6 +25,7 @@ import {
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
+  isProviderInstancePickerReady,
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { useEnvironments } from "../../state/environments";
@@ -41,7 +36,14 @@ import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { DraftInput } from "../ui/draft-input";
 import { Spinner } from "../ui/spinner";
-import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
+import {
+  SettingResetButton,
+  SettingsRow,
+  SettingsSearchTarget,
+  SettingsSection,
+} from "./settingsLayout";
+import { BetterT3SettingsSubgroup } from "./BetterT3SettingsSubgroup";
+import { BetterT3SettingsSearchItems } from "./BetterT3SettingsSearch";
 import { AssemblyAiVoiceSettingsForm } from "./AssemblyAiVoiceSettingsForm";
 
 const EMPTY_SECRET_VALUE = { value: "", valueRedacted: false };
@@ -300,9 +302,15 @@ function ProjectSpeechProfileRow({
 export function VoiceInputSettings({
   environmentId,
   disabled,
+  accessSettings,
+  translationSettings,
+  transcriptTransferSettings,
 }: {
   readonly environmentId: EnvironmentId;
   readonly disabled: boolean;
+  readonly accessSettings?: ReactNode;
+  readonly translationSettings?: ReactNode;
+  readonly transcriptTransferSettings?: ReactNode;
 }) {
   const translator = useInterfaceTranslator();
   const translate = translator.message;
@@ -426,6 +434,34 @@ export function VoiceInputSettings({
     voiceTranslationModelSelection.model,
     "text-generation",
   );
+  const savedTranslationSelection = settings.voiceTranslationModelSelection;
+  const savedTranslationModel = savedTranslationSelection
+    ? modelOptionsByInstance
+        .get(savedTranslationSelection.instanceId)
+        ?.find((model) => model.slug === savedTranslationSelection.model)
+    : undefined;
+  const savedTranslationProvider = modelInstanceEntries.find(
+    (entry) => entry.instanceId === savedTranslationSelection?.instanceId,
+  );
+  const translationSummary = [
+    translate(
+      settings.voiceInputOutputLanguage === "english"
+        ? "settings.betterT3.value.english"
+        : "settings.betterT3.value.nativeLanguage",
+    ),
+    savedTranslationSelection === null
+      ? translate("settings.betterT3.value.automatic")
+      : (savedTranslationModel?.name ?? savedTranslationSelection.model),
+    ...(disabled
+      ? [translate("settings.betterT3.noEnvironment")]
+      : savedTranslationSelection &&
+          (!savedTranslationModel ||
+            savedTranslationModel.isUnavailable ||
+            !savedTranslationProvider ||
+            !isProviderInstancePickerReady(savedTranslationProvider))
+        ? [translate("settings.betterT3.value.unavailable")]
+        : []),
+  ].join(" · ");
   const cleanupModelPicker = {
     fallbackSelection: defaultModelSelection,
     instanceEntries: modelInstanceEntries,
@@ -580,255 +616,282 @@ export function VoiceInputSettings({
         title={translate("settings.voice.title")}
         icon={<MicIcon className="size-3.5" />}
       >
-        <SettingsRow
-          id="voice.credentials"
-          data-better-t3-feature="voice.credentials"
-          title={translate("settings.voice.apiKey.title")}
-          description={translate("settings.voice.apiKey.description")}
-          status={translate(
-            assemblyAiApiKeyConfigured
-              ? "settings.voice.apiKey.configured"
-              : "settings.voice.apiKey.missing",
-          )}
-          resetAction={
-            assemblyAiApiKeyConfigured ? (
-              <SettingResetButton
-                label={translate("settings.voice.apiKey.title")}
+        <BetterT3SettingsSearchItems
+          items={[
+            {
+              id: "voice-translation-model",
+              targetId: "voice-translation-model",
+              to: "/settings/better-t3",
+              title: translate("settings.voice.model.title"),
+              description: translate("settings.voice.model.description"),
+              category: translate("settings.voice.title"),
+            },
+          ]}
+        />
+        <BetterT3SettingsSubgroup groupId="voice-access" hideTitle={!accessSettings}>
+          {accessSettings}
+          <SettingsRow
+            id="voice.credentials"
+            data-better-t3-feature="voice.credentials"
+            title={translate("settings.voice.apiKey.title")}
+            description={translate("settings.voice.apiKey.description")}
+            status={translate(
+              assemblyAiApiKeyConfigured
+                ? "settings.voice.apiKey.configured"
+                : "settings.voice.apiKey.missing",
+            )}
+            resetAction={
+              assemblyAiApiKeyConfigured ? (
+                <SettingResetButton
+                  label={translate("settings.voice.apiKey.title")}
+                  disabled={disabled}
+                  onClick={() =>
+                    updateSettings({
+                      speechTranscription: {
+                        assemblyAi: {
+                          apiKey: EMPTY_SECRET_VALUE,
+                        },
+                      },
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <DraftInput
                 disabled={disabled}
-                onClick={() =>
+                className="w-full sm:w-72"
+                nativeInput
+                type="password"
+                value={assemblyAiApiKey.value}
+                placeholder={
+                  assemblyAiApiKey.valueRedacted
+                    ? translate("settings.voice.apiKey.saved")
+                    : "aai_..."
+                }
+                autoComplete="off"
+                spellCheck={false}
+                aria-label={translate("settings.voice.apiKey.title")}
+                onCommit={(value) =>
                   updateSettings({
                     speechTranscription: {
                       assemblyAi: {
-                        apiKey: EMPTY_SECRET_VALUE,
+                        apiKey: { value, valueRedacted: false },
                       },
                     },
                   })
                 }
               />
-            ) : null
-          }
-          control={
-            <DraftInput
-              disabled={disabled}
-              className="w-full sm:w-72"
-              nativeInput
-              type="password"
-              value={assemblyAiApiKey.value}
-              placeholder={
-                assemblyAiApiKey.valueRedacted
-                  ? translate("settings.voice.apiKey.saved")
-                  : "aai_..."
-              }
-              autoComplete="off"
-              spellCheck={false}
-              aria-label={translate("settings.voice.apiKey.title")}
-              onCommit={(value) =>
-                updateSettings({
-                  speechTranscription: {
-                    assemblyAi: {
-                      apiKey: { value, valueRedacted: false },
-                    },
-                  },
-                })
-              }
-            />
-          }
-        />
-        <SettingsRow
-          id="voice-translation-model"
-          title={translate("settings.voice.model.title")}
-          description={translate("settings.voice.model.description")}
-          resetAction={
-            settings.voiceTranslationModelSelection !== null ? (
-              <SettingResetButton
-                label={translate("settings.voice.model.resetLabel")}
+            }
+          />
+        </BetterT3SettingsSubgroup>
+        <BetterT3SettingsSubgroup groupId="voice-translation" summary={translationSummary}>
+          {translationSettings}
+          <SettingsRow
+            id="voice-translation-model"
+            title={translate("settings.voice.model.title")}
+            description={translate("settings.voice.model.description")}
+            resetAction={
+              settings.voiceTranslationModelSelection !== null ? (
+                <SettingResetButton
+                  label={translate("settings.voice.model.resetLabel")}
+                  disabled={disabled}
+                  onClick={() => updateSettings({ voiceTranslationModelSelection: null })}
+                />
+              ) : null
+            }
+            control={
+              <ProviderModelPicker
                 disabled={disabled}
-                onClick={() => updateSettings({ voiceTranslationModelSelection: null })}
+                activeInstanceId={voiceTranslationModelSelection.instanceId}
+                model={voiceTranslationModelSelection.model}
+                lockedProvider={null}
+                instanceEntries={modelInstanceEntries}
+                modelOptionsByInstance={modelOptionsByInstance}
+                modelSelectionPurpose="text-generation"
+                triggerVariant="outline"
+                triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
+                triggerAriaLabel={translate("settings.voice.model.title")}
+                onInstanceModelChange={(instanceId, model) =>
+                  updateSettings({
+                    voiceTranslationModelSelection: createModelSelection(instanceId, model),
+                  })
+                }
               />
-            ) : null
-          }
-          control={
-            <ProviderModelPicker
-              disabled={disabled}
-              activeInstanceId={voiceTranslationModelSelection.instanceId}
-              model={voiceTranslationModelSelection.model}
-              lockedProvider={null}
-              instanceEntries={modelInstanceEntries}
-              modelOptionsByInstance={modelOptionsByInstance}
-              modelSelectionPurpose="text-generation"
-              triggerVariant="outline"
-              triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
-              triggerAriaLabel={translate("settings.voice.model.title")}
-              onInstanceModelChange={(instanceId, model) =>
-                updateSettings({
-                  voiceTranslationModelSelection: createModelSelection(instanceId, model),
-                })
-              }
-            />
-          }
-        />
-      </SettingsSection>
-
-      <SettingsSection
-        id="voice-recording-options"
-        title={translate("settings.voice.options.defaults")}
-        icon={<MicIcon className="size-3.5" />}
-      >
-        {supportsOptions ? (
-          <>
-            <AssemblyAiVoiceSettingsForm
-              key={`${environmentId}:${JSON.stringify(assemblyAi.voice)}`}
-              value={assemblyAi.voice}
-              models={models}
-              t3Models={cleanupModelPicker}
-              disabled={disabled}
-              onSave={(voice) => persistVoiceOptions(voice)}
-            />
-            {modelsState !== "ready" ? (
-              <div className="space-y-2 px-4 pb-4 text-xs text-muted-foreground" role="status">
-                <p>
-                  {translate(
-                    modelsState === "loading"
-                      ? "settings.voice.options.modelsLoading"
-                      : "settings.voice.options.modelsFailed",
-                  )}
-                </p>
-                {modelsState === "error" ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={disabled}
-                    onClick={() => setModelsRefresh((current) => current + 1)}
-                  >
-                    {translate("settings.voice.options.modelsRetry")}
-                  </Button>
-                ) : null}
-              </div>
-            ) : null}
-          </>
-        ) : (
-          <p className="px-4 py-4 text-xs text-muted-foreground">
-            {translate("settings.voice.options.unsupported")}
-          </p>
-        )}
-      </SettingsSection>
-
-      <SettingsSection
-        id="project-speech-context"
-        title={translate("settings.voice.context.title")}
-        icon={<FolderSearchIcon className="size-3.5" />}
-        headerAction={
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            aria-label={translate("settings.voice.context.refresh")}
-            disabled={disabled || projectEnvironmentIds.length === 0}
-            onClick={() => void refreshProfiles()}
-          >
-            <RefreshCwIcon className={cn("size-3.5", isRefreshing && "animate-spin")} />
-          </Button>
-        }
-      >
-        {projectGroups.length === 0 ? (
-          <div className="px-4 py-6 text-center text-xs text-muted-foreground sm:px-5">
-            {translate("settings.voice.context.noProjects")}
-          </div>
-        ) : (
-          projectGroups.map((group) => {
-            const environmentState = profileStateByEnvironment.get(group.environmentId);
-            return (
-              <div key={group.environmentId} className="border-t border-border/60 first:border-t-0">
-                <div className="flex items-center justify-between gap-3 bg-muted/20 px-4 py-2.5 sm:px-5">
-                  <h3 className="voice-input-environment-title truncate text-2xs font-semibold uppercase text-foreground/60">
-                    {group.label}
-                  </h3>
-                  <span className="shrink-0 text-2xs text-muted-foreground">
-                    {translate("settings.voice.context.projectCount", {
-                      count: group.projects.length,
-                    })}
-                  </span>
-                </div>
-                {environmentState?.status === "error" ? (
-                  <p
-                    className="border-t border-border/60 px-4 py-2 text-xs text-destructive sm:px-5"
-                    role="alert"
-                  >
-                    {translate("settings.voice.context.environmentUnavailable")}
+            }
+          />
+        </BetterT3SettingsSubgroup>
+        <SettingsSearchTarget id="voice-recording-options">
+          {supportsOptions ? (
+            <>
+              <AssemblyAiVoiceSettingsForm
+                key={`${environmentId}:${JSON.stringify(assemblyAi.voice)}`}
+                value={assemblyAi.voice}
+                models={models}
+                modelsState={modelsState}
+                t3Models={cleanupModelPicker}
+                disabled={disabled}
+                onSave={(voice) => persistVoiceOptions(voice)}
+              />
+              {modelsState !== "ready" ? (
+                <div className="space-y-2 px-4 pb-4 text-xs text-muted-foreground" role="status">
+                  <p>
+                    {translate(
+                      modelsState === "loading"
+                        ? "settings.voice.options.modelsLoading"
+                        : "settings.voice.options.modelsFailed",
+                    )}
                   </p>
-                ) : null}
-                <div className="border-t border-border/60">
-                  {group.projects.map((project) => {
-                    const key = projectKey(project.environmentId, project.id);
-                    return (
-                      <ProjectSpeechProfileRow
-                        key={key}
-                        disabled={disabled}
-                        project={project}
-                        environmentState={environmentState}
-                        open={expandedProjectKeys.has(key)}
-                        busyAction={busyActionByProject[key]}
-                        actionError={actionErrorByProject[key]}
-                        onOpenChange={(open) => setProjectExpanded(key, open)}
-                        onIndex={() => void runProjectAction(project, "index")}
-                        onUseBasicContext={() => void runProjectAction(project, "basic")}
-                        voiceSettings={
-                          supportsOptions ? (
-                            <div className="space-y-3 border-t border-border/60 pt-4">
-                              <h4 className="text-sm font-medium">
-                                {translate("settings.voice.options.project")}
-                              </h4>
-                              {assemblyAi.projectOverrides[project.id] ? (
-                                <>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    disabled={disabled || projectSettingsBusy !== null}
-                                    onClick={() => void changeProjectOverride(project.id, null)}
-                                  >
-                                    {translate("settings.voice.options.inherit")}
-                                  </Button>
-                                  <AssemblyAiVoiceSettingsForm
-                                    key={JSON.stringify(assemblyAi.projectOverrides[project.id])}
-                                    value={resolveAssemblyAiVoiceSettings(assemblyAi, project.id)}
-                                    models={models}
-                                    t3Models={cleanupModelPicker}
-                                    disabled={disabled || projectSettingsBusy !== null}
-                                    onSave={(voice) => persistVoiceOptions(voice, project.id)}
-                                  />
-                                </>
-                              ) : (
-                                <>
-                                  <p className="text-xs text-muted-foreground">
-                                    {translate("settings.voice.options.inherited")}
-                                  </p>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    disabled={disabled || projectSettingsBusy !== null}
-                                    onClick={() =>
-                                      void changeProjectOverride(project.id, assemblyAi.voice)
-                                    }
-                                  >
-                                    {translate("settings.voice.options.override")}
-                                  </Button>
-                                </>
-                              )}
-                              {projectSettingsError === project.id ? (
-                                <p role="alert" className="text-xs text-destructive">
-                                  {translate("settings.voice.options.saveFailed")}
-                                </p>
-                              ) : null}
-                            </div>
-                          ) : null
-                        }
-                      />
-                    );
-                  })}
+                  {modelsState === "error" ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={disabled}
+                      onClick={() => setModelsRefresh((current) => current + 1)}
+                    >
+                      {translate("settings.voice.options.modelsRetry")}
+                    </Button>
+                  ) : null}
                 </div>
+              ) : null}
+            </>
+          ) : (
+            <p className="px-4 py-4 text-xs text-muted-foreground">
+              {translate("settings.voice.options.unsupported")}
+            </p>
+          )}
+        </SettingsSearchTarget>
+
+        <BetterT3SettingsSubgroup groupId="voice-project-context">
+          <SettingsSearchTarget id="project-speech-context">
+            <div className="flex justify-end px-3 pt-2 sm:px-4">
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                aria-label={translate("settings.voice.context.refresh")}
+                disabled={disabled || projectEnvironmentIds.length === 0}
+                onClick={() => void refreshProfiles()}
+              >
+                <RefreshCwIcon className={cn("size-3.5", isRefreshing && "animate-spin")} />
+              </Button>
+            </div>
+            {projectGroups.length === 0 ? (
+              <div className="px-4 py-6 text-center text-xs text-muted-foreground sm:px-5">
+                {translate("settings.voice.context.noProjects")}
               </div>
-            );
-          })
-        )}
+            ) : (
+              projectGroups.map((group) => {
+                const environmentState = profileStateByEnvironment.get(group.environmentId);
+                return (
+                  <div
+                    key={group.environmentId}
+                    className="border-t border-border/60 first:border-t-0"
+                  >
+                    <div className="flex items-center justify-between gap-3 bg-muted/20 px-4 py-2.5 sm:px-5">
+                      <h3 className="voice-input-environment-title truncate text-2xs font-semibold uppercase text-foreground/60">
+                        {group.label}
+                      </h3>
+                      <span className="shrink-0 text-2xs text-muted-foreground">
+                        {translate("settings.voice.context.projectCount", {
+                          count: group.projects.length,
+                        })}
+                      </span>
+                    </div>
+                    {environmentState?.status === "error" ? (
+                      <p
+                        className="border-t border-border/60 px-4 py-2 text-xs text-destructive sm:px-5"
+                        role="alert"
+                      >
+                        {translate("settings.voice.context.environmentUnavailable")}
+                      </p>
+                    ) : null}
+                    <div className="border-t border-border/60">
+                      {group.projects.map((project) => {
+                        const key = projectKey(project.environmentId, project.id);
+                        return (
+                          <ProjectSpeechProfileRow
+                            key={key}
+                            disabled={disabled}
+                            project={project}
+                            environmentState={environmentState}
+                            open={expandedProjectKeys.has(key)}
+                            busyAction={busyActionByProject[key]}
+                            actionError={actionErrorByProject[key]}
+                            onOpenChange={(open) => setProjectExpanded(key, open)}
+                            onIndex={() => void runProjectAction(project, "index")}
+                            onUseBasicContext={() => void runProjectAction(project, "basic")}
+                            voiceSettings={
+                              supportsOptions ? (
+                                <div className="space-y-3 border-t border-border/60 pt-4">
+                                  <h4 className="text-sm font-medium">
+                                    {translate("settings.voice.options.project")}
+                                  </h4>
+                                  {assemblyAi.projectOverrides[project.id] ? (
+                                    <>
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={disabled || projectSettingsBusy !== null}
+                                        onClick={() => void changeProjectOverride(project.id, null)}
+                                      >
+                                        {translate("settings.voice.options.inherit")}
+                                      </Button>
+                                      <AssemblyAiVoiceSettingsForm
+                                        key={JSON.stringify(
+                                          assemblyAi.projectOverrides[project.id],
+                                        )}
+                                        value={resolveAssemblyAiVoiceSettings(
+                                          assemblyAi,
+                                          project.id,
+                                        )}
+                                        grouped={false}
+                                        models={models}
+                                        modelsState={modelsState}
+                                        t3Models={cleanupModelPicker}
+                                        disabled={disabled || projectSettingsBusy !== null}
+                                        onSave={(voice) => persistVoiceOptions(voice, project.id)}
+                                      />
+                                    </>
+                                  ) : (
+                                    <>
+                                      <p className="text-xs text-muted-foreground">
+                                        {translate("settings.voice.options.inherited")}
+                                      </p>
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={disabled || projectSettingsBusy !== null}
+                                        onClick={() =>
+                                          void changeProjectOverride(project.id, assemblyAi.voice)
+                                        }
+                                      >
+                                        {translate("settings.voice.options.override")}
+                                      </Button>
+                                    </>
+                                  )}
+                                  {projectSettingsError === project.id ? (
+                                    <p role="alert" className="text-xs text-destructive">
+                                      {translate("settings.voice.options.saveFailed")}
+                                    </p>
+                                  ) : null}
+                                </div>
+                              ) : null
+                            }
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </SettingsSearchTarget>
+        </BetterT3SettingsSubgroup>
+        {transcriptTransferSettings ? (
+          <BetterT3SettingsSubgroup groupId="voice-transcript-transfer" hideTitle>
+            {transcriptTransferSettings}
+          </BetterT3SettingsSubgroup>
+        ) : null}
       </SettingsSection>
     </>
   );
