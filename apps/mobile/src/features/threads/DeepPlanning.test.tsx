@@ -30,6 +30,7 @@ vi.mock("react", async (importOriginal) => ({
   ...(await importOriginal<typeof import("react")>()),
   memo: (component: unknown) => component,
   useCallback: (callback: unknown) => callback,
+  useEffect: () => {},
   useState: (initial: unknown) => {
     const index = fixture.cursor++;
     if (!(index in fixture.states))

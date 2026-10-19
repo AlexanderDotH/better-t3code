@@ -1,10 +1,11 @@
 import type { DeepPlanEvidence, DeepPlanRun, DeepPlanStepStatus } from "@t3tools/contracts";
 import {
   deepPlanCitationTitles,
+  getDeepPlanComposerChecklistExpiresAt,
   selectDeepPlanProgress,
   selectDeepPlanSteps,
 } from "@t3tools/client-runtime/deep-planning";
-import { memo, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
@@ -77,6 +78,14 @@ export const DeepPlanChecklist = memo(function DeepPlanChecklist(props: {
     readonly message: string;
   } | null>(null);
   const run = props.run;
+  const [now, setNow] = useState(() => Date.now());
+  const expiresAt = props.embedded ? null : getDeepPlanComposerChecklistExpiresAt(run);
+  useEffect(() => {
+    if (expiresAt === null || expiresAt <= now) return;
+    const timer = setTimeout(() => setNow(Date.now()), Math.max(0, expiresAt - Date.now()));
+    return () => clearTimeout(timer);
+  }, [expiresAt, now]);
+  const expired = expiresAt !== null && expiresAt <= now;
   const plan = run.plan;
   const steps = selectDeepPlanSteps(run);
   const progress = selectDeepPlanProgress(run);
@@ -94,6 +103,8 @@ export const DeepPlanChecklist = memo(function DeepPlanChecklist(props: {
     (props.canContinue === true &&
       ["collecting", "planning", "implementing"].includes(run.phase) &&
       !progress.allStepsVerified);
+
+  if (expired) return null;
 
   return (
     <View

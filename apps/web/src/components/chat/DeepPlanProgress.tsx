@@ -1,9 +1,10 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import type { DeepPlanRun, DeepPlanStepStatus } from "@t3tools/contracts";
 import {
   deepPlanCitationTitles,
   deepPlanSourceTitle,
   isDeepPlanSourceSummarized,
+  getDeepPlanComposerChecklistExpiresAt,
   selectDeepPlanProgress,
   selectDeepPlanSteps,
 } from "@t3tools/client-runtime/deep-planning";
@@ -124,8 +125,16 @@ export function DeepPlanChecklist({
   const translate = useInterfaceTranslator().message;
   const [expanded, setExpanded] = useState(true);
   const detailsId = useId();
+  const [now, setNow] = useState(() => Date.now());
+  const expiresAt = placement === "composer" ? getDeepPlanComposerChecklistExpiresAt(run) : null;
+  useEffect(() => {
+    if (expiresAt === null || expiresAt <= now) return;
+    const timer = setTimeout(() => setNow(Date.now()), Math.max(0, expiresAt - Date.now()));
+    return () => clearTimeout(timer);
+  }, [expiresAt, now]);
+  const expired = expiresAt !== null && expiresAt <= now;
   const plan = run.plan;
-  if (!plan || plan.steps.length === 0) return null;
+  if (!plan || plan.steps.length === 0 || expired) return null;
   const steps = selectDeepPlanSteps(run);
   const completed = selectDeepPlanProgress(run).verifiedSteps;
   const current =

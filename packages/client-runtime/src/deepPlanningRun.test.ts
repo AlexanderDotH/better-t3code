@@ -12,7 +12,11 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
-import { deepPlanCitationTitles, formatDeepPlanForDisplay } from "./deepPlanningPresentation.ts";
+import {
+  deepPlanCitationTitles,
+  formatDeepPlanForDisplay,
+  getDeepPlanComposerChecklistExpiresAt,
+} from "./deepPlanningPresentation.ts";
 
 import {
   approveDeepPlanImplementation,
@@ -121,6 +125,28 @@ function run(overrides?: Partial<DeepPlanRun>): DeepPlanRun {
 }
 
 describe("DeepPlan durable client state", () => {
+  it("expires completed composer checklists one minute after their durable update", () => {
+    expect(
+      getDeepPlanComposerChecklistExpiresAt({ phase: "completed", updatedAt: createdAt }),
+    ).toBe(Date.parse("2026-10-16T08:01:00.000Z"));
+    expect(
+      getDeepPlanComposerChecklistExpiresAt({ phase: "completed", updatedAt: "invalid" }),
+    ).toBe(0);
+  });
+
+  it.each([
+    "collecting",
+    "planning",
+    "awaitingApproval",
+    "implementing",
+    "validating",
+    "paused",
+    "failed",
+    "blocked",
+  ] as const)("keeps %s plans available regardless of age", (phase) => {
+    expect(getDeepPlanComposerChecklistExpiresAt({ phase, updatedAt: createdAt })).toBeNull();
+  });
+
   it("resolves owner and implementation threads without crossing environments", () => {
     const plan = run();
     const owner = { id: threadId, environmentId, deepPlan: plan };
