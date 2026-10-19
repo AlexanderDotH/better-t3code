@@ -5,6 +5,16 @@ import type {
 } from "@t3tools/contracts";
 import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 
+const COMPLETED_CHECKLIST_VISIBLE_MS = 60_000;
+
+export function getDeepPlanComposerChecklistExpiresAt(
+  run: Pick<DeepPlanRun, "phase" | "updatedAt">,
+): number | null {
+  if (run.phase !== "completed") return null;
+  const updatedAt = Date.parse(run.updatedAt);
+  return Number.isFinite(updatedAt) ? updatedAt + COMPLETED_CHECKLIST_VISIBLE_MS : 0;
+}
+
 export function deepPlanSourceTitle(source: DeepPlanSourceSnapshot): string {
   return [source.environmentLabel, source.projectTitle, source.threadTitle]
     .filter(Boolean)

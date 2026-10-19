@@ -295,6 +295,7 @@ afterEach(async () => {
   await act(() => root.unmount());
   container.remove();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 function button(text: string): HTMLButtonElement {
@@ -452,6 +453,82 @@ it("separates implemented work from verified steps and final validation while ke
   );
   expect(button("Collapse checklist").getAttribute("aria-expanded")).toBe("true");
   expect(container.textContent).not.toContain("Focused workflow checks passed");
+});
+
+function completedRun(updatedAt: string): DeepPlanRun {
+  const run = makeRun();
+  return {
+    ...run,
+    phase: "completed",
+    updatedAt,
+    approval: {
+      planVersion: 1,
+      approvalKey: run.approvalKey!,
+      approvedAt: updatedAt,
+      approvedBy: "user",
+      implementation: { instanceId: ProviderInstanceId.make("codex"), model: "model" },
+      implementationThreadId: threadId,
+      implementerId: "same-agent",
+    },
+    stepStates: run.plan!.steps.map((step) => ({
+      stepId: step.id,
+      status: "verified",
+      evidence,
+      updatedAt,
+    })),
+    finalValidation: { ...run.finalValidation, status: "passed", evidence, updatedAt },
+  };
+}
+
+it("removes the composer checklist a minute after an active run completes", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(createdAt);
+  const run = completedRun(createdAt);
+  await act(() => root.render(<DeepPlanChecklist run={{ ...run, phase: "implementing" }} />));
+  await act(() => vi.advanceTimersByTime(120_000));
+  expect(container.textContent).toContain("Deep checklist");
+
+  const finished = { ...run, updatedAt: new Date().toISOString() };
+  await act(() => root.render(<DeepPlanChecklist run={finished} />));
+  await act(() => vi.advanceTimersByTime(59_999));
+  expect(container.textContent).toContain("2 of 2 verified");
+  await act(() => vi.advanceTimersByTime(1));
+  expect(container.textContent).toBe("");
+});
+
+it("keeps old completed checklists out of the composer on revisit but available in the plan", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime("2026-10-16T10:10:00.000Z");
+  const run = completedRun(createdAt);
+  await act(() => root.render(<DeepPlanChecklist run={run} />));
+  expect(container.textContent).toBe("");
+  await act(() => root.render(<DeepPlanChecklist key="revisit" run={run} />));
+  expect(container.textContent).toBe("");
+
+  await act(() => root.render(<DeepPlanChecklist run={run} placement="plan" />));
+  expect(container.textContent).toContain("2 of 2 verified");
+  expect(container.textContent).toContain("Focused workflow checks passed");
+});
+
+it("uses the remaining completion time and cancels it when another plan becomes active", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime("2026-10-16T10:00:45.000Z");
+  await act(() => root.render(<DeepPlanChecklist run={completedRun(createdAt)} />));
+  await act(() => vi.advanceTimersByTime(14_999));
+  expect(container.textContent).toContain("Deep checklist");
+  await act(() => vi.advanceTimersByTime(1));
+  expect(container.textContent).toBe("");
+
+  const next = makeRun({ id: DeepPlanRunId.make("next"), phase: "implementing" });
+  await act(() => root.render(<DeepPlanChecklist run={next} />));
+  await act(() => vi.advanceTimersByTime(120_000));
+  expect(container.textContent).toContain("Current: Build the workflow");
+
+  const finished = completedRun(new Date().toISOString());
+  await act(() => root.render(<DeepPlanChecklist run={finished} />));
+  await act(() => root.render(<DeepPlanChecklist run={next} />));
+  await act(() => vi.advanceTimersByTime(60_000));
+  expect(container.textContent).toContain("Current: Build the workflow");
 });
 
 it("shows the structured Deep Plan and its interactive checklist in the normal plan card", async () => {
