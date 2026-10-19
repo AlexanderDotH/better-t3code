@@ -2,6 +2,7 @@ import {
   resolveBetterT3FeatureFlag,
   type CavemanMode,
   type ModelSelection,
+  type ModelSelectionPurpose,
   type SidebarProjectSortOrder,
   type SidebarThreadSortOrder,
   type BetterT3FeatureAvailabilityState,
@@ -17,12 +18,17 @@ import {
   type ProjectId,
   type ServerLifecycleWelcomePayload,
   type ServerSettingsPatch,
+  type ServerConfig,
   type ThreadId,
 } from "@t3tools/contracts";
 import type { BetterT3PreparedStatusModel } from "@t3tools/client-runtime/better-t3-status";
+import {
+  BETTER_T3_SETTINGS_SUBGROUPS,
+  type BetterT3SettingsSubgroup,
+} from "@t3tools/client-runtime/better-t3-settings-layout";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
-import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
-import { stripAutoReasoning } from "@t3tools/shared/model";
+import type { InterfaceMessageKey, InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
+import { stripAutoReasoning, supportsModelSelectionPurpose } from "@t3tools/shared/model";
 
 type MobileVisiblePreparedStatusFeatureId = Exclude<
   keyof BetterT3PreparedStatusModel,
@@ -386,6 +392,95 @@ export interface MobileBetterT3Control {
 export interface MobileBetterT3Section {
   readonly id: BetterT3FeatureSection;
   readonly controls: ReadonlyArray<MobileBetterT3Control>;
+  readonly groups: ReadonlyArray<{
+    readonly definition: BetterT3SettingsSubgroup;
+    readonly controls: ReadonlyArray<MobileBetterT3Control>;
+  }>;
+}
+
+export function mobileBetterT3SubgroupSummary(input: {
+  readonly group: BetterT3SettingsSubgroup;
+  readonly controls: ReadonlyArray<MobileBetterT3Control>;
+  readonly config: Pick<ServerConfig, "settings" | "providers"> | null;
+  readonly outputLanguage?: "native" | "english";
+  readonly message: InterfaceTranslator["message"];
+}): string | undefined {
+  const first = input.controls[0];
+  if (first !== undefined && first.availability.state !== "available") {
+    return input.message(
+      (first.availability.reasonMessageId ??
+        `settings.betterT3.availability.${first.availability.state}`) as InterfaceMessageKey,
+    );
+  }
+  const modelSummary = (
+    selection: ModelSelection | null | undefined,
+    purpose: ModelSelectionPurpose = "text-generation",
+  ) => {
+    if (input.config === null) return input.message("settings.betterT3.noEnvironment");
+    if (selection === null || selection === undefined) {
+      return input.message("settings.betterT3.value.automatic");
+    }
+    const provider = input.config.providers.find(
+      (candidate) => candidate.instanceId === selection.instanceId,
+    );
+    const model = provider?.models.find((candidate) => candidate.slug === selection.model);
+    const label = model?.name ?? selection.model;
+    return provider?.enabled &&
+      provider.installed &&
+      provider.auth.status !== "unauthenticated" &&
+      provider.availability !== "unavailable" &&
+      model !== undefined &&
+      supportsModelSelectionPurpose(model, purpose)
+      ? label
+      : `${label} · ${input.message("settings.betterT3.availability.unavailable")}`;
+  };
+  const enabledLabel = input.message(
+    first?.value === true ? "settings.betterT3.summary.on" : "settings.betterT3.summary.off",
+  );
+  const settings = input.config?.settings;
+  switch (input.group.id) {
+    case "fetch":
+      return `${enabledLabel} · ${modelSummary(settings?.fetchModelSelection)}`;
+    case "parallel-plan":
+      return `${enabledLabel} · ${modelSummary(settings?.parallelPlanReviewModelSelection)}`;
+    case "context-compaction":
+      return [
+        input.message(
+          first?.value === true
+            ? "settings.betterT3.preview.examples.context.background"
+            : "settings.betterT3.preview.examples.context.native",
+        ),
+        ...(first?.value === true
+          ? [modelSummary(settings?.contextCompactionModelSelection, "context-compaction")]
+          : []),
+      ].join(" · ");
+    case "auto-reasoning":
+      return modelSummary(settings?.autoReasoningModelSelection, "decision");
+    case "voice-translation":
+      return settings === undefined
+        ? input.message("settings.betterT3.noEnvironment")
+        : [
+            input.message(
+              input.outputLanguage === "english"
+                ? "settings.betterT3.value.english"
+                : "settings.betterT3.value.nativeLanguage",
+            ),
+            modelSummary(settings.voiceTranslationModelSelection),
+          ].join(" · ");
+    case "indexing-models":
+      return settings === undefined
+        ? input.message("settings.betterT3.noEnvironment")
+        : [
+            settings.projectIndexingDefaultModelSelection === null
+              ? input.message("projectIndexing.noDefaultModel")
+              : modelSummary(settings.projectIndexingDefaultModelSelection),
+            settings.projectIndexingDecisionModelSelection === null
+              ? input.message("settings.betterT3.value.projectIndexDecisionOff")
+              : modelSummary(settings.projectIndexingDecisionModelSelection, "decision"),
+          ].join(" · ");
+    default:
+      return undefined;
+  }
 }
 
 export function mobileBetterT3SurfaceForWidth(
@@ -484,7 +579,23 @@ export function buildMobileBetterT3Sections(input: {
     const controls = [...controlsById.values()].filter(
       (control) => control.descriptor.section === sectionId,
     );
-    return controls.length === 0 ? [] : [{ id: sectionId, controls }];
+    const supplementalTarget =
+      sectionId === "chat-layout"
+        ? "response-metrics"
+        : sectionId === "composer"
+          ? "legacy-context-window-indicator"
+          : null;
+    const groups = BETTER_T3_SETTINGS_SUBGROUPS.flatMap((definition) => {
+      const groupControls = controls.filter((control) =>
+        definition.featureIds.includes(control.id),
+      );
+      const hasSupplementalControl =
+        supplementalTarget !== null && definition.targetIds.includes(supplementalTarget);
+      return groupControls.length === 0 && !hasSupplementalControl
+        ? []
+        : [{ definition, controls: groupControls }];
+    });
+    return groups.length === 0 ? [] : [{ id: sectionId, controls, groups }];
   });
 }
 

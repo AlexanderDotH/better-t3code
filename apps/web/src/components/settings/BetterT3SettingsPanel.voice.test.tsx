@@ -1,7 +1,10 @@
+// @vitest-environment jsdom
+
 import {
   BETTER_T3_FEATURE_REGISTRY,
   DEFAULT_UNIFIED_SETTINGS,
   EnvironmentId,
+  ProviderInstanceId,
   type UnifiedSettings,
 } from "@t3tools/contracts";
 import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
@@ -77,11 +80,13 @@ vi.mock("../chat/ProviderModelPicker", () => ({
 import { BetterT3SettingsContent } from "./BetterT3SettingsPanel";
 import { buildBetterT3ControlStates } from "./BetterT3SettingsPanel.logic";
 import { VoiceInputSettings } from "./VoiceInputSettings";
+import { Collapsible } from "../ui/collapsible";
 
 const translate = createInterfaceTranslator({ language: "en", locale: "en-US" }).message;
 
 it("shows each voice setting once and keeps credentials, models, and projects in the selected environment", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  window.localStorage.clear();
   fixture.updateSettings.mockClear();
   fixture.listProfiles.mockClear();
   for (const environmentId of ["local", "remote"]) {
@@ -122,6 +127,13 @@ it("shows each voice setting once and keeps credentials, models, and projects in
     await act(() => {
       renderer = create(content("remote"));
     });
+    await act(() =>
+      renderer!.root
+        .findAllByType(Collapsible)
+        .find((node) => node.props["data-better-t3-subgroup"] === "voice-translation")!
+        .props.onOpenChange(true),
+    );
+    expect(fixture.updateSettings).not.toHaveBeenCalled();
     const voiceRegion = renderer!.root.findByProps({ id: "better-t3-group-voice", role: "region" });
     const composerRegion = renderer!.root.findByProps({
       id: "better-t3-group-composer",
@@ -180,9 +192,21 @@ it("shows each voice setting once and keeps credentials, models, and projects in
       speechTranscription: { assemblyAi: { apiKey: { value: "", valueRedacted: false } } },
     });
 
+    fixture.settings.set("remote", {
+      ...fixture.settings.get("remote")!,
+      voiceTranslationModelSelection: {
+        instanceId: ProviderInstanceId.make("removed-provider"),
+        model: "saved-remote-model",
+      },
+    });
+    await act(() => renderer!.update(content("remote")));
+    expect(JSON.stringify(renderer!.toJSON())).toContain("saved-remote-model");
+    expect(JSON.stringify(renderer!.toJSON())).toContain("Unavailable");
+    expect(fixture.listProfiles).toHaveBeenCalledTimes(1);
     await act(() => keyInput().props.onChange({ target: { value: "unsaved-remote-draft" } }));
     await act(() => renderer!.update(content("local")));
     expect(keyInput().props.value).toBe("local-key");
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain("saved-remote-model");
     expect(JSON.stringify(renderer!.toJSON())).toContain("Local project");
     expect(JSON.stringify(renderer!.toJSON())).not.toContain("Remote project");
     expect(fixture.listProfiles).toHaveBeenLastCalledWith({ environmentId: "local", input: {} });

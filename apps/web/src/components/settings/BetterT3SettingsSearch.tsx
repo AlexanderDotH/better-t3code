@@ -1,6 +1,19 @@
 import { Autocomplete as AutocompletePrimitive } from "@base-ui/react/autocomplete";
 import { SearchIcon, XIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import type { BetterT3FeatureControlStateV1 } from "@t3tools/contracts";
+import { getBetterT3SettingsSubgroupForFeature } from "@t3tools/client-runtime/better-t3-settings-layout";
+import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
+import {
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import {
@@ -10,12 +23,105 @@ import {
   AutocompleteList,
   AutocompletePopup,
 } from "../ui/autocomplete";
-import { scrollToSettingsTarget } from "./settingsLayout";
+import { useRequestSettingsSearchTarget } from "./settingsLayout";
+import { resolveBetterT3DescriptorMessageKeys } from "./BetterT3SettingsPanel.logic";
 import { searchSettings, SETTINGS_SEARCH_ITEMS, type SettingsSearchItem } from "./settingsSearch";
 
-/** Index the mounted labels so environment-specific and translated settings stay in sync. */
-export function readBetterT3SettingsSearchItems(page: ParentNode): SettingsSearchItem[] {
-  return Array.from(
+const EMPTY_SEARCH_ITEMS: readonly SettingsSearchItem[] = [];
+const BetterT3SearchItemsContext = createContext<readonly SettingsSearchItem[]>(EMPTY_SEARCH_ITEMS);
+const BetterT3SearchRegistrationContext = createContext<
+  (id: string, items: readonly SettingsSearchItem[]) => () => void
+>(() => () => undefined);
+
+function withSearchAliases(item: SettingsSearchItem): SettingsSearchItem {
+  const targetId = item.targetId ?? item.id;
+  const aliases = SETTINGS_SEARCH_ITEMS.filter(
+    (alias) => ("targetId" in alias ? alias.targetId : alias.id) === targetId,
+  );
+  return {
+    ...item,
+    searchTerms: [
+      ...(item.searchTerms ?? []),
+      ...aliases.flatMap((alias) => [
+        alias.title,
+        ...("searchTerms" in alias ? alias.searchTerms : []),
+      ]),
+    ],
+  };
+}
+
+/** Declare only rows rendered by the current surface, even before their lazy content mounts. */
+export function buildBetterT3FeatureSearchItems(
+  features: readonly BetterT3FeatureControlStateV1[],
+  translate: InterfaceTranslator["message"],
+): SettingsSearchItem[] {
+  return features.flatMap((feature) => {
+    const subgroup = getBetterT3SettingsSubgroupForFeature(feature.descriptor.id);
+    if (!subgroup) return [];
+    const messageIds = resolveBetterT3DescriptorMessageKeys(feature.descriptor);
+    return [
+      {
+        id: feature.descriptor.id,
+        targetId: feature.descriptor.id,
+        to: "/settings/better-t3" as const,
+        title: translate(messageIds.labelMessageId),
+        description: translate(messageIds.descriptionMessageId),
+        category: translate(`settings.betterT3.tab.${subgroup.categoryId}`),
+        searchTerms: [translate(subgroup.titleMessageId)],
+      },
+    ];
+  });
+}
+
+export function BetterT3SettingsSearchItemsProvider({
+  items = EMPTY_SEARCH_ITEMS,
+  children,
+}: {
+  readonly items?: readonly SettingsSearchItem[];
+  readonly children: ReactNode;
+}) {
+  const [registrations, setRegistrations] = useState<
+    ReadonlyMap<string, readonly SettingsSearchItem[]>
+  >(new Map());
+  const register = useCallback((id: string, entries: readonly SettingsSearchItem[]) => {
+    setRegistrations((current) => new Map(current).set(id, entries));
+    return () => {
+      setRegistrations((current) => {
+        const next = new Map(current);
+        next.delete(id);
+        return next;
+      });
+    };
+  }, []);
+  const availableItems = useMemo(
+    () => [...items, ...Array.from(registrations.values()).flat()],
+    [items, registrations],
+  );
+  return (
+    <BetterT3SearchRegistrationContext value={register}>
+      <BetterT3SearchItemsContext value={availableItems}>{children}</BetterT3SearchItemsContext>
+    </BetterT3SearchRegistrationContext>
+  );
+}
+
+/** Register specialized fields outside their collapsed body, after the usual availability checks. */
+export function BetterT3SettingsSearchItems({
+  items,
+}: {
+  readonly items: readonly SettingsSearchItem[];
+}) {
+  const id = useId();
+  const register = useContext(BetterT3SearchRegistrationContext);
+  useEffect(() => register(id, items), [id, items, register]);
+  return null;
+}
+
+/** Merge declared lazy fields with current DOM labels without indexing unrelated hidden controls. */
+export function readBetterT3SettingsSearchItems(
+  page: ParentNode,
+  declaredItems: readonly SettingsSearchItem[] = EMPTY_SEARCH_ITEMS,
+): SettingsSearchItem[] {
+  const mountedItems = Array.from(
     page.querySelectorAll<HTMLElement>(
       '[data-slot="settings-row"], section[id], [role="region"][id]',
     ),
@@ -36,9 +142,6 @@ export function readBetterT3SettingsSearchItems(page: ParentNode): SettingsSearc
       element.dataset.slot === "settings-row"
         ? (element.querySelector(":scope > div > div > p")?.textContent?.trim() ?? "")
         : "";
-    const aliases = SETTINGS_SEARCH_ITEMS.filter(
-      (item) => ("targetId" in item ? item.targetId : item.id) === target.id,
-    );
     return [
       {
         id: `${target.id}:${index}`,
@@ -47,33 +150,44 @@ export function readBetterT3SettingsSearchItems(page: ParentNode): SettingsSearc
         targetId: target.id,
         category,
         description,
-        searchTerms: aliases.flatMap((item) => [
-          item.title,
-          ...("searchTerms" in item ? item.searchTerms : []),
-        ]),
       },
     ];
   });
+  const declaredTargets = new Set(declaredItems.map((item) => item.targetId ?? item.id));
+  return [
+    ...declaredItems,
+    ...mountedItems.filter((item) => !declaredTargets.has(item.targetId)),
+  ].map(withSearchAliases);
 }
 
 export function BetterT3SettingsSearch() {
   const translate = useInterfaceTranslator().message;
+  const declaredItems = useContext(BetterT3SearchItemsContext);
+  const requestTarget = useRequestSettingsSearchTarget();
   const inputRef = useRef<HTMLInputElement>(null);
   const highlightedItemRef = useRef<SettingsSearchItem | null>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [items, setItems] = useState<SettingsSearchItem[]>([]);
+  const [mountedItems, setMountedItems] = useState<SettingsSearchItem[]>([]);
+  const items = useMemo(() => {
+    const declaredTargets = new Set(declaredItems.map((item) => item.targetId ?? item.id));
+    return [
+      ...declaredItems.map(withSearchAliases),
+      ...mountedItems.filter((item) => !declaredTargets.has(item.targetId ?? item.id)),
+    ];
+  }, [declaredItems, mountedItems]);
   const results = query.trim() ? searchSettings(query, items) : [];
   const label = translate("settings.application.search.aria");
-  const refreshItems = () => {
+  const refreshItems = useCallback(() => {
     const page = inputRef.current?.closest("[data-settings-page-scroll]");
-    setItems(page ? readBetterT3SettingsSearchItems(page) : []);
-  };
+    setMountedItems(page ? readBetterT3SettingsSearchItems(page) : []);
+  }, []);
+  useEffect(refreshItems, [declaredItems, refreshItems]);
   const selectSearchResult = (item: SettingsSearchItem) => {
     highlightedItemRef.current = null;
     setOpen(false);
     setQuery("");
-    window.requestAnimationFrame(() => scrollToSettingsTarget(item.targetId ?? item.id));
+    requestTarget(item.targetId ?? item.id);
   };
 
   return (

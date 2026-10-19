@@ -25,6 +25,10 @@ import {
   type SidebarThreadSortOrder,
 } from "@t3tools/contracts";
 import { ProviderInstanceId } from "@t3tools/contracts";
+import {
+  sanitizeBetterT3ExpandedSettingsGroups,
+  type BetterT3SettingsSubgroupId,
+} from "@t3tools/client-runtime/better-t3-settings-layout";
 import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
 import { MOBILE_THEME_IDS, type MobileThemeId, type MobileThemeMode } from "../lib/mobileTheme";
 import * as MobileDatabase from "./mobile-database";
@@ -57,6 +61,7 @@ export interface Preferences {
   readonly usagePacingWorkdayHours?: 8 | 24;
   /** Device-local Better T3 registry values, including clean/existing migration provenance. */
   readonly betterT3Device?: BetterT3SettingsV1Type;
+  readonly betterT3ExpandedSettingsGroups?: ReadonlyArray<BetterT3SettingsSubgroupId>;
   readonly liveActivitiesEnabled?: boolean;
   readonly experimentalFetch?: boolean;
   readonly experimentalParallelPlanImplementation?: boolean;
@@ -166,6 +171,7 @@ export function sanitizeMobilePreferences(
     usagePacingEnabled?: boolean;
     usagePacingWorkdayHours?: 8 | 24;
     betterT3Device?: BetterT3SettingsV1Type;
+    betterT3ExpandedSettingsGroups?: ReadonlyArray<BetterT3SettingsSubgroupId>;
     liveActivitiesEnabled?: boolean;
     experimentalFetch?: boolean;
     experimentalParallelPlanImplementation?: boolean;
@@ -219,6 +225,12 @@ export function sanitizeMobilePreferences(
   }
   if (parsed.usagePacingWorkdayHours === 8 || parsed.usagePacingWorkdayHours === 24) {
     preferences.usagePacingWorkdayHours = parsed.usagePacingWorkdayHours;
+  }
+
+  if (Array.isArray(parsed.betterT3ExpandedSettingsGroups)) {
+    preferences.betterT3ExpandedSettingsGroups = sanitizeBetterT3ExpandedSettingsGroups(
+      parsed.betterT3ExpandedSettingsGroups,
+    );
   }
 
   const betterT3Device = decodeBetterT3SettingsV1(parsed.betterT3Device);

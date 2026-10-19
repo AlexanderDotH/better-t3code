@@ -1,16 +1,99 @@
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import {
+  BETTER_T3_FEATURE_REGISTRY,
+  DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
+  DEFAULT_UNIFIED_SETTINGS,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
+import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import {
   buildAutoReasoningModelSelectionPatch,
   buildBetterT3ScalarControlPatch,
+  buildBetterT3SubgroupSummaries,
   buildProjectIndexingDecisionModelSelectionPatch,
   resolveBetterT3ModelSelection,
   supportsAutoReasoningEvaluationProvider,
 } from "./BetterT3SettingsPanel.controls";
 
+import { buildBetterT3ControlStates } from "./BetterT3SettingsPanel.logic";
+
 const codexId = ProviderInstanceId.make("codex");
+const summaryTranslate = createInterfaceTranslator({ language: "en", locale: "en-US" }).message;
+const summaryFeatures = buildBetterT3ControlStates({
+  registry: BETTER_T3_FEATURE_REGISTRY,
+  device: DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
+  environment: DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
+  surface: "web",
+  capabilities: { contextCompactionVersion: 1, agentWorkflowVersion: 1 },
+});
+const summaryProvider: ServerProvider = {
+  instanceId: codexId,
+  driver: ProviderDriverKind.make("codex"),
+  enabled: true,
+  installed: true,
+  version: null,
+  status: "ready",
+  auth: { status: "authenticated" },
+  checkedAt: "2026-01-01T00:00:00.000Z",
+  models: [{ slug: "chosen", name: "Chosen model", isCustom: false, capabilities: {} }],
+  slashCommands: [],
+  skills: [],
+};
+
+it("summarizes the saved model and changes state without falling back to an unrelated model", () => {
+  const settings = {
+    ...DEFAULT_UNIFIED_SETTINGS,
+    autoReasoningModelSelection: { instanceId: codexId, model: "chosen" },
+  };
+  const summarize = (providers: readonly ServerProvider[]) =>
+    buildBetterT3SubgroupSummaries({
+      settings,
+      providers,
+      features: summaryFeatures,
+      translate: summaryTranslate,
+    });
+  expect(summarize([summaryProvider])["auto-reasoning"]).toBe("Chosen model");
+  expect(summarize([{ ...summaryProvider, models: [] }])["auto-reasoning"]).toBe(
+    "chosen · Unavailable",
+  );
+  expect(
+    summarize([
+      {
+        ...summaryProvider,
+        models: [{ slug: "other", name: "Other model", isCustom: false, capabilities: {} }],
+      },
+    ])["auto-reasoning"],
+  ).toBe("chosen · Unavailable");
+  expect(
+    summarize([{ ...summaryProvider, auth: { status: "unauthenticated" } }])["auto-reasoning"],
+  ).toBe("Chosen model · Unavailable");
+  expect(summarize([])["auto-reasoning"]).toBe("chosen · Unavailable");
+});
+
+it("keeps automatic model selection and native compaction summaries faithful to the current settings", () => {
+  const nativeFeatures = summaryFeatures.map((feature) =>
+    feature.descriptor.id === "agent.contextCompaction" ? { ...feature, value: false } : feature,
+  );
+  const native = buildBetterT3SubgroupSummaries({
+    settings: DEFAULT_UNIFIED_SETTINGS,
+    providers: [],
+    features: nativeFeatures,
+    translate: summaryTranslate,
+  });
+  expect(native["auto-reasoning"]).toBe("Automatic");
+  expect(native["context-compaction"]).toBe("Codex");
+  const background = buildBetterT3SubgroupSummaries({
+    settings: DEFAULT_UNIFIED_SETTINGS,
+    providers: [],
+    features: summaryFeatures,
+    translate: summaryTranslate,
+  });
+  expect(background["context-compaction"]).toBe("Better T3 Code · Automatic");
+});
 
 function entry(
   models: ReadonlyArray<{

@@ -7,20 +7,30 @@ import {
   AuthOrchestrationReadScope,
   type EnvironmentId,
   type ProjectIndexModelSelection,
+  type ServerProvider,
   type ServerSettingsPatch,
+  type UnifiedSettings,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useState } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 
 import { isElectron } from "../../env";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
+import { getCustomModelOptionsByInstance } from "../../modelSelection";
+import {
+  applyProviderInstanceSettings,
+  deriveProviderInstanceEntries,
+  isProviderInstancePickerReady,
+} from "../../providerInstances";
 import { useEnvironment, type EnvironmentPresentation } from "../../state/environments";
 import { bindProjectIndexApi } from "../../state/projectIndexing";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { environmentSession } from "../../state/session";
-import { SettingsRow, SettingsSection } from "../settings/settingsLayout";
+import { SettingsRow, SettingsSearchTarget, SettingsSection } from "../settings/settingsLayout";
+import { BetterT3SettingsSubgroup } from "../settings/BetterT3SettingsSubgroup";
+import { BetterT3SettingsSearchItems } from "../settings/BetterT3SettingsSearch";
 import { useSettingsCommand, useSettingsMutation } from "../settings/useSettingsMutation";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
@@ -33,12 +43,73 @@ type DefaultsPatch = Pick<
   "projectIndexingEnabled" | "projectIndexingDefaultModelSelection"
 >;
 
+function indexingModelSummary(
+  settings: UnifiedSettings,
+  providers: readonly ServerProvider[],
+  selection: ProjectIndexModelSelection | null,
+  purpose: "text-generation" | "decision",
+  emptyLabel: string,
+  unavailableLabel: string,
+) {
+  if (selection === null) return emptyLabel;
+  const provider = applyProviderInstanceSettings(
+    deriveProviderInstanceEntries(providers),
+    settings,
+  ).find((entry) => entry.instanceId === selection.instanceId);
+  const model = getCustomModelOptionsByInstance(
+    settings,
+    providers,
+    selection.instanceId,
+    selection.model,
+    purpose,
+  )
+    .get(selection.instanceId)
+    ?.find((option) => option.slug === selection.model);
+  const available =
+    provider && isProviderInstancePickerReady(provider) && model && !model.isUnavailable;
+  return [model?.name ?? selection.model, ...(!available ? [unavailableLabel] : [])].join(" · ");
+}
+
+function ProjectIndexDecisionSettings({
+  environmentId,
+  children,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly children?: ReactNode;
+}) {
+  const { message } = useInterfaceTranslator();
+  const settings = useEnvironmentSettings(environmentId);
+  const environment = useEnvironment(environmentId);
+  if (!children) return null;
+  return (
+    <BetterT3SettingsSubgroup
+      groupId="indexing-models"
+      summary={indexingModelSummary(
+        settings,
+        environment?.serverConfig?.providers ?? [],
+        settings.projectIndexingDecisionModelSelection,
+        "decision",
+        message("settings.betterT3.value.projectIndexDecisionOff"),
+        message("projectIndexing.modelUnavailable"),
+      )}
+    >
+      {children}
+    </BetterT3SettingsSubgroup>
+  );
+}
+
 function ProjectIndexDefaultsForm({
   environment,
   canOperate,
+  refreshing = false,
+  decisionModelSettings,
+  preview,
 }: {
   readonly environment: EnvironmentPresentation;
   readonly canOperate: boolean;
+  readonly refreshing?: boolean;
+  readonly decisionModelSettings?: ReactNode;
+  readonly preview?: ReactNode;
 }) {
   const { message } = useInterfaceTranslator();
   const navigate = useNavigate();
@@ -72,104 +143,152 @@ function ProjectIndexDefaultsForm({
           : (check.reason ?? message("projectIndexing.modelUnsupported"));
 
   return (
-    <div className="space-y-6">
-      <SettingsSection
-        id="knowledge.projectIndexingMaster"
-        title={message("projectIndexing.globalTitle")}
-      >
-        {!canOperate ? (
-          <p className="px-3 py-3 text-sm text-muted-foreground sm:px-4">
-            {message("projectIndexing.readOnly")}
-          </p>
-        ) : null}
-        <SettingsRow
-          title={message("projectIndexing.masterEnabled")}
-          description={message("projectIndexing.masterDescription")}
-          control={
-            <Switch
-              aria-label={message("projectIndexing.masterEnabled")}
-              checked={settings.projectIndexingEnabled}
-              disabled={!canOperate || save.isPending}
-              onCheckedChange={(projectIndexingEnabled) => update({ projectIndexingEnabled })}
-            />
-          }
-        />
-        <SettingsRow
-          title={message("projectIndexing.projectSettings")}
-          description={message("projectIndexing.projectSettingsDescription")}
-          control={
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() =>
-                void navigate({
-                  to: "/settings/projects",
-                  search: { project: undefined, machine: environment.environmentId },
-                })
-              }
-            >
-              {message("projectIndexing.projectSettings")}
-            </Button>
-          }
-        />
-        {error ? (
-          <p role="alert" className="px-3 py-3 text-sm text-destructive sm:px-4">
-            {error}
-          </p>
-        ) : null}
-      </SettingsSection>
-      <SettingsSection
-        id="knowledge.projectIndexingReviewDefaults"
-        title={message("projectIndexing.reviewEnabled")}
-      >
-        <SettingsRow
-          id="knowledge.projectIndexingDefaultModel"
-          title={message("projectIndexing.defaultModel")}
-          description={message("projectIndexing.defaultModelDescription")}
-          status={modelStatus}
-          control={
-            <div className="flex flex-wrap items-center gap-2">
-              <ProjectIndexModelPicker
-                label={message("projectIndexing.defaultModel")}
-                selection={selection}
-                settings={settings}
-                providers={environment.serverConfig?.providers ?? []}
+    <SettingsSection title={message("projectIndexing.globalTitle")}>
+      <BetterT3SettingsSearchItems
+        items={[
+          {
+            id: "knowledge.projectIndexingDefaultModel",
+            targetId: "knowledge.projectIndexingDefaultModel",
+            to: "/settings/better-t3",
+            title: message("projectIndexing.defaultModel"),
+            description: message("projectIndexing.defaultModelDescription"),
+            category: message("projectIndexing.globalTitle"),
+          },
+        ]}
+      />
+      <BetterT3SettingsSubgroup groupId="project-indexing">
+        {preview}
+        <SettingsSearchTarget
+          id="knowledge.projectIndexingMaster"
+          inert={refreshing}
+          aria-busy={refreshing}
+        >
+          {!canOperate ? (
+            <p className="px-3 py-3 text-sm text-muted-foreground sm:px-4">
+              {message("projectIndexing.readOnly")}
+            </p>
+          ) : null}
+          <SettingsRow
+            title={message("projectIndexing.masterEnabled")}
+            description={message("projectIndexing.masterDescription")}
+            control={
+              <Switch
+                aria-label={message("projectIndexing.masterEnabled")}
+                checked={settings.projectIndexingEnabled}
                 disabled={!canOperate || save.isPending}
-                onChange={(projectIndexingDefaultModelSelection) =>
-                  update({ projectIndexingDefaultModelSelection })
-                }
+                onCheckedChange={(projectIndexingEnabled) => update({ projectIndexingEnabled })}
               />
-              {selection ? (
-                <Button
-                  size="xs"
-                  variant="ghost-muted"
-                  disabled={!canOperate || save.isPending}
-                  onClick={() => update({ projectIndexingDefaultModelSelection: null })}
-                >
-                  {message("common.clear")}
-                </Button>
-              ) : null}
-              {selection && check?.supported === false ? (
-                <Button
-                  size="xs"
-                  variant="outline"
-                  onClick={() => setCheckAttempt((attempt) => attempt + 1)}
-                >
-                  {message("projectIndexing.checkModelAgain")}
-                </Button>
-              ) : null}
-            </div>
-          }
-        />
-      </SettingsSection>
-    </div>
+            }
+          />
+          <SettingsRow
+            title={message("projectIndexing.projectSettings")}
+            description={message("projectIndexing.projectSettingsDescription")}
+            control={
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  void navigate({
+                    to: "/settings/projects",
+                    search: { project: undefined, machine: environment.environmentId },
+                  })
+                }
+              >
+                {message("projectIndexing.projectSettings")}
+              </Button>
+            }
+          />
+          {error ? (
+            <p role="alert" className="px-3 py-3 text-sm text-destructive sm:px-4">
+              {error}
+            </p>
+          ) : null}
+        </SettingsSearchTarget>
+      </BetterT3SettingsSubgroup>
+      <BetterT3SettingsSubgroup
+        groupId="indexing-models"
+        summary={[
+          indexingModelSummary(
+            settings,
+            environment.serverConfig?.providers ?? [],
+            selection,
+            "text-generation",
+            message("projectIndexing.noDefaultModel"),
+            message("projectIndexing.modelUnavailable"),
+          ),
+          ...(selection && modelStatus ? [modelStatus] : []),
+          ...(decisionModelSettings
+            ? [
+                indexingModelSummary(
+                  settings,
+                  environment.serverConfig?.providers ?? [],
+                  settings.projectIndexingDecisionModelSelection,
+                  "decision",
+                  message("settings.betterT3.value.projectIndexDecisionOff"),
+                  message("projectIndexing.modelUnavailable"),
+                ),
+              ]
+            : []),
+        ].join(" · ")}
+        revealOnError={error !== null}
+      >
+        <SettingsSearchTarget id="knowledge.projectIndexingReviewDefaults">
+          <div inert={refreshing} aria-busy={refreshing}>
+            <SettingsRow
+              id="knowledge.projectIndexingDefaultModel"
+              title={message("projectIndexing.defaultModel")}
+              description={message("projectIndexing.defaultModelDescription")}
+              status={modelStatus}
+              control={
+                <div className="flex flex-wrap items-center gap-2">
+                  <ProjectIndexModelPicker
+                    label={message("projectIndexing.defaultModel")}
+                    selection={selection}
+                    settings={settings}
+                    providers={environment.serverConfig?.providers ?? []}
+                    disabled={!canOperate || save.isPending}
+                    onChange={(projectIndexingDefaultModelSelection) =>
+                      update({ projectIndexingDefaultModelSelection })
+                    }
+                  />
+                  {selection ? (
+                    <Button
+                      size="xs"
+                      variant="ghost-muted"
+                      disabled={!canOperate || save.isPending}
+                      onClick={() => update({ projectIndexingDefaultModelSelection: null })}
+                    >
+                      {message("common.clear")}
+                    </Button>
+                  ) : null}
+                  {selection && check?.supported === false ? (
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() => setCheckAttempt((attempt) => attempt + 1)}
+                    >
+                      {message("projectIndexing.checkModelAgain")}
+                    </Button>
+                  ) : null}
+                </div>
+              }
+            />
+          </div>
+          {decisionModelSettings}
+        </SettingsSearchTarget>
+      </BetterT3SettingsSubgroup>
+    </SettingsSection>
   );
 }
 
 function AuthorizedProjectIndexDefaults({
   environment,
+  decisionModelSettings,
+  preview,
 }: {
   readonly environment: EnvironmentPresentation;
+  readonly decisionModelSettings?: ReactNode;
+  readonly preview?: ReactNode;
 }) {
   const { message } = useInterfaceTranslator();
   const localDesktop = isElectron && environment.entry.target._tag === "PrimaryConnectionTarget";
@@ -189,49 +308,77 @@ function AuthorizedProjectIndexDefaults({
   if (!localDesktop && (session.error !== null || (session.data !== null && !canRead))) {
     if (initialized) setInitialized(false);
     return (
-      <div className="space-y-2 px-3 text-sm text-muted-foreground sm:px-4">
-        <p role="alert">{session.error ?? message("projectIndexing.readUnavailable")}</p>
-        {session.error ? (
-          <Button size="xs" variant="outline" onClick={session.refresh}>
-            {message("projectIndexing.retry")}
-          </Button>
-        ) : null}
-      </div>
+      <>
+        <div className="space-y-2 px-3 text-sm text-muted-foreground sm:px-4">
+          <p role="alert">{session.error ?? message("projectIndexing.readUnavailable")}</p>
+          {session.error ? (
+            <Button size="xs" variant="outline" onClick={session.refresh}>
+              {message("projectIndexing.retry")}
+            </Button>
+          ) : null}
+        </div>
+        <ProjectIndexDecisionSettings environmentId={environment.environmentId}>
+          {decisionModelSettings}
+        </ProjectIndexDecisionSettings>
+      </>
     );
   }
   if (!initialized && refreshing)
     return (
-      <p role="status" className="px-3 text-sm text-muted-foreground sm:px-4">
-        {message("common.loading")}
-      </p>
+      <>
+        <p role="status" className="px-3 text-sm text-muted-foreground sm:px-4">
+          {message("common.loading")}
+        </p>
+        <ProjectIndexDecisionSettings environmentId={environment.environmentId}>
+          {decisionModelSettings}
+        </ProjectIndexDecisionSettings>
+      </>
     );
   if (!initialized) setInitialized(true);
   return (
-    <div inert={refreshing} aria-busy={refreshing}>
-      <ProjectIndexDefaultsForm environment={environment} canOperate={canOperate && !refreshing} />
-    </div>
+    <ProjectIndexDefaultsForm
+      environment={environment}
+      canOperate={canOperate && !refreshing}
+      refreshing={refreshing}
+      decisionModelSettings={decisionModelSettings}
+      preview={preview}
+    />
   );
 }
 
 export function ProjectIndexingGlobalSettings({
   environmentId,
+  decisionModelSettings,
+  preview,
 }: {
   readonly environmentId: EnvironmentId;
+  readonly decisionModelSettings?: ReactNode;
+  readonly preview?: ReactNode;
 }) {
   const { message } = useInterfaceTranslator();
   const environment = useEnvironment(environmentId);
   if (!environment || environment.connection.phase !== "connected" || !environment.serverConfig)
     return (
-      <p className="px-3 text-sm text-muted-foreground sm:px-4">
-        {message("settings.betterT3.noEnvironment")}
-      </p>
+      <>
+        <p className="px-3 text-sm text-muted-foreground sm:px-4">
+          {message("settings.betterT3.noEnvironment")}
+        </p>
+        <ProjectIndexDecisionSettings environmentId={environmentId}>
+          {decisionModelSettings}
+        </ProjectIndexDecisionSettings>
+      </>
     );
   const capabilities = environment.serverConfig.environment.capabilities;
   if (!projectIndexingSupported(capabilities))
     return (
-      <p className="px-3 text-sm text-muted-foreground sm:px-4">
-        {message("projectIndexing.updateServer")}
-      </p>
+      <>
+        <p className="px-3 text-sm text-muted-foreground sm:px-4">
+          {message("projectIndexing.updateServer")}
+        </p>
+        <ProjectIndexDecisionSettings environmentId={environmentId}>
+          {decisionModelSettings}
+        </ProjectIndexDecisionSettings>
+      </>
     );
   if (!projectIndexingDefaultsSupported(capabilities))
     return (
@@ -239,8 +386,21 @@ export function ProjectIndexingGlobalSettings({
         <p className="px-3 text-sm text-muted-foreground sm:px-4">
           {message("projectIndexing.legacyDefaults")}
         </p>
-        <ProjectIndexingSettingsSection environmentId={environmentId} />
+        <BetterT3SettingsSubgroup groupId="project-indexing">
+          {preview}
+          <ProjectIndexingSettingsSection environmentId={environmentId} />
+        </BetterT3SettingsSubgroup>
+        <ProjectIndexDecisionSettings environmentId={environmentId}>
+          {decisionModelSettings}
+        </ProjectIndexDecisionSettings>
       </div>
     );
-  return <AuthorizedProjectIndexDefaults key={environmentId} environment={environment} />;
+  return (
+    <AuthorizedProjectIndexDefaults
+      key={environmentId}
+      environment={environment}
+      decisionModelSettings={decisionModelSettings}
+      preview={preview}
+    />
+  );
 }

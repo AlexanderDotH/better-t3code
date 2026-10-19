@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./better-t3-settings-layout": {
+      "types": "./src/betterT3SettingsLayout.ts",
+      "default": "./src/betterT3SettingsLayout.ts"
+    },
     "./project-chat-settings": {
       "types": "./src/projectChatSettings.ts",
       "default": "./src/projectChatSettings.ts"

@@ -6,10 +6,11 @@ import {
 import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Schema from "effect/Schema";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
+import type { BetterT3SettingsSubgroupId } from "@t3tools/client-runtime/better-t3-settings-layout";
 
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
-import type { ProviderInstanceEntry } from "../../providerInstances";
+import { isProviderInstancePickerReady, type ProviderInstanceEntry } from "../../providerInstances";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import type { ModelEsque } from "../chat/providerIconUtils";
 import { Button } from "../ui/button";
@@ -18,6 +19,8 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { SettingsRow } from "./settingsLayout";
+import { BetterT3SettingsSubgroup } from "./BetterT3SettingsSubgroup";
+import { BetterT3SettingsSearchItems } from "./BetterT3SettingsSearch";
 
 type ModelOption = { readonly id: string; readonly name: string };
 const isValidVoiceSettings = Schema.is(AssemblyAiVoiceSettings);
@@ -28,6 +31,8 @@ export function AssemblyAiVoiceSettingsForm({
   t3Models,
   disabled,
   onSave,
+  grouped = true,
+  modelsState = "ready",
 }: {
   readonly value: AssemblyAiVoiceSettings;
   readonly models: readonly ModelOption[];
@@ -37,6 +42,8 @@ export function AssemblyAiVoiceSettingsForm({
     readonly optionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>>;
   };
   readonly disabled: boolean;
+  readonly grouped?: boolean;
+  readonly modelsState?: "loading" | "ready" | "error";
   readonly onSave: (settings: AssemblyAiVoiceSettings) => Promise<boolean>;
 }) {
   const translate = useInterfaceTranslator().message;
@@ -51,6 +58,51 @@ export function AssemblyAiVoiceSettingsForm({
   const modelOptions = models.some((model) => model.id === draft.cleanupModel)
     ? models
     : [{ id: draft.cleanupModel, name: draft.cleanupModel }, ...models];
+  const cleanupModeLabel = translate(`settings.voice.options.${draft.cleanupMode}`);
+  const selectedCleanupModel = draft.cleanupModelSelection
+    ? t3Models.optionsByInstance
+        .get(draft.cleanupModelSelection.instanceId)
+        ?.find((model) => model.slug === draft.cleanupModelSelection?.model)
+    : undefined;
+  const selectedCleanupProvider = t3Models.instanceEntries.find(
+    (entry) => entry.instanceId === draft.cleanupModelSelection?.instanceId,
+  );
+  const cleanupModelLabel = draft.cleanupModelSelection
+    ? (selectedCleanupModel?.name ?? draft.cleanupModelSelection.model)
+    : (modelOptions.find((model) => model.id === draft.cleanupModel)?.name ?? draft.cleanupModel);
+  const cleanupModelStatus = draft.cleanupModelSelection
+    ? !selectedCleanupModel ||
+      selectedCleanupModel.isUnavailable ||
+      !selectedCleanupProvider ||
+      !isProviderInstancePickerReady(selectedCleanupProvider)
+      ? translate("settings.betterT3.value.unavailable")
+      : null
+    : modelsState === "loading"
+      ? translate("settings.voice.options.modelsLoading")
+      : !models.some((model) => model.id === draft.cleanupModel)
+        ? translate("settings.betterT3.value.unavailable")
+        : null;
+  const cleanupSummary = cleanupEnabled
+    ? [
+        cleanupModeLabel,
+        cleanupModelLabel,
+        ...(cleanupModelStatus ? [cleanupModelStatus] : []),
+      ].join(" · ")
+    : cleanupModeLabel;
+
+  function group(groupId: BetterT3SettingsSubgroupId, children: ReactNode, summary?: string) {
+    return grouped ? (
+      <BetterT3SettingsSubgroup
+        groupId={groupId}
+        summary={summary}
+        revealOnError={groupId === "voice-cleanup" && message === "validation"}
+      >
+        {children}
+      </BetterT3SettingsSubgroup>
+    ) : (
+      children
+    );
+  }
 
   function update<K extends keyof AssemblyAiVoiceSettings>(
     key: K,
@@ -69,6 +121,7 @@ export function AssemblyAiVoiceSettingsForm({
   ) {
     return (
       <SettingsRow
+        id={grouped && key === "cleanupMode" ? "voice-cleanup-mode" : undefined}
         title={translate(label)}
         description={hint ? translate(hint) : undefined}
         control={
@@ -200,169 +253,219 @@ export function AssemblyAiVoiceSettingsForm({
         void save();
       }}
     >
-      {select("speechModel", "settings.voice.options.speechModel", [
-        { value: "universal-3-5-pro", label: "Universal 3.5 Pro" },
-        { value: "universal-streaming-multilingual", label: "Universal Streaming Multilingual" },
-        { value: "universal-streaming-english", label: "Universal Streaming English" },
-      ])}
-      <SettingsRow
-        title={translate("settings.voice.options.languages")}
-        description={translate(
-          pro
-            ? "settings.voice.options.languagesHint"
-            : draft.speechModel === "universal-streaming-english"
-              ? "settings.voice.options.englishOnly"
-              : "settings.voice.options.proOnly",
-        )}
-        control={
-          <Input
-            nativeInput
-            size="sm"
-            className="w-full sm:w-72"
-            value={languages}
-            disabled={controlsDisabled || !pro}
-            aria-label={translate("settings.voice.options.languages")}
-            placeholder="de, en"
-            onChange={(event) => {
-              setLanguages(event.target.value);
-              setMessage(null);
-            }}
-          />
-        }
-      />
-      {select(
-        "streamingMode",
-        "settings.voice.options.mode",
-        [
-          { value: "balanced", label: translate("settings.voice.options.balanced") },
-          { value: "max_accuracy", label: translate("settings.voice.options.accuracy") },
-          { value: "min_latency", label: translate("settings.voice.options.latency") },
-        ],
-        !pro,
-        !pro ? "settings.voice.options.proOnly" : undefined,
-      )}
-      {number("minTurnSilence", "settings.voice.options.minSilence", 50, 10000)}
-      {number("maxTurnSilence", "settings.voice.options.maxSilence", 50, 10000)}
-      {number("vadThreshold", "settings.voice.options.vad", 0, 1, 0.01)}
-      {toggle("includePartialTurns", "settings.voice.options.partials")}
-      {pro ? (
-        <>
-          {toggle(
-            "continuousPartials",
-            "settings.voice.options.continuous",
-            undefined,
-            !draft.includePartialTurns,
-          )}
-          {number(
-            "interruptionDelay",
-            "settings.voice.options.delay",
-            0,
-            1000,
-            1,
-            !draft.includePartialTurns,
-          )}
-        </>
-      ) : null}
-      {select("voiceFocus", "settings.voice.options.focus", [
-        { value: "near-field", label: translate("settings.voice.options.near") },
-        { value: "far-field", label: translate("settings.voice.options.far") },
-      ])}
-      {toggle(
-        "projectVocabulary",
-        "settings.voice.options.vocabulary",
-        "settings.voice.options.vocabularyHint",
-      )}
-      <SettingsRow
-        title={translate("settings.voice.options.terms")}
-        description={translate("settings.voice.options.termsHint")}
-      >
-        <Textarea
-          value={terms}
-          disabled={controlsDisabled}
-          rows={3}
-          aria-label={translate("settings.voice.options.terms")}
-          onChange={(event) => {
-            setTerms(event.target.value);
-            setMessage(null);
-          }}
+      {grouped ? (
+        <BetterT3SettingsSearchItems
+          items={[
+            {
+              id: "voice-cleanup-mode",
+              targetId: "voice-cleanup-mode",
+              to: "/settings/better-t3",
+              title: translate("settings.voice.options.cleanup"),
+              description: translate("settings.voice.options.cleanupHint"),
+              category: translate("settings.voice.title"),
+            },
+            {
+              id: "voice-cleanup-model",
+              targetId: "voice-cleanup-model",
+              to: "/settings/better-t3",
+              title: translate("settings.voice.options.cleanupModel"),
+              category: translate("settings.voice.title"),
+            },
+            ...(draft.cleanupMode === "custom"
+              ? [
+                  {
+                    id: "voice-cleanup-instructions",
+                    targetId: "voice-cleanup-instructions",
+                    to: "/settings/better-t3" as const,
+                    title: translate("settings.voice.options.instructions"),
+                    category: translate("settings.voice.title"),
+                  },
+                ]
+              : []),
+          ]}
         />
-      </SettingsRow>
-      {pro ? (
-        <SettingsRow
-          title={translate("settings.voice.options.context")}
-          description={translate("settings.voice.options.contextHint")}
-        >
-          <Textarea
-            value={draft.contextPrompt}
-            maxLength={1750}
-            disabled={controlsDisabled}
-            rows={3}
-            aria-label={translate("settings.voice.options.context")}
-            onChange={(event) => update("contextPrompt", event.target.value)}
-          />
-        </SettingsRow>
       ) : null}
-      {select(
-        "cleanupMode",
-        "settings.voice.options.cleanup",
-        [
-          { value: "off", label: translate("settings.voice.options.off") },
-          { value: "conservative", label: translate("settings.voice.options.conservative") },
-          { value: "compact", label: translate("settings.voice.options.compact") },
-          { value: "custom", label: translate("settings.voice.options.custom") },
-        ],
-        false,
-        "settings.voice.options.cleanupHint",
-      )}
-      <SettingsRow
-        title={translate("settings.voice.options.cleanupModel")}
-        control={
-          <ProviderModelPicker
-            activeInstanceId={
-              draft.cleanupModelSelection?.instanceId ?? t3Models.fallbackSelection.instanceId
+      {group(
+        "voice-recording",
+        <>
+          {select("speechModel", "settings.voice.options.speechModel", [
+            { value: "universal-3-5-pro", label: "Universal 3.5 Pro" },
+            {
+              value: "universal-streaming-multilingual",
+              label: "Universal Streaming Multilingual",
+            },
+            { value: "universal-streaming-english", label: "Universal Streaming English" },
+          ])}
+          <SettingsRow
+            title={translate("settings.voice.options.languages")}
+            description={translate(
+              pro
+                ? "settings.voice.options.languagesHint"
+                : draft.speechModel === "universal-streaming-english"
+                  ? "settings.voice.options.englishOnly"
+                  : "settings.voice.options.proOnly",
+            )}
+            control={
+              <Input
+                nativeInput
+                size="sm"
+                className="w-full sm:w-72"
+                value={languages}
+                disabled={controlsDisabled || !pro}
+                aria-label={translate("settings.voice.options.languages")}
+                placeholder="de, en"
+                onChange={(event) => {
+                  setLanguages(event.target.value);
+                  setMessage(null);
+                }}
+              />
             }
-            model={draft.cleanupModelSelection?.model ?? t3Models.fallbackSelection.model}
-            lockedProvider={null}
-            instanceEntries={t3Models.instanceEntries}
-            modelOptionsByInstance={t3Models.optionsByInstance}
-            modelSelectionPurpose="text-generation"
-            auxiliaryModels={modelOptions}
-            selectedAuxiliaryModel={draft.cleanupModelSelection ? null : draft.cleanupModel}
-            fallbackToFirstModel={false}
-            disabled={controlsDisabled || !cleanupEnabled}
-            triggerVariant="outline"
-            triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
-            triggerAriaLabel={translate("settings.voice.options.cleanupModel")}
-            onInstanceModelChange={(instanceId, model) => {
-              update("cleanupModelSelection", createModelSelection(instanceId, model));
-            }}
-            onAuxiliaryModelChange={(model) => {
-              setMessage(null);
-              setDraft((current) => ({
-                ...current,
-                cleanupModel: model,
-                cleanupModelSelection: null,
-              }));
-            }}
           />
-        }
-      />
-      {draft.cleanupMode === "custom" ? (
-        <SettingsRow title={translate("settings.voice.options.instructions")}>
-          <Textarea
-            value={draft.cleanupInstructions}
-            maxLength={4000}
-            disabled={controlsDisabled}
-            rows={3}
-            aria-label={translate("settings.voice.options.instructions")}
-            onChange={(event) => update("cleanupInstructions", event.target.value)}
+          {select(
+            "streamingMode",
+            "settings.voice.options.mode",
+            [
+              { value: "balanced", label: translate("settings.voice.options.balanced") },
+              { value: "max_accuracy", label: translate("settings.voice.options.accuracy") },
+              { value: "min_latency", label: translate("settings.voice.options.latency") },
+            ],
+            !pro,
+            !pro ? "settings.voice.options.proOnly" : undefined,
+          )}
+          {number("minTurnSilence", "settings.voice.options.minSilence", 50, 10000)}
+          {number("maxTurnSilence", "settings.voice.options.maxSilence", 50, 10000)}
+          {number("vadThreshold", "settings.voice.options.vad", 0, 1, 0.01)}
+          {toggle("includePartialTurns", "settings.voice.options.partials")}
+          {pro ? (
+            <>
+              {toggle(
+                "continuousPartials",
+                "settings.voice.options.continuous",
+                undefined,
+                !draft.includePartialTurns,
+              )}
+              {number(
+                "interruptionDelay",
+                "settings.voice.options.delay",
+                0,
+                1000,
+                1,
+                !draft.includePartialTurns,
+              )}
+            </>
+          ) : null}
+          {select("voiceFocus", "settings.voice.options.focus", [
+            { value: "near-field", label: translate("settings.voice.options.near") },
+            { value: "far-field", label: translate("settings.voice.options.far") },
+          ])}
+          {toggle(
+            "projectVocabulary",
+            "settings.voice.options.vocabulary",
+            "settings.voice.options.vocabularyHint",
+          )}
+          <SettingsRow
+            title={translate("settings.voice.options.terms")}
+            description={translate("settings.voice.options.termsHint")}
+          >
+            <Textarea
+              value={terms}
+              disabled={controlsDisabled}
+              rows={3}
+              aria-label={translate("settings.voice.options.terms")}
+              onChange={(event) => {
+                setTerms(event.target.value);
+                setMessage(null);
+              }}
+            />
+          </SettingsRow>
+          {pro ? (
+            <SettingsRow
+              title={translate("settings.voice.options.context")}
+              description={translate("settings.voice.options.contextHint")}
+            >
+              <Textarea
+                value={draft.contextPrompt}
+                maxLength={1750}
+                disabled={controlsDisabled}
+                rows={3}
+                aria-label={translate("settings.voice.options.context")}
+                onChange={(event) => update("contextPrompt", event.target.value)}
+              />
+            </SettingsRow>
+          ) : null}
+          {toggle(
+            "automaticFileReferences",
+            "settings.voice.options.files",
+            "settings.voice.options.filesHint",
+          )}
+        </>,
+      )}
+      {group(
+        "voice-cleanup",
+        <>
+          {select(
+            "cleanupMode",
+            "settings.voice.options.cleanup",
+            [
+              { value: "off", label: translate("settings.voice.options.off") },
+              { value: "conservative", label: translate("settings.voice.options.conservative") },
+              { value: "compact", label: translate("settings.voice.options.compact") },
+              { value: "custom", label: translate("settings.voice.options.custom") },
+            ],
+            false,
+            "settings.voice.options.cleanupHint",
+          )}
+          <SettingsRow
+            id={grouped ? "voice-cleanup-model" : undefined}
+            title={translate("settings.voice.options.cleanupModel")}
+            control={
+              <ProviderModelPicker
+                activeInstanceId={
+                  draft.cleanupModelSelection?.instanceId ?? t3Models.fallbackSelection.instanceId
+                }
+                model={draft.cleanupModelSelection?.model ?? t3Models.fallbackSelection.model}
+                lockedProvider={null}
+                instanceEntries={t3Models.instanceEntries}
+                modelOptionsByInstance={t3Models.optionsByInstance}
+                modelSelectionPurpose="text-generation"
+                auxiliaryModels={modelOptions}
+                selectedAuxiliaryModel={draft.cleanupModelSelection ? null : draft.cleanupModel}
+                fallbackToFirstModel={false}
+                disabled={controlsDisabled || !cleanupEnabled}
+                triggerVariant="outline"
+                triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
+                triggerAriaLabel={translate("settings.voice.options.cleanupModel")}
+                onInstanceModelChange={(instanceId, model) => {
+                  update("cleanupModelSelection", createModelSelection(instanceId, model));
+                }}
+                onAuxiliaryModelChange={(model) => {
+                  setMessage(null);
+                  setDraft((current) => ({
+                    ...current,
+                    cleanupModel: model,
+                    cleanupModelSelection: null,
+                  }));
+                }}
+              />
+            }
           />
-        </SettingsRow>
-      ) : null}
-      {toggle(
-        "automaticFileReferences",
-        "settings.voice.options.files",
-        "settings.voice.options.filesHint",
+          {draft.cleanupMode === "custom" ? (
+            <SettingsRow
+              id={grouped ? "voice-cleanup-instructions" : undefined}
+              title={translate("settings.voice.options.instructions")}
+            >
+              <Textarea
+                value={draft.cleanupInstructions}
+                maxLength={4000}
+                disabled={controlsDisabled}
+                rows={3}
+                aria-label={translate("settings.voice.options.instructions")}
+                onChange={(event) => update("cleanupInstructions", event.target.value)}
+              />
+            </SettingsRow>
+          ) : null}
+        </>,
+        cleanupSummary,
       )}
       <div className="space-y-3 px-3 py-4 sm:px-4">
         <p className="text-xs text-muted-foreground">

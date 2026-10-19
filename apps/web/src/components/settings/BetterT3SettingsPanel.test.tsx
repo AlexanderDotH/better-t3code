@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import {
   BETTER_T3_FEATURE_REGISTRY,
   DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
@@ -5,9 +6,9 @@ import {
 import { DEFAULT_CLIENT_SETTINGS, type ClientSettings } from "@t3tools/contracts/settings";
 import { mergeClientSettingsPatch } from "@t3tools/client-runtime/client-settings";
 import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
-import { act, Children, isValidElement, useState, type ReactNode } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
-import { expect, it, vi } from "vite-plus/test";
+import { act, useState, type ReactNode } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 import { BetterT3SettingsContent } from "./BetterT3SettingsPanel";
 import { BetterT3FeatureChoice } from "./BetterT3SettingsPreview";
@@ -16,14 +17,13 @@ import {
   buildBetterT3ControlStates,
   buildReasoningDisplaySettingsPatch,
 } from "./BetterT3SettingsPanel.logic";
-import { SettingsSearchTargetProvider } from "./settingsLayout";
+import { SettingsSearchTargetProvider, SettingsSearchTarget } from "./settingsLayout";
+import { BetterT3SettingsSubgroup } from "./BetterT3SettingsSubgroup";
 
 vi.mock("../../hooks/useSettings", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../hooks/useSettings")>()),
   usePrimarySettingsAvailable: () => true,
 }));
-
-vi.mock("./BetterT3SettingsSearch", () => ({ BetterT3SettingsSearch: () => null }));
 
 const translate = createInterfaceTranslator({ language: "de", locale: "de-DE" }).message;
 const features = buildBetterT3ControlStates({
@@ -33,6 +33,45 @@ const features = buildBetterT3ControlStates({
   surface: "web",
   capabilities: {},
 });
+let host: HTMLDivElement;
+let root: Root;
+const scrollIntoView = vi.fn();
+beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: () => ({ matches: true, addEventListener() {}, removeEventListener() {} }),
+  });
+  HTMLElement.prototype.scrollIntoView = scrollIntoView;
+  Object.defineProperty(HTMLElement.prototype, "getAnimations", {
+    configurable: true,
+    value: () => [],
+  });
+  localStorage.clear();
+  host = document.createElement("div");
+  document.body.append(host);
+  root = createRoot(host);
+});
+afterEach(async () => {
+  await act(() => root.unmount());
+  host.remove();
+  scrollIntoView.mockClear();
+  vi.unstubAllGlobals();
+});
+const render = async (content: ReactNode) => act(() => root.render(content));
+const click = async (element: Element | null) => {
+  expect(element).not.toBeNull();
+  await act(() => (element as HTMLElement).click());
+};
+
 function DraftControl() {
   const [draft, setDraft] = useState("");
   return (
@@ -43,7 +82,6 @@ function DraftControl() {
     />
   );
 }
-
 function ReasoningSettingsHarness(props: { onChange: (settings: ClientSettings) => void }) {
   const [settings, setSettings] = useState(DEFAULT_CLIENT_SETTINGS);
   const controls = buildBetterT3ControlStates({
@@ -94,293 +132,191 @@ function ReasoningSettingsHarness(props: { onChange: (settings: ClientSettings) 
   );
 }
 
-it("keeps all three reasoning choices visible and switches display and compatibility settings together", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+it("keeps all reasoning choices directly visible and updates their existing settings together", async () => {
   const onChange = vi.fn();
-  let renderer: ReactTestRenderer | undefined;
-  try {
-    await act(() => {
-      renderer = create(<ReasoningSettingsHarness onChange={onChange} />);
-    });
-    expect(renderer!.root.findAllByType("details")).toHaveLength(0);
-    expect(
-      renderer!.root.findAllByProps({ "data-better-t3-feature": "agent.reasoningWorkingOverlay" }),
-    ).toHaveLength(0);
-    const reasoningRow = renderer!.root.findByProps({
-      id: "agent.reasoningVisibility",
-      "data-slot": "settings-row",
-    });
-    expect(reasoningRow.findAllByProps({ role: "switch" })).toHaveLength(0);
-    const radios = () => renderer!.root.findAllByProps({ role: "radio" });
-    expect(radios().map((node) => node.props["aria-checked"])).toEqual([true, false, false]);
-    for (const index of [1, 2, 0, 2, 1, 0]) {
-      await act(() => radios()[index]!.props.onClick());
-      expect(radios().map((node) => node.props["aria-checked"])).toEqual(
-        [0, 1, 2].map((value) => value === index),
-      );
-      expect(onChange).toHaveBeenLastCalledWith({
-        ...DEFAULT_CLIENT_SETTINGS,
-        showReasoning: index !== 0,
-        betterT3Device: {
-          ...DEFAULT_CLIENT_SETTINGS.betterT3Device,
-          flags: {
-            ...DEFAULT_CLIENT_SETTINGS.betterT3Device.flags,
-            "agent.reasoningVisibility": index !== 0,
-            "agent.reasoningWorkingOverlay": index === 2,
-          },
+  await render(<ReasoningSettingsHarness onChange={onChange} />);
+  expect(host.querySelector('[data-better-t3-feature="agent.reasoningWorkingOverlay"]')).toBeNull();
+  const row = host.querySelector('[data-better-t3-feature="agent.reasoningVisibility"]')!;
+  expect(row.querySelector('[role="switch"]')).toBeNull();
+  const radios = () => Array.from(row.querySelectorAll<HTMLElement>('[role="radio"]'));
+  expect(radios().map((radio) => radio.getAttribute("aria-checked"))).toEqual([
+    "true",
+    "false",
+    "false",
+  ]);
+  for (const index of [1, 2, 0, 2, 1, 0]) {
+    await click(radios()[index]!);
+    expect(radios().map((radio) => radio.getAttribute("aria-checked"))).toEqual(
+      [0, 1, 2].map((value) => String(value === index)),
+    );
+    expect(onChange).toHaveBeenLastCalledWith({
+      ...DEFAULT_CLIENT_SETTINGS,
+      showReasoning: index !== 0,
+      betterT3Device: {
+        ...DEFAULT_CLIENT_SETTINGS.betterT3Device,
+        flags: {
+          ...DEFAULT_CLIENT_SETTINGS.betterT3Device.flags,
+          "agent.reasoningVisibility": index !== 0,
+          "agent.reasoningWorkingOverlay": index === 2,
         },
-      });
-    }
-  } finally {
-    await act(() => renderer?.unmount());
-    vi.unstubAllGlobals();
-  }
-});
-
-it("keeps the Project Index decision selector beside the dedicated Project Index settings", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  let renderer: ReactTestRenderer | undefined;
-  try {
-    await act(() => {
-      renderer = create(
-        <BetterT3SettingsContent
-          features={features}
-          translate={translate}
-          controls={{
-            "knowledge.projectIndexingDecisionModel": <button>Decision model</button>,
-          }}
-          projectIndexingSettings={<span>Project Index settings</span>}
-          onSwitchChange={vi.fn()}
-        />,
-      );
-    });
-
-    expect(
-      renderer!.root.findAll(
-        (node) =>
-          typeof node.type === "string" &&
-          node.props["data-better-t3-feature"] === "knowledge.projectIndexingDecisionModel",
-      ),
-    ).toHaveLength(1);
-    expect(renderer!.root.findByProps({ children: "Decision model" })).toBeDefined();
-    expect(renderer!.root.findByProps({ children: "Project Index settings" })).toBeDefined();
-  } finally {
-    await act(() => renderer?.unmount());
-    vi.unstubAllGlobals();
-  }
-});
-
-it("keeps every setting mounted across category jumps and search jumps to former advanced settings", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("window", { matchMedia: () => ({ matches: true }) });
-  const scrollIntoView = vi.fn();
-  const focus = vi.fn();
-  const onTargetHandled = vi.fn();
-  const nodes = new Map<string, unknown>();
-  const navigationStyles = new Map<string, string>();
-  const navigation = {
-    offsetHeight: 182,
-    parentElement: {
-      style: {
-        setProperty: (name: string, value: string) => navigationStyles.set(name, value),
-        removeProperty: (name: string) => navigationStyles.delete(name),
       },
-    },
-  };
-  let resizeNavigation = () => {};
-  const disconnectNavigation = vi.fn();
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      constructor(callback: () => void) {
-        resizeNavigation = callback;
-      }
-      observe = vi.fn();
-      disconnect = disconnectNavigation;
-    },
+    });
+  }
+});
+
+it("keeps the Project Index decision selector in its collapsed model group exactly once", async () => {
+  await render(
+    <BetterT3SettingsContent
+      features={features}
+      translate={translate}
+      controls={{ "knowledge.projectIndexingDecisionModel": <button>Decision model</button> }}
+      projectIndexingSettings={<span>Project Index settings</span>}
+      onSwitchChange={vi.fn()}
+    />,
   );
-  vi.stubGlobal("document", { getElementById: (id: string) => nodes.get(id) });
-  let renderer: ReactTestRenderer | undefined;
-  const renderContent = (targetId: string | null) => (
-    <SettingsSearchTargetProvider targetId={targetId} onTargetHandled={onTargetHandled}>
+  expect(host.textContent).toContain("Project Index settings");
+  expect(
+    host.querySelector('[data-better-t3-feature="knowledge.projectIndexingDecisionModel"]'),
+  ).toBeNull();
+  await click(host.querySelector('[data-better-t3-subgroup="indexing-models"] button'));
+  expect(
+    host.querySelectorAll('[data-better-t3-feature="knowledge.projectIndexingDecisionModel"]'),
+  ).toHaveLength(1);
+  expect(host.textContent).toContain("Decision model");
+});
+
+it("keeps every row available and preserves drafts through category navigation and collapsing", async () => {
+  const onSwitchChange = vi.fn();
+  await render(
+    <BetterT3SettingsContent
+      features={features}
+      translate={translate}
+      controls={{}}
+      languageControl={<span>Interface language</span>}
+      usagePacingControl={<span>Usage pacing</span>}
+      chatWidthSettings={<span>Adjust chat width</span>}
+      visualSettings={<span>Glass opacity</span>}
+      featureChoices={{ "agent.fetchModel": <DraftControl /> }}
+      onSwitchChange={onSwitchChange}
+    />,
+  );
+  for (const trigger of Array.from(
+    host.querySelectorAll<HTMLElement>('[data-slot="collapsible-trigger"]'),
+  ))
+    await click(trigger);
+  const actualIds = Array.from(host.querySelectorAll<HTMLElement>("[data-better-t3-feature]"))
+    .map((row) => row.dataset.betterT3Feature)
+    .sort();
+  expect(actualIds).toEqual(
+    features
+      .map(({ descriptor }) => descriptor.id)
+      .filter((id) => id !== "agent.reasoningWorkingOverlay")
+      .sort(),
+  );
+  const draft = host.querySelector<HTMLInputElement>('[aria-label="Draft setting"]')!;
+  await act(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+      draft,
+      "Unsaved draft",
+    );
+    draft.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  for (const link of Array.from(host.querySelectorAll<HTMLAnchorElement>("nav a"))) {
+    await click(link);
+    expect(document.activeElement?.id).toBe(link.hash.slice(1));
+    expect(host.querySelector<HTMLInputElement>('[aria-label="Draft setting"]')!.value).toBe(
+      "Unsaved draft",
+    );
+  }
+  const fetchTrigger = host.querySelector<HTMLElement>(
+    '[data-better-t3-subgroup="fetch"] [data-slot="collapsible-trigger"]',
+  )!;
+  await click(fetchTrigger);
+  expect(draft.closest("[inert]")).not.toBeNull();
+  await click(fetchTrigger);
+  expect(draft.closest("[inert]")).toBeNull();
+  expect(host.querySelector('[aria-label="Draft setting"]')).toBe(draft);
+  expect(draft.value).toBe("Unsaved draft");
+  expect(onSwitchChange).not.toHaveBeenCalled();
+});
+
+it("opens a lazy model group before focusing its search destination", async () => {
+  const handled = vi.fn();
+  await render(
+    <SettingsSearchTargetProvider targetId="agent.fetchModel" onTargetHandled={handled}>
       <BetterT3SettingsContent
         features={features}
         translate={translate}
-        controls={{}}
-        languageControl={<span>Interface language</span>}
-        usagePacingControl={<span>Usage pacing</span>}
-        chatWidthSettings={<span>Adjust chat width</span>}
-        visualSettings={<span>Glass opacity</span>}
-        featureChoices={Object.fromEntries(
-          features.map(({ descriptor }) => [
-            descriptor.id,
-            descriptor.id === "agent.fetchModel" ? (
-              <DraftControl key={descriptor.id} />
-            ) : (
-              descriptor.id
-            ),
-          ]),
-        )}
+        controls={{ "agent.fetchModel": <input aria-label="Fetch model" /> }}
         onSwitchChange={vi.fn()}
       />
-    </SettingsSearchTargetProvider>
+    </SettingsSearchTargetProvider>,
   );
+  const target = host.querySelector('[id="agent.fetchModel"]');
+  expect(target).not.toBeNull();
+  expect(target?.closest('[inert], [aria-hidden="true"]')).toBeNull();
+  expect(document.activeElement).toBe(target);
+  expect(handled).toHaveBeenCalledOnce();
+});
 
-  try {
+it("indexes moved language and decision controls before their specialized groups ever open", async () => {
+  const movedIds = ["voice.outputLanguage", "knowledge.projectIndexingDecisionModel"] as const;
+  await render(
+    <SettingsSearchTargetProvider targetId={null}>
+      <BetterT3SettingsContent
+        features={features.filter((feature) => movedIds.some((id) => id === feature.descriptor.id))}
+        consumedFeatureIds={movedIds}
+        controls={{}}
+        translate={translate}
+        onSwitchChange={vi.fn()}
+        voiceSettings={
+          <BetterT3SettingsSubgroup groupId="voice-translation">
+            <SettingsSearchTarget id="voice.outputLanguage">Language control</SettingsSearchTarget>
+          </BetterT3SettingsSubgroup>
+        }
+        projectIndexingSettings={
+          <BetterT3SettingsSubgroup groupId="indexing-models">
+            <SettingsSearchTarget id="knowledge.projectIndexingDecisionModel">
+              Decision control
+            </SettingsSearchTarget>
+          </BetterT3SettingsSubgroup>
+        }
+      />
+    </SettingsSearchTargetProvider>,
+  );
+  const input = host.querySelector<HTMLInputElement>('input[role="combobox"]')!;
+  for (const id of movedIds) {
+    expect(document.getElementById(id)).toBeNull();
+    const label = translate(`betterT3.${id}.label`);
     await act(() => {
-      renderer = create(renderContent(null), {
-        createNodeMock: (element) => {
-          const props = element.props as {
-            id?: string;
-            children?: ReactNode;
-            onFocusCapture?: () => void;
-            "data-better-t3-navigation"?: boolean;
-          };
-          if (props["data-better-t3-navigation"] !== undefined) return navigation;
-          if (!props.id) return null;
-          const id = props.id;
-          const header = Children.toArray(props.children).find(
-            (child) =>
-              isValidElement<Record<string, unknown>>(child) &&
-              child.props["data-settings-scroll-target"] !== undefined,
-          );
-          const node = {
-            dataset: {},
-            querySelector: () =>
-              isValidElement<Record<string, unknown>>(header)
-                ? {
-                    dataset: { settingsScrollTarget: header.props["data-settings-scroll-target"] },
-                    scrollIntoView: (options: ScrollIntoViewOptions) => scrollIntoView(id, options),
-                  }
-                : null,
-            scrollIntoView: (options: ScrollIntoViewOptions) => scrollIntoView(id, options),
-            focus: () => {
-              focus(id);
-              props.onFocusCapture?.();
-            },
-            classList: { remove: vi.fn() },
-          };
-          nodes.set(id, node);
-          return node;
-        },
-      });
+      input.focus();
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, label);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    const root = renderer!.root;
-    expect(navigationStyles.get("--better-t3-navigation-height")).toBe("182px");
-    const settingIds = () =>
-      root
-        .findAll((node) => typeof node.type === "string" && !!node.props["data-better-t3-feature"])
-        .map((node) => node.props["data-better-t3-feature"])
-        .sort();
-    const expectedIds = features
-      .map(({ descriptor }) => descriptor.id)
-      .filter((id) => id !== "agent.reasoningWorkingOverlay")
-      .sort();
-    expect(settingIds()).toEqual(expectedIds);
-    expect(root.findAllByType("a").map((link) => link.children.join(""))).toEqual([
-      "Allgemein",
-      "Darstellung",
-      "Chat",
-      "Eingabe",
-      "Seitenleiste",
-      "Nutzung",
-      "Agenten",
-      "Workspace",
-      "Spracheingabe",
-      "Wissen",
-      "System",
-      "Integrationen",
-    ]);
-    for (const [group, featureId] of [
-      ["chat", "chat.presentation"],
-      ["chat", "chat.characterStreamingMotion"],
-      ["chat", "agent.reasoningVisibility"],
-      ["composer", "agent.expandedComposerControls"],
-      ["composer", "agent.promptImprovement"],
-      ["composer", "chat.workspaceCardDeck"],
-      ["composer", "chat.contextWindowSelector"],
-      ["sidebar", "chat.sorting"],
-      ["sidebar", "chat.classicSidebar"],
-      ["agents", "agent.deepThinking"],
-      ["workspace", "workspace.checkpoints"],
-      ["voice", "voice.outputLanguage"],
-      ["knowledge", "knowledge.graph"],
-      ["system", "resource.diagnostics"],
-      ["integrations", "integration.mcp"],
-    ]) {
-      const region = root.findByProps({ id: `better-t3-group-${group}`, role: "region" });
-      expect(
-        region.findByProps({ id: featureId, "data-better-t3-feature": featureId }),
-      ).toBeDefined();
-    }
-    for (const [group, label] of [
-      ["general", "Interface language"],
-      ["appearance", "Glass opacity"],
-      ["chat", "Adjust chat width"],
-      ["usage", "Usage pacing"],
-    ]) {
-      const region = root.findByProps({ id: `better-t3-group-${group}`, role: "region" });
-      expect(region.findAllByType("span").map((node) => node.children.join(""))).toContain(label);
-    }
-
-    await act(() =>
-      root
-        .findByProps({ "aria-label": "Draft setting" })
-        .props.onChange({ currentTarget: { value: "Unsaved draft" } }),
-    );
-    for (const group of [
-      "general",
-      "appearance",
-      "chat",
-      "composer",
-      "sidebar",
-      "usage",
-      "agents",
-      "workspace",
-      "voice",
-      "knowledge",
-      "system",
-      "integrations",
-    ]) {
-      await act(() => {
-        root.findByProps({ href: `#better-t3-group-${group}` }).props.onClick({
-          preventDefault: vi.fn(),
-        });
-      });
-      expect(focus).toHaveBeenLastCalledWith(`better-t3-group-${group}`);
-      expect(scrollIntoView).toHaveBeenLastCalledWith(`better-t3-group-${group}`, {
-        behavior: "auto",
-        block: "start",
-      });
-      expect(settingIds()).toEqual(expectedIds);
-      expect(root.findByProps({ "aria-label": "Draft setting" }).props.value).toBe("Unsaved draft");
-    }
-
-    navigation.offsetHeight = 326;
-    resizeNavigation();
-    expect(navigationStyles.get("--better-t3-navigation-height")).toBe("326px");
-
-    await act(() => renderer!.update(renderContent("knowledge.graph")));
-    expect(focus).toHaveBeenLastCalledWith("knowledge.graph");
-    expect(scrollIntoView).toHaveBeenLastCalledWith("knowledge.graph", {
-      behavior: "auto",
-      block: "center",
-    });
-    expect(onTargetHandled).toHaveBeenCalledOnce();
-    expect(root.findByProps({ "aria-label": "Draft setting" }).props.value).toBe("Unsaved draft");
-
-    await act(() => renderer!.update(renderContent("better-t3-group-sidebar")));
-    expect(focus).toHaveBeenLastCalledWith("better-t3-group-sidebar");
-    expect(scrollIntoView).toHaveBeenLastCalledWith("better-t3-group-sidebar", {
-      behavior: "auto",
-      block: "start",
-    });
-    await act(() => renderer!.unmount());
-    renderer = undefined;
-    expect(disconnectNavigation).toHaveBeenCalledOnce();
-    expect(navigationStyles.size).toBe(0);
-  } finally {
-    await act(() => renderer?.unmount());
-    vi.unstubAllGlobals();
+    expect(
+      Array.from(document.querySelectorAll('[role="option"]')).some((option) =>
+        option.textContent?.includes(label),
+      ),
+    ).toBe(true);
   }
+});
+
+it("shows only available device categories when there is no environment", async () => {
+  await render(
+    <BetterT3SettingsContent
+      features={[]}
+      controls={{}}
+      translate={translate}
+      onSwitchChange={vi.fn()}
+      languageControl={<span>Interface language</span>}
+      chatSettings={<span>Response metrics</span>}
+      composerSettings={<span>Context meter</span>}
+    />,
+  );
+  expect(Array.from(host.querySelectorAll("nav a")).map((link) => link.textContent)).toEqual([
+    "Allgemein",
+    "Chat",
+    "Eingabe",
+  ]);
+  expect(host.querySelectorAll('[data-slot="settings-section-body"]')).toHaveLength(3);
 });

@@ -66,6 +66,74 @@ function makePreferencesState(
 }
 
 describe("mobile preferences state", () => {
+  it.effect("keeps Better T3 expansion across navigation after persistence fails", () =>
+    Effect.gen(function* () {
+      let persisted: Preferences = { baseFontSize: 16 };
+      let failWrites = true;
+      let writeStarted = deferred<void>();
+      const state = makePreferencesState({
+        load: Effect.succeed(persisted),
+        savePatch: (patch) =>
+          Effect.gen(function* () {
+            writeStarted.resolve(undefined);
+            if (failWrites) {
+              return yield* new MobilePreferencesSaveError({ cause: new Error("write failed") });
+            }
+            persisted = { ...persisted, ...patch };
+            return persisted;
+          }),
+      });
+      const registry = AtomRegistry.make();
+      const unmountFirstScreen = registry.mount(state.preferencesAtom);
+      const unmountUpdate = registry.mount(state.updatePreferencesAtom);
+      yield* AtomRegistry.getResult(registry, state.preferencesAtom, { suspendOnWaiting: true });
+
+      const rolledBackOrdinaryPreference = deferred<void>();
+      const stopObserving = registry.subscribe(state.preferencesAtom, (result) => {
+        if (
+          AsyncResult.isSuccess(result) &&
+          result.value.baseFontSize === 16 &&
+          result.value.betterT3ExpandedSettingsGroups?.includes("parallel-plan")
+        ) {
+          rolledBackOrdinaryPreference.resolve(undefined);
+        }
+      });
+      registry.set(state.updatePreferencesAtom, {
+        betterT3ExpandedSettingsGroups: ["fetch", "parallel-plan"],
+        baseFontSize: 22,
+      });
+      yield* Effect.promise(() => rolledBackOrdinaryPreference.promise);
+      stopObserving();
+      expect(persisted).toEqual({ baseFontSize: 16 });
+      unmountFirstScreen();
+      const unmountNextScreen = registry.mount(state.preferencesAtom);
+      expect(
+        yield* AtomRegistry.getResult(registry, state.preferencesAtom, { suspendOnWaiting: true }),
+      ).toEqual({
+        baseFontSize: 16,
+        betterT3ExpandedSettingsGroups: ["fetch", "parallel-plan"],
+      });
+
+      failWrites = false;
+      writeStarted = deferred<void>();
+      registry.set(state.updatePreferencesAtom, {
+        betterT3ExpandedSettingsGroups: ["fetch", "parallel-plan", "auto-reasoning"],
+      });
+      yield* Effect.promise(() => writeStarted.promise);
+      yield* AtomRegistry.getResult(registry, state.updatePreferencesAtom, {
+        suspendOnWaiting: true,
+      });
+      expect(persisted).toEqual({
+        baseFontSize: 16,
+        betterT3ExpandedSettingsGroups: ["fetch", "parallel-plan", "auto-reasoning"],
+      });
+
+      unmountNextScreen();
+      unmountUpdate();
+      registry.dispose();
+    }),
+  );
+
   it.effect("shares one preference load across consumers", () =>
     Effect.gen(function* () {
       const load = vi.fn(() => Promise.resolve<Preferences>({ baseFontSize: 17 }));
