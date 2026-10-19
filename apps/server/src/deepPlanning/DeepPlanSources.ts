@@ -96,6 +96,7 @@ export class DeepPlanSources extends Context.Service<DeepPlanSources, DeepPlanSo
 ) {}
 
 const QUERY_PAGE_SIZE = 128;
+const EXPORT_RECORD_BATCH_SIZE = 128;
 const DEFAULT_CATALOG_PAGE_SIZE = 50;
 const DEFAULT_RECORD_PAGE_SIZE = 25;
 const RECORD_PAGE_BYTES = 256 * 1024;
@@ -104,6 +105,7 @@ const Cursor = Schema.Struct({
   scope: Schema.String,
   offset: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   anchor: Schema.optional(Schema.String),
+  endOffset: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
 });
 const CursorJson = Schema.fromJsonString(Cursor);
 const decodeCursorJson = Schema.decodeUnknownEffect(CursorJson);
@@ -183,19 +185,67 @@ function pageLimit(value: number | undefined, maximum: number, fallback: number)
   return value === undefined ? fallback : Math.max(1, Math.min(maximum, Math.floor(value)));
 }
 
-function encodeCursor(scope: string, offset: number): string {
-  return Buffer.from(encodeCursorJson({ version: 1, scope, offset })).toString("base64url");
+function encodeCursor(scope: string, offset: number, endOffset?: number): string {
+  return Buffer.from(
+    encodeCursorJson({
+      version: 1,
+      scope,
+      offset,
+      ...(endOffset === undefined ? {} : { endOffset }),
+    }),
+  ).toString("base64url");
 }
 
 const decodeCursor = Effect.fnUntraced(function* (encoded: string | undefined, scope: string) {
-  if (encoded === undefined) return 0;
+  if (encoded === undefined) return { offset: 0, endOffset: undefined };
   const cursor = yield* decodeCursorJson(Buffer.from(encoded, "base64url").toString("utf8")).pipe(
     Effect.mapError(() => sourceError("invalid-chunk", "The source cursor is invalid.")),
   );
   if (cursor.scope !== scope) {
     return yield* sourceError("invalid-chunk", "The source cursor belongs to another snapshot.");
   }
-  return cursor.offset;
+  return cursor;
+});
+
+const sourceContentRow = Effect.fnUntraced(function* (
+  sourceId: DeepPlanSourceId,
+  record: DeepPlanSourceRecord,
+) {
+  const recordJson = canonicalSourceJson(record);
+  const recordBytes = Buffer.byteLength(recordJson);
+  if (recordBytes > DEEP_PLAN_MAX_RECORD_BYTES)
+    return yield* sourceError(
+      "invalid-chunk",
+      "Source records must use content chunks for large bodies.",
+      sourceId,
+    );
+  const body = record.kind === "attachment" || record.kind === "content";
+  return {
+    record_id: record.recordId,
+    origin_key: sourceOriginKey(record.origin),
+    content_hash: record.contentHash,
+    record_json: recordJson,
+    record_bytes: recordBytes,
+    record_kind: record.kind,
+    required_analysis:
+      record.kind === "attachment" || (record.kind === "content" && !record.requiredForAnalysis)
+        ? 0
+        : 1,
+    content_id:
+      record.kind === "attachment"
+        ? record.attachmentId
+        : record.kind === "content"
+          ? record.contentId
+          : null,
+    chunk_index: body ? record.chunkIndex : null,
+    total_chunks: body ? record.totalChunks : null,
+    body_bytes:
+      record.kind === "attachment"
+        ? Buffer.byteLength(record.dataBase64, "base64")
+        : record.kind === "content"
+          ? Buffer.byteLength(record.data)
+          : 0,
+  };
 });
 
 export const makeDeepPlanSources = Effect.gen(function* () {
@@ -210,27 +260,8 @@ export const makeDeepPlanSources = Effect.gen(function* () {
     ordinal: number,
     record: DeepPlanSourceRecord,
   ) {
-    const recordJson = canonicalSourceJson(record);
-    const recordBytes = Buffer.byteLength(recordJson);
-    if (recordBytes > DEEP_PLAN_MAX_RECORD_BYTES)
-      return yield* sourceError(
-        "invalid-chunk",
-        "Source records must use content chunks for large bodies.",
-        sourceId,
-      );
-    const body = record.kind === "attachment" || record.kind === "content";
-    yield* sql`
-      INSERT OR IGNORE INTO deep_plan_source_contents (
-        record_id, origin_key, content_hash, record_json, record_bytes, record_kind,
-        required_analysis, content_id, chunk_index, total_chunks, body_bytes
-      ) VALUES (
-        ${record.recordId}, ${sourceOriginKey(record.origin)}, ${record.contentHash}, ${recordJson}, ${recordBytes}, ${record.kind},
-        ${record.kind === "attachment" || (record.kind === "content" && !record.requiredForAnalysis) ? 0 : 1},
-        ${record.kind === "attachment" ? record.attachmentId : record.kind === "content" ? record.contentId : null},
-        ${body ? record.chunkIndex : null}, ${body ? record.totalChunks : null},
-        ${record.kind === "attachment" ? Buffer.byteLength(record.dataBase64, "base64") : record.kind === "content" ? Buffer.byteLength(record.data) : 0}
-      )
-    `;
+    const content = yield* sourceContentRow(sourceId, record);
+    yield* sql`INSERT OR IGNORE INTO deep_plan_source_contents ${sql.insert(content)}`;
     const existing = yield* sql<{ readonly recordId: string }>`
       SELECT record_id AS "recordId" FROM deep_plan_source_records
       WHERE source_id = ${sourceId} AND ordinal = ${ordinal}
@@ -245,6 +276,34 @@ export const makeDeepPlanSources = Effect.gen(function* () {
     yield* sql`
       INSERT OR IGNORE INTO deep_plan_source_records (source_id, ordinal, record_id)
       VALUES (${sourceId}, ${ordinal}, ${record.recordId})
+    `;
+  });
+
+  const persistExportRecords = Effect.fnUntraced(function* (
+    sourceId: DeepPlanSourceId,
+    offset: number,
+    records: ReadonlyArray<DeepPlanSourceRecord>,
+  ) {
+    if (records.length === 0) return;
+    const uniqueRecords = new Map(records.map((record) => [record.recordId, record]));
+    const stored = yield* sql<{ readonly recordId: string }>`
+      SELECT record_id AS "recordId" FROM deep_plan_source_contents
+      WHERE ${sql.in("record_id", [...uniqueRecords.keys()])}
+    `;
+    for (const row of stored) uniqueRecords.delete(row.recordId);
+    const contents = yield* Effect.forEach(uniqueRecords.values(), (record) =>
+      sourceContentRow(sourceId, record),
+    );
+    if (contents.length > 0)
+      yield* sql`INSERT OR IGNORE INTO deep_plan_source_contents ${sql.insert(contents)}`;
+    yield* sql`
+      INSERT INTO deep_plan_source_records ${sql.insert(
+        records.map((record, index) => ({
+          source_id: sourceId,
+          ordinal: offset + index,
+          record_id: record.recordId,
+        })),
+      )}
     `;
   });
 
@@ -316,8 +375,9 @@ export const makeDeepPlanSources = Effect.gen(function* () {
     readonly cursor?: string | undefined;
     readonly limit?: number | undefined;
   }) {
-    const offset = yield* decodeCursor(input.cursor, input.scope);
-    if (offset > input.snapshot.recordCount) {
+    const cursor = yield* decodeCursor(input.cursor, input.scope);
+    const { offset, endOffset = input.snapshot.recordCount } = cursor;
+    if (offset > endOffset || endOffset > input.snapshot.recordCount) {
       return yield* sourceError(
         "invalid-chunk",
         "The source cursor is past the end of the snapshot.",
@@ -328,7 +388,7 @@ export const makeDeepPlanSources = Effect.gen(function* () {
       WITH candidates AS (
         SELECT r.ordinal, c.record_id, c.record_bytes
         FROM deep_plan_source_records r JOIN deep_plan_source_contents c ON c.record_id = r.record_id
-        WHERE r.source_id = ${input.snapshot.sourceId} AND r.ordinal >= ${offset}
+        WHERE r.source_id = ${input.snapshot.sourceId} AND r.ordinal >= ${offset} AND r.ordinal < ${endOffset}
         ORDER BY r.ordinal
         LIMIT ${pageLimit(input.limit, DEEP_PLAN_MAX_CHUNK_RECORDS, DEFAULT_RECORD_PAGE_SIZE)}
       ), page AS (
@@ -349,7 +409,7 @@ export const makeDeepPlanSources = Effect.gen(function* () {
     }
     const records = yield* Effect.forEach(selected, (value) => decodeRecordJson(value));
     const nextOffset = offset + records.length;
-    if (nextOffset < input.snapshot.recordCount && records.length === 0) {
+    if (nextOffset < endOffset && records.length === 0) {
       return yield* sourceError(
         "incomplete-source",
         "The frozen source is missing records.",
@@ -364,7 +424,7 @@ export const makeDeepPlanSources = Effect.gen(function* () {
         records,
         chunkHash: sourceChunkHash(records),
         nextCursor:
-          nextOffset < input.snapshot.recordCount ? encodeCursor(input.scope, nextOffset) : null,
+          nextOffset < endOffset ? encodeCursor(input.scope, nextOffset, cursor.endOffset) : null,
       } satisfies SourceChunk,
     };
   });
@@ -375,7 +435,13 @@ export const makeDeepPlanSources = Effect.gen(function* () {
     readonly cursor?: string | undefined;
     readonly limit?: number | undefined;
   }) {
-    const offset = yield* decodeCursor(input.cursor, input.scope);
+    const { offset, endOffset } = yield* decodeCursor(input.cursor, input.scope);
+    if (endOffset !== undefined)
+      return yield* sourceError(
+        "invalid-chunk",
+        "Read content references with includeBodies=true.",
+        input.snapshot.sourceId,
+      );
     if (offset > input.snapshot.recordCount)
       return yield* sourceError(
         "invalid-chunk",
@@ -429,7 +495,7 @@ export const makeDeepPlanSources = Effect.gen(function* () {
           chunkIndex: 0,
           totalChunks: row.totalChunks,
           byteLength: row.bodyBytes,
-          cursor: encodeCursor(input.scope, row.ordinal),
+          cursor: encodeCursor(input.scope, row.ordinal, row.ordinal + row.totalChunks),
         });
         nextOffset = row.ordinal + row.totalChunks;
       }
@@ -576,13 +642,20 @@ export const makeDeepPlanSources = Effect.gen(function* () {
             const sourceId = DeepPlanSourceId.make(sourceContentHash([exportId, origin]));
             const manifest = sourceManifestHasher();
             let ordinal = 0;
+            let pendingRecords: DeepPlanSourceRecord[] = [];
+            const flush = Effect.fnUntraced(function* () {
+              yield* persistExportRecords(sourceId, ordinal, pendingRecords);
+              ordinal += pendingRecords.length;
+              pendingRecords = [];
+            });
             const counts = yield* captureSourceRecords({
               origin,
               attachmentsDir: serverConfig.attachmentsDir,
-              onRecord: (record) =>
-                persistRecord(sourceId, ordinal++, record).pipe(
-                  Effect.tap(() => Effect.sync(() => manifest.add(record))),
-                ),
+              onRecord: Effect.fnUntraced(function* (record) {
+                manifest.add(record);
+                pendingRecords.push(record);
+                if (pendingRecords.length >= EXPORT_RECORD_BATCH_SIZE) yield* flush();
+              }),
             }).pipe(
               Effect.provideService(SqlClient.SqlClient, sql),
               Effect.provideService(FileSystem.FileSystem, fs),
@@ -594,6 +667,7 @@ export const makeDeepPlanSources = Effect.gen(function* () {
                 ),
               ),
             );
+            yield* flush();
             const contentHash = manifest.finish();
             const snapshot: DeepPlanSourceSnapshot = {
               sourceId,
@@ -643,7 +717,7 @@ export const makeDeepPlanSources = Effect.gen(function* () {
           "export-not-found",
           "The frozen export was not found for this project.",
         );
-      const offset = yield* decodeCursor(input.cursor, `catalog:${exportId}`);
+      const { offset } = yield* decodeCursor(input.cursor, `catalog:${exportId}`);
       const limit = pageLimit(input.limit, DEEP_PLAN_MAX_PAGE_SIZE, DEFAULT_CATALOG_PAGE_SIZE);
       const rows = yield* sql<{ readonly snapshot: string }>`
       SELECT snapshot_json AS snapshot FROM deep_plan_sources

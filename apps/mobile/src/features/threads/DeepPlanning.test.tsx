@@ -362,6 +362,46 @@ describe("native Deep Planning", () => {
     expect(text(checklist())).toContain("Reconnect test passed");
   });
 
+  it("shows partial read progress and keeps a fully read chat pending until its summary is saved", () => {
+    const base = runFixture();
+    const source = { ...base.sources[0]!, recordCount: 100 };
+    let run: DeepPlanRun = {
+      ...base,
+      phase: "planning",
+      plan: null,
+      approval: null,
+      sources: [source],
+      sourceCoverage: [
+        {
+          ...base.sourceCoverage[0]!,
+          status: "ready",
+          summary: null,
+          importedRecordCount: 100,
+          readRecordCount: 37,
+        },
+      ],
+    };
+    const checklist = () => render(() => DeepPlanChecklist({ run }));
+    expect(text(checklist())).toContain(source.threadTitle);
+    expect(text(checklist())).toContain("Reading · 37%");
+    expect(text(checklist())).toContain("0 of 1 sources analyzed");
+    run = { ...run, sourceCoverage: [{ ...run.sourceCoverage[0]!, readRecordCount: 100 }] };
+    expect(text(checklist())).toContain("Read · summary pending");
+    expect(text(checklist())).toContain("0 of 1 sources analyzed");
+    run = {
+      ...run,
+      sourceCoverage: [
+        {
+          ...run.sourceCoverage[0]!,
+          status: "summarized",
+          summary: base.sourceCoverage[0]!.summary,
+        },
+      ],
+    };
+    expect(text(checklist())).toContain("1 of 1 sources analyzed");
+    expect(text(checklist())).not.toContain("Read · summary pending");
+  });
+
   it("shows source failures and final validation evidence as separate progress", () => {
     const original = runFixture();
     const run: DeepPlanRun = {

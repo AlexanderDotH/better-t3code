@@ -52,9 +52,9 @@ export function DeepPlanRunControls({
     <ComposerBanner.Attachment>
       <ComposerBanner.Root variant={resumable || error ? "warning" : "default"}>
         <div className="flex flex-wrap items-center gap-2 p-3">
-          {run.pauseReason ? (
+          {run.pauseReason || (resumable && run.phase === "collecting") ? (
             <p className="min-w-0 flex-1 break-words text-xs text-muted-foreground">
-              {run.pauseReason}
+              {run.pauseReason ?? translate("chat.deepPlan.resumeCollection")}
             </p>
           ) : null}
           {resumable ? (

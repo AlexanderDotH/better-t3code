@@ -94,7 +94,10 @@ function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw abortError();
 }
 
-async function withAbort<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
+export async function awaitDeepPlanSourceOperation<T>(
+  operation: Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
   if (!signal) return operation;
   throwIfAborted(signal);
   return new Promise<T>((resolve, reject) => {
@@ -128,7 +131,7 @@ async function retrySourceOperation<T>(
   for (let attempt = 1; ; attempt += 1) {
     throwIfAborted(signal);
     try {
-      const result = await withAbort(operation(), signal);
+      const result = await awaitDeepPlanSourceOperation(operation(), signal);
       throwIfAborted(signal);
       return result;
     } catch (error) {
@@ -404,7 +407,7 @@ export async function transferDeepPlanSources(input: {
     const cached = apis.get(environmentId);
     if (cached) return cached;
     throwIfAborted(input.signal);
-    const api = await withAbort(
+    const api = await awaitDeepPlanSourceOperation(
       Promise.resolve(input.apiForEnvironment(environmentId)),
       input.signal,
     );

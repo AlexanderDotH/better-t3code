@@ -714,6 +714,88 @@ it.effect(
     }),
 );
 
+it.effect("streams source read progress after waiting without treating it as a saved summary", () =>
+  Effect.gen(function* () {
+    const source = { ...frozenSource("reading-source"), recordCount: 100 };
+    const initialCoverage = {
+      sourceId: source.sourceId,
+      status: "ready" as const,
+      importedRecordCount: 100,
+      readRecordCount: 0,
+      summary: null,
+      error: null,
+      updatedAt: timestamp,
+    };
+    let coverage = initialCoverage;
+    let current: DeepPlanRun = { ...run, sources: [source], sourceCoverage: [initialCoverage] };
+    const test = harness({
+      run: current,
+      sources: {
+        listSources: () => Effect.sync(() => ({ runId, sources: [source], coverage: [coverage] })),
+      },
+    });
+    test.getRun.mockImplementation(() => Effect.sync(() => current));
+    test.updateRun.mockImplementation((input) =>
+      updateDeepPlanRun(current, {
+        ...input,
+        type: "thread.deep-plan.update",
+        commandId: CommandId.make(input.operationId),
+        createdAt: timestamp,
+      }).pipe(
+        Effect.mapError(
+          (error) => new DeepPlanError({ code: "invalid-transition", message: error.detail }),
+        ),
+        Effect.tap((next) =>
+          Effect.sync(() => {
+            current = next;
+          }),
+        ),
+      ),
+    );
+    const agent = {
+      agentId: SubagentId.make("reading-worker"),
+      status: "running" as const,
+      providerInstanceId: modelSelection.instanceId,
+      providerDriver: ProviderDriverKind.make("codex"),
+      model: modelSelection.model,
+      reasoningEffort: null,
+    };
+    const layer = Layer.mock(GeneralSubagentCoordinator)({
+      analyzeDeepPlanSources: () => Effect.succeed([{ ...agent, sourceIds: [source.sourceId] }]),
+      wait: () =>
+        Effect.sync(() => {
+          coverage = { ...coverage, readRecordCount: 37, updatedAt: "2026-10-16T10:00:01.000Z" };
+          return { agents: [{ ...agent, result: null }], allTerminal: false, timedOut: true };
+        }),
+    });
+    const result = yield* test
+      .provide(invokeDeepPlanAnalyzeSources({ expectedRunId: runId }))
+      .pipe(Effect.provide(layer));
+    expect(result).toMatchObject({ complete: false, remainingSourceCount: 1 });
+    expect(current.sourceCoverage[0]).toMatchObject({
+      readRecordCount: 37,
+      status: "ready",
+      summary: null,
+    });
+    expect(current.revision).toBe(4);
+    coverage = { ...coverage, updatedAt: "2026-10-16T10:00:02.000Z" };
+    yield* test
+      .provide(invokeDeepPlanAnalyzeSources({ expectedRunId: runId, waitSeconds: 0 }))
+      .pipe(Effect.provide(layer));
+    expect(test.updateRun).toHaveBeenCalledOnce();
+    coverage = { ...coverage, readRecordCount: 100 };
+    yield* test
+      .provide(invokeDeepPlanAnalyzeSources({ expectedRunId: runId, waitSeconds: 0 }))
+      .pipe(Effect.provide(layer));
+    expect(current.sourceCoverage[0]).toMatchObject({
+      readRecordCount: 100,
+      status: "ready",
+      summary: null,
+    });
+    expect(test.updateRun).toHaveBeenCalledTimes(2);
+  }),
+);
+
 it.effect("rejects a source grant replayed by another worker or after user approval", () =>
   Effect.gen(function* () {
     const sourceId = DeepPlanSourceId.make("source-1");

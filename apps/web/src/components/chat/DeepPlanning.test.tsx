@@ -5,6 +5,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import {
   DeepPlanRunId,
+  DeepPlanExportId,
+  type ClientOrchestrationCommand,
   DeepPlanSourceId,
   EnvironmentId,
   ProjectId,
@@ -31,6 +33,8 @@ import {
 import {
   formatDeepPlanMarkdown,
   getDeepPlanProposalBlockReason,
+  continueDeepPlanForTurn,
+  type DeepPlanningApi,
 } from "@t3tools/client-runtime/deep-planning";
 import { DeepPlanReviewCard } from "./DeepPlanReviewCard";
 
@@ -396,6 +400,173 @@ it("selects and removes extra archived chats without changing automatically incl
   );
   expect(container.textContent).toContain("Sources are fixed for this Deep Plan.");
   expect(button("Remove Remote design").disabled).toBe(true);
+});
+
+it("keeps the unfinished source visible as reading advances to a saved summary", async () => {
+  const base = makeRun();
+  const finished = base.sources[0]!;
+  const reading = {
+    ...finished,
+    sourceId: DeepPlanSourceId.make("large-source"),
+    threadTitle: "Large pipeline history",
+    recordCount: 100,
+  };
+  let current = makeRun({
+    phase: "planning",
+    plan: null,
+    sources: [finished, reading],
+    sourceCoverage: [
+      base.sourceCoverage[0]!,
+      {
+        ...base.sourceCoverage[0]!,
+        sourceId: reading.sourceId,
+        status: "ready",
+        summary: null,
+        importedRecordCount: 100,
+        readRecordCount: 37,
+      },
+    ],
+  });
+  await act(() => root.render(<DeepPlanAnalysisProgress run={current} />));
+  expect(container.textContent).toContain("1 of 2 sources analyzed");
+  expect(container.querySelector("li")?.textContent).toContain("Large pipeline history");
+  expect(container.querySelector("li")?.textContent).toContain("Reading · 37%");
+  current = {
+    ...current,
+    sourceCoverage: current.sourceCoverage.map((entry) =>
+      entry.sourceId === reading.sourceId ? { ...entry, readRecordCount: 100 } : entry,
+    ),
+  };
+  await act(() => root.render(<DeepPlanAnalysisProgress run={current} />));
+  expect(container.textContent).toContain("1 of 2 sources analyzed");
+  expect(container.querySelector("li")?.textContent).toContain("Read · summary pending");
+  expect(container.textContent).not.toContain("Reading · 37%");
+  current = {
+    ...current,
+    sourceCoverage: current.sourceCoverage.map((entry) =>
+      entry.sourceId === reading.sourceId
+        ? { ...entry, status: "summarized", summary: base.sourceCoverage[0]!.summary }
+        : entry,
+    ),
+  };
+  await act(() => root.render(<DeepPlanAnalysisProgress run={current} />));
+  expect(container.textContent).toContain("2 of 2 sources analyzed");
+  expect(
+    [...container.querySelectorAll("li")].every((row) => row.textContent?.includes("Done")),
+  ).toBe(true);
+});
+
+it("resumes preparation before starting analysis and replaces the unknown total with imported sources", async () => {
+  let current = makeRun({
+    phase: "collecting",
+    revision: 0,
+    plan: null,
+    sources: [],
+    sourceCoverage: [],
+  });
+  const source = makeRun().sources[0]!;
+  let releaseExport!: (result: Awaited<ReturnType<DeepPlanningApi["exportSources"]>>) => void;
+  let notifyExportStarted!: () => void;
+  const exportStarted = new Promise<void>((resolve) => {
+    notifyExportStarted = resolve;
+  });
+  const exported = new Promise<Awaited<ReturnType<DeepPlanningApi["exportSources"]>>>((resolve) => {
+    releaseExport = resolve;
+  });
+  const commands: ClientOrchestrationCommand[] = [];
+  const api: DeepPlanningApi = {
+    getRun: async () => current,
+    dispatchCommand: async (command) => {
+      commands.push(command);
+      if (command.type === "thread.deep-plan.start")
+        current = { ...current, id: command.runId, revision: 0, phase: "collecting" };
+      if (command.type === "thread.deep-plan.update")
+        current = { ...current, revision: current.revision + 1, phase: "paused" };
+    },
+    catalogSources: async () => {
+      throw new Error("Unexpected metadata request");
+    },
+    exportSources: () => {
+      notifyExportStarted();
+      return exported;
+    },
+    initializeSources: async (input) => {
+      current = {
+        ...current,
+        sources: input.snapshots,
+        sourceCoverage: input.snapshots.map((snapshot) => ({
+          sourceId: snapshot.sourceId,
+          status: "ready",
+          importedRecordCount: snapshot.recordCount,
+          readRecordCount: 0,
+          summary: null,
+          error: null,
+          updatedAt: createdAt,
+        })),
+        phase: "planning",
+        revision: 1,
+      };
+      renderRun();
+      return { runId: current.id, sources: current.sources, coverage: current.sourceCoverage };
+    },
+    readExportChunk: async () => {
+      throw new Error("Local histories are already imported");
+    },
+    importSourceChunk: async () => {
+      throw new Error("Local histories must not be uploaded again");
+    },
+  };
+  let nextId = 0;
+  let continuation: Promise<DeepPlanRun> | undefined;
+  const resume = async () => {
+    continuation = continueDeepPlanForTurn({
+      run: current,
+      environmentId,
+      projectId,
+      fallbackModelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
+      runtimeMode: "full-access",
+      apiForEnvironment: () => api,
+      createId: () => `resumed-${++nextId}`,
+      now: () => createdAt,
+    });
+    await continuation;
+  };
+  function renderRun() {
+    root.render(
+      <>
+        <DeepPlanAnalysisProgress run={current} />
+        <DeepPlanRunControls
+          run={current}
+          disabled={false}
+          canContinue
+          onResume={resume}
+          onFinalValidation={resume}
+        />
+      </>,
+    );
+  }
+  await act(renderRun);
+  expect(container.textContent).toContain("Preparing chat histories…");
+  expect(container.textContent).not.toContain("0 of 0");
+  expect(container.querySelector("progress")).toBeNull();
+  await act(async () => {
+    button("Resume").click();
+    await exportStarted;
+  });
+  expect(button("Resuming…").disabled).toBe(true);
+  expect(commands.some((command) => command.type === "thread.turn.start")).toBe(false);
+  await act(async () => {
+    releaseExport({
+      exportId: DeepPlanExportId.make("resumed-export"),
+      capturedAt: createdAt,
+      sources: [source],
+      nextCursor: null,
+    });
+    await continuation;
+  });
+  expect(container.textContent).toContain("0 of 1 sources analyzed");
+  expect(container.textContent).toContain("Archived research");
+  expect(commands.filter((command) => command.type === "thread.turn.start")).toHaveLength(1);
 });
 
 it("keeps frozen sources with missing coverage visible and blocks approval", async () => {

@@ -20,6 +20,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+import { makeSqlStatementCounter } from "../../integration/SqlStatementCounter.integration.ts";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
@@ -343,9 +344,24 @@ it.layer(TestLayer)("DeepPlanSources", (it) => {
             id: `${threadId}-${index.toString().padStart(4, "0")}`,
             text: `Requirement ${index}`,
           });
-        const exported = yield* sources.exportSources({ projectId, includeArchived: true });
+        const counter = makeSqlStatementCounter();
+        const exported = yield* sources
+          .exportSources({ projectId, includeArchived: true })
+          .pipe(Effect.withTracer(counter.tracer));
+        assert.isBelow(
+          counter.count(),
+          60,
+          "Freezing a history must use bounded batches of SQL statements.",
+        );
         const snapshot = exported.sources[0]!;
         assert.equal(snapshot.messageCount, 365);
+        const repeated = yield* sources.exportSources({ projectId, includeArchived: true });
+        assert.equal(repeated.sources[0]?.contentHash, snapshot.contentHash);
+        const sql = yield* SqlClient.SqlClient;
+        const stored = yield* sql<{
+          readonly count: number;
+        }>`SELECT COUNT(*) AS count FROM deep_plan_source_contents WHERE json_extract(origin_key, '$.threadId') = ${threadId}`;
+        assert.equal(stored[0]?.count, 365);
         let cursor: string | undefined;
         const records: string[] = [];
         do {
@@ -571,6 +587,11 @@ it.layer(TestLayer)("DeepPlanSources", (it) => {
           text: "Review the attachment if needed",
           attachments: [attachment],
         });
+        yield* seedMessage({
+          threadId,
+          id: `${threadId}-z-later`,
+          text: "This later message must stay outside the attachment body.",
+        });
         const exported = yield* sources.exportSources({ projectId, includeArchived: true });
         const snapshot = exported.sources[0]!;
         const runId = DeepPlanRunId.make(`${threadId}-run`);
@@ -583,7 +604,7 @@ it.layer(TestLayer)("DeepPlanSources", (it) => {
           includeBodies: false,
         });
         assert.isNull(page.nextCursor);
-        assert.equal(page.records.length, 2);
+        assert.equal(page.records.length, 3);
         const reference = page.records.find((record) => record.kind === "content-reference");
         assert.isDefined(reference);
         if (reference?.kind !== "content-reference") return;
@@ -600,19 +621,28 @@ it.layer(TestLayer)("DeepPlanSources", (it) => {
           (yield* sources.assertCompleteCoverage(runId)).coverage[0]?.readRecordCount,
           snapshot.recordCount,
         );
-        const body = yield* sources.readSourceChunk({
-          threadId,
-          runId,
-          sourceId: snapshot.sourceId,
-          cursor: reference.cursor!,
-          includeBodies: true,
-        });
-        const restored = Buffer.concat(
-          body.records
-            .filter((record) => record.kind === "attachment")
-            .map((record) => Buffer.from(record.dataBase64, "base64")),
-        );
-        assert.deepStrictEqual(restored, bytes);
+        let bodyCursor: string | undefined = reference.cursor!;
+        const chunks: Buffer[] = [];
+        let bodyPages = 0;
+        while (bodyCursor !== undefined) {
+          const body: DeepPlanReadSourceChunkResult = yield* sources.readSourceChunk({
+            threadId,
+            runId,
+            sourceId: snapshot.sourceId,
+            cursor: bodyCursor,
+            includeBodies: true,
+            limit: 1,
+          });
+          assert.isAbove(body.records.length, 0);
+          for (const record of body.records) {
+            assert.equal(record.kind, "attachment");
+            if (record.kind === "attachment") chunks.push(Buffer.from(record.dataBase64, "base64"));
+          }
+          bodyPages += 1;
+          bodyCursor = body.nextCursor ?? undefined;
+        }
+        assert.equal(bodyPages, reference.totalChunks);
+        assert.deepStrictEqual(Buffer.concat(chunks), bytes);
       }),
   );
 
@@ -624,7 +654,7 @@ it.layer(TestLayer)("DeepPlanSources", (it) => {
         const sql = yield* SqlClient.SqlClient;
         const projectId = yield* seedProject();
         const threadId = yield* seedThread(projectId, "giant");
-        const text = "Read every detail 🧠\n".repeat(12_000);
+        const text = "Read every detail 🧠\n".repeat(60_000);
         yield* seedMessage({ threadId, id: `${threadId}-message`, text });
         yield* sql`
       INSERT INTO projection_thread_activities (activity_id, thread_id, tone, kind, summary, payload_json, created_at)
@@ -638,6 +668,7 @@ it.layer(TestLayer)("DeepPlanSources", (it) => {
         let cursor: string | undefined;
         const textChunks: string[] = [];
         let references = 0;
+        let bodyCursor: string | undefined;
         do {
           const page = yield* sources.readSourceChunk({
             threadId,
@@ -652,12 +683,38 @@ it.layer(TestLayer)("DeepPlanSources", (it) => {
           for (const record of page.records) {
             if (record.kind === "content" && record.requiredForAnalysis)
               textChunks.push(record.data);
-            if (record.kind === "content-reference") references += 1;
+            if (record.kind === "content-reference") {
+              references += 1;
+              bodyCursor = record.cursor ?? undefined;
+            }
           }
           cursor = page.nextCursor ?? undefined;
         } while (cursor !== undefined);
         assert.equal(textChunks.join(""), text);
         assert.equal(references, 1);
+        assert.isDefined(bodyCursor);
+        const toolChunks: string[] = [];
+        while (bodyCursor !== undefined) {
+          const page: DeepPlanReadSourceChunkResult = yield* sources.readSourceChunk({
+            threadId,
+            runId,
+            sourceId: snapshot.sourceId,
+            cursor: bodyCursor,
+            includeBodies: true,
+          });
+          for (const record of page.records) {
+            assert.equal(record.kind, "content");
+            if (record.kind === "content") {
+              assert.isFalse(record.requiredForAnalysis);
+              toolChunks.push(record.data);
+            }
+          }
+          bodyCursor = page.nextCursor ?? undefined;
+        }
+        assert.equal(
+          toolChunks.join(""),
+          canonicalSourceJson({ output: "tool data".repeat(30_000) }),
+        );
         assert.equal(
           (yield* sources.listSources({ threadId, runId })).coverage[0]?.readRecordCount,
           snapshot.recordCount,

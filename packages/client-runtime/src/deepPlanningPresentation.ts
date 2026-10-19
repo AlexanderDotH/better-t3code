@@ -5,6 +5,8 @@ import type {
 } from "@t3tools/contracts";
 import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 
+import { isDeepPlanSourceSummarized } from "./deepPlanningRun.ts";
+
 const COMPLETED_CHECKLIST_VISIBLE_MS = 60_000;
 
 export function getDeepPlanComposerChecklistExpiresAt(
@@ -19,6 +21,38 @@ export function deepPlanSourceTitle(source: DeepPlanSourceSnapshot): string {
   return [source.environmentLabel, source.projectTitle, source.threadTitle]
     .filter(Boolean)
     .join(" / ");
+}
+
+export function selectDeepPlanSourceAnalysis(run: DeepPlanRun, translator: InterfaceTranslator) {
+  const coverageById = new Map(run.sourceCoverage.map((entry) => [entry.sourceId, entry]));
+  return run.sources
+    .map((source) => {
+      const coverage = coverageById.get(source.sourceId);
+      const complete = isDeepPlanSourceSummarized(run, source);
+      const failed = coverage?.status === "unavailable" || coverage?.status === "failed";
+      const readCount = coverage?.readRecordCount ?? 0;
+      const read = coverage?.status === "ready" && readCount === source.recordCount;
+      const reading = !read && readCount > 0;
+      const label = complete
+        ? translator.message("chat.deepPlan.done")
+        : failed
+          ? (coverage.error ?? translator.message("chat.deepPlan.sourceUnavailable"))
+          : read
+            ? translator.message("chat.deepPlan.analysisRead")
+            : reading
+              ? translator.message("chat.deepPlan.analysisReading", {
+                  percent: Math.min(99, Math.floor((readCount / source.recordCount) * 100)),
+                })
+              : translator.message("chat.deepPlan.analysisPending");
+      return {
+        source,
+        complete,
+        failed,
+        label,
+        priority: complete ? 3 : failed ? 0 : read || reading ? 1 : 2,
+      };
+    })
+    .sort((left, right) => left.priority - right.priority);
 }
 
 export function deepPlanCitationTitles(

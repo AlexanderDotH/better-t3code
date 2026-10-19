@@ -18,6 +18,7 @@ import * as DateTime from "effect/DateTime";
 import { buildDeepPlanImplementationPrompt, selectDeepPlanProgress } from "./deepPlanningRun.ts";
 
 import {
+  awaitDeepPlanSourceOperation,
   deepPlanSourceRefKey,
   transferDeepPlanSources,
   uniqueDeepPlanSourceRefs,
@@ -83,7 +84,7 @@ async function pauseRun(input: {
   });
 }
 
-export async function prepareDeepPlanForTurn(input: {
+async function prepareDeepPlan(input: {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
   readonly threadId: ThreadId;
@@ -202,6 +203,45 @@ export async function prepareDeepPlanForTurn(input: {
   }
 }
 
+function preparationKey(environmentId: EnvironmentId, threadId: ThreadId): string {
+  return JSON.stringify([environmentId, threadId]);
+}
+
+const preparations = new Map<
+  string,
+  { readonly selectionKey: string; readonly result: Promise<DeepPlanRun> }
+>();
+
+export async function prepareDeepPlanForTurn(
+  input: Parameters<typeof prepareDeepPlan>[0],
+): Promise<DeepPlanRun> {
+  if (input.signal?.aborted) throw new Error("DeepPlan source collection was canceled.");
+  const key = preparationKey(input.environmentId, input.threadId);
+  const selectionKey = JSON.stringify([
+    input.projectId,
+    uniqueDeepPlanSourceRefs(input.additionalSourceRefs ?? [])
+      .filter(
+        (source) =>
+          source.environmentId !== input.environmentId || source.projectId !== input.projectId,
+      )
+      .map(deepPlanSourceRefKey)
+      .sort(),
+  ]);
+  const active = preparations.get(key);
+  if (active) {
+    if (active.selectionKey !== selectionKey)
+      throw new Error("Wait for source collection to finish before changing the selected chats.");
+    return awaitDeepPlanSourceOperation(active.result, input.signal);
+  }
+  const preparation = { selectionKey, result: prepareDeepPlan(input) };
+  preparations.set(key, preparation);
+  const finish = () => {
+    if (preparations.get(key) === preparation) preparations.delete(key);
+  };
+  void preparation.result.then(finish, finish);
+  return preparation.result;
+}
+
 export async function continueDeepPlanForTurn(input: {
   readonly run: DeepPlanRun;
   readonly environmentId: EnvironmentId;
@@ -219,6 +259,9 @@ export async function continueDeepPlanForTurn(input: {
   let run = await api.getRun({ threadId: input.run.threadId, runId: input.run.id });
   if (!run || run.id !== input.run.id || run.phase === "completed")
     throw new Error("This Deep Plan is no longer waiting to continue.");
+  const preparation = preparations.get(preparationKey(input.environmentId, run.threadId));
+  // The original sender owns starting the turn once this collection finishes.
+  if (preparation) return preparation.result;
   if (!run.approval && (run.phase === "collecting" || !importsComplete(run))) {
     run = await prepareDeepPlanForTurn({
       environmentId: input.environmentId,
