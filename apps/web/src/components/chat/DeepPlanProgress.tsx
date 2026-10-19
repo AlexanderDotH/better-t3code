@@ -3,7 +3,7 @@ import type { DeepPlanRun, DeepPlanStepStatus } from "@t3tools/contracts";
 import {
   deepPlanCitationTitles,
   deepPlanSourceTitle,
-  isDeepPlanSourceSummarized,
+  selectDeepPlanSourceAnalysis,
   getDeepPlanComposerChecklistExpiresAt,
   selectDeepPlanProgress,
   selectDeepPlanSteps,
@@ -39,12 +39,14 @@ function stepStatusMessage(status: DeepPlanStepStatus) {
 }
 
 export function DeepPlanAnalysisProgress({ run }: { run: DeepPlanRun }) {
-  const translate = useInterfaceTranslator().message;
+  const translator = useInterfaceTranslator();
+  const translate = translator.message;
   const completed = selectDeepPlanProgress(run).summarizedSourceCount;
+  const collecting = run.phase === "collecting";
   const missing = run.sourceCoverage.filter(
     (source) => source.status === "unavailable" || source.status === "failed",
   );
-  const coverageById = new Map(run.sourceCoverage.map((source) => [source.sourceId, source]));
+  const analysis = selectDeepPlanSourceAnalysis(run, translator);
   if (
     run.phase !== "collecting" &&
     run.phase !== "planning" &&
@@ -59,49 +61,47 @@ export function DeepPlanAnalysisProgress({ run }: { run: DeepPlanRun }) {
           <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
             <strong className="font-medium">{translate("chat.deepPlan.analysisTitle")}</strong>
             <span className="text-muted-foreground">
-              {translate("chat.deepPlan.analysisProgress", {
-                completed,
-                total: run.sources.length,
-              })}
+              {collecting
+                ? translate("chat.deepPlan.collecting")
+                : translate("chat.deepPlan.analysisProgress", {
+                    completed,
+                    total: run.sources.length,
+                  })}
             </span>
           </div>
-          <progress
-            className="h-1.5 w-full accent-primary"
-            value={completed}
-            max={Math.max(1, run.sources.length)}
-            aria-label={translate("chat.deepPlan.analysisTitle")}
-          />
+          {collecting ? (
+            <p className="text-xs text-muted-foreground">
+              {translate("chat.deepPlan.collectingHint")}
+            </p>
+          ) : (
+            <progress
+              className="h-1.5 w-full accent-primary"
+              value={completed}
+              max={Math.max(1, run.sources.length)}
+              aria-label={translate("chat.deepPlan.analysisTitle")}
+            />
+          )}
           <ul className="max-h-36 overflow-y-auto overscroll-contain text-xs">
-            {run.sources.map((source) => {
-              const coverage = coverageById.get(source.sourceId);
-              const failed = coverage?.status === "unavailable" || coverage?.status === "failed";
-              return (
-                <li
-                  key={source.sourceId}
-                  className="flex min-w-0 items-start justify-between gap-3 py-1"
+            {analysis.map(({ source, failed, label }) => (
+              <li
+                key={source.sourceId}
+                className="flex min-w-0 items-start justify-between gap-3 py-1"
+              >
+                <span className="min-w-0 break-words">
+                  {deepPlanSourceTitle(source)}
+                  {source.archived ? (
+                    <span className="block text-muted-foreground">
+                      {translate("chat.deepPlan.archived")}
+                    </span>
+                  ) : null}
+                </span>
+                <span
+                  className={failed ? "text-warning-foreground" : "shrink-0 text-muted-foreground"}
                 >
-                  <span className="min-w-0 break-words">
-                    {deepPlanSourceTitle(source)}
-                    {source.archived ? (
-                      <span className="block text-muted-foreground">
-                        {translate("chat.deepPlan.archived")}
-                      </span>
-                    ) : null}
-                  </span>
-                  <span
-                    className={
-                      failed ? "text-warning-foreground" : "shrink-0 text-muted-foreground"
-                    }
-                  >
-                    {failed
-                      ? (coverage?.error ?? translate("chat.deepPlan.sourceUnavailable"))
-                      : isDeepPlanSourceSummarized(run, source)
-                        ? translate("chat.deepPlan.done")
-                        : translate("chat.deepPlan.analysisPending")}
-                  </span>
-                </li>
-              );
-            })}
+                  {label}
+                </span>
+              </li>
+            ))}
           </ul>
           {missing.length > 0 ? (
             <p role="status" className="text-xs text-warning-foreground">

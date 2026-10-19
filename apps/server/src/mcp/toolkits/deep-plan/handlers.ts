@@ -250,11 +250,33 @@ export const invokeDeepPlanAnalyzeSources = Effect.fn("DeepPlanToolkit.analyzeSo
           timeoutSeconds: input.waitSeconds ?? 30,
         })
       : null;
-  yield* requirePlanningRun(input.expectedRunId);
-  const frozen = yield* sources.listSources({
-    threadId: binding.runThreadId,
-    runId: binding.runId,
-  });
+  const frozen = yield* workflow.withRunLock(
+    binding.runId,
+    Effect.gen(function* () {
+      const bound = yield* requirePlanningRun(input.expectedRunId);
+      const frozen = yield* sources.listSources({
+        threadId: binding.runThreadId,
+        runId: binding.runId,
+      });
+      const previousCoverage = new Map(
+        bound.run.sourceCoverage.map((entry) => [entry.sourceId, entry]),
+      );
+      const readProgressChanged = frozen.coverage.some(
+        (entry) => entry.readRecordCount !== previousCoverage.get(entry.sourceId)?.readRecordCount,
+      );
+      if (bound.run.plan === null && readProgressChanged) {
+        yield* updateRun(
+          bound,
+          {
+            expectedRevision: bound.run.revision,
+            operationId: `source-read-progress:${bound.run.revision}`,
+          },
+          { type: "source-coverage", coverage: frozen.coverage },
+        );
+      }
+      return frozen;
+    }),
+  );
   const remainingSourceCount = frozen.sources.filter(
     (source) =>
       !frozen.coverage.some(

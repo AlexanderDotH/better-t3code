@@ -45,10 +45,35 @@ export const deepPlanningInterfaceCatalog = defineLocalizedInterfaceCatalog({
   "chat.deepPlan.archived": ["Archived", "Archiviert", "Archivée"],
   "chat.deepPlan.analysisTitle": ["Deep analysis", "Tiefenanalyse", "Analyse approfondie"],
   "chat.deepPlan.startAnalysis": ["Start analysis", "Analyse starten", "Lancer l’analyse"],
+  "chat.deepPlan.collecting": [
+    "Preparing chat histories…",
+    "Chatverläufe werden vorbereitet…",
+    "Préparation des historiques…",
+  ],
+  "chat.deepPlan.collectingHint": [
+    "Large chat histories can take a while to prepare.",
+    "Die Vorbereitung großer Chatverläufe kann etwas dauern.",
+    "La préparation des longs historiques peut prendre du temps.",
+  ],
+  "chat.deepPlan.resumeCollection": [
+    "Resume to finish preparing the chat histories.",
+    "Mit Fortsetzen die Vorbereitung der Chatverläufe abschließen.",
+    "Reprenez pour terminer la préparation des historiques.",
+  ],
   "chat.deepPlan.analysisProgress": [
     "{{completed}} of {{total}} sources analyzed",
     "{{completed}} von {{total}} Quellen analysiert",
     "{{completed}} sources analysées sur {{total}}",
+  ],
+  "chat.deepPlan.analysisReading": [
+    "Reading · {{percent}}%",
+    "Wird gelesen · {{percent}} %",
+    "Lecture · {{percent}} %",
+  ],
+  "chat.deepPlan.analysisRead": [
+    "Read · summary pending",
+    "Gelesen · Zusammenfassung ausstehend",
+    "Lu · résumé en attente",
   ],
   "chat.deepPlan.missingSources": [
     {

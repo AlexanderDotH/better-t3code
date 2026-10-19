@@ -91,6 +91,87 @@ beforeEach(() => {
 });
 
 describe("DeepPlan turn preparation", () => {
+  it("joins an active collection when Resume is clicked before the export finishes", async () => {
+    const target = api();
+    let release!: (value: Awaited<ReturnType<typeof transferDeepPlanSources>>) => void;
+    let notifyStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      notifyStarted = resolve;
+    });
+    const exportResult = new Promise<Awaited<ReturnType<typeof transferDeepPlanSources>>>(
+      (resolve) => {
+        release = resolve;
+      },
+    );
+    vi.mocked(transferDeepPlanSources).mockImplementation(() => {
+      notifyStarted();
+      return exportResult;
+    });
+    const collecting = run({ id: nextRunId, phase: "collecting" });
+    target.getRun
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(collecting)
+      .mockResolvedValueOnce(run({ id: nextRunId }));
+    const first = prepare(target);
+    await started;
+    const resumed = prepare(target, {
+      existingRun: run({ id: nextRunId, phase: "collecting" }),
+      additionalSourceRefs: [{ environmentId, projectId, threadId }],
+    });
+    expect(transferDeepPlanSources).toHaveBeenCalledTimes(1);
+    expect(target.dispatchCommand).toHaveBeenCalledTimes(1);
+    await expect(
+      prepare(target, {
+        additionalSourceRefs: [
+          { environmentId: EnvironmentId.make("remote"), projectId, threadId },
+        ],
+      }),
+    ).rejects.toThrow("Wait for source collection");
+    const continued = continueRun(target, collecting);
+    const controller = new AbortController();
+    const cancelledWait = prepare(target, { signal: controller.signal });
+    controller.abort();
+    await expect(cancelledWait).rejects.toThrow("canceled");
+    release({ sources: [], coverage: [] });
+    expect((await first).id).toBe(nextRunId);
+    expect(await resumed).toEqual(await first);
+    expect(await continued).toEqual(await first);
+    expect(target.dispatchCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps simultaneous preparation in two environments separate for the same thread", async () => {
+    const local = api();
+    const remote = api();
+    for (const target of [local, remote])
+      target.getRun.mockResolvedValueOnce(null).mockResolvedValueOnce(run({ id: nextRunId }));
+    const bothStarted = Promise.withResolvers<void>();
+    const exported = Promise.withResolvers<Awaited<ReturnType<typeof transferDeepPlanSources>>>();
+    let started = 0;
+    vi.mocked(transferDeepPlanSources).mockImplementation(() => {
+      if (++started === 2) bothStarted.resolve();
+      return exported.promise;
+    });
+    const first = prepare(local);
+    const second = prepare(remote, { environmentId: EnvironmentId.make("remote") });
+    await bothStarted.promise;
+    expect(transferDeepPlanSources).toHaveBeenCalledTimes(2);
+    exported.resolve({ sources: [], coverage: [] });
+    expect((await Promise.all([first, second])).map((prepared) => prepared.id)).toEqual([
+      nextRunId,
+      nextRunId,
+    ]);
+  });
+
+  it("allows another attempt after collection fails without leaving a pending preparation", async () => {
+    const target = api();
+    target.getRun.mockResolvedValue(null);
+    vi.mocked(transferDeepPlanSources).mockRejectedValueOnce(new Error("Connection lost"));
+    await expect(prepare(target)).rejects.toThrow("Connection lost");
+    target.getRun.mockResolvedValueOnce(null).mockResolvedValueOnce(run({ id: nextRunId }));
+    expect((await prepare(target)).id).toBe(nextRunId);
+    expect(transferDeepPlanSources).toHaveBeenCalledTimes(2);
+  });
+
   it("reuses complete unapproved planning sources without exporting them again", async () => {
     const target = api();
     const existing = run();

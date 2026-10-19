@@ -4,6 +4,7 @@ import {
   getDeepPlanComposerChecklistExpiresAt,
   selectDeepPlanProgress,
   selectDeepPlanSteps,
+  selectDeepPlanSourceAnalysis,
 } from "@t3tools/client-runtime/deep-planning";
 import { memo, useEffect, useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
@@ -91,6 +92,7 @@ export const DeepPlanChecklist = memo(function DeepPlanChecklist(props: {
   const progress = selectDeepPlanProgress(run);
   const verifiedCount = progress.verifiedSteps;
   const analyzedCount = progress.summarizedSourceCount;
+  const sourceAnalysis = selectDeepPlanSourceAnalysis(run, translator);
   const sourceErrors = run.sourceCoverage.filter(
     (source) => source.status === "failed" || source.status === "unavailable",
   );
@@ -142,10 +144,12 @@ export const DeepPlanChecklist = memo(function DeepPlanChecklist(props: {
                   completed: verifiedCount,
                   total: plan.steps.length,
                 })
-              : translator.message("chat.deepPlan.analysisProgress", {
-                  completed: analyzedCount,
-                  total: run.sources.length,
-                })}
+              : run.phase === "collecting"
+                ? translator.message("chat.deepPlan.collecting")
+                : translator.message("chat.deepPlan.analysisProgress", {
+                    completed: analyzedCount,
+                    total: run.sources.length,
+                  })}
           </Text>
         </View>
         <SymbolView
@@ -172,6 +176,21 @@ export const DeepPlanChecklist = memo(function DeepPlanChecklist(props: {
                 })}
               </Text>
             ) : null}
+            {run.phase === "collecting" ? (
+              <Text className="text-xs text-foreground-muted">
+                {translator.message("chat.deepPlan.collectingHint")}
+              </Text>
+            ) : null}
+            {!plan && run.phase !== "collecting"
+              ? sourceAnalysis
+                  .filter((entry) => !entry.complete && !entry.failed)
+                  .map(({ source, label }) => (
+                    <View key={source.sourceId} className="gap-1">
+                      <Text className="text-xs text-foreground">{source.threadTitle}</Text>
+                      <Text className="text-xs text-foreground-muted">{label}</Text>
+                    </View>
+                  ))
+              : null}
             {currentStep ? (
               <Text className="text-xs text-foreground" accessibilityLiveRegion="polite">
                 {translator.message("chat.deepPlan.currentStep", { title: currentStep.title })}
