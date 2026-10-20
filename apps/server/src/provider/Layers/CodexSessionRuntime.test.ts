@@ -353,6 +353,36 @@ describe("buildTurnStartParams", () => {
     }),
   );
 
+  it.effect("ends Plan mode and clears previous Deep Plan context on a Build turn", () =>
+    Effect.gen(function* () {
+      const plan = yield* buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        prompt: "Plan this change",
+        interactionMode: "plan",
+        t3ToolAvailability: {
+          ...configuredT3ToolAvailability(undefined),
+          deepPlan: { phase: "planning" },
+        },
+      });
+      const build = yield* buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        prompt: "Edit the documentation",
+        interactionMode: "default",
+      });
+      NodeAssert.equal(plan.collaborationMode?.mode, "plan");
+      NodeAssert.match(plan.additionalContext?.t3_code_deep_plan?.value ?? "", /deep_plan_publish/);
+      NodeAssert.equal(build.collaborationMode?.mode, "default");
+      NodeAssert.match(
+        build.collaborationMode?.settings.developer_instructions ?? "",
+        /Any earlier Plan Mode has ended/,
+      );
+      NodeAssert.equal(build.additionalContext?.t3_code_deep_plan?.value, "");
+      NodeAssert.equal(build.sandboxPolicy?.type, "dangerFullAccess");
+    }),
+  );
+
   it("includes default collaboration mode and image attachments", () => {
     const params = Effect.runSync(
       buildTurnStartParams({

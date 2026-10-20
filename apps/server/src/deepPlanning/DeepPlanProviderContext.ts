@@ -42,6 +42,7 @@ export function deepPlanProviderContext(
     };
   }
   if (
+    interactionMode !== "plan" ||
     run.threadId !== threadId ||
     (run.phase !== "collecting" && run.phase !== "planning" && run.phase !== "awaitingApproval")
   )

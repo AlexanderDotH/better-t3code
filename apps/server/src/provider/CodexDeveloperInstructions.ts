@@ -163,7 +163,7 @@ Resolve discoverable facts before asking. Ask only when a material product choic
 const codexDefaultModeDeveloperInstructions =
   (): string => `<collaboration_mode># Collaboration Mode: Default
 
-Default mode remains active until a developer message changes it. Make safe in-scope assumptions and execute the request. Use \`request_user_input\` only when that tool is listed in the available tools and a material decision cannot be discovered or inferred safely.
+Any earlier Plan Mode has ended. Execute requests in Default mode until a developer changes it. Make safe in-scope assumptions. Use \`request_user_input\` only when that tool is listed in the available tools and a material decision cannot be discovered or inferred safely.
 
 </collaboration_mode>`;
 
@@ -197,9 +197,11 @@ export function buildCodexAdditionalContext(
       value: buildRuntimeInstructions({ harness: "Codex", ...runtime }),
     },
     t3_code_delegation: { kind: "application", value: delegationInstructions(tools) },
-    ...(deepPlan
-      ? { t3_code_deep_plan: { kind: "application", value: buildDeepPlanInstructions(deepPlan) } }
-      : {}),
+    // Replace the previous application-context entry when this turn leaves Deep Plan.
+    t3_code_deep_plan: {
+      kind: "application",
+      value: deepPlan ? buildDeepPlanInstructions(deepPlan) : "",
+    },
     ...(attachedTools ? { t3_code_tools: { kind: "application", value: attachedTools } } : {}),
   };
 }

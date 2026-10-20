@@ -1955,6 +1955,39 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       ),
   });
 
+  const getTurnStartStateRow = SqlSchema.findOne({
+    Request: ThreadIdLookupInput,
+    Result: Schema.Struct({
+      latestUserMessageId: Schema.NullOr(MessageId),
+      latestUserMessageAt: Schema.NullOr(IsoDateTime),
+      pendingMessageId: Schema.NullOr(MessageId),
+    }),
+    execute: ({ threadId }) => sql`
+      WITH latest_message AS (
+        SELECT message_id, created_at FROM projection_thread_messages
+        WHERE thread_id = ${threadId} AND role = 'user' AND history_origin_json IS NULL
+        ORDER BY created_at DESC, message_id DESC LIMIT 1
+      )
+      SELECT
+        (SELECT message_id FROM latest_message) AS "latestUserMessageId",
+        (SELECT created_at FROM latest_message) AS "latestUserMessageAt",
+        (SELECT pending_message_id FROM projection_turns
+          WHERE thread_id = ${threadId} AND turn_id IS NULL AND state = 'pending'
+            AND pending_message_id IS NOT NULL AND checkpoint_turn_count IS NULL
+            AND history_origin_json IS NULL
+          ORDER BY requested_at DESC LIMIT 1) AS "pendingMessageId"
+    `,
+  });
+  const getTurnStartState: ProjectionSnapshotQueryShape["getTurnStartState"] = (threadId) =>
+    getTurnStartStateRow({ threadId }).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.getTurnStartState:query",
+          "ProjectionSnapshotQuery.getTurnStartState:decodeRow",
+        ),
+      ),
+    );
+
   const getTurnStartMessageRow = SqlSchema.findOneOption({
     Request: TurnStartMessageLookupInput,
     Result: ProjectionTurnStartMessageDbRowSchema,
@@ -5360,6 +5393,7 @@ pending_approval_requests AS (
     getFullThreadDiffContext,
     getThreadShellById,
     getThreadRuntimeContext,
+    getTurnStartState,
     getTurnStartMessage,
     getRecentThreadMessages,
     getThreadDetailById,

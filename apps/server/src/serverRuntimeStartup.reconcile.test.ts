@@ -1,14 +1,18 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   type OrchestrationCommand,
+  type DeepPlanRun,
+  DeepPlanRunId,
+  ProjectId,
   type OrchestrationSessionStatus,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderSendTurnInput,
+  type ProviderInteractionMode,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import { assert, it } from "@effect/vitest";
+import { assert, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -37,11 +41,12 @@ const makeThread = (
   activeTurnId: TurnId | null = null,
   archivedAt: string | null = null,
   deletedAt: string | null = null,
+  interactionMode: ProviderInteractionMode = "default",
 ) => ({
   id: ThreadId.make(id),
   archivedAt,
   deletedAt,
-  interactionMode: "default" as const,
+  interactionMode,
   session: {
     threadId: ThreadId.make(id),
     status,
@@ -92,11 +97,12 @@ const runReconciliation = (input: {
   readonly providerService?: ProviderService.ProviderService["Service"];
   readonly directory: ProviderSessionDirectory.ProviderSessionDirectory["Service"];
   readonly dispatch: OrchestrationEngine.OrchestrationEngineService["Service"]["dispatch"];
+  readonly query?: ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"];
 }) =>
   ServerRuntimeStartup.reconcileProviderSessions.pipe(
     Effect.provideService(
       ProjectionSnapshotQuery.ProjectionSnapshotQuery,
-      queryWithThreads(input.threads),
+      input.query ?? queryWithThreads(input.threads),
     ),
     Effect.provideService(
       ProviderService.ProviderService,
@@ -994,5 +1000,118 @@ it.effect("settles failed opt-in recovery without retrying the provider turn", (
       continueAfterServerUpdate: null,
       continueAfterServerUpdatePrepared: null,
     });
+  }),
+);
+
+it.effect.each([
+  { phase: "planning", interactionMode: "plan" },
+  { phase: "paused", interactionMode: "plan" },
+  { phase: "planning", interactionMode: "default" },
+] as const)("recovers work in the selected mode for %s", ({ phase, interactionMode }) =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("restart-deep-plan");
+    const turnId = TurnId.make("restart-deep-plan-turn");
+    const run: DeepPlanRun = {
+      id: DeepPlanRunId.make("restart-plan"),
+      threadId,
+      phase,
+      revision: 2,
+      plan: null,
+      approval: null,
+      approvalKey: null,
+      sources: [],
+      sourceCoverage: [],
+      stepStates: [],
+      finalValidation: {
+        status: "pending",
+        attempt: 0,
+        requestId: null,
+        turnId: null,
+        evidence: [],
+        updatedAt,
+      },
+      procedureAdjustments: [],
+      operations: [],
+      pauseReason: phase === "paused" ? "User paused" : null,
+      createdAt: updatedAt,
+      updatedAt,
+    };
+    let thread = {
+      ...makeThread(threadId, "running", turnId),
+      projectId: ProjectId.make("restart-deep-project"),
+      interactionMode,
+      runtimeMode: "full-access" as const,
+      modelSelection: { instanceId: providerInstanceId, model: "approved-planning-model" },
+      latestTurn: null,
+      deepPlan: run,
+    };
+    const cleared = yield* Deferred.make<void>();
+    const dispatched: OrchestrationCommand[] = [];
+    const sentModes: string[] = [];
+    let binding: ProviderSessionDirectory.ProviderRuntimeBinding = {
+      threadId,
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId,
+      status: "running",
+      resumeCursor: { threadId },
+      runtimePayload: { activeTurnId: turnId },
+    };
+    yield* runReconciliation({
+      threads: [thread],
+      continueAfterRestart: true,
+      providerService: {
+        ...makeProviderService(),
+        getCapabilities: () =>
+          Effect.succeed({ sessionModelSwitch: "in-session", promptlessTurnContinuation: true }),
+        sendTurn: (input) =>
+          Effect.sync(() => {
+            sentModes.push(input.interactionMode ?? "unset");
+            return { threadId, turnId };
+          }),
+      },
+      query: {
+        ...queryWithThreads([thread]),
+        getThreadShellById: () => Effect.sync(() => Option.some(thread) as never),
+      },
+      directory: {
+        getBinding: () => Effect.sync(() => Option.some(binding)),
+        upsert: (next) =>
+          Effect.gen(function* () {
+            binding = next;
+            if (
+              typeof next.runtimePayload === "object" &&
+              next.runtimePayload !== null &&
+              "continueAfterServerUpdate" in next.runtimePayload &&
+              next.runtimePayload.continueAfterServerUpdate === null
+            )
+              yield* Deferred.succeed(cleared, undefined);
+          }),
+        recordImportedTranscript: () => Effect.die("unused"),
+        getProvider: () => Effect.die("unused"),
+        listThreadIds: () => Effect.die("unused"),
+        listBindings: () => Effect.succeed([]),
+      },
+      dispatch: (command) =>
+        Effect.sync(() => {
+          dispatched.push(command);
+          if (command.type === "thread.session.set")
+            thread = { ...thread, session: command.session as typeof thread.session };
+          return { sequence: dispatched.length };
+        }),
+    });
+    yield* Deferred.await(cleared);
+    const starts = dispatched.filter((command) => command.type === "thread.turn.start");
+    expect(starts).toHaveLength(phase === "planning" && interactionMode === "plan" ? 1 : 0);
+    expect(sentModes).toEqual(interactionMode === "default" ? ["default"] : []);
+    if (starts.length) {
+      expect(starts[0]).toMatchObject({
+        threadId,
+        background: { runId: run.id },
+        idleGuard: { latestTurnId: null },
+        interactionMode: "plan",
+        modelSelection: thread.modelSelection,
+      });
+    }
+    expect(thread.session.status).toBe(interactionMode === "plan" ? "interrupted" : "starting");
   }),
 );

@@ -148,15 +148,16 @@ function buildCompactHandoff(input: CompactHandoffInput): ProviderTranscriptHand
 
 export function buildProviderTranscriptHandoff(input: {
   readonly messages: ReadonlyArray<OrchestrationMessage>;
-  readonly boundaryMessageId: OrchestrationMessage["id"];
+  readonly boundaryMessageId?: OrchestrationMessage["id"];
   readonly latestTurnState?: string | null;
   readonly checkpoints?: ReadonlyArray<HandoffCheckpoint>;
   readonly editedMessageIds?: ReadonlyArray<OrchestrationMessage["id"]>;
   readonly maxChars?: number;
 }): ProviderTranscriptHandoff {
-  const boundaryIndex = input.messages.findIndex(
-    (message) => message.id === input.boundaryMessageId,
-  );
+  const boundaryIndex =
+    input.boundaryMessageId === undefined
+      ? input.messages.length
+      : input.messages.findIndex((message) => message.id === input.boundaryMessageId);
   const messages = boundaryIndex < 0 ? [] : input.messages.slice(0, boundaryIndex);
   const compact = buildCompactHandoff({
     messages,

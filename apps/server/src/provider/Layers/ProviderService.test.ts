@@ -86,6 +86,7 @@ import { makeProviderRegistryLayer } from "../testUtils/providerRegistryMock.ts"
 import { ProviderRegistry } from "../Services/ProviderRegistry.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import type { McpDeepPlanContext } from "../../mcp/McpInvocationContext.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { replyContext, replyOwnerThreadId } from "../../mcp/testFixtures/messageReply.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -152,30 +153,31 @@ function makeFakeCodexAdapter(
   const sessions = new Map<ThreadId, ProviderSession>();
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
 
-  const startSession = vi.fn((input: ProviderSessionStartInput) =>
-    Effect.sync(() => {
-      const now = "2026-01-01T00:00:00.000Z";
-      const session: ProviderSession = {
-        provider,
-        ...(input.providerInstanceId !== undefined
-          ? { providerInstanceId: input.providerInstanceId }
-          : {}),
-        status: "ready",
-        runtimeMode: input.runtimeMode,
-        threadId: input.threadId,
-        resumeCursor: input.resumeCursor ?? {
-          opaque: `resume-${String(input.threadId)}`,
-        },
-        cwd: input.cwd ?? process.cwd(),
-        createdAt: now,
-        updatedAt: now,
-        ...(input.runtimeSessionId !== undefined
-          ? { runtimeSessionId: input.runtimeSessionId }
-          : {}),
-      };
-      sessions.set(session.threadId, session);
-      return session;
-    }),
+  const startSession = vi.fn(
+    (input: ProviderSessionStartInput): Effect.Effect<ProviderSession, ProviderAdapterError> =>
+      Effect.sync(() => {
+        const now = "2026-01-01T00:00:00.000Z";
+        const session: ProviderSession = {
+          provider,
+          ...(input.providerInstanceId !== undefined
+            ? { providerInstanceId: input.providerInstanceId }
+            : {}),
+          status: "ready",
+          runtimeMode: input.runtimeMode,
+          threadId: input.threadId,
+          resumeCursor: input.resumeCursor ?? {
+            opaque: `resume-${String(input.threadId)}`,
+          },
+          cwd: input.cwd ?? process.cwd(),
+          createdAt: now,
+          updatedAt: now,
+          ...(input.runtimeSessionId !== undefined
+            ? { runtimeSessionId: input.runtimeSessionId }
+            : {}),
+        };
+        sessions.set(session.threadId, session);
+        return session;
+      }),
   );
 
   const sendTurn = vi.fn(
@@ -479,6 +481,7 @@ function makeProviderServiceLayer(
     readonly settingsLayer?: typeof defaultServerSettingsLayer;
     readonly registry?: ProviderAdapterRegistry.ProviderAdapterRegistry["Service"];
     readonly usageProviders?: Layer.Layer<ProviderRegistry>;
+    readonly projections?: Layer.Layer<ProjectionSnapshotQuery.ProjectionSnapshotQuery>;
   } = {},
 ) {
   const codex = makeFakeCodexAdapter(CODEX_DRIVER, input.supportsConversationRollback);
@@ -509,6 +512,7 @@ function makeProviderServiceLayer(
       makeProviderServiceLive().pipe(
         Layer.provide(NodeServices.layer),
         Layer.provide(providerAdapterLayer),
+        Layer.provide(input.projections ?? Layer.empty),
         Layer.provide(directoryLayer),
         Layer.provideMerge(input.settingsLayer ?? defaultServerSettingsLayer),
         Layer.provide(input.usageProviders ?? makeProviderRegistryLayer()),
@@ -536,6 +540,123 @@ function makeProviderServiceLayer(
     cursor,
     layer,
   };
+}
+
+{
+  const threadId = asThreadId("deep-plan-mode-sync");
+  const modelSelection = createModelSelection(codexInstanceId, "gpt-5.4");
+  const createdAt = "2026-10-20T09:30:00.000Z";
+  const thread: OrchestrationThreadShell = {
+    id: threadId,
+    projectId: ProjectId.make("mode-sync-project"),
+    title: "Mode synchronization",
+    modelSelection,
+    runtimeMode: "full-access",
+    interactionMode: "plan",
+    branch: null,
+    worktreePath: null,
+    latestTurn: null,
+    createdAt,
+    updatedAt: createdAt,
+    archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    pullRequests: [],
+    session: null,
+    latestUserMessageAt: null,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    hasActionableProposedPlan: false,
+    deepPlan: {
+      id: DeepPlanRunId.make("mode-sync-run"),
+      threadId,
+      phase: "planning",
+      revision: 2,
+      plan: null,
+      approval: null,
+      approvalKey: null,
+      sources: [],
+      sourceCoverage: [],
+      stepStates: [],
+      procedureAdjustments: [],
+      operations: [],
+      pauseReason: null,
+      createdAt,
+      updatedAt: createdAt,
+      finalValidation: {
+        status: "pending",
+        evidence: [],
+        updatedAt: null,
+        attempt: 0,
+        requestId: null,
+        turnId: null,
+      },
+    },
+  };
+  const codex = makeFakeCodexAdapter();
+  const adapter: ProviderAdapterShape<ProviderAdapterError> = {
+    ...codex.adapter,
+    capabilities: {
+      ...codex.adapter.capabilities,
+      deepPlan: { supported: true, readOnlyPlan: "native" },
+    },
+  };
+  const { layer } = makeProviderServiceLayer({
+    registry: makeStaticInstanceRegistry([[codexInstanceId, adapter]]),
+    projections: Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+      getThreadShellById: () => Effect.succeed(Option.some(thread)),
+    }),
+  });
+  layer("Deep Plan mode synchronization", (it) => {
+    it.effect("removes the previous run binding when the same session switches to Build", () =>
+      Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        yield* provider.startSession(threadId, {
+          threadId,
+          providerInstanceId: codexInstanceId,
+          runtimeMode: "full-access",
+          modelSelection,
+        });
+        McpProviderSession.setMcpProviderSession({
+          environmentId: EnvironmentId.make("mode-sync-environment"),
+          threadId,
+          providerSessionId: "mode-sync-session",
+          providerInstanceId: codexInstanceId,
+          endpoint: "http://localhost/mcp",
+          authorizationHeader: "test-credential",
+          capabilities: new Set(),
+        });
+        yield* provider.sendTurn({ threadId, input: "Plan the change", interactionMode: "plan" });
+        assert.equal(
+          McpProviderSession.readMcpProviderSession(threadId)?.deepPlan?.runId,
+          thread.deepPlan!.id,
+        );
+        yield* provider.sendTurn({
+          threadId,
+          input: "Edit the documentation",
+          interactionMode: "default",
+        });
+        assert.equal(codex.startSession.mock.calls.length, 1);
+        assert.equal(codex.sendTurn.mock.calls[1]?.[0].interactionMode, "default");
+        assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId)?.deepPlan);
+        assert.isFalse(
+          McpProviderSession.readMcpProviderSession(threadId)?.capabilities.has("deep-plan"),
+        );
+        yield* provider.sendTurn({
+          threadId,
+          input: "Return to planning",
+          interactionMode: "plan",
+        });
+        assert.equal(
+          McpProviderSession.readMcpProviderSession(threadId)?.deepPlan?.runId,
+          thread.deepPlan!.id,
+        );
+        assert.equal(codex.sendTurn.mock.calls[2]?.[0].interactionMode, "plan");
+      }).pipe(
+        Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
+      ),
+    );
+  });
 }
 
 for (const [enabled, completed] of [
@@ -1129,6 +1250,131 @@ it.effect("ProviderServiceLive rejects new sessions for disabled custom instance
     assert.equal(codex.startSession.mock.calls.length, 0);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+const previousWriter = makeFakeCodexAdapter();
+const replacementWriter = makeFakeCodexAdapter();
+const replacementWriterOpenAttempts: ThreadId[] = [];
+const startReplacement = replacementWriter.startSession.getMockImplementation();
+assert(startReplacement !== undefined);
+replacementWriter.startSession.mockImplementation((input) =>
+  Effect.gen(function* () {
+    replacementWriterOpenAttempts.push(input.threadId);
+    if (yield* previousWriter.adapter.hasSession(input.threadId)) {
+      return yield* new ProviderAdapterRequestError({
+        provider: CODEX_DRIVER,
+        method: "thread/resume",
+        detail: "thread saved-codex-thread already has an active writer",
+      });
+    }
+    return yield* startReplacement(input);
+  }),
+);
+const writerRegistry = makeAdapterRegistryMock({ [CODEX_DRIVER]: previousWriter.adapter });
+let useReplacementWriter = false;
+const writerHandoff = makeProviderServiceLayer({
+  registry: {
+    ...writerRegistry,
+    getByInstance: (instanceId) =>
+      instanceId === codexInstanceId && useReplacementWriter
+        ? Effect.succeed(replacementWriter.adapter)
+        : writerRegistry.getByInstance(instanceId),
+  },
+});
+writerHandoff.layer("ProviderServiceLive writer handoff", (it) => {
+  it.effect("releases the previous adapter's writer before resuming its provider thread", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("deep-plan-writer-handoff");
+      const otherThreadId = asThreadId("unrelated-writer");
+      useReplacementWriter = false;
+      const original = yield* provider.startSession(threadId, {
+        threadId,
+        providerInstanceId: codexInstanceId,
+        runtimeMode: "full-access",
+        resumeCursor: { threadId: "saved-codex-thread" },
+      });
+      yield* provider.startSession(otherThreadId, {
+        threadId: otherThreadId,
+        providerInstanceId: codexInstanceId,
+        runtimeMode: "full-access",
+      });
+      const closeStarted = yield* Deferred.make<void>();
+      const allowClose = yield* Deferred.make<void>();
+      const forceStopPrevious = previousWriter.forceStopSession.getMockImplementation();
+      assert(forceStopPrevious !== undefined);
+      previousWriter.forceStopSession.mockImplementationOnce((id, runtimeId) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(closeStarted, undefined);
+          yield* Deferred.await(allowClose);
+          return yield* forceStopPrevious(id, runtimeId);
+        }),
+      );
+      useReplacementWriter = true;
+      const resume = yield* provider
+        .startSession(threadId, {
+          threadId,
+          providerInstanceId: codexInstanceId,
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(closeStarted);
+      assert.isFalse(replacementWriterOpenAttempts.includes(threadId));
+      yield* Deferred.succeed(allowClose, undefined);
+      const resumed = yield* Fiber.join(resume);
+      assert.deepStrictEqual(resumed.resumeCursor, original.resumeCursor);
+      assert.notEqual(resumed.runtimeSessionId, original.runtimeSessionId);
+      assert.isFalse(yield* previousWriter.adapter.hasSession(threadId));
+      assert.isTrue(yield* previousWriter.adapter.hasSession(otherThreadId));
+      const result = yield* provider.sendTurn({
+        threadId,
+        input: "Continue the approved Deep Plan",
+      });
+      assert.equal(result.threadId, threadId);
+      assert.equal(replacementWriter.sendTurn.mock.calls.length, 1);
+    }),
+  );
+  it.effect("keeps the saved session recoverable when releasing its writer fails", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const threadId = asThreadId("deep-plan-writer-cleanup-failure");
+      useReplacementWriter = false;
+      const original = yield* provider.startSession(threadId, {
+        threadId,
+        providerInstanceId: codexInstanceId,
+        runtimeMode: "full-access",
+        resumeCursor: { threadId: "saved-codex-thread-cleanup" },
+      });
+      const originalBinding = yield* directory.getBinding(threadId);
+      const cleanupError = new ProviderAdapterRequestError({
+        provider: CODEX_DRIVER,
+        method: "session/stop",
+        detail: "The previous writer could not be released",
+      });
+      previousWriter.forceStopSession.mockImplementationOnce(() => Effect.fail(cleanupError));
+      replacementWriter.startSession.mockClear();
+      useReplacementWriter = true;
+      const error = yield* provider
+        .startSession(threadId, {
+          threadId,
+          providerInstanceId: codexInstanceId,
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(error, cleanupError);
+      assert.isFalse(replacementWriterOpenAttempts.includes(threadId));
+      assert.isFalse(yield* replacementWriter.adapter.hasSession(threadId));
+      assert.deepStrictEqual(yield* directory.getBinding(threadId), originalBinding);
+      assert.isTrue(yield* previousWriter.adapter.hasSession(threadId));
+      const resumed = yield* provider.startSession(threadId, {
+        threadId,
+        providerInstanceId: codexInstanceId,
+        runtimeMode: "full-access",
+      });
+      assert.deepStrictEqual(resumed.resumeCursor, original.resumeCursor);
+    }),
+  );
+});
 
 const routing = makeProviderServiceLayer();
 

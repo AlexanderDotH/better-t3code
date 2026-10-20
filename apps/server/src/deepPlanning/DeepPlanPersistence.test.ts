@@ -41,7 +41,7 @@ import {
   DeepPlanValidationReactorLive,
   finalValidationRequestId,
 } from "./DeepPlanValidationReactor.ts";
-import { pendingDeepPlanValidationRequests } from "./pendingDeepPlanValidationRequests.ts";
+import { pendingDeepPlanTurnRequests } from "./pendingDeepPlanTurnRequests.ts";
 
 const createdAt = "2026-10-16T08:00:00.000Z";
 const model = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
@@ -406,7 +406,7 @@ it.layer(baseLayer)("durable Deep Plan orchestration", (it) => {
           createdAt,
         });
         const recover = Effect.gen(function* () {
-          return yield* pendingDeepPlanValidationRequests({
+          return yield* pendingDeepPlanTurnRequests({
             readModel: yield* query.getCommandReadModel(),
             receipts,
             turns,

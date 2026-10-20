@@ -326,6 +326,12 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             ),
           };
         }
+        // Startup snapshots omit old messages; guards need their durable identity.
+        const turnStartState =
+          envelope.command.type === "thread.turn.start" &&
+          (envelope.command.idleGuard !== undefined || envelope.command.background !== undefined)
+            ? yield* projectionSnapshotQuery.getTurnStartState(envelope.command.threadId)
+            : undefined;
         const eventBase = yield* Effect.gen(function* () {
           if (envelope.command.type === "thread.fork") {
             return yield* planThreadFork({
@@ -337,6 +343,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           return yield* decideOrchestrationCommand({
             command: envelope.command,
             readModel: decisionReadModel,
+            ...(turnStartState !== undefined ? { turnStartState } : {}),
             ...(Option.isSome(userInputActivity)
               ? { userInputActivity: userInputActivity.value }
               : {}),
@@ -383,19 +390,25 @@ const makeOrchestrationEngine = Effect.gen(function* () {
               }
 
               const lastSavedEvent = committedEvents.at(-1) ?? null;
-              if (lastSavedEvent === null) {
+              if (
+                lastSavedEvent === null &&
+                (envelope.command.type !== "thread.turn.start" ||
+                  (envelope.command.idleGuard === undefined &&
+                    envelope.command.background === undefined))
+              ) {
                 return yield* new OrchestrationCommandInvariantError({
                   commandType: envelope.command.type,
                   detail: "Command produced no events.",
                 });
               }
 
+              const lastSequence = lastSavedEvent?.sequence ?? commandReadModel.snapshotSequence;
               yield* commandReceiptRepository.upsert({
                 commandId: envelope.command.commandId,
-                aggregateKind: lastSavedEvent.aggregateKind,
-                aggregateId: lastSavedEvent.aggregateId,
-                acceptedAt: lastSavedEvent.occurredAt,
-                resultSequence: lastSavedEvent.sequence,
+                aggregateKind: lastSavedEvent?.aggregateKind ?? aggregateRef.aggregateKind,
+                aggregateId: lastSavedEvent?.aggregateId ?? aggregateRef.aggregateId,
+                acceptedAt: lastSavedEvent?.occurredAt ?? (yield* nowIso),
+                resultSequence: lastSequence,
                 status: "accepted",
                 error: null,
               });
@@ -403,7 +416,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
               return {
                 committedEvents,
                 attachmentCleanups,
-                lastSequence: lastSavedEvent.sequence,
+                lastSequence,
                 nextCommandReadModel,
               } as const;
             }),

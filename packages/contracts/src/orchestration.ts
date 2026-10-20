@@ -1740,6 +1740,13 @@ const ThreadTurnStartBootstrap = Schema.Struct({
 
 export type ThreadTurnStartBootstrap = typeof ThreadTurnStartBootstrap.Type;
 
+const DeepPlanBackgroundTurn = Schema.Struct({ runId: DeepPlanRunId });
+
+const ThreadTurnStartIdleGuard = Schema.Struct({
+  latestTurnId: Schema.optional(Schema.NullOr(TurnId)),
+  latestUserMessageId: Schema.optional(Schema.NullOr(MessageId)),
+});
+
 export const ThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
   commandId: CommandId,
@@ -1760,6 +1767,8 @@ export const ThreadTurnStartCommand = Schema.Struct({
   ),
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  idleGuard: Schema.optional(ThreadTurnStartIdleGuard),
+  background: Schema.optional(DeepPlanBackgroundTurn),
   createdAt: IsoDateTime,
 });
 
@@ -1803,6 +1812,8 @@ const ClientThreadTurnStartCommand = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  idleGuard: Schema.optional(ThreadTurnStartIdleGuard),
+  background: Schema.optional(DeepPlanBackgroundTurn),
   createdAt: IsoDateTime,
 });
 
@@ -2820,6 +2831,7 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
   resultOnly: Schema.optional(Schema.Boolean),
+  background: Schema.optional(Schema.Struct({ runId: DeepPlanRunId, text: Schema.String })),
   retryOfTurnId: Schema.optional(TurnId),
   fetchMode: Schema.optional(Schema.Literal("repository-exploration")),
   modelSelection: Schema.optional(ModelSelection),

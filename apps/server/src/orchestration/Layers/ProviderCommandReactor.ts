@@ -11,10 +11,16 @@ import {
 import { withWorkspaceLease } from "../../workspace/workspaceLease.ts";
 import { deepPlanProviderContext } from "../../deepPlanning/DeepPlanProviderContext.ts";
 import {
-  pendingDeepPlanValidationRequests,
+  canContinueDeepPlan,
+  deepPlanContinuationCommand,
+} from "../../deepPlanning/DeepPlanContinuation.ts";
+import {
+  pendingDeepPlanTurnRequests,
   canDispatchDeepPlanValidationRequest,
-} from "../../deepPlanning/pendingDeepPlanValidationRequests.ts";
+} from "../../deepPlanning/pendingDeepPlanTurnRequests.ts";
 import { OrchestrationCommandReceiptRepository } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
+import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
+import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import {
   type ChatAttachment,
@@ -63,6 +69,7 @@ import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { ProjectionThreadSubagentRepository } from "../../persistence/Services/ProjectionThreadSubagents.ts";
@@ -167,6 +174,17 @@ type ProviderIntentEvent = Extract<
       | "thread.activity-appended";
   }
 >;
+
+function isDeepPlanContinuationActivity(
+  event: Extract<OrchestrationEvent, { type: "thread.activity-appended" }>,
+): boolean {
+  return (
+    event.payload.subagentId === undefined &&
+    event.payload.activity.replyTopicId === undefined &&
+    (event.payload.activity.kind === "user-input.resolved" ||
+      event.payload.activity.kind === "approval.resolved")
+  );
+}
 
 function toNonEmptyProviderInput(value: string | undefined): string | undefined {
   const normalized = value?.trim();
@@ -405,8 +423,10 @@ const make = Effect.gen(function* () {
   const skillEngine = yield* SkillEngine;
   const projectMemory = yield* ProjectMemoryStore;
   const projectContext = yield* Effect.serviceOption(ProjectContextQuery);
-  const commandReceipts = yield* Effect.serviceOption(OrchestrationCommandReceiptRepository);
-  const projectionTurns = yield* Effect.serviceOption(ProjectionTurnRepository);
+  const commandReceipts = yield* OrchestrationCommandReceiptRepository;
+  const projectionTurns = yield* ProjectionTurnRepository;
+  const observedSequence = yield* SubscriptionRef.make(0);
+  let started = false;
   const terminalManager = yield* TerminalManager.TerminalManager;
   /** Environment settings with the thread's project overrides applied. */
   const projectSettingsForThread = Effect.fnUntraced(function* (threadId: ThreadId) {
@@ -718,10 +738,21 @@ const make = Effect.gen(function* () {
     const queued = turnsAfterCompaction.get(threadId) ?? [];
     while (queued.length > 0 && turnsAfterCompaction.get(threadId) === queued) {
       const event = queued[0]!;
-      const turnStart = yield* projectionSnapshotQuery.getTurnStartMessage({
-        threadId,
-        messageId: event.payload.messageId,
-      });
+      const turnStart = event.payload.background
+        ? Option.some({ text: event.payload.background.text, attachments: [] })
+        : yield* projectionSnapshotQuery
+            .getTurnStartMessage({
+              threadId,
+              messageId: event.payload.messageId,
+            })
+            .pipe(
+              Effect.map((context) =>
+                Option.map(context, ({ message }) => ({
+                  text: message.text,
+                  attachments: message.attachments ?? [],
+                })),
+              ),
+            );
       if (turnsAfterCompaction.get(threadId) !== queued) return;
       // In flight from here on: a cancellation reports it when the replay runs, not from the queue.
       queued.shift();
@@ -740,8 +771,8 @@ const make = Effect.gen(function* () {
           message: {
             messageId,
             role: "user",
-            text: turnStart.value.message.text,
-            attachments: turnStart.value.message.attachments ?? [],
+            text: turnStart.value.text,
+            attachments: turnStart.value.attachments,
           },
         })
         .pipe(
@@ -1062,7 +1093,7 @@ const make = Effect.gen(function* () {
       thread.deepPlan,
       threadId,
       options?.modelSelection ?? thread.modelSelection,
-      options?.interactionMode,
+      options?.interactionMode ?? thread.interactionMode,
     );
     const desiredRuntimeMode = thread.runtimeMode;
     const requestedModelSelection =
@@ -1432,6 +1463,7 @@ const make = Effect.gen(function* () {
     readonly editedMessageIds: ReadonlyArray<OrchestrationMessage["id"]>;
     readonly hasPendingMessageEdits: boolean;
     readonly boundaryMessageId: OrchestrationMessage["id"];
+    readonly background?: boolean;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly modelSelection?: ModelSelection;
     readonly interactionMode?: "default" | "plan";
@@ -1474,7 +1506,7 @@ const make = Effect.gen(function* () {
       thread.deepPlan,
       thread.id,
       input.modelSelection ?? thread.modelSelection,
-      input.interactionMode,
+      input.interactionMode ?? thread.interactionMode,
     );
     const pinnedDeepPlanModel =
       deepPlanBinding?.phase === "execution" || deepPlanBinding?.phase === "validation"
@@ -1742,7 +1774,7 @@ const make = Effect.gen(function* () {
       sessionPreparation.transcriptHandoffRequired
         ? buildProviderTranscriptHandoff({
             messages: transcriptHistory?.messages ?? [],
-            boundaryMessageId: input.boundaryMessageId,
+            ...(input.background ? {} : { boundaryMessageId: input.boundaryMessageId }),
             editedMessageIds: input.editedMessageIds,
             maxChars: Math.max(
               0,
@@ -2474,10 +2506,68 @@ const make = Effect.gen(function* () {
       return;
     }
     if (!canDispatchDeepPlanValidationRequest(event, thread.deepPlan)) return;
-    const turnStart = yield* projectionSnapshotQuery.getTurnStartMessage({
-      threadId: thread.id,
-      messageId: event.payload.messageId,
-    });
+    const background = event.payload.background;
+    if (
+      background &&
+      thread.deepPlan?.id === background.runId &&
+      thread.deepPlan.approval === null &&
+      thread.interactionMode !== "plan"
+    ) {
+      yield* orchestrationEngine.dispatch({
+        type: "thread.activity.append",
+        commandId: yield* serverCommandId("deep-plan-mode-changed"),
+        threadId: thread.id,
+        createdAt: event.payload.createdAt,
+        activity: {
+          id: yield* serverEventId(),
+          kind: "deep-plan.continuation-skipped",
+          tone: "info",
+          summary: "Deep Plan continuation canceled after switching to Build",
+          payload: { requestId: event.payload.messageId },
+          turnId: null,
+          createdAt: event.payload.createdAt,
+        },
+      });
+      return;
+    }
+    if (
+      background &&
+      (thread.deepPlan?.id !== background.runId ||
+        !canContinueDeepPlan(thread.deepPlan, thread.interactionMode) ||
+        (thread.deepPlan.approval?.implementationThreadId ?? thread.deepPlan.threadId) !==
+          thread.id)
+    )
+      return;
+    const turnStartState = background
+      ? yield* projectionSnapshotQuery.getTurnStartState(thread.id)
+      : undefined;
+    const persistedMessageId = background
+      ? turnStartState?.latestUserMessageId
+      : event.payload.messageId;
+    const persisted = persistedMessageId
+      ? yield* projectionSnapshotQuery.getTurnStartMessage({
+          threadId: thread.id,
+          messageId: persistedMessageId,
+        })
+      : Option.none();
+    const backgroundMessage: OrchestrationMessage = {
+      id: event.payload.messageId,
+      role: "user" as const,
+      text: background?.text ?? "",
+      turnId: null,
+      streaming: false,
+      createdAt: event.payload.createdAt,
+      updatedAt: event.payload.createdAt,
+    };
+    const turnStart = background
+      ? Option.some({
+          message: backgroundMessage,
+          hasOtherUserMessages: true,
+          editedMessageIds: Option.isSome(persisted) ? persisted.value.editedMessageIds : [],
+          hasPendingMessageEdits:
+            Option.isSome(persisted) && persisted.value.hasPendingMessageEdits,
+        })
+      : persisted;
     if (Option.isNone(turnStart) || turnStart.value.message.role !== "user") {
       yield* appendProviderFailureActivity({
         threadId: event.payload.threadId,
@@ -2491,6 +2581,7 @@ const make = Effect.gen(function* () {
       return;
     }
     const { message, hasOtherUserMessages } = turnStart.value;
+    if (background && message.id !== turnStartState?.pendingMessageId && !resumed) return;
     const appendTurnStartFailure = (summary: string, detail: string) =>
       appendProviderFailureActivity({
         threadId: event.payload.threadId,
@@ -2778,6 +2869,7 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    let startedTurnId: TurnId | null = null;
     const startProviderTurn = Effect.gen(function* () {
       const sendTurnRequest = yield* buildSendTurnRequestForThread({
         threadId: event.payload.threadId,
@@ -2789,13 +2881,16 @@ const make = Effect.gen(function* () {
           ? { titleSeed: event.payload.titleSeed }
           : {}),
         boundaryMessageId: message.id,
+        ...(background ? { background: true } : {}),
         editedMessageIds: turnStart.value.editedMessageIds,
         hasPendingMessageEdits: turnStart.value.hasPendingMessageEdits,
         ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
         ...(event.payload.modelSelection !== undefined
           ? { modelSelection: event.payload.modelSelection }
           : {}),
-        interactionMode: event.payload.interactionMode,
+        // Older background requests may still carry the composer's planning mode.
+        interactionMode:
+          background && thread.deepPlan?.approval ? "default" : event.payload.interactionMode,
         ...(event.payload.resultOnly !== undefined ? { resultOnly: event.payload.resultOnly } : {}),
         ...(event.payload.retryOfTurnId !== undefined
           ? { retryOfTurnId: event.payload.retryOfTurnId }
@@ -2870,6 +2965,7 @@ const make = Effect.gen(function* () {
             enhancedRequest;
           const { contextCheckpoint, ...sendRequest } = providerRequest;
           const started = yield* providerService.sendTurn(sendRequest);
+          startedTurnId = started.turnId;
           if (contextCheckpoint)
             yield* contextCompaction.applied(event.payload.threadId, contextCheckpoint).pipe(
               Effect.catchCause((cause) =>
@@ -3062,12 +3158,28 @@ const make = Effect.gen(function* () {
     yield* startProviderTurn.pipe(
       Effect.catchCause(recoverTurnStartFailure),
       Effect.ensuring(
-        Effect.sync(() => {
-          forkHandoffsInFlight.delete(event.payload.threadId);
-          pendingTurnStarts.delete(turnStartDone);
-        }).pipe(
-          Effect.andThen(Deferred.succeed(turnStartDone, undefined)),
-          Effect.andThen(resumed ? Deferred.succeed(resumed.sent, undefined) : Effect.void),
+        Effect.suspend(() =>
+          continueIdleDeepPlan(event.payload.threadId, {
+            completedTurnStart: { done: turnStartDone, turnId: startedTurnId },
+          }),
+        ).pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause)
+              ? Effect.interrupt
+              : Effect.logWarning("Deep Plan continuation check failed after turn startup", {
+                  threadId: event.payload.threadId,
+                  cause: Cause.pretty(cause),
+                }),
+          ),
+          Effect.ensuring(
+            Effect.sync(() => {
+              forkHandoffsInFlight.delete(event.payload.threadId);
+              pendingTurnStarts.delete(turnStartDone);
+            }).pipe(
+              Effect.andThen(Deferred.succeed(turnStartDone, undefined)),
+              Effect.andThen(resumed ? Deferred.succeed(resumed.sent, undefined) : Effect.void),
+            ),
+          ),
         ),
       ),
       Effect.forkScoped,
@@ -3305,6 +3417,68 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const continueIdleDeepPlan = Effect.fn("continueIdleDeepPlan")(function* (
+    threadId: ThreadId,
+    options: {
+      readonly afterRestart?: boolean;
+      readonly completedTurnStart?: {
+        readonly done: Deferred.Deferred<void>;
+        readonly turnId: TurnId | null;
+      };
+    } = {},
+  ) {
+    const target = yield* resolveThreadShell(threadId);
+    const run = target?.deepPlan;
+    if (
+      !target ||
+      !run ||
+      !canContinueDeepPlan(run, target.interactionMode) ||
+      (run.approval?.implementationThreadId ?? run.threadId) !== threadId ||
+      target.archivedAt !== null ||
+      target.hasPendingApprovals ||
+      target.hasPendingUserInput ||
+      target.session?.status === "starting" ||
+      target.session?.status === "running" ||
+      target.latestTurn?.state === "running" ||
+      [...pendingTurnStarts].some(
+        ([start, targetId]) => targetId === threadId && start !== options.completedTurnStart?.done,
+      ) ||
+      compactingThreadIds.has(threadId)
+    )
+      return;
+    if (
+      !options.afterRestart &&
+      (target.session?.status !== "ready" ||
+        target.latestTurn?.state !== "completed" ||
+        (options.completedTurnStart !== undefined &&
+          options.completedTurnStart.turnId !== target.latestTurn.turnId))
+    )
+      return;
+    if (
+      !run.approval &&
+      (run.phase === "collecting" ||
+        !run.sources.every((source) =>
+          run.sourceCoverage.some(
+            (coverage) =>
+              coverage.sourceId === source.sourceId &&
+              (coverage.status === "ready" || coverage.status === "summarized") &&
+              coverage.importedRecordCount === source.recordCount,
+          ),
+        ))
+    )
+      return;
+    const settings = yield* projectSettingsForThread(threadId);
+    if (options.afterRestart && !settings.continueThreadsAfterServerUpdate) return;
+    yield* orchestrationEngine.dispatch(
+      deepPlanContinuationCommand({
+        run,
+        target,
+        commandId: yield* serverCommandId("deep-plan-continue"),
+        createdAt: DateTime.formatIso(yield* DateTime.now),
+      }),
+    );
+  });
+
   const processDomainEvent = Effect.fn("processDomainEvent")(function* (
     event: ProviderIntentEvent,
   ) {
@@ -3330,10 +3504,14 @@ const make = Effect.gen(function* () {
           !event.payload.activity.id.startsWith("subagent:")
         )
           yield* contextCompaction.observe(event.payload.threadId, event.payload.activity.payload);
+        if (isDeepPlanContinuationActivity(event))
+          yield* continueIdleDeepPlan(event.payload.threadId);
         return;
       case "thread.session-set":
-        if (event.payload.session.status === "ready")
+        if (event.payload.session.status === "ready") {
           yield* maybeRefineThreadTitle(event.payload.threadId);
+          yield* continueIdleDeepPlan(event.payload.threadId);
+        }
         return;
       case "thread.runtime-mode-set": {
         const thread = yield* resolveThreadShell(event.payload.threadId);
@@ -3419,6 +3597,7 @@ const make = Effect.gen(function* () {
   const worker = yield* makeDrainableWorker(processDomainEventSafely);
 
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
+    started = true;
     const pendingTitles = yield* findPendingThreadTitles().pipe(
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
@@ -3444,14 +3623,18 @@ const make = Effect.gen(function* () {
         event.type === "thread.session-stop-requested" ||
         event.type === "thread.settled" ||
         (event.type === "thread.activity-appended" &&
-          event.payload.activity.kind === "context-window.updated")
+          (event.payload.activity.kind === "context-window.updated" ||
+            isDeepPlanContinuationActivity(event)))
       ) {
-        return yield* worker.enqueue(event);
+        yield* worker.enqueue(event);
       }
+      yield* SubscriptionRef.update(observedSequence, (seen) => Math.max(seen, event.sequence));
     });
 
     // Subscribe before returning, even while event handling waits for server activation.
+    const initialSequence = yield* orchestrationEngine.latestSequence;
     const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
+    yield* SubscriptionRef.update(observedSequence, (seen) => Math.max(seen, initialSequence));
     yield* forkParked(Stream.runForEach(domainEvents, processEvent));
 
     const startupReadModel = yield* projectionSnapshotQuery.getCommandReadModel().pipe(
@@ -3472,21 +3655,18 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const pendingDeepPlanTurns =
-      Option.isSome(commandReceipts) && Option.isSome(projectionTurns)
-        ? yield* pendingDeepPlanValidationRequests({
-            readModel: startupReadModel.value,
-            receipts: commandReceipts.value,
-            turns: projectionTurns.value,
-            engine: orchestrationEngine,
-          }).pipe(
-            Effect.catch((error) =>
-              Effect.logWarning("Could not recover pending Deep Plan validation requests.", {
-                error,
-              }).pipe(Effect.as([])),
-            ),
-          )
-        : [];
+    const pendingDeepPlanTurns = yield* pendingDeepPlanTurnRequests({
+      readModel: startupReadModel.value,
+      receipts: commandReceipts,
+      turns: projectionTurns,
+      engine: orchestrationEngine,
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Could not recover pending Deep Plan turn requests.", { error }).pipe(
+          Effect.as([]),
+        ),
+      ),
+    );
 
     yield* reconcileOrphanedSessionsAtStartup(startupReadModel.value).pipe(
       Effect.catchCause((cause) => {
@@ -3527,27 +3707,87 @@ const make = Effect.gen(function* () {
     );
     const recoverStartupWork = Effect.andThen(
       recoverTitles,
-      Effect.forEach(pendingDeepPlanTurns, (event) => worker.enqueue(event), { discard: true }),
+      Effect.gen(function* () {
+        for (const event of pendingDeepPlanTurns) {
+          const background = event.payload.background;
+          if (!background) {
+            yield* worker.enqueue(event);
+            continue;
+          }
+          const state = yield* projectionSnapshotQuery.getTurnStartState(event.payload.threadId);
+          if (state.pendingMessageId === event.payload.messageId) {
+            yield* worker.enqueue(event);
+          } else {
+            const target = yield* resolveThreadShell(event.payload.threadId);
+            const run = target?.deepPlan;
+            if (
+              target &&
+              run?.id === background.runId &&
+              canContinueDeepPlan(run, target.interactionMode)
+            ) {
+              yield* orchestrationEngine.dispatch(
+                deepPlanContinuationCommand({
+                  run,
+                  target,
+                  commandId: yield* serverCommandId("deep-plan-recover"),
+                  createdAt: DateTime.formatIso(yield* DateTime.now),
+                }),
+              );
+            }
+          }
+        }
+        for (const thread of startupReadModel.value.threads) {
+          const run = thread.deepPlan;
+          if (run?.threadId !== thread.id) continue;
+          yield* continueIdleDeepPlan(run.approval?.implementationThreadId ?? thread.id, {
+            afterRestart: true,
+          });
+        }
+      }),
+    );
+    const recoverStartupWorkSafely = recoverStartupWork.pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("Deep Plan startup recovery failed", { cause: Cause.pretty(cause) }),
+      ),
     );
     const activation = yield* ServerActivation;
     if (activation === undefined) {
-      yield* recoverStartupWork;
+      yield* recoverStartupWorkSafely;
     } else {
-      yield* forkParked(recoverStartupWork);
+      yield* forkParked(recoverStartupWorkSafely);
     }
   });
 
   return {
     start,
     drain: Effect.gen(function* () {
-      yield* worker.drain;
-      yield* Effect.forEach([...pendingTurnStarts.keys()], Deferred.await, { discard: true });
-      yield* threadTitleRegenerationWorker.drain;
-      yield* contextCompaction.drain;
+      if (!started) return;
+      let sequence = yield* orchestrationEngine.latestSequence;
+      while (true) {
+        yield* SubscriptionRef.changes(observedSequence).pipe(
+          Stream.filter((seen) => seen >= sequence),
+          Stream.runHead,
+        );
+        yield* worker.drain;
+        yield* Effect.forEach([...pendingTurnStarts.keys()], Deferred.await, { discard: true });
+        yield* threadTitleRegenerationWorker.drain;
+        yield* contextCompaction.drain;
+        const current = yield* orchestrationEngine.latestSequence;
+        if (current === sequence) return;
+        sequence = current;
+      }
     }),
   } satisfies ProviderCommandReactorShape;
 });
 
 export const ProviderCommandReactorLive = Layer.effect(ProviderCommandReactor, make).pipe(
-  Layer.provide(ProjectionThreadSubagentRepositoryLive),
+  Layer.provide(
+    Layer.mergeAll(
+      ProjectionThreadSubagentRepositoryLive,
+      OrchestrationCommandReceiptRepositoryLive,
+      ProjectionTurnRepositoryLive,
+    ),
+  ),
 );

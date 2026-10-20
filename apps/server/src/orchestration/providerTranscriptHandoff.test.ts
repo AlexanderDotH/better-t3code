@@ -127,6 +127,19 @@ describe("buildProviderTranscriptHandoff", () => {
     expect(built.attachments.map((attachment) => attachment.id)).toContain("edited-image");
   });
 
+  it("retains canonical context when a background continuation has no visible message boundary", () => {
+    const built = buildProviderTranscriptHandoff({
+      messages: [
+        message("goal", "user", "Implement the approved plan"),
+        message("progress", "assistant", "The parser is verified; the renderer still needs work"),
+      ],
+      latestTurnState: "interrupted",
+    });
+    expect(built.handoff).toContain("Implement the approved plan");
+    expect(built.handoff).toContain("The parser is verified; the renderer still needs work");
+    expect(built.handoff).toContain("latestTurn=interrupted; open=true");
+  });
+
   it("bounds selected message text and is deterministic when the boundary is unknown", () => {
     const input = {
       messages: [message("user-1", "user", `goal ${"x".repeat(50_000)}`)],

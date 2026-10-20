@@ -288,6 +288,16 @@ export interface ProjectionSnapshotQueryShape {
     ProjectionRepositoryError
   >;
 
+  /** Read only the durable facts needed to guard a turn start. */
+  readonly getTurnStartState: (threadId: ThreadId) => Effect.Effect<
+    {
+      readonly latestUserMessageId: MessageId | null;
+      readonly latestUserMessageAt: string | null;
+      readonly pendingMessageId: MessageId | null;
+    },
+    ProjectionRepositoryError
+  >;
+
   /**
    * Read one requested message and whether another non-compaction user message exists.
    * Newer queued messages count too, preserving first-turn title eligibility.

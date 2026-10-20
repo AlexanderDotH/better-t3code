@@ -931,7 +931,8 @@ describe("CodexSessionRuntime compaction", () => {
         assert.equal(item.role, "developer");
         return item.content[0].text;
       });
-      assert.lengthOf(texts, 2);
+      assert.lengthOf(texts, 3);
+      assert.include(texts, "<t3_code_deep_plan></t3_code_deep_plan>");
       assert.match(
         texts.find((text) => text.startsWith("<t3_code_runtime>")) ?? "",
         /^<t3_code_runtime><runtime_info>.*as GPT-5\.6 Sol \(model slug: gpt-5\.6-sol\).*<\/t3_code_runtime>$/s,
