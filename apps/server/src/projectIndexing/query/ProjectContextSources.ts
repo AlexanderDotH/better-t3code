@@ -45,6 +45,7 @@ export type ProjectContextHashReader = (
 ) => Effect.Effect<string, Error>;
 
 const MAX_SOURCE_FILES_PER_QUERY = 64;
+const SOURCE_HASH_CONCURRENCY = 8;
 const MAX_RECORD_REFERENCES = 64;
 
 type SourceHashCheck =
@@ -110,28 +111,34 @@ export function makeProjectContextSourceValidator(input: {
   >();
   const readDependencies = makeProjectContextDependencyReader(input.reader, input.revision);
   const readHash: ProjectContextHashReader = input.readHash ?? hashProjectSourceFile;
-  const freshness = Effect.fn("ProjectContextSources.freshness")(function* (
-    filePath: string,
-    expectedHash: string,
+  const readSourceHashes = Effect.fn("ProjectContextSources.readSourceHashes")(function* (
+    sources: ReadonlyArray<ProjectEvidenceV1>,
   ) {
-    if (!isSafeProjectSourcePath(filePath)) return "unknown" as const;
-    if (!hashes.has(filePath)) {
-      if (hashes.size >= MAX_SOURCE_FILES_PER_QUERY) return "unknown" as const;
-      const hash = yield* readHash(input.workspaceRoot, filePath).pipe(
-        Effect.match({
-          onSuccess: (hash): SourceHashCheck => ({ status: "read", hash }),
-          onFailure: (error): SourceHashCheck => ({ status: sourceReadFailureFreshness(error) }),
-        }),
-      );
-      hashes.set(filePath, hash);
-    }
+    const paths = [...new Set(sources.map((source) => source.filePath))]
+      .filter((path) => !hashes.has(path) && isSafeProjectSourcePath(path))
+      .slice(0, MAX_SOURCE_FILES_PER_QUERY - hashes.size);
+    const checked = yield* Effect.forEach(
+      paths,
+      (path) =>
+        readHash(input.workspaceRoot, path).pipe(
+          Effect.match({
+            onSuccess: (hash): SourceHashCheck => ({ status: "read", hash }),
+            onFailure: (error): SourceHashCheck => ({ status: sourceReadFailureFreshness(error) }),
+          }),
+        ),
+      { concurrency: SOURCE_HASH_CONCURRENCY },
+    );
+    for (const [index, path] of paths.entries()) hashes.set(path, checked[index]!);
+  });
+
+  function freshness(filePath: string, expectedHash: string): ProjectIndexFreshness {
     const hash = hashes.get(filePath);
     return hash?.status !== "read"
-      ? (hash?.status ?? ("unknown" as const))
+      ? (hash?.status ?? "unknown")
       : hash.hash === expectedHash
-        ? ("current" as const)
-        : ("stale" as const);
-  });
+        ? "current"
+        : "stale";
+  }
 
   const validate = Effect.fn("ProjectContextSources.validate")(function* (
     record: ProjectContextRecord,
@@ -349,9 +356,11 @@ export function makeProjectContextSourceValidator(input: {
         ),
       );
     }
+    const sources = [...evidence, ...dependencySources];
+    yield* readSourceHashes(sources);
     const sourceChecks = new Map<string, ProjectIndexFreshness>();
-    for (const source of [...evidence, ...dependencySources]) {
-      const current = yield* freshness(source.filePath, source.sourceHash);
+    for (const source of sources) {
+      const current = freshness(source.filePath, source.sourceHash);
       sourceChecks.set(
         source.filePath,
         combineFreshness(sourceChecks.get(source.filePath) ?? "current", current),

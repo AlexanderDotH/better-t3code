@@ -134,7 +134,24 @@ function fail(code: string, detail: string): never {
   throw new KnowledgeStoreError({ code, detail });
 }
 function run<A>(operation: string, task: () => Promise<A>) {
-  return Effect.tryPromise({ try: task, catch: (cause) => storeError(operation, cause) });
+  return Effect.suspend(() => {
+    let pending: Promise<A> | undefined;
+    return Effect.tryPromise({
+      try: () => (pending = task()),
+      catch: (cause) => storeError(operation, cause),
+    }).pipe(
+      // Finish native I/O before interruption closes this query's scoped database handles.
+      Effect.onInterrupt(() =>
+        Effect.promise(
+          () =>
+            pending?.then(
+              () => undefined,
+              () => undefined,
+            ) ?? Promise.resolve(),
+        ),
+      ),
+    );
+  });
 }
 function leaseTtl(value?: number) {
   return Math.max(100, Math.min(10 * 60_000, Math.floor(value ?? DEFAULT_LEASE_TTL_MS)));

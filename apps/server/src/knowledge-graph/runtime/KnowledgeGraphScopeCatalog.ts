@@ -15,6 +15,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
@@ -66,6 +67,8 @@ interface ScopeShellSnapshot {
 export interface KnowledgeGraphScopeCatalogDependencies {
   readonly getEnvironmentId: Effect.Effect<EnvironmentId, Error>;
   readonly getShellSnapshot: Effect.Effect<ScopeShellSnapshot, Error>;
+  readonly getProject: (projectId: ProjectId) => Effect.Effect<ScopeProject | undefined, Error>;
+  readonly getThread: (threadId: ThreadId) => Effect.Effect<ScopeThread | undefined, Error>;
   readonly canonicalizeWorkspaceRoot: (workspaceRoot: string) => Effect.Effect<string, Error>;
   readonly homeDirectory: string;
 }
@@ -200,8 +203,19 @@ export function makeKnowledgeGraphScopeCatalog(
   const resolveScope = Effect.fn("KnowledgeGraphScopeCatalog.resolveScope")(function* (
     input: KnowledgeGraphScopeInput,
   ) {
-    const [environmentId, shell] = yield* Effect.all([readEnvironmentId, readShell]);
-    const project = shell.projects.find(({ id }) => id === input.projectId);
+    const [environmentId, project] = yield* Effect.all([
+      readEnvironmentId,
+      dependencies.getProject(input.projectId).pipe(
+        Effect.mapError(
+          (cause) =>
+            new KnowledgeGraphScopeResolutionError({
+              reason: "workspace-root-unavailable",
+              projectId: input.projectId,
+              cause,
+            }),
+        ),
+      ),
+    ]);
     if (project === undefined) {
       return yield* new KnowledgeGraphScopeResolutionError({
         reason: "project-not-found",
@@ -217,7 +231,16 @@ export function makeKnowledgeGraphScopeCatalog(
         projectWorkspaceRoot: project.workspaceRoot,
       });
     }
-    const thread = shell.threads.find(({ id }) => id === input.threadId);
+    const thread = yield* dependencies.getThread(input.threadId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new KnowledgeGraphScopeResolutionError({
+            reason: "workspace-root-unavailable",
+            threadId: input.threadId,
+            cause,
+          }),
+      ),
+    );
     if (thread === undefined) {
       return yield* new KnowledgeGraphScopeResolutionError({
         reason: "thread-not-found",
@@ -243,8 +266,16 @@ export function makeKnowledgeGraphScopeCatalog(
   const resolveThread = Effect.fn("KnowledgeGraphScopeCatalog.resolveThread")(function* (
     threadId: ThreadId,
   ) {
-    const shell = yield* readShell;
-    const thread = shell.threads.find(({ id }) => id === threadId);
+    const thread = yield* dependencies.getThread(threadId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new KnowledgeGraphScopeResolutionError({
+            reason: "workspace-root-unavailable",
+            threadId,
+            cause,
+          }),
+      ),
+    );
     if (thread === undefined) {
       return yield* new KnowledgeGraphScopeResolutionError({
         reason: "thread-not-found",
@@ -329,6 +360,10 @@ export const layer = Layer.effect(
       makeKnowledgeGraphScopeCatalog({
         getEnvironmentId: environment.getEnvironmentId,
         getShellSnapshot: projections.getShellSnapshot(),
+        getProject: (projectId) =>
+          projections.getProjectShellById(projectId).pipe(Effect.map(Option.getOrUndefined)),
+        getThread: (threadId) =>
+          projections.getThreadShellById(threadId).pipe(Effect.map(Option.getOrUndefined)),
         canonicalizeWorkspaceRoot: (workspaceRoot) =>
           fileSystem.realPath(path.resolve(workspaceRoot)),
         homeDirectory,
