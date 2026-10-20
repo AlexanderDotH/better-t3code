@@ -695,16 +695,38 @@ export const makeCursorModelDiscovery = Effect.fn("makeCursorModelDiscovery")(fu
         Exit.isSuccess(exit) && exit.value.length > 0 ? Duration.minutes(30) : Duration.zero,
     },
   );
+  const capabilityCache = yield* Cache.makeWith(
+    (key: {
+      readonly version: string | null;
+      readonly auth: ServerProviderAuth;
+      readonly modelSlugs: ReadonlyArray<string>;
+    }) => discoverCursorModelCapabilitiesViaAcp(cursorSettings, key.modelSlugs, environment),
+    {
+      capacity: 1,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.minutes(30) : Duration.minutes(1)),
+    },
+  );
   return {
     discover: (about: Pick<CursorAboutResult, "version" | "auth">) =>
       Cache.get(cache, JSON.stringify([about.version, about.auth])),
-    invalidate: Cache.invalidateAll(cache),
+    discoverCapabilities: (snapshot: Pick<ServerProvider, "version" | "auth" | "models">) =>
+      Cache.get(capabilityCache, {
+        version: snapshot.version,
+        auth: snapshot.auth,
+        modelSlugs: snapshot.models
+          .filter((model) => !model.isCustom && !hasCursorModelCapabilities(model))
+          .map((model) => model.slug)
+          .toSorted(),
+      }),
+    invalidate: Effect.all([Cache.invalidateAll(cache), Cache.invalidateAll(capabilityCache)], {
+      discard: true,
+    }),
   };
 });
 
 const discoverCursorModelCapabilitiesViaAcp = (
   cursorSettings: CursorSettings,
-  existingModels: ReadonlyArray<ServerProviderModel>,
+  targetModelSlugs: ReadonlyArray<string>,
   environment: NodeJS.ProcessEnv = process.env,
 ) =>
   withCursorAcpProbeRuntime(
@@ -729,13 +751,8 @@ const discoverCursorModelCapabilitiesViaAcp = (
           );
         }
 
-        const targetModelSlugs = new Set<string>();
-        for (const model of existingModels) {
-          if (!model.isCustom && !hasCursorModelCapabilities(model)) {
-            targetModelSlugs.add(model.slug);
-          }
-        }
-        if (targetModelSlugs.size === 0) {
+        const targetModels = new Set(targetModelSlugs);
+        if (targetModels.size === 0) {
           return buildCursorDiscoveredModels(
             modelChoices.map((modelChoice) => ({
               slug: modelChoice.value.trim(),
@@ -749,11 +766,7 @@ const discoverCursorModelCapabilitiesViaAcp = (
           modelChoices,
           (modelChoice) => {
             const modelSlug = modelChoice.value.trim();
-            if (
-              !modelSlug ||
-              !targetModelSlugs.has(modelSlug) ||
-              capabilitiesBySlug.has(modelSlug)
-            ) {
+            if (!modelSlug || !targetModels.has(modelSlug) || capabilitiesBySlug.has(modelSlug)) {
               return Effect.void.pipe(
                 Effect.as<readonly [string, ModelCapabilities] | undefined>(undefined),
               );
@@ -1379,9 +1392,11 @@ function hasUncapturedCursorModels(snapshot: Pick<ServerProvider, "models">): bo
  */
 export const enrichCursorSnapshot = (input: {
   readonly settings: CursorSettings;
-  readonly environment?: NodeJS.ProcessEnv;
   readonly snapshot: ServerProvider;
   readonly maintenanceCapabilities: ProviderMaintenanceCapabilities;
+  readonly discoverCapabilities: (
+    snapshot: ServerProvider,
+  ) => ReturnType<typeof discoverCursorModelCapabilitiesViaAcp>;
   readonly enableProviderUpdateChecks?: boolean;
   readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
   readonly stampIdentity?: (snapshot: ServerProvider) => ServerProvider;
@@ -1423,11 +1438,7 @@ export const enrichCursorSnapshot = (input: {
         return Effect.void;
       }
 
-      return discoverCursorModelCapabilitiesViaAcp(
-        settings,
-        baseSnapshot.models,
-        input.environment,
-      ).pipe(
+      return input.discoverCapabilities(baseSnapshot).pipe(
         Effect.flatMap((discoveredModels) => {
           if (discoveredModels.length === 0) {
             return Effect.void;
