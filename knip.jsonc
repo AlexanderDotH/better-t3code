@@ -30,6 +30,7 @@
         "src/service-launcher.ts!",
         "src/serviceLauncher.ts!",
         "src/claude-history-worker.ts!",
+        "src/deepPlanning/DeepPlanSourceWorker.ts!",
         "src/projectIndexing/extraction/typescriptCompatibleWorker.ts!",
         "scripts/cli.ts",
         "scripts/evaluate-thread-titles.ts",
