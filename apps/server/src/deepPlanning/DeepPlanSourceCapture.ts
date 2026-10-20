@@ -33,6 +33,7 @@ import {
 } from "./DeepPlanSourceContent.ts";
 
 const CAPTURE_PAGE_SIZE = 128;
+const CAPTURE_PAGE_BYTES = 4 * 1024 * 1024;
 const ATTACHMENT_CHUNK_BYTES = 18 * 1024;
 const CONTENT_CHUNK_CHARS = 8 * 1024;
 const INLINE_CONTENT_BYTES = 32 * 1024;
@@ -67,6 +68,14 @@ const ActivityRow = Schema.Struct({
 });
 const decodeMessageRows = Schema.decodeUnknownEffect(Schema.Array(MessageRow));
 const decodeActivityRows = Schema.decodeUnknownEffect(Schema.Array(ActivityRow));
+
+function compareCaptureRows(
+  left: { readonly createdAt: string; readonly rowKey: string },
+  right: { readonly createdAt: string; readonly rowKey: string },
+) {
+  if (left.createdAt !== right.createdAt) return left.createdAt < right.createdAt ? -1 : 1;
+  return Buffer.compare(Buffer.from(left.rowKey), Buffer.from(right.rowKey));
+}
 
 function messageFromRow(row: typeof MessageRow.Type): OrchestrationMessage {
   return {
@@ -233,29 +242,60 @@ export const captureSourceRecords = Effect.fn("DeepPlanSources.captureSourceReco
 
   let afterCreatedAt = "";
   let afterRowKey = "";
+  // Keep key pages outside payload joins so SQLite cannot scan all subagent bodies.
   while (true) {
     const rows = yield* sql`
-        WITH messages AS (
-          SELECT 'message:' || message_id AS "rowKey", message_id AS id,
-            NULL AS "subagentId", role, text, turn_id AS "turnId",
-            attachments_json AS attachments, context_json AS context,
-            history_origin_json AS "historyOrigin", NULL AS "replyTo", NULL AS "replyTopicId",
-            created_at AS "createdAt", updated_at AS "updatedAt"
+        WITH root_page AS (
+          SELECT message_id AS id, created_at AS "createdAt", 'message:' || message_id AS "rowKey"
           FROM projection_thread_messages
           WHERE thread_id = ${input.origin.threadId} AND is_streaming = 0
-          UNION ALL
-          SELECT 'subagent:' || subagent_id || ':' || message_id, message_id,
-            subagent_id, role, text, turn_id, attachments_json, context_json,
-            NULL, reply_to_json, reply_topic_id, created_at, updated_at
+            AND created_at >= ${afterCreatedAt}
+            AND (created_at > ${afterCreatedAt} OR 'message:' || message_id > ${afterRowKey})
+          ORDER BY created_at, message_id LIMIT ${CAPTURE_PAGE_SIZE}
+        ), subagent_page AS (
+          SELECT message_id AS id, subagent_id AS "subagentId", created_at AS "createdAt",
+            'subagent:' || subagent_id || ':' || message_id AS "rowKey"
           FROM projection_thread_subagent_messages
           WHERE thread_id = ${input.origin.threadId} AND is_streaming = 0
+            AND created_at >= ${afterCreatedAt}
+            AND (created_at > ${afterCreatedAt} OR 'subagent:' || subagent_id || ':' || message_id > ${afterRowKey})
+          ORDER BY created_at, "rowKey" LIMIT ${CAPTURE_PAGE_SIZE}
+        ), page AS MATERIALIZED (
+          SELECT id, NULL AS "subagentId", "createdAt", "rowKey" FROM root_page
+          UNION ALL
+          SELECT id, "subagentId", "createdAt", "rowKey" FROM subagent_page
+          ORDER BY "createdAt", "rowKey" LIMIT ${CAPTURE_PAGE_SIZE}
+        ), sizes AS (
+          SELECT p.*, octet_length(m.text) + COALESCE(octet_length(m.attachments_json), 0)
+            + COALESCE(octet_length(m.context_json), 0) AS bytes
+          FROM page p CROSS JOIN projection_thread_messages m ON m.message_id = p.id
+          WHERE p."subagentId" IS NULL
+          UNION ALL
+          SELECT p.*, octet_length(m.text) + COALESCE(octet_length(m.attachments_json), 0)
+            + COALESCE(octet_length(m.context_json), 0)
+          FROM page p CROSS JOIN projection_thread_subagent_messages m
+            ON m.thread_id = ${input.origin.threadId} AND m.subagent_id = p."subagentId" AND m.message_id = p.id
+        ), budgets AS (
+          SELECT *, SUM(bytes) OVER (ORDER BY "createdAt", "rowKey") AS "totalBytes",
+            ROW_NUMBER() OVER (ORDER BY "createdAt", "rowKey") AS position FROM sizes
+        ), bounded_page AS MATERIALIZED (
+          SELECT * FROM budgets WHERE "totalBytes" <= ${CAPTURE_PAGE_BYTES} OR position = 1
         )
-        SELECT * FROM messages
-        WHERE "createdAt" > ${afterCreatedAt}
-          OR ("createdAt" = ${afterCreatedAt} AND "rowKey" > ${afterRowKey})
-        ORDER BY "createdAt", "rowKey" LIMIT ${CAPTURE_PAGE_SIZE}
+        SELECT p."rowKey", m.message_id AS id, p."subagentId", m.role, m.text,
+          m.turn_id AS "turnId", m.attachments_json AS attachments, m.context_json AS context,
+          m.history_origin_json AS "historyOrigin", NULL AS "replyTo", NULL AS "replyTopicId",
+          m.created_at AS "createdAt", m.updated_at AS "updatedAt"
+        FROM bounded_page p CROSS JOIN projection_thread_messages m ON m.message_id = p.id
+        WHERE p."subagentId" IS NULL
+        UNION ALL
+        SELECT p."rowKey", m.message_id, p."subagentId", m.role, m.text,
+          m.turn_id, m.attachments_json, m.context_json, NULL, m.reply_to_json, m.reply_topic_id,
+          m.created_at, m.updated_at
+        FROM bounded_page p CROSS JOIN projection_thread_subagent_messages m
+          ON m.thread_id = ${input.origin.threadId} AND m.subagent_id = p."subagentId" AND m.message_id = p.id
       `;
-    const decoded = yield* decodeMessageRows(rows);
+    // Sort only page-sized references; sorting payloads in SQLite can spill gigabytes to disk.
+    const decoded = (yield* decodeMessageRows(rows)).toSorted(compareCaptureRows);
     if (decoded.length === 0) break;
     for (const row of decoded) {
       const origin = yield* recordOrigin(
@@ -307,22 +347,50 @@ export const captureSourceRecords = Effect.fn("DeepPlanSources.captureSourceReco
   afterRowKey = "";
   while (true) {
     const rows = yield* sql`
-        WITH activities AS (
-          SELECT 'activity:' || activity_id AS "rowKey", activity_id AS id,
-            NULL AS "subagentId", tone, kind, summary, payload_json AS payload,
-            turn_id AS "turnId", sequence, history_origin_json AS "historyOrigin", created_at AS "createdAt"
-          FROM projection_thread_activities WHERE thread_id = ${input.origin.threadId}
+        WITH root_page AS (
+          SELECT activity_id AS id, created_at AS "createdAt", 'activity:' || activity_id AS "rowKey"
+          FROM projection_thread_activities
+          WHERE thread_id = ${input.origin.threadId} AND created_at >= ${afterCreatedAt}
+            AND (created_at > ${afterCreatedAt} OR 'activity:' || activity_id > ${afterRowKey})
+          ORDER BY created_at, activity_id LIMIT ${CAPTURE_PAGE_SIZE}
+        ), subagent_page AS (
+          SELECT activity_id AS id, subagent_id AS "subagentId", created_at AS "createdAt",
+            'subagent-activity:' || subagent_id || ':' || activity_id AS "rowKey"
+          FROM projection_thread_subagent_activities
+          WHERE thread_id = ${input.origin.threadId} AND created_at >= ${afterCreatedAt}
+            AND (created_at > ${afterCreatedAt} OR 'subagent-activity:' || subagent_id || ':' || activity_id > ${afterRowKey})
+          ORDER BY created_at, "rowKey" LIMIT ${CAPTURE_PAGE_SIZE}
+        ), page AS MATERIALIZED (
+          SELECT id, NULL AS "subagentId", "createdAt", "rowKey" FROM root_page
           UNION ALL
-          SELECT 'subagent-activity:' || subagent_id || ':' || activity_id, activity_id,
-            subagent_id, tone, kind, summary, payload_json, turn_id, sequence, NULL, created_at
-          FROM projection_thread_subagent_activities WHERE thread_id = ${input.origin.threadId}
+          SELECT id, "subagentId", "createdAt", "rowKey" FROM subagent_page
+          ORDER BY "createdAt", "rowKey" LIMIT ${CAPTURE_PAGE_SIZE}
+        ), sizes AS (
+          SELECT p.*, octet_length(a.payload_json) + octet_length(a.summary) AS bytes
+          FROM page p CROSS JOIN projection_thread_activities a ON a.activity_id = p.id
+          WHERE p."subagentId" IS NULL
+          UNION ALL
+          SELECT p.*, octet_length(a.payload_json) + octet_length(a.summary)
+          FROM page p CROSS JOIN projection_thread_subagent_activities a
+            ON a.thread_id = ${input.origin.threadId} AND a.subagent_id = p."subagentId" AND a.activity_id = p.id
+        ), budgets AS (
+          SELECT *, SUM(bytes) OVER (ORDER BY "createdAt", "rowKey") AS "totalBytes",
+            ROW_NUMBER() OVER (ORDER BY "createdAt", "rowKey") AS position FROM sizes
+        ), bounded_page AS MATERIALIZED (
+          SELECT * FROM budgets WHERE "totalBytes" <= ${CAPTURE_PAGE_BYTES} OR position = 1
         )
-        SELECT * FROM activities
-        WHERE "createdAt" > ${afterCreatedAt}
-          OR ("createdAt" = ${afterCreatedAt} AND "rowKey" > ${afterRowKey})
-        ORDER BY "createdAt", "rowKey" LIMIT ${CAPTURE_PAGE_SIZE}
+        SELECT p."rowKey", a.activity_id AS id, p."subagentId", a.tone, a.kind, a.summary,
+          a.payload_json AS payload, a.turn_id AS "turnId", a.sequence,
+          a.history_origin_json AS "historyOrigin", a.created_at AS "createdAt"
+        FROM bounded_page p CROSS JOIN projection_thread_activities a ON a.activity_id = p.id
+        WHERE p."subagentId" IS NULL
+        UNION ALL
+        SELECT p."rowKey", a.activity_id, p."subagentId", a.tone, a.kind, a.summary,
+          a.payload_json, a.turn_id, a.sequence, NULL, a.created_at
+        FROM bounded_page p CROSS JOIN projection_thread_subagent_activities a
+          ON a.thread_id = ${input.origin.threadId} AND a.subagent_id = p."subagentId" AND a.activity_id = p.id
       `;
-    const decoded = yield* decodeActivityRows(rows);
+    const decoded = (yield* decodeActivityRows(rows)).toSorted(compareCaptureRows);
     if (decoded.length === 0) break;
     for (const row of decoded) {
       const origin = yield* recordOrigin(

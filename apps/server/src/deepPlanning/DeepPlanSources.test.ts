@@ -15,16 +15,18 @@ import {
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { makeSqlStatementCounter } from "../../integration/SqlStatementCounter.integration.ts";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { layerConfig as SqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
 import {
   canonicalSourceJson,
   sourceChunkHash,
@@ -46,7 +48,7 @@ const descriptor = Schema.decodeUnknownSync(ExecutionEnvironmentDescriptor)({
   capabilities: {},
 });
 const TestLayer = DeepPlanSourcesLive.pipe(
-  Layer.provideMerge(SqlitePersistenceMemory),
+  Layer.provideMerge(SqlitePersistenceLive),
   Layer.provideMerge(
     ServerConfig.layerTest(process.cwd(), { prefix: "t3-deep-plan-sources-test-" }),
   ),
@@ -380,6 +382,161 @@ it.layer(TestLayer)("DeepPlanSources", (it) => {
   );
 
   it.effect(
+    "keeps reads and writes available during capture and publishes only a complete export",
+    () =>
+      Effect.gen(function* () {
+        const sources = yield* DeepPlanSources;
+        const sql = yield* SqlClient.SqlClient;
+        const projectId = yield* seedProject();
+        const threadId = yield* seedThread(projectId, "concurrent");
+        yield* seedMessage({
+          threadId,
+          id: `${threadId}-message`,
+          text: "Keep the backend responsive",
+        });
+        const capture = yield* sources
+          .exportSources({ projectId, includeArchived: true })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* sql`UPDATE projection_threads SET title = 'Still responsive' WHERE thread_id = ${threadId}`;
+        const unpublished = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM deep_plan_source_exports WHERE project_id = ${projectId}
+      `;
+        assert.equal(unpublished[0]?.count, 0);
+        assert.isUndefined(
+          capture.pollUnsafe(),
+          "The server's connection must be available while capture is active.",
+        );
+        const exported = yield* Fiber.join(capture);
+        assert.equal(exported.sources.length, 1);
+        assert.equal(exported.sources[0]?.recordCount, 1);
+        const published = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM deep_plan_source_exports WHERE project_id = ${projectId}
+      `;
+        assert.equal(published[0]?.count, 1);
+      }),
+  );
+
+  it.effect(
+    "cancels capture without publishing a partial export or reserving the database connection",
+    () =>
+      Effect.gen(function* () {
+        const sources = yield* DeepPlanSources;
+        const sql = yield* SqlClient.SqlClient;
+        const projectId = yield* seedProject();
+        const threadId = yield* seedThread(projectId, "cancel-capture");
+        yield* seedMessage({ threadId, id: `${threadId}-message`, text: "Cancel this capture" });
+        const capture = yield* sources
+          .exportSources({ projectId, includeArchived: true })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* sql`SELECT thread_id FROM projection_threads WHERE thread_id = ${threadId}`;
+        assert.isUndefined(capture.pollUnsafe());
+        yield* Fiber.interrupt(capture);
+        const exports = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM deep_plan_source_exports WHERE project_id = ${projectId}
+      `;
+        assert.equal(exports[0]?.count, 0);
+        const retried = yield* sources.exportSources({ projectId, includeArchived: true });
+        assert.equal(retried.sources[0]?.messageCount, 1);
+      }),
+  );
+
+  it.effect("removes committed record batches when the capture file is incomplete", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const fs = yield* FileSystem.FileSystem;
+      const projectId = yield* seedProject();
+      const threadId = yield* seedThread(projectId, "truncated-capture");
+      yield* seedMessage({
+        threadId,
+        id: `${threadId}-message`,
+        text: "Required content ".repeat(150_000),
+      });
+      const sources = yield* makeDeepPlanSources.pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          stream: (filePath, options) =>
+            fs.stream(filePath, { ...options, chunkSize: 512 * 1024 }).pipe(Stream.take(1)),
+        }),
+      );
+      const counter = makeSqlStatementCounter();
+      yield* sources
+        .exportSources({ projectId, includeArchived: true })
+        .pipe(Effect.withTracer(counter.tracer), Effect.flip);
+      assert.isAbove(
+        counter.count(),
+        5,
+        "Capture must have imported batches before detecting the incomplete file.",
+      );
+      const exports = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM deep_plan_source_exports WHERE project_id = ${projectId}
+      `;
+      assert.equal(exports[0]?.count, 0);
+      const contents = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM deep_plan_source_contents WHERE json_extract(origin_key, '$.threadId') = ${threadId}
+      `;
+      assert.equal(contents[0]?.count, 0);
+    }),
+  );
+
+  it.effect("retains root and subagent messages and activities across tied-timestamp pages", () =>
+    Effect.gen(function* () {
+      const sources = yield* DeepPlanSources;
+      const sql = yield* SqlClient.SqlClient;
+      const projectId = yield* seedProject();
+      const threadId = yield* seedThread(projectId, "mixed-pages");
+      const messageOrigins: string[] = [];
+      const activityOrigins: string[] = [];
+      for (let index = 0; index < 150; index += 1) {
+        const id = `${threadId}-${String(index).padStart(4, "0")}`;
+        yield* seedMessage({ threadId, id, text: `Root ${index}` });
+        messageOrigins.push(id);
+        yield* sql`INSERT INTO projection_thread_activities
+          (activity_id, thread_id, tone, kind, summary, payload_json, created_at)
+          VALUES (${id}, ${threadId}, 'info', 'tool.completed', 'Root', '{}', ${at})`;
+        activityOrigins.push(id);
+        for (const subagentId of ["agent", "agent-extra", "agent:child"]) {
+          yield* sql`INSERT INTO projection_thread_subagent_messages
+            (thread_id, subagent_id, message_id, role, text, is_streaming, created_at, updated_at)
+            VALUES (${threadId}, ${subagentId}, ${id}, 'assistant', ${`Child ${index}`}, 0, ${at}, ${at})`;
+          messageOrigins.push(`subagent:${subagentId}:${id}`);
+          yield* sql`INSERT INTO projection_thread_subagent_activities
+            (thread_id, subagent_id, activity_id, tone, kind, summary, payload_json, created_at)
+            VALUES (${threadId}, ${subagentId}, ${id}, 'info', 'tool.completed', 'Child', '{}', ${at})`;
+          activityOrigins.push(`subagent-activity:${subagentId}:${id}`);
+        }
+      }
+      const exported = yield* sources.exportSources({ projectId, includeArchived: true });
+      const snapshot = exported.sources[0]!;
+      assert.equal(snapshot.messageCount, messageOrigins.length);
+      assert.equal(snapshot.activityCount, activityOrigins.length);
+      const records: DeepPlanSourceRecord[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = yield* sources.readExportChunk({
+          exportId: exported.exportId,
+          sourceId: snapshot.sourceId,
+          cursor,
+          limit: 100,
+        });
+        records.push(...page.records);
+        cursor = page.nextCursor ?? undefined;
+      } while (cursor !== undefined);
+      assert.deepEqual(
+        records
+          .filter((record) => record.kind === "message")
+          .map((record) => record.origin.recordId),
+        messageOrigins.sort(),
+      );
+      assert.deepEqual(
+        records
+          .filter((record) => record.kind === "activity")
+          .map((record) => record.origin.recordId),
+        activityOrigins.sort(),
+      );
+    }),
+  );
+
+  it.effect(
     "imports idempotent ordered chunks durably and refuses incomplete histories and coverage",
     () =>
       Effect.gen(function* () {
@@ -654,12 +811,13 @@ it.layer(TestLayer)("DeepPlanSources", (it) => {
         const sql = yield* SqlClient.SqlClient;
         const projectId = yield* seedProject();
         const threadId = yield* seedThread(projectId, "giant");
-        const text = "Read every detail 🧠\n".repeat(60_000);
+        const text = "Read every detail 🧠\n".repeat(240_000);
+        const toolPayload = canonicalSourceJson({ output: "tool data".repeat(600_000) });
         yield* seedMessage({ threadId, id: `${threadId}-message`, text });
         yield* sql`
       INSERT INTO projection_thread_activities (activity_id, thread_id, tone, kind, summary, payload_json, created_at)
       VALUES (${`${threadId}-tool`}, ${threadId}, 'tool', 'tool.completed', 'Large inspection output',
-        ${canonicalSourceJson({ output: "tool data".repeat(30_000) })}, ${at})
+        ${toolPayload}, ${at})
     `;
         const exported = yield* sources.exportSources({ projectId, includeArchived: true });
         const snapshot = exported.sources[0]!;
@@ -711,10 +869,7 @@ it.layer(TestLayer)("DeepPlanSources", (it) => {
           }
           bodyCursor = page.nextCursor ?? undefined;
         }
-        assert.equal(
-          toolChunks.join(""),
-          canonicalSourceJson({ output: "tool data".repeat(30_000) }),
-        );
+        assert.equal(toolChunks.join(""), toolPayload);
         assert.equal(
           (yield* sources.listSources({ threadId, runId })).coverage[0]?.readRecordCount,
           snapshot.recordCount,

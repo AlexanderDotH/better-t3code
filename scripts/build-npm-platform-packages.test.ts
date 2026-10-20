@@ -85,6 +85,7 @@ const makeFakeArchives = Effect.fn("test.makeFakeArchives")(function* () {
       path.join(contentDir, "knowledge-graph-extraction-worker.mjs"),
       "export {};\n",
     );
+    yield* fs.writeFileString(path.join(contentDir, "deep-plan-source-worker.mjs"), "export {};\n");
     yield* fs.writeFileString(
       path.join(contentDir, "t3"),
       `#!/bin/sh\necho "stub ${key} $*"\nexit 7\n`,
@@ -156,6 +157,7 @@ it.layer(NodeServices.layer)("build-npm-platform-packages", (it) => {
         "project-indexer",
         "project-indexer-typescript-compatible.mjs",
         "knowledge-graph-extraction-worker.mjs",
+        "deep-plan-source-worker.mjs",
         "node_modules",
       ]);
       assert.equal(linuxManifest.preferUnplugged, true);
@@ -187,6 +189,10 @@ it.layer(NodeServices.layer)("build-npm-platform-packages", (it) => {
       );
       assert.equal(
         yield* fs.readFileString(path.join(linuxDir, "knowledge-graph-extraction-worker.mjs")),
+        "export {};\n",
+      );
+      assert.equal(
+        yield* fs.readFileString(path.join(linuxDir, "deep-plan-source-worker.mjs")),
         "export {};\n",
       );
       // A root README, or npm would display a bundled dependency's.

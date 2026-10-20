@@ -122,6 +122,7 @@ export function npmPlatformPackageManifest(
       "project-indexer",
       "project-indexer-typescript-compatible.mjs",
       "knowledge-graph-extraction-worker.mjs",
+      "deep-plan-source-worker.mjs",
       "node_modules",
     ],
     preferUnplugged: true,
