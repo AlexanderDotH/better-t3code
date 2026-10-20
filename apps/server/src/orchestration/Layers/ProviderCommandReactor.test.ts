@@ -763,6 +763,7 @@ describe("ProviderCommandReactor", () => {
       projectContext: { query },
       decisionGeneration: { decideMany },
     });
+    const readDetails = vi.spyOn(harness.snapshotQuery, "getThreadDetailById");
     for (const [index, text] of [
       "Edit decoder",
       "Edit formatter",
@@ -802,6 +803,7 @@ describe("ProviderCommandReactor", () => {
       Array.from({ length: 3 }, () => ["project-1", "thread-1"]),
     );
     expect(decideMany).not.toHaveBeenCalled();
+    expect(readDetails).not.toHaveBeenCalled();
   });
 
   effectIt.effect.each(["approval-required", "auto-accept-edits", "auto", "full-access"] as const)(
@@ -1035,6 +1037,11 @@ describe("ProviderCommandReactor", () => {
         projectIndexingDecisionModelSelection: decisionModelSelection,
       },
     });
+    const readDetails = vi
+      .spyOn(harness.snapshotQuery, "getThreadDetailById")
+      .mockImplementation(() =>
+        Effect.die("Context decisions must not load the full chat history"),
+      );
 
     for (const [index, text] of [
       "Include indexed context",
@@ -1062,6 +1069,7 @@ describe("ProviderCommandReactor", () => {
     }
 
     expect(decideMany).toHaveBeenCalledTimes(3);
+    expect(readDetails).not.toHaveBeenCalled();
     expect(decideMany.mock.calls.every(([requests]) => requests.length === 1)).toBe(true);
     expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
       transcriptHandoff: { text: expect.stringContaining("Private candidate for Include") },

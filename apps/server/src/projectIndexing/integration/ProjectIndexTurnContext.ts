@@ -2,6 +2,7 @@ import * as NodeCrypto from "node:crypto";
 
 import { type ProjectIndexQueryResultV1, type ProjectIndexScopeInput } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as References from "effect/References";
 
 import type { ProjectContextQuery } from "../query/ProjectContextQuery.ts";
@@ -9,6 +10,9 @@ import { estimateProjectIndexTokens } from "../semantic/ProjectIndexContextBudge
 
 export const PROJECT_INDEX_TASK_MAX_CHARACTERS = 8_000;
 export const PROJECT_INDEX_AUTOMATIC_CONTEXT_MAX_TOKENS = 2_000;
+export const PROJECT_INDEX_AUTOMATIC_QUERY_MAX_TOKENS = 4_000;
+export const PROJECT_INDEX_AUTOMATIC_QUERY_MAX_RECORDS = 8;
+export const PROJECT_INDEX_AUTOMATIC_QUERY_TIMEOUT_MS = 750;
 const CONTEXT_PREFIX = [
   "<t3_project_knowledge>",
   "Static source facts follow. Read original code and applicable AGENTS.md before editing.",
@@ -116,8 +120,13 @@ const retrieveProjectIndexTurnContext = Effect.fnUntraced(
         ...scope,
         operation: "task",
         text: task.slice(0, PROJECT_INDEX_TASK_MAX_CHARACTERS),
+        maxTokens: PROJECT_INDEX_AUTOMATIC_QUERY_MAX_TOKENS,
+        limit: PROJECT_INDEX_AUTOMATIC_QUERY_MAX_RECORDS,
       })
-      .pipe(Effect.option);
+      .pipe(
+        Effect.timeoutOption(PROJECT_INDEX_AUTOMATIC_QUERY_TIMEOUT_MS),
+        Effect.orElseSucceed(() => Option.none()),
+      );
     if (result._tag === "None" || result.value.revision === 0) return undefined;
     const formatted = renderProjectIndexTurnContext(result.value);
     if (formatted === undefined) return undefined;

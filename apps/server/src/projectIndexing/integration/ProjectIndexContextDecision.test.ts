@@ -1,4 +1,5 @@
 import { expect, it } from "@effect/vitest";
+import * as TestClock from "effect/testing/TestClock";
 import {
   EMPTY_PROJECT_INDEX_COVERAGE,
   DecisionGenerationError,
@@ -7,7 +8,9 @@ import {
   ProviderInstanceId,
   type ProjectIndexQueryResultV1,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 
 import { ProjectContextQuery } from "../query/ProjectContextQuery.ts";
 import {
@@ -24,6 +27,10 @@ import {
 } from "./ProjectIndexContextDecision.ts";
 import {
   PROJECT_INDEX_TASK_MAX_CHARACTERS,
+  PROJECT_INDEX_AUTOMATIC_QUERY_MAX_RECORDS,
+  PROJECT_INDEX_AUTOMATIC_QUERY_MAX_TOKENS,
+  PROJECT_INDEX_AUTOMATIC_QUERY_TIMEOUT_MS,
+  prepareProjectIndexTurnContext,
   retrieveProjectIndexTurnContextCandidate,
   type ProjectIndexTurnContextCandidate,
 } from "./ProjectIndexTurnContext.ts";
@@ -104,9 +111,13 @@ function candidate(overrides?: {
 it.effect("retrieves a bounded candidate after local Project Index lookup", () =>
   Effect.gen(function* () {
     let requestedText = "";
+    let requestedLimit: number | undefined;
+    let requestedTokens: number | undefined;
     const query = ProjectContextQuery.of({
       query: (input) => {
         requestedText = input.text ?? "";
+        requestedLimit = input.limit;
+        requestedTokens = input.maxTokens;
         return Effect.succeed(queryResult());
       },
     });
@@ -118,6 +129,8 @@ it.effect("retrieves a bounded candidate after local Project Index lookup", () =
     );
 
     expect(requestedText).toHaveLength(PROJECT_INDEX_TASK_MAX_CHARACTERS);
+    expect(requestedLimit).toBe(PROJECT_INDEX_AUTOMATIC_QUERY_MAX_RECORDS);
+    expect(requestedTokens).toBe(PROJECT_INDEX_AUTOMATIC_QUERY_MAX_TOKENS);
     expect(result).toMatchObject({
       hitCount: 1,
       fingerprint: { indexRevision: 7 },
@@ -172,6 +185,44 @@ it.effect("does not produce candidates for excluded turns, no hits, or retrieval
     ).toBeUndefined();
   }),
 );
+
+for (const [mode, retrieve] of [
+  ["direct context", prepareProjectIndexTurnContext],
+  ["decision candidate", retrieveProjectIndexTurnContextCandidate],
+] as const) {
+  it.effect(`continues without optional ${mode} when its time budget is exceeded`, () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      let interrupted = false;
+      let queryCalls = 0;
+      const query = ProjectContextQuery.of({
+        query: () =>
+          Effect.gen(function* () {
+            if (queryCalls++ > 0) return queryResult();
+            yield* Deferred.succeed(entered, undefined);
+            return yield* Effect.never;
+          }).pipe(
+            Effect.onInterrupt(() =>
+              Effect.sync(() => {
+                interrupted = true;
+              }),
+            ),
+          ),
+      });
+      const lookup: Effect.Effect<string | ProjectIndexTurnContextCandidate | undefined> = retrieve(
+        query,
+        { projectId },
+        "Explain the project",
+      );
+      const fiber = yield* lookup.pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(entered);
+      yield* TestClock.adjust(PROJECT_INDEX_AUTOMATIC_QUERY_TIMEOUT_MS);
+      expect(yield* Fiber.join(fiber)).toBeUndefined();
+      expect(interrupted).toBe(true);
+      expect(yield* retrieve(query, { projectId }, "Explain the project")).toBeDefined();
+    }),
+  );
+}
 
 it("builds the fixed include-or-skip question with bounded private state", () => {
   const input = buildProjectIndexContextDecisionInput(

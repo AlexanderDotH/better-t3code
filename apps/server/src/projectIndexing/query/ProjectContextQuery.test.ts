@@ -46,6 +46,7 @@ import {
 } from "./ProjectContextQuery.ts";
 import type { ProjectContextPosition } from "./ProjectContextCursor.ts";
 import { makeProjectContextRetrieval } from "./ProjectContextRetrieval.ts";
+import { makeProjectContextSourceValidator } from "./ProjectContextSources.ts";
 import { projectContextImpact } from "./ProjectContextTraversal.ts";
 import type { ProjectContextReader } from "./ProjectContextSources.ts";
 import { readProjectIndexGraphOverview } from "./ProjectIndexGraphOverview.ts";
@@ -1089,6 +1090,51 @@ it.effect("keeps a readable AGENTS path when applicable directives exceed the an
     expect(
       changed.gaps.some((gap) => gap.kind === "stale-source" && gap.filePath === document.filePath),
     ).toBe(true);
+  }),
+);
+
+it.effect("verifies independent source files concurrently and reuses hashes within one query", () =>
+  Effect.gen(function* () {
+    const target = entity("parallel");
+    const paths = [target.filePath, ...Array.from({ length: 15 }, (_, i) => `src/config${i}.ts`)];
+    const { reader } = makeReader({
+      entities: [target],
+      files: paths.map((path) => ({
+        path,
+        contentHash: `hash:${path}`,
+        language: "typescript",
+        bytes: 1,
+        classification: "source" as const,
+        status: "indexed" as const,
+        configDependencies: path === target.filePath ? paths.slice(1) : [],
+      })),
+    });
+    const reads: string[] = [];
+    let inFlight = 0;
+    let peak = 0;
+    const validator = makeProjectContextSourceValidator({
+      reader,
+      workspaceRoot: "/trusted/worktree",
+      revision: 1,
+      readHash: (_root, path) =>
+        Effect.gen(function* () {
+          reads.push(path);
+          peak = Math.max(peak, ++inFlight);
+          yield* Effect.yieldNow;
+          inFlight -= 1;
+          return `hash:${path}`;
+        }),
+    });
+
+    expect((yield* validator.validate(target)).record?.freshness).toBe("current");
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(8);
+    expect(reads.toSorted()).toEqual(paths.toSorted());
+    expect((yield* validator.validate(target)).record?.freshness).toBe("current");
+    expect(reads).toHaveLength(paths.length);
+    expect(
+      (yield* validator.validate({ ...target, sourceHash: "changed" })).record?.freshness,
+    ).toBe("stale");
   }),
 );
 

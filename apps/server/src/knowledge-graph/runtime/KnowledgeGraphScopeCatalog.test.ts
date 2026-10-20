@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import {
   isKnowledgeGraphWorkspaceRootIndexable,
   makeKnowledgeGraphScopeCatalog,
+  type KnowledgeGraphScopeCatalogDependencies,
 } from "./KnowledgeGraphScopeCatalog.ts";
 
 class MissingWorkspaceRoot extends Data.TaggedError("MissingWorkspaceRoot")<{
@@ -36,7 +37,23 @@ const shell = {
   ],
 };
 
-const catalog = makeKnowledgeGraphScopeCatalog({
+function catalogWithSnapshot(
+  dependencies: Omit<KnowledgeGraphScopeCatalogDependencies, "getProject" | "getThread">,
+) {
+  return makeKnowledgeGraphScopeCatalog({
+    ...dependencies,
+    getProject: (projectId) =>
+      dependencies.getShellSnapshot.pipe(
+        Effect.map((snapshot) => snapshot.projects.find(({ id }) => id === projectId)),
+      ),
+    getThread: (threadId) =>
+      dependencies.getShellSnapshot.pipe(
+        Effect.map((snapshot) => snapshot.threads.find(({ id }) => id === threadId)),
+      ),
+  });
+}
+
+const catalog = catalogWithSnapshot({
   getEnvironmentId: Effect.succeed(environmentId),
   getShellSnapshot: Effect.succeed(shell),
   canonicalizeWorkspaceRoot: (root) => Effect.succeed(`/canonical${root}`),
@@ -44,6 +61,48 @@ const catalog = makeKnowledgeGraphScopeCatalog({
 });
 
 describe("KnowledgeGraphScopeCatalog", () => {
+  it.effect("resolves one chat without loading unrelated projects or the full shell", () =>
+    Effect.gen(function* () {
+      const requestedProjects: ProjectId[] = [];
+      const requestedThreads: ThreadId[] = [];
+      const focused = makeKnowledgeGraphScopeCatalog({
+        getEnvironmentId: Effect.succeed(environmentId),
+        getShellSnapshot: Effect.die("Single-chat lookup must not load the full shell"),
+        getProject: (id) => {
+          requestedProjects.push(id);
+          return Effect.succeed(shell.projects.find((project) => project.id === id));
+        },
+        getThread: (id) => {
+          requestedThreads.push(id);
+          return Effect.succeed(shell.threads.find((thread) => thread.id === id));
+        },
+        canonicalizeWorkspaceRoot: (root) => Effect.succeed(root),
+        homeDirectory,
+      });
+      const scope = yield* focused.resolveScope({ projectId: projectOne, threadId: featureThread });
+      assert.strictEqual(scope.effectiveWorkspaceRoot, "/repo-worktrees/feature");
+      assert.deepStrictEqual(requestedProjects, [projectOne]);
+      assert.deepStrictEqual(requestedThreads, [featureThread]);
+      const resolved = yield* focused.resolveThread(mainThread);
+      assert.strictEqual(resolved.scope.effectiveWorkspaceRoot, "/repo");
+      const missing = yield* focused
+        .resolveScope({ projectId: ProjectId.make("missing") })
+        .pipe(Effect.flip);
+      assert.strictEqual(missing.reason, "project-not-found");
+      const missingThread = yield* focused
+        .resolveScope({
+          projectId: projectOne,
+          threadId: ThreadId.make("missing"),
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(missingThread.reason, "thread-not-found");
+      const mismatch = yield* focused
+        .resolveScope({ projectId: projectTwo, threadId: mainThread })
+        .pipe(Effect.flip);
+      assert.strictEqual(mismatch.reason, "thread-project-mismatch");
+    }),
+  );
+
   it("rejects the filesystem root and user home but permits a project below home", () => {
     assert.isFalse(
       isKnowledgeGraphWorkspaceRootIndexable(NodePath.parse(homeDirectory).root, homeDirectory),
@@ -106,7 +165,7 @@ describe("KnowledgeGraphScopeCatalog", () => {
 
   it.effect("deduplicates live worktree aliases by canonical effective root", () =>
     Effect.gen(function* () {
-      const aliasCatalog = makeKnowledgeGraphScopeCatalog({
+      const aliasCatalog = catalogWithSnapshot({
         getEnvironmentId: Effect.succeed(environmentId),
         getShellSnapshot: Effect.succeed({
           projects: [{ id: projectOne, workspaceRoot: "/repo" }],
@@ -132,7 +191,7 @@ describe("KnowledgeGraphScopeCatalog", () => {
 
   it.effect("keeps registered projects available when a stale worktree disappeared", () =>
     Effect.gen(function* () {
-      const catalogWithStaleWorktree = makeKnowledgeGraphScopeCatalog({
+      const catalogWithStaleWorktree = catalogWithSnapshot({
         getEnvironmentId: Effect.succeed(environmentId),
         getShellSnapshot: Effect.succeed({
           projects: [{ id: projectOne, workspaceRoot: "/repo" }],
@@ -158,7 +217,7 @@ describe("KnowledgeGraphScopeCatalog", () => {
 
   it.effect("retains the environment identity after the last project is removed", () =>
     Effect.gen(function* () {
-      const emptyCatalog = makeKnowledgeGraphScopeCatalog({
+      const emptyCatalog = catalogWithSnapshot({
         getEnvironmentId: Effect.succeed(environmentId),
         getShellSnapshot: Effect.succeed({ projects: [], threads: [] }),
         canonicalizeWorkspaceRoot: (root) => Effect.succeed(root),
@@ -172,7 +231,7 @@ describe("KnowledgeGraphScopeCatalog", () => {
 
   it.effect("keeps healthy projects indexable when another registered root disappeared", () =>
     Effect.gen(function* () {
-      const catalogWithMissingProject = makeKnowledgeGraphScopeCatalog({
+      const catalogWithMissingProject = catalogWithSnapshot({
         getEnvironmentId: Effect.succeed(environmentId),
         getShellSnapshot: Effect.succeed({
           projects: [
@@ -202,7 +261,7 @@ describe("KnowledgeGraphScopeCatalog", () => {
       const safeProjectRoot = NodePath.join(homeDirectory, "project");
       const safeWorktreeRoot = NodePath.join(homeDirectory, "project-worktree");
       const homeAlias = NodePath.join(filesystemRoot, "home-alias");
-      const broadRootCatalog = makeKnowledgeGraphScopeCatalog({
+      const broadRootCatalog = catalogWithSnapshot({
         getEnvironmentId: Effect.succeed(environmentId),
         getShellSnapshot: Effect.succeed({
           projects: [

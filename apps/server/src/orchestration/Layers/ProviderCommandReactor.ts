@@ -1500,7 +1500,7 @@ const make = Effect.gen(function* () {
               threadId: input.threadId,
             },
             input.messageText,
-          )
+          ).pipe(Effect.withSpan("ProviderCommandReactor.projectIndexContext"))
         : undefined;
     const projectIndexCandidate =
       project && Option.isSome(projectContext) && projectIndexDecisionModelSelection !== null
@@ -1511,10 +1511,11 @@ const make = Effect.gen(function* () {
               threadId: input.threadId,
             },
             input.messageText,
-          )
+          ).pipe(Effect.withSpan("ProviderCommandReactor.projectIndexContext"))
         : undefined;
     const reasoningHistory =
-      isAutoReasoningEnabled(durableModelSelection) || projectIndexCandidate !== undefined
+      isAutoReasoningEnabled(durableModelSelection) ||
+      (projectIndexCandidate !== undefined && input.retryOfTurnId !== undefined)
         ? yield* projectionSnapshotQuery
             .getThreadDetailById(input.threadId)
             .pipe(Effect.map(Option.getOrUndefined))
