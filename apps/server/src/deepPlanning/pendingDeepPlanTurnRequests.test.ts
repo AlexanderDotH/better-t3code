@@ -29,8 +29,8 @@ import { deepPlanApprovalKey } from "./deepPlanDecision.ts";
 import { finalValidationRequestId } from "./DeepPlanValidationReactor.ts";
 import {
   canDispatchDeepPlanValidationRequest,
-  pendingDeepPlanValidationRequests,
-} from "./pendingDeepPlanValidationRequests.ts";
+  pendingDeepPlanTurnRequests,
+} from "./pendingDeepPlanTurnRequests.ts";
 
 const createdAt = "2026-10-16T10:00:00.000Z";
 const ownerId = ThreadId.make("pending-validation-owner");
@@ -208,7 +208,7 @@ function fixture(
     }),
   );
   const recover = Effect.gen(function* () {
-    return yield* pendingDeepPlanValidationRequests({
+    return yield* pendingDeepPlanTurnRequests({
       readModel,
       receipts: yield* OrchestrationCommandReceiptRepository,
       turns: yield* ProjectionTurnRepository,
@@ -335,4 +335,32 @@ it("drops obsolete validation turns before they can run as ordinary work", () =>
     payload: { ...event.payload, messageId: MessageId.make("ordinary-message") },
   };
   expect(canDispatchDeepPlanValidationRequest(ordinary, null)).toBe(true);
+});
+
+it.effect("recovers a pending background implementation with its durable identity", () => {
+  const implementing: DeepPlanRun = { ...run, phase: "implementing" };
+  const commandId = CommandId.make("background-implementation");
+  const messageId = MessageId.make(commandId + ":message");
+  const backgroundEvent = {
+    ...event,
+    commandId,
+    payload: {
+      ...event.payload,
+      messageId,
+      background: { runId: run.id, text: "Continue saved work." },
+    },
+  };
+  const test = fixture({
+    threads: [
+      thread(ownerId, { deepPlan: implementing }),
+      thread(targetId, { deepPlan: implementing }),
+    ],
+    pending: { ...pending, messageId },
+    receipt: { ...receipt, commandId },
+    event: backgroundEvent,
+  });
+  return Effect.gen(function* () {
+    expect(yield* test.recover).toEqual([backgroundEvent]);
+    expect(test.receiptRequests).toEqual([commandId]);
+  });
 });

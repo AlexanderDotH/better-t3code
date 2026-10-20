@@ -15,6 +15,10 @@ import {
   WorktreeSetupSnapshot,
   worktreeSetupActivityId,
 } from "@t3tools/contracts";
+import {
+  canContinueDeepPlan,
+  deepPlanContinuationCommand,
+} from "./deepPlanning/DeepPlanContinuation.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
@@ -504,15 +508,20 @@ export const reconcileProviderSessions = Effect.gen(function* () {
   );
   const { threads } = yield* query.getCommandReadModel();
   // Provider startup can report ready before the continuation is submitted.
-  // Find those markers in one read rather than querying every idle thread.
-  const preparedThreadIds = new Set(
+  // Startup reconciliation can also interrupt it before the parked send runs.
+  const interruptedThreadIds = new Set(
+    threads.filter((thread) => thread.session?.status === "interrupted").map((thread) => thread.id),
+  );
+  const continuationThreadIds = new Set(
     (yield* directory.listBindings().pipe(
       Effect.catch((cause) =>
         Effect.logWarning("failed to read prepared provider continuations", { cause }).pipe(
           Effect.andThen(
             Effect.forEach(
               threads.filter(
-                (thread) => thread.session?.status === "ready" && !liveThreadIds.has(thread.id),
+                (thread) =>
+                  (thread.session?.status === "ready" || interruptedThreadIds.has(thread.id)) &&
+                  !liveThreadIds.has(thread.id),
               ),
               (thread) =>
                 directory.getBinding(thread.id).pipe(Effect.orElseSucceed(() => Option.none())),
@@ -527,8 +536,10 @@ export const reconcileProviderSessions = Effect.gen(function* () {
       .filter(
         (binding) =>
           readServerUpdateContinuationTurnId(binding.runtimePayload) !== null &&
-          readRuntimePayload(binding.runtimePayload).activeTurnId === null &&
-          readRuntimePayload(binding.runtimePayload).continueAfterServerUpdatePrepared === true,
+          ((readRuntimePayload(binding.runtimePayload).activeTurnId === null &&
+            readRuntimePayload(binding.runtimePayload).continueAfterServerUpdatePrepared ===
+              true) ||
+            interruptedThreadIds.has(binding.threadId)),
       )
       .map((binding) => binding.threadId),
   );
@@ -538,7 +549,8 @@ export const reconcileProviderSessions = Effect.gen(function* () {
       (thread.session.status === "starting" ||
         thread.session.status === "running" ||
         thread.session.activeTurnId !== null ||
-        (thread.session.status === "ready" && preparedThreadIds.has(thread.id))) &&
+        ((thread.session.status === "ready" || thread.session.status === "interrupted") &&
+          continuationThreadIds.has(thread.id))) &&
       !liveThreadIds.has(thread.id),
   );
 
@@ -569,13 +581,15 @@ export const reconcileProviderSessions = Effect.gen(function* () {
       (session.activeTurnId !== null ||
         readRuntimePayload(binding.value.runtimePayload).activeTurnId == null ||
         readRuntimePayload(binding.value.runtimePayload).activeTurnId === continuationTurnId);
-    const preparedWhileReady =
-      session.status === "ready" &&
+    const preparedWhileIdle =
+      (session.status === "ready" || session.status === "interrupted") &&
       session.activeTurnId === null &&
       continuationMarked &&
       Option.isSome(binding) &&
-      readRuntimePayload(binding.value.runtimePayload).activeTurnId === null &&
-      readRuntimePayload(binding.value.runtimePayload).continueAfterServerUpdatePrepared === true;
+      ((readRuntimePayload(binding.value.runtimePayload).activeTurnId === null &&
+        readRuntimePayload(binding.value.runtimePayload).continueAfterServerUpdatePrepared ===
+          true) ||
+        session.status === "interrupted");
     // Runtime events advance the projection's turn, but not the directory's
     // last admitted turn. Use the projection to identify interrupted work.
     const interruptedByRestart =
@@ -646,11 +660,19 @@ export const reconcileProviderSessions = Effect.gen(function* () {
     if (
       Option.isSome(binding) &&
       (continuationMarked || interruptedByRestart) &&
-      (session.status === "running" || session.status === "starting" || preparedWhileReady) &&
+      (session.status === "running" || session.status === "starting" || preparedWhileIdle) &&
       binding.value.resumeCursor != null &&
       thread.archivedAt === null &&
       thread.deletedAt === null
     ) {
+      const deepPlan = threads.find(
+        (owner) =>
+          owner.deletedAt === null &&
+          owner.archivedAt === null &&
+          owner.deepPlan?.threadId === owner.id &&
+          (owner.deepPlan.approval !== null || thread.interactionMode === "plan") &&
+          (owner.deepPlan.approval?.implementationThreadId ?? owner.id) === thread.id,
+      )?.deepPlan;
       const prepared = yield* Effect.gen(function* () {
         yield* directory.upsert({
           ...binding.value,
@@ -670,7 +692,7 @@ export const reconcileProviderSessions = Effect.gen(function* () {
           threadId: thread.id,
           session: {
             ...session,
-            status: "starting",
+            status: deepPlan ? "interrupted" : "starting",
             activeTurnId: null,
             lastError: null,
             updatedAt: resumedAt,
@@ -698,6 +720,21 @@ export const reconcileProviderSessions = Effect.gen(function* () {
               return yield* new ProviderSessionContinuationError({
                 threadId: thread.id,
               });
+            }
+            if (deepPlan) {
+              if (canContinueDeepPlan(deepPlan, thread.interactionMode)) {
+                const target = yield* query.getThreadShellById(thread.id);
+                if (Option.isSome(target))
+                  yield* orchestrationEngine.dispatch(
+                    deepPlanContinuationCommand({
+                      run: deepPlan,
+                      target: target.value,
+                      commandId: CommandId.make(yield* crypto.randomUUIDv4),
+                      createdAt: DateTime.formatIso(yield* DateTime.now),
+                    }),
+                  );
+              }
+              return;
             }
             const capabilities = yield* providerService.getCapabilities(providerInstanceId);
             yield* providerService.sendTurn({

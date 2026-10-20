@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
+import { canContinueDeepPlan } from "./DeepPlanContinuation.ts";
 import type { OrchestrationCommandReceiptRepository } from "../persistence/Services/OrchestrationCommandReceipts.ts";
 import type { ProjectionTurnRepository } from "../persistence/Services/ProjectionTurns.ts";
 import type { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
@@ -30,7 +31,7 @@ export function canDispatchDeepPlanValidationRequest(
   );
 }
 
-export const pendingDeepPlanValidationRequests = Effect.fn("pendingDeepPlanValidationRequests")(
+export const pendingDeepPlanTurnRequests = Effect.fn("pendingDeepPlanTurnRequests")(
   function* (input: {
     readonly readModel: OrchestrationReadModel;
     readonly receipts: OrchestrationCommandReceiptRepository["Service"];
@@ -42,22 +43,17 @@ export const pendingDeepPlanValidationRequests = Effect.fn("pendingDeepPlanValid
       const run = thread.deepPlan;
       if (thread.deletedAt !== null || thread.archivedAt !== null || run?.threadId !== thread.id)
         continue;
-      if (
-        run.phase === "validating" &&
-        run.approval &&
-        run.finalValidation.status === "inProgress" &&
-        run.finalValidation.requestId
-      )
-        runs.set(run.id, run);
+      // The reactor also recovers requests from before a mode change to release their reservations.
+      if (canContinueDeepPlan(run, "plan")) runs.set(run.id, run);
     }
     const events: Array<TurnStartEvent> = [];
     for (const run of runs.values()) {
-      const requestId = run.finalValidation.requestId!;
-      const targetId = run.approval!.implementationThreadId;
+      const targetId = run.approval?.implementationThreadId ?? run.threadId;
       const target = input.readModel.threads.find((thread) => thread.id === targetId);
       if (!target || target.deletedAt !== null || target.archivedAt !== null) continue;
       const pending = yield* input.turns.getPendingTurnStartByThreadId({ threadId: targetId });
-      if (Option.isNone(pending) || pending.value.messageId !== requestId + ":message") continue;
+      if (Option.isNone(pending) || !pending.value.messageId.endsWith(":message")) continue;
+      const requestId = pending.value.messageId.slice(0, -":message".length);
       const receipt = yield* input.receipts.getByCommandId({
         commandId: CommandId.make(requestId),
       });
@@ -82,7 +78,9 @@ export const pendingDeepPlanValidationRequests = Effect.fn("pendingDeepPlanValid
         Option.isSome(event) &&
         event.value.type === "thread.turn-start-requested" &&
         event.value.commandId === requestId &&
-        event.value.payload.messageId === pending.value.messageId
+        event.value.payload.messageId === pending.value.messageId &&
+        (event.value.payload.background?.runId === run.id ||
+          (run.phase === "validating" && run.finalValidation.requestId === requestId))
       )
         events.push(event.value);
     }

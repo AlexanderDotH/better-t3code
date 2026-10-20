@@ -1569,6 +1569,28 @@ it.effect(
           },
         });
 
+        currentDeepInvocation = {
+          ...currentDeepInvocation,
+          deepPlan: { ...currentDeepInvocation.deepPlan!, approvedPlanVersion: 2 },
+        };
+        const stalePlan = yield* callTool(planningSessionId, "deep_plan_state", {});
+        expect(stalePlan.isError).toBe(true);
+        expect(stalePlan.content).toContainEqual({
+          type: "text",
+          text: expect.stringContaining("current approved plan and implementing thread"),
+        });
+
+        currentDeepInvocation = {
+          ...workspaceWriteInvocation,
+          ownerThreadId: threadId,
+        };
+        const unboundPlan = yield* callTool(planningSessionId, "deep_plan_state", {});
+        expect(unboundPlan.isError).toBe(true);
+        expect(unboundPlan.content).toContainEqual({
+          type: "text",
+          text: expect.stringContaining("Resume the Deep Plan in T3"),
+        });
+
         const fullSchemaBytes = Buffer.byteLength(encodeJsonText(workspaceTools));
         const narrowSchemaBytes = Buffer.byteLength(encodeJsonText(workspaceOnlyTools));
         expect(narrowSchemaBytes).toBeLessThanOrEqual(fullSchemaBytes / 2);

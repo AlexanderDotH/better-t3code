@@ -8,6 +8,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import { deepPlanProviderContext } from "./DeepPlanProviderContext.ts";
+import { canContinueDeepPlan } from "./DeepPlanContinuation.ts";
 
 const owner = ThreadId.make("deep-owner");
 const implementer = ThreadId.make("deep-implementer");
@@ -89,16 +90,31 @@ const approvedRun: DeepPlanRun = {
 
 describe("deepPlanProviderContext", () => {
   it.each(["collecting", "planning", "awaitingApproval"] as const)(
-    "keeps %s read-only even when the requested provider mode is default",
+    "only binds %s to a planning turn and never overrides Build",
     (phase) => {
       expect(
         deepPlanProviderContext({ ...planningRun, phase }, owner, selectedModel, "default"),
+      ).toBeUndefined();
+      expect(
+        deepPlanProviderContext({ ...planningRun, phase }, owner, selectedModel),
+      ).toBeUndefined();
+      expect(
+        deepPlanProviderContext({ ...planningRun, phase }, owner, selectedModel, "plan"),
       ).toMatchObject({
         phase: "planning",
         readOnly: true,
         modelSelection: selectedModel,
         approvedPlanVersion: null,
       });
+    },
+  );
+
+  it.each(["collecting", "planning"] as const)(
+    "does not automatically continue an unapproved %s run outside Plan mode",
+    (phase) => {
+      expect(canContinueDeepPlan({ ...planningRun, phase }, "default")).toBe(false);
+      expect(canContinueDeepPlan({ ...planningRun, phase }, "plan")).toBe(true);
+      expect(canContinueDeepPlan(approvedRun, "default")).toBe(true);
     },
   );
 

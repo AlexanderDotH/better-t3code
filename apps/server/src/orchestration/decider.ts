@@ -56,6 +56,7 @@ import {
 } from "./messageReplyDecision.ts";
 import { threadHasQueuedTurnStart, threadHasUnfinishedDeepPlan } from "./ThreadSettlementPolicy.ts";
 import { findProjectAgentClaimConflicts } from "../projectAgent/claimRules.ts";
+import { canContinueDeepPlan } from "../deepPlanning/DeepPlanContinuation.ts";
 import { startDeepPlanRun, updateDeepPlanRun } from "../deepPlanning/deepPlanDecision.ts";
 import { deepPlanMarkdown } from "../deepPlanning/deepPlanMarkdown.ts";
 
@@ -329,10 +330,16 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
   command,
   readModel,
   userInputActivity,
+  turnStartState,
 }: {
   readonly command: OrchestrationCommand;
   readonly readModel: OrchestrationReadModel;
   readonly userInputActivity?: OrchestrationThreadActivity;
+  readonly turnStartState?: {
+    readonly latestUserMessageId: MessageId | null;
+    readonly latestUserMessageAt: string | null;
+    readonly pendingMessageId: MessageId | null;
+  };
 }): Effect.fn.Return<
   DecideOrchestrationCommandResult,
   OrchestrationCommandRejection | PlatformError.PlatformError,
@@ -1998,6 +2005,53 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      let interactionMode = targetThread.interactionMode;
+      if (command.background !== undefined) {
+        const run = readModel.threads.find(
+          (thread) =>
+            thread.deepPlan?.id === command.background?.runId &&
+            thread.deepPlan?.threadId === thread.id &&
+            thread.archivedAt === null &&
+            thread.deletedAt === null,
+        )?.deepPlan;
+        if (
+          targetThread.archivedAt !== null ||
+          !run ||
+          !canContinueDeepPlan(run, targetThread.interactionMode) ||
+          (run.approval?.implementationThreadId ?? run.threadId) !== targetThread.id
+        )
+          return [];
+        interactionMode = run.approval ? "default" : "plan";
+      }
+      if (command.idleGuard !== undefined || command.background !== undefined) {
+        const guard = command.idleGuard ?? {};
+        const message = targetThread.messages.findLast(
+          (message) => message.role === "user" && message.historyOrigin === undefined,
+        );
+        const state = turnStartState ?? {
+          latestUserMessageId: message?.id ?? null,
+          latestUserMessageAt: message?.createdAt ?? null,
+          pendingMessageId: null,
+        };
+        const hasQueuedTurn = threadHasQueuedTurnStart(
+          {
+            latestUserMessageAt: state.latestUserMessageAt,
+            latestTurn: targetThread.latestTurn,
+            session: targetThread.session,
+          },
+          yield* nowIso,
+        );
+        if (
+          isActiveProjectAgentThread(targetThread) ||
+          state.pendingMessageId !== null ||
+          hasQueuedTurn ||
+          (guard.latestTurnId !== undefined &&
+            guard.latestTurnId !== (targetThread.latestTurn?.turnId ?? null)) ||
+          (guard.latestUserMessageId !== undefined &&
+            guard.latestUserMessageId !== state.latestUserMessageId)
+        )
+          return [];
+      }
       if (targetThread.harnessSync?.activity === "active") {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
@@ -2042,31 +2096,32 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           message.role === "user" &&
           message.turnId === null,
       );
-      const userMessageEvent: PlannedOrchestrationEvent | null = persistedUserMessage
-        ? null
-        : {
-            ...(yield* withEventBase({
-              aggregateKind: "thread",
-              aggregateId: command.threadId,
-              occurredAt: command.createdAt,
-              commandId: command.commandId,
-            })),
-            type: "thread.message-sent",
-            payload: {
-              threadId: command.threadId,
-              messageId: command.message.messageId,
-              role: "user",
-              text: command.message.text,
-              attachments: command.message.attachments,
-              ...(command.message.context !== undefined
-                ? { context: command.message.context }
-                : {}),
-              turnId: null,
-              streaming: false,
-              createdAt: command.createdAt,
-              updatedAt: command.createdAt,
-            },
-          };
+      const userMessageEvent: PlannedOrchestrationEvent | null =
+        persistedUserMessage || command.background
+          ? null
+          : {
+              ...(yield* withEventBase({
+                aggregateKind: "thread",
+                aggregateId: command.threadId,
+                occurredAt: command.createdAt,
+                commandId: command.commandId,
+              })),
+              type: "thread.message-sent",
+              payload: {
+                threadId: command.threadId,
+                messageId: command.message.messageId,
+                role: "user",
+                text: command.message.text,
+                attachments: command.message.attachments,
+                ...(command.message.context !== undefined
+                  ? { context: command.message.context }
+                  : {}),
+                turnId: null,
+                streaming: false,
+                createdAt: command.createdAt,
+                updatedAt: command.createdAt,
+              },
+            };
       const turnStartRequestedEvent: PlannedOrchestrationEvent = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -2079,13 +2134,18 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           messageId: command.message.messageId,
+          ...(command.background
+            ? {
+                background: { runId: command.background.runId, text: command.message.text },
+              }
+            : {}),
           ...(command.fetchMode !== undefined ? { fetchMode: command.fetchMode } : {}),
           ...(command.modelSelection !== undefined
             ? { modelSelection: command.modelSelection }
             : {}),
           ...(command.titleSeed !== undefined ? { titleSeed: command.titleSeed } : {}),
           runtimeMode: targetThread.runtimeMode,
-          interactionMode: targetThread.interactionMode,
+          interactionMode,
           ...(sourceProposedPlan !== undefined ? { sourceProposedPlan } : {}),
           createdAt: command.createdAt,
         },

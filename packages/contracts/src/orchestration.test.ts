@@ -637,6 +637,35 @@ it.effect("preserves Fetch mode in thread.turn.start", () =>
   }),
 );
 
+it.effect(
+  "retains background continuation identity and idle guards across client and server decoding",
+  () =>
+    Effect.gen(function* () {
+      const client = yield* decodeClientOrchestrationCommand({
+        type: "thread.turn.start",
+        commandId: "background-continuation",
+        threadId: "thread-1",
+        message: {
+          messageId: "background-message",
+          role: "user",
+          text: "Continue saved work",
+          attachments: [],
+        },
+        background: { runId: "saved-run" },
+        idleGuard: { latestTurnId: "previous-turn", latestUserMessageId: null },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+      const server = yield* decodeThreadTurnStartCommand(client);
+      assert.deepStrictEqual(server.background, { runId: "saved-run" });
+      assert.deepStrictEqual(server.idleGuard, {
+        latestTurnId: TurnId.make("previous-turn"),
+        latestUserMessageId: null,
+      });
+    }),
+);
+
 it.effect("keeps Fetch mode narrow on client turn-start commands", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeClientOrchestrationCommand({

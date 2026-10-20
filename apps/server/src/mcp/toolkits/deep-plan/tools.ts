@@ -40,7 +40,11 @@ export class DeepPlanToolScopeError extends Schema.TaggedError<DeepPlanToolScope
     ]),
     detail: Schema.String,
   },
-) {}
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
 
 const RunAssertion = { expectedRunId: DeepPlanRunId };
 const UpdateFields = {

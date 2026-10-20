@@ -25,6 +25,7 @@ import {
   ComposerContextId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DeepPlanRunId,
+  type DeepPlanMutation,
   RuntimeMode,
   EnvironmentId,
   EventId,
@@ -69,6 +70,7 @@ import { DecisionGeneration } from "../../decisionGeneration/DecisionGeneration.
 import { makeDecisionGenerationTestLayer } from "../../decisionGeneration/testUtils.ts";
 import { TerminalManager } from "../../terminal/Manager.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
+import { deepPlanApprovalKey } from "../../deepPlanning/deepPlanDecision.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
@@ -699,6 +701,478 @@ describe("ProviderCommandReactor", () => {
       },
     };
   }
+
+  async function startResumablePlan(harness: Awaited<ReturnType<typeof createHarness>>) {
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.interaction-mode.set",
+        commandId: CommandId.make("resumable-plan-mode"),
+        threadId: ThreadId.make("thread-1"),
+        interactionMode: "plan",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.deep-plan.start",
+        commandId: CommandId.make("resumable-plan-start"),
+        threadId: ThreadId.make("thread-1"),
+        runId: DeepPlanRunId.make("resumable-plan"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    const snapshot = await harness.readModel();
+    const run = snapshot.threads.find((thread) => thread.id === "thread-1")!.deepPlan!;
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.deep-plan.update",
+        commandId: CommandId.make("resumable-plan-sources"),
+        threadId: run.threadId,
+        runId: run.id,
+        expectedRevision: run.revision,
+        operationId: "resumable-plan-sources",
+        mutation: { type: "sources-set", sources: [] },
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    return run;
+  }
+
+  const hiddenContinuation = (id: string) => ({
+    type: "thread.turn.start" as const,
+    commandId: CommandId.make(id),
+    threadId: ThreadId.make("thread-1"),
+    message: {
+      messageId: MessageId.make(id + ":message"),
+      role: "user" as const,
+      text: "Continue from the saved Deep Plan evidence.",
+      attachments: [],
+    },
+    background: { runId: DeepPlanRunId.make("resumable-plan") },
+    idleGuard: {},
+    runtimeMode: "full-access" as const,
+    interactionMode: "plan" as const,
+    createdAt: "2026-01-01T00:00:01.000Z",
+  });
+
+  it.each([false, true])(
+    "keeps Build mode after a saved plan, including a pending request=%s",
+    async (pending) => {
+      const harness = await createHarness({ deferReactorStart: true });
+      await startResumablePlan(harness);
+      if (pending)
+        await harness.runEffect(harness.engine.dispatch(hiddenContinuation("old-plan-request")));
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.interaction-mode.set",
+          commandId: CommandId.make("switch-to-build"),
+          threadId: ThreadId.make("thread-1"),
+          interactionMode: "default",
+          createdAt: "2026-01-01T00:00:02.000Z",
+        }),
+      );
+      await harness.startReactor();
+      await harness.drain();
+      expect(harness.sendTurn).not.toHaveBeenCalled();
+      expect(await harness.readPendingTurnStarts()).toEqual([]);
+      await harness.runEffect(harness.engine.dispatch(hiddenContinuation("stale-plan-request")));
+      await harness.drain();
+      expect(harness.sendTurn).not.toHaveBeenCalled();
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("normal-build"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: MessageId.make("build-message"),
+            role: "user",
+            text: "Edit the documentation",
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: "2026-01-01T00:00:03.000Z",
+        }),
+      );
+      await harness.drain();
+      expect(harness.sendTurn).toHaveBeenCalledOnce();
+      expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+        interactionMode: "default",
+        input: expect.stringContaining("Edit the documentation"),
+      });
+    },
+  );
+
+  it.each([
+    ["implementation", "continue"],
+    ["validation", "continue"],
+    ["implementation", "recovery"],
+    ["validation", "recovery"],
+    ["implementation", "review"],
+    ["validation", "review"],
+  ] as const)(
+    "uses the correct turn mode for approved %s during %s with a Plan composer",
+    async (phase, request) => {
+      const harness = await createHarness({
+        deferReactorStart: true,
+        serverSettings: { continueThreadsAfterServerUpdate: false },
+      });
+      await startResumablePlan(harness);
+      const threadId = ThreadId.make("thread-1");
+      const plan = {
+        schemaVersion: 1,
+        version: 1,
+        goal: "Continue the approved work",
+        scope: ["Approved work"],
+        decisions: [],
+        affectedAreas: ["Workspace"],
+        steps: [
+          {
+            id: "implement",
+            title: "Implement the change",
+            description: "Complete the approved work.",
+            dependencies: [],
+            acceptanceCriteria: [
+              {
+                id: "verified",
+                description: "The work passes its check.",
+                checkMethod: "Run the focused check.",
+              },
+            ],
+          },
+        ],
+        finalValidation: {
+          description: "Validate the approved outcome.",
+          checkMethod: "Run the integration check.",
+        },
+      } as const;
+      const snapshot = await harness.readModel();
+      const model = snapshot.threads[0]!.modelSelection;
+      const actor = { implementerId: `thread:${threadId}`, model };
+      const update = async (mutation: DeepPlanMutation) => {
+        const run = (await harness.readModel()).threads[0]!.deepPlan!;
+        const operationId = `${mutation.type}:${run.revision}`;
+        await harness.runEffect(
+          harness.engine.dispatch({
+            type: "thread.deep-plan.update",
+            commandId: CommandId.make(operationId),
+            threadId,
+            runId: run.id,
+            expectedRevision: run.revision,
+            operationId,
+            mutation,
+            createdAt: "2026-01-01T00:00:00.000Z",
+          }),
+        );
+      };
+      await update({ type: "publish-plan", plan });
+      await update({
+        type: "approve",
+        planVersion: plan.version,
+        approvalKey: deepPlanApprovalKey(plan),
+        implementation: model,
+        implementationThreadId: threadId,
+        implementerId: actor.implementerId,
+      });
+      if (phase === "validation") {
+        for (const status of ["inProgress", "implemented", "verified"] as const)
+          await update({
+            type: "step-update",
+            stepId: "implement",
+            status,
+            actor,
+            evidence: [
+              {
+                kind: "test",
+                summary: "Focused check passed",
+                createdAt: "2026-01-01T00:00:00.000Z",
+              },
+            ],
+          });
+        await update({
+          type: "validation-start",
+          requestId: "deep-plan:resumable-plan:validation:1:0",
+          actor,
+        });
+      }
+      if (request !== "recovery") await harness.startReactor();
+      const { background, ...continuation } = hiddenContinuation("approved-continuation");
+      await harness.runEffect(
+        harness.engine.dispatch({
+          ...continuation,
+          ...(request === "review" ? {} : { background }),
+          interactionMode: "default",
+        }),
+      );
+      if (request === "recovery") {
+        // Older builds persisted the composer's Plan mode on execution requests.
+        await harness.runEffect(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient.SqlClient;
+            yield* sql`
+              UPDATE orchestration_events
+              SET payload_json = json_set(payload_json, '$.interactionMode', 'plan')
+              WHERE command_id = 'approved-continuation'
+                AND event_type = 'thread.turn-start-requested'
+            `;
+          }),
+        );
+        await harness.startReactor();
+      }
+      await harness.drain();
+      expect(harness.sendTurn).toHaveBeenCalledOnce();
+      expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+        interactionMode: request === "review" ? "plan" : "default",
+        modelSelection: model,
+      });
+      const thread = (await harness.readModel()).threads[0]!;
+      expect(thread.messages).toHaveLength(request === "review" ? 1 : 0);
+      expect(thread.interactionMode).toBe("plan");
+      if (request === "continue") {
+        for (const status of ["running", "ready"] as const)
+          await harness.runEffect(
+            harness.engine.dispatch({
+              type: "thread.session.set",
+              commandId: CommandId.make(`approved-${status}`),
+              threadId,
+              session: {
+                ...thread.session!,
+                status,
+                activeTurnId: status === "running" ? TurnId.make("approved-turn") : null,
+              },
+              createdAt: "2026-01-01T00:00:02.000Z",
+            }),
+          );
+        await harness.drain();
+        expect(harness.sendTurn).toHaveBeenCalledTimes(2);
+        expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({
+          interactionMode: "default",
+          modelSelection: model,
+        });
+      }
+    },
+  );
+
+  it("delivers background continuation without a user bubble or title regeneration", async () => {
+    const harness = await createHarness();
+    await startResumablePlan(harness);
+    await harness.runEffect(harness.engine.dispatch(hiddenContinuation("hidden-start")));
+    await harness.drain();
+    expect(harness.sendTurn).toHaveBeenCalledOnce();
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      input: expect.stringContaining("Continue from the saved Deep Plan evidence."),
+      interactionMode: "plan",
+    });
+    expect(harness.generateThreadTitle).not.toHaveBeenCalled();
+    expect((await harness.readModel()).threads[0]?.messages).toEqual([]);
+  });
+
+  it.each([true, false])(
+    "recovers an idle saved plan after restart according to preference %s",
+    async (enabled) => {
+      const harness = await createHarness({
+        deferReactorStart: true,
+        serverSettings: { continueThreadsAfterServerUpdate: enabled },
+      });
+      await startResumablePlan(harness);
+      await harness.startReactor();
+      await harness.drain();
+      expect(harness.sendTurn).toHaveBeenCalledTimes(enabled ? 1 : 0);
+      expect((await harness.readModel()).threads[0]?.messages).toEqual([]);
+    },
+  );
+
+  it.each(["pending", "starting"] as const)(
+    "recovers a background request interrupted before provider acknowledgement from %s once",
+    async (status) => {
+      const harness = await createHarness({ deferReactorStart: true });
+      await startResumablePlan(harness);
+      await harness.runEffect(harness.engine.dispatch(hiddenContinuation("pending-background")));
+      if (status === "starting")
+        await harness.runEffect(
+          harness.engine.dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make("interrupted-startup"),
+            threadId: ThreadId.make("thread-1"),
+            session: {
+              threadId: ThreadId.make("thread-1"),
+              providerName: "codex",
+              status: "starting",
+              runtimeSessionId: null,
+              activeTurnId: null,
+              abortState: null,
+              lastError: null,
+              runtimeMode: "full-access",
+              updatedAt: "2026-01-01T00:00:01.000Z",
+            },
+            createdAt: "2026-01-01T00:00:01.000Z",
+          }),
+        );
+      await harness.startReactor();
+      await harness.drain();
+      expect(harness.sendTurn).toHaveBeenCalledOnce();
+      expect((await harness.readModel()).threads[0]?.messages).toEqual([]);
+    },
+  );
+
+  it.each([
+    ["none", false],
+    ["user-input", false],
+    ["approval", false],
+    ["user-input", true],
+  ] as const)("continues without an open chat after %s; paused=%s", async (pendingKind, paused) => {
+    const harness = await createHarness();
+    await startResumablePlan(harness);
+    await harness.runEffect(harness.engine.dispatch(hiddenContinuation("first-background")));
+    await harness.drain();
+    const threadId = ThreadId.make("thread-1");
+    const session = (await harness.readModel()).threads[0]!.session!;
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("plan-running"),
+        threadId,
+        session: {
+          ...session,
+          status: "running",
+          activeTurnId: TurnId.make("first-background-turn"),
+        },
+        createdAt: "2026-01-01T00:00:02.000Z",
+      }),
+    );
+    if (pendingKind !== "none")
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make("plan-question"),
+          threadId,
+          activity: {
+            id: EventId.make("plan-question"),
+            kind: `${pendingKind}.requested`,
+            tone: pendingKind === "approval" ? "approval" : "info",
+            summary: "Waiting for a response",
+            payload: {
+              requestId: "plan-question",
+              ...(pendingKind === "approval"
+                ? { requestKind: "command", requestType: "command_execution" }
+                : { questions: [{ id: "choice", header: "Choice", question: "Which option?" }] }),
+            },
+            turnId: TurnId.make("first-background-turn"),
+            createdAt: "2026-01-01T00:00:02.000Z",
+          },
+          createdAt: "2026-01-01T00:00:02.000Z",
+        }),
+      );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("plan-ready"),
+        threadId,
+        session: {
+          ...session,
+          status: "ready",
+          activeTurnId: null,
+          updatedAt: "2026-01-01T00:00:03.000Z",
+        },
+        createdAt: "2026-01-01T00:00:03.000Z",
+      }),
+    );
+    await harness.drain();
+    if (pendingKind !== "none") {
+      expect(harness.sendTurn).toHaveBeenCalledOnce();
+      if (paused) {
+        const run = (await harness.readModel()).threads[0]!.deepPlan!;
+        await harness.runEffect(
+          harness.engine.dispatch({
+            type: "thread.deep-plan.update",
+            commandId: CommandId.make("pause-before-resolution"),
+            threadId,
+            runId: run.id,
+            expectedRevision: run.revision,
+            operationId: "pause-before-resolution",
+            mutation: { type: "pause", reason: "Stopped by the user." },
+            createdAt: "2026-01-01T00:00:03.000Z",
+          }),
+        );
+      }
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make("plan-question-resolved"),
+          threadId,
+          activity: {
+            id: EventId.make("plan-question-resolved"),
+            kind: `${pendingKind}.resolved`,
+            tone: "info",
+            summary: "Request resolved",
+            payload: { requestId: "plan-question" },
+            turnId: TurnId.make("first-background-turn"),
+            createdAt: "2026-01-01T00:00:04.000Z",
+          },
+          createdAt: "2026-01-01T00:00:04.000Z",
+        }),
+      );
+      await harness.drain();
+    }
+    expect(harness.sendTurn).toHaveBeenCalledTimes(paused ? 1 : 2);
+    expect((await harness.readModel()).threads[0]?.messages).toEqual([]);
+  });
+
+  it.each([true, false])(
+    "continues without an open chat after start acknowledgment; completed turn matches=%s",
+    async (matchesTurn) => {
+      const harness = await createHarness();
+      await startResumablePlan(harness);
+      const entered = await harness.runEffect(Deferred.make<void>());
+      const acknowledge = await harness.runEffect(Deferred.make<void>());
+      const idleObserved = await harness.runEffect(Deferred.make<void>());
+      const threadId = ThreadId.make("thread-1");
+      const turnId = TurnId.make("fast-plan-turn");
+      harness.sendTurn.mockImplementationOnce(() =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(entered, undefined);
+          yield* Deferred.await(acknowledge);
+          return { threadId, turnId: matchesTurn ? turnId : TurnId.make("newer-turn") };
+        }),
+      );
+      const readShell = harness.snapshotQuery.getThreadShellById;
+      vi.spyOn(harness.snapshotQuery, "getThreadShellById").mockImplementation((id) =>
+        readShell(id).pipe(
+          Effect.tap((shell) =>
+            Option.isSome(shell) &&
+            shell.value.session?.status === "ready" &&
+            shell.value.latestTurn?.turnId === turnId &&
+            shell.value.latestTurn.state === "completed"
+              ? Deferred.succeed(idleObserved, undefined)
+              : Effect.void,
+          ),
+        ),
+      );
+      await harness.runEffect(harness.engine.dispatch(hiddenContinuation("fast-plan")));
+      await harness.runEffect(Deferred.await(entered));
+      const session = (await harness.readModel()).threads[0]!.session!;
+      for (const status of ["running", "ready"] as const)
+        await harness.runEffect(
+          harness.engine.dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make(`fast-plan-${status}`),
+            threadId,
+            session: {
+              ...session,
+              status,
+              activeTurnId: status === "running" ? turnId : null,
+              updatedAt: "2026-01-01T00:00:03.000Z",
+            },
+            createdAt: "2026-01-01T00:00:03.000Z",
+          }),
+        );
+      await harness.runEffect(Deferred.await(idleObserved));
+      await harness.runEffect(Deferred.succeed(acknowledge, undefined));
+      await harness.drain();
+      expect(harness.sendTurn).toHaveBeenCalledTimes(matchesTurn ? 2 : 1);
+      expect((await harness.readModel()).threads[0]?.messages).toEqual([]);
+    },
+  );
 
   it("refreshes indexed task context inside an existing provider session and falls back on index failure", async () => {
     let revision = 0;

@@ -614,7 +614,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       run,
       threadId,
       selection ?? thread.value.modelSelection,
-      interactionMode,
+      interactionMode ?? thread.value.interactionMode,
     );
   });
   const issueMcpCredential =
@@ -1447,8 +1447,24 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
                 : {}),
             },
           );
+    const releasePreviousWriter = Effect.gen(function* () {
+      const previous = installed.previous;
+      if (
+        previous === undefined ||
+        previous.adapter === input.adapter ||
+        previous.adapter.provider !== input.adapter.provider
+      )
+        return;
+      // A rebuilt adapter cannot release the writer held by its predecessor.
+      if (previous.startFiber) yield* Fiber.interrupt(previous.startFiber);
+      yield* previous.adapter.forceStopSession(
+        input.sessionInput.threadId,
+        previous.runtimeSessionId,
+      );
+    });
     const startExit = yield* Effect.exit(
-      prepareSession.pipe(
+      releasePreviousWriter.pipe(
+        Effect.andThen(prepareSession),
         Effect.andThen(Deferred.succeed(startGate, undefined)),
         Effect.andThen(Fiber.join(startFiber)),
       ),

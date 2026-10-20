@@ -77,6 +77,8 @@ const make = Effect.gen(function* () {
                 text: prompt,
                 attachments: [],
               },
+              background: { runId: run.id },
+              idleGuard: {},
               modelSelection: {
                 instanceId: run.approval.implementation.instanceId,
                 model: run.approval.implementation.model,

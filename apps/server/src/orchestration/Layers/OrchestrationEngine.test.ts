@@ -9,6 +9,7 @@ import {
   CheckpointRef,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  DeepPlanRunId,
   MessageId,
   ProjectId,
   ThreadId,
@@ -108,9 +109,14 @@ async function createOrchestrationSystem(
   );
   const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
   const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
+  const receipts = await runtime.runPromise(
+    Effect.service(OrchestrationCommandReceipts.OrchestrationCommandReceiptRepository),
+  );
   return {
     engine,
     readModel: () => runtime.runPromise(snapshotQuery.getSnapshot()),
+    readReceipt: (commandId: CommandId) =>
+      runtime.runPromise(receipts.getByCommandId({ commandId })),
     readThread: (threadId: ThreadId) =>
       runtime.runPromise(snapshotQuery.getThreadDetailById(threadId)),
     run: <A, E>(effect: Effect.Effect<A, E>) => runtime.runPromise(effect),
@@ -2465,5 +2471,351 @@ describe("OrchestrationEngine", () => {
     expect(withoutOrigin?.metadata.origin).toBeUndefined();
 
     await system.dispose();
+  });
+});
+
+describe("Deep Plan continuation after restart", () => {
+  const threadId = ThreadId.make("deep-plan-restart");
+  const turnId = TurnId.make("interrupted-implementation");
+  const messageId = MessageId.make("approved-implementation");
+  const idleGuard = { latestTurnId: turnId, latestUserMessageId: messageId };
+
+  async function seedInterruptedImplementation(
+    system: Awaited<ReturnType<typeof createOrchestrationSystem>>,
+  ) {
+    const projectId = ProjectId.make("deep-plan-restart-project");
+    const commands: OrchestrationCommand[] = [
+      {
+        type: "project.create",
+        commandId: CommandId.make("restart-project"),
+        projectId,
+        title: "Deep Plan restart",
+        workspaceRoot: "/tmp/deep-plan-restart",
+        createdAt: now(),
+      },
+      {
+        type: "thread.create",
+        commandId: CommandId.make("restart-thread"),
+        threadId,
+        projectId,
+        title: "Implementation",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt: now(),
+      },
+      {
+        type: "thread.turn.start",
+        commandId: CommandId.make("original-implementation"),
+        threadId,
+        message: {
+          messageId,
+          role: "user",
+          text: "Implement the approved Deep Plan.",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdAt: now(),
+      },
+      {
+        type: "thread.session.set",
+        commandId: CommandId.make("running-implementation"),
+        threadId,
+        session: {
+          threadId,
+          providerName: "codex",
+          status: "running",
+          activeTurnId: turnId,
+          runtimeSessionId: null,
+          runtimeMode: "full-access",
+          abortState: null,
+          lastError: null,
+          updatedAt: now(),
+        },
+        createdAt: now(),
+      },
+    ];
+    for (const command of commands) await system.run(system.engine.dispatch(command));
+    await system.recoverOrphanedTurn(threadId);
+  }
+
+  function continuation(id: string): OrchestrationCommand {
+    return {
+      type: "thread.turn.start",
+      commandId: CommandId.make(id),
+      threadId,
+      message: {
+        messageId: MessageId.make(id),
+        role: "user",
+        text: "CONTINUE THE EXISTING APPROVED DEEPPLAN IMPLEMENTATION.",
+        attachments: [],
+      },
+      idleGuard,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdAt: "2026-01-01T00:00:03.000Z",
+    };
+  }
+
+  it("persists one invisible continuation before provider acknowledgement and permits retry after failure", async () => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-hidden-plan-"));
+    const databasePath = NodePath.join(directory, "state.sqlite");
+    let system = await createOrchestrationSystem(databasePath);
+    const runId = DeepPlanRunId.make("hidden-continuation-run");
+    try {
+      await seedInterruptedImplementation(system);
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.interaction-mode.set",
+          commandId: CommandId.make("hidden-plan-mode"),
+          threadId,
+          interactionMode: "plan",
+          createdAt: now(),
+        }),
+      );
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.deep-plan.start",
+          commandId: CommandId.make("hidden-plan-start"),
+          threadId,
+          runId,
+          createdAt: now(),
+        }),
+      );
+      const hidden = (id: string) => ({ ...continuation(id), background: { runId } });
+      const before = await system.run(system.engine.latestSequence);
+      const results = await Promise.all(
+        ["resume-one", "resume-two", "resume-three"].map((id) =>
+          system.run(system.engine.dispatch(hidden(id))),
+        ),
+      );
+      expect(results.map((result) => result.sequence)).toEqual([
+        before + 1,
+        before + 1,
+        before + 1,
+      ]);
+      let detail = await system.readThread(threadId);
+      expect(Option.isSome(detail) && detail.value.messages.map((message) => message.id)).toEqual([
+        messageId,
+      ]);
+
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("server:provider-session-set:background-ready"),
+          threadId,
+          session: {
+            threadId,
+            providerName: "codex",
+            status: "ready",
+            activeTurnId: null,
+            runtimeSessionId: null,
+            runtimeMode: "full-access",
+            abortState: null,
+            lastError: null,
+            updatedAt: now(),
+          },
+          createdAt: now(),
+        }),
+      );
+      const savedSequence = await system.run(system.engine.latestSequence);
+      expect(
+        (await system.run(system.engine.dispatch(hidden("resume-before-acknowledgement"))))
+          .sequence,
+      ).toBe(savedSequence);
+      await system.dispose();
+      system = await createOrchestrationSystem(databasePath);
+      expect(
+        (await system.run(system.engine.dispatch(hidden("resume-after-restart")))).sequence,
+      ).toBe(savedSequence);
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make("failed-hidden-start"),
+          threadId,
+          activity: {
+            id: EventId.make("failed-hidden-start"),
+            kind: "provider.turn.start.failed",
+            tone: "error",
+            summary: "Provider unavailable",
+            payload: { requestId: "resume-one" },
+            turnId: null,
+            createdAt: now(),
+          },
+          createdAt: now(),
+        }),
+      );
+      const failedSequence = await system.run(system.engine.latestSequence);
+      expect(
+        (await system.run(system.engine.dispatch(hidden("retry-hidden-start")))).sequence,
+      ).toBe(failedSequence + 1);
+      detail = await system.readThread(threadId);
+      expect(Option.isSome(detail) && detail.value.messages.map((message) => message.id)).toEqual([
+        messageId,
+      ]);
+    } finally {
+      await system.dispose();
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("resumes from saved message metadata after rebuilding the lightweight command state", async () => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-plan-restart-"));
+    const databasePath = NodePath.join(directory, "state.sqlite");
+    let system = await createOrchestrationSystem(databasePath);
+    try {
+      await seedInterruptedImplementation(system);
+      await system.dispose();
+      system = await createOrchestrationSystem(databasePath);
+      const before = await system.run(system.engine.latestSequence);
+      const result = await system.run(system.engine.dispatch(continuation("resume-after-restart")));
+      expect(result.sequence).toBe(before + 2);
+      const detail = await system.readThread(threadId);
+      expect(Option.isSome(detail)).toBe(true);
+      if (Option.isSome(detail))
+        expect(
+          detail.value.messages
+            .filter((message) => message.role === "user")
+            .map((message) => message.id),
+        ).toEqual([messageId, MessageId.make("resume-after-restart")]);
+    } finally {
+      await system.dispose();
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("does not act on stale client message state after restart", async () => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-plan-stale-"));
+    const databasePath = NodePath.join(directory, "state.sqlite");
+    let system = await createOrchestrationSystem(databasePath);
+    try {
+      await seedInterruptedImplementation(system);
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.message.user.append",
+          commandId: CommandId.make("newer-request"),
+          threadId,
+          message: {
+            messageId: MessageId.make("newer-request"),
+            text: "Continue with this updated instruction.",
+            attachments: [],
+          },
+          createdAt: "2026-01-01T00:00:03.000Z",
+        }),
+      );
+      await system.dispose();
+      system = await createOrchestrationSystem(databasePath);
+      const before = await system.run(system.engine.latestSequence);
+      const result = await system.run(system.engine.dispatch(continuation("stale-resume")));
+      expect(result.sequence).toBe(before);
+      const detail = await system.readThread(threadId);
+      expect(Option.isSome(detail) && detail.value.messages.map((message) => message.id)).toEqual([
+        messageId,
+        MessageId.make("newer-request"),
+      ]);
+      const receipt = await system.readReceipt(CommandId.make("stale-resume"));
+      expect(Option.isSome(receipt) && receipt.value.status).toBe("accepted");
+    } finally {
+      await system.dispose();
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("acknowledges duplicate continuations without events and retains their receipts across restart", async () => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-plan-dedup-"));
+    const databasePath = NodePath.join(directory, "state.sqlite");
+    let system = await createOrchestrationSystem(databasePath);
+    try {
+      await seedInterruptedImplementation(system);
+      const before = await system.run(system.engine.latestSequence);
+      const commands = ["manual-resume", "automatic-resume", "another-client"].map(continuation);
+      const results = await Promise.all(
+        commands.map((command) => system.run(system.engine.dispatch(command))),
+      );
+      expect(results.map((result) => result.sequence)).toEqual([
+        before + 2,
+        before + 2,
+        before + 2,
+      ]);
+      expect(await system.run(system.engine.latestSequence)).toBe(before + 2);
+      for (const command of commands) {
+        const receipt = await system.readReceipt(command.commandId);
+        expect(Option.isSome(receipt) && receipt.value.status).toBe("accepted");
+      }
+      await system.dispose();
+      system = await createOrchestrationSystem(databasePath);
+      const replay = await system.run(system.engine.dispatch(commands[1]!));
+      expect(replay.sequence).toBe(before + 2);
+      const detail = await system.readThread(threadId);
+      expect(
+        Option.isSome(detail) && detail.value.messages.filter((message) => message.role === "user"),
+      ).toHaveLength(2);
+    } finally {
+      await system.dispose();
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts a skipped continuation while a provider is starting", async () => {
+    const system = await createOrchestrationSystem();
+    try {
+      await seedInterruptedImplementation(system);
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("already-starting"),
+          threadId,
+          session: {
+            threadId,
+            providerName: "codex",
+            status: "starting",
+            activeTurnId: null,
+            runtimeSessionId: null,
+            runtimeMode: "full-access",
+            abortState: null,
+            lastError: null,
+            updatedAt: now(),
+          },
+          createdAt: now(),
+        }),
+      );
+      const before = await system.run(system.engine.latestSequence);
+      const skipped = continuation("skip-starting");
+      const result = await system.run(system.engine.dispatch(skipped));
+      expect(result.sequence).toBe(before);
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("idle-again"),
+          threadId,
+          session: {
+            threadId,
+            providerName: "codex",
+            status: "interrupted",
+            activeTurnId: null,
+            runtimeSessionId: null,
+            runtimeMode: "full-access",
+            abortState: null,
+            lastError: null,
+            updatedAt: now(),
+          },
+          createdAt: now(),
+        }),
+      );
+      const idleSequence = await system.run(system.engine.latestSequence);
+      expect(await system.run(system.engine.dispatch(skipped))).toEqual(result);
+      expect(await system.run(system.engine.latestSequence)).toBe(idleSequence);
+      const detail = await system.readThread(threadId);
+      expect(
+        Option.isSome(detail) && detail.value.messages.filter((message) => message.role === "user"),
+      ).toHaveLength(1);
+      const next = await system.run(system.engine.dispatch(continuation("new-resume")));
+      expect(next.sequence).toBe(idleSequence + 2);
+    } finally {
+      await system.dispose();
+    }
   });
 });

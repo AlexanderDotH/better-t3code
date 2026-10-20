@@ -39,7 +39,8 @@ const loadBoundRun = Effect.fn("DeepPlanToolkit.loadBoundRun")(function* (
   if (!invocation.capabilities.has("deep-plan") || !binding) {
     return yield* new DeepPlanToolScopeError({
       reason: "credential-not-authorized",
-      detail: "This credential is not bound to a Deep Plan run.",
+      detail:
+        "This session is not bound to an active Deep Plan run. Resume the Deep Plan in T3 before using its tools.",
     });
   }
   const sourceAnalysis = binding.sourceAnalysis;

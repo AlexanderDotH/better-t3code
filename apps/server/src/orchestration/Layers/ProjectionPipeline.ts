@@ -2257,7 +2257,11 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             yield* projectionTurnRepository.deletePendingTurnStartByThreadId(event.payload);
             return;
           }
-          if (event.payload.activity.kind !== "provider.turn.start.failed") return;
+          if (
+            event.payload.activity.kind !== "provider.turn.start.failed" &&
+            event.payload.activity.kind !== "deep-plan.continuation-skipped"
+          )
+            return;
           const pendingTurnStart = yield* projectionTurnRepository.getPendingTurnStartByThreadId(
             event.payload,
           );
@@ -2299,8 +2303,22 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           const turnId = event.payload.session.activeTurnId;
           if (turnId === null || event.payload.session.status !== "running") {
             if (
-              (event.payload.session.status === "ready" &&
-                event.commandId?.startsWith("server:provider-session-set:") === true) ||
+              event.payload.session.status === "ready" &&
+              event.commandId?.startsWith("server:provider-session-set:") === true
+            ) {
+              const pending = yield* projectionTurnRepository.getPendingTurnStartByThreadId(
+                event.payload,
+              );
+              if (Option.isSome(pending)) {
+                const message = yield* projectionThreadMessageRepository.getByMessageId({
+                  messageId: pending.value.messageId,
+                });
+                // Background requests stay reserved until the provider adopts a turn.
+                if (Option.isSome(message))
+                  yield* projectionTurnRepository.deletePendingTurnStartByThreadId(event.payload);
+              }
+            }
+            if (
               event.payload.session.status === "error" ||
               event.payload.session.status === "stopped" ||
               event.payload.session.status === "interrupted"
