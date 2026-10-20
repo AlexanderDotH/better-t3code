@@ -171,6 +171,19 @@ export default mergeConfig(
         },
       },
       {
+        entry: {
+          "deep-plan-source-worker": "src/deepPlanning/DeepPlanSourceWorker.ts",
+        },
+        outDir: "dist",
+        clean: false,
+        sourcemap: true,
+        deps: {
+          alwaysBundle: shouldBundleCliDependency,
+          neverBundle: isExternalCliDependency,
+          onlyBundle: false as const,
+        },
+      },
+      {
         // The installer copies this file alone into the runtime directory.
         // A separate build prevents shared chunks from making that copy unloadable.
         entry: { "service-launcher": "src/service-launcher.ts" },

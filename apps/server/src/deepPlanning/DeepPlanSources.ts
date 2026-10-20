@@ -38,14 +38,19 @@ import {
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { ServerConfig } from "../config.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
-import { captureSourceRecords } from "./DeepPlanSourceCapture.ts";
+import { SOURCE_EXPORT_BATCH_BYTES, SourceExportEntry } from "./DeepPlanSourceExport.ts";
+import { captureSourceExportInWorker } from "./DeepPlanSourceWorkerClient.ts";
 import {
   canonicalSourceJson,
   sourceChunkHash,
@@ -133,12 +138,12 @@ const RunSourceRow = Schema.Struct({
 });
 type RunSourceRow = typeof RunSourceRow.Type;
 const decodeSnapshotJson = Schema.decodeEffect(SnapshotJson);
+const decodeSourceExportEntry = Schema.decodeEffect(Schema.fromJsonString(SourceExportEntry));
 const decodeRecordJson = Schema.decodeEffect(RecordJson);
 const decodeRecordOriginJson = Schema.decodeEffect(
   Schema.fromJsonString(DeepPlanSourceRecordOrigin),
 );
 const decodeRunSourceRows = Schema.decodeUnknownEffect(Schema.Array(RunSourceRow));
-const decodeThreadRows = Schema.decodeUnknownEffect(Schema.Array(ThreadRow));
 const decodeCatalogRows = Schema.decodeUnknownEffect(
   Schema.Array(
     Schema.Struct({
@@ -253,6 +258,8 @@ export const makeDeepPlanSources = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig;
   const environment = yield* ServerEnvironment;
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const exportLock = yield* Semaphore.make(1);
   const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
   const persistRecord = Effect.fnUntraced(function* (
@@ -607,107 +614,145 @@ export const makeDeepPlanSources = Effect.gen(function* () {
         exportId = DeepPlanExportId.make(NodeCrypto.randomUUID());
         const capturedAt = yield* nowIso;
         const descriptor = yield* environment.getDescriptor;
-        const project = yield* sql<{ readonly title: string }>`
-        SELECT title FROM projection_projects WHERE project_id = ${input.projectId} AND deleted_at IS NULL
-      `;
-        if (project[0] === undefined)
-          return yield* sourceError("source-not-found", "The source project was not found.");
-        const selection = new Set(input.threadIds);
-        const found = new Set<string>();
-        yield* sql`
-        INSERT INTO deep_plan_source_exports (export_id, project_id, captured_at, selection_json)
-        VALUES (${exportId}, ${input.projectId}, ${capturedAt}, ${canonicalSourceJson({ threadIds: input.threadIds, includeArchived: input.includeArchived })})
-      `;
-        let afterThreadId = "";
-        let sourceOrdinal = 0;
-        while (true) {
-          const rows = yield* sql`
-          SELECT t.thread_id AS "threadId", t.title, t.archived_at AS "archivedAt", t.fork_json AS fork,
-            (SELECT project_id FROM projection_threads WHERE thread_id = json_extract(t.fork_json, '$.provenance.sourceThreadId')) AS "forkProjectId"
-          FROM projection_threads t WHERE t.project_id = ${input.projectId} AND t.deleted_at IS NULL
-            AND t.thread_id > ${afterThreadId} AND (${input.includeArchived !== false ? 1 : 0} = 1 OR t.archived_at IS NULL)
-          ORDER BY t.thread_id LIMIT ${QUERY_PAGE_SIZE}
-        `;
-          const threads = yield* decodeThreadRows(rows);
-          if (threads.length === 0) break;
-          for (const thread of threads) {
-            afterThreadId = thread.threadId;
-            if (input.threadIds !== undefined && !selection.has(thread.threadId)) continue;
-            found.add(thread.threadId);
-            const origin = {
-              environmentId: descriptor.environmentId,
-              projectId: input.projectId,
-              threadId: thread.threadId,
-            };
-            const sourceId = DeepPlanSourceId.make(sourceContentHash([exportId, origin]));
-            const manifest = sourceManifestHasher();
-            let ordinal = 0;
-            let pendingRecords: DeepPlanSourceRecord[] = [];
-            const flush = Effect.fnUntraced(function* () {
-              yield* persistExportRecords(sourceId, ordinal, pendingRecords);
-              ordinal += pendingRecords.length;
-              pendingRecords = [];
-            });
-            const counts = yield* captureSourceRecords({
-              origin,
-              attachmentsDir: serverConfig.attachmentsDir,
-              onRecord: Effect.fnUntraced(function* (record) {
-                manifest.add(record);
-                pendingRecords.push(record);
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-deep-plan-export-" });
+        const outputPath = path.join(directory, "records.ndjson");
+        const result = yield* captureSourceExportInWorker({
+          dbPath: serverConfig.dbPath,
+          outputPath,
+          attachmentsDir: serverConfig.attachmentsDir,
+          exportId,
+          capturedAt,
+          environmentId: descriptor.environmentId,
+          environmentLabel: descriptor.label,
+          input,
+        });
+        const snapshots: DeepPlanSourceSnapshot[] = [];
+        const importedSources = new Set<DeepPlanSourceId>();
+        let sourceId: DeepPlanSourceId | undefined;
+        let ordinal = 0;
+        let pendingRecords: DeepPlanSourceRecord[] = [];
+        let pendingBytes = 0;
+        let published = false;
+        // The worker owns the read snapshot; only bounded imports reserve this connection.
+        const flush = Effect.fnUntraced(function* () {
+          if (sourceId === undefined || pendingRecords.length === 0) return;
+          importedSources.add(sourceId);
+          yield* persistExportRecords(sourceId, ordinal, pendingRecords).pipe(sql.withTransaction);
+          ordinal += pendingRecords.length;
+          pendingRecords = [];
+          pendingBytes = 0;
+          yield* Effect.yieldNow;
+        });
+        const cleanup = Effect.gen(function* () {
+          for (const importedSource of importedSources) {
+            while (true) {
+              const rows = yield* sql<{ readonly ordinal: number; readonly recordId: string }>`
+                SELECT ordinal, record_id AS "recordId" FROM deep_plan_source_records
+                WHERE source_id = ${importedSource} ORDER BY ordinal LIMIT ${EXPORT_RECORD_BATCH_SIZE}
+              `;
+              if (rows.length === 0) break;
+              yield* sql.withTransaction(
+                Effect.gen(function* () {
+                  yield* sql`DELETE FROM deep_plan_source_records
+                  WHERE source_id = ${importedSource} AND ${sql.in(
+                    "ordinal",
+                    rows.map((row) => row.ordinal),
+                  )}`;
+                  yield* sql`DELETE FROM deep_plan_source_contents
+                  WHERE ${sql.in(
+                    "record_id",
+                    rows.map((row) => row.recordId),
+                  )}
+                    AND NOT EXISTS (SELECT 1 FROM deep_plan_source_records r
+                      WHERE r.record_id = deep_plan_source_contents.record_id)`;
+                }),
+              );
+              yield* Effect.yieldNow;
+            }
+          }
+        });
+        yield* Effect.gen(function* () {
+          yield* fs.stream(outputPath).pipe(
+            Stream.decodeText(),
+            Stream.splitLines,
+            Stream.filter((line) => line.length > 0),
+            Stream.runForEach(
+              Effect.fnUntraced(function* (line) {
+                const entry = yield* decodeSourceExportEntry(line);
+                if (entry.type === "snapshot") {
+                  yield* flush();
+                  if (
+                    ordinal !== entry.snapshot.recordCount ||
+                    (sourceId !== undefined && sourceId !== entry.snapshot.sourceId)
+                  )
+                    return yield* sourceError(
+                      "incomplete-source",
+                      "The frozen source is missing records.",
+                      entry.snapshot.sourceId,
+                    );
+                  snapshots.push(entry.snapshot);
+                  sourceId = undefined;
+                  ordinal = 0;
+                  return;
+                }
+                if (sourceId !== undefined && sourceId !== entry.sourceId)
+                  return yield* sourceError(
+                    "content-mismatch",
+                    "The frozen source records are out of order.",
+                  );
+                sourceId = entry.sourceId;
+                const bytes = Buffer.byteLength(line);
+                if (pendingBytes + bytes > SOURCE_EXPORT_BATCH_BYTES) yield* flush();
+                pendingRecords.push(entry.record);
+                pendingBytes += bytes;
                 if (pendingRecords.length >= EXPORT_RECORD_BATCH_SIZE) yield* flush();
               }),
-            }).pipe(
-              Effect.provideService(SqlClient.SqlClient, sql),
-              Effect.provideService(FileSystem.FileSystem, fs),
-              Effect.mapError(() =>
-                sourceError(
-                  "source-unavailable",
-                  "The source history or an attachment could not be frozen.",
-                  sourceId,
-                ),
-              ),
-            );
-            yield* flush();
-            const contentHash = manifest.finish();
-            const snapshot: DeepPlanSourceSnapshot = {
-              sourceId,
-              origin,
-              environmentLabel: descriptor.label,
-              projectTitle: project[0]!.title,
-              threadTitle: thread.title,
-              archived: thread.archivedAt !== null,
-              capturedAt,
-              contentVersion: contentHash,
-              contentHash,
-              ...counts,
-              forkOrigin:
-                thread.fork === null
-                  ? null
-                  : {
-                      ...origin,
-                      projectId: thread.forkProjectId ?? input.projectId,
-                      threadId: thread.fork.provenance.sourceThreadId,
-                    },
-            };
-            yield* sql`
-            INSERT INTO deep_plan_sources (source_id, export_id, source_ordinal, snapshot_json, complete)
-            VALUES (${sourceId}, ${exportId}, ${sourceOrdinal++}, ${canonicalSourceJson(snapshot)}, 1)
-          `;
-          }
-        }
-        if (input.threadIds?.some((threadId) => !found.has(threadId))) {
-          return yield* sourceError(
-            "source-not-found",
-            "A selected chat is deleted, unavailable, or outside the source project.",
+            ),
           );
-        }
-        const projectCounts = yield* sql<{ readonly count: number }>`
-          SELECT COUNT(*) AS count FROM projection_threads WHERE project_id = ${input.projectId} AND deleted_at IS NULL
-        `;
-        yield* sql`
-          UPDATE deep_plan_source_exports SET complete_project = ${found.size === projectCounts[0]?.count ? 1 : 0}
-          WHERE export_id = ${exportId}
-        `;
+          if (sourceId !== undefined)
+            return yield* sourceError(
+              "incomplete-source",
+              "The frozen source has no completed snapshot.",
+            );
+          yield* sql
+            .withTransaction(
+              Effect.gen(function* () {
+                yield* sql`
+              INSERT INTO deep_plan_source_exports (export_id, project_id, captured_at, selection_json, complete_project)
+              VALUES (${exportId}, ${input.projectId}, ${capturedAt}, ${canonicalSourceJson({ threadIds: input.threadIds, includeArchived: input.includeArchived })}, ${result.completeProject ? 1 : 0})
+            `;
+                for (let offset = 0; offset < snapshots.length; offset += QUERY_PAGE_SIZE) {
+                  yield* sql`INSERT INTO deep_plan_sources ${sql.insert(
+                    snapshots.slice(offset, offset + QUERY_PAGE_SIZE).map((snapshot, index) => ({
+                      source_id: snapshot.sourceId,
+                      export_id: exportId,
+                      source_ordinal: offset + index,
+                      snapshot_json: canonicalSourceJson(snapshot),
+                      complete: 1,
+                    })),
+                  )}`;
+                }
+              }),
+            )
+            .pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  published = true;
+                }),
+              ),
+              Effect.uninterruptible,
+            );
+        }).pipe(
+          Effect.onExit((exit) =>
+            Exit.isFailure(exit) && !published
+              ? cleanup.pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning("Could not clean up an incomplete source export", { cause }),
+                  ),
+                )
+              : Effect.void,
+          ),
+        );
       }
       const exports = yield* sql<{ readonly projectId: string; readonly capturedAt: string }>`
       SELECT project_id AS "projectId", captured_at AS "capturedAt" FROM deep_plan_source_exports WHERE export_id = ${exportId}
@@ -735,7 +780,8 @@ export const makeDeepPlanSources = Effect.gen(function* () {
           rows.length > limit ? encodeCursor(`catalog:${exportId}`, offset + sources.length) : null,
       };
     },
-    sql.withTransaction,
+    Effect.scoped,
+    exportLock.withPermits(1),
     Effect.mapError(storageError),
   );
 

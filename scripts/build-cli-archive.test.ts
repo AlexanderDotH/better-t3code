@@ -33,6 +33,10 @@ it.layer(NodeServices.layer)("CLI runtime assets", (it) => {
         path.join(serverDistDir, "knowledge-graph-extraction-worker.mjs"),
         "knowledge graph worker",
       );
+      yield* fs.writeFileString(
+        path.join(serverDistDir, "deep-plan-source-worker.mjs"),
+        "source worker",
+      );
 
       yield* stageCliRuntimeAssets({ serverDistDir, contentDir });
 
@@ -53,6 +57,10 @@ it.layer(NodeServices.layer)("CLI runtime assets", (it) => {
       assert.equal(
         yield* fs.readFileString(path.join(contentDir, "knowledge-graph-extraction-worker.mjs")),
         "knowledge graph worker",
+      );
+      assert.equal(
+        yield* fs.readFileString(path.join(contentDir, "deep-plan-source-worker.mjs")),
+        "source worker",
       );
     }),
   );

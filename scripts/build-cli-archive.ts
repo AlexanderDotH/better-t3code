@@ -294,6 +294,7 @@ export const stageCliRuntimeAssets = Effect.fn("stageCliRuntimeAssets")(function
     "project-indexer",
     "project-indexer-typescript-compatible.mjs",
     "knowledge-graph-extraction-worker.mjs",
+    "deep-plan-source-worker.mjs",
   ];
   for (const asset of assets) {
     yield* requireInput(
