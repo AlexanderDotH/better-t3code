@@ -735,6 +735,55 @@ describe("checkCursorProviderStatus", () => {
 });
 
 describe("discoverCursorModelsViaAcp", () => {
+  it("reuses background capabilities across health checks and refreshes when identity changes", async () => {
+    await runNode(
+      Effect.gen(function* () {
+        const { requestLogPath, wrapperPath } = yield* makeProviderStatusEnvFixture();
+        const fileSystem = yield* FileSystem.FileSystem;
+        const discovery = yield* makeCursorModelDiscovery(
+          {
+            enabled: true,
+            binaryPath: wrapperPath,
+            apiEndpoint: "",
+            customModels: [],
+          },
+          { ...process.env, T3_ACP_REQUEST_LOG_PATH: requestLogPath },
+        );
+        const snapshot = {
+          version: "2026.08.11",
+          auth: { status: "authenticated" as const, label: "first@example.test" },
+          models: [
+            {
+              slug: "gpt-5.4",
+              name: "GPT",
+              isCustom: false,
+              capabilities: createModelCapabilities({ optionDescriptors: [] }),
+            },
+          ],
+        };
+        const first = yield* discovery.discoverCapabilities(snapshot);
+        expect(first.length).toBeGreaterThan(0);
+        yield* fileSystem.writeFileString(requestLogPath, "");
+        const repeated = { ...snapshot, models: snapshot.models.map((model) => ({ ...model })) };
+        expect(yield* discovery.discoverCapabilities(repeated)).toEqual(first);
+        expect(yield* fileSystem.readFileString(requestLogPath)).toBe("");
+
+        yield* discovery.discoverCapabilities({ ...snapshot, version: "2026.08.12" });
+        expect(yield* fileSystem.readFileString(requestLogPath)).toContain("initialize");
+        yield* fileSystem.writeFileString(requestLogPath, "");
+        yield* discovery.discoverCapabilities({
+          ...snapshot,
+          auth: { ...snapshot.auth, label: "second@example.test" },
+        });
+        expect(yield* fileSystem.readFileString(requestLogPath)).toContain("initialize");
+        yield* fileSystem.writeFileString(requestLogPath, "");
+        yield* discovery.invalidate;
+        yield* discovery.discoverCapabilities(snapshot);
+        expect(yield* fileSystem.readFileString(requestLogPath)).toContain("initialize");
+      }),
+    );
+  });
+
   it("reuses successful discovery until the CLI version or account changes", async () => {
     await runNode(
       Effect.gen(function* () {

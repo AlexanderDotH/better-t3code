@@ -207,8 +207,8 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
             Effect.flatMap((maintenanceCapabilities) =>
               enrichCursorSnapshot({
                 settings: settings.provider,
-                environment: processEnv,
                 snapshot: currentSnapshot,
+                discoverCapabilities: modelDiscovery.discoverCapabilities,
                 maintenanceCapabilities,
                 enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
                 publishSnapshot,
