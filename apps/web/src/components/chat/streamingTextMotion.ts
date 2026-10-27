@@ -1,12 +1,17 @@
 export const MAX_STREAMING_TEXT_MOTION_GRAPHEMES = 512;
 const STREAMING_TEXT_MOTION_EWMA_FACTOR = 0.35;
+const STREAMING_TEXT_RATE_MEMORY_MS = 200;
+const STREAMING_TEXT_BURST_WINDOW_MS = 250;
 
 const SLOW_RATE_GRAPHEMES_PER_SECOND = 20;
 const FAST_RATE_GRAPHEMES_PER_SECOND = 180;
-const SLOW_DURATION_MS = 125;
-const FAST_DURATION_MS = 65;
-const SLOW_STAGGER_WINDOW_MS = 35;
-const FAST_STAGGER_WINDOW_MS = 6;
+const SLOW_DURATION_MS = 360;
+const FAST_DURATION_MS = 150;
+const SLOW_STAGGER_WINDOW_MS = 120;
+const FAST_STAGGER_WINDOW_MS = 54;
+const SLOW_STAGGER_STEP_MS = 24;
+const FAST_STAGGER_STEP_MS = 4;
+export const MAX_STREAMING_TEXT_MOTION_REVEAL_MS = SLOW_DURATION_MS + SLOW_STAGGER_WINDOW_MS;
 
 let cachedSegmenter: Intl.Segmenter | null = null;
 let cachedSegmenterConstructor: typeof Intl.Segmenter | undefined;
@@ -144,31 +149,38 @@ function findStreamingAppendSourceStart(previousLength: number, nextText: string
 export function smoothStreamingTextRate(
   previousRate: number | undefined,
   observedRate: number,
+  elapsedMs: number | null = null,
 ): number {
   if (previousRate === undefined || !Number.isFinite(previousRate)) {
     return observedRate;
   }
-  return (
-    previousRate * (1 - STREAMING_TEXT_MOTION_EWMA_FACTOR) +
-    observedRate * STREAMING_TEXT_MOTION_EWMA_FACTOR
-  );
+  const weight =
+    elapsedMs !== null && Number.isFinite(elapsedMs) && elapsedMs > 0
+      ? 1 - Math.exp(-elapsedMs / STREAMING_TEXT_RATE_MEMORY_MS)
+      : STREAMING_TEXT_MOTION_EWMA_FACTOR;
+  return previousRate * (1 - weight) + observedRate * weight;
 }
 
 export function calculateStreamingTextMotionTiming(
   graphemesPerSecond: number,
   graphemeCount: number,
 ): StreamingTextMotionTiming {
-  const progress = timingProgress(graphemesPerSecond);
+  // A buffered paragraph must catch up even when it arrives after a long pause.
+  const burstRate = (graphemeCount * 1_000) / STREAMING_TEXT_BURST_WINDOW_MS;
+  const progress = timingProgress(Math.max(graphemesPerSecond, burstRate));
   const durationMs = interpolate(SLOW_DURATION_MS, FAST_DURATION_MS, progress);
-  const staggerWindowMs = interpolate(SLOW_STAGGER_WINDOW_MS, FAST_STAGGER_WINDOW_MS, progress);
-  const staggerStepMs = graphemeCount > 1 ? staggerWindowMs / (graphemeCount - 1) : 0;
-  const lastDelayMs = graphemeCount > 1 ? staggerWindowMs : 0;
+  const gaps = Math.max(0, graphemeCount - 1);
+  const staggerWindowMs = Math.min(
+    interpolate(SLOW_STAGGER_WINDOW_MS, FAST_STAGGER_WINDOW_MS, progress),
+    gaps * interpolate(SLOW_STAGGER_STEP_MS, FAST_STAGGER_STEP_MS, progress),
+  );
+  const staggerStepMs = gaps > 0 ? staggerWindowMs / gaps : 0;
 
   return {
     durationMs,
     staggerWindowMs,
     staggerStepMs,
-    revealDeadlineMs: Math.min(160, durationMs + lastDelayMs),
+    revealDeadlineMs: durationMs + staggerWindowMs,
   };
 }
 
@@ -180,14 +192,17 @@ export function createStreamingTextMotionFrame({
   startedAtMs = 0,
 }: CreateStreamingTextMotionFrameInput): StreamingTextMotionFrameResult {
   const observedRate = observeStreamingTextRate(append.graphemes.length, elapsedMs, previousRate);
-  const smoothedRate = smoothStreamingTextRate(previousRate, observedRate);
+  const smoothedRate = smoothStreamingTextRate(previousRate, observedRate, elapsedMs);
   const animatedGraphemes = append.graphemes.slice(-MAX_STREAMING_TEXT_MOTION_GRAPHEMES);
   const sourceStart = animatedGraphemes[0]?.sourceOffset;
   if (sourceStart === undefined) return { frame: null, smoothedRate };
 
   return {
     frame: {
-      ...calculateStreamingTextMotionTiming(smoothedRate, animatedGraphemes.length),
+      ...calculateStreamingTextMotionTiming(
+        Math.max(observedRate, smoothedRate),
+        animatedGraphemes.length,
+      ),
       generation,
       startedAtMs,
       sourceStart,
@@ -343,7 +358,10 @@ function observeStreamingTextRate(
   }
   return (
     previousRate ??
-    Math.min(FAST_RATE_GRAPHEMES_PER_SECOND, graphemeCount * SLOW_RATE_GRAPHEMES_PER_SECOND)
+    Math.max(
+      SLOW_RATE_GRAPHEMES_PER_SECOND,
+      (graphemeCount * 1_000) / STREAMING_TEXT_BURST_WINDOW_MS,
+    )
   );
 }
 

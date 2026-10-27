@@ -1,3 +1,4 @@
+import { ChatStatusBubble, useChatBubblePalette } from "./ChatBubble";
 import {
   worktreeSetupStageLabel,
   type WorktreeSetupSnapshot,
@@ -39,6 +40,7 @@ const icons: Record<WorktreeSetupStage["status"], AppSymbolName> = {
 /** Setup stages collapse into the working header once the agent's turn is live. */
 export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
   const { snapshot, turnStarted, turnStartedAt, working } = props;
+  const palette = useChatBubblePalette();
   const handedOff = turnStarted && worktreeSetupAgentStarted(snapshot);
   const running = snapshot.phase === "running";
   const backgroundSetup = handedOff && running;
@@ -63,81 +65,87 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
               : "Worktree ready";
 
   return (
-    <View accessibilityLabel="Worktree setup" className="py-1">
-      <View className="min-h-11 flex-row items-center gap-2 border-b border-border px-1">
-        <HeaderLabel
-          label={label}
-          active={(running || working) && !detailsOpen}
-          failed={failed && !working}
-        />
-        {!handedOff ? (
-          <Text
-            className="text-2xs text-foreground-secondary"
-            style={{ fontVariant: ["tabular-nums"] }}
-          >
-            {elapsed(snapshot.startedAt, snapshot.endedAt, now)}
-          </Text>
-        ) : null}
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={
-            backgroundSetup
-              ? `${scriptName} is still running. Show setup progress.`
-              : "Worktree setup details"
-          }
-          accessibilityState={{ expanded: detailsOpen }}
-          onPress={() => setDetailsOpen(true)}
-          className="min-h-11 max-w-[55%] justify-center px-2"
-        >
-          <View
-            className={
-              backgroundSetup
-                ? "min-w-0 flex-row items-center gap-1 rounded-full border border-border px-2 py-1"
-                : "flex-row items-center gap-1"
-            }
-          >
-            {backgroundSetup ? (
-              <ActivityIndicator
-                size="small"
-                colorClassName="accent-icon-muted"
-                style={{ width: 12, height: 12, transform: [{ scale: 0.65 }] }}
-              />
-            ) : failed ? (
-              <SymbolView
-                name="exclamationmark.circle"
-                size={12}
-                tintColorClassName="accent-danger-foreground"
-              />
-            ) : null}
-            <Text numberOfLines={1} className="shrink text-2xs text-foreground-secondary">
-              {backgroundSetup ? scriptName : "Details"}
+    <ChatStatusBubble
+      tone={
+        failed ? "error" : running ? "info" : snapshot.phase === "cancelled" ? "warning" : "success"
+      }
+    >
+      <View accessibilityLabel="Worktree setup" className="py-1">
+        <View className="min-h-11 flex-row items-center gap-2 border-b border-border px-1">
+          <HeaderLabel
+            label={label}
+            active={(running || working) && !detailsOpen}
+            failed={failed && !working}
+          />
+          {!handedOff ? (
+            <Text
+              className="text-2xs text-foreground-secondary"
+              style={{ fontVariant: ["tabular-nums"] }}
+            >
+              {elapsed(snapshot.startedAt, snapshot.endedAt, now)}
             </Text>
-            {!backgroundSetup ? (
-              <SymbolView name="chevron.right" size={10} tintColorClassName="accent-icon-muted" />
-            ) : null}
-          </View>
-        </Pressable>
-      </View>
-      {!handedOff ? (
-        <View className="pt-1 pb-2">
-          {snapshot.stages
-            .filter((stage) => stage.id !== "agent")
-            .map((stage) => (
-              <StageRow
-                key={stage.id}
-                stage={stage}
-                scriptName={snapshot.setupScript?.name ?? null}
-                now={now}
-                compact
-                animate={!detailsOpen}
-              />
-            ))}
+          ) : null}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={
+              backgroundSetup
+                ? `${scriptName} is still running. Show setup progress.`
+                : "Worktree setup details"
+            }
+            accessibilityState={{ expanded: detailsOpen }}
+            onPress={() => setDetailsOpen(true)}
+            className="min-h-11 max-w-[55%] justify-center px-2"
+          >
+            <View
+              className={
+                backgroundSetup
+                  ? "min-w-0 flex-row items-center gap-1 rounded-full border border-border px-2 py-1"
+                  : "flex-row items-center gap-1"
+              }
+            >
+              {backgroundSetup ? (
+                <ActivityIndicator
+                  size="small"
+                  colorClassName="accent-icon-muted"
+                  style={{ width: 12, height: 12, transform: [{ scale: 0.65 }] }}
+                />
+              ) : failed ? (
+                <SymbolView
+                  name="exclamationmark.circle"
+                  size={12}
+                  tintColorClassName="accent-danger-foreground"
+                />
+              ) : null}
+              <Text numberOfLines={1} className="shrink text-2xs text-foreground-secondary">
+                {backgroundSetup ? scriptName : "Details"}
+              </Text>
+              {!backgroundSetup ? (
+                <SymbolView name="chevron.right" size={10} tintColorClassName="accent-icon-muted" />
+              ) : null}
+            </View>
+          </Pressable>
         </View>
-      ) : null}
-      {detailsOpen ? (
-        <SetupDetailsSheet {...props} now={now} onClose={() => setDetailsOpen(false)} />
-      ) : null}
-    </View>
+        {!handedOff ? (
+          <View className="pt-1 pb-2">
+            {snapshot.stages
+              .filter((stage) => stage.id !== "agent")
+              .map((stage) => (
+                <StageRow
+                  key={stage.id}
+                  stage={stage}
+                  scriptName={snapshot.setupScript?.name ?? null}
+                  now={now}
+                  compact
+                  animate={!detailsOpen && !palette.better}
+                />
+              ))}
+          </View>
+        ) : null}
+        {detailsOpen ? (
+          <SetupDetailsSheet {...props} now={now} onClose={() => setDetailsOpen(false)} />
+        ) : null}
+      </View>
+    </ChatStatusBubble>
   );
 }
 
@@ -161,7 +169,8 @@ function HeaderLabel({
   active: boolean;
   failed?: boolean;
 }) {
-  return active ? (
+  const palette = useChatBubblePalette();
+  return active && !palette.better ? (
     <ShimmeringWorkContent
       icon="clock"
       iconSubtleColor="transparent"

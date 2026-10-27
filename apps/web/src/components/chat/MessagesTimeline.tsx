@@ -1,6 +1,21 @@
+import { ChatStatusSurface } from "./ChatPresentation";
+import { ChatReasoningDisclosure } from "./ChatReasoningDisclosure";
+import { ChatThinkingIndicator } from "./ChatThinkingIndicator";
+import { ButtonAppearanceContext } from "../ui/button";
 import { ResponseMetricsDetails } from "./ResponseMetricsDetails";
 import type { ResponseMetricsSnapshot } from "@t3tools/contracts";
 import { useChatVisualMode } from "../../chatVisualModeSync";
+import { resolveChatPresentation } from "@t3tools/client-runtime/chat-presentation";
+import { useChatDetailMotion, useChatPresentationMotion } from "./useChatPresentationMotion";
+import { ChatDetailPanel } from "./ChatDetailPanel";
+import { ChatSizeMotion, useChatWidthMotion } from "./ChatSizeMotion";
+import {
+  ChatRowMotionContext,
+  ChatTimelineRowMotion,
+  useChatRowPresence,
+} from "./useChatRowPresence";
+import { useChatInteractionMotion } from "./useChatInteractionMotion";
+import { useTimelineEndFollow } from "./useTimelineEndFollow";
 import { isMessageReplyTopicActive } from "@t3tools/client-runtime/messageReplies";
 import { resolveForkBoundaryTimelineEntryId } from "../../lib/threadFork";
 import { forkBoundaryKey } from "@t3tools/client-runtime/thread-fork";
@@ -9,7 +24,7 @@ import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { useClientSettings } from "../../hooks/useSettings";
 import { resolveBetterT3FeatureFlag } from "@t3tools/contracts";
 import { PencilIcon, RefreshCwIcon } from "lucide-react";
-import { MessageReplyGesture } from "./MessageReplyGesture";
+import { MessageReplyButton, MessageReplyGesture } from "./MessageReplyGesture";
 import { MessageReplyQuote } from "./MessageReplyPreview";
 import { ReplyTopicControls } from "./ReplyTopicControls";
 import { toastManager } from "../ui/toast";
@@ -187,12 +202,14 @@ import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { shouldAutoExpandChangedFiles } from "./changedFilesPresentation";
 import { MessageAudioAttachments } from "./MessageAudioAttachments";
+import { MessageAttachmentFiles } from "./MessageAttachmentFiles";
 import { useFileContextMenuHandler } from "../../fileContextMenu";
 import { useProject, useThread } from "../../state/entities";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
   readTimelinePosition,
   rememberTimelinePosition,
+  resolveDisclosureScrollDelta,
   timelineContentOverflowsViewport,
 } from "./timelineScrollAnchoring";
 import { MessageCopyButton } from "./MessageCopyButton";
@@ -270,7 +287,12 @@ import {
 } from "@t3tools/shared/composerContextClipboard";
 import { extractVoiceFileContext } from "@t3tools/shared/voiceFileContext";
 import { chatMarkdownClipboardPayload } from "../../markdown-clipboard";
-import { ContextChip, ContextChipLabel, type ContextChipKind } from "../ContextChip";
+import {
+  ContextChip,
+  ContextChipLabel,
+  ContextChipFileAppearanceContext,
+  type ContextChipKind,
+} from "../ContextChip";
 import { createContextPresentationRegistry } from "../contextPresentationRegistry";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import type { ChatMarkdownContextReference } from "../ChatMarkdown";
@@ -333,9 +355,13 @@ interface TimelineRowSharedState {
   deepPlanReview: DeepPlanTimelineReview | null;
   responseMetrics: ReadonlyMap<TurnId, ResponseMetricsSnapshot> | null;
   chatVisualMode: ChatVisualMode;
+  presentationMotion: boolean;
+  presentationTextMotion: boolean;
   showReasoning: boolean;
   showWorkingReasoning: boolean;
+  showMessageReasoning: boolean;
   streamingMotionEnabled: boolean;
+  canAnimateInitialText: (id: string) => boolean;
   forkDividerAfterRowId: string | null;
   forkActions: TimelineForkActions | null;
   retryAction: TimelineRetryAction | null;
@@ -455,10 +481,9 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END = {
   animated: false,
   on: {
     dataChange: true,
-    // Composer inset changes must not move already-visible messages. New
-    // rows and row growth still keep live-follow pinned through the other
-    // triggers below.
-    footerLayout: false,
+    // The footer reserves the composer and floating widgets. Its growth must
+    // move the live edge too; manual history navigation disables end-follow.
+    footerLayout: true,
     itemLayout: true,
     layout: true,
   },
@@ -506,7 +531,10 @@ interface MessagesTimelineProps {
   deepPlanReview?: DeepPlanTimelineReview | null;
   responseMetrics?: ReadonlyMap<TurnId, ResponseMetricsSnapshot> | null;
   composerPlanTurnId?: TurnId | null;
+  composerWorkingStatusVisible?: boolean;
   streamingMotionEnabled?: boolean;
+  presentationConnected?: boolean;
+  presentationConnectionGeneration?: number;
   forkProvenance?: TimelineForkProvenance | null;
   forkActions?: TimelineForkActions | null;
   retryAction?: TimelineRetryAction | null;
@@ -570,6 +598,7 @@ interface MessagesTimelineProps {
    * scroll-mode refs whenever the user drifts near the bottom.
    */
   liveFollowEnabled: boolean;
+  isFollowingEnd?: () => boolean;
   onIsAtEndChange: (isAtEnd: boolean) => void;
   /**
    * Whether the real rows extend past the viewport above the composer.
@@ -598,7 +627,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   deepPlanReview = null,
   responseMetrics = null,
   composerPlanTurnId = null,
-  streamingMotionEnabled = false,
+  composerWorkingStatusVisible = false,
+  streamingMotionEnabled = true,
+  presentationConnected = true,
+  presentationConnectionGeneration = 0,
   forkProvenance = null,
   forkActions = null,
   retryAction = null,
@@ -647,6 +679,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onAnchorReady,
   contentInsetEndAdjustment,
   liveFollowEnabled,
+  isFollowingEnd,
   onIsAtEndChange,
   onContentOverflowChange,
   onToolOutputCollapsedAtEnd,
@@ -661,6 +694,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onRemoveQueuedMessage = NOOP_QUEUED_MESSAGE_ACTION,
 }: MessagesTimelineProps) {
   const listIdentityKey = displayThreadKey ?? routeThreadKey;
+  const followingEnd = useCallback(
+    () => isFollowingEnd?.() ?? liveFollowEnabled,
+    [isFollowingEnd, liveFollowEnabled],
+  );
   const translate = useInterfaceTranslator().message;
   const [replySourceRequest, setReplySourceRequest] = useState<{
     threadKey: string;
@@ -724,9 +761,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const listIdentityRef = useRef(listIdentityKey);
   const previousLatestTurnRef = useRef(latestTurn);
-  // The list stays mounted across thread switches. Its first end pins on the
-  // new thread must snap, not glide, even if that thread is mid-turn.
+  // A new thread starts from its own measurements. Its first end pins must
+  // snap, not glide, even if that thread is mid-turn.
   const [settlingListIdentity, setSettlingListIdentity] = useState<string | null>(null);
+  const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
   let paintedExpandedTurnIds = expandedTurnIds;
   let paintedExpandedWorkGroupIds = expandedWorkGroupIds;
   let paintedExpandedSpawnEntryIds = expandedSpawnEntryIds;
@@ -736,6 +774,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     setPositionedThreadKey(null);
     previousLatestTurnRef.current = latestTurn;
     setSettlingListIdentity(listIdentityKey);
+    setDisclosureToggleSettling(false);
     paintedExpandedTurnIds = rememberedPosition?.disclosures?.turns ?? new Set();
     paintedExpandedWorkGroupIds = rememberedPosition?.disclosures?.workGroups ?? new Set();
     paintedExpandedSpawnEntryIds = rememberedPosition?.disclosures?.spawnEntries ?? new Set();
@@ -770,6 +809,18 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     [currentFoldRetention.retainedTurnIds, paintedExpandedTurnIds],
   );
   const chatVisualMode = useChatVisualMode();
+  const presentationMotion = useClientSettings((settings) =>
+    resolveBetterT3FeatureFlag(settings.betterT3Device, "chat.presentationMotion"),
+  );
+  const characterStreamingMotion = useClientSettings((settings) =>
+    resolveBetterT3FeatureFlag(settings.betterT3Device, "chat.characterStreamingMotion"),
+  );
+  const presentation = resolveChatPresentation({
+    mode: chatVisualMode,
+    presentationMotion,
+    characterStreamingMotion,
+    reducedMotion: prefersReducedMotion,
+  });
   const showReasoning = useClientSettings(
     (settings) =>
       settings.showReasoning &&
@@ -779,6 +830,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     (settings) =>
       settings.showReasoning &&
       resolveBetterT3FeatureFlag(settings.betterT3Device, "agent.reasoningWorkingOverlay"),
+  );
+  const showMessageReasoning = useClientSettings(
+    (settings) =>
+      settings.showReasoning &&
+      !resolveBetterT3FeatureFlag(settings.betterT3Device, "agent.reasoningWorkingOverlay") &&
+      resolveBetterT3FeatureFlag(settings.betterT3Device, "agent.reasoningInMessage"),
   );
   const citationThreadRef = useMemo(() => parseScopedThreadKey(routeThreadKey), [routeThreadKey]);
   const openPullRequest = useOpenPrLink(citationThreadRef ?? undefined);
@@ -797,21 +854,36 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       },
     [listIdentityKey, rememberedPosition],
   );
-  const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
   const disclosureAnchorKeyRef = useRef<string | null>(null);
+  const disclosureControlRef = useRef<{
+    control: HTMLElement;
+    row: HTMLElement;
+    width: number;
+    height: number;
+  } | null>(null);
   const disclosureSettleFrameRef = useRef<number | null>(null);
   const disclosureSettleSecondFrameRef = useRef<number | null>(null);
-  useEffect(() => {
+  const disclosureSettleRevisionRef = useRef(0);
+  const disclosureBottomInsetRef = useRef(contentInsetEndAdjustment);
+  useLayoutEffect(() => {
+    disclosureBottomInsetRef.current = contentInsetEndAdjustment;
+  }, [contentInsetEndAdjustment]);
+  useLayoutEffect(() => {
     return () => {
+      disclosureSettleRevisionRef.current += 1;
+      disclosureControlRef.current = null;
+      disclosureAnchorKeyRef.current = null;
       if (disclosureSettleFrameRef.current !== null) {
         cancelAnimationFrame(disclosureSettleFrameRef.current);
       }
       if (disclosureSettleSecondFrameRef.current !== null) {
         cancelAnimationFrame(disclosureSettleSecondFrameRef.current);
       }
+      disclosureSettleFrameRef.current = null;
+      disclosureSettleSecondFrameRef.current = null;
     };
-  }, []);
+  }, [listIdentityKey]);
 
   useEffect(() => {
     if (settlingListIdentity === null) return;
@@ -830,6 +902,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
   const suspendEndScrollMaintenanceForDisclosure = useCallback(
     (anchorKey: string, collapsed = false) => {
+      const revision = ++disclosureSettleRevisionRef.current;
+      const identity = listIdentityKey;
       disclosureAnchorKeyRef.current = anchorKey;
       setDisclosureToggleSettling(true);
       if (disclosureSettleFrameRef.current !== null) {
@@ -840,20 +914,83 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       }
       disclosureSettleFrameRef.current = requestAnimationFrame(() => {
         disclosureSettleSecondFrameRef.current = requestAnimationFrame(() => {
-          disclosureAnchorKeyRef.current = null;
-          setDisclosureToggleSettling(false);
-          disclosureSettleFrameRef.current = null;
-          disclosureSettleSecondFrameRef.current = null;
-          // Wait for row measurement and the disclosure click's blur check.
-          // Closing output can reveal the end without a scroll event.
-          if (collapsed && resolveTimelineIsAtEnd(listRef.current?.getState()) === true) {
-            onToolOutputCollapsedAtEnd?.();
-          }
+          const finish = () => {
+            if (
+              disclosureSettleRevisionRef.current !== revision ||
+              listIdentityRef.current !== identity
+            )
+              return;
+            const disclosure = disclosureControlRef.current;
+            disclosureControlRef.current = null;
+            const list = listRef.current;
+            const viewport = list?.getScrollableNode();
+            if (!followingEnd() && disclosure?.control.isConnected && viewport) {
+              const row = disclosure.row.getBoundingClientRect();
+              if (row.height !== disclosure.height || row.width !== disclosure.width) {
+                const bounds = viewport.getBoundingClientRect();
+                const delta = resolveDisclosureScrollDelta({
+                  viewportTop: bounds.top,
+                  viewportBottom: bounds.bottom,
+                  contentBottom: row.bottom,
+                  controlTop: disclosure.control.getBoundingClientRect().top,
+                  bottomInset: disclosureBottomInsetRef.current,
+                });
+                if (delta > 1) {
+                  void list?.scrollToOffset({
+                    offset: viewport.scrollTop + delta,
+                    animated: !prefersReducedMotion,
+                  });
+                }
+              }
+            }
+            disclosureAnchorKeyRef.current = null;
+            setDisclosureToggleSettling(false);
+            disclosureSettleFrameRef.current = null;
+            disclosureSettleSecondFrameRef.current = null;
+            if (collapsed && resolveTimelineIsAtEnd(listRef.current?.getState()) === true) {
+              onToolOutputCollapsedAtEnd?.();
+            }
+          };
+          const viewport = listRef.current?.getScrollableNode();
+          const animations = (viewport?.getAnimations?.({ subtree: true }) ?? []).filter(
+            (animation) =>
+              typeof KeyframeEffect !== "undefined" &&
+              animation.effect instanceof KeyframeEffect &&
+              animation.effect
+                .getKeyframes()
+                .some((frame) =>
+                  ["height", "maxHeight", "width", "gridTemplateRows"].some(
+                    (property) => property in frame,
+                  ),
+                ),
+          );
+          if (animations.length === 0) finish();
+          else
+            void Promise.allSettled(animations.map((animation) => animation.finished)).then(finish);
         });
       });
     },
-    [listRef, onToolOutputCollapsedAtEnd],
+    [followingEnd, listIdentityKey, listRef, onToolOutputCollapsedAtEnd, prefersReducedMotion],
   );
+
+  const handleDisclosureClickCapture = useCallback(
+    (event: MouseEvent<HTMLDivElement>) => {
+      if (!(event.target instanceof Element)) return;
+      const control = event.target.closest<HTMLElement>(
+        "[aria-expanded]:not([aria-haspopup]), summary, .chat-markdown-table-container [aria-pressed]",
+      );
+      const row = control?.closest<HTMLElement>("[data-timeline-row-id]");
+      if (!control || !row?.dataset.timelineRowId) return;
+      const bounds = row.getBoundingClientRect();
+      disclosureControlRef.current = { control, row, width: bounds.width, height: bounds.height };
+      suspendEndScrollMaintenanceForDisclosure(row.dataset.timelineRowId);
+    },
+    [suspendEndScrollMaintenanceForDisclosure],
+  );
+
+  const cancelDisclosureScroll = useCallback(() => {
+    disclosureControlRef.current = null;
+  }, []);
 
   const shouldRestoreVisibleContentPosition = useCallback((row: MessagesTimelineRow) => {
     const disclosureAnchorKey = disclosureAnchorKeyRef.current;
@@ -974,13 +1111,21 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         : new Set(liveAgentTaskKey.length > 0 ? liveAgentTaskKey.split("\n") : []),
     [liveAgentTaskKey],
   );
+  const hideWorkingIndicator =
+    presentation.variant === "better-t3" &&
+    composerWorkingStatusVisible &&
+    !isCompacting &&
+    !isPreparingWorktree &&
+    worktreeSetup?.phase !== "running";
   const rawRows = useMemo(() => {
     const previous = rowsProjectionRef.current;
     const projection = deriveMessagesTimelineRowsWithState(
       {
-        chatVisualMode,
+        chatVisualMode: presentation.grouping,
+        hideWorkingIndicator,
         showReasoning,
         showWorkingReasoning,
+        showMessageReasoning,
         composerPlanTurnId,
         timelineEntries,
         latestTurn,
@@ -1003,9 +1148,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     return projection.rows;
   }, [
     rowsProjectionRef,
-    chatVisualMode,
+    presentation.grouping,
+    hideWorkingIndicator,
     showReasoning,
     showWorkingReasoning,
+    showMessageReasoning,
     composerPlanTurnId,
     routeThreadKey,
     listIdentityKey,
@@ -1023,7 +1170,21 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     worktreeSetup,
     queuedMessages,
   ]);
-  const rows = useStableRows(rawRows, listIdentityKey);
+  const stableRows = useStableRows(rawRows, listIdentityKey);
+  const rowPresence = useChatRowPresence(
+    stableRows,
+    listIdentityKey,
+    presentation.variant === "better-t3" &&
+      presentation.presentationMotion &&
+      !prefersReducedMotion &&
+      !restoringThreadPosition,
+    expandedTurnIdsForRows,
+  );
+  const rows = rowPresence.rows;
+  const rowMotion = useMemo(
+    () => ({ entering: rowPresence.entering, exiting: rowPresence.exiting }),
+    [rowPresence.entering, rowPresence.exiting],
+  );
   useEffect(() => {
     if (!replySourceRequest || finishedReplySourceRef.current === replySourceRequest) return;
     if (replySourceRequest.threadKey !== listIdentityKey) {
@@ -1206,6 +1367,26 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
   );
+  useChatInteractionMotion(
+    timelineViewportElement,
+    presentation.presentationMotion,
+    routeThreadKey,
+  );
+  const { streamingMotionReady: presentationStreamingReady, canAnimateInitialText } =
+    useChatPresentationMotion({
+      identity: `${listIdentityKey}:${presentationConnectionGeneration}`,
+      mode: presentation.variant,
+      enabled: presentation.presentationMotion,
+      textMotion: presentation.characterStreamingMotion,
+      connected:
+        presentationConnected &&
+        !citationHistoryLoading &&
+        !loadEarlier?.loading &&
+        liveFollowEnabled,
+      entries: timelineEntries,
+      rows,
+      viewport: timelineViewportElement,
+    });
   // Re-measure the minimap gutter when the chat column changes width without a viewport resize.
   const chatWidth = useClientSettings((settings) => settings.chatWidth);
   const {
@@ -1245,6 +1426,19 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     );
     return config ? { ...config, onReady: handleAnchorReady } : undefined;
   }, [anchorMessageId, handleAnchorReady, rows]);
+  const scheduleEndFollow = useTimelineEndFollow({
+    listRef,
+    identity: listIdentityKey,
+    enabled:
+      listIdentityKey === routeThreadKey &&
+      liveFollowEnabled &&
+      !restoringThreadPosition &&
+      !citationPositioning &&
+      !anchoredEndSpace,
+    isFollowingEnd: followingEnd,
+    bottomInset: contentInsetEndAdjustment,
+    revision: rows,
+  });
   const timelineListFooter = useMemo(
     () => <TimelineListFooter composerInset={anchoredEndSpace ? 0 : contentInsetEndAdjustment} />,
     [anchoredEndSpace, contentInsetEndAdjustment],
@@ -1275,6 +1469,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onContentOverflowChange(measureContentOverflow());
     });
   }, [measureContentOverflow, onContentOverflowChange]);
+  const handleItemSizeChanged = useCallback(() => {
+    scheduleEndFollow();
+    reportContentOverflow();
+  }, [reportContentOverflow, scheduleEndFollow]);
   useEffect(() => cancelContentOverflowFrame, [cancelContentOverflowFrame]);
   // The list's own layout effects have already run here, so estimated row
   // positions are in place. Reporting before the first paint lets a thread
@@ -1288,7 +1486,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
-    if (restoringThreadPosition || state?.data !== rows) return;
+    if (restoringThreadPosition || listIdentityKey !== routeThreadKey || state?.data !== rows)
+      return;
     const isAtEnd = resolveTimelineIsAtEnd(state);
     const position = state?.data?.length ? resolveWorkGroupScrollAnchor(state) : undefined;
     if (position && state && isAtEnd !== undefined) {
@@ -1301,7 +1500,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           // DOM geometry includes the header and the virtualizer's layout adjustment.
           offsetWithinRow: element.getBoundingClientRect().top - row.getBoundingClientRect().top,
           scrollOffset: element.scrollTop,
-          atEnd: isAtEnd,
+          // Layout can briefly move the physical end while follow is still
+          // active. Remember the intent, so returning follows new content.
+          atEnd: followingEnd() || isAtEnd,
           disclosures: {
             turns: paintedExpandedTurnIds,
             workGroups: paintedExpandedWorkGroupIds,
@@ -1359,6 +1560,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     workGroupViewState,
     rows,
     listIdentityKey,
+    routeThreadKey,
+    followingEnd,
     restoringThreadPosition,
     listRef,
     minimapItems,
@@ -1393,6 +1596,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       );
       setMinimapHitStripWidth(resolveTimelineMinimapHitStripWidth(viewportWidth, contentWidth));
       reportContentOverflow();
+      scheduleEndFollow();
     };
 
     const frame = requestAnimationFrame(measure);
@@ -1404,19 +1608,24 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       cancelAnimationFrame(frame);
       observer.disconnect();
     };
-  }, [timelineViewportElement, rows.length, reportContentOverflow, chatWidth]);
+  }, [timelineViewportElement, rows.length, reportContentOverflow, scheduleEndFollow, chatWidth]);
 
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
       deepPlanReview,
       responseMetrics,
       chatVisualMode,
+      presentationMotion: presentation.presentationMotion,
+      presentationTextMotion: presentation.characterStreamingMotion,
       showReasoning,
       showWorkingReasoning,
+      showMessageReasoning,
       citationRequest: readyCitationRequest,
       listRef,
       timestampFormat,
-      streamingMotionEnabled,
+      streamingMotionEnabled:
+        streamingMotionEnabled && (chatVisualMode !== "better-t3" || presentationStreamingReady),
+      canAnimateInitialText,
       routeThreadKey,
       // Keep Markdown callbacks memoized during unrelated activity updates.
       threadRef: citationThreadRef,
@@ -1463,12 +1672,17 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     [
       deepPlanReview,
       chatVisualMode,
+      presentation.presentationMotion,
+      presentation.characterStreamingMotion,
       showReasoning,
       showWorkingReasoning,
+      showMessageReasoning,
       readyCitationRequest,
       listRef,
       timestampFormat,
       streamingMotionEnabled,
+      presentationStreamingReady,
+      canAnimateInitialText,
       routeThreadKey,
       citationThreadRef,
       markdownCwd,
@@ -1553,12 +1767,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   // from TimelineRowCtx, which propagates through LegendList's memo.
   const renderItem = useCallback(
     ({ item }: { item: MessagesTimelineRow }) => (
-      <div
+      <ChatTimelineRowMotion
+        id={item.id}
         className="mx-auto w-full min-w-0 max-w-full sm:max-w-[var(--chat-content-width,48rem)]"
-        data-timeline-root="true"
       >
         <TimelineRowContent row={item} />
-      </div>
+      </ChatTimelineRowMotion>
     ),
     [],
   );
@@ -1579,96 +1793,116 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   }
 
   return (
-    <TimelineRowCtx value={sharedState}>
-      <TimelineRowActivityCtx value={activityState}>
-        <div
-          ref={setTimelineViewportElement}
-          className="relative h-full min-h-0"
-          data-assistant-citation-viewport="true"
-        >
-          {onCiteAssistantText && citationThreadRef ? (
-            <AssistantSelectionToolbar
-              viewport={timelineViewportElement}
-              threadRef={citationThreadRef}
-              onCite={onCiteAssistantText}
-            />
-          ) : null}
-          <LegendList<MessagesTimelineRow>
-            ref={listRef}
-            data={rows}
-            extraData={`${listIdentityKey}:${rows.length}`}
-            keyExtractor={keyExtractor}
-            getItemType={getItemType}
-            renderItem={renderItem}
-            estimatedItemSize={90}
-            initialScrollAtEnd={citationRequest === null && rememberedPosition?.atEnd !== false}
-            // Legend needs a data refresh to mount new pins without a scroll event.
-            dataVersion={readyCitationRequest?.key ?? listIdentityKey}
-            {...(alwaysRender ? { alwaysRender } : {})}
-            onLoad={onCitationListLoad}
-            {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
-            contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
-            maintainScrollAtEnd={
-              citationPositioning ||
-              (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
-              anchoredEndSpace ||
-              !liveFollowEnabled ||
-              disclosureToggleSettling
-                ? false
-                : isWorking && !prefersReducedMotion && settlingListIdentity === null
-                  ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
-                  : TIMELINE_MAINTAIN_SCROLL_AT_END
-            }
-            maintainVisibleContentPosition={
-              citationPositioning ||
-              (restoringThreadPosition && rememberedPosition?.atEnd === false)
-                ? false
-                : maintainVisibleContentPosition
-            }
-            maintainScrollAtEndThreshold={1}
-            onScroll={handleScroll}
-            onItemSizeChanged={reportContentOverflow}
-            className={cn(
-              "scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
-              onReplyMessage ? "px-9 sm:px-10" : "px-3 sm:px-5",
-              topFadeEnabled && "topbar-scroll-fade",
-            )}
-            ListHeaderComponent={
-              <>
-                {loadEarlier !== null ? (
-                  <TimelineLoadEarlierHeader
-                    loading={loadEarlier.loading}
-                    onLoadEarlier={loadEarlier.onLoadEarlier}
-                    fade={topFadeEnabled}
-                  />
-                ) : topFadeEnabled ? (
-                  TIMELINE_LIST_FADE_HEADER
-                ) : (
-                  TIMELINE_LIST_HEADER
+    <ButtonAppearanceContext value={chatVisualMode === "better-t3" ? "soft" : "default"}>
+      <TimelineRowCtx value={sharedState}>
+        <TimelineRowActivityCtx value={activityState}>
+          <ChatRowMotionContext value={rowMotion}>
+            <div
+              ref={setTimelineViewportElement}
+              onClickCapture={handleDisclosureClickCapture}
+              onWheelCapture={cancelDisclosureScroll}
+              onTouchMoveCapture={cancelDisclosureScroll}
+              onPointerDownCapture={cancelDisclosureScroll}
+              onKeyDownCapture={(event) => {
+                if (
+                  ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End"].includes(event.key)
+                ) {
+                  cancelDisclosureScroll();
+                }
+              }}
+              className="relative h-full min-h-0"
+              data-assistant-citation-viewport="true"
+              data-chat-presentation={presentation.variant}
+              data-presentation-motion={presentation.presentationMotion}
+            >
+              {onCiteAssistantText && citationThreadRef ? (
+                <AssistantSelectionToolbar
+                  viewport={timelineViewportElement}
+                  threadRef={citationThreadRef}
+                  onCite={onCiteAssistantText}
+                />
+              ) : null}
+              <LegendList<MessagesTimelineRow>
+                key={listIdentityKey}
+                ref={listRef}
+                data={rows}
+                extraData={`${listIdentityKey}:${rows.length}`}
+                keyExtractor={keyExtractor}
+                getItemType={getItemType}
+                renderItem={renderItem}
+                estimatedItemSize={90}
+                initialScrollAtEnd={citationRequest === null && rememberedPosition?.atEnd !== false}
+                // Legend needs a data refresh to mount new pins without a scroll event.
+                dataVersion={readyCitationRequest?.key ?? listIdentityKey}
+                {...(alwaysRender ? { alwaysRender } : {})}
+                onLoad={onCitationListLoad}
+                {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
+                contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
+                maintainScrollAtEnd={
+                  citationPositioning ||
+                  (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
+                  anchoredEndSpace ||
+                  !liveFollowEnabled
+                    ? false
+                    : isWorking &&
+                        !prefersReducedMotion &&
+                        settlingListIdentity === null &&
+                        !disclosureToggleSettling
+                      ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
+                      : TIMELINE_MAINTAIN_SCROLL_AT_END
+                }
+                maintainVisibleContentPosition={
+                  citationPositioning ||
+                  (restoringThreadPosition && rememberedPosition?.atEnd === false)
+                    ? false
+                    : maintainVisibleContentPosition
+                }
+                maintainScrollAtEndThreshold={1}
+                onScroll={handleScroll}
+                onItemSizeChanged={handleItemSizeChanged}
+                className={cn(
+                  "scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
+                  onReplyMessage ? "px-9 sm:px-10" : "px-3 sm:px-5",
+                  topFadeEnabled && "topbar-scroll-fade",
                 )}
-                {forkProvenance ? <TimelineForkProvenanceBanner {...forkProvenance} /> : null}
-              </>
-            }
-            ListFooterComponent={timelineListFooter}
-          />
-          <TimelineMinimap
-            items={minimapItems}
-            hasPersistentGutter={minimapHasPersistentGutter}
-            hitStripWidth={minimapHitStripWidth}
-            currentIndex={minimapCurrentIndex}
-            stripMap={minimapStripMap}
-            onSelect={(item) => {
-              onManualNavigation();
-              void listRef.current?.scrollToIndex({
-                index: item.rowIndex,
-                animated: true,
-                viewOffset: 24,
-              });
-            }}
-          />
-        </div>
-      </TimelineRowActivityCtx>
-    </TimelineRowCtx>
+                ListHeaderComponent={
+                  <>
+                    {loadEarlier !== null ? (
+                      <TimelineLoadEarlierHeader
+                        loading={loadEarlier.loading}
+                        onLoadEarlier={loadEarlier.onLoadEarlier}
+                        fade={topFadeEnabled}
+                      />
+                    ) : topFadeEnabled ? (
+                      TIMELINE_LIST_FADE_HEADER
+                    ) : (
+                      TIMELINE_LIST_HEADER
+                    )}
+                    {forkProvenance ? <TimelineForkProvenanceBanner {...forkProvenance} /> : null}
+                  </>
+                }
+                ListFooterComponent={timelineListFooter}
+              />
+              <TimelineMinimap
+                items={minimapItems}
+                hasPersistentGutter={minimapHasPersistentGutter}
+                hitStripWidth={minimapHitStripWidth}
+                currentIndex={minimapCurrentIndex}
+                stripMap={minimapStripMap}
+                onSelect={(item) => {
+                  onManualNavigation();
+                  void listRef.current?.scrollToIndex({
+                    index: item.rowIndex,
+                    animated: true,
+                    viewOffset: 24,
+                  });
+                }}
+              />
+            </div>
+          </ChatRowMotionContext>
+        </TimelineRowActivityCtx>
+      </TimelineRowCtx>
+    </ButtonAppearanceContext>
   );
 });
 
@@ -1987,6 +2221,15 @@ function TimelineMinimapNavigationButton({
 type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"][number];
 type TimelineRow = MessagesTimelineRow;
 
+function betterT3RowSpacing(row: TimelineRow): string {
+  if (row.kind === "message" && row.message.role === "user") return "pb-7 sm:pb-8";
+  if (row.kind === "message" && row.message.role === "assistant") {
+    return row.showAssistantMeta ? "pb-7" : "pb-4";
+  }
+  if (row.kind === "assistant-meta" || row.kind === "proposed-plan") return "pb-6";
+  return row.kind === "work" && row.isExpandedToolGroup ? "pb-1" : "pb-2.5";
+}
+
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
   const ctx = use(TimelineRowCtx);
   const { forkDividerAfterRowId, chatVisualMode } = ctx;
@@ -2007,43 +2250,60 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
   const isExpandedToolGroup = row.kind === "work" && row.isExpandedToolGroup;
   const isExpandedToolGroupHeader =
     (row.kind === "work-toggle" && row.expanded) || (row.kind === "work-live" && row.expanded);
+  const workGroupTone =
+    row.kind === "work-toggle"
+      ? row.hasFailure
+        ? "error"
+        : "success"
+      : row.kind === "work-live"
+        ? workEntryDisplayIndicatesToolFailure(row.entry)
+          ? "error"
+          : row.active
+            ? "info"
+            : "success"
+        : undefined;
 
   return (
     <div
       className={cn(
         // Commentary (non-terminal assistant) rows carry no metadata row, so
         // they sit closer to the work that follows them.
-        chatVisualMode === "classic"
-          ? (row.kind === "message" &&
-              row.message.role === "assistant" &&
-              !row.showAssistantMeta) ||
-            row.kind === "work" ||
-            row.kind === "work-toggle"
-            ? "pb-2"
-            : "pb-4"
-          : isExpandedToolGroup
-            ? "pb-1"
-            : isExpandedToolGroupHeader
-              ? "pb-0"
-              : row.kind === "turn-fold" || row.kind === "working"
-                ? "pb-1.5"
-                : (row.kind === "message" &&
-                      row.message.role === "assistant" &&
-                      !row.showAssistantMeta) ||
-                    row.kind === "work" ||
-                    row.kind === "work-live" ||
-                    row.kind === "work-toggle" ||
-                    row.kind === "activity-group" ||
-                    row.kind === "worktree-setup" ||
-                    (row.kind === "message" && row.message.role === "reasoning") ||
-                    row.kind === "thinking"
-                  ? "pb-2"
-                  : "pb-4",
+        chatVisualMode === "better-t3"
+          ? betterT3RowSpacing(row)
+          : chatVisualMode === "classic"
+            ? (row.kind === "message" &&
+                row.message.role === "assistant" &&
+                !row.showAssistantMeta) ||
+              row.kind === "work" ||
+              row.kind === "work-toggle" ||
+              row.kind === "activity-group"
+              ? "pb-2"
+              : "pb-4"
+            : isExpandedToolGroup
+              ? "pb-1"
+              : isExpandedToolGroupHeader
+                ? "pb-0"
+                : row.kind === "turn-fold" || row.kind === "working"
+                  ? "pb-1.5"
+                  : (row.kind === "message" &&
+                        row.message.role === "assistant" &&
+                        !row.showAssistantMeta) ||
+                      row.kind === "work" ||
+                      row.kind === "work-live" ||
+                      row.kind === "work-toggle" ||
+                      row.kind === "activity-group" ||
+                      row.kind === "worktree-setup" ||
+                      (row.kind === "message" && row.message.role === "reasoning") ||
+                      row.kind === "thinking"
+                    ? "pb-2"
+                    : "pb-4",
         (row.kind === "message" && row.message.role === "assistant") ||
           row.kind === "assistant-meta"
           ? "group/assistant"
           : null,
+        chatVisualMode === "better-t3" && workGroupTone && "better-chat-work-group",
       )}
+      data-chat-tone={chatVisualMode === "better-t3" ? workGroupTone : undefined}
       data-timeline-row-id={row.id}
       data-timeline-row-kind={row.kind}
       data-message-id={
@@ -2059,19 +2319,59 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
           displayLabel={row.displayLabel}
         />
       ) : null}
-      {row.kind === "work-live" ? <LiveWorkEntryTimelineRow row={row} /> : null}
+      {row.kind === "work-live" ? (
+        <ChatStatusSurface
+          tone={
+            workEntryDisplayIndicatesToolFailure(row.entry)
+              ? "error"
+              : row.active
+                ? "info"
+                : "success"
+          }
+          compact
+        >
+          <LiveWorkEntryTimelineRow row={row} />
+        </ChatStatusSurface>
+      ) : null}
       {row.kind === "activity-group" ? <ActivityGroupTimelineRow row={row} /> : null}
-      {row.kind === "work-toggle" ? <WorkGroupToggleTimelineRow row={row} /> : null}
+      {row.kind === "work-toggle" ? (
+        <ChatStatusSurface tone={row.hasFailure ? "error" : "success"} compact>
+          <WorkGroupToggleTimelineRow row={row} />
+        </ChatStatusSurface>
+      ) : null}
+      {ctx.chatVisualMode === "better-t3" &&
+      (row.kind === "work-live" || row.kind === "work-toggle") ? (
+        <ChatDetailPanel expanded={row.expanded} motion={ctx.presentationMotion}>
+          <div className="better-chat-work-group-details">
+            <WorkGroupSection
+              anchorKey={row.groupId}
+              disclosureAnchorKey={row.id}
+              groupedEntries={
+                row.kind === "work-live" ? row.groupedEntries : (row.detailEntries ?? [])
+              }
+              isExpandedToolGroup
+            />
+          </div>
+        </ChatDetailPanel>
+      ) : null}
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
-      {row.kind === "context-compaction" ? <ContextCompactionTimelineRow row={row} /> : null}
+      {row.kind === "context-compaction" ? (
+        <ChatStatusSurface tone="info" compact>
+          <ContextCompactionTimelineRow row={row} />
+        </ChatStatusSurface>
+      ) : null}
       {row.kind === "message" && row.message.role === "user" ? (
         <MessageReplyGesture role="user" onReply={reply}>
           <UserTimelineRow row={row} />
         </MessageReplyGesture>
       ) : null}
       {row.kind === "message" && row.message.role === "assistant" ? (
-        <MessageReplyGesture role="assistant" onReply={reply}>
-          <AssistantTimelineRow row={row} />
+        <MessageReplyGesture
+          role="assistant"
+          onReply={reply}
+          showAction={chatVisualMode !== "better-t3"}
+        >
+          <AssistantTimelineRow row={row} onReply={reply} />
         </MessageReplyGesture>
       ) : null}
       {replyTopic && ctx.threadRef ? (
@@ -2087,8 +2387,16 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       ) : null}
       {row.kind === "assistant-meta" ? <AssistantMetaTimelineRow row={row} /> : null}
       {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
-      {row.kind === "turn-plan" ? <TurnPlanTimelineRow row={row} /> : null}
-      {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
+      {row.kind === "turn-plan" ? (
+        <ChatStatusSurface tone="info">
+          <TurnPlanTimelineRow row={row} />
+        </ChatStatusSurface>
+      ) : null}
+      {row.kind === "working" ? (
+        <ChatStatusSurface tone="info" compact>
+          <WorkingTimelineRow row={row} />
+        </ChatStatusSurface>
+      ) : null}
       {forkDividerAfterRowId === row.id ? (
         <div
           className="flex items-center gap-3 pb-4 pt-1 text-xs text-muted-foreground"
@@ -2099,8 +2407,26 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
           <span className="h-px flex-1 bg-border" />
         </div>
       ) : null}
-      {row.kind === "thinking" ? <ThinkingTimelineRow /> : null}
-      {row.kind === "worktree-setup" ? <WorktreeSetupTimelineRow row={row} /> : null}
+      {row.kind === "thinking" ? (
+        <ChatStatusSurface compact>
+          <ThinkingTimelineRow />
+        </ChatStatusSurface>
+      ) : null}
+      {row.kind === "worktree-setup" ? (
+        <ChatStatusSurface
+          tone={
+            row.snapshot.phase === "failed"
+              ? "error"
+              : row.snapshot.phase === "cancelled"
+                ? "warning"
+                : row.snapshot.phase === "done"
+                  ? "success"
+                  : "info"
+          }
+        >
+          <WorktreeSetupTimelineRow row={row} />
+        </ChatStatusSurface>
+      ) : null}
       {row.kind === "queued-message" ? <QueuedMessageTimelineRow row={row} /> : null}
     </div>
   );
@@ -2155,7 +2481,20 @@ function QueuedMessageTimelineRow({
         : "Sends after the messages above it";
   return (
     <div className="flex flex-col items-end" data-queued-message-id={queuedMessage.id}>
-      <div className="max-w-[80%] rounded-2xl border border-dashed border-border p-3 text-message-foreground/80">
+      <div
+        data-presentation-bubble={ctx.chatVisualMode === "better-t3" ? "user" : undefined}
+        className={cn(
+          "max-w-[80%] rounded-2xl border border-dashed border-border p-3 text-message-foreground/80",
+          ctx.chatVisualMode === "better-t3" && "better-chat-bubble",
+        )}
+      >
+        {ctx.chatVisualMode === "better-t3" ? (
+          <div
+            aria-hidden
+            data-presentation-surface
+            className="pointer-events-none absolute inset-0 -z-10 rounded-[inherit]"
+          />
+        ) : null}
         {text.length > 0 ? (
           <UserMessageBody
             messageId={row.id}
@@ -2360,8 +2699,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     () => userImages.filter((image) => image.name.startsWith("preview-annotation-")),
     [userImages],
   );
-  // A file with a chip in the prose needs no standalone row. Media is the exception: the
-  // thumbnail is the only way to actually see it, so it shows whether or not it has a chip.
+  // Current and Classic omit files already linked in prose. Better T3 keeps the
+  // attachment footer so those files also have a thumbnail and download control.
   const contextReferences = useMemo(
     () => collectComposerContextReferences(resolvedContext.text),
     [resolvedContext.text],
@@ -2526,137 +2865,245 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     !row.message.replyTopicId && ctx.editAction?.editor?.messageId === row.message.id
       ? ctx.editAction.editor.content
       : null;
+  const bubbleWidthRef = useChatWidthMotion<HTMLDivElement>(
+    `${editor !== null}:${row.message.attachments?.length ?? 0}`,
+    ctx.chatVisualMode === "better-t3" && ctx.presentationMotion,
+  );
+
+  const messageBody = (
+    <div key="message-body" onCopyCapture={onBodyCopyCapture} data-reply-message-content>
+      <ChatSizeMotion>
+        {editor ?? (
+          <CollapsibleUserMessageBody
+            messageId={row.message.id}
+            text={resolvedContext.text}
+            renderContextReference={renderContextReference}
+            skills={ctx.skills}
+            markdownCwd={ctx.markdownCwd}
+          />
+        )}
+      </ChatSizeMotion>
+    </div>
+  );
+  const attachments = (
+    <>
+      <MessageAudioAttachments
+        environmentId={ctx.activeThreadEnvironmentId}
+        attachments={userAudio}
+        className={ctx.chatVisualMode === "better-t3" ? "" : "mb-2"}
+      />
+      {(regularImages.length > 0 || userVideos.length > 0) && (
+        <div
+          className={
+            ctx.chatVisualMode === "better-t3"
+              ? "grid max-w-[300px] grid-cols-2 gap-2.5"
+              : "mb-2 grid max-w-[210px] grid-cols-2 gap-2"
+          }
+        >
+          {regularImages.map((image) => (
+            <div
+              key={image.id}
+              className={cn(
+                "bg-background/70",
+                image.source?.kind === "snap-shot" && image.previewUrl
+                  ? cn(SNAP_SHOT_ATTACHMENT_FRAME_CLASS, "col-span-2")
+                  : "aspect-[4/3] overflow-hidden rounded-lg border border-border/80",
+              )}
+            >
+              {image.previewUrl ? (
+                <button
+                  type="button"
+                  className="block h-full w-full cursor-zoom-in"
+                  data-chat-media-preview
+                  aria-label={`Preview ${image.name}`}
+                  onClick={() => {
+                    const preview = buildExpandedImagePreview(regularImages, image.id);
+                    if (!preview) return;
+                    ctx.onImageExpand(preview);
+                  }}
+                >
+                  <img
+                    src={image.previewUrl}
+                    alt={image.name}
+                    className="block size-full object-cover"
+                  />
+                </button>
+              ) : (
+                <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-secondary-label text-2xs">
+                  {image.name}
+                </div>
+              )}
+              {image.previewUrl && image.source?.kind === "snap-shot" ? (
+                <SnapShotAttachmentDetails source={image.source} />
+              ) : null}
+            </div>
+          ))}
+          {userVideos.map((file) => (
+            <UserVideoAttachment key={file.id} file={file} />
+          ))}
+        </div>
+      )}
+
+      {ctx.chatVisualMode === "better-t3" ? (
+        <MessageAttachmentFiles
+          files={otherUserFiles}
+          unknownAttachments={unknownAttachments}
+          environmentId={ctx.activeThreadEnvironmentId}
+          theme={ctx.resolvedTheme}
+          onOpen={ctx.onFileOpen}
+          onDownload={ctx.onFileDownload}
+        />
+      ) : (
+        <>
+          {unchippedFiles.length > 0 || unknownAttachments.length > 0 ? (
+            <div className="mb-2 flex flex-col gap-1">
+              {unchippedFiles.map((file) => {
+                const fileIdentity = (
+                  <>
+                    <PierreEntryIcon pathValue={file.name} kind="file" theme={ctx.resolvedTheme} />
+                    <span className="min-w-0 flex-1 truncate">{file.name}</span>
+                  </>
+                );
+                if (file.downloadable !== false) {
+                  return (
+                    <div key={file.id} className="flex min-w-0 items-center gap-1">
+                      <button
+                        type="button"
+                        aria-label={`Preview ${file.name}`}
+                        onClick={() => ctx.onFileOpen(file)}
+                        className="focus-visible:ring-ring/70 flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset"
+                      >
+                        {fileIdentity}
+                        <EyeIcon className="size-4 shrink-0" />
+                      </button>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              size="icon-xs"
+                              variant="ghost-muted"
+                              aria-label={`Download ${file.name}`}
+                              onClick={() => ctx.onFileDownload(file)}
+                            />
+                          }
+                        >
+                          <DownloadIcon />
+                        </TooltipTrigger>
+                        <TooltipPopup side="top">Download {file.name}</TooltipPopup>
+                      </Tooltip>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div key={file.id} className="flex min-w-0 items-center gap-2 py-1 text-sm">
+                    {fileIdentity}
+                  </div>
+                );
+              })}
+              {unknownAttachments.map((attachment) => (
+                <div key={attachment.id} className="flex min-w-0 items-center gap-2 py-1 text-sm">
+                  <PierreEntryIcon
+                    pathValue={attachment.name}
+                    kind="file"
+                    theme={ctx.resolvedTheme}
+                  />
+                  <span className="min-w-0 flex-1 truncate">{attachment.name}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </>
+      )}
+    </>
+  );
+  const hasAttachments =
+    regularImages.length > 0 ||
+    userVideos.length > 0 ||
+    userAudio.length > 0 ||
+    (ctx.chatVisualMode === "better-t3" ? otherUserFiles.length > 0 : unchippedFiles.length > 0) ||
+    unknownAttachments.length > 0;
+
+  const actions = (
+    <div
+      className={
+        ctx.chatVisualMode === "better-t3"
+          ? "better-chat-action-buttons"
+          : "flex items-center gap-0.5"
+      }
+    >
+      {!row.message.replyTopicId ? <RetryUserMessageButton messageId={row.message.id} /> : null}
+      <EditMessageButton message={row.message} />
+      {!row.message.replyTopicId &&
+      !row.message.streaming &&
+      ctx.forkActions?.forkableMessageIds.has(row.message.id) ? (
+        <TimelineForkButton boundary={{ kind: "message", messageId: row.message.id }} />
+      ) : null}
+      {resolvedContext.text && (
+        <MessageCopyButton
+          // Structured paste needs the canonical links to retain their positions.
+          text={
+            voiceContextCopyText ??
+            (contextClipboardFragment
+              ? resolvedContext.text
+              : replaceComposerContextReferences(
+                  resolvedContext.text,
+                  (reference) => reference.label,
+                ))
+          }
+          {...(contextClipboardFragment
+            ? {
+                extraFlavors: { [COMPOSER_CONTEXT_CLIPBOARD_MIME]: contextClipboardFragment },
+              }
+            : {})}
+          variant="ghost"
+        />
+      )}
+    </div>
+  );
 
   return (
-    <div className="group flex flex-col items-end gap-1">
+    <div
+      className={cn(
+        "group flex flex-col items-end gap-1",
+        ctx.chatVisualMode === "better-t3" && "better-chat-message",
+      )}
+    >
       <div
+        ref={bubbleWidthRef}
+        data-presentation-bubble={ctx.chatVisualMode === "better-t3" ? "user" : undefined}
         className={cn(
           "relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground",
+          ctx.chatVisualMode === "better-t3" && "better-chat-bubble isolate bg-transparent",
           editor && "w-full",
         )}
       >
+        {ctx.chatVisualMode === "better-t3" ? (
+          <div
+            aria-hidden
+            data-presentation-surface
+            className="pointer-events-none absolute inset-0 -z-10 rounded-[inherit] bg-message"
+          />
+        ) : null}
         <MessageAuthorHeading>You</MessageAuthorHeading>
+        {ctx.chatVisualMode === "better-t3" ? (
+          <div className="better-chat-actions">{actions}</div>
+        ) : null}
         {row.message.replyTo ? (
           <MessageReplyQuote replyTo={row.message.replyTo} onJumpToSource={ctx.onJumpReplySource} />
         ) : null}
-        <MessageAudioAttachments
-          environmentId={ctx.activeThreadEnvironmentId}
-          attachments={userAudio}
-          className="mb-2"
-        />
-        {(regularImages.length > 0 || userVideos.length > 0) && (
-          <div className="mb-2 grid max-w-[210px] grid-cols-2 gap-2">
-            {regularImages.map((image) => (
-              <div
-                key={image.id}
-                className={cn(
-                  "bg-background/70",
-                  image.source?.kind === "snap-shot" && image.previewUrl
-                    ? cn(SNAP_SHOT_ATTACHMENT_FRAME_CLASS, "col-span-2")
-                    : "aspect-[4/3] overflow-hidden rounded-lg border border-border/80",
-                )}
-              >
-                {image.previewUrl ? (
-                  <button
-                    type="button"
-                    className="block h-full w-full cursor-zoom-in"
-                    aria-label={`Preview ${image.name}`}
-                    onClick={() => {
-                      const preview = buildExpandedImagePreview(regularImages, image.id);
-                      if (!preview) return;
-                      ctx.onImageExpand(preview);
-                    }}
-                  >
-                    <img
-                      src={image.previewUrl}
-                      alt={image.name}
-                      className="block size-full object-cover"
-                    />
-                  </button>
-                ) : (
-                  <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-secondary-label text-2xs">
-                    {image.name}
-                  </div>
-                )}
-                {image.previewUrl && image.source?.kind === "snap-shot" ? (
-                  <SnapShotAttachmentDetails source={image.source} />
-                ) : null}
-              </div>
-            ))}
-            {userVideos.map((file) => (
-              <UserVideoAttachment key={file.id} file={file} />
-            ))}
-          </div>
-        )}
-        {unchippedFiles.length > 0 || unknownAttachments.length > 0 ? (
-          <div className="mb-2 flex flex-col gap-1">
-            {unchippedFiles.map((file) => {
-              const fileIdentity = (
-                <>
-                  <PierreEntryIcon pathValue={file.name} kind="file" theme={ctx.resolvedTheme} />
-                  <span className="min-w-0 flex-1 truncate">{file.name}</span>
-                </>
-              );
-              if (file.downloadable !== false) {
-                return (
-                  <div key={file.id} className="flex min-w-0 items-center gap-1">
-                    <button
-                      type="button"
-                      aria-label={`Preview ${file.name}`}
-                      onClick={() => ctx.onFileOpen(file)}
-                      className="focus-visible:ring-ring/70 flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset"
-                    >
-                      {fileIdentity}
-                      <EyeIcon className="size-4 shrink-0" />
-                    </button>
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <Button
-                            size="icon-xs"
-                            variant="ghost-muted"
-                            aria-label={`Download ${file.name}`}
-                            onClick={() => ctx.onFileDownload(file)}
-                          />
-                        }
-                      >
-                        <DownloadIcon />
-                      </TooltipTrigger>
-                      <TooltipPopup side="top">Download {file.name}</TooltipPopup>
-                    </Tooltip>
-                  </div>
-                );
-              }
-
-              return (
-                <div key={file.id} className="flex min-w-0 items-center gap-2 py-1 text-sm">
-                  {fileIdentity}
-                </div>
-              );
-            })}
-            {unknownAttachments.map((attachment) => (
-              <div key={attachment.id} className="flex min-w-0 items-center gap-2 py-1 text-sm">
-                <PierreEntryIcon
-                  pathValue={attachment.name}
-                  kind="file"
-                  theme={ctx.resolvedTheme}
-                />
-                <span className="min-w-0 flex-1 truncate">{attachment.name}</span>
-              </div>
-            ))}
-          </div>
-        ) : null}
-        <div onCopyCapture={onBodyCopyCapture} data-reply-message-content>
-          {editor ?? (
-            <CollapsibleUserMessageBody
-              messageId={row.message.id}
-              text={resolvedContext.text}
-              renderContextReference={renderContextReference}
-              skills={ctx.skills}
-              markdownCwd={ctx.markdownCwd}
-            />
-          )}
-        </div>
+        {ctx.chatVisualMode === "better-t3" ? messageBody : null}
+        <ChatSizeMotion>
+          {hasAttachments ? (
+            <div
+              className={ctx.chatVisualMode === "better-t3" ? "better-chat-attachments" : undefined}
+              data-message-attachments
+            >
+              {attachments}
+            </div>
+          ) : null}
+        </ChatSizeMotion>
+        {ctx.chatVisualMode !== "better-t3" ? messageBody : null}
         {!editor && inlineAnnotations.length > 0 ? (
           <div className="mt-3 space-y-2" data-classic-preview-annotations>
             {inlineAnnotations.map(({ record, image }) => (
@@ -2682,37 +3129,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
             </TooltipPopup>
           </Tooltip>
-          <div className="flex items-center gap-0.5">
-            {!row.message.replyTopicId ? (
-              <RetryUserMessageButton messageId={row.message.id} />
-            ) : null}
-            <EditMessageButton message={row.message} />
-            {!row.message.replyTopicId &&
-            !row.message.streaming &&
-            ctx.forkActions?.forkableMessageIds.has(row.message.id) ? (
-              <TimelineForkButton boundary={{ kind: "message", messageId: row.message.id }} />
-            ) : null}
-            {resolvedContext.text && (
-              <MessageCopyButton
-                // Structured paste needs the canonical links to retain their positions.
-                text={
-                  voiceContextCopyText ??
-                  (contextClipboardFragment
-                    ? resolvedContext.text
-                    : replaceComposerContextReferences(
-                        resolvedContext.text,
-                        (reference) => reference.label,
-                      ))
-                }
-                {...(contextClipboardFragment
-                  ? {
-                      extraFlavors: { [COMPOSER_CONTEXT_CLIPBOARD_MIME]: contextClipboardFragment },
-                    }
-                  : {})}
-                variant="ghost"
-              />
-            )}
-          </div>
+          {ctx.chatVisualMode !== "better-t3" ? actions : null}
         </div>
       </div>
     </div>
@@ -2830,37 +3247,59 @@ export function resolvePreviewAnnotationImage(input: {
   );
 }
 
-/**
- * Hover-revealed wall-clock time with a full-date tooltip — the same metadata
- * presentation as message rows, for work entries and turn folds. The parent
- * carries `group/timeline-row`; hover or focus on an existing control reveals
- * the time without adding a tab stop. Hidden timestamps stay outside the row
- * layout. Visibility changes immediately so leaving flow cannot overlap text
- * during a fade-out. Place it before any trailing disclosure control so
- * revealing the time does not move the chevron.
+/** Reveals the timestamp on hover or focus without adding a tab stop.
+ * Better T3 pills measure the localized label so their width can transition in both directions.
  */
 function TimelineRowTimestamp({
   createdAt,
   timestampFormat,
   className,
+  pill = false,
 }: {
   createdAt: string;
   timestampFormat: TimestampFormat;
   className?: string;
+  pill?: boolean;
 }) {
+  const { chatVisualMode } = use(TimelineRowCtx);
+  const revealWidth = pill && chatVisualMode === "better-t3";
+  const label = formatDayAwareTimestamp(createdAt, timestampFormat);
+  const timestampRef = useRef<HTMLSpanElement>(null);
+  const labelRef = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    const timestamp = timestampRef.current;
+    const content = labelRef.current;
+    if (!revealWidth || !timestamp || !content) return;
+    const measure = () =>
+      timestamp.style.setProperty("--chat-timestamp-width", `${content.offsetWidth}px`);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [revealWidth, label]);
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <span
+            ref={timestampRef}
             className={cn(
-              "pointer-events-none absolute me-1 shrink-0 whitespace-nowrap rounded-md text-muted-foreground text-xs tabular-nums opacity-0 group-hover/timeline-row:pointer-events-auto group-hover/timeline-row:static group-hover/timeline-row:opacity-100 group-focus-within/timeline-row:pointer-events-auto group-focus-within/timeline-row:static group-focus-within/timeline-row:opacity-100",
+              revealWidth
+                ? "better-chat-timestamp text-muted-foreground text-xs tabular-nums"
+                : "pointer-events-none absolute me-1 shrink-0 whitespace-nowrap rounded-md text-muted-foreground text-xs tabular-nums opacity-0 group-hover/timeline-row:pointer-events-auto group-hover/timeline-row:static group-hover/timeline-row:opacity-100 group-focus-within/timeline-row:pointer-events-auto group-focus-within/timeline-row:static group-focus-within/timeline-row:opacity-100",
               className,
             )}
           />
         }
       >
-        {formatDayAwareTimestamp(createdAt, timestampFormat)}
+        {revealWidth ? (
+          <span ref={labelRef} className="better-chat-timestamp-label">
+            {label}
+          </span>
+        ) : (
+          label
+        )}
       </TooltipTrigger>
       <TooltipPopup>{formatChatTimestampTooltip(createdAt, timestampFormat)}</TooltipPopup>
     </Tooltip>
@@ -2869,10 +3308,24 @@ function TimelineRowTimestamp({
 
 function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-fold" }> }) {
   const ctx = use(TimelineRowCtx);
-  const Icon = row.expanded ? ChevronDownIcon : ChevronRightIcon;
+  const better = ctx.chatVisualMode === "better-t3";
+  const Icon = !better && row.expanded ? ChevronDownIcon : ChevronRightIcon;
+  const timestamp = (
+    <TimelineRowTimestamp
+      createdAt={row.createdAt}
+      timestampFormat={ctx.timestampFormat}
+      className={better ? "better-chat-turn-timestamp" : "ms-auto"}
+      pill={better}
+    />
+  );
 
   return (
-    <div className="group/timeline-row relative flex items-center gap-1 border-b border-border/60 pb-2 pe-0.5 pt-1">
+    <div
+      className={cn(
+        "group/timeline-row relative flex items-center gap-1 border-b border-border/60 pb-2 pe-0.5 pt-1",
+        ctx.chatVisualMode === "better-t3" && "better-chat-turn-divider",
+      )}
+    >
       <button
         type="button"
         aria-expanded={row.expanded}
@@ -2883,19 +3336,28 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
           ctx.chatVisualMode === "classic" ? "text-xs" : "text-sm leading-relaxed",
         )}
       >
-        <span>{row.label}</span>
-        <Icon className="size-3.5" />
+        <span className={better ? "min-w-0 truncate" : undefined}>{row.label}</span>
+        {better ? timestamp : null}
+        <Icon
+          className={cn(
+            "size-3.5 shrink-0",
+            better && "better-chat-chevron",
+            better && row.expanded && "rotate-90",
+          )}
+        />
       </button>
-      <TimelineRowTimestamp
-        createdAt={row.createdAt}
-        timestampFormat={ctx.timestampFormat}
-        className="ms-auto"
-      />
+      {!better ? timestamp : null}
     </div>
   );
 }
 
-function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+function AssistantTimelineRow({
+  row,
+  onReply,
+}: {
+  row: Extract<TimelineRow, { kind: "message" }>;
+  onReply: (() => void) | undefined;
+}) {
   const ctx = use(TimelineRowCtx);
   const { isWorking, unsettledTurnId } = use(TimelineRowActivityCtx);
   const isStreaming =
@@ -2910,12 +3372,17 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   const body = (
     <ChatMarkdown
       text={messageText}
+      className={ctx.chatVisualMode === "better-t3" ? "text-message-foreground" : ""}
       cwd={ctx.markdownCwd}
       threadRef={ctx.threadRef ?? undefined}
       environmentId={ctx.activeThreadEnvironmentId}
       isStreaming={isStreaming}
       streamId={`${ctx.routeThreadKey}:${row.id}`}
+      animateInitialStreamChunk={
+        ctx.chatVisualMode === "better-t3" ? ctx.canAnimateInitialText(row.id) : isStreaming
+      }
       streamingMotionEnabled={ctx.streamingMotionEnabled}
+      streamingBlockMotionEnabled={ctx.chatVisualMode !== "better-t3"}
       lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
       skills={ctx.skills}
       headingLevelOffset={MESSAGE_HEADING_LEVEL}
@@ -2927,9 +3394,46 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   );
 
   return (
-    <>
-      <div className="min-w-0 px-1 py-0.5">
+    <div className={ctx.chatVisualMode === "better-t3" ? "better-chat-message" : undefined}>
+      <div
+        data-presentation-bubble={ctx.chatVisualMode === "better-t3" ? "assistant" : undefined}
+        className={cn(
+          "min-w-0 px-1 py-0.5",
+          ctx.chatVisualMode === "better-t3" &&
+            "better-chat-bubble relative isolate text-message-foreground",
+        )}
+      >
+        {ctx.chatVisualMode === "better-t3" ? (
+          <div
+            aria-hidden
+            data-presentation-surface
+            className="pointer-events-none absolute inset-0 -z-10 rounded-[inherit] bg-message"
+          />
+        ) : null}
         <MessageAuthorHeading>T3 Code</MessageAuthorHeading>
+        {ctx.chatVisualMode === "better-t3" && (!isStreaming || onReply) ? (
+          <div className="better-chat-actions">
+            <div className="better-chat-action-buttons">
+              <EditMessageButton message={row.message} />
+              {!row.message.replyTopicId &&
+              !row.message.streaming &&
+              ctx.forkActions?.forkableMessageIds.has(row.message.id) ? (
+                <TimelineForkButton boundary={{ kind: "message", messageId: row.message.id }} />
+              ) : null}
+              <AssistantCopyButton
+                message={row.message}
+                showCopyButton={!isStreaming}
+                streaming={isStreaming}
+              />
+              {onReply ? <MessageReplyButton onReply={onReply} /> : null}
+            </div>
+          </div>
+        ) : null}
+        {row.reasoningGroup ? (
+          <div className="mb-3" data-message-reasoning>
+            <ActivityGroupTimelineRow row={row.reasoningGroup} anchorKey={row.id} />
+          </div>
+        ) : null}
         {row.message.replyTo ? (
           <MessageReplyQuote replyTo={row.message.replyTo} onJumpToSource={ctx.onJumpReplySource} />
         ) : null}
@@ -2959,7 +3463,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           resolvedTheme={ctx.resolvedTheme}
           onOpenTurnDiff={ctx.onOpenTurnDiff}
         />
-        {row.showAssistantMeta ? (
+        {row.showAssistantMeta && ctx.chatVisualMode !== "better-t3" ? (
           <AssistantMessageMeta
             className="mt-1.5"
             message={row.message}
@@ -2968,7 +3472,16 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           />
         ) : null}
       </div>
-    </>
+      {row.showAssistantMeta && ctx.chatVisualMode === "better-t3" ? (
+        <AssistantMessageMeta
+          className="better-chat-meta"
+          message={row.message}
+          showCopyButton={false}
+          copyStreaming={row.assistantCopyStreaming}
+          alwaysVisible
+        />
+      ) : null}
+    </div>
   );
 }
 
@@ -3015,19 +3528,21 @@ function AssistantMessageMeta({
         className,
       )}
     >
-      <div className="flex shrink-0 items-center gap-0.5">
-        {!message.replyTopicId &&
-        !message.streaming &&
-        ctx.forkActions?.forkableMessageIds.has(message.id) ? (
-          <TimelineForkButton boundary={{ kind: "message", messageId: message.id }} />
-        ) : null}
-        <AssistantCopyButton
-          message={message}
-          showCopyButton={showCopyButton}
-          streaming={copyStreaming}
-        />
-        <EditMessageButton message={message} />
-      </div>
+      {ctx.chatVisualMode !== "better-t3" ? (
+        <div className="flex shrink-0 items-center gap-0.5">
+          {!message.replyTopicId &&
+          !message.streaming &&
+          ctx.forkActions?.forkableMessageIds.has(message.id) ? (
+            <TimelineForkButton boundary={{ kind: "message", messageId: message.id }} />
+          ) : null}
+          <AssistantCopyButton
+            message={message}
+            showCopyButton={showCopyButton}
+            streaming={copyStreaming}
+          />
+          <EditMessageButton message={message} />
+        </div>
+      ) : null}
       {!message.streaming && (
         <Tooltip>
           <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
@@ -3202,14 +3717,25 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
   const { chatVisualMode } = use(TimelineRowCtx);
   const translate = useInterfaceTranslator().message;
   const classic = chatVisualMode === "classic";
-  const shimmer = isPreparingWorktree || isCompacting;
+  const better = chatVisualMode === "better-t3";
+  const shimmer = !better && (isPreparingWorktree || isCompacting);
   return (
-    <div className={classic ? "py-0.5 pl-1.5" : "border-b border-border/60 pb-2 pt-1"}>
+    <div
+      className={
+        classic
+          ? "py-0.5 pl-1.5"
+          : better
+            ? "better-chat-pill-row"
+            : "border-b border-border/60 pb-2 pt-1"
+      }
+    >
       <div
         className={
-          classic
-            ? "flex min-w-0 items-center gap-2 pt-1 text-secondary-label text-2xs tabular-nums"
-            : "flex h-6 min-w-0 items-baseline px-1 text-sm leading-relaxed text-muted-foreground tabular-nums"
+          better
+            ? "flex min-w-0 items-center gap-2 text-xs text-muted-foreground tabular-nums"
+            : classic
+              ? "flex min-w-0 items-center gap-2 pt-1 text-secondary-label text-2xs tabular-nums"
+              : "flex h-6 min-w-0 items-baseline px-1 text-sm leading-relaxed text-muted-foreground tabular-nums"
         }
       >
         {classic ? (
@@ -3301,10 +3827,22 @@ function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnap
 
 function ActivityGroupTimelineRow({
   row,
+  anchorKey = row.id,
 }: {
   row: Extract<TimelineRow, { kind: "activity-group" }>;
+  anchorKey?: string;
 }) {
   const ctx = use(TimelineRowCtx);
+  const detailRef = useChatDetailMotion(
+    ctx.presentationMotion && ctx.presentationTextMotion,
+    row.expanded,
+    row.id,
+  );
+  const { unsettledTurnId } = use(TimelineRowActivityCtx);
+  const traceIsActive = (entry: (typeof row.entries)[number]) => {
+    const turnId = entry.kind === "message" ? entry.message.turnId : entry.entry.turnId;
+    return row.active && (turnId ? turnId === unsettledTurnId : entry === row.entries.at(-1));
+  };
   const work = omitSupersededLifecycleMarkers(
     row.entries.flatMap((entry) =>
       entry.kind === "work" &&
@@ -3315,18 +3853,23 @@ function ActivityGroupTimelineRow({
     ),
     (entry) => entry,
   );
-  if (ctx.showWorkingReasoning && work.length === 0) {
+  if (
+    (ctx.showWorkingReasoning || ctx.showMessageReasoning || ctx.chatVisualMode === "better-t3") &&
+    work.length === 0
+  ) {
     return (
       <TimelineWorkingReasoningLog
+        anchorKey={anchorKey}
         traces={row.entries.flatMap<WorkingReasoningTrace>((entry) =>
           entry.kind === "message"
             ? [
                 {
                   id: entry.message.id,
                   detail: entry.message.text,
-                  streaming: entry.message.streaming,
+                  streaming: traceIsActive(entry) && entry.message.streaming,
                   turnId: entry.message.turnId,
                   createdAt: entry.message.createdAt,
+                  updatedAt: entry.message.updatedAt,
                 },
               ]
             : workEntryIsProviderReasoning(entry.entry)
@@ -3334,7 +3877,7 @@ function ActivityGroupTimelineRow({
                   {
                     id: entry.id,
                     detail: entry.entry.detail ?? "",
-                    streaming: true,
+                    streaming: traceIsActive(entry),
                     turnId: entry.entry.turnId ?? null,
                     createdAt: entry.createdAt,
                   },
@@ -3430,17 +3973,29 @@ function ActivityGroupTimelineRow({
           shimmer={thinking}
         />
       </button>
-      {row.expanded ? <div className="mt-2">{details}</div> : null}
+      {row.expanded ? (
+        <div ref={detailRef} className="mt-2">
+          {details}
+        </div>
+      ) : null}
     </div>
   );
 }
 
 function ThinkingTimelineRow() {
+  const { chatVisualMode, presentationMotion } = use(TimelineRowCtx);
   const { isCompacting, isPreparingWorktree } = use(TimelineRowActivityCtx);
   // Reserve the activity row during setup so the handoff keeps the same height.
   return (
-    <div className="min-h-7">
-      {isPreparingWorktree || isCompacting ? null : (
+    <div
+      className={cn(
+        "min-h-7",
+        chatVisualMode === "better-t3" && "better-chat-thinking-pill flex items-center",
+      )}
+    >
+      {isPreparingWorktree || isCompacting ? null : chatVisualMode === "better-t3" ? (
+        <ChatThinkingIndicator motion={presentationMotion} />
+      ) : (
         <LiveActivityRow label="Thinking" iconName="brain" active shimmer />
       )}
     </div>
@@ -3478,15 +4033,17 @@ function ReasoningTraceBlock({
   ) {
     return null;
   }
-  if (ctx.showWorkingReasoning) {
+  if (ctx.showWorkingReasoning || ctx.chatVisualMode === "better-t3") {
     return (
       <TimelineWorkingReasoningLog
+        anchorKey={anchorKey}
         traces={messages.map((message) => ({
           id: message.id,
           detail: message.text,
-          streaming: message.streaming,
+          streaming: streaming && message.streaming,
           turnId: message.turnId,
           createdAt: message.createdAt,
+          updatedAt: message.updatedAt,
         }))}
       />
     );
@@ -3540,6 +4097,9 @@ function ReasoningTraceBlock({
               cwd={ctx.markdownCwd}
               threadRef={ctx.threadRef ?? undefined}
               isStreaming={streaming && reasoningMessage.streaming}
+              streamId={`${ctx.routeThreadKey}:${reasoningMessage.id}`}
+              streamingMotionEnabled={ctx.streamingMotionEnabled}
+              streamingBlockMotionEnabled={ctx.chatVisualMode !== "better-t3"}
               lineBreaks
               skills={ctx.skills}
               headingLevelOffset={MESSAGE_HEADING_LEVEL}
@@ -3564,6 +4124,23 @@ const ReasoningTimelineRow = memo(function ReasoningTimelineRow({
   const { message } = row;
   if (message.text.trim().length === 0) return null;
   const isStreaming = Boolean(message.streaming) && isWorking && message.turnId === unsettledTurnId;
+  if (ctx.chatVisualMode === "better-t3") {
+    return (
+      <TimelineWorkingReasoningLog
+        anchorKey={row.id}
+        traces={[
+          {
+            id: message.id,
+            detail: message.text,
+            streaming: isStreaming,
+            turnId: message.turnId,
+            createdAt: message.createdAt,
+            updatedAt: message.updatedAt,
+          },
+        ]}
+      />
+    );
+  }
   return (
     <div
       className="flex min-w-0 select-text flex-col gap-2 px-1 py-0.5 text-secondary-label"
@@ -3578,6 +4155,7 @@ const ReasoningTimelineRow = memo(function ReasoningTimelineRow({
         streamId={`${ctx.routeThreadKey}:${message.id}`}
         animateInitialStreamChunk={isStreaming}
         streamingMotionEnabled={ctx.streamingMotionEnabled}
+        streamingBlockMotionEnabled
         skills={ctx.skills}
         onVisualizationAction={ctx.onVisualizationAction}
         onImageExpand={ctx.onImageExpand}
@@ -3662,7 +4240,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
 
   if (nonEmptyEntries.length === 0) return null;
   if (workEntryIsProviderReasoning(nonEmptyEntries[0]!)) {
-    return <ReasoningWorkEntryRow workEntries={nonEmptyEntries} />;
+    return <ReasoningWorkEntryRow workEntries={nonEmptyEntries} anchorKey={disclosureAnchorKey} />;
   }
   if (isExpandedToolGroup) {
     return (
@@ -3683,6 +4261,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
           <SimpleWorkEntryRow
             key={workEntry.id}
             workEntry={workEntry}
+            anchorKey={disclosureAnchorKey}
             workspaceRoot={workspaceRoot}
             isExpandedToolGroupEntry={false}
             displayLabel={displayLabel}
@@ -3705,7 +4284,7 @@ function ExpandedWorkGroupEntries({
   entries: TimelineWorkEntry[];
   workspaceRoot: string | undefined;
 }) {
-  const { workGroupViewState: viewState, onToggleWorkEntry } = use(TimelineRowCtx);
+  const { workGroupViewState: viewState, onToggleWorkEntry, chatVisualMode } = use(TimelineRowCtx);
   const [initialScrollIndex] = useState(() =>
     resolveWorkGroupScrollIndex(entries, viewState.scrollPositions.get(anchorKey)),
   );
@@ -3791,11 +4370,12 @@ function ExpandedWorkGroupEntries({
       <SimpleWorkEntryRow
         key={item.id}
         workEntry={item}
+        anchorKey={disclosureAnchorKey}
         workspaceRoot={workspaceRoot}
         isExpandedToolGroupEntry
       />
     ),
-    [workspaceRoot],
+    [disclosureAnchorKey, workspaceRoot],
   );
 
   return (
@@ -3806,7 +4386,7 @@ function ExpandedWorkGroupEntries({
         extraData={workspaceRoot}
         keyExtractor={workEntryKey}
         renderItem={renderEntry}
-        estimatedItemSize={24}
+        estimatedItemSize={chatVisualMode === "better-t3" ? 36 : 24}
         drawDistance={240}
         recycleItems
         {...(initialScrollIndex ? { initialScrollIndex } : {})}
@@ -3839,6 +4419,8 @@ function ExpandedWorkGroupEntries({
 const workEntryKey = (entry: TimelineWorkEntry) => entry.id;
 
 function ActivityShimmerOverlay({ children }: { children: ReactNode }) {
+  const { chatVisualMode } = use(TimelineRowCtx);
+  if (chatVisualMode === "better-t3") return null;
   return (
     <span
       aria-hidden
@@ -3877,12 +4459,17 @@ function LiveActivityRow({
   active?: boolean;
   shimmer?: boolean;
 }) {
-  const animated = active && !failed;
+  const { chatVisualMode } = use(TimelineRowCtx);
+  const animated = active && !failed && chatVisualMode !== "better-t3";
   const showShimmer = animated && shimmer;
   return (
     <div
       ref={animated ? observeVisibleAnimation : undefined}
-      className="relative min-h-6 w-fit max-w-full min-w-0 overflow-hidden rounded-md text-sm leading-relaxed"
+      data-presentation-status
+      className={cn(
+        "relative min-h-6 w-fit max-w-full min-w-0 overflow-hidden rounded-md text-sm leading-relaxed",
+        chatVisualMode === "better-t3" && "text-xs",
+      )}
     >
       <LiveActivityContent
         label={label}
@@ -3918,6 +4505,7 @@ function LiveActivityContent({
   active?: boolean;
   highlighted?: boolean;
 }) {
+  const { chatVisualMode } = use(TimelineRowCtx);
   const showTrailingFailureMark =
     failed && iconName !== undefined && !toolIconAcceptsTint(iconName, toolIcon);
 
@@ -3927,6 +4515,7 @@ function LiveActivityContent({
         "flex min-h-6 min-w-0 items-center gap-1.5 py-0.5",
         iconName ? "px-0.5" : "px-1",
         highlighted ? "text-foreground" : "text-secondary-label",
+        chatVisualMode === "better-t3" && "better-chat-pill-row",
       )}
     >
       {iconName ? (
@@ -3956,6 +4545,11 @@ function LiveActivityContent({
 
 function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "work-live" }> }) {
   const ctx = use(TimelineRowCtx);
+  const label = liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active);
+  const widthRef = useChatWidthMotion<HTMLButtonElement>(
+    label,
+    ctx.chatVisualMode === "better-t3" && ctx.presentationMotion,
+  );
   if (row.entry.agentSpawn) {
     return (
       <AgentSpawnRow
@@ -3965,13 +4559,16 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
       />
     );
   }
-  const label = liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active);
   const failed = workEntryDisplayIndicatesToolFailure(row.entry);
 
   return (
     <button
       type="button"
-      className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+      className={cn(
+        "group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+        ctx.chatVisualMode === "better-t3" && "better-chat-running",
+      )}
+      ref={widthRef}
       aria-label={failed ? `${label}, tool call failed` : undefined}
       aria-expanded={row.expanded}
       onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
@@ -4049,6 +4646,10 @@ function WorkGroupToggleTimelineRow({
 }) {
   const ctx = use(TimelineRowCtx);
   const translate = useInterfaceTranslator().message;
+  const widthRef = useChatWidthMotion<HTMLButtonElement>(
+    row.summary,
+    ctx.chatVisualMode === "better-t3" && ctx.presentationMotion,
+  );
   if (ctx.chatVisualMode === "classic") {
     return (
       <button
@@ -4070,7 +4671,12 @@ function WorkGroupToggleTimelineRow({
   return (
     <button
       type="button"
-      className="group/tool-group group/timeline-row relative flex min-h-6 w-full cursor-pointer items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left text-sm leading-relaxed transition-colors duration-150 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+      data-presentation-status
+      ref={widthRef}
+      className={cn(
+        "group/tool-group group/timeline-row relative flex min-h-6 w-full cursor-pointer items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left text-sm leading-relaxed transition-colors duration-150 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+        ctx.chatVisualMode === "better-t3" && "better-chat-pill-row",
+      )}
       aria-label={row.hasFailure ? `${row.summary}, tool call failed` : undefined}
       aria-expanded={row.expanded}
       onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
@@ -4086,7 +4692,17 @@ function WorkGroupToggleTimelineRow({
         />
       </span>
       <span className="min-w-0 flex-1 truncate text-secondary-label">{row.summary}</span>
-      <TimelineRowTimestamp createdAt={row.createdAt} timestampFormat={ctx.timestampFormat} />
+      {ctx.chatVisualMode === "better-t3" ? (
+        <span aria-hidden className="flex size-4 shrink-0 items-center justify-center">
+          <ChevronRightIcon
+            className={cn(
+              "better-chat-chevron size-3 shrink-0 text-muted-foreground",
+              row.expanded && "rotate-90",
+            )}
+          />
+        </span>
+      ) : null}
+      <TimelineRowTimestamp createdAt={row.createdAt} timestampFormat={ctx.timestampFormat} pill />
     </button>
   );
 }
@@ -4164,6 +4780,16 @@ function AssistantChangedFilesSectionInner({
       turnId={turnSummary.turnId}
       files={checkpointFiles}
       allDirectoriesExpanded={allDirectoriesExpanded}
+      {...(chatVisualMode === "better-t3"
+        ? {
+            compactPresentation: {
+              expanded: persistedExpanded ?? false,
+              motionEnabled: ctx.presentationMotion,
+              onExpandedChange: (expanded: boolean) =>
+                setExpanded(routeThreadKey, turnSummary.turnId, expanded),
+            },
+          }
+        : {})}
       {...(classic
         ? {
             classicPresentation: {
@@ -4289,6 +4915,7 @@ function UserMessagePreviewAnnotationDetails(props: {
         <button
           type="button"
           className="block max-h-64 w-full cursor-zoom-in overflow-hidden border-b border-border/70 bg-muted"
+          data-chat-media-preview
           aria-label={`Preview ${props.image.name}`}
           onClick={() => {
             if (!props.image) return;
@@ -4759,20 +5386,24 @@ const UserMessageBody = memo(function UserMessageBody(props: {
     return null;
   }
   return (
-    <ChatMarkdown
-      text={props.text}
-      streamId={`${ctx.routeThreadKey}:${props.messageId}`}
-      cwd={props.markdownCwd}
-      threadRef={ctx.threadRef ?? undefined}
-      environmentId={ctx.activeThreadEnvironmentId}
-      onVisualizationAction={ctx.onVisualizationAction}
-      skills={props.skills}
-      className="text-message-foreground"
-      lineBreaks
-      parseRawHtml={false}
-      renderContextReference={props.renderContextReference}
-      headingLevelOffset={MESSAGE_HEADING_LEVEL}
-    />
+    <ContextChipFileAppearanceContext
+      value={ctx.chatVisualMode === "better-t3" ? "message" : "default"}
+    >
+      <ChatMarkdown
+        text={props.text}
+        streamId={`${ctx.routeThreadKey}:${props.messageId}`}
+        cwd={props.markdownCwd}
+        threadRef={ctx.threadRef ?? undefined}
+        environmentId={ctx.activeThreadEnvironmentId}
+        onVisualizationAction={ctx.onVisualizationAction}
+        skills={props.skills}
+        className="text-message-foreground"
+        lineBreaks
+        parseRawHtml={false}
+        renderContextReference={props.renderContextReference}
+        headingLevelOffset={MESSAGE_HEADING_LEVEL}
+      />
+    </ContextChipFileAppearanceContext>
   );
 });
 
@@ -5162,11 +5793,12 @@ function workEntryRawCommand(
 function buildToolCallExpandedBody(
   workEntry: TimelineWorkEntry,
   workspaceRoot: string | undefined,
-  visibleLabel: string,
+  visibleLabel: string | null,
   viewedImagePath: string | null,
 ): string | null {
   const blocks: string[] = [];
-  const seen = new Set<string>([visibleLabel.trim()]);
+  const label = visibleLabel?.trim();
+  const seen = new Set<string>(label ? [label] : []);
   const addBlock = (value: string | null | undefined) => {
     const text = value?.trim();
     if (!text || seen.has(text)) return;
@@ -5178,7 +5810,7 @@ function buildToolCallExpandedBody(
   }
   const command = workEntry.command?.trim();
   const raw = workEntryRawCommand(workEntry);
-  if (command === visibleLabel.trim()) {
+  if (command && command === label) {
     seen.add(command);
   } else {
     addBlock(raw ?? command);
@@ -5446,6 +6078,7 @@ function AgentSpawnMemberRow({
 
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workEntry: TimelineWorkEntry;
+  anchorKey: string;
   workspaceRoot: string | undefined;
   isExpandedToolGroupEntry: boolean;
   displayLabel?: string | undefined;
@@ -5454,16 +6087,21 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const { workEntry, workspaceRoot, isExpandedToolGroupEntry, displayLabel } = props;
   // Before any hooks: spawn rows render their own component.
   if (workEntry.agentSpawn) {
-    return (
+    const content = (
       <AgentSpawnRow
         workEntry={workEntry}
         active={!isExpandedToolGroupEntry}
         onToggleEntry={props.onToggleEntry}
       />
     );
+    return isExpandedToolGroupEntry ? (
+      content
+    ) : (
+      <ChatStatusSurface compact>{content}</ChatStatusSurface>
+    );
   }
   if (workEntryIsProviderReasoning(workEntry)) {
-    return <ReasoningWorkEntryRow workEntries={[workEntry]} />;
+    return <ReasoningWorkEntryRow workEntries={[workEntry]} anchorKey={props.anchorKey} />;
   }
   return (
     <PlainWorkEntryRow
@@ -5476,16 +6114,23 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   );
 });
 
-function ReasoningWorkEntryRow({ workEntries }: { workEntries: ReadonlyArray<TimelineWorkEntry> }) {
+function ReasoningWorkEntryRow({
+  workEntries,
+  anchorKey,
+}: {
+  workEntries: ReadonlyArray<TimelineWorkEntry>;
+  anchorKey: string;
+}) {
   const ctx = use(TimelineRowCtx);
   const { isWorking, unsettledTurnId } = use(TimelineRowActivityCtx);
-  if (ctx.showWorkingReasoning) {
+  if (ctx.showWorkingReasoning || ctx.chatVisualMode === "better-t3") {
     return (
       <TimelineWorkingReasoningLog
+        anchorKey={anchorKey}
         traces={workEntries.map((entry) => ({
           id: entry.id,
           detail: entry.detail ?? "",
-          streaming: entry.turnId !== null && entry.turnId === unsettledTurnId,
+          streaming: isWorking && entry.turnId !== null && entry.turnId === unsettledTurnId,
           turnId: entry.turnId ?? null,
           createdAt: entry.createdAt,
         }))}
@@ -5509,8 +6154,9 @@ function ReasoningWorkEntryRow({ workEntries }: { workEntries: ReadonlyArray<Tim
             environmentId={ctx.activeThreadEnvironmentId}
             isStreaming={isStreaming}
             streamId={`${ctx.routeThreadKey}:${entry.id}`}
-            animateInitialStreamChunk={isStreaming}
+            animateInitialStreamChunk={isStreaming && ctx.chatVisualMode !== "better-t3"}
             streamingMotionEnabled={ctx.streamingMotionEnabled}
+            streamingBlockMotionEnabled={ctx.chatVisualMode !== "better-t3"}
             onVisualizationAction={ctx.onVisualizationAction}
             skills={ctx.skills}
             className="text-xs text-secondary-label"
@@ -5522,8 +6168,41 @@ function ReasoningWorkEntryRow({ workEntries }: { workEntries: ReadonlyArray<Tim
   );
 }
 
-function TimelineWorkingReasoningLog({ traces }: { traces: readonly WorkingReasoningTrace[] }) {
-  return <WorkingReasoningLog traces={traces} />;
+function TimelineWorkingReasoningLog({
+  traces,
+  anchorKey,
+}: {
+  traces: readonly WorkingReasoningTrace[];
+  anchorKey: string;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const first = traces[0];
+  if (
+    (ctx.chatVisualMode === "better-t3" || ctx.showMessageReasoning) &&
+    !ctx.showWorkingReasoning &&
+    first
+  ) {
+    return (
+      <ChatReasoningDisclosure
+        traces={traces}
+        motion={ctx.presentationMotion}
+        expanded={ctx.expandedReasoningMessageIds.has(first.id)}
+        onExpandedChange={(expanded) => ctx.onToggleReasoning(first.id, expanded, anchorKey)}
+        markdown={{
+          streamId: ctx.routeThreadKey,
+          cwd: ctx.markdownCwd,
+          threadRef: ctx.threadRef ?? undefined,
+          environmentId: ctx.activeThreadEnvironmentId,
+          skills: ctx.skills,
+          streamingMotionEnabled: ctx.streamingMotionEnabled,
+          onVisualizationAction: ctx.onVisualizationAction,
+          onImageExpand: ctx.onImageExpand,
+          onUseArtifactTemplate: ctx.onUseArtifactTemplate,
+        }}
+      />
+    );
+  }
+  return <WorkingReasoningLog traces={traces} chatVisualMode={ctx.chatVisualMode} />;
 }
 
 const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
@@ -5534,7 +6213,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   onToggleEntry?: ((collapsed: boolean) => void) | undefined;
 }) {
   const { workEntry, workspaceRoot, isExpandedToolGroupEntry, displayLabel } = props;
-  const { threadRef, onImageExpand, chatVisualMode, timestampFormat, workGroupViewState } =
+  const { threadRef, chatVisualMode, timestampFormat, workGroupViewState, presentationMotion } =
     use(TimelineRowCtx);
   const groupView = use(WorkGroupViewCtx);
   const viewState = groupView?.state ?? workGroupViewState;
@@ -5566,7 +6245,13 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
     showFailedIndicator &&
     (workEntrySignalsSevereFailure(workEntry) || !workLogEntryIsToolLike(workEntry));
   const entryIconName =
-    showWarningIndicator || showDestructiveRowStyle ? "circle-alert" : workEntryIconName(workEntry);
+    showWarningIndicator || showDestructiveRowStyle
+      ? "circle-alert"
+      : chatVisualMode === "better-t3" &&
+          workEntry.toolLifecycleStatus === "completed" &&
+          !showFailedIndicator
+        ? "check"
+        : workEntryIconName(workEntry);
   const entryToolIcon =
     showWarningIndicator || showDestructiveRowStyle
       ? undefined
@@ -5599,14 +6284,16 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
       workEntry.changedFiles?.length ||
       viewedImage,
     );
-  const expandedBody = expanded
-    ? buildToolCallExpandedBody(
-        workEntry,
-        workspaceRoot,
-        previewText,
-        viewedImage ? viewedImagePath : null,
-      )
-    : null;
+  const details = (
+    <WorkEntryDetails
+      workEntry={workEntry}
+      workspaceRoot={workspaceRoot}
+      previewText={previewText}
+      viewedImage={viewedImage}
+      viewedImagePath={viewedImagePath}
+      canExpand={canExpand}
+    />
+  );
   // Reserve destructive row styling for severe failures, not routine tool errors.
   const iconWrapperClass = cn(
     chatVisualMode === "classic"
@@ -5629,7 +6316,9 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
         : workLogEntryIsToolLike(workEntry)
           ? "text-secondary-label"
           : "text-foreground/80";
-  const accessiblePreview = [previewText, answerPreview].filter(Boolean).join(": ");
+  const headerText =
+    chatVisualMode === "better-t3" ? (previewText.split("\n", 1)[0] ?? previewText) : previewText;
+  const accessiblePreview = [headerText, answerPreview].filter(Boolean).join(": ");
   const accessibleDisplayText = showFailedIndicator
     ? `${accessiblePreview}, tool call failed`
     : accessiblePreview;
@@ -5650,18 +6339,28 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
       }
     : {};
 
-  return (
+  const timestamp = (
+    <TimelineRowTimestamp createdAt={workEntry.createdAt} timestampFormat={timestampFormat} pill />
+  );
+  const content = (
     <div
       className={cn(
         "group/timeline-row relative flex flex-col rounded-md px-0.5 transition-colors",
         isExpandedToolGroupEntry ? "py-0" : "py-0.5",
         expanded && "mb-1",
+        chatVisualMode === "better-t3" && "better-chat-work",
         canExpand &&
           "cursor-pointer hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
       )}
       {...rowToggleProps}
     >
-      <div className="flex select-none items-center gap-1.5 transition-[opacity,translate] duration-200">
+      <div
+        data-presentation-status
+        className={cn(
+          "flex select-none items-center gap-1.5 transition-[opacity,translate] duration-200",
+          chatVisualMode === "better-t3" && "better-chat-pill-row",
+        )}
+      >
         <span
           className={iconWrapperClass}
           role={showFailedIndicator ? "img" : undefined}
@@ -5682,19 +6381,23 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
             <p
               className={cn(
                 "flex min-w-0 w-full items-baseline gap-1.5",
-                chatVisualMode === "classic" ? "text-xs leading-5" : "text-sm leading-relaxed",
+                chatVisualMode === "classic" || chatVisualMode === "better-t3"
+                  ? "text-xs leading-5"
+                  : "text-sm leading-relaxed",
               )}
             >
               <span
                 className={cn(
                   answerPreview ? "shrink-0" : "min-w-0 flex-1",
-                  expanded ? "whitespace-pre-wrap break-words select-text" : "truncate",
+                  expanded && chatVisualMode !== "better-t3"
+                    ? "whitespace-pre-wrap break-words select-text"
+                    : "truncate",
                   headingClass,
                 )}
                 onClick={expanded ? stopRowToggleWhileSelectingText : undefined}
                 onPointerDown={expanded ? stopRowToggle : undefined}
               >
-                {previewText}
+                {headerText}
               </span>
               {answerPreview ? (
                 <span
@@ -5717,7 +6420,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
           !toolIconAcceptsTint(entryIconName, entryToolIcon) ? (
             <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
           ) : null}
-          <TimelineRowTimestamp createdAt={workEntry.createdAt} timestampFormat={timestampFormat} />
+          {chatVisualMode !== "better-t3" ? timestamp : null}
           <span
             className={cn(
               "flex size-4 shrink-0 items-center justify-center",
@@ -5732,9 +6435,64 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
               )}
             />
           </span>
+          {chatVisualMode === "better-t3" ? timestamp : null}
         </div>
       </div>
-      {expanded && viewedImage && threadRef ? (
+      {chatVisualMode === "better-t3" ? (
+        <ChatDetailPanel expanded={expanded} motion={presentationMotion}>
+          {details}
+        </ChatDetailPanel>
+      ) : expanded ? (
+        details
+      ) : null}
+    </div>
+  );
+  return isExpandedToolGroupEntry ? (
+    content
+  ) : (
+    <ChatStatusSurface
+      tone={
+        showFailedIndicator
+          ? "error"
+          : showWarningIndicator
+            ? "warning"
+            : workEntry.toolLifecycleStatus === "completed"
+              ? "success"
+              : "neutral"
+      }
+      compact
+    >
+      {content}
+    </ChatStatusSurface>
+  );
+});
+
+function WorkEntryDetails({
+  workEntry,
+  workspaceRoot,
+  previewText,
+  viewedImage,
+  viewedImagePath,
+  canExpand,
+}: {
+  workEntry: TimelineWorkEntry;
+  workspaceRoot: string | undefined;
+  previewText: string;
+  viewedImage: ReturnType<typeof resolveViewedImageAsset> | null;
+  viewedImagePath: string | null;
+  canExpand: boolean;
+}) {
+  const { threadRef, onImageExpand, chatVisualMode } = use(TimelineRowCtx);
+  const expandedBody =
+    buildToolCallExpandedBody(
+      workEntry,
+      workspaceRoot,
+      chatVisualMode === "better-t3" ? null : previewText,
+      viewedImage ? viewedImagePath : null,
+    ) ?? (chatVisualMode === "better-t3" && !viewedImage ? previewText : null);
+  return (
+    <>
+      {viewedImage && threadRef ? (
         <div
           className="mt-1 ms-7 cursor-default"
           onClick={stopRowToggle}
@@ -5751,16 +6509,18 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
           />
         </div>
       ) : null}
-      {expanded && workEntry.questionAnswer ? (
+      {workEntry.questionAnswer ? (
         <QuestionAnswerHistory answer={workEntry.questionAnswer} />
       ) : null}
-      {expanded && canExpand && expandedBody && !workEntry.questionAnswer ? (
+      {canExpand && expandedBody && !workEntry.questionAnswer ? (
         <div
           className={cn(
             "mt-1 ms-7 cursor-default",
             chatVisualMode === "classic"
               ? "border-s border-border/45 ps-3 pt-0.5"
-              : "rounded-md bg-muted/40 px-3 py-2",
+              : chatVisualMode === "better-t3"
+                ? "better-chat-work-output"
+                : "rounded-md bg-muted/40 px-3 py-2",
           )}
           onClick={stopRowToggle}
           onPointerDown={stopRowToggle}
@@ -5768,9 +6528,9 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
           <pre className={toolCallExpandedBodyClassName}>{expandedBody}</pre>
         </div>
       ) : null}
-    </div>
+    </>
   );
-});
+}
 
 function QuestionAnswerHistory({
   answer,

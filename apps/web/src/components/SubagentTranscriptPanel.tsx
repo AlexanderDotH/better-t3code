@@ -60,7 +60,7 @@ export const SubagentTranscriptPanel = memo(function SubagentTranscriptPanel({
   markdownCwd,
   threadRef,
   timestampFormat = "locale",
-  streamingMotionEnabled = false,
+  streamingMotionEnabled = true,
   className,
   hasOlderActivities = false,
   isLoadingOlderActivities = false,
@@ -367,6 +367,7 @@ function TranscriptMessage({
         cwd={markdownCwd}
         threadRef={threadRef}
         isStreaming={message.streaming}
+        animateInitialStreamChunk={message.streaming && message.role === "assistant"}
         streamId={`${threadRef?.environmentId ?? ""}:${threadRef?.threadId ?? ""}:${message.id}`}
         streamingMotionEnabled={message.role === "assistant" && streamingMotionEnabled}
         lineBreaks={message.role === "user"}

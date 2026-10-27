@@ -275,6 +275,10 @@
       "types": "./src/projectThreadPreviewSync.ts",
       "default": "./src/projectThreadPreviewSync.ts"
     },
+    "./chat-presentation": {
+      "types": "./src/chatPresentation.ts",
+      "default": "./src/chatPresentation.ts"
+    },
     "./chat-visual-mode-sync": {
       "types": "./src/chatVisualModeSync.ts",
       "default": "./src/chatVisualModeSync.ts"

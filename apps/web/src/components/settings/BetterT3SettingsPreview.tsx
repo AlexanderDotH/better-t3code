@@ -1,18 +1,23 @@
-import type {
-  BetterT3FeatureId,
-  ChatVisualMode,
-  ContextWindowSelector,
-  SidebarPosition,
+import {
+  CHAT_VISUAL_MODES,
+  type BetterT3FeatureId,
+  type ChatVisualMode,
+  type ContextWindowSelector,
+  type SidebarPosition,
 } from "@t3tools/contracts";
 import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import {
   ArrowUpIcon,
   BotIcon,
+  BrainIcon,
   CheckIcon,
   ChevronDownIcon,
+  ChevronRightIcon,
+  FileIcon,
   GitBranchIcon,
   MessageSquareIcon,
   PlugIcon,
+  SearchIcon,
   SparklesIcon,
   WorkflowIcon,
 } from "lucide-react";
@@ -43,6 +48,7 @@ export const BETTER_T3_VISUAL_FEATURE_IDS = [
   "chat.workspaceCardDeck",
   "chat.classicBubbleOnly",
   "chat.characterStreamingMotion",
+  "chat.presentationMotion",
   "chat.cardMorphing",
   "chat.draftIndicators",
   ...BETTER_T3_EXAMPLE_FEATURE_IDS,
@@ -59,7 +65,11 @@ function FeatureVisualFrame(props: {
     <div
       className={cn(
         "relative flex items-center justify-center overflow-hidden bg-muted/25 p-3",
-        props.featureId === "chat.classicSidebar" ? "h-24" : "h-36",
+        props.featureId === "chat.classicSidebar"
+          ? "h-24"
+          : props.featureId === "chat.presentation" || props.featureId === "chat.presentationMotion"
+            ? "h-52"
+            : "h-36",
       )}
       data-better-t3-feature-visual={props.featureId}
       key={props.animationKey}
@@ -217,20 +227,21 @@ function AgentReasoningPreview(props: {
       <span className="flex size-6 items-center justify-center rounded-full bg-primary/10 text-primary">
         <SparklesIcon className="size-3" />
       </span>
-      <div
-        className={cn(
-          "mt-auto rounded-lg border border-border/40 bg-muted/25 p-2",
-          !props.model.reasoningVisibility && "opacity-40",
-        )}
-      >
-        <span className="better-t3-preview-label font-medium text-muted-foreground">
-          {props.translate("settings.betterT3.preview.agent.reasoning")}
-        </span>
-        <div className="mt-1.5 space-y-1">
-          <span className="better-t3-preview-thinking-line block h-1 w-[88%] origin-left rounded-full bg-foreground/12" />
-          <span className="better-t3-preview-thinking-line block h-1 w-[61%] origin-left rounded-full bg-foreground/8" />
+      {props.model.reasoningVisibility ? (
+        <div className="mt-auto rounded-lg border border-border/40 bg-muted/25 p-2">
+          <span className="better-t3-preview-label font-medium text-muted-foreground">
+            {props.translate("settings.betterT3.preview.agent.reasoning")}
+          </span>
+          <div className="mt-1.5 space-y-1">
+            <span className="better-t3-preview-thinking-line block h-1 w-[88%] origin-left rounded-full bg-foreground/12" />
+            <span className="better-t3-preview-thinking-line block h-1 w-[61%] origin-left rounded-full bg-foreground/8" />
+          </div>
         </div>
-      </div>
+      ) : (
+        <p className="mt-auto better-t3-preview-label text-foreground">
+          {props.translate("settings.betterT3.preview.chat.response")}
+        </p>
+      )}
     </div>
   );
 }
@@ -314,30 +325,112 @@ function SidebarLayoutPreview(props: {
 
 function ChatPresentationPreview(props: {
   readonly model: BetterT3ChatPreviewModel;
+  readonly reasoning: BetterT3AgentPreviewModel;
   readonly translate: Translate;
 }) {
+  const betterT3 = props.model.presentation === "better-t3";
+  const classic = props.model.presentation === "classic";
+  const inlineReasoning =
+    props.reasoning.reasoningVisibility &&
+    !props.reasoning.reasoningWorkingOverlay &&
+    !props.reasoning.reasoningInMessage;
+  const workingReasoning =
+    props.reasoning.reasoningVisibility && props.reasoning.reasoningWorkingOverlay;
   return (
-    <div className="flex h-full min-w-0 flex-col gap-1.5 rounded-lg border border-border/70 bg-card p-2 shadow-xs">
-      <div className="ml-auto flex h-5 w-[48%] shrink-0 items-center rounded-md bg-primary/12 px-2">
-        <span className="h-1 w-3/4 rounded-full bg-primary/30" />
-      </div>
+    <div
+      className="flex h-full min-w-0 flex-col rounded-lg border border-border/70 bg-background p-2 shadow-xs"
+      data-chat-presentation={props.model.presentation}
+      data-presentation-motion={betterT3 && props.model.presentationMotion}
+      style={{ fontSize: "0.625rem" }}
+    >
       <div
-        className={cn(
-          "better-t3-preview-reveal flex min-h-0 items-start gap-1.5",
-          props.model.presentation === "current" &&
-            "rounded-md border border-border/60 bg-muted/25 p-2",
-        )}
+        className="mx-auto flex min-h-0 flex-1 flex-col gap-2"
+        style={{ width: `${props.model.contentWidthPercent}%` }}
       >
-        <BotIcon className="mt-0.5 size-3 shrink-0 text-muted-foreground" />
-        <div className="min-w-0 flex-1 space-y-1.5">
-          <div className="truncate better-t3-preview-label leading-3 text-foreground/80">
-            {props.translate("settings.betterT3.preview.chat.response")}
-          </div>
-          <div className="h-1 w-[88%] rounded-full bg-foreground/15" />
-          <div className="h-1 w-[62%] rounded-full bg-foreground/10" />
+        <div
+          className={cn(
+            "ml-auto max-w-[80%] px-2 py-1",
+            betterT3
+              ? "better-t3-preview-message rounded-xl bg-message text-message-foreground"
+              : "rounded-lg bg-primary/12 text-primary",
+          )}
+        >
+          <span className="block h-1 w-12 max-w-full rounded-full bg-current opacity-25" />
         </div>
+        <div className="flex flex-col gap-1 text-muted-foreground">
+          {inlineReasoning ? (
+            <div className="flex min-w-0 items-center gap-1.5">
+              <BrainIcon className="size-3 shrink-0" />
+              <span className="min-w-0 truncate">
+                {props.translate("settings.betterT3.preview.chat.thought")}
+              </span>
+              <ChevronRightIcon className="size-2.5 shrink-0" />
+            </div>
+          ) : null}
+          <div className="flex min-w-0 items-center gap-1.5">
+            <SearchIcon className="size-3 shrink-0" />
+            <span className="min-w-0 truncate">
+              {props.translate(
+                classic
+                  ? "settings.betterT3.preview.chat.tool"
+                  : "settings.betterT3.preview.chat.toolGroup",
+              )}
+            </span>
+            <ChevronRightIcon className="size-2.5 shrink-0" />
+          </div>
+          {classic ? (
+            <span className="flex items-center gap-1 pl-4.5">
+              {props.translate("settings.betterT3.preview.chat.moreTools")}
+              <ChevronDownIcon className="size-2.5 shrink-0" />
+            </span>
+          ) : null}
+        </div>
+        <div
+          className={cn(
+            "flex min-h-0 items-start gap-1.5",
+            betterT3 &&
+              "better-t3-preview-message mr-auto max-w-[80%] rounded-xl bg-message px-2 py-1 text-message-foreground",
+            betterT3 &&
+              props.model.presentationMotion &&
+              props.model.characterStreamingMotion &&
+              "better-t3-preview-presentation-reveal",
+          )}
+        >
+          {!betterT3 ? <BotIcon className="mt-0.5 size-3 shrink-0 text-muted-foreground" /> : null}
+          <div className="min-w-0 flex-1 space-y-1.5">
+            {props.reasoning.reasoningInMessage ? (
+              <div className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
+                <BrainIcon className="size-3 shrink-0" />
+                <span className="min-w-0 truncate">
+                  {props.translate("settings.betterT3.preview.chat.thought")}
+                </span>
+                <ChevronRightIcon className="size-2.5 shrink-0" />
+              </div>
+            ) : null}
+            <p className={cn("leading-relaxed", !betterT3 && "text-foreground")}>
+              {props.translate("settings.betterT3.preview.chat.response")}
+            </p>
+            {betterT3 ? (
+              <span className="inline-flex max-w-full items-center gap-1.5">
+                <FileIcon className="size-3 shrink-0" />
+                <span className="min-w-0 truncate font-medium">App.tsx</span>
+                <span className="shrink-0 font-mono text-success">
+                  +12 <span className="text-destructive">−3</span>
+                </span>
+              </span>
+            ) : null}
+          </div>
+        </div>
+        {workingReasoning ? (
+          <div className="mt-auto flex min-w-0 items-center gap-1 rounded-lg border border-border/60 bg-card px-1.5 py-1 text-muted-foreground">
+            <span>{props.translate("chat.timeline.working")}</span>
+            <span className="truncate">
+              {props.translate("settings.betterT3.preview.reasoning.current")}
+            </span>
+          </div>
+        ) : null}
       </div>
-      <span className="mt-auto block h-4 shrink-0 rounded-md border border-border/60 bg-background" />
+      <span className="mt-2 block h-4 shrink-0 rounded-md border border-border/60 bg-card" />
     </div>
   );
 }
@@ -435,10 +528,10 @@ export type BetterT3VisualChoiceValue =
 function visualChoiceValues(
   featureId: BetterT3VisualFeatureId,
 ): ReadonlyArray<BetterT3VisualChoiceValue> {
-  if (featureId === "agent.reasoningVisibility") return ["none", "chat", "working"];
+  if (featureId === "agent.reasoningVisibility") return ["none", "chat", "working", "message"];
   if (featureId === "voice.outputLanguage") return ["native", "english"];
   if (featureId === "chat.sidebarPosition") return ["left", "right"];
-  if (featureId === "chat.presentation") return ["current", "classic"];
+  if (featureId === "chat.presentation") return CHAT_VISUAL_MODES;
   if (featureId === "chat.contextWindowSelector") return ["native", "better-t3"];
   return [false, true];
 }
@@ -496,7 +589,9 @@ function visualChoiceLabel(
         ? "settings.betterT3.reasoning.none"
         : value === "working"
           ? "settings.betterT3.reasoning.working"
-          : "settings.betterT3.reasoning.chat",
+          : value === "message"
+            ? "settings.betterT3.reasoning.message"
+            : "settings.betterT3.reasoning.chat",
     );
   }
   if (featureId === "chat.sidebarPosition") {
@@ -507,9 +602,8 @@ function visualChoiceLabel(
     );
   }
   if (featureId === "chat.presentation") {
-    return translate(
-      value === "classic" ? "settings.betterT3.value.classic" : "settings.betterT3.value.current",
-    );
+    const mode = CHAT_VISUAL_MODES.find((mode) => mode === value) ?? "current";
+    return translate(`settings.chatVisuals.${mode}`);
   }
   if (featureId === "chat.contextWindowSelector") {
     return translate(
@@ -551,6 +645,7 @@ function visualChoiceModel(
           ...model.agent,
           reasoningVisibility: value !== "none",
           reasoningWorkingOverlay: value === "working",
+          reasoningInMessage: value === "message",
         },
       };
     case "chat.sidebarPosition":
@@ -570,7 +665,10 @@ function visualChoiceModel(
     case "chat.presentation":
       return {
         ...model,
-        chat: { ...model.chat, presentation: value === "classic" ? "classic" : "current" },
+        chat: {
+          ...model.chat,
+          presentation: CHAT_VISUAL_MODES.find((mode) => mode === value) ?? "current",
+        },
       };
     case "chat.workspaceCardDeck":
       return { ...model, chat: { ...model.chat, workspaceCardDeck: value === true } };
@@ -578,6 +676,8 @@ function visualChoiceModel(
       return { ...model, chat: { ...model.chat, composerPlanBubble: value === true } };
     case "chat.characterStreamingMotion":
       return { ...model, chat: { ...model.chat, characterStreamingMotion: value === true } };
+    case "chat.presentationMotion":
+      return { ...model, chat: { ...model.chat, presentationMotion: value === true } };
     case "chat.contextWindowSelector":
       return {
         ...model,
@@ -601,7 +701,8 @@ export function BetterT3FeatureChoice(props: {
       aria-label={props.translate(`betterT3.${props.featureId}.label`)}
       className={cn(
         "grid grid-cols-1 gap-3 pb-2 pt-3 sm:grid-cols-2",
-        props.featureId === "agent.reasoningVisibility" && "lg:grid-cols-3",
+        props.featureId === "chat.presentation" && "lg:grid-cols-3",
+        props.featureId === "agent.reasoningVisibility" && "xl:grid-cols-4",
       )}
       data-better-t3-feature-choice={props.featureId}
       role="radiogroup"
@@ -616,7 +717,11 @@ export function BetterT3FeatureChoice(props: {
                   ? "settings.betterT3.compaction.betterT3Description"
                   : "settings.betterT3.compaction.codexDescription",
               )
-            : undefined;
+            : props.featureId === "chat.presentation"
+              ? props.translate(
+                  `settings.chatVisuals.${CHAT_VISUAL_MODES.find((mode) => mode === value) ?? "current"}.description`,
+                )
+              : undefined;
         return (
           <button
             aria-checked={selected}
@@ -781,10 +886,12 @@ function BetterT3FeatureVisual(props: {
     case "agent.reasoningVisibility":
       return (
         <FeatureVisualFrame
-          animationKey={`reasoning:${agent.reasoningVisibility}:${agent.reasoningWorkingOverlay}`}
+          animationKey={`reasoning:${agent.reasoningVisibility}:${agent.reasoningWorkingOverlay}:${agent.reasoningInMessage}`}
           featureId={props.featureId}
         >
-          {agent.reasoningWorkingOverlay ? (
+          {agent.reasoningInMessage ? (
+            <ChatPresentationPreview model={chat} reasoning={agent} translate={props.translate} />
+          ) : agent.reasoningWorkingOverlay ? (
             <div className="flex h-full flex-col justify-end gap-2">
               <div className="flex items-center gap-2 rounded-xl border border-border/70 bg-card px-3 py-2 shadow-xs">
                 <span className="shrink-0 better-t3-preview-label text-muted-foreground">
@@ -816,12 +923,13 @@ function BetterT3FeatureVisual(props: {
         </FeatureVisualFrame>
       );
     case "chat.presentation":
+    case "chat.presentationMotion":
       return (
         <FeatureVisualFrame
-          animationKey={`presentation:${chat.presentation}:${chat.characterStreamingMotion}`}
+          animationKey={`presentation:${chat.presentation}:${chat.presentationMotion}:${agent.reasoningVisibility}:${agent.reasoningWorkingOverlay}`}
           featureId={props.featureId}
         >
-          <ChatPresentationPreview model={chat} translate={props.translate} />
+          <ChatPresentationPreview model={chat} reasoning={agent} translate={props.translate} />
         </FeatureVisualFrame>
       );
     case "chat.characterStreamingMotion":

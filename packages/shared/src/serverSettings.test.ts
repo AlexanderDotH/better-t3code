@@ -7,6 +7,7 @@ import {
   UsageLimitSourceId,
   McpServerId,
   resolveBetterT3FeatureFlag,
+  resolveChatVisualModeRecord,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
@@ -282,6 +283,121 @@ describe("serverSettings helpers", () => {
     });
     expect(staleLegacy.interfaceLocaleSyncRecordV1).toEqual(current.interfaceLocaleSyncRecordV1);
     expect(staleLegacy.interfaceLanguageSyncRecord).toEqual(current.interfaceLanguageSyncRecord);
+  });
+
+  it("writes V2 chat modes and compatible legacy mirrors together", () => {
+    for (const mode of ["current", "classic", "better-t3"] as const) {
+      const record = { mode, updatedAt: 30, updateId: "device-b:30" };
+      const configured = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+        chatVisualModeSyncRecordV2: record,
+      });
+      expect(configured.chatVisualModeSyncRecordV2).toEqual(record);
+      expect(configured.chatVisualModeSyncRecord).toEqual({
+        ...record,
+        mode: mode === "better-t3" ? "current" : mode,
+      });
+      const unrelated = applyServerSettingsPatch(configured, { defaultAutoPull: true });
+      expect(unrelated.defaultAutoPull).toBe(true);
+      expect(unrelated.chatVisualModeSyncRecordV2).toEqual(record);
+      expect(unrelated.chatVisualModeSyncRecord).toEqual(configured.chatVisualModeSyncRecord);
+    }
+  });
+
+  it("ignores stale chat mode writes and the echo of a V2 legacy mirror", () => {
+    const record = { mode: "better-t3", updatedAt: 30, updateId: "device-b:30" } as const;
+    const current = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      chatVisualModeSyncRecordV2: record,
+    });
+    for (const patch of [
+      { chatVisualModeSyncRecord: { ...record, mode: "current" as const } },
+      { chatVisualModeSyncRecord: { ...record, mode: "classic" as const, updatedAt: 29 } },
+      {
+        chatVisualModeSyncRecord: {
+          ...record,
+          mode: "classic" as const,
+          updateId: "device-a:30",
+        },
+      },
+      { chatVisualModeSyncRecordV2: { ...record, mode: "classic" as const, updatedAt: 29 } },
+      { chatVisualModeSyncRecordV2: { ...record, mode: "classic" as const } },
+    ]) {
+      const patched = applyServerSettingsPatch(current, patch);
+      expect(patched.chatVisualModeSyncRecordV2).toEqual(record);
+      expect(patched.chatVisualModeSyncRecord).toEqual(current.chatVisualModeSyncRecord);
+    }
+  });
+
+  it("lets newer legacy choices win regardless of arrival order", () => {
+    const v2 = { mode: "better-t3", updatedAt: 30, updateId: "device-b:30" } as const;
+    for (const legacy of [
+      { mode: "classic", updatedAt: 31, updateId: "device-a:31" },
+      { mode: "classic", updatedAt: 30, updateId: "device-c:30" },
+    ] as const) {
+      const patches = [{ chatVisualModeSyncRecordV2: v2 }, { chatVisualModeSyncRecord: legacy }];
+      for (const ordered of [patches, patches.toReversed()]) {
+        const saved = ordered.reduce(applyServerSettingsPatch, DEFAULT_SERVER_SETTINGS);
+        expect(saved.chatVisualModeSyncRecordV2).toEqual(v2);
+        expect(saved.chatVisualModeSyncRecord).toEqual(legacy);
+        expect(
+          resolveChatVisualModeRecord(
+            saved.chatVisualModeSyncRecord,
+            saved.chatVisualModeSyncRecordV2,
+          ),
+        ).toEqual(legacy);
+      }
+    }
+  });
+
+  it("resolves conflicting fields by clock and prefers V2 when their clocks match", () => {
+    const v2 = { mode: "better-t3", updatedAt: 30, updateId: "device-b:30" } as const;
+    for (const legacy of [
+      { mode: "classic", updatedAt: 29, updateId: "device-b:29" },
+      { mode: "classic", updatedAt: 30, updateId: "device-b:30" },
+      { mode: "classic", updatedAt: 31, updateId: "device-b:31" },
+    ] as const) {
+      const saved = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+        chatVisualModeSyncRecordV2: v2,
+        chatVisualModeSyncRecord: legacy,
+      });
+      const expected = legacy.updatedAt > v2.updatedAt ? legacy : v2;
+      expect(saved.chatVisualModeSyncRecordV2).toEqual(v2);
+      expect(
+        resolveChatVisualModeRecord(
+          saved.chatVisualModeSyncRecord,
+          saved.chatVisualModeSyncRecordV2,
+        ),
+      ).toEqual(expected);
+      expect(saved.chatVisualModeSyncRecord).toEqual({
+        ...expected,
+        mode: expected.mode === "better-t3" ? "current" : expected.mode,
+      });
+    }
+  });
+
+  it("upgrades a legacy-only mirror when its matching V2 record arrives", () => {
+    const record = { mode: "better-t3", updatedAt: 30, updateId: "device-b:30" } as const;
+    const mirrorOnly = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      chatVisualModeSyncRecord: { ...record, mode: "current" },
+    });
+    expect(mirrorOnly.chatVisualModeSyncRecordV2).toBeUndefined();
+    const saved = applyServerSettingsPatch(mirrorOnly, { chatVisualModeSyncRecordV2: record });
+    expect(saved.chatVisualModeSyncRecordV2).toEqual(record);
+  });
+
+  it("restores Better T3 after another client promoted its mirror into V2", () => {
+    const record = { mode: "better-t3", updatedAt: 30, updateId: "device-b:30" } as const;
+    const promotedMirror = { ...record, mode: "current" } as const;
+    const initial = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      chatVisualModeSyncRecordV2: promotedMirror,
+    });
+    const restored = applyServerSettingsPatch(initial, { chatVisualModeSyncRecordV2: record });
+    const echoed = applyServerSettingsPatch(restored, {
+      chatVisualModeSyncRecordV2: promotedMirror,
+    });
+    for (const saved of [restored, echoed]) {
+      expect(saved.chatVisualModeSyncRecordV2).toEqual(record);
+      expect(saved.chatVisualModeSyncRecord).toEqual(promotedMirror);
+    }
   });
 
   it("maps former streaming choices without overriding the canonical mode", () => {

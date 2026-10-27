@@ -53,7 +53,23 @@ export function filePreviewKind(file: {
   return "unsupported";
 }
 
+/** Lightweight previews shown inside a chat, separate from the full file viewer. */
+export function fileThumbnailKind(file: { readonly name: string; readonly mimeType?: string }) {
+  const mime = file.mimeType?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  if (
+    mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    ((!mime || mime === "application/octet-stream" || mime === "application/zip") &&
+      /\.docx$/i.test(file.name))
+  ) {
+    return "document" as const;
+  }
+  const kind = filePreviewKind(file);
+  if (kind === "html" || kind === "markdown") return "text" as const;
+  return kind === "unsupported" || kind === "audio" ? null : kind;
+}
+
 export const FILE_TEXT_PREVIEW_MAX_BYTES = 1024 * 1024;
+export const FILE_THUMBNAIL_TEXT_MAX_BYTES = 16 * 1024;
 
 /** Reject binary data rather than displaying replacement characters as a document. */
 export function decodeFilePreviewText(bytes: Uint8Array, truncated = false) {

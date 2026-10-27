@@ -105,3 +105,51 @@ describe("buildBetterT3SettingsPreviewModel", () => {
     expect(after.agent.animationKey).toBe(before.agent.animationKey);
   });
 });
+
+it("uses the actual reasoning setting even when a stale feature flag disagrees", () => {
+  const input = {
+    features: [
+      feature("agent.reasoningVisibility", false),
+      feature("agent.reasoningWorkingOverlay", true, "blocked"),
+    ],
+    chatVisualMode: "better-t3" as const,
+    reasoningWorkingOverlay: true,
+    contextWindowSelector: "native" as const,
+    sidebarPosition: "left" as const,
+  };
+  expect(buildBetterT3SettingsPreviewModel({ ...input, showReasoning: false }).agent).toMatchObject(
+    {
+      reasoningVisibility: false,
+      reasoningWorkingOverlay: false,
+    },
+  );
+  expect(buildBetterT3SettingsPreviewModel({ ...input, showReasoning: true }).agent).toMatchObject({
+    reasoningVisibility: true,
+    reasoningWorkingOverlay: true,
+  });
+});
+
+it("keeps motion choices independent and follows the actual chat width", () => {
+  const input = {
+    features: [
+      feature("chat.presentationMotion", false),
+      feature("chat.characterStreamingMotion", true),
+    ],
+    chatVisualMode: "better-t3" as const,
+    contextWindowSelector: "native" as const,
+    sidebarPosition: "left" as const,
+  };
+  expect(buildBetterT3SettingsPreviewModel({ ...input, chatWidth: "full" }).chat).toMatchObject({
+    presentationMotion: false,
+    characterStreamingMotion: true,
+    contentWidthPercent: 100,
+  });
+  expect(
+    buildBetterT3SettingsPreviewModel({
+      ...input,
+      chatWidth: "wide",
+      chatWidthCustomizationEnabled: true,
+      chatWidthAdjustmentPercent: -100,
+    }).chat.contentWidthPercent,
+  ).toBe(30);
+});

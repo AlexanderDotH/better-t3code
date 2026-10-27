@@ -1,3 +1,4 @@
+import { useChatBubblePalette } from "./ChatBubble";
 import type { DeepPlanEvidence, DeepPlanRun, DeepPlanStepStatus } from "@t3tools/contracts";
 import {
   deepPlanCitationTitles,
@@ -71,6 +72,7 @@ export const DeepPlanChecklist = memo(function DeepPlanChecklist(props: {
   readonly canContinue?: boolean;
 }) {
   const translator = useMobileInterfaceTranslator();
+  const palette = useChatBubblePalette("warning");
   const [expanded, setExpanded] = useState(true);
   const [expandedStepId, setExpandedStepId] = useState<string | null>(null);
   const [resuming, setResuming] = useState(false);
@@ -210,6 +212,15 @@ export const DeepPlanChecklist = memo(function DeepPlanChecklist(props: {
                 }}
                 disabled={resuming || props.resumeDisabled === true}
                 className="min-h-11 items-center justify-center rounded-xl border border-border px-3"
+                style={
+                  palette.better && props.embedded
+                    ? ({ pressed }) => ({
+                        backgroundColor: pressed ? palette.hover : palette.control,
+                        borderRadius: 999,
+                        borderWidth: 0,
+                      })
+                    : undefined
+                }
                 onPress={async () => {
                   setResuming(true);
                   setResumeError(null);

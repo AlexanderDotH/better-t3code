@@ -1,20 +1,21 @@
 import {
-  ChatVisualModeSyncRecord,
+  ChatVisualModeSyncRecordV2,
+  chatVisualModeToLegacyRecord,
   DEFAULT_CHAT_VISUAL_MODE,
   type ChatVisualMode,
-  type ChatVisualModeSyncRecord as ChatVisualModeSyncRecordType,
+  type ChatVisualModeSyncRecordV2 as ChatVisualModeSyncRecordType,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import type { Preferences } from "../persistence/mobile-preferences";
 
-const decodeChatVisualModeSyncRecord = Schema.decodeUnknownSync(ChatVisualModeSyncRecord);
+const decodeChatVisualModeSyncRecord = Schema.decodeUnknownSync(ChatVisualModeSyncRecordV2);
 
 export interface MobileChatVisualModePreferencePatch extends Pick<
   Preferences,
-  "chatVisualModeSyncRecord"
+  "chatVisualModeSyncRecord" | "chatVisualModeSyncRecordV2"
 > {
-  readonly chatVisualModeSyncRecord: ChatVisualModeSyncRecordType;
+  readonly chatVisualModeSyncRecordV2: ChatVisualModeSyncRecordType;
 }
 
 export function resolveMobileChatVisualMode(
@@ -34,7 +35,10 @@ export function createMobileChatVisualModeRecord(
 export function mobileChatVisualModePreferencePatch(
   record: ChatVisualModeSyncRecordType,
 ): MobileChatVisualModePreferencePatch {
-  return { chatVisualModeSyncRecord: record };
+  return {
+    chatVisualModeSyncRecord: chatVisualModeToLegacyRecord(record),
+    chatVisualModeSyncRecordV2: record,
+  };
 }
 
 export function nextMobileChatVisualModeUpdatedAt(input: {

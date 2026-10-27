@@ -24,6 +24,7 @@ import type {
   EnvironmentId,
   MessageId,
   ModelSelection,
+  OrchestrationCheckpointSummary,
   OrchestrationThreadShell,
   OrchestrationProposedPlan,
   OrchestrationSubagentSummary,
@@ -138,6 +139,7 @@ import type { ResponseMetricsSnapshot, TurnId } from "@t3tools/contracts";
 import type { ContextWindowSnapshot } from "@t3tools/client-runtime/context-window";
 
 export interface ThreadDetailScreenProps {
+  readonly checkpoints?: ReadonlyArray<OrchestrationCheckpointSummary>;
   readonly messageReply?: ComposerDraft["messageReply"];
   readonly messageRepliesEnabled?: boolean;
   readonly messageReplySending?: boolean;
@@ -1102,6 +1104,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             )}
           >
             <ThreadFeed
+              connected={props.connectionStateLabel === "connected"}
+              checkpoints={props.checkpoints}
               environmentId={props.environmentId}
               threadId={props.selectedThread.id}
               workspaceRoot={props.threadCwd}

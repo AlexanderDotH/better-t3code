@@ -14,7 +14,7 @@ export function ThreadSubagents({
   subagents,
   markdownCwd,
   timestampFormat,
-  streamingMotionEnabled = false,
+  streamingMotionEnabled = true,
 }: {
   readonly threadRef: ScopedThreadRef;
   readonly subagents: readonly OrchestrationSubagentSummary[];

@@ -1,50 +1,48 @@
-import type { ChatVisualMode } from "@t3tools/contracts";
+import { CHAT_VISUAL_MODES } from "@t3tools/contracts";
+import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 
 export interface ChatVisualModeSyncStatus {
   readonly isSyncing: boolean;
+  readonly isLocalOnly?: boolean;
   readonly failedEnvironmentLabels: readonly string[];
   readonly deferredEnvironmentLabels: readonly string[];
   readonly unsupportedEnvironmentLabels: readonly string[];
 }
 
-export const CHAT_VISUAL_MODE_OPTIONS: ReadonlyArray<{
-  readonly mode: ChatVisualMode;
-  readonly label: string;
-  readonly description: string;
-}> = [
-  {
-    mode: "current",
-    label: "Current",
-    description: "Shows the activity-focused transcript with larger work summaries.",
-  },
-  {
-    mode: "classic",
-    label: "Classic",
-    description: "Restores the compact legacy transcript layout.",
-  },
-];
-
-function environmentList(labels: readonly string[]): string {
-  return labels.join(", ");
+export function chatVisualModeOptions(translate: InterfaceTranslator["message"]) {
+  return CHAT_VISUAL_MODES.map((mode) => ({
+    mode,
+    label: translate(`settings.chatVisuals.${mode}`),
+    description: translate(`settings.chatVisuals.${mode}.description`),
+  }));
 }
 
-export function chatVisualModeSyncMessages(status: ChatVisualModeSyncStatus): readonly string[] {
+export function chatVisualModeSyncMessages(
+  status: ChatVisualModeSyncStatus,
+  translate: InterfaceTranslator["message"],
+): readonly string[] {
   const messages: string[] = [];
-  if (status.isSyncing) {
-    messages.push("Syncing with connected environments…");
-  }
+  if (status.isLocalOnly) messages.push(translate("settings.chatVisuals.sync.local"));
+  if (status.isSyncing) messages.push(translate("settings.chatVisuals.sync.pending"));
   if (status.failedEnvironmentLabels.length > 0) {
-    const subject = environmentList(status.failedEnvironmentLabels);
-    const reconnect =
-      status.failedEnvironmentLabels.length === 1 ? "it reconnects" : "they reconnect";
-    messages.push(`Could not sync with ${subject}. T3 Code will retry after ${reconnect}.`);
+    messages.push(
+      translate("settings.chatVisuals.sync.failed", {
+        environments: status.failedEnvironmentLabels.join(", "),
+      }),
+    );
   }
   if (status.deferredEnvironmentLabels.length > 0) {
-    messages.push(`Waiting for ${environmentList(status.deferredEnvironmentLabels)} to reconnect.`);
+    messages.push(
+      translate("settings.chatVisuals.sync.deferred", {
+        environments: status.deferredEnvironmentLabels.join(", "),
+      }),
+    );
   }
   if (status.unsupportedEnvironmentLabels.length > 0) {
     messages.push(
-      `Update ${environmentList(status.unsupportedEnvironmentLabels)} to sync this setting.`,
+      translate("settings.chatVisuals.sync.unsupported", {
+        environments: status.unsupportedEnvironmentLabels.join(", "),
+      }),
     );
   }
   return messages;

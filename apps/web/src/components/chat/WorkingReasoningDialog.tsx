@@ -1,5 +1,5 @@
 import { reasoningTitleMarkdown } from "@t3tools/client-runtime/work-log/reasoning";
-import type { TurnId } from "@t3tools/contracts";
+import type { ChatVisualMode, TurnId } from "@t3tools/contracts";
 import { BrainIcon, ChevronRightIcon } from "lucide-react";
 import type { Root, RootContent } from "mdast";
 import {
@@ -15,6 +15,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import { cn } from "../../lib/utils";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import ChatMarkdown from "../ChatMarkdown";
@@ -29,6 +30,7 @@ export interface WorkingReasoningTrace {
   readonly streaming: boolean;
   readonly turnId?: TurnId | null;
   readonly createdAt?: string;
+  readonly updatedAt?: string;
 }
 
 interface ReasoningSelection {
@@ -104,6 +106,7 @@ export function WorkingReasoningDialogProvider(props: {
       detail: message.text,
       turnId: message.turnId,
       createdAt: message.createdAt,
+      updatedAt: message.updatedAt,
       streaming:
         message.streaming && message.turnId !== null && message.turnId === props.activeTurnId,
     }));
@@ -197,6 +200,7 @@ export function WorkingReasoningLog(props: {
   readonly traces: readonly WorkingReasoningTrace[];
   readonly followTurnId?: TurnId;
   readonly compact?: boolean;
+  readonly chatVisualMode?: ChatVisualMode;
 }) {
   const openReasoning = use(WorkingReasoningDialogContext);
   const label = useInterfaceTranslator().message("chat.timeline.thinking");
@@ -224,12 +228,23 @@ export function WorkingReasoningLog(props: {
           className={
             props.compact
               ? "flex min-w-0 w-full items-center justify-center gap-1.5 rounded-md text-2xs text-secondary-label focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              : "flex min-h-6 min-w-0 w-full items-center gap-1.5 rounded-md px-0.5 text-start text-sm text-secondary-label hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              : cn(
+                  "flex min-h-6 min-w-0 w-full items-center gap-1.5 rounded-md px-0.5 text-start text-secondary-label hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  props.chatVisualMode === "classic" ? "text-xs" : "text-sm",
+                )
           }
         />
       }
     >
-      {props.compact ? null : <BrainIcon aria-hidden className="size-4 shrink-0 text-icon-muted" />}
+      {props.compact ? null : (
+        <BrainIcon
+          aria-hidden
+          className={cn(
+            "shrink-0 text-icon-muted",
+            props.chatVisualMode === "classic" ? "size-3.5" : "size-4",
+          )}
+        />
+      )}
       <span className="min-w-0 truncate">
         <ReasoningTitle title={reasoningTitleMarkdown(trace.detail, label)} fallback={label} />
       </span>

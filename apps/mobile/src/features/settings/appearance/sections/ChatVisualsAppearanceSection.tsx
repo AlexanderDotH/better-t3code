@@ -2,20 +2,27 @@ import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../../../components/AppText";
 import { SymbolView } from "../../../../components/AppSymbol";
+import { SettingsSwitchRow } from "../../components/SettingsSwitchRow";
 import { SettingsSection } from "../../components/SettingsSection";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
-import { CHAT_VISUAL_MODE_OPTIONS, chatVisualModeSyncMessages } from "../chatVisualsAppearance";
+import { chatVisualModeOptions, chatVisualModeSyncMessages } from "../chatVisualsAppearance";
 import { useMobileInterfaceTranslator } from "../../../../localization/useMobileInterfaceTranslator";
 
 export function ChatVisualsAppearanceSection() {
   const translator = useMobileInterfaceTranslator();
-  const { chatVisualMode, chatVisualModeSyncStatus, isReady, setChatVisualMode } =
-    useAppearancePreferences();
-  const messages = chatVisualModeSyncMessages(chatVisualModeSyncStatus);
+  const {
+    chatVisualMode,
+    chatVisualModeSyncStatus,
+    isReady,
+    setChatVisualMode,
+    presentationMotion,
+    setPresentationMotion,
+  } = useAppearancePreferences();
+  const messages = chatVisualModeSyncMessages(chatVisualModeSyncStatus, translator.message);
 
   return (
     <SettingsSection card title={translator.message("mobile.appearance.chatVisuals")}>
-      {CHAT_VISUAL_MODE_OPTIONS.map((option, index) => (
+      {chatVisualModeOptions(translator.message).map((option, index) => (
         <Pressable
           key={option.mode}
           accessibilityRole="radio"
@@ -50,6 +57,14 @@ export function ChatVisualsAppearanceSection() {
         </Pressable>
       ))}
 
+      <SettingsSwitchRow
+        disabled={!isReady}
+        icon="sparkles"
+        label={translator.message("betterT3.chat.presentationMotion.label")}
+        subtitle={translator.message("mobile.appearance.presentationMotionDescription")}
+        onValueChange={setPresentationMotion}
+        value={presentationMotion}
+      />
       {messages.length > 0 ? (
         <View className="gap-1 border-t border-border-subtle p-4">
           {messages.map((message) => (

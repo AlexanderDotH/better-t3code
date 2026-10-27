@@ -16,6 +16,7 @@ import {
 } from "./chat/markdownTableState";
 
 const motionPreferences = vi.hoisted(() => ({ enabled: false }));
+vi.mock("../chatVisualModeSync", () => ({ useChatVisualMode: () => "current" }));
 const visualizationState = vi.hoisted(() => ({ enabled: false, render: vi.fn() }));
 vi.mock("../hooks/useVisualizationsEnabled", () => ({
   useVisualizationsEnabled: () => visualizationState.enabled,
@@ -276,6 +277,54 @@ describe("ChatMarkdown favicon privacy", () => {
 });
 
 describe("ChatMarkdown streaming", () => {
+  it("honors the character-motion setting for the first and final chunks without another opt-in", async () => {
+    motionPreferences.enabled = true;
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    const markdown = (text: string, isStreaming: boolean) => (
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={text}
+        isStreaming={isStreaming}
+        streamId="setting-driven-stream"
+        animateInitialStreamChunk={isStreaming}
+      />
+    );
+    const animated = () => renderer!.root.findAllByProps({ "data-stream-character": "" });
+    try {
+      await act(() => {
+        renderer = create(markdown("First", true));
+      });
+      expect(
+        animated()
+          .map((node) => node.children.join(""))
+          .join(""),
+      ).toBe("First");
+
+      await act(() => {
+        renderer!.update(markdown("First final", false));
+      });
+      expect(
+        animated()
+          .map((node) => node.children.join(""))
+          .join(""),
+      ).toContain("final");
+
+      motionPreferences.enabled = false;
+      await act(() => {
+        renderer!.update(markdown("First final disabled", false));
+      });
+      expect(animated()).toHaveLength(0);
+      const renderedText = (node: ReactTestInstance | string): string =>
+        typeof node === "string" ? node : node.children.map(renderedText).join("");
+      expect(renderedText(renderer!.root.findByType("p"))).toBe("First final disabled");
+    } finally {
+      await act(() => renderer?.unmount());
+      motionPreferences.enabled = false;
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("animates appended graphemes while retaining parsed formatting and clears motion when disabled", async () => {
     motionPreferences.enabled = true;
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);

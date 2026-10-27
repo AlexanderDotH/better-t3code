@@ -145,10 +145,14 @@ function BetterT3SettingsSubgroupContent({
   const panelId = `${id}-panel`;
 
   useLayoutEffect(() => {
-    if (targetId && getBetterT3SettingsSubgroupForTarget(targetId)?.id === groupId) {
+    if (
+      group?.collapsible &&
+      targetId &&
+      getBetterT3SettingsSubgroupForTarget(targetId)?.id === groupId
+    ) {
       setExpanded(true);
     }
-  }, [groupId, setExpanded, targetId]);
+  }, [group?.collapsible, groupId, setExpanded, targetId]);
   useLayoutEffect(() => {
     if (!group?.collapsible || !expanded) return;
     if (mountedExpandedContent.current) retryTarget();

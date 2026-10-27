@@ -1211,6 +1211,7 @@ function ThreadRouteContent(
 
       <View className="flex-1 bg-screen android:overflow-hidden android:rounded-t-[28px] android:bg-thread-canvas">
         <ThreadDetailScreen
+          checkpoints={gitWorkbenchEnabled ? selectedThreadDetail?.checkpoints : undefined}
           selectedThread={selectedThreadWithDraftSettings ?? selectedThread}
           contentPresentation={contentPresentation}
           screenTone={connectionTone(routeConnectionState)}

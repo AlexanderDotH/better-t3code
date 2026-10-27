@@ -4,8 +4,11 @@ import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
 import type * as React from "react";
+import { createContext, use } from "react";
 
 import { cn } from "~/lib/utils";
+
+export const ButtonAppearanceContext = createContext<"default" | "soft">("default");
 
 const buttonVariants = cva(
   "[--control-icon-color:currentColor] [&_svg]:-mx-0.5 relative inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-[var(--control-radius)] border font-medium text-base outline-none transition-[box-shadow,scale] [&:active:not([aria-haspopup])]:scale-[0.97] before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--control-radius)-1px)] pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-64 aria-disabled:cursor-not-allowed aria-disabled:opacity-64 sm:text-sm [&_svg:not([class*='text-'])]:text-[var(--control-icon-color)] [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
@@ -39,6 +42,11 @@ const buttonVariants = cva(
         xs: "h-7 gap-1 px-[calc(--spacing(2)-1px)] text-sm sm:h-6 sm:text-xs [&_svg:not([class*='size-'])]:size-4 sm:[&_svg:not([class*='size-'])]:size-3.5",
       },
       variant: {
+        soft: "[--control-radius:999px] rounded-full border-transparent bg-(--soft-control-background,var(--secondary)) text-(--soft-control-foreground,var(--foreground)) shadow-none before:rounded-full [:hover,[data-pressed]]:bg-(--soft-control-hover,var(--accent))",
+        "soft-ghost":
+          "[--control-radius:999px] [--control-icon-color:currentColor] rounded-full border-transparent text-muted-foreground before:rounded-full [:hover,[data-pressed]]:bg-(--soft-control-hover,var(--accent)) [:hover,[data-pressed]]:text-foreground",
+        "soft-destructive":
+          "[--control-radius:999px] rounded-full border-transparent bg-destructive/10 text-destructive-foreground shadow-none before:rounded-full [:hover,[data-pressed]]:bg-destructive/18",
         default:
           "not-disabled:inset-shadow-[0_1px_--theme(--color-white/16%)] border-primary bg-primary text-primary-foreground shadow-primary/24 shadow-xs [:active,[data-pressed]]:inset-shadow-[0_1px_--theme(--color-black/8%)] [:disabled,:active,[data-pressed]]:shadow-none [:hover,[data-pressed]]:bg-primary/90",
         destructive:
@@ -79,12 +87,29 @@ interface ButtonProps extends useRender.ComponentProps<"button"> {
 }
 
 function Button({ className, variant, size, render, ...props }: ButtonProps) {
+  const appearance = use(ButtonAppearanceContext);
+  const softVariant: ButtonVariant =
+    variant === "destructive" ||
+    variant === "destructive-outline" ||
+    variant === "ghost-destructive"
+      ? "soft-destructive"
+      : variant === "ghost" || variant === "ghost-muted"
+        ? "soft-ghost"
+        : variant === undefined ||
+            variant === "default" ||
+            variant === "outline" ||
+            variant === "secondary" ||
+            variant === "warning-outline"
+          ? "soft"
+          : variant;
   const typeValue: React.ButtonHTMLAttributes<HTMLButtonElement>["type"] = render
     ? undefined
     : "button";
 
   const defaultProps = {
-    className: cn(buttonVariants({ className, size, variant })),
+    className: cn(
+      buttonVariants({ className, size, variant: appearance === "soft" ? softVariant : variant }),
+    ),
     "data-slot": "button",
     type: typeValue,
   };

@@ -6,6 +6,7 @@ import {
   EnvironmentId,
   type ChatVisualMode,
   type ChatVisualModeSyncRecord,
+  type ChatVisualModeSyncRecordV2,
   type ClientSettings,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -19,7 +20,10 @@ interface EnvironmentFixture {
   connection: { phase: "connected" | "disconnected" };
   serverConfig: {
     environment: { capabilities: { environmentSettingsVersion: number } };
-    settings: { chatVisualModeSyncRecord: ChatVisualModeSyncRecord };
+    settings: {
+      chatVisualModeSyncRecord: ChatVisualModeSyncRecord;
+      chatVisualModeSyncRecordV2?: ChatVisualModeSyncRecordV2;
+    };
   };
 }
 
@@ -73,7 +77,7 @@ function readDisk() {
 function saved(mode: ChatVisualMode) {
   return new Promise<ClientSettings>((resolve) => {
     const receipt = (settings: ClientSettings) => {
-      if (settings.chatVisualModeLocalRecord?.mode !== mode) return;
+      if (settings.chatVisualModeLocalRecordV2?.mode !== mode) return;
       saveReceipts.delete(receipt);
       resolve(settings);
     };
@@ -89,6 +93,7 @@ function Selection() {
       <output>{mode}</output>
       <button onClick={() => setMode("classic")}>Classic</button>
       <button onClick={() => setMode("current")}>Current</button>
+      <button onClick={() => setMode("better-t3")}>Better T3</button>
       <ChatVisualModeSyncCoordinator />
     </>
   );
@@ -107,8 +112,10 @@ async function restart() {
   await mount();
 }
 
-async function choose(label: "Classic" | "Current") {
-  const receipt = saved(label === "Classic" ? "classic" : "current");
+async function choose(label: "Classic" | "Current" | "Better T3") {
+  const receipt = saved(
+    label === "Classic" ? "classic" : label === "Current" ? "current" : "better-t3",
+  );
   await act(async () => {
     [...container.querySelectorAll("button")]
       .find((button) => button.textContent === label)!
@@ -349,4 +356,69 @@ it("keeps the legacy choice recoverable when its migration cannot be written", a
   expect(localStorage.getItem(legacyKey)).toBeNull();
   await restart();
   expect(container.querySelector("output")!.textContent).toBe("classic");
+});
+
+it("persists Better T3 and its Current mirror offline through a restart", async () => {
+  disk = JSON.stringify(encode({ ...DEFAULT_CLIENT_SETTINGS, fontSizeInterface: 17 }));
+  await mount();
+  await choose("Better T3");
+  const better = readDisk()?.chatVisualModeLocalRecordV2;
+  expect(better?.mode).toBe("better-t3");
+  expect(readDisk()?.chatVisualModeLocalRecord).toEqual({ ...better, mode: "current" });
+  await restart();
+  expect(container.querySelector("output")!.textContent).toBe("better-t3");
+  expect(readDisk()?.fontSizeInterface).toBe(17);
+  expect(mocks.updateServer).not.toHaveBeenCalled();
+});
+
+it("keeps Better T3 local when a connected server can only read V1", async () => {
+  mocks.environments = [
+    {
+      environmentId: EnvironmentId.make("old"),
+      label: "Old server",
+      connection: { phase: "connected" },
+      serverConfig: {
+        environment: { capabilities: { environmentSettingsVersion: 3 } },
+        settings: {
+          chatVisualModeSyncRecord: { mode: "current", updatedAt: 100, updateId: "old" },
+        },
+      },
+    },
+  ];
+  await mount();
+  mocks.updateServer.mockClear();
+  await choose("Better T3");
+  expect(container.querySelector("output")!.textContent).toBe("better-t3");
+  expect(mocks.updateServer).not.toHaveBeenCalled();
+});
+
+it("restores Better T3 from V2 over an already migrated Current mirror at the same clock", async () => {
+  const better = { mode: "better-t3", updatedAt: 500, updateId: "server:better" } as const;
+  const mirror = { ...better, mode: "current" } as const;
+  disk = JSON.stringify(
+    encode({
+      ...DEFAULT_CLIENT_SETTINGS,
+      chatVisualModeLocalRecord: mirror,
+      chatVisualModeLocalRecordV2: mirror,
+    }),
+  );
+  mocks.environments = [
+    {
+      environmentId: EnvironmentId.make("modern"),
+      label: "Modern server",
+      connection: { phase: "connected" },
+      serverConfig: {
+        environment: { capabilities: { environmentSettingsVersion: 6 } },
+        settings: { chatVisualModeSyncRecord: mirror, chatVisualModeSyncRecordV2: better },
+      },
+    },
+  ];
+  const receipt = saved("better-t3");
+  await mount();
+  await act(async () => {
+    await receipt;
+  });
+  expect(container.querySelector("output")!.textContent).toBe("better-t3");
+  expect(readDisk()?.chatVisualModeLocalRecordV2).toEqual(better);
+  expect(mocks.updateServer).not.toHaveBeenCalled();
 });

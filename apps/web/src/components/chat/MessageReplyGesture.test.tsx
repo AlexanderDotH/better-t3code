@@ -107,12 +107,16 @@ describe.each([
 ] as const)("reply pointer gesture for %s messages", (role, direction) => {
   it("replies on release without rerendering message content", () => {
     const { onReply, text, renderContent } = renderGesture(role);
+    const surface = container.querySelector("[data-message-reply-gesture]")!;
     pointer(text, "pointerdown", 0);
+    expect(surface.hasAttribute("data-message-reply-dragging")).toBe(false);
     pointer(text, "pointermove", direction * 56);
+    expect(surface.getAttribute("data-message-reply-dragging")).toBe("true");
     expect(onReply).not.toHaveBeenCalled();
     expect(renderContent).toHaveBeenCalledTimes(1);
     pointer(text, "pointerup", direction * 56);
     expect(onReply).toHaveBeenCalledTimes(1);
+    expect(surface.hasAttribute("data-message-reply-dragging")).toBe(false);
     expect(container.querySelector<HTMLElement>("[style*='translateX']")).toBeNull();
   });
 

@@ -20,6 +20,7 @@ import {
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { Button } from "../ui/button";
 import { ComposerBanner } from "./ComposerBanner";
+import { ChatSizeMotion } from "./ChatSizeMotion";
 
 function stepStatusMessage(status: DeepPlanStepStatus) {
   switch (status) {
@@ -146,194 +147,199 @@ export function DeepPlanChecklist({
       className={placement === "plan" ? "min-w-0" : "min-w-0 p-3"}
       data-deep-plan-checklist={run.id}
     >
-      <div className="flex min-w-0 items-center gap-2">
-        <ListChecksIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium">{translate("chat.deepPlan.checklist")}</p>
-          <p className="text-xs text-muted-foreground" aria-live="polite">
-            {translate("chat.deepPlan.stepProgress", { completed, total: plan.steps.length })}
-          </p>
-        </div>
-        <Button
-          variant="ghost-muted"
-          size="icon"
-          aria-label={translate(expanded ? "chat.deepPlan.collapse" : "chat.deepPlan.expand")}
-          aria-controls={detailsId}
-          aria-expanded={expanded}
-          onClick={() => setExpanded(!expanded)}
-        >
-          {expanded ? (
-            <ChevronDownIcon aria-hidden="true" />
-          ) : (
-            <ChevronRightIcon aria-hidden="true" />
-          )}
-        </Button>
-      </div>
-      {current ? (
-        <p className="mt-2 break-words text-xs text-muted-foreground">
-          {translate("chat.deepPlan.currentStep", { title: current.title })}
-        </p>
-      ) : null}
-      {expanded ? (
-        <div
-          id={detailsId}
-          className={
-            placement === "plan"
-              ? "mt-2"
-              : "mt-2 max-h-[min(36dvh,20rem)] overflow-y-auto overscroll-contain"
-          }
-        >
-          <ol className="space-y-1">
-            {steps.map(({ step, status, evidence }, index) => {
-              const sources = deepPlanCitationTitles(
-                step.sources,
-                run.sources,
-                translate("chat.deepPlan.sourceUnavailable"),
-              );
-              return (
-                <li key={step.id}>
-                  <details className="rounded-md border border-border/70">
-                    <summary className="min-h-11 cursor-pointer px-3 py-2 text-sm focus-visible:rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                      {status === "verified" ? (
-                        <SquareCheckIcon
-                          aria-hidden
-                          className="me-2 inline size-3.5 align-text-bottom text-success-foreground"
-                        />
-                      ) : (
-                        <SquareIcon
-                          aria-hidden
-                          className="me-2 inline size-3.5 align-text-bottom text-muted-foreground"
-                        />
-                      )}
-                      <span className="break-words">
-                        {index + 1}. {step.title}
-                      </span>
-                      <span className="ms-2 text-xs text-muted-foreground">
-                        {translate(stepStatusMessage(status))}
-                      </span>
-                    </summary>
-                    <div className="space-y-2 px-3 pb-3 text-xs">
-                      <p className="whitespace-pre-wrap text-muted-foreground">
-                        {step.description}
-                      </p>
-                      {sources.length > 0 ? (
-                        <p className="break-words text-muted-foreground">
-                          {translate("chat.deepPlan.sources")}: {sources.join("; ")}
-                        </p>
-                      ) : null}
-                      {step.dependencies.length > 0 ? (
-                        <p className="break-words text-muted-foreground">
-                          {translate("chat.deepPlan.dependencies")}:{" "}
-                          {step.dependencies
-                            .map(
-                              (id) => plan.steps.find((dependency) => dependency.id === id)?.title,
-                            )
-                            .filter(Boolean)
-                            .join("; ")}
-                        </p>
-                      ) : null}
-                      <div>
-                        <strong className="font-medium">
-                          {translate("chat.deepPlan.requirements")}
-                        </strong>
-                        <ul className="mt-1 list-disc space-y-1 ps-4">
-                          {step.acceptanceCriteria.map((criterion) => {
-                            const titles = deepPlanCitationTitles(
-                              criterion.sources,
-                              run.sources,
-                              translate("chat.deepPlan.sourceUnavailable"),
-                            );
-                            return (
-                              <li key={criterion.id}>
-                                {criterion.description}
-                                <span className="block text-muted-foreground">
-                                  {criterion.checkMethod}
-                                </span>
-                                {titles.length > 0 ? (
-                                  <span className="block break-words text-muted-foreground">
-                                    {translate("chat.deepPlan.sources")}: {titles.join("; ")}
-                                  </span>
-                                ) : null}
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      </div>
-                      <div>
-                        <strong className="font-medium">
-                          {translate("chat.deepPlan.evidence")}
-                        </strong>
-                        {evidence.length ? (
-                          <ul className="mt-1 list-disc space-y-1 ps-4">
-                            {evidence.map((item) => (
-                              <li
-                                key={`${item.createdAt}:${item.kind}:${item.summary}:${item.reference ?? ""}`}
-                                className="break-words"
-                              >
-                                {item.summary}
-                                {item.reference ? (
-                                  <span className="block whitespace-pre-wrap text-muted-foreground">
-                                    {item.reference}
-                                  </span>
-                                ) : null}
-                              </li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <p className="mt-1 text-muted-foreground">
-                            {translate("chat.deepPlan.noEvidence")}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  </details>
-                </li>
-              );
-            })}
-          </ol>
-          <div
-            className="mt-3 rounded-md border border-border bg-background/60 p-3"
-            data-deep-plan-final-validation="true"
-          >
-            <div className="flex items-center gap-2 text-sm font-medium">
-              {validation.status === "passed" ? (
-                <CircleCheckIcon className="size-4" aria-hidden="true" />
-              ) : validation.status === "failed" ? (
-                <TriangleAlertIcon className="size-4" aria-hidden="true" />
-              ) : null}
-              {translate("chat.deepPlan.finalValidation")}
-            </div>
-            <p className="mt-1 text-xs text-muted-foreground">{plan.finalValidation.description}</p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {translate("chat.deepPlan.checkMethod")}: {plan.finalValidation.checkMethod}
+      <ChatSizeMotion>
+        <div className="flex min-w-0 items-center gap-2">
+          <ListChecksIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium">{translate("chat.deepPlan.checklist")}</p>
+            <p className="text-xs text-muted-foreground" aria-live="polite">
+              {translate("chat.deepPlan.stepProgress", { completed, total: plan.steps.length })}
             </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {validation.status === "passed"
-                ? translate("chat.deepPlan.status.verified")
-                : validation.status === "failed"
-                  ? translate("chat.deepPlan.status.failed")
-                  : validation.status === "inProgress"
-                    ? translate("chat.deepPlan.status.inProgress")
-                    : translate("chat.deepPlan.validationPending")}
-            </p>
-            {validation.evidence.length ? (
-              <ul className="mt-2 list-disc space-y-1 ps-4 text-xs">
-                {validation.evidence.map((item) => (
-                  <li
-                    key={`${item.createdAt}:${item.kind}:${item.summary}:${item.reference ?? ""}`}
-                    className="break-words"
-                  >
-                    {item.summary}
-                    {item.reference ? (
-                      <span className="block text-muted-foreground">{item.reference}</span>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
           </div>
+          <Button
+            variant="ghost-muted"
+            size="icon"
+            aria-label={translate(expanded ? "chat.deepPlan.collapse" : "chat.deepPlan.expand")}
+            aria-controls={detailsId}
+            aria-expanded={expanded}
+            onClick={() => setExpanded(!expanded)}
+          >
+            {expanded ? (
+              <ChevronDownIcon aria-hidden="true" />
+            ) : (
+              <ChevronRightIcon aria-hidden="true" />
+            )}
+          </Button>
         </div>
-      ) : null}
+        {current ? (
+          <p className="mt-2 break-words text-xs text-muted-foreground">
+            {translate("chat.deepPlan.currentStep", { title: current.title })}
+          </p>
+        ) : null}
+        {expanded ? (
+          <div
+            id={detailsId}
+            className={
+              placement === "plan"
+                ? "mt-2"
+                : "mt-2 max-h-[min(36dvh,20rem)] overflow-y-auto overscroll-contain"
+            }
+          >
+            <ol className="space-y-1">
+              {steps.map(({ step, status, evidence }, index) => {
+                const sources = deepPlanCitationTitles(
+                  step.sources,
+                  run.sources,
+                  translate("chat.deepPlan.sourceUnavailable"),
+                );
+                return (
+                  <li key={step.id}>
+                    <details className="rounded-md border border-border/70">
+                      <summary className="min-h-11 cursor-pointer px-3 py-2 text-sm focus-visible:rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                        {status === "verified" ? (
+                          <SquareCheckIcon
+                            aria-hidden
+                            className="me-2 inline size-3.5 align-text-bottom text-success-foreground"
+                          />
+                        ) : (
+                          <SquareIcon
+                            aria-hidden
+                            className="me-2 inline size-3.5 align-text-bottom text-muted-foreground"
+                          />
+                        )}
+                        <span className="break-words">
+                          {index + 1}. {step.title}
+                        </span>
+                        <span className="ms-2 text-xs text-muted-foreground">
+                          {translate(stepStatusMessage(status))}
+                        </span>
+                      </summary>
+                      <div className="space-y-2 px-3 pb-3 text-xs">
+                        <p className="whitespace-pre-wrap text-muted-foreground">
+                          {step.description}
+                        </p>
+                        {sources.length > 0 ? (
+                          <p className="break-words text-muted-foreground">
+                            {translate("chat.deepPlan.sources")}: {sources.join("; ")}
+                          </p>
+                        ) : null}
+                        {step.dependencies.length > 0 ? (
+                          <p className="break-words text-muted-foreground">
+                            {translate("chat.deepPlan.dependencies")}:{" "}
+                            {step.dependencies
+                              .map(
+                                (id) =>
+                                  plan.steps.find((dependency) => dependency.id === id)?.title,
+                              )
+                              .filter(Boolean)
+                              .join("; ")}
+                          </p>
+                        ) : null}
+                        <div>
+                          <strong className="font-medium">
+                            {translate("chat.deepPlan.requirements")}
+                          </strong>
+                          <ul className="mt-1 list-disc space-y-1 ps-4">
+                            {step.acceptanceCriteria.map((criterion) => {
+                              const titles = deepPlanCitationTitles(
+                                criterion.sources,
+                                run.sources,
+                                translate("chat.deepPlan.sourceUnavailable"),
+                              );
+                              return (
+                                <li key={criterion.id}>
+                                  {criterion.description}
+                                  <span className="block text-muted-foreground">
+                                    {criterion.checkMethod}
+                                  </span>
+                                  {titles.length > 0 ? (
+                                    <span className="block break-words text-muted-foreground">
+                                      {translate("chat.deepPlan.sources")}: {titles.join("; ")}
+                                    </span>
+                                  ) : null}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </div>
+                        <div>
+                          <strong className="font-medium">
+                            {translate("chat.deepPlan.evidence")}
+                          </strong>
+                          {evidence.length ? (
+                            <ul className="mt-1 list-disc space-y-1 ps-4">
+                              {evidence.map((item) => (
+                                <li
+                                  key={`${item.createdAt}:${item.kind}:${item.summary}:${item.reference ?? ""}`}
+                                  className="break-words"
+                                >
+                                  {item.summary}
+                                  {item.reference ? (
+                                    <span className="block whitespace-pre-wrap text-muted-foreground">
+                                      {item.reference}
+                                    </span>
+                                  ) : null}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="mt-1 text-muted-foreground">
+                              {translate("chat.deepPlan.noEvidence")}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </details>
+                  </li>
+                );
+              })}
+            </ol>
+            <div
+              className="mt-3 rounded-md border border-border bg-background/60 p-3"
+              data-deep-plan-final-validation="true"
+            >
+              <div className="flex items-center gap-2 text-sm font-medium">
+                {validation.status === "passed" ? (
+                  <CircleCheckIcon className="size-4" aria-hidden="true" />
+                ) : validation.status === "failed" ? (
+                  <TriangleAlertIcon className="size-4" aria-hidden="true" />
+                ) : null}
+                {translate("chat.deepPlan.finalValidation")}
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {plan.finalValidation.description}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {translate("chat.deepPlan.checkMethod")}: {plan.finalValidation.checkMethod}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {validation.status === "passed"
+                  ? translate("chat.deepPlan.status.verified")
+                  : validation.status === "failed"
+                    ? translate("chat.deepPlan.status.failed")
+                    : validation.status === "inProgress"
+                      ? translate("chat.deepPlan.status.inProgress")
+                      : translate("chat.deepPlan.validationPending")}
+              </p>
+              {validation.evidence.length ? (
+                <ul className="mt-2 list-disc space-y-1 ps-4 text-xs">
+                  {validation.evidence.map((item) => (
+                    <li
+                      key={`${item.createdAt}:${item.kind}:${item.summary}:${item.reference ?? ""}`}
+                      className="break-words"
+                    >
+                      {item.summary}
+                      {item.reference ? (
+                        <span className="block text-muted-foreground">{item.reference}</span>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+      </ChatSizeMotion>
     </div>
   );
   if (placement === "plan") return content;

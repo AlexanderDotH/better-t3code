@@ -11,6 +11,27 @@ import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
+export function MessageReplyButton({ onReply }: { onReply: () => void }) {
+  const translate = useInterfaceTranslator().message;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            size="icon-xs"
+            variant="ghost-muted"
+            aria-label={translate("chat.reply.action")}
+            onClick={onReply}
+          />
+        }
+      >
+        <ReplyIcon />
+      </TooltipTrigger>
+      <TooltipPopup>{translate("chat.reply.action")}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
 const INTERACTIVE_CONTENT =
   "a,button,input,textarea,select,[contenteditable=true],[role=button],[role=link],audio,video,img,canvas,iframe,pre,code,table,[data-reply-gesture-ignore]";
 const MESSAGE_TEXT =
@@ -62,10 +83,12 @@ export function MessageReplyGesture({
   children,
   onReply,
   role,
+  showAction = true,
 }: {
   children: ReactNode;
   role: "user" | "assistant";
   onReply: (() => void) | undefined;
+  showAction?: boolean;
 }) {
   const translate = useInterfaceTranslator().message;
   const surfaceRef = useRef<HTMLDivElement>(null);
@@ -88,6 +111,7 @@ export function MessageReplyGesture({
     cleanupPointerListenersRef.current = null;
     if (pointer && surfaceRef.current?.hasPointerCapture?.(pointer.id))
       surfaceRef.current.releasePointerCapture(pointer.id);
+    surfaceRef.current?.removeAttribute("data-message-reply-dragging");
     if (contentRef.current) {
       contentRef.current.style.removeProperty("transition");
       contentRef.current.style.removeProperty("transform");
@@ -121,6 +145,7 @@ export function MessageReplyGesture({
         return null;
       }
       pointer.locked = true;
+      surfaceRef.current?.setAttribute("data-message-reply-dragging", "true");
       if (event.type === "pointermove") surfaceRef.current?.setPointerCapture?.(event.pointerId);
     }
     if (selectionActive) window.getSelection()?.removeAllRanges();
@@ -306,7 +331,7 @@ export function MessageReplyGesture({
       >
         {children}
       </div>
-      {onReply ? (
+      {onReply && showAction ? (
         <div
           ref={actionRef}
           data-message-reply-action
@@ -314,21 +339,7 @@ export function MessageReplyGesture({
           data-side={role === "assistant" ? "left" : "right"}
           className="absolute flex opacity-0 transition-opacity duration-150 motion-reduce:transition-none data-[side=left]:top-0.5 data-[side=left]:right-full data-[side=left]:pr-1.5 data-[side=right]:top-2 data-[side=right]:left-full data-[side=right]:pl-1.5 data-[nearby=true]:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100"
         >
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  size="icon-xs"
-                  variant="ghost-muted"
-                  aria-label={translate("chat.reply.action")}
-                  onClick={onReply}
-                />
-              }
-            >
-              <ReplyIcon />
-            </TooltipTrigger>
-            <TooltipPopup>{translate("chat.reply.action")}</TooltipPopup>
-          </Tooltip>
+          <MessageReplyButton onReply={onReply} />
         </div>
       ) : null}
     </div>

@@ -960,6 +960,11 @@ export const mobileInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "L’indexation extrait la terminologie du projet et les noms des technologies pour AssemblyAI. Aucun extrait de source n’est envoyé.",
   ],
   "mobile.appearance.title": ["Appearance", "Darstellung", "Apparence"],
+  "mobile.appearance.presentationMotionDescription": [
+    "Brief transitions in Better T3 mode on this device. Reduced motion disables them.",
+    "Kurze Übergänge im Better-T3-Modus auf diesem Gerät. Reduzierte Bewegung deaktiviert sie.",
+    "De brèves transitions en mode Better T3 sur cet appareil. La réduction des animations les désactive.",
+  ],
   "mobile.appearance.chatVisuals": [
     "Chat visuals",
     "Chat-Darstellung",

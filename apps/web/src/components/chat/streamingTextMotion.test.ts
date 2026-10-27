@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   calculateStreamingTextMotionTiming,
+  MAX_STREAMING_TEXT_MOTION_REVEAL_MS,
   createStreamingTextMotionFrame,
   detectStreamingTextAppend,
   getStreamingTextMotionAnimationTiming,
@@ -201,46 +202,103 @@ describe("streaming append detection", () => {
 describe("adaptive streaming timing", () => {
   it("uses the slow-output budget at 20 graphemes per second", () => {
     expect(calculateStreamingTextMotionTiming(20, 4)).toEqual({
-      durationMs: 125,
-      staggerWindowMs: 35,
-      staggerStepMs: 35 / 3,
-      revealDeadlineMs: 160,
+      durationMs: 360,
+      staggerWindowMs: 72,
+      staggerStepMs: 24,
+      revealDeadlineMs: 432,
     });
   });
 
   it("uses the fast-output budget at 180 graphemes per second", () => {
     expect(calculateStreamingTextMotionTiming(180, 4)).toEqual({
-      durationMs: 65,
-      staggerWindowMs: 6,
-      staggerStepMs: 2,
-      revealDeadlineMs: 71,
+      durationMs: 150,
+      staggerWindowMs: 12,
+      staggerStepMs: 4,
+      revealDeadlineMs: 162,
     });
   });
 
-  it("interpolates between timing budgets and caps the final reveal at 160ms", () => {
+  it("interpolates between rates without stretching a short batch across the entire stagger window", () => {
     const timing = calculateStreamingTextMotionTiming(100, 2);
 
     expect(timing).toEqual({
-      durationMs: 95,
-      staggerWindowMs: 20.5,
-      staggerStepMs: 20.5,
-      revealDeadlineMs: 115.5,
+      durationMs: 255,
+      staggerWindowMs: 14,
+      staggerStepMs: 14,
+      revealDeadlineMs: 269,
     });
-    expect(timing.revealDeadlineMs).toBeLessThanOrEqual(160);
+    expect(timing.revealDeadlineMs).toBeLessThanOrEqual(MAX_STREAMING_TEXT_MOTION_REVEAL_MS);
   });
 
   it("uses no stagger for a one-grapheme batch", () => {
     expect(calculateStreamingTextMotionTiming(20, 1)).toEqual({
-      durationMs: 125,
-      staggerWindowMs: 35,
+      durationMs: 360,
+      staggerWindowMs: 0,
       staggerStepMs: 0,
-      revealDeadlineMs: 125,
+      revealDeadlineMs: 360,
     });
   });
 
   it("smooths observed output using an EWMA factor of 0.35", () => {
     expect(smoothStreamingTextRate(undefined, 80)).toBe(80);
     expect(smoothStreamingTextRate(80, 180)).toBe(115);
+  });
+
+  it("speeds up immediately for a burst and slows back down after sparse output", () => {
+    const sparse = createStreamingTextMotionFrame({
+      append: detectStreamingTextAppend("", "a")!,
+      elapsedMs: 500,
+      generation: 1,
+      previousRate: undefined,
+    });
+    const burst = createStreamingTextMotionFrame({
+      append: detectStreamingTextAppend("", "a".repeat(120))!,
+      elapsedMs: 40,
+      generation: 2,
+      previousRate: sparse.smoothedRate,
+    });
+    const sparseAgain = createStreamingTextMotionFrame({
+      append: detectStreamingTextAppend("", "b")!,
+      elapsedMs: 1_000,
+      generation: 3,
+      previousRate: burst.smoothedRate,
+    });
+    expect(burst.frame!.durationMs).toBeLessThan(sparse.frame!.durationMs);
+    expect(burst.frame!.revealDeadlineMs).toBeLessThan(sparse.frame!.revealDeadlineMs);
+    expect(sparseAgain.frame!.durationMs).toBeGreaterThan(burst.frame!.durationMs);
+    expect(sparseAgain.frame!.durationMs).toBe(sparse.frame!.durationMs);
+  });
+
+  it("tracks arrival cadence and clears a buffered paragraph quickly after a pause", () => {
+    const append = detectStreamingTextAppend("", "hello")!;
+    const slow = createStreamingTextMotionFrame({
+      append,
+      elapsedMs: 500,
+      generation: 1,
+      previousRate: undefined,
+    });
+    const fast = createStreamingTextMotionFrame({
+      append,
+      elapsedMs: 20,
+      generation: 2,
+      previousRate: slow.smoothedRate,
+    });
+    const buffered = createStreamingTextMotionFrame({
+      append: detectStreamingTextAppend("", "hello ".repeat(40))!,
+      elapsedMs: 5_000,
+      generation: 3,
+      previousRate: fast.smoothedRate,
+    });
+    expect(fast.frame!.durationMs).toBeLessThan(slow.frame!.durationMs);
+    expect(buffered.frame!.revealDeadlineMs).toBeLessThan(slow.frame!.revealDeadlineMs);
+    expect(buffered.frame!.revealDeadlineMs).toBeLessThan(250);
+    for (const rate of [0, 20, 50, 100, 180, 5_000]) {
+      for (const count of [1, 4, 16, 64, 512]) {
+        expect(
+          calculateStreamingTextMotionTiming(rate, count).revealDeadlineMs,
+        ).toBeLessThanOrEqual(MAX_STREAMING_TEXT_MOTION_REVEAL_MS);
+      }
+    }
   });
 
   it("animates only the newest 512 graphemes of an oversized Unicode append", () => {
@@ -296,8 +354,8 @@ describe("adaptive streaming timing", () => {
 
     expect(result.frame?.generation).toBe(7);
     expect(getStreamingTextMotionDelayMs(result.frame!, 0)).toBe(0);
-    expect(getStreamingTextMotionDelayMs(result.frame!, 3)).toBe(35);
-    expect(result.frame?.revealDeadlineMs).toBe(160);
+    expect(getStreamingTextMotionDelayMs(result.frame!, 3)).toBe(72);
+    expect(result.frame?.revealDeadlineMs).toBe(432);
   });
 
   it("resumes retained character motion when a renderer remounts its spans", () => {
@@ -313,7 +371,7 @@ describe("adaptive streaming timing", () => {
     expect(getStreamingTextMotionDelayMs(result.frame!, 0, 150)).toBe(-50);
     expect(getStreamingTextMotionAnimationTiming(result.frame!, 0, 150)).toEqual({
       delayMs: -50,
-      durationMs: 125,
+      durationMs: 360,
     });
   });
 });
@@ -494,6 +552,77 @@ describe("Markdown source reconciliation", () => {
 });
 
 describe("streaming motion commit lifecycle", () => {
+  it("finishes the active reveal and animates text delivered with the completion event", () => {
+    const input = {
+      animateInitialStreamChunk: true,
+      isStreaming: true,
+      isVisible: true,
+      nowMs: 100,
+      streamId: "message-1",
+      text: "First",
+    };
+    const active = advanceStreamingTextMotionCommit(null, input);
+    const completed = advanceStreamingTextMotionCommit(active, {
+      ...input,
+      isStreaming: false,
+      nowMs: 101,
+    });
+    expect(completed.frames).toBe(active.frames);
+
+    const finalAppend = advanceStreamingTextMotionCommit(active, {
+      ...input,
+      isStreaming: false,
+      nowMs: 101,
+      text: "First final",
+    });
+    expect(finalAppend.frames.at(-1)).toMatchObject({ sourceStart: 5, sourceEnd: 11 });
+    expect(
+      advanceStreamingTextMotionCommit(finalAppend, {
+        ...input,
+        enabled: false,
+        isStreaming: false,
+        nowMs: 102,
+        text: "First final",
+      }).frames,
+    ).toHaveLength(0);
+  });
+
+  it("retires the completed reveal without an animation-frame loop", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    const { callbacks, document } = installStreamingMotionTestDom();
+    const { createRoot } = await import("react-dom/client");
+    const root = createRoot(document.createElement("div") as unknown as Element);
+    const snapshots: StreamingTextMotionSnapshot[] = [];
+    const onSnapshot = (snapshot: StreamingTextMotionSnapshot) => snapshots.push(snapshot);
+    try {
+      await act(() =>
+        root.render(
+          createElement(StreamingTextMotionHarness, {
+            text: "",
+            isStreaming: true,
+            onSnapshot,
+          }),
+        ),
+      );
+      await act(() =>
+        root.render(
+          createElement(StreamingTextMotionHarness, {
+            text: "Final",
+            isStreaming: false,
+            onSnapshot,
+          }),
+        ),
+      );
+      expect(snapshots.at(-1)?.frames).toHaveLength(1);
+      expect(callbacks.size).toBe(0);
+      await act(() => vi.advanceTimersByTime(MAX_STREAMING_TEXT_MOTION_REVEAL_MS));
+      expect(snapshots.at(-1)?.frames).toHaveLength(0);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      await act(() => root.unmount());
+    }
+  });
+
   it("publishes motion with each text commit without waiting for another animation frame", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
     const { callbacks, document } = installStreamingMotionTestDom();
@@ -513,7 +642,7 @@ describe("streaming motion commit lifecycle", () => {
         expect(callbacks.size).toBe(0);
       }
       expect(snapshots.at(-1)?.frames.map((frame) => frame.sourceStart)).toEqual([0, 1, 2]);
-      await act(() => vi.advanceTimersByTime(200));
+      await act(() => vi.advanceTimersByTime(MAX_STREAMING_TEXT_MOTION_REVEAL_MS));
       expect(snapshots.at(-1)?.frames).toHaveLength(3);
       expect(vi.getTimerCount()).toBe(0);
       await act(() =>
@@ -594,11 +723,11 @@ describe("streaming motion commit lifecycle", () => {
       { generation: 2, sourceStart: 1, sourceEnd: 2 },
     ]);
 
-    const afterFirstDeadline = clearCompletedStreamingTextMotionSequence(secondDelta, 226);
+    const afterFirstDeadline = clearCompletedStreamingTextMotionSequence(secondDelta, 461);
     expect(afterFirstDeadline).toBe(secondDelta);
     expect(afterFirstDeadline.frames.map(({ generation }) => generation)).toEqual([1, 2]);
 
-    const afterFinalDeadline = clearCompletedStreamingTextMotionSequence(secondDelta, 276);
+    const afterFinalDeadline = clearCompletedStreamingTextMotionSequence(secondDelta, 511);
     expect(afterFinalDeadline.frames).toHaveLength(0);
   });
 
@@ -722,8 +851,8 @@ describe("streaming motion commit lifecycle", () => {
       text: "A".repeat(32),
     });
 
-    expect(oneGrapheme.frames[0]?.durationMs).toBe(125);
-    expect(manyGraphemes.frames[0]?.durationMs).toBeLessThan(125);
+    expect(oneGrapheme.frames[0]?.durationMs).toBe(360);
+    expect(manyGraphemes.frames[0]?.durationMs).toBeLessThan(360);
     expect(manyGraphemes.frames[0]?.revealDeadlineMs).toBeLessThan(
       oneGrapheme.frames[0]!.revealDeadlineMs,
     );
@@ -783,7 +912,9 @@ describe("streaming motion commit lifecycle", () => {
     expect(appended.frames.at(-1)?.smoothedRate).toBe(80);
     expect(appended.frames.at(-1)?.sourceStart).toBe(1);
     expect(smoothed.generation).toBe(2);
-    expect(smoothed.frames.at(-1)?.smoothedRate).toBe(115);
+    expect(smoothed.frames.at(-1)?.smoothedRate).toBeGreaterThan(80);
+    expect(smoothed.frames.at(-1)?.smoothedRate).toBeLessThan(180);
+    expect(smoothed.frames.at(-1)?.durationMs).toBeLessThan(appended.frames.at(-1)!.durationMs);
   });
 
   it("clears and resets rate on replacement, completion, hiding, and stream changes", () => {
@@ -807,7 +938,7 @@ describe("streaming motion commit lifecycle", () => {
       animateInitialStreamChunk: false,
       isStreaming: false,
       isVisible: true,
-      nowMs: 200,
+      nowMs: 100 + MAX_STREAMING_TEXT_MOTION_REVEAL_MS,
       streamId: "message-1",
       text: "abc",
     });

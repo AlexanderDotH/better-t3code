@@ -236,6 +236,7 @@ class T3MarkdownTextSelectionModule : Module() {
         ),
         maximumWidth = (metrics.widthPixels - 80 * metrics.density).coerceAtLeast(100f),
         density = metrics.density,
+        messageAppearance = payload.optString("appearance") == "message",
       )
       // toInt() truncates, so a fractional pixel of the chip would fall outside the bitmap
       // and take the right-hand border with it. Round up: a spare column costs nothing.

@@ -1,9 +1,14 @@
 import { isElectron } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
-import { STATIC_KEYBINDING_COMMANDS, type KeybindingCommand } from "@t3tools/contracts";
+import {
+  CHAT_VISUAL_MODES,
+  STATIC_KEYBINDING_COMMANDS,
+  type KeybindingCommand,
+} from "@t3tools/contracts";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import { DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { commandLabel } from "./KeybindingsSettings.logic";
 import {
   validateSettingsScopeSearch,
@@ -139,6 +144,26 @@ const KEYBINDING_SEARCH_ITEMS = STATIC_KEYBINDING_COMMANDS.toSorted((left, right
  * that may not be mounted point at their nearest stable section instead.
  */
 export const SETTINGS_SEARCH_ITEMS = [
+  {
+    id: "chat-presentation",
+    title: "Chat presentation",
+    to: "/settings/better-t3",
+    targetId: "chat.presentation",
+    searchTerms: [
+      "Chat-Darstellung Présentation conversation transcript",
+      ...(["en", "de", "fr"] as const).flatMap((language) => {
+        const translate = createInterfaceTranslator({ language, locale: language }).message;
+        return CHAT_VISUAL_MODES.map((mode) => translate(`settings.chatVisuals.${mode}`));
+      }),
+    ],
+  },
+  {
+    id: "chat-presentation-motion",
+    title: "Better T3 transitions",
+    to: "/settings/better-t3",
+    targetId: "chat.presentationMotion",
+    searchTerms: ["Better-T3-Übergänge Transitions Better T3 animation motion reduced movement"],
+  },
   {
     id: "chat-visualizations",
     title: "Diagrams & data visualization",

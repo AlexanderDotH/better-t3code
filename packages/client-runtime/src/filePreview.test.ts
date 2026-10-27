@@ -49,6 +49,15 @@ describe("readFilePreviewResponse", () => {
     expect(cancelled).toBe(true);
   });
 
+  it("bounds thumbnail text and preserves a partial UTF-8 character at the limit", async () => {
+    const content = await readFilePreviewResponse(
+      new Response("abc€end"),
+      new AbortController().signal,
+      4,
+    );
+    expect(content).toEqual({ text: "abc", truncated: true });
+  });
+
   it("stops consuming an unbounded response and cancels its stream", async () => {
     let cancelled = false;
     const body = new ReadableStream<Uint8Array>({

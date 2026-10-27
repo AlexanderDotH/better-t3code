@@ -6,6 +6,8 @@ import { act, createElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
+vi.mock("./ChatBubble", () => ({ useChatBubblePalette: () => ({ better: false }) }));
+
 vi.mock("react-native", () => {
   const Container = (props: { children?: ReactNode }) => createElement("div", {}, props.children);
   return { View: Container, ScrollView: Container, Pressable: Container };

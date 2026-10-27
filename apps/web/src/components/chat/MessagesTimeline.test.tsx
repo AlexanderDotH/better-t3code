@@ -2,6 +2,8 @@
 
 import {
   ApprovalRequestId,
+  CHAT_VISUAL_MODES,
+  type ChatVisualMode,
   ComposerContextId,
   DEFAULT_CLIENT_SETTINGS,
   CheckpointRef,
@@ -33,9 +35,11 @@ import { InlineMessageEditor } from "./InlineMessageEditor";
 import { MessagesTimeline, resolvePreviewAnnotationImage } from "./MessagesTimeline";
 import { WorkingReasoningDialogProvider } from "./WorkingReasoningDialog";
 import { deriveUnsettledTurnId } from "./MessagesTimeline.logic";
+import { readTimelinePosition } from "./timelineScrollAnchoring";
+import { MAX_STREAMING_TEXT_MOTION_REVEAL_MS } from "./streamingTextMotion";
 import { useClientSettings } from "../../hooks/useSettings";
 
-const visualPreference = vi.hoisted(() => ({ mode: "current" as "current" | "classic" }));
+const visualPreference = vi.hoisted(() => ({ mode: "current" as ChatVisualMode }));
 vi.mock("../../chatVisualModeSync", () => ({ useChatVisualMode: () => visualPreference.mode }));
 
 vi.mock("@legendapp/list/react", async () => {
@@ -245,6 +249,231 @@ function buildProps() {
   };
 }
 
+it("returns to the updated live edge after switching threads during a layout change", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("requestAnimationFrame", () => 0);
+  vi.stubGlobal("cancelAnimationFrame", () => {});
+  const { LegendList } = await import("@legendapp/list/react");
+  const props = buildProps();
+  const threadA = "scroll-restoration:thread-a";
+  const threadB = "scroll-restoration:thread-b";
+  const first = buildUserTimelineEntry("First prompt");
+  const answer = buildAssistantTimelineEntry("Growing answer");
+  const viewport = document.createElement("div");
+  const row = document.createElement("div");
+  let contentHeight = 2400;
+  viewport.scrollTop = 900;
+  Object.defineProperties(viewport, {
+    clientHeight: { value: 700 },
+    scrollHeight: { get: () => contentHeight },
+  });
+  vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 800, 700));
+  vi.spyOn(row, "getBoundingClientRect").mockReturnValue(new DOMRect(0, -100, 800, 1600));
+  const scrollToEnd = vi.fn(async () => {
+    viewport.scrollTop = contentHeight - 700;
+  });
+  const scrollToIndex = vi.fn(async () => {});
+  let following = true;
+  let renderer: ReactTestRenderer | undefined;
+  const getListProps = () => renderer!.root.findByType(LegendList).props;
+  try {
+    await act(() => {
+      renderer = create(
+        <MessagesTimeline
+          {...props}
+          routeThreadKey={threadA}
+          isFollowingEnd={() => following}
+          timelineEntries={[first, answer]}
+        />,
+      );
+    });
+    props.listRef.current = {
+      getScrollableNode: () => viewport,
+      getState: () => ({
+        data: getListProps().data,
+        scroll: viewport.scrollTop,
+        scrollLength: 700,
+        contentLength: contentHeight,
+        positionAtIndex: (index: number) => index * 800,
+        sizeAtIndex: () => 800,
+        indexByKey: (key: string) =>
+          getListProps().data.findIndex((item: { id: string }) => item.id === key),
+        elementAtIndex: () => row,
+      }),
+      scrollToEnd,
+      scrollToIndex,
+      scrollToOffset: vi.fn(async () => {}),
+    } as unknown as LegendListRef;
+
+    // A growing row has moved the physical end, but the user never scrolled away.
+    await act(() => getListProps().onScroll());
+    expect(readTimelinePosition(threadA)?.atEnd).toBe(true);
+    await act(() =>
+      renderer!.update(
+        <MessagesTimeline
+          {...props}
+          routeThreadKey={threadB}
+          isFollowingEnd={() => following}
+          timelineEntries={[first]}
+        />,
+      ),
+    );
+    contentHeight = 4100;
+    scrollToEnd.mockClear();
+    await act(() =>
+      renderer!.update(
+        <MessagesTimeline
+          {...props}
+          routeThreadKey={threadA}
+          isFollowingEnd={() => following}
+          timelineEntries={[
+            first,
+            { ...answer, message: { ...answer.message, text: "A much longer completed answer" } },
+          ]}
+        />,
+      ),
+    );
+    expect(scrollToEnd).toHaveBeenCalled();
+    expect(viewport.scrollTop).toBe(3400);
+    expect(scrollToIndex).not.toHaveBeenCalled();
+
+    // A real navigation gesture changes the saved intent even before React re-renders.
+    following = false;
+    viewport.scrollTop = 900;
+    await act(() => getListProps().onScroll());
+    expect(readTimelinePosition(threadA)?.atEnd).toBe(false);
+    expect(readTimelinePosition(threadA)?.offsetWithinRow).toBe(100);
+    const saved = readTimelinePosition(threadA);
+
+    // Painting the old thread while the next thread loads must not overwrite its position.
+    await act(() =>
+      renderer!.update(
+        <MessagesTimeline
+          {...props}
+          routeThreadKey={threadB}
+          displayThreadKey={threadA}
+          liveFollowEnabled={false}
+          isFollowingEnd={() => following}
+          timelineEntries={[first, answer]}
+        />,
+      ),
+    );
+    viewport.scrollTop = 0;
+    await act(() => getListProps().onScroll());
+    expect(readTimelinePosition(threadA)).toEqual(saved);
+  } finally {
+    await act(() => renderer?.unmount());
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  }
+});
+
+it("reveals toggled details above the widgets and cancels that adjustment for a new scroll gesture", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const frames = new Map<number, FrameRequestCallback>();
+  let nextFrame = 0;
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    frames.set(++nextFrame, callback);
+    return nextFrame;
+  });
+  vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const flush = () =>
+    act(() => {
+      const pending = [...frames.values()];
+      frames.clear();
+      pending.forEach((callback) => callback(0));
+    });
+  const host = document.createElement("div");
+  document.body.append(host);
+  host.scrollTop = 400;
+  Object.defineProperties(host, {
+    scrollHeight: { value: 3000 },
+    clientHeight: { value: 800 },
+  });
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    if (this === host) return new DOMRect(0, 0, 800, 800);
+    if (this.dataset.timelineRowId === "reveal-tool") {
+      return new DOMRect(0, 500, 700, this.querySelector('[aria-expanded="true"]') ? 320 : 48);
+    }
+    if (this.hasAttribute("aria-expanded")) return new DOMRect(0, 500, 200, 36);
+    return new DOMRect(0, 0, 800, 0);
+  });
+  const root = createRoot(host);
+  const props = buildProps();
+  const scrollToOffset = vi.fn(async ({ offset }: { offset: number }) => {
+    host.scrollTop = offset;
+  });
+  const scrollToEnd = vi.fn(async () => {});
+  props.listRef.current = {
+    getScrollableNode: () => host,
+    getState: () => ({ isAtEnd: false }),
+    scrollToOffset,
+    scrollToEnd,
+  } as unknown as LegendListRef;
+  try {
+    await act(() =>
+      root.render(
+        <MessagesTimeline
+          {...props}
+          routeThreadKey="disclosure-scroll:thread"
+          liveFollowEnabled={false}
+          contentInsetEndAdjustment={280}
+          timelineEntries={[
+            {
+              id: "reveal-tool",
+              kind: "work",
+              createdAt: MESSAGE_CREATED_AT,
+              entry: {
+                id: "reveal-tool",
+                createdAt: MESSAGE_CREATED_AT,
+                label: "Read source",
+                tone: "tool",
+                toolLifecycleStatus: "completed",
+                detail: "Expanded output",
+              },
+            },
+          ]}
+        />,
+      ),
+    );
+    await flush();
+    await flush();
+    const row = host.querySelector<HTMLElement>('[data-timeline-row-id="reveal-tool"]')!;
+    const toggle = row.querySelector<HTMLElement>("[aria-expanded]")!;
+    await act(() => toggle.click());
+    await flush();
+    await flush();
+    expect(scrollToOffset).toHaveBeenLastCalledWith({ offset: 716, animated: true });
+    expect(scrollToEnd).not.toHaveBeenCalled();
+    host.scrollTop = 400;
+    await act(() => toggle.click());
+    await flush();
+    await flush();
+    expect(scrollToOffset).toHaveBeenLastCalledWith({ offset: 444, animated: true });
+
+    scrollToOffset.mockClear();
+    await act(() => toggle.click());
+    await act(() => row.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -100 })));
+    await flush();
+    await flush();
+    expect(scrollToOffset).not.toHaveBeenCalled();
+  } finally {
+    await act(() => root.unmount());
+    host.remove();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  }
+});
+
 function buildLongUserMessageText(tail = "deep hidden detail only after expand") {
   return Array.from({ length: 9 }, (_, index) =>
     index === 8 ? tail : `Line ${index + 1}: ${"verbose prompt content ".repeat(8).trim()}`,
@@ -278,6 +507,292 @@ function buildAssistantTimelineEntry(text: string) {
     },
   };
 }
+
+it("places attachment previews below Better T3 prose while preserving other layouts and actions", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("requestAnimationFrame", () => 0);
+  vi.stubGlobal("cancelAnimationFrame", () => {});
+  vi.stubGlobal(
+    "IntersectionObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const file = {
+    type: "file" as const,
+    id: "report",
+    name: "report.pdf",
+    mimeType: "application/pdf",
+    sizeBytes: 42,
+  };
+  const archive = { ...file, id: "archive", name: "archive.zip", mimeType: "application/zip" };
+  const entry = buildUserTimelineEntry("Review the attached report.");
+  const entries = [{ ...entry, message: { ...entry.message, attachments: [archive, file] } }];
+  const onFileOpen = vi.fn();
+  const onFileDownload = vi.fn();
+  try {
+    for (const mode of ["current", "better-t3", "classic"] as const) {
+      visualPreference.mode = mode;
+      await act(() =>
+        root.render(
+          <MessagesTimeline
+            {...buildProps()}
+            timelineEntries={entries}
+            onFileOpen={onFileOpen}
+            onFileDownload={onFileDownload}
+          />,
+        ),
+      );
+      const body = container.querySelector("[data-reply-message-content]")!;
+      const attachments = container.querySelector("[data-message-attachments]")!;
+      expect(body.textContent).toContain("Review the attached report.");
+      const follows = Boolean(
+        body.compareDocumentPosition(attachments) & Node.DOCUMENT_POSITION_FOLLOWING,
+      );
+      expect(follows).toBe(mode === "better-t3");
+      if (mode === "better-t3") {
+        const previews = attachments.querySelector(".better-chat-attachment-grid")!;
+        const others = attachments.querySelector(".better-chat-attachment-list")!;
+        expect(previews.textContent).toContain("report.pdf");
+        expect(others.textContent).toContain("archive.zip");
+        expect(
+          previews.compareDocumentPosition(others) & Node.DOCUMENT_POSITION_FOLLOWING,
+        ).toBeTruthy();
+      }
+      await act(() =>
+        container.querySelector<HTMLButtonElement>('[aria-label="Preview report.pdf"]')!.click(),
+      );
+      expect(onFileOpen).toHaveBeenLastCalledWith(file);
+      await act(() =>
+        container.querySelector<HTMLButtonElement>('[aria-label="Download report.pdf"]')!.click(),
+      );
+      expect(onFileDownload).toHaveBeenLastCalledWith(file);
+    }
+  } finally {
+    await act(() => root.unmount());
+    container.remove();
+    visualPreference.mode = "current";
+    vi.unstubAllGlobals();
+  }
+});
+
+it("preserves the mounted list, scroll position, and open tool output across Better T3 switches", async () => {
+  visualPreference.mode = "current";
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("requestAnimationFrame", () => 0);
+  vi.stubGlobal("cancelAnimationFrame", () => {});
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const props = buildProps();
+  const timelineEntries: TimelineEntry[] = [
+    {
+      id: "stable-tool",
+      kind: "work",
+      createdAt: MESSAGE_CREATED_AT,
+      entry: {
+        id: "stable-tool",
+        createdAt: MESSAGE_CREATED_AT,
+        tone: "tool",
+        label: "Read source",
+        command: "cat source.ts",
+        detail: "Complete tool output",
+        toolLifecycleStatus: "completed",
+        itemType: "command_execution",
+      },
+    },
+  ];
+  const render = () => <MessagesTimeline {...props} timelineEntries={timelineEntries} />;
+  try {
+    await act(() => root.render(render()));
+    const list = container.querySelector<HTMLElement>("[data-testid='legend-list']")!;
+    const row = container.querySelector<HTMLElement>("[data-timeline-row-id='stable-tool']")!;
+    await act(() => row.querySelector<HTMLElement>("[role='button']")!.click());
+    expect(row.textContent).toContain("Complete tool output");
+    list.scrollTop = 140;
+    for (const mode of ["better-t3", "current"] as const) {
+      visualPreference.mode = mode;
+      await act(() => root.render(render()));
+      expect(container.querySelector("[data-testid='legend-list']")).toBe(list);
+      expect(container.querySelector("[data-timeline-row-id='stable-tool']")).toBe(row);
+      expect(list.scrollTop).toBe(140);
+      expect(row.querySelector("[aria-expanded='true']")).not.toBeNull();
+      expect(row.textContent).toContain("Complete tool output");
+    }
+  } finally {
+    await act(() => root.unmount());
+    container.remove();
+    visualPreference.mode = "current";
+    vi.unstubAllGlobals();
+  }
+});
+
+it.each([false, true])(
+  "keeps Better T3 history and reconnect text still while future chunks honor character motion (%s)",
+  async (characters) => {
+    const { __setClientSettingsForTests, getClientSettings } =
+      await import("../../hooks/useSettings");
+    const originalSettings = getClientSettings();
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      betterT3Device: {
+        ...makeBetterT3SettingsV1("existing-install-migration"),
+        flags: { "chat.characterStreamingMotion": characters },
+      },
+    });
+    visualPreference.mode = "better-t3";
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const turnId = TurnId.make("better-stream");
+    const base = buildAssistantTimelineEntry("Existing response");
+    const render = (text: string, generation = 1) => (
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        runningTurnId={turnId}
+        presentationConnectionGeneration={generation}
+        latestTurn={{ turnId, state: "running", startedAt: MESSAGE_CREATED_AT, completedAt: null }}
+        timelineEntries={[{ ...base, message: { ...base.message, text, turnId, streaming: true } }]}
+      />
+    );
+    let renderer: ReactTestRenderer | undefined;
+    const charactersOnScreen = () => renderer!.root.findAllByProps({ "data-stream-character": "" });
+    try {
+      await act(() => {
+        renderer = create(render("Existing response"));
+      });
+      expect(charactersOnScreen()).toHaveLength(0);
+      await act(() => renderer!.update(render("Existing response appended")));
+      expect(charactersOnScreen().length > 0).toBe(characters);
+      await act(() => renderer!.update(render("Existing response appended recovered", 2)));
+      expect(charactersOnScreen()).toHaveLength(0);
+      await act(() => renderer!.update(render("Existing response appended recovered fresh", 2)));
+      expect(charactersOnScreen().length > 0).toBe(characters);
+      await act(() => renderer!.unmount());
+      await act(() => {
+        renderer = create(render("Existing response appended recovered fresh", 2));
+      });
+      expect(charactersOnScreen()).toHaveLength(0);
+      expect(renderer!.root.findAllByProps({ "data-streaming": "" })).toHaveLength(0);
+    } finally {
+      await act(() => renderer?.unmount());
+      __setClientSettingsForTests(originalSettings);
+      visualPreference.mode = "current";
+    }
+  },
+);
+
+it.each([false, true])(
+  "animates a newly received complete answer with character streaming and presentation motion %s",
+  async (presentationMotion) => {
+    const { __setClientSettingsForTests, getClientSettings } =
+      await import("../../hooks/useSettings");
+    const originalSettings = getClientSettings();
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      betterT3Device: {
+        ...makeBetterT3SettingsV1("existing-install-migration"),
+        flags: {
+          "chat.characterStreamingMotion": true,
+          "chat.presentationMotion": presentationMotion,
+        },
+      },
+    });
+    visualPreference.mode = "better-t3";
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const history = buildAssistantTimelineEntry("Previously loaded text");
+    const incoming = {
+      ...buildAssistantTimelineEntry("A short answer received in one piece."),
+      id: "incoming-complete",
+      createdAt: "2026-10-27T10:00:01.000Z",
+      message: {
+        ...buildAssistantTimelineEntry("A short answer received in one piece.").message,
+        id: MessageId.make("incoming-complete"),
+        createdAt: "2026-10-27T10:00:01.000Z",
+        updatedAt: "2026-10-27T10:00:01.000Z",
+      },
+    };
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(() => {
+        renderer = create(<MessagesTimeline {...buildProps()} timelineEntries={[history]} />);
+      });
+      expect(renderer!.root.findAllByProps({ "data-stream-character": "" })).toHaveLength(0);
+      await act(() =>
+        renderer!.update(
+          <MessagesTimeline {...buildProps()} timelineEntries={[history, incoming]} />,
+        ),
+      );
+      const row = renderer!.root.findByProps({ "data-timeline-row-id": incoming.id });
+      expect(row.findAllByProps({ "data-stream-character": "" }).length).toBeGreaterThan(0);
+      expect(
+        renderer!.root
+          .findByProps({ "data-timeline-row-id": history.id })
+          .findAllByProps({ "data-stream-character": "" }),
+      ).toHaveLength(0);
+      const placeholder = {
+        ...incoming,
+        id: "incoming-placeholder",
+        createdAt: "2026-10-27T10:00:02.000Z",
+        message: {
+          ...incoming.message,
+          id: MessageId.make("incoming-placeholder"),
+          text: "",
+          createdAt: "2026-10-27T10:00:02.000Z",
+        },
+      };
+      await act(() =>
+        renderer!.update(
+          <MessagesTimeline {...buildProps()} timelineEntries={[history, incoming, placeholder]} />,
+        ),
+      );
+      await act(() =>
+        renderer!.update(
+          <MessagesTimeline
+            {...buildProps()}
+            timelineEntries={[
+              history,
+              incoming,
+              {
+                ...placeholder,
+                message: {
+                  ...placeholder.message,
+                  text: "The placeholder now contains a complete answer.",
+                },
+              },
+            ]}
+          />,
+        ),
+      );
+      expect(
+        renderer!.root
+          .findByProps({ "data-timeline-row-id": placeholder.id })
+          .findAllByProps({ "data-stream-character": "" }).length,
+      ).toBeGreaterThan(0);
+    } finally {
+      await act(() => renderer?.unmount());
+      __setClientSettingsForTests(originalSettings);
+      visualPreference.mode = "current";
+    }
+  },
+);
 
 function buildSnapShotTimelineEntry(previewUrl?: string) {
   const entry = buildUserTimelineEntry("First prompt.");
@@ -505,8 +1020,9 @@ it("moves the active plan between the composer and native timeline", async () =>
 });
 
 it.each([false, true])(
-  "animates only the live assistant and clears motion on turn completion (characters %s)",
+  "animates only the live assistant and finishes motion on turn completion (characters %s)",
   async (characters) => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
     const { __setClientSettingsForTests, getClientSettings } =
       await import("../../hooks/useSettings");
     const originalSettings = getClientSettings();
@@ -574,6 +1090,9 @@ it.each([false, true])(
         );
       expect(views()[0]!.props["data-streaming"]).toBeUndefined();
       expect(views()[1]!.props["data-streaming"]).toBe(characters ? undefined : "");
+      expect(views()[1]!.findAllByProps({ "data-stream-character": "" }).length > 0).toBe(
+        characters,
+      );
       await act(() => {
         renderer!.update(render("Live text appended"));
       });
@@ -586,10 +1105,17 @@ it.each([false, true])(
       });
       for (const view of views()) {
         expect(view.props["data-streaming"]).toBeUndefined();
+      }
+      expect(views()[1]!.findAllByProps({ "data-stream-character": "" }).length > 0).toBe(
+        characters,
+      );
+      await act(() => vi.advanceTimersByTime(MAX_STREAMING_TEXT_MOTION_REVEAL_MS));
+      for (const view of views()) {
         expect(view.findAllByProps({ "data-stream-character": "" })).toHaveLength(0);
       }
     } finally {
       await act(() => renderer?.unmount());
+      vi.useRealTimers();
       __setClientSettingsForTests(originalSettings);
     }
   },
@@ -646,6 +1172,7 @@ it("keeps voice-file candidates out of the bubble and preserves them on the clip
 it.each(["classic", "current"] as const)(
   "keeps %s reasoning directly visible as traces arrive and update",
   async (mode) => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
     const { __setClientSettingsForTests, getClientSettings } =
       await import("../../hooks/useSettings");
     const originalSettings = getClientSettings();
@@ -738,6 +1265,7 @@ it.each(["classic", "current"] as const)(
           <ReasoningTimelineFixture {...props} isWorking={false} timelineEntries={updatedTraces} />,
         );
       });
+      await act(() => vi.advanceTimersByTime(MAX_STREAMING_TEXT_MOTION_REVEAL_MS));
       expect(reasoning.findAllByProps({ "data-stream-character": "" })).toHaveLength(0);
 
       await act(() => {
@@ -768,7 +1296,6 @@ it.each(["classic", "current"] as const)(
               }}
               environmentId={EnvironmentId.make("environment-1")}
               cwd={undefined}
-              streamingMotionEnabled
             />
           </ReasoningTimelineFixture>,
         ),
@@ -783,6 +1310,7 @@ it.each(["classic", "current"] as const)(
     } finally {
       await act(() => renderer?.unmount());
       requestFrame.mockRestore();
+      vi.useRealTimers();
       __setClientSettingsForTests(originalSettings);
       visualPreference.mode = "current";
     }
@@ -1747,7 +2275,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-maintain-scroll-at-end="enabled"');
     expect(markup).toContain('data-maintain-scroll-at-end-animated="false"');
     expect(markup).toContain('data-maintain-scroll-at-end-data-change="true"');
-    expect(markup).toContain('data-maintain-scroll-at-end-footer-layout="false"');
+    expect(markup).toContain('data-maintain-scroll-at-end-footer-layout="true"');
     expect(markup).toContain('data-maintain-scroll-at-end-item-layout="true"');
     expect(markup).toContain('data-maintain-scroll-at-end-layout="true"');
     expect(markup).toContain('data-user-message-collapsed="true"');
@@ -2206,6 +2734,82 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('aria-label="Hidden work includes a failure"');
   });
 
+  it.each(["detail", "label", "command"] as const)(
+    "keeps Better T3 expanded %s content in the details instead of the pill header",
+    async (contentSource) => {
+      visualPreference.mode = "better-t3";
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      vi.stubGlobal("requestAnimationFrame", () => 0);
+      vi.stubGlobal("cancelAnimationFrame", () => {});
+      vi.stubGlobal(
+        "ResizeObserver",
+        class {
+          observe() {}
+          disconnect() {}
+        },
+      );
+      const title =
+        contentSource === "command"
+          ? "echo first"
+          : "ProviderAdapterSessionClosedError: adapter thread is closed";
+      const fullText = [
+        title,
+        ...Array.from({ length: 60 }, (_, index) =>
+          contentSource === "command"
+            ? `echo line ${index}`
+            : `    at sendTurn (/workspace/server.ts:${index + 1}:1)`,
+        ),
+      ].join("\n");
+      const entry: TimelineEntry = {
+        id: "expanded-status",
+        kind: "work",
+        createdAt: MESSAGE_CREATED_AT,
+        entry: {
+          id: "expanded-status",
+          createdAt: MESSAGE_CREATED_AT,
+          tone: contentSource === "command" ? "tool" : "error",
+          label: contentSource === "label" ? fullText : title,
+          ...(contentSource === "detail" ? { detail: fullText } : {}),
+          ...(contentSource === "command" ? { command: fullText } : {}),
+        },
+      };
+      const container = document.createElement("div");
+      document.body.append(container);
+      const root = createRoot(container);
+      try {
+        await act(() =>
+          root.render(<MessagesTimeline {...buildProps()} timelineEntries={[entry]} />),
+        );
+        const row = container.querySelector("[data-timeline-row-id='expanded-status']")!;
+        const toggle = row.querySelector<HTMLElement>("[role='button']")!;
+        const header = row.querySelector("[data-presentation-status] p")!;
+        expect(header.textContent).toBe(title);
+        expect(row.querySelector("pre")).toBeNull();
+
+        await act(() => toggle.click());
+        expect(toggle.getAttribute("aria-expanded")).toBe("true");
+        expect(header.textContent).toBe(title);
+        const output = row.querySelector("pre")!;
+        expect(output.textContent).toBe(fullText);
+
+        await act(() => output.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+        expect(toggle.getAttribute("aria-expanded")).toBe("true");
+        await act(() =>
+          toggle.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })),
+        );
+        expect(toggle.getAttribute("aria-expanded")).toBe("false");
+        await act(() => toggle.click());
+        expect(toggle.getAttribute("aria-expanded")).toBe("true");
+        expect(row.querySelector("pre")?.textContent).toBe(fullText);
+      } finally {
+        await act(() => root.unmount());
+        container.remove();
+        visualPreference.mode = "current";
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+
   it("keeps classic shell commands compact until expanded", async () => {
     const command = "/bin/zsh -lc 'vp test run apps/web/src/session-logic.test.ts'";
     visualPreference.mode = "classic";
@@ -2424,6 +3028,184 @@ describe("MessagesTimeline", () => {
     }
   });
 
+  it.each(CHAT_VISUAL_MODES)(
+    "keeps combined thinking in the latest response and updates it while streaming in %s",
+    async (mode) => {
+      const { __setClientSettingsForTests, getClientSettings } =
+        await import("../../hooks/useSettings");
+      const originalSettings = getClientSettings();
+      const setDisplay = (display: "message" | "chat" | "none") =>
+        __setClientSettingsForTests({
+          ...DEFAULT_CLIENT_SETTINGS,
+          showReasoning: display !== "none",
+          betterT3Device: {
+            ...makeBetterT3SettingsV1("existing-install-migration"),
+            flags: {
+              "agent.reasoningWorkingOverlay": false,
+              "agent.reasoningInMessage": display === "message",
+            },
+          },
+        });
+      setDisplay("message");
+      visualPreference.mode = mode;
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      vi.stubGlobal("requestAnimationFrame", () => 0);
+      vi.stubGlobal("cancelAnimationFrame", () => {});
+      vi.stubGlobal(
+        "ResizeObserver",
+        class {
+          observe() {}
+          disconnect() {}
+        },
+      );
+      const container = document.createElement("div");
+      document.body.append(container);
+      const root = createRoot(container);
+      const turnId = TurnId.make("message-reasoning");
+      const thought = (id: string, text: string) => {
+        const base = buildAssistantTimelineEntry(text);
+        return {
+          ...base,
+          id,
+          message: {
+            ...base.message,
+            id: MessageId.make(id),
+            role: "reasoning" as const,
+            turnId,
+            streaming: true,
+          },
+        };
+      };
+      const response = (id: string, text: string) => {
+        const base = buildAssistantTimelineEntry(text);
+        return { ...base, id, message: { ...base.message, id: MessageId.make(id), turnId } };
+      };
+      let entries: TimelineEntry[] = [
+        buildUserTimelineEntry("First request"),
+        thought("first-thought", "First reasoning paragraph"),
+      ];
+      const render = () => (
+        <ReasoningTimelineFixture
+          {...buildProps()}
+          isWorking
+          runningTurnId={turnId}
+          timelineEntries={[...entries]}
+        />
+      );
+      const disclosures = () => container.querySelectorAll(".better-chat-reasoning");
+      try {
+        await act(() => root.render(render()));
+        expect(disclosures()).toHaveLength(1);
+        expect(container.querySelector("[data-message-reasoning]")).toBeNull();
+        await act(() => disclosures()[0]!.querySelector<HTMLButtonElement>("button")!.click());
+        expect(container.textContent).toContain("First reasoning paragraph");
+
+        entries.push(response("progress-response", "Checking the implementation."));
+        await act(() => root.render(render()));
+        expect(disclosures()).toHaveLength(1);
+        expect(
+          container.querySelector(
+            "[data-timeline-row-id='progress-response'] [data-message-reasoning]",
+          )?.textContent,
+        ).toContain("First reasoning paragraph");
+
+        entries.push(
+          {
+            id: "separate-tool",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "separate-tool",
+              createdAt: MESSAGE_CREATED_AT,
+              turnId,
+              tone: "tool",
+              label: "Read source",
+              command: "cat source.ts",
+              detail: "Tool output stays separate",
+            },
+          },
+          {
+            id: "legacy-thought",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "legacy-thought",
+              createdAt: MESSAGE_CREATED_AT,
+              turnId,
+              tone: "thinking",
+              sourceActivityKind: "reasoning.summary",
+              label: "Thinking",
+              detail: "Legacy reasoning paragraph",
+            },
+          },
+          thought("streaming-thought", "New reasoning"),
+          response("final-response", "Completed response"),
+        );
+        await act(() => root.render(render()));
+        expect(disclosures()).toHaveLength(1);
+        const finalRow = container.querySelector("[data-timeline-row-id='final-response']")!;
+        const embedded = finalRow.querySelector("[data-message-reasoning]")!;
+        expect(embedded.textContent).toContain("First reasoning paragraph");
+        expect(embedded.textContent).toContain("Legacy reasoning paragraph");
+        expect(embedded.textContent).toContain("New reasoning");
+        expect(embedded.textContent).not.toContain("Tool output stays separate");
+        expect(
+          container.querySelector(
+            "[data-timeline-row-id='progress-response'] [data-message-reasoning]",
+          ),
+        ).toBeNull();
+
+        entries = entries.map((entry) =>
+          entry.kind === "message" && entry.id === "streaming-thought"
+            ? {
+                ...entry,
+                message: { ...entry.message, text: "New reasoning with a streamed ending" },
+              }
+            : entry,
+        );
+        await act(() => root.render(render()));
+        expect(finalRow.querySelector("[data-message-reasoning]")).toBe(embedded);
+        expect(embedded.textContent).toContain("New reasoning with a streamed ending");
+        expect(embedded.querySelector("button")?.getAttribute("aria-expanded")).toBe("true");
+
+        const secondUser = buildUserTimelineEntry("Second request");
+        entries.push(
+          {
+            ...secondUser,
+            id: "second-user",
+            message: { ...secondUser.message, id: MessageId.make("second-user") },
+          },
+          thought("second-request-thought", "Separate request reasoning"),
+        );
+        await act(() => root.render(render()));
+        expect(disclosures()).toHaveLength(2);
+        expect(embedded.textContent).not.toContain("Separate request reasoning");
+
+        setDisplay("chat");
+        await act(() => root.render(render()));
+        expect(container.querySelector("[data-message-reasoning]")).toBeNull();
+        expect(container.textContent).toContain("First reasoning paragraph");
+        setDisplay("none");
+        await act(() => root.render(render()));
+        expect(disclosures()).toHaveLength(0);
+        expect(container.textContent).not.toContain("First reasoning paragraph");
+        expect(container.textContent).not.toContain("Legacy reasoning paragraph");
+        setDisplay("message");
+        await act(() => root.render(render()));
+        expect(container.querySelector("[data-message-reasoning]")?.textContent).toContain(
+          "New reasoning with a streamed ending",
+        );
+        expect(disclosures()).toHaveLength(2);
+      } finally {
+        await act(() => root.unmount());
+        container.remove();
+        __setClientSettingsForTests(originalSettings);
+        visualPreference.mode = "current";
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+
   it.each(["classic", "current"] as const)(
     "opens full Working thinking in the real dialog and retains it at completion in the %s layout",
     async (mode) => {
@@ -2514,6 +3296,121 @@ describe("MessagesTimeline", () => {
       }
     },
   );
+
+  it("keeps classic tool details and the Working dialog usable across layout changes", async () => {
+    const { __setClientSettingsForTests, getClientSettings } =
+      await import("../../hooks/useSettings");
+    const originalSettings = getClientSettings();
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      showReasoning: true,
+      betterT3Device: {
+        ...makeBetterT3SettingsV1("existing-install-migration"),
+        flags: { "agent.reasoningWorkingOverlay": true },
+      },
+    });
+    visualPreference.mode = "classic";
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const turnId = TurnId.make("classic-working-details");
+    const thought = buildAssistantTimelineEntry(
+      "**Inspecting files**\n\nFull Working trace remains available",
+    );
+    const timelineEntries: TimelineEntry[] = [
+      {
+        ...thought,
+        message: { ...thought.message, role: "reasoning", turnId },
+      },
+      ...[1, 2].map((index) => ({
+        kind: "work" as const,
+        id: `working-tool-${index}`,
+        createdAt: `2026-03-17T19:12:3${index}.000Z`,
+        entry: {
+          id: `working-tool-${index}`,
+          turnId,
+          createdAt: `2026-03-17T19:12:3${index}.000Z`,
+          label: `Read file ${index}`,
+          tone: "tool" as const,
+          toolLifecycleStatus: "completed" as const,
+          itemType: "command_execution" as const,
+          command: `cat file-${index}.txt`,
+          detail: `Output from file ${index}`,
+        },
+      })),
+    ];
+    const render = () => (
+      <ReasoningTimelineFixture
+        {...buildProps()}
+        timelineEntries={[...timelineEntries]}
+        isWorking
+        activeTurnStartedAt={MESSAGE_CREATED_AT}
+        runningTurnId={turnId}
+        latestTurn={{
+          turnId,
+          state: "running",
+          startedAt: MESSAGE_CREATED_AT,
+          completedAt: null,
+        }}
+        streamingMotionEnabled={false}
+      />
+    );
+    try {
+      await act(() => root.render(render()));
+      expect(container.querySelectorAll("[data-timeline-row-kind='work']")).toHaveLength(1);
+      expect(container.textContent).not.toContain("Full Working trace remains available");
+      const latestTool = container.querySelector<HTMLElement>(
+        "[data-timeline-row-kind='work'] [role='button']",
+      );
+      await act(() => latestTool!.click());
+      expect(container.textContent).toContain("Output from file 2");
+      expect(container.textContent).not.toContain("Output from file 1");
+      const expandTools = container.querySelector<HTMLButtonElement>(
+        "[data-timeline-row-kind='work-toggle'] button",
+      );
+      await act(() => expandTools!.click());
+      expect(container.querySelectorAll("[data-timeline-row-kind='work']")).toHaveLength(2);
+      const firstTool = container.querySelector<HTMLElement>(
+        "[data-timeline-row-kind='work'] [role='button']",
+      );
+      await act(() => firstTool!.click());
+      expect(container.textContent).toContain("Output from file 1");
+      const reasoning = container.querySelector<HTMLButtonElement>("button[data-reasoning-log]");
+      expect(reasoning?.textContent).toBe("Inspecting files");
+      await act(() => reasoning!.click());
+      const content = document.querySelector("[data-working-reasoning-content]");
+      expect(content?.textContent).toContain("Full Working trace remains available");
+
+      for (const mode of CHAT_VISUAL_MODES) {
+        visualPreference.mode = mode;
+        await act(() => root.render(render()));
+        expect(document.querySelector("[data-working-reasoning-content]")).toBe(content);
+        expect(container.querySelectorAll("[data-timeline-row-kind='work']")).toHaveLength(
+          mode === "classic" ? 2 : 0,
+        );
+      }
+      visualPreference.mode = "classic";
+      await act(() => root.render(render()));
+      expect(container.textContent).toContain("Output from file 1");
+      expect(container.textContent).toContain("Output from file 2");
+    } finally {
+      await act(() => root.unmount());
+      container.remove();
+      __setClientSettingsForTests(originalSettings);
+      visualPreference.mode = "current";
+      vi.unstubAllGlobals();
+    }
+  });
 
   it("renders initial thinking as the shared live activity row", () => {
     const turnId = TurnId.make("turn-live");
@@ -2810,6 +3707,89 @@ describe("MessagesTimeline", () => {
     ).toBeNull();
   });
 
+  it("keeps pasted file chips between their surrounding words across presentation changes", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+        unobserve() {}
+      },
+    );
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const file = {
+      type: "file" as const,
+      id: "document-1",
+      name: "notes.txt",
+      mimeType: "text/plain",
+      sizeBytes: 12,
+    };
+    const entry = buildUserTimelineEntry(
+      "Compare [notes.txt](t3-context://v1/file/document-context) with the latest changes.",
+    );
+    const timelineEntries: TimelineEntry[] = [
+      {
+        ...entry,
+        message: {
+          ...entry.message,
+          attachments: [file],
+          context: {
+            version: 1,
+            records: [
+              {
+                version: 1,
+                contextId: ComposerContextId.make("document-context"),
+                kind: "file",
+                label: file.name,
+                attachmentId: file.id,
+                name: file.name,
+                mimeType: file.mimeType,
+                sizeBytes: file.sizeBytes,
+              },
+            ],
+          },
+        },
+      },
+    ];
+    const onFileOpen = vi.fn();
+    let mountedChip: Element | null = null;
+    try {
+      for (const mode of ["current", "better-t3", "classic", "better-t3"] as const) {
+        visualPreference.mode = mode;
+        await act(() =>
+          root.render(
+            <MessagesTimeline
+              {...buildProps()}
+              timelineEntries={timelineEntries}
+              onFileOpen={onFileOpen}
+            />,
+          ),
+        );
+        const body = container.querySelector("[data-user-message-body]");
+        const chips = body?.querySelectorAll("button[data-markdown-copy]") ?? [];
+        expect(chips).toHaveLength(1);
+        const chip = chips[0]!;
+        if (mountedChip) expect(chip).toBe(mountedChip);
+        mountedChip = chip;
+        const paragraph = chip.closest("p")!;
+        expect(paragraph.textContent).toMatch(/^Compare notes.txt.* with the latest changes\.$/);
+        expect(container.querySelector('button[aria-label="Preview notes.txt"]') !== null).toBe(
+          mode === "better-t3",
+        );
+        await act(() => chip.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+        expect(onFileOpen).toHaveBeenLastCalledWith(file);
+      }
+    } finally {
+      await act(() => root.unmount());
+      container.remove();
+      visualPreference.mode = "current";
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("renders structured context records as chips without reparsing text", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -2980,103 +3960,105 @@ describe("MessagesTimeline", () => {
   });
 });
 
-it.each(["current", "classic"] as const)(
-  "edits both message roles in place in the %s layout",
-  async (mode) => {
-    visualPreference.mode = mode;
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    const user = buildUserTimelineEntry("Original user text");
-    const assistant = buildAssistantTimelineEntry("Original assistant text");
-    const initial = [
-      user,
-      {
-        ...assistant,
-        id: "assistant-entry",
-        message: { ...assistant.message, id: MessageId.make("assistant-message") },
-      },
-    ];
-    function Harness() {
-      const [entries, setEntries] =
-        useState<Extract<TimelineEntry, { kind: "message" }>[]>(initial);
-      const [editing, setEditing] = useState<{
-        id: MessageId;
-        draftRef: { current: string };
-      } | null>(null);
-      return (
-        <MessagesTimeline
-          {...buildProps()}
-          timelineEntries={entries}
-          editAction={{
-            available: true,
-            onEdit: (message) =>
-              setEditing({ id: message.id, draftRef: { current: message.text } }),
-            editor: editing
-              ? {
-                  messageId: editing.id,
-                  content: (
-                    <InlineMessageEditor
-                      draftRef={editing.draftRef}
-                      available
-                      onClose={() => setEditing(null)}
-                      onSave={async (text) => {
-                        setEntries((current) =>
-                          current.map((entry) =>
-                            entry.message.id === editing.id
-                              ? { ...entry, message: { ...entry.message, text } }
-                              : entry,
-                          ),
-                        );
-                      }}
-                    />
-                  ),
-                }
-              : null,
-          }}
-        />
+it.each(CHAT_VISUAL_MODES)("edits both message roles in place in the %s layout", async (mode) => {
+  visualPreference.mode = mode;
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const user = buildUserTimelineEntry("Original user text");
+  const assistant = buildAssistantTimelineEntry("Original assistant text");
+  const initial = [
+    user,
+    {
+      ...assistant,
+      id: "assistant-entry",
+      message: { ...assistant.message, id: MessageId.make("assistant-message") },
+    },
+  ];
+  function Harness() {
+    const [entries, setEntries] = useState<Extract<TimelineEntry, { kind: "message" }>[]>(initial);
+    const [editing, setEditing] = useState<{
+      id: MessageId;
+      draftRef: { current: string };
+    } | null>(null);
+    return (
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={entries}
+        editAction={{
+          available: true,
+          onEdit: (message) => setEditing({ id: message.id, draftRef: { current: message.text } }),
+          editor: editing
+            ? {
+                messageId: editing.id,
+                content: (
+                  <InlineMessageEditor
+                    draftRef={editing.draftRef}
+                    available
+                    onClose={() => setEditing(null)}
+                    onSave={async (text) => {
+                      setEntries((current) =>
+                        current.map((entry) =>
+                          entry.message.id === editing.id
+                            ? { ...entry, message: { ...entry.message, text } }
+                            : entry,
+                        ),
+                      );
+                    }}
+                  />
+                ),
+              }
+            : null,
+        }}
+      />
+    );
+  }
+  let renderer!: ReactTestRenderer;
+  try {
+    await act(async () => {
+      renderer = create(<Harness />);
+    });
+    for (const role of ["user", "assistant"] as const) {
+      const row = () =>
+        renderer.root.findByProps({
+          "data-message-id": role === "user" ? user.message.id : "assistant-message",
+        });
+      await act(async () =>
+        row()
+          .findAllByType("button")
+          .find((button) => button.props["aria-label"] === "Edit message")!
+          .props.onClick({ nativeEvent: {}, preventDefault: vi.fn(), stopPropagation: vi.fn() }),
       );
+      expect(row().findAllByType("textarea")).toHaveLength(1);
+      expect(renderer.root.findAllByProps({ role: "dialog" })).toHaveLength(0);
+      await act(async () =>
+        row()
+          .findByType("textarea")
+          .props.onChange({
+            target: { value: `Corrected ${role} text` },
+            currentTarget: { value: `Corrected ${role} text` },
+            nativeEvent: {},
+          }),
+      );
+      const editor = row().findByType("textarea");
+      visualPreference.mode = mode === "better-t3" ? "current" : "better-t3";
+      await act(() => renderer.update(<Harness />));
+      expect(row().findByType("textarea")).toBe(editor);
+      expect(editor.props.value).toBe(`Corrected ${role} text`);
+      visualPreference.mode = mode;
+      await act(() => renderer.update(<Harness />));
+      await act(async () => row().findByType("form").props.onSubmit({ preventDefault: vi.fn() }));
+      expect(row().findAllByType("textarea")).toHaveLength(0);
+      expect(JSON.stringify(renderer.toJSON())).toContain(`Corrected ${role} text`);
+      expect(
+        renderer.root.findAll(
+          (node) => node.type === "div" && node.props["data-message-role"] !== undefined,
+        ),
+      ).toHaveLength(2);
     }
-    let renderer!: ReactTestRenderer;
-    try {
-      await act(async () => {
-        renderer = create(<Harness />);
-      });
-      for (const role of ["user", "assistant"] as const) {
-        const row = () =>
-          renderer.root.findByProps({
-            "data-message-id": role === "user" ? user.message.id : "assistant-message",
-          });
-        await act(async () =>
-          row()
-            .findAllByType("button")
-            .find((button) => button.props["aria-label"] === "Edit message")!
-            .props.onClick({ nativeEvent: {}, preventDefault: vi.fn(), stopPropagation: vi.fn() }),
-        );
-        expect(row().findAllByType("textarea")).toHaveLength(1);
-        expect(renderer.root.findAllByProps({ role: "dialog" })).toHaveLength(0);
-        await act(async () =>
-          row()
-            .findByType("textarea")
-            .props.onChange({
-              target: { value: `Corrected ${role} text` },
-              currentTarget: { value: `Corrected ${role} text` },
-              nativeEvent: {},
-            }),
-        );
-        await act(async () => row().findByType("form").props.onSubmit({ preventDefault: vi.fn() }));
-        expect(row().findAllByType("textarea")).toHaveLength(0);
-        expect(JSON.stringify(renderer.toJSON())).toContain(`Corrected ${role} text`);
-        expect(
-          renderer.root.findAll(
-            (node) => node.type === "div" && node.props["data-message-role"] !== undefined,
-          ),
-        ).toHaveLength(2);
-      }
-    } finally {
-      await act(async () => renderer?.unmount());
-      visualPreference.mode = "current";
-    }
-  },
-);
+  } finally {
+    await act(async () => renderer?.unmount());
+    visualPreference.mode = "current";
+  }
+});
 
 it("restores complete Classic question histories and remembers explicit collapse across row remounts", async () => {
   visualPreference.mode = "current";
@@ -3261,3 +4243,460 @@ it("restores an inline Classic annotation preview without duplicating its image 
     visualPreference.mode = "current";
   }
 });
+
+it("keeps edit and fork in the Better T3 message header with keyboard access and metrics beneath", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+    },
+  );
+  const { __setClientSettingsForTests, getClientSettings } =
+    await import("../../hooks/useSettings");
+  const original = getClientSettings();
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    betterT3Device: {
+      ...makeBetterT3SettingsV1("existing-install-migration"),
+      flags: { "chat.presentationMotion": false },
+    },
+  });
+  visualPreference.mode = "better-t3";
+  const source = buildUserTimelineEntry("A finished response");
+  const message = {
+    ...source.message,
+    role: "assistant" as const,
+    turnId: TurnId.make("header-turn"),
+  };
+  const entry = { ...source, message };
+  const onEdit = vi.fn();
+  const onFork = vi.fn();
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const render = () => (
+    <MessagesTimeline
+      {...buildProps()}
+      timelineEntries={[entry]}
+      editAction={{ available: true, onEdit }}
+      forkActions={{
+        available: true,
+        pendingBoundary: null,
+        forkableMessageIds: new Set([message.id]),
+        forkableProposedPlanIds: new Set(),
+        onFork,
+      }}
+    />
+  );
+  try {
+    await act(() => root.render(render()));
+    const header = container.querySelector(".better-chat-actions")!;
+    const edit = header.querySelector<HTMLButtonElement>("button[aria-label='Edit message']")!;
+    const fork = header.querySelector<HTMLButtonElement>(
+      "button[aria-label='Fork chat from here']",
+    )!;
+    expect(edit).not.toBeNull();
+    expect(fork).not.toBeNull();
+    await act(() => {
+      edit.focus();
+      edit.click();
+    });
+    expect(document.activeElement).toBe(edit);
+    expect(onEdit).toHaveBeenCalledWith(message);
+    await act(() => fork.click());
+    expect(onFork).toHaveBeenCalledWith({ kind: "message", messageId: message.id });
+    const meta = container.querySelector(".better-chat-meta")!;
+    expect(meta).not.toBeNull();
+    expect(meta.querySelector("button[aria-label='Edit message']")).toBeNull();
+    expect(meta.closest("[data-presentation-bubble]")).toBeNull();
+    visualPreference.mode = "current";
+    await act(() => root.render(render()));
+    expect(container.querySelector(".better-chat-actions")).toBeNull();
+    expect(container.querySelector("button[aria-label='Edit message']")).not.toBeNull();
+  } finally {
+    await act(() => root.unmount());
+    container.remove();
+    visualPreference.mode = "current";
+    __setClientSettingsForTests(original);
+    vi.unstubAllGlobals();
+  }
+});
+
+it.each(CHAT_VISUAL_MODES)(
+  "avoids a duplicate composer working status in %s while retaining live work and distinct statuses",
+  async (mode) => {
+    const { __setClientSettingsForTests, getClientSettings } =
+      await import("../../hooks/useSettings");
+    const original = getClientSettings();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    visualPreference.mode = mode;
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      betterT3Device: {
+        ...makeBetterT3SettingsV1("existing-install-migration"),
+        flags: { "chat.presentationMotion": false },
+      },
+    });
+    const turnId = TurnId.make("composer-working-status");
+    const entries: TimelineEntry[] = [
+      {
+        kind: "work",
+        id: "active-tool",
+        createdAt: MESSAGE_CREATED_AT,
+        entry: {
+          id: "active-tool",
+          turnId,
+          createdAt: MESSAGE_CREATED_AT,
+          tone: "tool",
+          label: "Inspecting source",
+          command: "cat source.ts",
+          itemType: "command_execution",
+          toolLifecycleStatus: "completed",
+        },
+      },
+    ];
+    const props = {
+      ...buildProps(),
+      routeThreadKey: `composer-status-${mode}`,
+      isWorking: true,
+      activeTurnStartedAt: MESSAGE_CREATED_AT,
+      latestTurn: {
+        turnId,
+        state: "running" as const,
+        startedAt: MESSAGE_CREATED_AT,
+        completedAt: null,
+      },
+    };
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const workingRows = () => container.querySelectorAll('[data-timeline-row-kind="working"]');
+    const render = (overrides: Partial<ComponentProps<typeof MessagesTimeline>>) => (
+      <MessagesTimeline {...props} {...overrides} timelineEntries={entries} />
+    );
+    try {
+      await act(() => root.render(render({ composerWorkingStatusVisible: false })));
+      expect(workingRows()).toHaveLength(1);
+      await act(() => root.render(render({ composerWorkingStatusVisible: true })));
+      expect(workingRows()).toHaveLength(mode === "better-t3" ? 0 : 1);
+      expect(container.textContent).toContain("cat");
+      await act(() => container.querySelector<HTMLElement>('[aria-expanded="false"]')!.click());
+      expect(container.textContent).toContain("source.ts");
+
+      await act(() =>
+        root.render(render({ composerWorkingStatusVisible: true, isCompacting: true })),
+      );
+      expect(workingRows()).toHaveLength(1);
+      expect(workingRows()[0]!.textContent).toContain("Compacting");
+      await act(() =>
+        root.render(render({ composerWorkingStatusVisible: true, isPreparingWorktree: true })),
+      );
+      expect(workingRows()).toHaveLength(1);
+      expect(workingRows()[0]!.textContent).toContain("Setting up worktree");
+      await act(() => root.render(render({ composerWorkingStatusVisible: false })));
+      expect(workingRows()).toHaveLength(1);
+    } finally {
+      await act(() => root.unmount());
+      container.remove();
+      visualPreference.mode = "current";
+      __setClientSettingsForTests(original);
+    }
+  },
+);
+
+it("renders one Better T3 thinking block across tools, commentary, streaming updates, and mode switches", async () => {
+  const { __setClientSettingsForTests, getClientSettings } =
+    await import("../../hooks/useSettings");
+  const original = getClientSettings();
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("requestAnimationFrame", () => 0);
+  vi.stubGlobal("cancelAnimationFrame", () => {});
+  visualPreference.mode = "better-t3";
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    showReasoning: true,
+    betterT3Device: {
+      ...makeBetterT3SettingsV1("existing-install-migration"),
+      flags: { "agent.reasoningWorkingOverlay": false, "chat.presentationMotion": false },
+    },
+  });
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  const turnId = TurnId.make("rendered-reasoning");
+  const message = (
+    id: string,
+    role: "user" | "assistant" | "reasoning",
+    text: string,
+    second: number,
+    scope: TurnId | null = turnId,
+  ): Extract<TimelineEntry, { kind: "message" }> => {
+    const createdAt = new Date(Date.UTC(2026, 9, 26, 12, 0, second)).toISOString();
+    return {
+      id,
+      kind: "message",
+      createdAt,
+      message: {
+        id: MessageId.make(id),
+        role,
+        text,
+        turnId: scope,
+        streaming: role === "reasoning",
+        createdAt,
+        updatedAt: createdAt,
+      },
+    };
+  };
+  let entries: TimelineEntry[] = [
+    message("request", "user", "Investigate the issue", 0),
+    message("thought-1", "reasoning", "First private trace", 1),
+    {
+      id: "read-tool",
+      kind: "work",
+      createdAt: "2026-10-26T12:00:02.000Z",
+      entry: {
+        id: "read-tool",
+        turnId,
+        createdAt: "2026-10-26T12:00:02.000Z",
+        tone: "tool",
+        label: "Read source",
+        command: "cat source.ts",
+        detail: "Tool output",
+        itemType: "command_execution",
+        toolLifecycleStatus: "completed",
+      },
+    },
+    message("thought-2", "reasoning", "Second private trace", 3, null),
+    message("commentary", "assistant", "Checking the next file.", 4),
+    message("thought-3", "reasoning", "Third private trace", 5, TurnId.make("continuation")),
+    {
+      id: "legacy-thought",
+      kind: "work",
+      createdAt: "2026-10-26T12:00:06.000Z",
+      entry: {
+        id: "legacy-thought",
+        createdAt: "2026-10-26T12:00:06.000Z",
+        turnId,
+        tone: "thinking",
+        label: "Thinking",
+        sourceActivityKind: "reasoning.summary",
+        detail: "Legacy private trace",
+      },
+    },
+  ];
+  const props = {
+    ...buildProps(),
+    routeThreadKey: "rendered-reasoning-regression",
+    isWorking: true,
+    activeTurnStartedAt: entries[0]!.createdAt,
+    latestTurn: {
+      turnId,
+      state: "running" as const,
+      startedAt: entries[0]!.createdAt,
+      completedAt: null,
+    },
+  };
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const render = () => <ReasoningTimelineFixture {...props} timelineEntries={[...entries]} />;
+  const blocks = () => container.querySelectorAll<HTMLElement>(".better-chat-reasoning");
+  try {
+    await act(() => root.render(render()));
+    expect(blocks()).toHaveLength(1);
+    const firstBlock = blocks()[0]!;
+    expect(firstBlock.textContent).not.toContain("private trace");
+    await act(() => firstBlock.querySelector("button")!.click());
+    for (const text of [
+      "First private trace",
+      "Second private trace",
+      "Third private trace",
+      "Legacy private trace",
+    ]) {
+      expect(firstBlock.textContent).toContain(text);
+    }
+    expect(firstBlock.textContent).not.toContain("Checking the next file.");
+    expect(firstBlock.textContent).not.toContain("Tool output");
+    expect(container.textContent).toContain("Checking the next file.");
+
+    entries = entries.map((entry) =>
+      entry.id === "thought-1"
+        ? message("thought-1", "reasoning", "First private trace updated", 1)
+        : entry,
+    );
+    await act(() => root.render(render()));
+    expect(blocks()).toHaveLength(1);
+    expect(blocks()[0]).toBe(firstBlock);
+    expect(firstBlock.textContent).toContain("First private trace updated");
+
+    entries = [...entries, message("thought-4", "reasoning", "Fourth private trace", 7)];
+    await act(() => root.render(render()));
+    expect(blocks()).toHaveLength(1);
+    expect(blocks()[0]).toBe(firstBlock);
+    expect(firstBlock.querySelector("button")!.getAttribute("aria-expanded")).toBe("true");
+    expect(firstBlock.textContent).toContain("First private trace updated");
+    expect(firstBlock.textContent).toContain("Fourth private trace");
+
+    visualPreference.mode = "current";
+    await act(() => root.render(render()));
+    expect(blocks()).toHaveLength(0);
+    expect(container.textContent).toContain("Fourth private trace");
+    visualPreference.mode = "better-t3";
+    await act(() => root.render(render()));
+    expect(blocks()).toHaveLength(1);
+
+    entries = [
+      ...entries,
+      message("new-request", "user", "A separate request", 8),
+      message("new-thought", "reasoning", "New request private trace", 9),
+    ];
+    await act(() =>
+      root.render(<ReasoningTimelineFixture {...props} timelineEntries={[...entries]} />),
+    );
+    expect(blocks()).toHaveLength(2);
+    await act(() => {
+      __setClientSettingsForTests({ ...getClientSettings(), showReasoning: false });
+      root.render(render());
+    });
+    expect(blocks()).toHaveLength(0);
+    expect(container.textContent).not.toContain("private trace");
+  } finally {
+    await act(() => root.unmount());
+    container.remove();
+    visualPreference.mode = "current";
+    __setClientSettingsForTests(original);
+  }
+});
+
+it.each(["message", "work"] as const)(
+  "preserves Better T3 %s reasoning disclosures while respecting visibility and overlay settings",
+  async (kind) => {
+    const { __setClientSettingsForTests, getClientSettings } =
+      await import("../../hooks/useSettings");
+    const original = getClientSettings();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    visualPreference.mode = "better-t3";
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      showReasoning: true,
+      betterT3Device: {
+        ...makeBetterT3SettingsV1("existing-install-migration"),
+        flags: { "agent.reasoningWorkingOverlay": false, "chat.presentationMotion": false },
+      },
+    });
+    const props = { ...buildProps(), routeThreadKey: `reasoning-disclosure-${kind}` };
+    const trace = (detail: string): TimelineEntry =>
+      kind === "message"
+        ? {
+            ...buildUserTimelineEntry(detail),
+            message: {
+              ...buildUserTimelineEntry(detail).message,
+              role: "reasoning",
+              turnId: TurnId.make("trace-turn"),
+            },
+          }
+        : {
+            kind: "work",
+            id: "trace-work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "trace-work",
+              createdAt: MESSAGE_CREATED_AT,
+              turnId: TurnId.make("trace-turn"),
+              tone: "thinking",
+              label: "Reasoning",
+              sourceActivityKind: "reasoning.summary",
+              detail,
+            },
+          };
+    const renderedText = (node: ReactTestInstance | string): string =>
+      typeof node === "string" ? node : node.children.map(renderedText).join("");
+    const detail = "**Inspecting changes**\n\nPrivate reasoning details";
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(() => {
+        renderer = create(
+          <ReasoningTimelineFixture {...props} timelineEntries={[trace(detail)]} />,
+        );
+      });
+      const disclosure = () => renderer!.root.findByProps({ className: "better-chat-reasoning" });
+      expect(disclosure().findAllByType("p").map(renderedText).join("")).not.toContain(
+        "Private reasoning details",
+      );
+      await act(() => disclosure().findByType("button").props.onClick());
+      expect(disclosure().findAllByType("p").map(renderedText).join("")).toContain(
+        "Private reasoning details",
+      );
+
+      await act(() =>
+        renderer!.update(
+          <ReasoningTimelineFixture {...props} timelineEntries={[trace(detail + " updated")]} />,
+        ),
+      );
+      expect(disclosure().findAllByType("p").map(renderedText).join("")).toContain(
+        "Private reasoning details updated",
+      );
+
+      await act(() => {
+        __setClientSettingsForTests({ ...getClientSettings(), showReasoning: false });
+        renderer!.update(
+          <ReasoningTimelineFixture {...props} timelineEntries={[trace(detail + " updated")]} />,
+        );
+      });
+      expect(renderedText(renderer!.root)).not.toContain("Private reasoning");
+      expect(renderedText(renderer!.root)).not.toContain("Inspecting changes");
+
+      await act(() => {
+        __setClientSettingsForTests({ ...getClientSettings(), showReasoning: true });
+        renderer!.update(
+          <ReasoningTimelineFixture {...props} timelineEntries={[trace(detail + " updated")]} />,
+        );
+      });
+      expect(disclosure().findAllByType("p").map(renderedText).join("")).toContain(
+        "Private reasoning details updated",
+      );
+      await act(() =>
+        __setClientSettingsForTests({
+          ...getClientSettings(),
+          betterT3Device: {
+            ...getClientSettings().betterT3Device,
+            flags: {
+              ...getClientSettings().betterT3Device.flags,
+              "agent.reasoningWorkingOverlay": true,
+            },
+          },
+        }),
+      );
+      await act(() =>
+        renderer!.update(
+          <ReasoningTimelineFixture {...props} timelineEntries={[trace(detail + " updated")]} />,
+        ),
+      );
+      expect(renderer!.root.findAllByProps({ className: "better-chat-reasoning" })).toHaveLength(0);
+    } finally {
+      await act(() => renderer?.unmount());
+      __setClientSettingsForTests(original);
+      visualPreference.mode = "current";
+    }
+  },
+);

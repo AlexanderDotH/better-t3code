@@ -4,6 +4,7 @@ import {
   getRowBottom,
   readTimelinePosition,
   rememberTimelinePosition,
+  resolveDisclosureScrollDelta,
   timelineContentOverflowsViewport,
 } from "./timelineScrollAnchoring";
 
@@ -171,6 +172,26 @@ describe("timeline scroll anchoring", () => {
 
     expect(withoutComposer?.overflowsUsableViewport).toBe(false);
     expect(withComposer?.overflowsUsableViewport).toBe(true);
+  });
+});
+
+describe("disclosure visibility", () => {
+  const viewport = { viewportTop: 100, viewportBottom: 900, bottomInset: 280 };
+  it("reveals content above the actual widgets, preserving the disclosure control", () => {
+    expect(resolveDisclosureScrollDelta({ ...viewport, controlTop: 500, contentBottom: 800 })).toBe(
+      196,
+    );
+    expect(
+      resolveDisclosureScrollDelta({ ...viewport, controlTop: 500, contentBottom: 1800 }),
+    ).toBe(376);
+  });
+  it("leaves visible details and a reader already partway down a long block in place", () => {
+    expect(resolveDisclosureScrollDelta({ ...viewport, controlTop: 300, contentBottom: 500 })).toBe(
+      0,
+    );
+    expect(resolveDisclosureScrollDelta({ ...viewport, controlTop: 50, contentBottom: 1400 })).toBe(
+      0,
+    );
   });
 });
 

@@ -1,10 +1,16 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import {
   settleChatVisualModeSyncWrites,
+  chatVisualModeSyncWritePatch,
   type ChatVisualModeSyncWriteOutcome,
 } from "@t3tools/client-runtime/chat-visual-mode-sync";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
-import type { ChatVisualMode, ChatVisualModeSyncRecord, EnvironmentId } from "@t3tools/contracts";
+import {
+  resolveChatVisualModeRecord,
+  type ChatVisualMode,
+  type ChatVisualModeSyncRecordV2,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -27,14 +33,15 @@ export interface MobileChatVisualModeSyncState {
   readonly mode: ChatVisualMode;
   readonly isReady: boolean;
   readonly isSyncing: boolean;
+  readonly isLocalOnly: boolean;
   readonly failedEnvironmentLabels: readonly string[];
   readonly deferredEnvironmentLabels: readonly string[];
   readonly unsupportedEnvironmentLabels: readonly string[];
   readonly setMode: (mode: ChatVisualMode) => void;
 }
 
-function writeKey(record: ChatVisualModeSyncRecord): string {
-  return `${record.updatedAt}:${record.updateId}`;
+function writeKey(record: ChatVisualModeSyncRecordV2, recordVersion = 1): string {
+  return `${recordVersion}:${record.mode}:${record.updatedAt}:${record.updateId}`;
 }
 
 function updateIds(
@@ -67,8 +74,8 @@ function setIds(
 }
 
 function recordMatches(
-  left: ChatVisualModeSyncRecord | null,
-  right: ChatVisualModeSyncRecord | null,
+  left: ChatVisualModeSyncRecordV2 | null,
+  right: ChatVisualModeSyncRecordV2 | null,
 ): boolean {
   return (
     left === right ||
@@ -98,6 +105,7 @@ export function useChatVisualModeSync(): MobileChatVisualModeSyncState {
   const preferencesReady = AsyncResult.isSuccess(preferencesResult) && !preferencesResult.waiting;
   const preferences = AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value : null;
   const localRecord = preferences?.chatVisualModeSyncRecord;
+  const localRecordV2 = preferences?.chatVisualModeSyncRecordV2;
 
   const syncEnvironments = useMemo(
     (): readonly MobileChatVisualModeSyncEnvironment<EnvironmentId>[] =>
@@ -109,6 +117,7 @@ export function useChatVisualModeSync(): MobileChatVisualModeSyncState {
         environmentSettingsVersion:
           environment.serverConfig?.environment.capabilities.environmentSettingsVersion,
         record: environment.serverConfig?.settings.chatVisualModeSyncRecord ?? null,
+        recordV2: environment.serverConfig?.settings.chatVisualModeSyncRecordV2 ?? null,
       })),
     [environments],
   );
@@ -119,9 +128,10 @@ export function useChatVisualModeSync(): MobileChatVisualModeSyncState {
         preferencesReady,
         catalogReady,
         localRecord,
+        localRecordV2,
         environments: syncEnvironments,
       }),
-    [catalogReady, localRecord, preferencesReady, syncEnvironments],
+    [catalogReady, localRecord, localRecordV2, preferencesReady, syncEnvironments],
   );
 
   const labelByEnvironmentId = useMemo(
@@ -137,13 +147,14 @@ export function useChatVisualModeSync(): MobileChatVisualModeSyncState {
   useEffect(() => {
     const patch = sync.preferencePatch;
     if (patch === null) return;
-    const patchKey = patch.chatVisualModeSyncRecord.updateId;
+    const patchKey = writeKey(patch.chatVisualModeSyncRecordV2, 2);
     if (attemptedPreferencePatch.current === patchKey) return;
     attemptedPreferencePatch.current = patchKey;
     savePreferences(patch);
   }, [savePreferences, sync.preferencePatch]);
 
   useEffect(() => {
+    if (!sync.isReady) return;
     const connectedEnvironmentIds = new Set(
       syncEnvironments
         .filter((environment) => environment.connected)
@@ -161,7 +172,7 @@ export function useChatVisualModeSync(): MobileChatVisualModeSyncState {
     }
 
     const writes = sync.plan.writes.filter((write) => {
-      const key = writeKey(write.record);
+      const key = writeKey(write.record, write.recordVersion);
       if (attemptedWriteByEnvironment.current.get(write.environmentId) === key) return false;
       attemptedWriteByEnvironment.current.set(write.environmentId, key);
       return true;
@@ -175,10 +186,11 @@ export function useChatVisualModeSync(): MobileChatVisualModeSyncState {
       writes.map(async (write): Promise<ChatVisualModeSyncWriteOutcome<EnvironmentId> | null> => {
         const result = await updateServerSettings({
           environmentId: write.environmentId,
-          input: { patch: { chatVisualModeSyncRecord: write.record } },
+          input: { patch: chatVisualModeSyncWritePatch(write) },
         });
         if (
-          attemptedWriteByEnvironment.current.get(write.environmentId) !== writeKey(write.record)
+          attemptedWriteByEnvironment.current.get(write.environmentId) !==
+          writeKey(write.record, write.recordVersion)
         ) {
           return null;
         }
@@ -202,18 +214,26 @@ export function useChatVisualModeSync(): MobileChatVisualModeSyncState {
       const completedEnvironmentIds = writes
         .filter(
           (write) =>
-            attemptedWriteByEnvironment.current.get(write.environmentId) === writeKey(write.record),
+            attemptedWriteByEnvironment.current.get(write.environmentId) ===
+            writeKey(write.record, write.recordVersion),
         )
         .map((write) => write.environmentId);
       setIds(setInFlightEnvironmentIds, [], completedEnvironmentIds);
     });
-  }, [sync.plan, syncEnvironments, updateServerSettings]);
+  }, [sync.isReady, sync.plan, syncEnvironments, updateServerSettings]);
 
   useEffect(() => {
     const winner = sync.plan.winner;
     if (winner === null) return;
     const synchronizedEnvironmentIds = syncEnvironments
-      .filter((environment) => environment.connected && recordMatches(environment.record, winner))
+      .filter(
+        (environment) =>
+          environment.connected &&
+          recordMatches(
+            resolveChatVisualModeRecord(environment.record, environment.recordV2),
+            winner,
+          ),
+      )
       .map((environment) => environment.environmentId);
     setIds(setFailedEnvironmentIds, [], synchronizedEnvironmentIds);
   }, [sync.plan.winner, syncEnvironments]);
@@ -227,7 +247,7 @@ export function useChatVisualModeSync(): MobileChatVisualModeSyncState {
       });
       lastLocalUpdatedAt.current = updatedAt;
       const record = createMobileChatVisualModeRecord(mode, updatedAt, `mobile:${uuidv4()}`);
-      attemptedPreferencePatch.current = record.updateId;
+      attemptedPreferencePatch.current = writeKey(record, 2);
       savePreferences(mobileChatVisualModePreferencePatch(record));
       setFailedEnvironmentIds([]);
     },
@@ -246,6 +266,9 @@ export function useChatVisualModeSync(): MobileChatVisualModeSyncState {
     mode: sync.mode,
     isReady: preferencesReady,
     isSyncing: inFlightEnvironmentIds.length > 0,
+    isLocalOnly: !syncEnvironments.some(
+      (environment) => environment.connected && environment.configLoaded,
+    ),
     failedEnvironmentLabels,
     deferredEnvironmentLabels: sync.deferredEnvironmentLabels,
     unsupportedEnvironmentLabels: sync.unsupportedEnvironmentLabels,

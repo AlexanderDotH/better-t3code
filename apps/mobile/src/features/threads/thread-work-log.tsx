@@ -1,3 +1,5 @@
+import { useChatBubblePalette } from "./ChatBubble";
+import { ThreadThinkingIndicator } from "./ThreadThinkingIndicator";
 import { QuestionAnswerHistory } from "./QuestionAnswerHistory";
 import {
   getQuestionAnswerPreview,
@@ -62,15 +64,18 @@ import Animated, {
   FadeIn,
   FadeOut,
   LinearTransition,
+  LayoutAnimationConfig,
   ReduceMotion,
   useAnimatedStyle,
   useSharedValue,
   withDelay,
   withRepeat,
   withSequence,
+  withSpring,
   withTiming,
 } from "react-native-reanimated";
 import { useAssetUrl } from "../../state/assets";
+import { ChatPresentationMotion, useChatPresentationMotion } from "./ChatPresentationMotion";
 
 const SHIMMER_WIDTH = 72;
 const SHIMMER_SWEEP_MS = 1_350;
@@ -80,6 +85,42 @@ export const THREAD_DISCLOSURE_TRANSITION_MS = 180;
 const WORK_LOG_LAYOUT_TRANSITION = LinearTransition.duration(THREAD_DISCLOSURE_TRANSITION_MS);
 const WORK_LOG_DETAIL_ENTER_TRANSITION = FadeIn.duration(140);
 const WORK_LOG_DETAIL_EXIT_TRANSITION = FadeOut.duration(120);
+const CHAT_DETAIL_LAYOUT = LinearTransition.springify()
+  .duration(280)
+  .dampingRatio(0.9)
+  .reduceMotion(ReduceMotion.System);
+const CHAT_DETAIL_ENTER = FadeIn.duration(180).reduceMotion(ReduceMotion.System);
+const CHAT_DETAIL_EXIT = FadeOut.duration(140).reduceMotion(ReduceMotion.System);
+
+function ThreadDisclosureLayout(props: {
+  children: ReactNode;
+  className?: string;
+  createdAt?: string;
+}) {
+  const motion = useChatPresentationMotion();
+  return (
+    <LayoutAnimationConfig skipEntering={motion.betterT3} skipExiting={motion.betterT3}>
+      <Animated.View
+        collapsable={false}
+        className={props.className}
+        layout={
+          motion.betterT3
+            ? motion.enabled
+              ? CHAT_DETAIL_LAYOUT
+              : undefined
+            : WORK_LOG_LAYOUT_TRANSITION
+        }
+        entering={
+          !motion.betterT3 && props.createdAt && isFreshRow(props.createdAt)
+            ? FadeIn.duration(200)
+            : undefined
+        }
+      >
+        {props.children}
+      </Animated.View>
+    </LayoutAnimationConfig>
+  );
+}
 type WorkContentIcon = AppSymbolName | "browser" | "device" | "t3-code" | "pull-request";
 
 function WorkLogIcon(props: {
@@ -119,15 +160,26 @@ export function ThreadDisclosureChevron(props: {
   readonly size: number;
   readonly tintColor: ColorValue;
 }) {
+  const motion = useChatPresentationMotion();
   const expandedAngle = props.collapsedDirection === "right" ? 90 : 180;
   const rotation = useSharedValue(props.expanded ? expandedAngle : 0);
 
   useLayoutEffect(() => {
-    rotation.value = withTiming(props.expanded ? expandedAngle : 0, {
-      duration: THREAD_DISCLOSURE_TRANSITION_MS,
-      reduceMotion: ReduceMotion.System,
-    });
-  }, [expandedAngle, props.expanded, rotation]);
+    cancelAnimation(rotation);
+    const target = props.expanded ? expandedAngle : 0;
+    rotation.value = motion.betterT3
+      ? motion.enabled
+        ? withSpring(target, {
+            duration: 260,
+            dampingRatio: 0.75,
+            reduceMotion: ReduceMotion.System,
+          })
+        : target
+      : withTiming(target, {
+          duration: THREAD_DISCLOSURE_TRANSITION_MS,
+          reduceMotion: ReduceMotion.System,
+        });
+  }, [expandedAngle, props.expanded, rotation, motion.betterT3, motion.enabled]);
 
   const rotationStyle = useAnimatedStyle(() => ({
     transform: [{ rotate: `${rotation.value}deg` }],
@@ -431,6 +483,14 @@ interface ThreadWorkLogProps {
 }
 
 export function ThreadWorkLog(props: ThreadWorkLogProps) {
+  const palette = useChatBubblePalette(
+    props.activities.some((row) => row.status === "failure")
+      ? "error"
+      : props.activities.some((row) => row.live)
+        ? "info"
+        : "success",
+  );
+  const groupedBetter = palette.better && props.activities[0]?.groupedToolDetail;
   const renderRow = useCallback(
     (row: ThreadFeedActivity) => (
       <ThreadWorkLogRow
@@ -467,7 +527,31 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
   }
 
   return (
-    <View className="-mx-1 mb-1 px-1 py-0">
+    <View
+      className="-mx-1 mb-1 px-1 py-0"
+      style={
+        groupedBetter
+          ? { marginLeft: 20, marginRight: 0, paddingLeft: 16, paddingRight: 0 }
+          : undefined
+      }
+    >
+      {groupedBetter ? (
+        <View
+          pointerEvents="none"
+          accessible={false}
+          style={{
+            position: "absolute",
+            top: 0,
+            bottom: 0,
+            left: 0,
+            width: 12,
+            borderLeftWidth: 1,
+            borderBottomWidth: 1,
+            borderBottomLeftRadius: 12,
+            borderColor: palette.border,
+          }}
+        />
+      ) : null}
       {props.activities[0]?.groupedToolDetail ? (
         <ThreadWorkGroupList
           activities={props.activities}
@@ -494,6 +578,7 @@ function ThreadWorkGroupList(props: {
   readonly scrollPositions: Map<string, ThreadWorkGroupScrollPosition>;
   readonly renderRow: (row: ThreadFeedActivity) => ReactNode;
 }) {
+  const presentationMotion = useChatPresentationMotion();
   const estimatedRowsHeight = workLogRowsHeight(
     props.activities,
     props.rowSizing.estimatedRowHeight,
@@ -664,6 +749,7 @@ function ThreadWorkGroupList(props: {
         }}
         onScroll={rememberPosition}
         onScrollBeginDrag={() => {
+          presentationMotion.discardPending?.();
           userScrollingRef.current = true;
           pendingAppendHeightRef.current = null;
         }}
@@ -749,8 +835,12 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
   },
 ) {
   const { row, expanded } = props;
+  const palette = useChatBubblePalette(
+    row.status === "failure" ? "error" : row.live ? "info" : "success",
+  );
+  const motion = useChatPresentationMotion();
   const canExpand = row.canExpand;
-  const fullDetail = expanded ? row.getFullDetail() : null;
+  const fullDetail = expanded ? row.getFullDetail(palette.better) : null;
   const viewedImagePath = workEntryViewedImagePath(row.workEntry);
   const toolPresentation = resolveWorkEntryToolPresentation(row.workEntry);
   const previewText = workEntryRowLabel(row.workEntry);
@@ -758,156 +848,202 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
     ? getQuestionAnswerPreview(row.workEntry.questionAnswer)
     : null;
   const accessiblePreview = [previewText, answerPreview].filter(Boolean).join(": ");
-  const displayText = workEntryRowLabel(row.workEntry, expanded);
+  const displayText = workEntryRowLabel(row.workEntry, expanded && !palette.better);
   const iconIsDestructive = row.icon === "alert" || row.icon === "warning";
   const failed = row.status === "failure";
   const toolIcon = row.workEntry.toolIcon ?? row.workEntry.toolSource?.icon;
   const icon = toolPresentation?.icon ?? workRowSymbolName(row.icon);
 
   return (
-    <Animated.View
-      layout={WORK_LOG_LAYOUT_TRANSITION}
-      className="overflow-hidden"
-      {...(isFreshRow(row.createdAt) ? { entering: FadeIn.duration(200) } : {})}
-    >
-      <Pressable
-        accessibilityRole={canExpand ? "button" : undefined}
-        accessibilityLabel={failed ? `${accessiblePreview}, tool call failed` : accessiblePreview}
-        accessibilityHint={
-          canExpand
-            ? `Double tap to ${expanded ? "hide" : "show"} full details. Long press to copy.`
-            : "Long press to copy."
-        }
-        accessibilityState={canExpand ? { expanded } : undefined}
-        hitSlop={4}
-        onPress={() => {
-          if (canExpand) {
-            void Haptics.selectionAsync();
-            props.onToggleRow(row.id, props.anchorKey);
+    <ChatPresentationMotion motionId={row.id}>
+      <ThreadDisclosureLayout className="overflow-hidden" createdAt={row.createdAt}>
+        <Pressable
+          accessibilityRole={canExpand ? "button" : undefined}
+          accessibilityLabel={failed ? `${accessiblePreview}, tool call failed` : accessiblePreview}
+          accessibilityHint={
+            canExpand
+              ? `Double tap to ${expanded ? "hide" : "show"} full details. Long press to copy.`
+              : "Long press to copy."
           }
-        }}
-        onLongPress={() => props.onCopyRow(row.id, row.getCopyText())}
-        className="rounded-md px-0.5 py-0 active:bg-subtle"
-      >
-        <View className="min-h-8 flex-row items-center gap-1.5">
-          {row.live && !expanded && props.chatVisualMode === "current" ? (
-            <ShimmeringWorkContent
-              environmentId={props.environmentId}
-              icon={icon}
-              iconSubtleColor={props.iconSubtleColor}
-              label={displayText}
-              showIcon
-              themeAppearance={props.themeAppearance}
-              toolIcon={toolIcon}
-            />
-          ) : (
-            <>
-              <View className="h-6 w-6 shrink-0 items-center justify-center">
-                {toolIcon ? (
-                  <ToolActivityIconView
-                    environmentId={props.environmentId}
-                    icon={toolIcon}
-                    fallback={icon}
-                    fallbackColor={props.iconSubtleColor}
-                    themeAppearance={props.themeAppearance}
-                  />
-                ) : (
-                  <WorkLogIcon
-                    icon={icon}
-                    color={props.iconSubtleColor}
-                    colorClassName={iconIsDestructive ? "accent-adaptive-rose-600-400" : undefined}
-                  />
-                )}
-              </View>
-              <Text
-                className={cn(
-                  "min-w-0 flex-1 text-sm text-foreground-muted",
-                  iconIsDestructive && "font-t3-medium text-adaptive-rose-600-400",
-                )}
-                numberOfLines={expanded ? undefined : 1}
-              >
-                {displayText}
-                {answerPreview ? (
-                  <Text
-                    className={
-                      !expanded &&
-                      row.workEntry.questionAnswer &&
-                      hasQuestionAnswer(row.workEntry.questionAnswer)
-                        ? "text-foreground"
-                        : "text-foreground-subtle"
-                    }
-                  >{`  ${answerPreview}`}</Text>
-                ) : null}
-              </Text>
-            </>
-          )}
+          accessibilityState={canExpand ? { expanded } : undefined}
+          hitSlop={4}
+          onPress={() => {
+            if (canExpand) {
+              void Haptics.selectionAsync();
+              props.onToggleRow(row.id, props.anchorKey);
+            }
+          }}
+          onLongPress={() => props.onCopyRow(row.id, row.getCopyText())}
+          className="rounded-md px-0.5 py-0 active:bg-subtle"
+          style={
+            palette.better
+              ? ({ pressed }) => ({
+                  borderRadius: 18,
+                  alignSelf: "flex-start",
+                  maxWidth: "100%",
+                  paddingHorizontal: 8,
+                  backgroundColor: pressed || expanded ? palette.control : "transparent",
+                })
+              : undefined
+          }
+        >
+          <View className="min-h-8 flex-row items-center gap-1.5">
+            {row.live && !expanded && props.chatVisualMode === "current" ? (
+              <ShimmeringWorkContent
+                environmentId={props.environmentId}
+                icon={icon}
+                iconSubtleColor={props.iconSubtleColor}
+                label={displayText}
+                showIcon
+                themeAppearance={props.themeAppearance}
+                toolIcon={toolIcon}
+              />
+            ) : (
+              <>
+                <View className="h-6 w-6 shrink-0 items-center justify-center">
+                  {palette.better && !row.live && !failed ? (
+                    <SymbolView
+                      name="checkmark"
+                      size={13}
+                      tintColor={palette.accent}
+                      type="monochrome"
+                    />
+                  ) : toolIcon ? (
+                    <ToolActivityIconView
+                      environmentId={props.environmentId}
+                      icon={toolIcon}
+                      fallback={icon}
+                      fallbackColor={props.iconSubtleColor}
+                      themeAppearance={props.themeAppearance}
+                    />
+                  ) : (
+                    <WorkLogIcon
+                      icon={icon}
+                      color={props.iconSubtleColor}
+                      colorClassName={
+                        iconIsDestructive ? "accent-adaptive-rose-600-400" : undefined
+                      }
+                    />
+                  )}
+                </View>
+                <Text
+                  className={cn(
+                    palette.better
+                      ? "min-w-0 shrink text-sm"
+                      : "min-w-0 flex-1 text-sm text-foreground-muted",
+                    iconIsDestructive && "font-t3-medium text-adaptive-rose-600-400",
+                  )}
+                  style={
+                    palette.better && !iconIsDestructive ? { color: palette.foreground } : undefined
+                  }
+                  numberOfLines={expanded && !palette.better ? undefined : 1}
+                >
+                  {displayText}
+                  {answerPreview ? (
+                    <Text
+                      className={
+                        !expanded &&
+                        row.workEntry.questionAnswer &&
+                        hasQuestionAnswer(row.workEntry.questionAnswer)
+                          ? "text-foreground"
+                          : "text-foreground-subtle"
+                      }
+                    >{`  ${answerPreview}`}</Text>
+                  ) : null}
+                </Text>
+              </>
+            )}
 
-          <View className="shrink-0 flex-row items-center gap-px">
-            {props.copied ? (
-              <Text className="pr-1 font-t3-medium text-3xs text-adaptive-emerald-600-400">
-                Copied
-              </Text>
-            ) : null}
-            {failed && toolIcon !== undefined ? (
-              <View
-                className="h-4 w-4 items-center justify-center"
-                accessibilityElementsHidden
-                importantForAccessibility="no-hide-descendants"
-              >
-                <SymbolView
-                  name="xmark"
-                  size={11}
-                  tintColorClassName="accent-danger-foreground/40"
-                  type="monochrome"
-                />
-              </View>
-            ) : null}
-            <View className="h-4 w-4 items-center justify-center">
-              {canExpand ? (
-                <ThreadDisclosureChevron
-                  expanded={expanded}
-                  collapsedDirection="down"
-                  size={11}
-                  tintColor={props.iconSubtleColor}
-                />
+            <View className="shrink-0 flex-row items-center gap-px">
+              {props.copied ? (
+                <Text className="pr-1 font-t3-medium text-3xs text-adaptive-emerald-600-400">
+                  Copied
+                </Text>
               ) : null}
+              {failed && toolIcon !== undefined ? (
+                <View
+                  className="h-4 w-4 items-center justify-center"
+                  accessibilityElementsHidden
+                  importantForAccessibility="no-hide-descendants"
+                >
+                  <SymbolView
+                    name="xmark"
+                    size={11}
+                    tintColorClassName="accent-danger-foreground/40"
+                    type="monochrome"
+                  />
+                </View>
+              ) : null}
+              <View className="h-4 w-4 items-center justify-center">
+                {canExpand ? (
+                  <ThreadDisclosureChevron
+                    expanded={expanded}
+                    collapsedDirection="down"
+                    size={11}
+                    tintColor={palette.better ? palette.foreground : props.iconSubtleColor}
+                  />
+                ) : null}
+              </View>
             </View>
           </View>
-        </View>
-      </Pressable>
+        </Pressable>
 
-      {expanded && (fullDetail || viewedImagePath || row.workEntry.questionAnswer) ? (
-        <Animated.View
-          entering={WORK_LOG_DETAIL_ENTER_TRANSITION}
-          exiting={WORK_LOG_DETAIL_EXIT_TRANSITION}
-          layout={WORK_LOG_LAYOUT_TRANSITION}
-          className="ml-7 border-l border-border pb-1 pl-3 pt-0.5"
-        >
-          {row.workEntry.questionAnswer ? (
-            <QuestionAnswerHistory
-              environmentId={props.environmentId}
-              answer={row.workEntry.questionAnswer}
-            />
-          ) : null}
-          {viewedImagePath ? (
-            <View className="pb-1.5">
-              {props.renderImage({ href: viewedImagePath, alt: null, title: null })}
-            </View>
-          ) : null}
-          <ScrollView
-            nestedScrollEnabled
-            directionalLockEnabled
-            showsVerticalScrollIndicator
-            className="max-h-60"
-            contentContainerStyle={{ paddingRight: 8 }}
+        {expanded && (fullDetail || viewedImagePath || row.workEntry.questionAnswer) ? (
+          <Animated.View
+            entering={
+              motion.betterT3
+                ? motion.enabled
+                  ? CHAT_DETAIL_ENTER
+                  : undefined
+                : WORK_LOG_DETAIL_ENTER_TRANSITION
+            }
+            exiting={
+              motion.betterT3
+                ? motion.enabled
+                  ? CHAT_DETAIL_EXIT
+                  : undefined
+                : WORK_LOG_DETAIL_EXIT_TRANSITION
+            }
+            layout={
+              motion.betterT3
+                ? motion.enabled
+                  ? CHAT_DETAIL_LAYOUT
+                  : undefined
+                : WORK_LOG_LAYOUT_TRANSITION
+            }
+            className="ml-7 border-l border-border pb-1 pl-3 pt-0.5"
           >
-            <Text selectable className="font-mono text-2xs leading-normal text-foreground-muted">
-              {fullDetail}
-            </Text>
-          </ScrollView>
-        </Animated.View>
-      ) : null}
-    </Animated.View>
+            <ChatPresentationMotion motionId={`detail:${row.id}`}>
+              {row.workEntry.questionAnswer ? (
+                <QuestionAnswerHistory
+                  environmentId={props.environmentId}
+                  answer={row.workEntry.questionAnswer}
+                />
+              ) : null}
+              {viewedImagePath ? (
+                <View className="pb-1.5">
+                  {props.renderImage({ href: viewedImagePath, alt: null, title: null })}
+                </View>
+              ) : null}
+              <ScrollView
+                nestedScrollEnabled
+                directionalLockEnabled
+                showsVerticalScrollIndicator
+                className="max-h-60"
+                contentContainerStyle={{ paddingRight: 8 }}
+              >
+                <Text
+                  selectable
+                  className="font-mono text-2xs leading-normal text-foreground-muted"
+                >
+                  {fullDetail}
+                </Text>
+              </ScrollView>
+            </ChatPresentationMotion>
+          </Animated.View>
+        ) : null}
+      </ThreadDisclosureLayout>
+    </ChatPresentationMotion>
   );
 });
 
@@ -927,6 +1063,7 @@ export function ThreadWorkGroupToggle(props: {
   readonly shimmer: boolean;
   readonly onToggle: () => void;
 }) {
+  const palette = useChatBubblePalette();
   const accessibilityLabel = props.hasFailure
     ? `${props.summary}, tool call failed`
     : props.summary;
@@ -949,7 +1086,12 @@ export function ThreadWorkGroupToggle(props: {
           props.onToggle();
         }}
         className="min-h-8 flex-row items-center gap-1.5 rounded-md px-0.5 py-0 active:bg-subtle"
-        style={{ minHeight: props.rowSizing.estimatedRowHeight }}
+        style={({ pressed }) => ({
+          minHeight: props.rowSizing.estimatedRowHeight,
+          ...(palette.better
+            ? { borderRadius: 999, backgroundColor: pressed ? palette.hover : "transparent" }
+            : {}),
+        })}
       >
         {props.shimmer ? (
           <ShimmeringWorkContent
@@ -1007,6 +1149,7 @@ const AGENT_SPAWN_TONE_DOT_CLASS = {
  * remounting the card (see the batch key in appendActivityGroupRows).
  */
 export const ThreadAgentSpawnCard = memo(function ThreadAgentSpawnCard(props: {
+  readonly motionId?: string;
   readonly summary: AgentSpawnSummary;
   readonly expanded: boolean;
   readonly iconSubtleColor: ColorValue;
@@ -1015,11 +1158,21 @@ export const ThreadAgentSpawnCard = memo(function ThreadAgentSpawnCard(props: {
   readonly onCopy: () => void;
 }) {
   const { summary, expanded } = props;
+  const motion = useChatPresentationMotion();
   const working = summary.tone === "working";
   const memberCount = summary.members.length;
   const canExpand = memberCount > 0;
   return (
-    <Animated.View layout={WORK_LOG_LAYOUT_TRANSITION} className="-mx-1 mb-1 px-1">
+    <Animated.View
+      layout={
+        motion.betterT3
+          ? motion.enabled
+            ? CHAT_DETAIL_LAYOUT
+            : undefined
+          : WORK_LOG_LAYOUT_TRANSITION
+      }
+      className="-mx-1 mb-1 px-1"
+    >
       <Pressable
         accessibilityRole={canExpand ? "button" : undefined}
         accessibilityState={canExpand ? { expanded } : undefined}
@@ -1090,36 +1243,56 @@ export const ThreadAgentSpawnCard = memo(function ThreadAgentSpawnCard(props: {
         </View>
         {expanded && canExpand ? (
           <Animated.View
-            entering={WORK_LOG_DETAIL_ENTER_TRANSITION}
-            exiting={WORK_LOG_DETAIL_EXIT_TRANSITION}
-            layout={WORK_LOG_LAYOUT_TRANSITION}
+            entering={
+              motion.betterT3
+                ? motion.enabled
+                  ? CHAT_DETAIL_ENTER
+                  : undefined
+                : WORK_LOG_DETAIL_ENTER_TRANSITION
+            }
+            exiting={
+              motion.betterT3
+                ? motion.enabled
+                  ? CHAT_DETAIL_EXIT
+                  : undefined
+                : WORK_LOG_DETAIL_EXIT_TRANSITION
+            }
+            layout={
+              motion.betterT3
+                ? motion.enabled
+                  ? CHAT_DETAIL_LAYOUT
+                  : undefined
+                : WORK_LOG_LAYOUT_TRANSITION
+            }
             className="ml-8 mt-1.5 gap-1.5 border-l border-border pl-3"
           >
-            {summary.members.map((member) => (
-              <View key={member.title} className="gap-px">
-                <View className="flex-row items-center gap-1.5">
-                  <View
-                    className={cn(
-                      "h-1.5 w-1.5 shrink-0 rounded-full",
-                      AGENT_SPAWN_TONE_DOT_CLASS[member.tone],
-                    )}
-                  />
-                  <Text className="min-w-0 flex-1 text-xs text-foreground" numberOfLines={1}>
-                    {member.title}
-                  </Text>
-                  <Text className="shrink-0 text-2xs text-foreground-muted">{member.status}</Text>
+            <ChatPresentationMotion motionId={props.motionId} className="gap-1.5">
+              {summary.members.map((member) => (
+                <View key={member.title} className="gap-px">
+                  <View className="flex-row items-center gap-1.5">
+                    <View
+                      className={cn(
+                        "h-1.5 w-1.5 shrink-0 rounded-full",
+                        AGENT_SPAWN_TONE_DOT_CLASS[member.tone],
+                      )}
+                    />
+                    <Text className="min-w-0 flex-1 text-xs text-foreground" numberOfLines={1}>
+                      {member.title}
+                    </Text>
+                    <Text className="shrink-0 text-2xs text-foreground-muted">{member.status}</Text>
+                  </View>
+                  {member.detail ? (
+                    <Text
+                      selectable
+                      className="pl-3 font-mono text-2xs leading-normal text-foreground-muted"
+                      numberOfLines={expanded ? 6 : 1}
+                    >
+                      {member.detail}
+                    </Text>
+                  ) : null}
                 </View>
-                {member.detail ? (
-                  <Text
-                    selectable
-                    className="pl-3 font-mono text-2xs leading-normal text-foreground-muted"
-                    numberOfLines={expanded ? 6 : 1}
-                  >
-                    {member.detail}
-                  </Text>
-                ) : null}
-              </View>
-            ))}
+              ))}
+            </ChatPresentationMotion>
           </Animated.View>
         ) : null}
       </Pressable>
@@ -1132,7 +1305,14 @@ export function ThreadThinkingRow(props: {
   readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
   readonly iconSubtleColor: ColorValue;
 }) {
-  if (props.chatVisualMode === "classic") {
+  if (props.chatVisualMode === "better-t3") {
+    return (
+      <View style={{ paddingHorizontal: 4, paddingVertical: 3 }}>
+        <ThreadThinkingIndicator color={props.iconSubtleColor} />
+      </View>
+    );
+  }
+  if (props.chatVisualMode !== "current") {
     return (
       <View
         accessible
@@ -1173,6 +1353,7 @@ export function ThreadThinkingRow(props: {
  * recycling; `children` is the trace body and only mounts while open.
  */
 export function ThreadReasoningRow(props: {
+  readonly motionId?: string;
   readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
   readonly iconSubtleColor: ColorValue;
   readonly expanded: boolean;
@@ -1181,8 +1362,9 @@ export function ThreadReasoningRow(props: {
   readonly onToggle: () => void;
   readonly children: ReactNode;
 }) {
+  const motion = useChatPresentationMotion();
   return (
-    <View className={cn("-mx-1 px-1 py-0", props.expanded && "pb-1.5")}>
+    <ThreadDisclosureLayout className={cn("-mx-1 px-1 py-0", props.expanded && "pb-1.5")}>
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ expanded: props.expanded }}
@@ -1194,9 +1376,16 @@ export function ThreadReasoningRow(props: {
           props.onToggle();
         }}
         className="min-h-8 flex-row items-center gap-1.5 rounded-md px-0.5 py-0 active:bg-subtle"
-        style={{ minHeight: props.rowSizing.estimatedRowHeight }}
+        style={{
+          minHeight: props.rowSizing.estimatedRowHeight,
+          ...(motion.betterT3
+            ? { paddingHorizontal: 12, paddingVertical: 4, borderRadius: 20 }
+            : {}),
+        }}
       >
-        {props.streaming ? (
+        {props.streaming && motion.betterT3 ? (
+          <ThreadThinkingIndicator color={props.iconSubtleColor} />
+        ) : props.streaming ? (
           <ShimmeringWorkContent
             key={props.rowSizing.textSizeKey}
             icon="brain"
@@ -1227,22 +1416,49 @@ export function ThreadReasoningRow(props: {
       </Pressable>
       {props.expanded ? (
         <Animated.View
-          entering={WORK_LOG_DETAIL_ENTER_TRANSITION}
-          exiting={WORK_LOG_DETAIL_EXIT_TRANSITION}
-          layout={WORK_LOG_LAYOUT_TRANSITION}
+          entering={
+            motion.betterT3
+              ? motion.enabled
+                ? CHAT_DETAIL_ENTER
+                : undefined
+              : WORK_LOG_DETAIL_ENTER_TRANSITION
+          }
+          exiting={
+            motion.betterT3
+              ? motion.enabled
+                ? CHAT_DETAIL_EXIT
+                : undefined
+              : WORK_LOG_DETAIL_EXIT_TRANSITION
+          }
+          layout={
+            motion.betterT3
+              ? motion.enabled
+                ? CHAT_DETAIL_LAYOUT
+                : undefined
+              : WORK_LOG_LAYOUT_TRANSITION
+          }
           className="ml-7 mt-1 rounded-xl bg-subtle px-3 py-2"
         >
-          <ScrollView
-            nestedScrollEnabled
-            directionalLockEnabled
-            showsVerticalScrollIndicator
-            className="max-h-80"
-          >
-            {props.children}
-          </ScrollView>
+          {motion.betterT3 ? (
+            <View
+              pointerEvents="none"
+              accessible={false}
+              className="absolute inset-y-0 left-0 w-3.5 rounded-bl-xl border-b border-l border-border"
+            />
+          ) : null}
+          <ChatPresentationMotion motionId={props.motionId}>
+            <ScrollView
+              nestedScrollEnabled
+              directionalLockEnabled
+              showsVerticalScrollIndicator
+              className="max-h-80"
+            >
+              {props.children}
+            </ScrollView>
+          </ChatPresentationMotion>
         </Animated.View>
       ) : null}
-    </View>
+    </ThreadDisclosureLayout>
   );
 }
 

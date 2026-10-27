@@ -16,8 +16,12 @@ function clamp(value: number, minimum: number, maximum: number): number {
 export function resolveMarkdownTableWidthBounds(
   contentWidth: number,
   chatColumnWidth: number,
+  bubblePadding = 0,
 ): MarkdownTableWidthBounds {
-  const availableWidth = Math.max(0, chatColumnWidth - MARKDOWN_TABLE_VIEWPORT_GUTTER_PX);
+  const availableWidth = Math.max(
+    0,
+    chatColumnWidth - MARKDOWN_TABLE_VIEWPORT_GUTTER_PX - bubblePadding,
+  );
   const minWidth = Math.min(Math.max(0, contentWidth), availableWidth);
   return { minWidth, maxWidth: Math.max(minWidth, availableWidth) };
 }

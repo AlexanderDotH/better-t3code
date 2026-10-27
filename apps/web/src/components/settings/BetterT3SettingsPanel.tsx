@@ -5,7 +5,12 @@ import type {
   BetterT3SwitchFeatureId,
   EnvironmentId,
 } from "@t3tools/contracts";
-import { BETTER_T3_FEATURE_REGISTRY, type SidebarPosition } from "@t3tools/contracts";
+import {
+  BETTER_T3_FEATURE_REGISTRY,
+  CHAT_VISUAL_MODES,
+  resolveBetterT3FeatureFlag,
+  type SidebarPosition,
+} from "@t3tools/contracts";
 import {
   DEFAULT_CHAT_WIDTH_ADJUSTMENT_PERCENT,
   DEFAULT_CHAT_WIDTH_CUSTOMIZATION_ENABLED,
@@ -34,6 +39,7 @@ import { Link } from "@tanstack/react-router";
 import { agentSettingsEnvironment } from "../../state/agentSettings";
 import { useCallback, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 
+import { ChatVisualModeSyncNotice } from "./ChatVisualModeSyncNotice";
 import { isElectron } from "../../env";
 import { useChatVisualMode, useSetChatVisualMode } from "../../chatVisualModeSync";
 import {
@@ -402,7 +408,11 @@ export function ContextWindowMeterSettings() {
 function visibleBetterT3Features(props: BetterT3SettingsPanelViewProps) {
   return props.features.filter((feature) => {
     const id = feature.descriptor.id;
-    if (id === "agent.reasoningWorkingOverlay" || props.consumedFeatureIds?.includes(id))
+    if (
+      id === "agent.reasoningWorkingOverlay" ||
+      id === "agent.reasoningInMessage" ||
+      props.consumedFeatureIds?.includes(id)
+    )
       return false;
     if (props.voiceSettings && id === "voice.credentials") return false;
     return !(
@@ -416,7 +426,7 @@ function visibleBetterT3Features(props: BetterT3SettingsPanelViewProps) {
 function searchableBetterT3Features(props: BetterT3SettingsPanelViewProps) {
   return props.features.filter((feature) => {
     const id = feature.descriptor.id;
-    if (id === "agent.reasoningWorkingOverlay") return false;
+    if (id === "agent.reasoningWorkingOverlay" || id === "agent.reasoningInMessage") return false;
     if (props.voiceSettings && id === "voice.credentials") return false;
     return !(
       props.projectIndexingSettings &&
@@ -961,8 +971,30 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
         chatVisualMode,
         contextWindowSelector: settings.contextWindowSelector,
         sidebarPosition: settings.sidebarPosition,
+        showReasoning: settings.showReasoning,
+        reasoningWorkingOverlay: resolveBetterT3FeatureFlag(
+          settings.betterT3Device,
+          "agent.reasoningWorkingOverlay",
+        ),
+        reasoningInMessage: resolveBetterT3FeatureFlag(
+          settings.betterT3Device,
+          "agent.reasoningInMessage",
+        ),
+        chatWidth: settings.chatWidth,
+        chatWidthCustomizationEnabled: settings.chatWidthCustomizationEnabled,
+        chatWidthAdjustmentPercent: settings.chatWidthAdjustmentPercent,
       }),
-    [chatVisualMode, features, settings.contextWindowSelector, settings.sidebarPosition],
+    [
+      chatVisualMode,
+      features,
+      settings.contextWindowSelector,
+      settings.sidebarPosition,
+      settings.showReasoning,
+      settings.betterT3Device,
+      settings.chatWidth,
+      settings.chatWidthCustomizationEnabled,
+      settings.chatWidthAdjustmentPercent,
+    ],
   );
   const onSwitchChange = useCallback(
     (featureId: BetterT3SwitchFeatureId, enabled: boolean) => {
@@ -978,7 +1010,7 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
       value: BetterT3VisualChoiceValue,
     ) => {
       if (featureId === "agent.reasoningVisibility") {
-        if (value === "none" || value === "chat" || value === "working") {
+        if (value === "none" || value === "chat" || value === "working" || value === "message") {
           updateSettings(buildReasoningDisplaySettingsPatch(value));
         }
         return;
@@ -988,7 +1020,8 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
         return;
       }
       if (featureId === "chat.presentation") {
-        if (value === "current" || value === "classic") setChatVisualMode(value);
+        const mode = CHAT_VISUAL_MODES.find((mode) => mode === value);
+        if (mode) setChatVisualMode(mode);
         return;
       }
       if (featureId === "chat.contextWindowSelector") {
@@ -1021,7 +1054,9 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
             ? "none"
             : previewModel.agent.reasoningWorkingOverlay
               ? "working"
-              : "chat";
+              : previewModel.agent.reasoningInMessage
+                ? "message"
+                : "chat";
           break;
         case "chat.sidebarPosition":
           value = previewModel.chat.sidebarPosition;
@@ -1039,15 +1074,20 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
           value = feature.value === true;
       }
       choices[featureId] = (
-        <BetterT3FeatureChoice
-          disabled={feature.availability.state !== "available"}
-          featureId={featureId}
-          key={featureId}
-          model={previewModel}
-          onChange={(nextValue) => onVisualChoiceChange(featureId, nextValue)}
-          translate={translate}
-          value={value}
-        />
+        <div key={featureId}>
+          <BetterT3FeatureChoice
+            disabled={feature.availability.state !== "available"}
+            featureId={featureId}
+            key={featureId}
+            model={previewModel}
+            onChange={(nextValue) => onVisualChoiceChange(featureId, nextValue)}
+            translate={translate}
+            value={value}
+          />
+          {featureId === "chat.presentation" ? (
+            <ChatVisualModeSyncNotice translate={translate} />
+          ) : null}
+        </div>
       );
     }
     return choices;

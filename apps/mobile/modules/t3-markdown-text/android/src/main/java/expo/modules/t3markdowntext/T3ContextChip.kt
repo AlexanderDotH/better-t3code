@@ -17,7 +17,8 @@ class T3ContextChip(
   fontSize: Float,
   colors: Colors,
   maximumWidth: Float,
-  private val density: Float
+  private val density: Float,
+  messageAppearance: Boolean = false
 ) {
   /** What the chip says: its name, the size beside it, and the glyph that leads it. */
   data class Content(val label: String, val symbol: String, val detail: String = "")
@@ -60,13 +61,30 @@ class T3ContextChip(
     TextUtils.TruncateAt.MIDDLE
   ).toString()
   private val fill = Color.argb(
-    28,
+    if (messageAppearance) 0 else 28,
     Color.red(colors.accent),
     Color.green(colors.accent),
     Color.blue(colors.accent)
   )
-  private val textColor = blend(colors.accent, colors.foreground, 0.22f)
-  private val borderColor = blend(colors.accent, colors.border, 0.34f)
+  private val textColor = if (messageAppearance) {
+    colors.foreground
+  } else {
+    blend(
+      colors.accent,
+      colors.foreground,
+      0.22f
+    )
+  }
+  private val borderColor = if (messageAppearance) {
+    colors.border
+  } else {
+    blend(
+      colors.accent,
+      colors.border,
+      0.34f
+    )
+  }
+  private val cornerRadius = if (messageAppearance) height / 2 else em / 2
 
   // Half a stroke keeps the border inside the box; the rest of the reserved margin is
   // slack, so an antialiased edge fades out before it reaches the span bounds.
@@ -79,11 +97,11 @@ class T3ContextChip(
     canvas.translate(x, y)
     paint.style = Paint.Style.FILL
     paint.color = fill
-    canvas.drawRoundRect(shape, em / 2, em / 2, paint)
+    canvas.drawRoundRect(shape, cornerRadius, cornerRadius, paint)
     paint.style = Paint.Style.STROKE
     paint.strokeWidth = strokeWidth
     paint.color = borderColor
-    canvas.drawRoundRect(shape, em / 2, em / 2, paint)
+    canvas.drawRoundRect(shape, cornerRadius, cornerRadius, paint)
     paint.color = textColor
     canvas.save()
     val iconSize = em * 1.17f

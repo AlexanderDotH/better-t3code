@@ -1,6 +1,8 @@
 import {
+  chatVisualModeToLegacyRecord,
   isProviderDriverKind,
   isProviderAvailable,
+  resolveChatVisualModeRecord,
   resolveProviderInstanceEnabled,
   ModelSelection,
   type ProjectChatSettings,
@@ -253,13 +255,52 @@ function applyProjectChatSettingsPatch(
 type LegacyLocaleRecord = ServerSettings["interfaceLanguageSyncRecord"];
 type LocaleRecordV1 = ServerSettings["interfaceLocaleSyncRecordV1"];
 
-function localeRecordIsNewer(
+function syncRecordIsNewer(
   candidate: { readonly updatedAt: number; readonly updateId: string },
   current: { readonly updatedAt: number; readonly updateId: string } | undefined,
 ): boolean {
   if (current === undefined) return true;
   if (candidate.updatedAt !== current.updatedAt) return candidate.updatedAt > current.updatedAt;
   return candidate.updateId > current.updateId;
+}
+
+function resolveChatVisualModePatch(
+  current: ServerSettings,
+  patch: {
+    readonly chatVisualModeSyncRecord: ServerSettings["chatVisualModeSyncRecord"];
+    readonly chatVisualModeSyncRecordV2: ServerSettings["chatVisualModeSyncRecordV2"];
+  },
+): Pick<ServerSettings, "chatVisualModeSyncRecord" | "chatVisualModeSyncRecordV2"> {
+  if (
+    patch.chatVisualModeSyncRecord === undefined &&
+    patch.chatVisualModeSyncRecordV2 === undefined
+  ) {
+    return {};
+  }
+  const legacy =
+    patch.chatVisualModeSyncRecord !== undefined &&
+    syncRecordIsNewer(patch.chatVisualModeSyncRecord, current.chatVisualModeSyncRecord)
+      ? patch.chatVisualModeSyncRecord
+      : current.chatVisualModeSyncRecord;
+  const incomingV2 = patch.chatVisualModeSyncRecordV2;
+  const currentV2 = current.chatVisualModeSyncRecordV2;
+  // A client may have promoted the Current mirror before learning its Better T3 source.
+  const restoresBetterT3 =
+    incomingV2?.mode === "better-t3" &&
+    currentV2?.mode === "current" &&
+    incomingV2.updatedAt === currentV2.updatedAt &&
+    incomingV2.updateId === currentV2.updateId;
+  const v2 =
+    incomingV2 !== undefined && (syncRecordIsNewer(incomingV2, currentV2) || restoresBetterT3)
+      ? incomingV2
+      : currentV2;
+  const record = resolveChatVisualModeRecord(legacy, v2);
+  if (record === null) return {};
+  return {
+    chatVisualModeSyncRecord: chatVisualModeToLegacyRecord(record),
+    // Keep legacy writes distinct so a later V2 record can supersede its own mirror.
+    ...(v2 === undefined ? {} : { chatVisualModeSyncRecordV2: v2 }),
+  };
 }
 
 function resolveInterfaceLocalePatch(
@@ -271,7 +312,7 @@ function resolveInterfaceLocalePatch(
 ): Partial<Pick<ServerSettings, "interfaceLanguageSyncRecord" | "interfaceLocaleSyncRecordV1">> {
   if (patch.interfaceLocaleSyncRecordV1 !== undefined) {
     const nextV1 = patch.interfaceLocaleSyncRecordV1;
-    if (!localeRecordIsNewer(nextV1, current.interfaceLocaleSyncRecordV1)) {
+    if (!syncRecordIsNewer(nextV1, current.interfaceLocaleSyncRecordV1)) {
       return {
         ...(current.interfaceLanguageSyncRecord === undefined
           ? {}
@@ -310,10 +351,10 @@ function resolveInterfaceLocalePatch(
         : { interfaceLocaleSyncRecordV1: current.interfaceLocaleSyncRecordV1 }),
     };
   }
-  const nextLegacy = localeRecordIsNewer(legacy, current.interfaceLanguageSyncRecord)
+  const nextLegacy = syncRecordIsNewer(legacy, current.interfaceLanguageSyncRecord)
     ? legacy
     : current.interfaceLanguageSyncRecord;
-  const nextV1 = localeRecordIsNewer(legacy, current.interfaceLocaleSyncRecordV1)
+  const nextV1 = syncRecordIsNewer(legacy, current.interfaceLocaleSyncRecordV1)
     ? { version: 1 as const, ...legacy }
     : current.interfaceLocaleSyncRecordV1;
   return {
@@ -428,6 +469,8 @@ export function applyServerSettingsPatch(
     enableAssistantStreaming,
     enableLegacyTokenStreaming,
     responseStreamingMode,
+    chatVisualModeSyncRecord,
+    chatVisualModeSyncRecordV2,
     interfaceLanguageSyncRecord,
     interfaceLocaleSyncRecordV1,
     automaticGitFetchInterval,
@@ -553,6 +596,10 @@ export function applyServerSettingsPatch(
     ...resolveInterfaceLocalePatch(current, {
       interfaceLanguageSyncRecord,
       interfaceLocaleSyncRecordV1,
+    }),
+    ...resolveChatVisualModePatch(current, {
+      chatVisualModeSyncRecord,
+      chatVisualModeSyncRecordV2,
     }),
     ...(worktreeCleanupPatch === undefined
       ? {}

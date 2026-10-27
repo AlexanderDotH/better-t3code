@@ -10,6 +10,7 @@ export async function renderDiagram(
   container: HTMLElement,
 ): Promise<RenderedDiagram> {
   const appearance = resolveVisualizationDiagramAppearance(request.theme, request.appearance);
+  const better = appearance.presentation === "better-t3";
   mermaid.initialize({
     startOnLoad: false,
     securityLevel: "strict",
@@ -40,17 +41,39 @@ export async function renderDiagram(
       useGradient: false,
       dropShadow: "none",
       nodeShadow: false,
+      ...(better
+        ? {
+            actorBkg: appearance.surface,
+            actorBorder: appearance.border,
+            actorTextColor: appearance.foreground,
+            actorLineColor: appearance.mutedForeground,
+            signalColor: appearance.mutedForeground,
+            signalTextColor: appearance.foreground,
+            labelBoxBkgColor: appearance.surface,
+            labelBoxBorderColor: appearance.border,
+            labelTextColor: appearance.foreground,
+            loopTextColor: appearance.foreground,
+            activationBkgColor: appearance.surface,
+            sequenceNumberColor: appearance.foreground,
+            clusterBkg: appearance.background,
+            clusterBorder: appearance.border,
+          }
+        : {}),
     },
     htmlLabels: false,
     flowchart: {
       htmlLabels: false,
-      padding: 12,
+      ...(better ? { curve: "basis" } : {}),
+      padding: better ? 16 : 12,
       nodeSpacing: 24,
       rankSpacing: 52,
       wrappingWidth: 200,
     },
     themeCSS:
-      ".edge-thickness-normal{stroke-width:1.5px}.flowchart-link{stroke-linecap:round;stroke-linejoin:round}",
+      ".edge-thickness-normal{stroke-width:1.5px}.flowchart-link{stroke-linecap:round;stroke-linejoin:round}" +
+      (better
+        ? ".messageLine0,.messageLine1,.actor-line{stroke-width:1.2px;stroke-linecap:round}.actor-line{stroke-dasharray:4 5}rect.actor{rx:10px;ry:10px}"
+        : ""),
     fontFamily: appearance.fontFamily,
     sequence: {
       actorFontFamily: appearance.fontFamily,
@@ -73,8 +96,8 @@ export async function renderDiagram(
   for (const rectangle of document.querySelectorAll(
     ".node > rect.basic.label-container:not([rx]):not([ry])",
   )) {
-    rectangle.setAttribute("rx", "8");
-    rectangle.setAttribute("ry", "8");
+    rectangle.setAttribute("rx", better ? "10" : "8");
+    rectangle.setAttribute("ry", better ? "10" : "8");
   }
   return { svg: new XMLSerializer().serializeToString(document.documentElement) };
 }

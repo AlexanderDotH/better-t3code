@@ -818,15 +818,56 @@ export const settingsInterfaceCatalog = defineLocalizedInterfaceCatalog({
   "settings.chatVisuals.group": ["Chat visuals", "Chatdarstellung", "Affichage des discussions"],
   "settings.chatVisuals.current": ["Current", "Aktuell", "Actuel"],
   "settings.chatVisuals.classic": ["Classic", "Klassisch", "Classique"],
+  "settings.chatVisuals.better-t3": ["Better T3", "Better T3", "Better T3"],
+  "settings.chatVisuals.current.description": [
+    "The default layout with grouped activities and larger work summaries.",
+    "Die Standardansicht mit gruppierten Aktivitäten und größeren Arbeitszusammenfassungen.",
+    "La présentation par défaut avec les activités regroupées et des résumés détaillés.",
+  ],
+  "settings.chatVisuals.classic.description": [
+    "The compact legacy transcript layout.",
+    "Die kompakte klassische Chatansicht.",
+    "La présentation classique et compacte de la transcription.",
+  ],
+  "settings.chatVisuals.better-t3.description": [
+    "Subtle message and reply bubbles, optional transitions, and compact work results.",
+    "Dezente Nachrichten- und Antwortblasen, optionale Übergänge und kompakte Arbeitsergebnisse.",
+    "Des bulles discrètes pour les messages et les réponses, des transitions facultatives et des résultats compacts.",
+  ],
+  "settings.chatVisuals.sync.local": [
+    "Saved on this device. Connect a compatible environment to sync your choice.",
+    "Auf diesem Gerät gespeichert. Zum Synchronisieren eine kompatible Umgebung verbinden.",
+    "Enregistré sur cet appareil. Connectez un environnement compatible pour synchroniser ce choix.",
+  ],
+  "settings.chatVisuals.sync.pending": [
+    "Changes are waiting to sync with connected environments.",
+    "Änderungen warten auf die Synchronisierung mit verbundenen Umgebungen.",
+    "Les modifications attendent la synchronisation avec les environnements connectés.",
+  ],
+  "settings.chatVisuals.sync.unsupported": [
+    "This choice stays on this device for {{environments}}. Update those servers to sync it.",
+    "Für {{environments}} bleibt diese Auswahl auf diesem Gerät. Zum Synchronisieren die Server aktualisieren.",
+    "Ce choix reste sur cet appareil pour {{environments}}. Mettez ces serveurs à jour pour le synchroniser.",
+  ],
+  "settings.chatVisuals.sync.deferred": [
+    "Waiting for {{environments}} to reconnect.",
+    "Wartet auf die erneute Verbindung mit {{environments}}.",
+    "En attente de la reconnexion de {{environments}}.",
+  ],
+  "settings.chatVisuals.sync.failed": [
+    "Could not sync with {{environments}}. T3 Code will retry after reconnection.",
+    "Synchronisierung mit {{environments}} fehlgeschlagen. T3 Code versucht es nach der erneuten Verbindung wieder.",
+    "Impossible de synchroniser avec {{environments}}. T3 Code réessaiera après la reconnexion.",
+  ],
   "settings.chatVisuals.optionAria": [
     "{{mode}} chat visuals",
     "Chatdarstellung {{mode}}",
     "Affichage des discussions {{mode}}",
   ],
   "settings.chatVisuals.description": [
-    "Current is the default. Classic restores the compact pre-merge transcript visuals.",
-    "„Aktuell“ ist der Standard. „Klassisch“ stellt die kompakte Transcript-Darstellung vor der Zusammenführung wieder her.",
-    "« Actuel » est le réglage par défaut. « Classique » restaure l’affichage compact des transcriptions antérieur à la fusion.",
+    "Current is the default. Choose Classic for the compact legacy layout or Better T3 for subtle message and reply bubbles with compact results.",
+    "„Aktuell“ ist der Standard. „Klassisch“ bietet die kompakte frühere Ansicht, „Better T3“ dezente Nachrichten- und Antwortblasen mit kompakten Ergebnissen.",
+    "« Actuel » est le réglage par défaut. « Classique » offre l’ancienne présentation compacte, « Better T3 » des bulles discrètes pour les messages et les réponses avec des résultats compacts.",
   ],
   "settings.font.terminalPreview": [
     "Terminal font preview",

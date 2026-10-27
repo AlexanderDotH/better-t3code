@@ -7,8 +7,12 @@ const HEIGHT_TRANSITION_FALLBACK_MS = 250;
 export function AnimatedHeight({
   children,
   holdHeight = false,
+  enabled = true,
+  containMargins = false,
 }: {
   readonly children: ReactNode;
+  readonly enabled?: boolean;
+  readonly containMargins?: boolean;
   /** Retain the previous content height while a replacement is loading. */
   readonly holdHeight?: boolean;
 }) {
@@ -29,19 +33,28 @@ export function AnimatedHeight({
   }, [heightState.height, heightState.isClipping]);
 
   useLayoutEffect(() => {
-    if (holdHeight) return;
+    if (holdHeight || !enabled) return;
     const element = contentRef.current;
     if (!element) return;
     let firstFrameId: number | null = null;
     let secondFrameId: number | null = null;
+    let previousWidth: number | null = null;
+    let resizingByPointer = false;
 
     const updateHeight = () => {
-      const nextHeight = Math.ceil(element.scrollHeight || element.getBoundingClientRect().height);
+      const bounds = element.getBoundingClientRect();
+      const nextHeight = Math.ceil(element.scrollHeight || bounds.height);
+      const animate =
+        previousWidth !== null &&
+        Math.abs(previousWidth - bounds.width) < 0.5 &&
+        !resizingByPointer &&
+        document.visibilityState === "visible";
+      previousWidth = bounds.width;
       setHeightState((currentState) => {
         if (currentState.height === nextHeight) return currentState;
         return {
           height: nextHeight,
-          isClipping: currentState.height !== null,
+          isClipping: animate && currentState.height !== null,
         };
       });
     };
@@ -68,21 +81,46 @@ export function AnimatedHeight({
       });
     };
 
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof HTMLTextAreaElement)) return;
+      const bounds = target.getBoundingClientRect();
+      resizingByPointer =
+        event.clientY >= bounds.bottom - 20 &&
+        (event.clientX >= bounds.right - 20 || event.clientX <= bounds.left + 20);
+    };
+    const onPointerUp = () => {
+      resizingByPointer = false;
+    };
+    element.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
+    const cleanup = () => {
+      cancelPendingFrames();
+      element.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
+    };
     updateHeightAfterPaint();
+    if (typeof ResizeObserver === "undefined") return cleanup;
     const resizeObserver = new ResizeObserver(updateHeightAfterPaint);
     resizeObserver.observe(element);
     return () => {
       resizeObserver.disconnect();
-      cancelPendingFrames();
+      cleanup();
     };
-  }, [holdHeight]);
+  }, [holdHeight, enabled]);
 
   return (
     <div
-      data-slot="animated-height"
-      className="transition-[height] duration-200 ease-out motion-reduce:transition-none"
+      data-slot={enabled ? "animated-height" : undefined}
+      className={
+        enabled && heightState.isClipping
+          ? "transition-[height] duration-200 ease-out motion-reduce:transition-none"
+          : undefined
+      }
       style={
-        heightState.height === null
+        !enabled || heightState.height === null
           ? undefined
           : { height: heightState.height, overflow: heightState.isClipping ? "hidden" : "visible" }
       }
@@ -93,7 +131,11 @@ export function AnimatedHeight({
         );
       }}
     >
-      <div ref={contentRef} style={holdHeight ? { height: "100%" } : undefined}>
+      <div
+        ref={contentRef}
+        className={containMargins ? "flow-root" : undefined}
+        style={holdHeight ? { height: "100%" } : undefined}
+      >
         {children}
       </div>
     </div>

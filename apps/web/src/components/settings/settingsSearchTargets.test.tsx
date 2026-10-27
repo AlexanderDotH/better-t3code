@@ -157,6 +157,29 @@ it("opens direct hash destinations and handles them only after a visible target 
   expect(groupTrigger().getAttribute("aria-expanded")).toBe("false");
 });
 
+it("focuses character streaming motion without repeatedly expanding its always-visible group", async () => {
+  const motionTargetId = "chat.characterStreamingMotion";
+  const handled = vi.fn();
+  await act(() =>
+    root.render(
+      <SettingsSearchTargetProvider targetId={motionTargetId} onTargetHandled={handled}>
+        <BetterT3SettingsExpansionProvider>
+          <BetterT3SettingsSubgroup groupId="chat-display" title="Chat display">
+            <SettingsSearchTarget id={motionTargetId}>
+              Character streaming motion
+            </SettingsSearchTarget>
+          </BetterT3SettingsSubgroup>
+        </BetterT3SettingsExpansionProvider>
+      </SettingsSearchTargetProvider>,
+    ),
+  );
+
+  expect(document.activeElement).toBe(document.getElementById(motionTargetId));
+  expect(handled).toHaveBeenCalledOnce();
+  expect(scrollIntoView).toHaveBeenCalledOnce();
+  expect(window.localStorage.getItem("t3code.better-t3-settings-expanded.v1")).toBeNull();
+});
+
 it("finds an unmounted translated model in inline search and opens it before focusing", async () => {
   await act(() =>
     root.render(

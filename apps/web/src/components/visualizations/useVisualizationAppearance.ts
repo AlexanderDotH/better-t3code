@@ -13,11 +13,17 @@ export const VISUALIZATION_SURFACE_CLASS_NAME =
 
 const listeners = new Set<() => void>();
 let observer: MutationObserver | undefined;
-let snapshot: VisualizationAppearance | undefined;
+type VisualizationPalettes = { standard: VisualizationAppearance; bubble: VisualizationAppearance };
+let snapshot: VisualizationPalettes | undefined;
 let snapshotKey = "";
 let snapshotRoot: HTMLElement | undefined;
 let probe:
-  | { container: HTMLDivElement; surface: HTMLDivElement; token: HTMLDivElement }
+  | {
+      container: HTMLDivElement;
+      surface: HTMLDivElement;
+      token: HTMLDivElement;
+      bubble: HTMLDivElement;
+    }
   | undefined;
 
 function createAppearanceProbe() {
@@ -31,12 +37,15 @@ function createAppearanceProbe() {
   const token = document.createElement("div");
   token.style.cssText =
     "background-color:var(--background);color:var(--contrast-foreground);border-color:var(--contrast-border);font-family:var(--font-sans)";
-  container.append(surface, token);
+  const bubble = document.createElement("div");
+  bubble.style.cssText =
+    "background-color:var(--message-surface);color:var(--contrast-message-foreground);border-color:color-mix(in srgb,var(--contrast-message-foreground) 26%,var(--message-surface))";
+  container.append(surface, token, bubble);
   document.body.append(container);
-  return { container, surface, token };
+  return { container, surface, token, bubble };
 }
 
-function readVisualizationAppearance(): VisualizationAppearance | undefined {
+function readVisualizationAppearance(): VisualizationPalettes | undefined {
   const root = typeof document === "undefined" ? undefined : document.documentElement;
   if (!root || !document.body || typeof getComputedStyle === "undefined") return undefined;
   probe ??= createAppearanceProbe();
@@ -62,10 +71,25 @@ function readVisualizationAppearance(): VisualizationAppearance | undefined {
     { ...colors, mutedForeground, surface: cardBackground || defaults.background },
     theme,
   );
-  return normalizeVisualizationAppearance(
-    { ...colors, background: card.surface, mutedForeground, surface },
-    theme,
-  );
+  const bubbleStyle = getComputedStyle(probe.bubble);
+  return {
+    standard: normalizeVisualizationAppearance(
+      { ...colors, background: card.surface, mutedForeground, surface },
+      theme,
+    ),
+    bubble: normalizeVisualizationAppearance(
+      {
+        ...colors,
+        presentation: "better-t3",
+        background: bubbleStyle.backgroundColor || card.surface,
+        foreground: bubbleStyle.color || colors.foreground,
+        border: bubbleStyle.borderTopColor || colors.border,
+        mutedForeground,
+        surface,
+      },
+      theme,
+    ),
+  };
 }
 
 function refreshAppearance() {
@@ -118,7 +142,18 @@ function getServerSnapshot() {
   return undefined;
 }
 
-export function useVisualizationAppearance(theme: VisualizationRenderRequest["theme"]) {
+export function useVisualizationAppearance(
+  theme: VisualizationRenderRequest["theme"],
+  presentation?: "better-t3",
+) {
   const appearance = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
-  return useMemo(() => appearance ?? resolveVisualizationAppearance(theme), [appearance, theme]);
+  return useMemo(() => {
+    const palette = presentation === "better-t3" ? appearance?.bubble : appearance?.standard;
+    return (
+      palette ?? {
+        ...resolveVisualizationAppearance(theme),
+        ...(presentation ? { presentation } : {}),
+      }
+    );
+  }, [appearance, theme, presentation]);
 }
