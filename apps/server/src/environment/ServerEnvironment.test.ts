@@ -184,7 +184,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       expect(second.capabilities.threadTitleRegeneration).toBe(true);
       expect(second.capabilities.mcpWorkspaceVersion).toBe(1);
       expect(second.capabilities.agentWorkflowVersion).toBe(1);
-      expect(second.capabilities.environmentSettingsVersion).toBe(5);
+      expect(second.capabilities.environmentSettingsVersion).toBe(6);
       expect(second.capabilities.aiEndpointDiscovery).toBe(true);
       expect(second.capabilities.visualizationsVersion).toBe(1);
       expect(second.capabilities.projectSettingsVersion).toBe(1);

@@ -257,7 +257,7 @@ export const make = Effect.gen(function* () {
       extensionStoreVersion: 1,
       agentWorkflowVersion: 1,
       deepPlanning: { version: 1, sourceExport: true, sourceImport: true },
-      environmentSettingsVersion: 5,
+      environmentSettingsVersion: 6,
       supportsSpeechDictationProcessing: true,
       aiEndpointDiscovery: true,
       visualizationsVersion: 1,

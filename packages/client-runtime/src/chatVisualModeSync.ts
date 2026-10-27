@@ -15,7 +15,7 @@ import {
 } from "./synchronizedPreferenceSync.ts";
 
 export const CHAT_VISUAL_MODE_SYNC_SETTINGS_VERSION = 3;
-export const CHAT_VISUAL_MODE_V2_SYNC_SETTINGS_VERSION = 6;
+const CHAT_VISUAL_MODE_V2_SYNC_SETTINGS_VERSION = 6;
 
 export interface ChatVisualModeSyncEnvironment<EnvironmentId extends string = string> {
   readonly environmentId: EnvironmentId;
