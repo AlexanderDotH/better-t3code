@@ -8,6 +8,7 @@ import {
 } from "./streamingTextMotion";
 
 export interface UseStreamingTextMotionOptions {
+  readonly enabled?: boolean;
   readonly text: string;
   readonly streamId: string | null | undefined;
   readonly isStreaming: boolean;
@@ -20,6 +21,7 @@ export interface StreamingTextMotionCommitInput extends UseStreamingTextMotionOp
 }
 
 export interface StreamingTextMotionCommitState {
+  readonly enabled: boolean;
   readonly streamId: string | null;
   readonly text: string;
   readonly isStreaming: boolean;
@@ -51,12 +53,26 @@ export function advanceStreamingTextMotionCommit(
     return startStreamingTextMotionCommit(input, streamId);
   }
 
-  if (streamId === null || !input.isStreaming || !input.isVisible) {
+  if (input.enabled === false || streamId === null || !input.isVisible) {
+    return resetStreamingTextMotionCommit(previous, input, streamId);
+  }
+  if (!previous.isStreaming && input.animateInitialStreamChunk && previous.text !== input.text) {
+    return startStreamingTextMotionCommit(input, streamId);
+  }
+  if (!input.isStreaming && !previous.isStreaming) {
     return resetStreamingTextMotionCommit(previous, input, streamId);
   }
 
   const append = detectStreamingTextAppend(previous.text, input.text);
   if (append === null) {
+    if (previous.text === input.text && !input.isStreaming) {
+      // Completion can arrive before the last CSS reveal finishes.
+      return {
+        ...clearCompletedStreamingTextMotionSequence(previous, input.nowMs),
+        isStreaming: false,
+        smoothedRate: undefined,
+      };
+    }
     return resetStreamingTextMotionCommit(previous, input, streamId);
   }
 
@@ -73,6 +89,7 @@ export function advanceStreamingTextMotionCommit(
     input.nowMs,
   ).frames.filter((frame) => frame.sourceEnd <= append.sourceStart);
   return {
+    enabled: true,
     streamId,
     text: input.text,
     isStreaming: input.isStreaming,
@@ -103,6 +120,7 @@ export function clearCompletedStreamingTextMotionSequence(
 }
 
 export function useStreamingTextMotion({
+  enabled = true,
   text,
   streamId,
   isStreaming,
@@ -127,6 +145,7 @@ export function useStreamingTextMotion({
   useCommitEffect(() => {
     const nowMs = readNowMs();
     const next = advanceStreamingTextMotionCommit(committedRef.current, {
+      enabled,
       text,
       streamId,
       isStreaming,
@@ -136,7 +155,29 @@ export function useStreamingTextMotion({
     });
     committedRef.current = next;
     publishFrames(next, nowMs);
-  }, [animateInitialStreamChunk, isStreaming, streamId, text, publishFrames]);
+  }, [enabled, animateInitialStreamChunk, isStreaming, streamId, text, publishFrames]);
+
+  useEffect(() => {
+    if (isStreaming || snapshot.frames.length === 0) return;
+    const frames = snapshot.frames;
+    const deadlineMs = Math.max(
+      ...frames.map((frame) => frame.startedAtMs + frame.revealDeadlineMs),
+    );
+    const timeout = setTimeout(
+      () => {
+        const committed = committedRef.current;
+        if (committed === null || committed.isStreaming || committed.frames !== frames) return;
+        const next = clearCompletedStreamingTextMotionSequence(
+          committed,
+          Math.max(readNowMs(), deadlineMs),
+        );
+        committedRef.current = next;
+        publishFrames(next, readNowMs());
+      },
+      Math.max(0, Math.ceil(deadlineMs - readNowMs())),
+    );
+    return () => clearTimeout(timeout);
+  }, [isStreaming, snapshot.frames, publishFrames]);
 
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -146,6 +187,7 @@ export function useStreamingTextMotion({
       if (committed === null) return;
 
       const next = advanceStreamingTextMotionCommit(committed, {
+        enabled: committed.enabled,
         text: committed.text,
         streamId: committed.streamId,
         isStreaming: committed.isStreaming,
@@ -173,7 +215,11 @@ function startStreamingTextMotionCommit(
   input: StreamingTextMotionCommitInput,
   streamId: string | null,
 ): StreamingTextMotionCommitState {
-  const canAnimate = streamId !== null && input.isVisible && input.animateInitialStreamChunk;
+  const canAnimate =
+    input.enabled !== false &&
+    streamId !== null &&
+    input.isVisible &&
+    input.animateInitialStreamChunk;
   const append = canAnimate ? detectStreamingTextAppend("", input.text) : null;
   const generation = append === null ? 0 : 1;
   const result =
@@ -188,6 +234,7 @@ function startStreamingTextMotionCommit(
         });
 
   return {
+    enabled: input.enabled !== false,
     streamId,
     text: input.text,
     isStreaming: input.isStreaming,
@@ -205,6 +252,7 @@ function resetStreamingTextMotionCommit(
   streamId: string | null,
 ): StreamingTextMotionCommitState {
   return {
+    enabled: input.enabled !== false,
     streamId,
     text: input.text,
     isStreaming: input.isStreaming,
@@ -236,6 +284,7 @@ function isRepeatedCommit(
   streamId: string | null,
 ): boolean {
   return (
+    previous.enabled === (input.enabled !== false) &&
     previous.streamId === streamId &&
     previous.text === input.text &&
     previous.isStreaming === input.isStreaming &&

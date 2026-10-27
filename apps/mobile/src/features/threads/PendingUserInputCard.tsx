@@ -281,6 +281,8 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                   return (
                     <Pressable
                       key={optionValue}
+                      accessibilityRole={question.multiSelect ? "checkbox" : "radio"}
+                      accessibilityState={{ checked: selected }}
                       className={cn(
                         "min-h-12 w-full rounded-2xl border px-3.5 py-3",
                         selected ? "border-primary bg-primary/10" : "border-border bg-input",

@@ -1,10 +1,14 @@
 import { useBetterT3DeviceFeature } from "../hooks/useBetterT3Feature";
+import { useChatVisualMode } from "../chatVisualModeSync";
+import { ChatSizeMotion } from "./chat/ChatSizeMotion";
+import { markdownTableBubblePadding, observeMarkdownTableBubble } from "./chat/markdownTableBubble";
 import { useVisualizationsEnabled } from "../hooks/useVisualizationsEnabled";
 import {
   isClosedVisualizationFence,
   normalizeVisualizationFormat,
 } from "@t3tools/client-runtime/visualizations/model";
 import { useStreamingTextMotion } from "./chat/useStreamingTextMotion";
+import { useMarkdownTableMotion } from "./chat/useMarkdownTableMotion";
 import type { StreamingTextMotionFrame } from "./chat/streamingTextMotion";
 import {
   StreamingTextRenderContext,
@@ -245,6 +249,7 @@ interface ChatMarkdownProps {
   streamId?: string | undefined;
   animateInitialStreamChunk?: boolean | undefined;
   streamingMotionEnabled?: boolean | undefined;
+  streamingBlockMotionEnabled?: boolean | undefined;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   className?: string;
   /** Treat single newlines as hard breaks — chat-style user input. */
@@ -765,11 +770,41 @@ interface MarkdownTableResizeGesture {
 
 const MARKDOWN_TABLE_RESIZE_EDGES = ["left", "right"] as const;
 
+function measureMarkdownTable(
+  container: HTMLElement | null,
+  preferredWidth: number | null,
+  bubbleLayout: boolean,
+): MarkdownTableSizing | null {
+  const content = container?.closest<HTMLElement>(".chat-markdown");
+  const column = container?.closest<HTMLElement>("[data-chat-column]");
+  if (!content || !column) return null;
+  const bubble = bubbleLayout
+    ? container?.closest<HTMLElement>(".better-chat-bubble[data-presentation-bubble]")
+    : null;
+  const contentWidth = content.getBoundingClientRect().width;
+  const bounds = resolveMarkdownTableWidthBounds(
+    contentWidth,
+    column.getBoundingClientRect().width,
+    bubble ? markdownTableBubblePadding(bubble) : 0,
+  );
+  const width =
+    preferredWidth === null
+      ? resolveDefaultExpandedMarkdownTableWidth(contentWidth, bounds)
+      : resolveDraggedMarkdownTableWidth({
+          bounds,
+          deltaX: 0,
+          edge: "right",
+          startWidth: preferredWidth,
+        });
+  return { ...bounds, contentWidth, width };
+}
+
 function MarkdownTable({
   children,
   stateKey,
   ...props
 }: React.ComponentProps<"table"> & { readonly stateKey: string }) {
+  const chatVisualMode = useChatVisualMode();
   const [rememberedState] = useState(() => markdownTableStateStore.get(stateKey));
   const containerRef = useRef<HTMLDivElement | null>(null);
   const tableRef = useRef<HTMLTableElement | null>(null);
@@ -777,7 +812,13 @@ function MarkdownTable({
   const sizingRef = useRef<MarkdownTableSizing | null>(null);
   const preferredWidthRef = useRef(rememberedState?.width ?? null);
   const [expanded, setExpanded] = useState(() => rememberedState?.expanded ?? false);
+  const presentationMotion = useBetterT3DeviceFeature("chat.presentationMotion");
   const [sizing, setSizing] = useState<MarkdownTableSizing | null>(null);
+  const tableMotion = useMarkdownTableMotion(
+    containerRef,
+    `${expanded}:${sizing?.width ?? ""}`,
+    chatVisualMode === "better-t3" && presentationMotion,
+  );
   const [copied, setCopied] = useState(false);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const expandLabel = expanded ? "Collapse table" : "Expand table";
@@ -811,33 +852,21 @@ function MarkdownTable({
     const content = tableContainer?.closest<HTMLElement>(".chat-markdown");
     const chatColumn = tableContainer?.closest<HTMLElement>("[data-chat-column]");
     if (!content || !chatColumn) return;
-
     const measure = () => {
-      const contentWidth = content.getBoundingClientRect().width;
-      const bounds = resolveMarkdownTableWidthBounds(
-        contentWidth,
-        chatColumn.getBoundingClientRect().width,
+      const next = measureMarkdownTable(
+        tableContainer,
+        preferredWidthRef.current,
+        chatVisualMode === "better-t3",
       );
-      updateSizing((current) => {
-        const width =
-          preferredWidthRef.current !== null
-            ? resolveDraggedMarkdownTableWidth({
-                bounds,
-                deltaX: 0,
-                edge: "right",
-                startWidth: preferredWidthRef.current,
-              })
-            : resolveDefaultExpandedMarkdownTableWidth(contentWidth, bounds);
-        if (
-          current?.contentWidth === contentWidth &&
-          current.minWidth === bounds.minWidth &&
-          current.maxWidth === bounds.maxWidth &&
-          current.width === width
-        ) {
-          return current;
-        }
-        return { ...bounds, contentWidth, width };
-      });
+      if (!next) return;
+      updateSizing((current) =>
+        current?.contentWidth === next.contentWidth &&
+        current.minWidth === next.minWidth &&
+        current.maxWidth === next.maxWidth &&
+        current.width === next.width
+          ? current
+          : next,
+      );
     };
 
     measure();
@@ -846,7 +875,15 @@ function MarkdownTable({
     observer.observe(content);
     observer.observe(chatColumn);
     return () => observer.disconnect();
-  }, [expanded, updateSizing]);
+  }, [expanded, updateSizing, chatVisualMode]);
+
+  useLayoutEffect(() => {
+    if ((!expanded && !tableMotion.animating) || chatVisualMode !== "better-t3") return;
+    const table = containerRef.current;
+    const bubble = table?.closest<HTMLElement>(".better-chat-bubble[data-presentation-bubble]");
+    if (!table || !bubble) return;
+    return observeMarkdownTableBubble(table, bubble);
+  }, [expanded, chatVisualMode, tableMotion.animating]);
 
   const setTableWidth = useCallback(
     (width: number) => {
@@ -859,12 +896,22 @@ function MarkdownTable({
   const beginResize = (edge: MarkdownTableResizeEdge, event: ReactPointerEvent<HTMLDivElement>) => {
     const current = sizingRef.current;
     if (event.button !== 0 || !current) return;
+    const animatedBounds = tableMotion.cancel();
+    const startWidth = animatedBounds
+      ? resolveDraggedMarkdownTableWidth({
+          bounds: current,
+          deltaX: 0,
+          edge,
+          startWidth: animatedBounds.width,
+        })
+      : current.width;
+    if (animatedBounds) setTableWidth(startWidth);
     resizeGestureRef.current = {
       bounds: current,
       edge,
       pointerId: event.pointerId,
       startPointerX: event.clientX,
-      startWidth: current.width,
+      startWidth,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
     event.preventDefault();
@@ -907,6 +954,7 @@ function MarkdownTable({
     if (!current) return;
     if (event.key === "Home" || event.key === "End") {
       event.preventDefault();
+      tableMotion.prepare();
       setTableWidth(event.key === "Home" ? current.minWidth : current.maxWidth);
       rememberState(true);
       return;
@@ -914,6 +962,7 @@ function MarkdownTable({
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     event.preventDefault();
     const edgeStep = MARKDOWN_TABLE_RESIZE_EDGE_STEP_PX * (event.shiftKey ? 4 : 1);
+    tableMotion.prepare();
     setTableWidth(
       resolveDraggedMarkdownTableWidth({
         bounds: current,
@@ -928,8 +977,15 @@ function MarkdownTable({
   function toggleExpanded() {
     const table = tableRef.current;
     if (!table) return;
+    tableMotion.prepare();
 
     if (!expanded) {
+      const next = measureMarkdownTable(
+        containerRef.current,
+        preferredWidthRef.current,
+        chatVisualMode === "better-t3",
+      );
+      if (next) updateSizing(() => next);
       const rows = [...table.rows];
       const columnWidths = rows.reduce<number[]>((widths, row) => {
         [...row.cells].forEach((cell, columnIndex) => {
@@ -1257,34 +1313,56 @@ function MarkdownCodeBlock({
       data-language={language}
       data-wrap={wrapped ? "true" : "false"}
     >
-      <div className="chat-markdown-codeblock-header flex items-center justify-between gap-2 pt-1.5 pr-1.5 pb-0 pl-3 select-none">
-        <span className="inline-flex min-w-0 items-center gap-1.5 font-mono text-2xs">
-          <MarkdownCodeBlockTitleContent
-            labelMotion={labelMotion}
-            fenceTitle={fenceTitle}
-            language={language}
-            theme={theme}
-          />
-        </span>
-        <span className="flex items-center gap-0.5" role="toolbar" aria-label="Code block actions">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  variant={wrapped ? "secondary" : "ghost-muted"}
-                  size="icon-xs"
-                  aria-pressed={wrapped}
-                  onClick={() => setWrapped((value) => !value)}
-                  aria-label={wrapLabel}
-                />
-              }
-            >
-              <WrapTextIcon className="size-3" />
-            </TooltipTrigger>
-            <TooltipPopup side="top">{wrapLabel}</TooltipPopup>
-          </Tooltip>
-          {canRun ? (
+      <ChatSizeMotion enabled={!isStreaming}>
+        <div className="chat-markdown-codeblock-header flex items-center justify-between gap-2 pt-1.5 pr-1.5 pb-0 pl-3 select-none">
+          <span className="inline-flex min-w-0 items-center gap-1.5 font-mono text-2xs">
+            <MarkdownCodeBlockTitleContent
+              labelMotion={labelMotion}
+              fenceTitle={fenceTitle}
+              language={language}
+              theme={theme}
+            />
+          </span>
+          <span
+            className="flex items-center gap-0.5"
+            role="toolbar"
+            aria-label="Code block actions"
+          >
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant={wrapped ? "secondary" : "ghost-muted"}
+                    size="icon-xs"
+                    aria-pressed={wrapped}
+                    onClick={() => setWrapped((value) => !value)}
+                    aria-label={wrapLabel}
+                  />
+                }
+              >
+                <WrapTextIcon className="size-3" />
+              </TooltipTrigger>
+              <TooltipPopup side="top">{wrapLabel}</TooltipPopup>
+            </Tooltip>
+            {canRun ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="ghost-muted"
+                      size="icon-xs"
+                      onClick={() => onRunShellCommand(command)}
+                      aria-label="Run in terminal"
+                    />
+                  }
+                >
+                  <PlayIcon className="size-3" />
+                </TooltipTrigger>
+                <TooltipPopup side="top">Run in terminal</TooltipPopup>
+              </Tooltip>
+            ) : null}
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -1292,35 +1370,19 @@ function MarkdownCodeBlock({
                     type="button"
                     variant="ghost-muted"
                     size="icon-xs"
-                    onClick={() => onRunShellCommand(command)}
-                    aria-label="Run in terminal"
+                    onClick={handleCopy}
+                    aria-label={copyLabel}
                   />
                 }
               >
-                <PlayIcon className="size-3" />
+                {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
               </TooltipTrigger>
-              <TooltipPopup side="top">Run in terminal</TooltipPopup>
+              <TooltipPopup side="top">{copyLabel}</TooltipPopup>
             </Tooltip>
-          ) : null}
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="ghost-muted"
-                  size="icon-xs"
-                  onClick={handleCopy}
-                  aria-label={copyLabel}
-                />
-              }
-            >
-              {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
-            </TooltipTrigger>
-            <TooltipPopup side="top">{copyLabel}</TooltipPopup>
-          </Tooltip>
-        </span>
-      </div>
-      {children}
+          </span>
+        </div>
+        {children}
+      </ChatSizeMotion>
     </div>
   );
 }
@@ -1684,6 +1746,7 @@ function expandableMarkdownImageProps(
     role: "button" as const,
     tabIndex: 0,
     "aria-label": `Preview ${previewName}`,
+    "data-chat-media-preview": "",
     onClick: expand,
     onKeyDown: (event: ReactKeyboardEvent) => {
       if (event.key === "Enter" || event.key === " ") expand(event);
@@ -3706,7 +3769,8 @@ function ChatMarkdown({
   isStreaming = false,
   streamId,
   animateInitialStreamChunk = false,
-  streamingMotionEnabled = false,
+  streamingMotionEnabled = true,
+  streamingBlockMotionEnabled = true,
   className,
   lineBreaks = false,
   parseRawHtml = true,
@@ -3726,8 +3790,9 @@ function ChatMarkdown({
   const motion = useStreamingTextMotion({
     text,
     streamId,
-    isStreaming: isStreaming && motionEnabled,
-    animateInitialStreamChunk: animateInitialStreamChunk && motionEnabled,
+    enabled: motionEnabled,
+    isStreaming,
+    animateInitialStreamChunk,
   });
   const streamingContext = useMemo(
     () => ({
@@ -3766,7 +3831,9 @@ function ChatMarkdown({
         className,
       )}
       // Gates the fade-in for blocks that arrive while the response streams.
-      data-streaming={componentState.isStreaming && !motionEnabled ? "" : undefined}
+      data-streaming={
+        componentState.isStreaming && streamingBlockMotionEnabled && !motionEnabled ? "" : undefined
+      }
       onCopy={handleCopy}
     >
       <StreamingTextRenderContext value={streamingContext}>

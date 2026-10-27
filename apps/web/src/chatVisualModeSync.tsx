@@ -1,12 +1,16 @@
 import {
   type ChatVisualMode,
   ChatVisualModeSyncRecord as ChatVisualModeSyncRecordSchema,
-  type ChatVisualModeSyncRecord,
+  type ChatVisualModeSyncRecordV2,
+  chatVisualModeToLegacyRecord,
+  resolveChatVisualModeRecord,
   DEFAULT_CHAT_VISUAL_MODE,
   type EnvironmentId,
 } from "@t3tools/contracts";
 import {
   planChatVisualModeSync,
+  selectLatestChatVisualModeRecord,
+  chatVisualModeSyncWritePatch,
   settleChatVisualModeSyncWrites,
   type ChatVisualModeSyncWrite,
 } from "@t3tools/client-runtime/chat-visual-mode-sync";
@@ -50,7 +54,7 @@ export function createChatVisualModeSyncRecord(
   mode: ChatVisualMode,
   clock: ChatVisualModeUpdateClock = DEFAULT_UPDATE_CLOCK,
   previousUpdatedAt = -1,
-): ChatVisualModeSyncRecord {
+): ChatVisualModeSyncRecordV2 {
   return {
     mode,
     updatedAt: Math.max(clock.now(), previousUpdatedAt + 1),
@@ -58,7 +62,7 @@ export function createChatVisualModeSyncRecord(
   };
 }
 
-export function resolveChatVisualMode(record: ChatVisualModeSyncRecord | null): ChatVisualMode {
+export function resolveChatVisualMode(record: ChatVisualModeSyncRecordV2 | null): ChatVisualMode {
   return record?.mode ?? DEFAULT_CHAT_VISUAL_MODE;
 }
 
@@ -93,8 +97,8 @@ export function chatVisualModeSyncStatusText(input: {
 }
 
 function recordsMatch(
-  left: ChatVisualModeSyncRecord | null,
-  right: ChatVisualModeSyncRecord | null,
+  left: ChatVisualModeSyncRecordV2 | null,
+  right: ChatVisualModeSyncRecordV2 | null,
 ): boolean {
   return (
     left === right ||
@@ -109,6 +113,7 @@ function recordsMatch(
 function writeKey(write: ChatVisualModeSyncWrite<EnvironmentId>): string {
   return [
     write.environmentId,
+    write.recordVersion ?? 1,
     write.record.updatedAt,
     write.record.updateId,
     write.record.mode,
@@ -126,24 +131,17 @@ function writesMatch(
 }
 
 type ChatVisualModeCacheUpdate =
-  | ChatVisualModeSyncRecord
+  | ChatVisualModeSyncRecordV2
   | null
-  | ((current: ChatVisualModeSyncRecord | null) => ChatVisualModeSyncRecord | null);
-
-function latestVisualModeRecord(
-  left: ChatVisualModeSyncRecord | null,
-  right: ChatVisualModeSyncRecord | null,
-): ChatVisualModeSyncRecord | null {
-  if (left === null) return right;
-  if (right === null) return left;
-  return right.updatedAt > left.updatedAt ||
-    (right.updatedAt === left.updatedAt && right.updateId > left.updateId)
-    ? right
-    : left;
-}
+  | ((current: ChatVisualModeSyncRecordV2 | null) => ChatVisualModeSyncRecordV2 | null);
 
 function useChatVisualModeSyncCache() {
-  const durableRecord = useClientSettings((settings) => settings.chatVisualModeLocalRecord ?? null);
+  const durableRecord = useClientSettings(
+    (settings) => settings.chatVisualModeLocalRecordV2 ?? null,
+  );
+  const durableLegacyRecord = useClientSettings(
+    (settings) => settings.chatVisualModeLocalRecord ?? null,
+  );
   const [legacyRecord, clearLegacyRecord] = useLocalStorage(
     CHAT_VISUAL_MODE_SYNC_STORAGE_KEY,
     null,
@@ -153,14 +151,22 @@ function useChatVisualModeSyncCache() {
   const setRecord = useCallback(
     (update: ChatVisualModeCacheUpdate) => {
       void persistClientSettingsUpdate((settings) => {
-        const current = latestVisualModeRecord(settings.chatVisualModeLocalRecord, legacyRecord);
+        const current = resolveChatVisualModeRecord(
+          legacyRecord,
+          resolveChatVisualModeRecord(
+            settings.chatVisualModeLocalRecord,
+            settings.chatVisualModeLocalRecordV2,
+          ),
+        );
         const next = typeof update === "function" ? update(current) : update;
+        const record =
+          typeof update === "function" || next === null
+            ? next
+            : selectLatestChatVisualModeRecord(current, next);
         return {
           ...settings,
-          chatVisualModeLocalRecord:
-            typeof update === "function" || next === null
-              ? next
-              : latestVisualModeRecord(current, next),
+          chatVisualModeLocalRecordV2: record,
+          chatVisualModeLocalRecord: record === null ? null : chatVisualModeToLegacyRecord(record),
         };
       })
         .then(() => clearLegacyRecord(null))
@@ -173,7 +179,10 @@ function useChatVisualModeSyncCache() {
     },
     [clearLegacyRecord, legacyRecord, translate],
   );
-  const record = latestVisualModeRecord(durableRecord, legacyRecord);
+  const record = resolveChatVisualModeRecord(
+    legacyRecord,
+    resolveChatVisualModeRecord(durableLegacyRecord, durableRecord),
+  );
   return [
     record,
     setRecord,
@@ -184,6 +193,39 @@ function useChatVisualModeSyncCache() {
 export function useChatVisualMode(): ChatVisualMode {
   const [record] = useChatVisualModeSyncCache();
   return resolveChatVisualMode(record);
+}
+
+export function useChatVisualModeSyncStatus() {
+  const [localRecord] = useChatVisualModeSyncCache();
+  const { environments } = useEnvironments();
+  const configured = environments.flatMap((environment) => {
+    const config = environment.serverConfig;
+    return config === null
+      ? []
+      : [
+          {
+            environmentId: environment.environmentId,
+            environmentSettingsVersion: config.environment.capabilities.environmentSettingsVersion,
+            connected: environment.connection.phase === "connected",
+            record: config.settings.chatVisualModeSyncRecord ?? null,
+            recordV2: config.settings.chatVisualModeSyncRecordV2 ?? null,
+          },
+        ];
+  });
+  const plan = planChatVisualModeSync({
+    localRecord: null,
+    localRecordV2: localRecord,
+    environments: configured,
+  });
+  const labels = new Map(
+    environments.map((environment) => [environment.environmentId, environment.label]),
+  );
+  return {
+    unsupportedEnvironmentLabels: plan.unsupportedEnvironmentIds.map((id) => labels.get(id) ?? id),
+    deferredEnvironmentLabels: plan.deferredEnvironmentIds.map((id) => labels.get(id) ?? id),
+    isSyncing: plan.writes.length > 0,
+    isLocalOnly: !configured.some((environment) => environment.connected),
+  };
 }
 
 export function useSetChatVisualMode(): (mode: ChatVisualMode) => void {
@@ -231,6 +273,7 @@ export function ChatVisualModeSyncCoordinator() {
             environmentSettingsVersion: config.environment.capabilities.environmentSettingsVersion,
             connected: environment.connection.phase === "connected",
             record: config.settings.chatVisualModeSyncRecord ?? null,
+            recordV2: config.settings.chatVisualModeSyncRecordV2 ?? null,
           },
         ];
       }),
@@ -243,7 +286,8 @@ export function ChatVisualModeSyncCoordinator() {
   const plan = useMemo(
     () =>
       planChatVisualModeSync<EnvironmentId>({
-        localRecord,
+        localRecord: null,
+        localRecordV2: localRecord,
         environments: syncEnvironments,
         pendingWrites,
       }),
@@ -311,7 +355,7 @@ export function ChatVisualModeSyncCoordinator() {
       writes.map(async (write) => {
         const result = await persistServerSettings({
           environmentId: write.environmentId,
-          input: { patch: { chatVisualModeSyncRecord: write.record } },
+          input: { patch: chatVisualModeSyncWritePatch(write) },
         });
         return {
           environmentId: write.environmentId,

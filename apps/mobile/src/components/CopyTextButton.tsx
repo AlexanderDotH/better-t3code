@@ -1,6 +1,7 @@
 import { SymbolView } from "../components/AppSymbol";
 import { memo, useEffect, useRef, useState } from "react";
-import { Alert, Pressable, type ColorValue } from "react-native";
+import { Alert, Platform, Pressable, type ColorValue } from "react-native";
+import { ControlPillMenu } from "./ControlPillMenu";
 
 import { tryCopyTextWithHaptic } from "../lib/copyTextWithHaptic";
 
@@ -16,6 +17,7 @@ export const CopyTextButton = memo(function CopyTextButton(props: {
   readonly borderColor?: ColorValue;
   readonly iconSize?: number;
   readonly buttonSize?: number;
+  readonly showLabelOnLongPress?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const resetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -29,33 +31,35 @@ export const CopyTextButton = memo(function CopyTextButton(props: {
     [],
   );
 
-  return (
+  const copy = async () => {
+    try {
+      if (props.onCopy) await props.onCopy();
+      else if (!(await tryCopyTextWithHaptic(props.text))) {
+        // A refused clipboard write is the common failure, and silence reads as success.
+        Alert.alert("Could not copy", "Try again.");
+        return;
+      }
+    } catch {
+      Alert.alert("Could not copy", "Try again.");
+      return;
+    }
+    setCopied(true);
+    if (resetTimeoutRef.current) {
+      clearTimeout(resetTimeoutRef.current);
+    }
+    resetTimeoutRef.current = setTimeout(() => {
+      setCopied(false);
+      resetTimeoutRef.current = null;
+    }, COPY_FEEDBACK_DURATION_MS);
+  };
+
+  const button = (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={copied ? "Copied" : props.accessibilityLabel}
       disabled={props.text.length === 0}
       hitSlop={8}
-      onPress={async () => {
-        try {
-          if (props.onCopy) await props.onCopy();
-          else if (!(await tryCopyTextWithHaptic(props.text))) {
-            // A refused clipboard write is the common failure, and silence reads as success.
-            Alert.alert("Could not copy", "Try again.");
-            return;
-          }
-        } catch {
-          Alert.alert("Could not copy", "Try again.");
-          return;
-        }
-        setCopied(true);
-        if (resetTimeoutRef.current) {
-          clearTimeout(resetTimeoutRef.current);
-        }
-        resetTimeoutRef.current = setTimeout(() => {
-          setCopied(false);
-          resetTimeoutRef.current = null;
-        }, COPY_FEEDBACK_DURATION_MS);
-      }}
+      onPress={copy}
       style={({ pressed }) => ({
         width: props.buttonSize ?? 30,
         height: props.buttonSize ?? 30,
@@ -80,5 +84,26 @@ export const CopyTextButton = memo(function CopyTextButton(props: {
         type="monochrome"
       />
     </Pressable>
+  );
+
+  if (!props.showLabelOnLongPress) return button;
+
+  return (
+    <ControlPillMenu
+      shouldOpenOnLongPress
+      actions={[
+        {
+          id: "copy",
+          title: props.accessibilityLabel,
+          ...(Platform.OS === "ios" ? { image: "doc.on.doc" } : {}),
+          attributes: { disabled: props.text.length === 0 },
+        },
+      ]}
+      onPressAction={({ nativeEvent }) => {
+        if (nativeEvent.event === "copy") void copy();
+      }}
+    >
+      {button}
+    </ControlPillMenu>
   );
 });

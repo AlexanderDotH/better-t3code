@@ -171,6 +171,52 @@ describe("DesktopClientSettings", () => {
     ),
   );
 
+  it.effect(
+    "reloads Better T3 and its legacy mirror without enabling independent preferences",
+    () =>
+      withClientSettings(
+        Effect.gen(function* () {
+          const environment = yield* DesktopEnvironment.DesktopEnvironment;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const settings = yield* DesktopClientSettings.DesktopClientSettings;
+          const savedSettings: ClientSettings = {
+            ...clientSettings,
+            chatVisualModeLocalRecord: {
+              mode: "current",
+              updatedAt: 1_790_860_000_100,
+              updateId: "desktop:better-t3-persistence",
+            },
+            chatVisualModeLocalRecordV2: {
+              mode: "better-t3",
+              updatedAt: 1_790_860_000_100,
+              updateId: "desktop:better-t3-persistence",
+            },
+            betterT3Device: {
+              ...clientSettings.betterT3Device,
+              flags: {
+                ...clientSettings.betterT3Device.flags,
+                "chat.presentationMotion": false,
+                "chat.characterStreamingMotion": false,
+                "chat.workspaceCardDeck": false,
+                "chat.cardMorphing": false,
+              },
+            },
+          };
+
+          yield* settings.set(savedSettings);
+          const reloadedSettings = yield* DesktopClientSettings.make;
+
+          assert.deepEqual(yield* reloadedSettings.get, Option.some(savedSettings));
+          assert.deepEqual(
+            yield* decodeClientSettingsJson(
+              yield* fileSystem.readFileString(environment.clientSettingsPath),
+            ),
+            savedSettings,
+          );
+        }),
+      ),
+  );
+
   for (const failure of [
     { label: "permission", reason: "PermissionDenied" },
     { label: "I/O", reason: "Unknown" },

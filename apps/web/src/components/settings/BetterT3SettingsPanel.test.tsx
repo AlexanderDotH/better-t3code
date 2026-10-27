@@ -114,10 +114,18 @@ function ReasoningSettingsHarness(props: { onChange: (settings: ClientSettings) 
                 ? "none"
                 : settings.betterT3Device.flags["agent.reasoningWorkingOverlay"]
                   ? "working"
-                  : "chat"
+                  : settings.betterT3Device.flags["agent.reasoningInMessage"]
+                    ? "message"
+                    : "chat"
             }
             onChange={(value) => {
-              if (value !== "none" && value !== "chat" && value !== "working") return;
+              if (
+                value !== "none" &&
+                value !== "chat" &&
+                value !== "working" &&
+                value !== "message"
+              )
+                return;
               const next = mergeClientSettingsPatch(
                 settings,
                 buildReasoningDisplaySettingsPatch(value),
@@ -143,11 +151,18 @@ it("keeps all reasoning choices directly visible and updates their existing sett
     "true",
     "false",
     "false",
+    "false",
   ]);
-  for (const index of [1, 2, 0, 2, 1, 0]) {
+  expect(radios().map((radio) => radio.getAttribute("aria-label"))).toEqual([
+    translate("settings.betterT3.reasoning.none"),
+    translate("settings.betterT3.reasoning.chat"),
+    translate("settings.betterT3.reasoning.working"),
+    translate("settings.betterT3.reasoning.message"),
+  ]);
+  for (const index of [1, 2, 3, 0, 3, 2, 1, 0]) {
     await click(radios()[index]!);
     expect(radios().map((radio) => radio.getAttribute("aria-checked"))).toEqual(
-      [0, 1, 2].map((value) => String(value === index)),
+      [0, 1, 2, 3].map((value) => String(value === index)),
     );
     expect(onChange).toHaveBeenLastCalledWith({
       ...DEFAULT_CLIENT_SETTINGS,
@@ -158,6 +173,7 @@ it("keeps all reasoning choices directly visible and updates their existing sett
           ...DEFAULT_CLIENT_SETTINGS.betterT3Device.flags,
           "agent.reasoningVisibility": index !== 0,
           "agent.reasoningWorkingOverlay": index === 2,
+          "agent.reasoningInMessage": index === 3,
         },
       },
     });
@@ -210,7 +226,7 @@ it("keeps every row available and preserves drafts through category navigation a
   expect(actualIds).toEqual(
     features
       .map(({ descriptor }) => descriptor.id)
-      .filter((id) => id !== "agent.reasoningWorkingOverlay")
+      .filter((id) => id !== "agent.reasoningWorkingOverlay" && id !== "agent.reasoningInMessage")
       .sort(),
   );
   const draft = host.querySelector<HTMLInputElement>('[aria-label="Draft setting"]')!;
@@ -257,6 +273,44 @@ it("opens a lazy model group before focusing its search destination", async () =
   expect(target?.closest('[inert], [aria-hidden="true"]')).toBeNull();
   expect(document.activeElement).toBe(target);
   expect(handled).toHaveBeenCalledOnce();
+});
+
+it("finds character streaming motion in inline search and focuses it on repeated selections", async () => {
+  const motionTargetId = "chat.characterStreamingMotion";
+  const motionLabel = "Character streaming motion";
+  const englishTranslate = createInterfaceTranslator({ language: "en", locale: "en-US" }).message;
+  await render(
+    <SettingsSearchTargetProvider targetId={null}>
+      <BetterT3SettingsContent
+        features={features}
+        translate={englishTranslate}
+        controls={{}}
+        onSwitchChange={vi.fn()}
+      />
+    </SettingsSearchTargetProvider>,
+  );
+  const target = document.getElementById(motionTargetId)!;
+  expect(target).not.toBeNull();
+  const input = host.querySelector<HTMLInputElement>('input[role="combobox"]')!;
+
+  for (let selection = 0; selection < 2; selection++) {
+    await act(() => {
+      input.focus();
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+        input,
+        motionLabel,
+      );
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const result = Array.from(document.querySelectorAll('[role="option"]')).find((option) =>
+      option.textContent?.includes(motionLabel),
+    );
+    await click(result ?? null);
+    expect(scrollIntoView.mock.contexts.at(-1)).toBe(target);
+    expect(document.activeElement).toBe(target);
+    expect(input.value).toBe("");
+    expect(target.closest('[hidden], [inert], [aria-hidden="true"]')).toBeNull();
+  }
 });
 
 it("indexes moved language and decision controls before their specialized groups ever open", async () => {

@@ -107,6 +107,19 @@ export function getAnchoredTurnMetrics({
   };
 }
 
+/** Reveal expanded content above the widgets without pushing its control off-screen. */
+export function resolveDisclosureScrollDelta(input: {
+  viewportTop: number;
+  viewportBottom: number;
+  contentBottom: number;
+  controlTop: number;
+  bottomInset: number;
+}): number {
+  const hiddenHeight = input.contentBottom - (input.viewportBottom - input.bottomInset - 16);
+  const availableScroll = input.controlTop - input.viewportTop - CHAT_TIMELINE_ANCHOR_OFFSET;
+  return Math.max(0, Math.min(hiddenHeight, availableScroll));
+}
+
 export interface RememberedTimelinePosition {
   readonly rowId: string;
   readonly offsetWithinRow: number;

@@ -9,6 +9,8 @@ import {
   BetterT3SettingsV1,
   bootstrapBetterT3SettingsV1,
   ChatVisualModeSyncRecord,
+  ChatVisualModeSyncRecordV2,
+  type ChatVisualModeSyncRecordV2 as ChatVisualModeSyncRecordV2Type,
   type ChatVisualModeSyncRecord as ChatVisualModeSyncRecordType,
   InterfaceLanguageSyncRecord,
   type InterfaceLanguageSyncRecord as InterfaceLanguageSyncRecordType,
@@ -41,6 +43,7 @@ const decodeProjectThreadPreviewSyncRecord = Schema.decodeUnknownOption(
   ProjectThreadPreviewSyncRecord,
 );
 const decodeChatVisualModeSyncRecord = Schema.decodeUnknownOption(ChatVisualModeSyncRecord);
+const decodeChatVisualModeSyncRecordV2 = Schema.decodeUnknownOption(ChatVisualModeSyncRecordV2);
 const decodeInterfaceLanguageSyncRecord = Schema.decodeUnknownOption(InterfaceLanguageSyncRecord);
 const decodeInterfaceLocaleSyncRecordV1 = Schema.decodeUnknownOption(InterfaceLocaleSyncRecordV1);
 const decodeBetterT3SettingsV1 = Schema.decodeUnknownOption(BetterT3SettingsV1);
@@ -84,6 +87,7 @@ export interface Preferences {
   readonly projectThreadPreviewSyncRecord?: ProjectThreadPreviewSyncRecordType;
   /** Offline mirror of the newest synchronized chat transcript presentation. */
   readonly chatVisualModeSyncRecord?: ChatVisualModeSyncRecordType;
+  readonly chatVisualModeSyncRecordV2?: ChatVisualModeSyncRecordV2Type;
   /** Offline mirror of the newest synchronized interface-language selection. */
   readonly interfaceLanguageSyncRecord?: InterfaceLanguageSyncRecordType;
   /** Versioned locale choice with French support; the legacy record remains a compatibility mirror. */
@@ -191,6 +195,7 @@ export function sanitizeMobilePreferences(
     olderProjectsExpanded?: boolean;
     projectThreadPreviewSyncRecord?: ProjectThreadPreviewSyncRecordType;
     chatVisualModeSyncRecord?: ChatVisualModeSyncRecordType;
+    chatVisualModeSyncRecordV2?: ChatVisualModeSyncRecordV2Type;
     interfaceLanguageSyncRecord?: InterfaceLanguageSyncRecordType;
     interfaceLocaleSyncRecordV1?: InterfaceLocaleSyncRecordV1Type;
     projectThreadPreviewMigrationVersion?: 1;
@@ -315,6 +320,12 @@ export function sanitizeMobilePreferences(
   const chatVisualModeSyncRecord = decodeChatVisualModeSyncRecord(parsed.chatVisualModeSyncRecord);
   if (Option.isSome(chatVisualModeSyncRecord)) {
     preferences.chatVisualModeSyncRecord = chatVisualModeSyncRecord.value;
+  }
+  const chatVisualModeSyncRecordV2 = decodeChatVisualModeSyncRecordV2(
+    parsed.chatVisualModeSyncRecordV2,
+  );
+  if (Option.isSome(chatVisualModeSyncRecordV2)) {
+    preferences.chatVisualModeSyncRecordV2 = chatVisualModeSyncRecordV2.value;
   }
   const interfaceLanguageSyncRecord = decodeInterfaceLanguageSyncRecord(
     parsed.interfaceLanguageSyncRecord,

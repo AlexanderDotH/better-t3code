@@ -2,9 +2,12 @@ import type {
   BetterT3FeatureControlStateV1,
   BetterT3FeatureId,
   ChatVisualMode,
+  ChatWidth,
   ContextWindowSelector,
   SidebarPosition,
 } from "@t3tools/contracts";
+
+import { resolveChatContentPreviewWidthPercent } from "../chat/chatContentWidth";
 
 export interface BetterT3AgentPreviewModel {
   readonly animationKey: string;
@@ -15,6 +18,7 @@ export interface BetterT3AgentPreviewModel {
   readonly promptImprovement: boolean;
   readonly reasoningVisibility: boolean;
   readonly reasoningWorkingOverlay: boolean;
+  readonly reasoningInMessage: boolean;
 }
 
 export interface BetterT3ChatPreviewModel {
@@ -26,6 +30,8 @@ export interface BetterT3ChatPreviewModel {
   readonly classicSidebar: boolean;
   readonly draftIndicators: boolean;
   readonly presentation: ChatVisualMode;
+  readonly presentationMotion: boolean;
+  readonly contentWidthPercent: number;
   readonly contextWindowSelector: ContextWindowSelector;
   readonly sidebarPosition: SidebarPosition;
   readonly workspaceCardDeck: boolean;
@@ -44,7 +50,7 @@ function effectiveFeatureEnabled(
   return feature?.value === true && feature.availability.state === "available";
 }
 
-function animationKey(values: ReadonlyArray<boolean | string>): string {
+function animationKey(values: ReadonlyArray<boolean | string | number>): string {
   return values.map((value) => (typeof value === "boolean" ? Number(value) : value)).join(":");
 }
 
@@ -53,16 +59,37 @@ export function buildBetterT3SettingsPreviewModel(input: {
   readonly chatVisualMode: ChatVisualMode;
   readonly contextWindowSelector: ContextWindowSelector;
   readonly sidebarPosition: SidebarPosition;
+  readonly showReasoning?: boolean;
+  readonly reasoningWorkingOverlay?: boolean;
+  readonly reasoningInMessage?: boolean;
+  readonly chatWidth?: ChatWidth;
+  readonly chatWidthCustomizationEnabled?: boolean;
+  readonly chatWidthAdjustmentPercent?: number;
 }): BetterT3SettingsPreviewModel {
+  const reasoningVisibility =
+    input.showReasoning ?? effectiveFeatureEnabled(input.features, "agent.reasoningVisibility");
+  const reasoningWorkingOverlay =
+    reasoningVisibility &&
+    (input.reasoningWorkingOverlay ??
+      effectiveFeatureEnabled(input.features, "agent.reasoningWorkingOverlay"));
+  const contentWidthPercent = input.chatWidthCustomizationEnabled
+    ? resolveChatContentPreviewWidthPercent(true, input.chatWidthAdjustmentPercent ?? 0)
+    : input.chatWidth === "full"
+      ? 100
+      : input.chatWidth === "wide"
+        ? 90
+        : 60;
   const agent = {
     planMode: effectiveFeatureEnabled(input.features, "agent.planMode"),
     deepThinking: effectiveFeatureEnabled(input.features, "agent.deepThinking"),
     promptImprovement: effectiveFeatureEnabled(input.features, "agent.promptImprovement"),
-    reasoningVisibility: effectiveFeatureEnabled(input.features, "agent.reasoningVisibility"),
-    reasoningWorkingOverlay: effectiveFeatureEnabled(
-      input.features,
-      "agent.reasoningWorkingOverlay",
-    ),
+    reasoningVisibility,
+    reasoningWorkingOverlay,
+    reasoningInMessage:
+      reasoningVisibility &&
+      !reasoningWorkingOverlay &&
+      (input.reasoningInMessage ??
+        effectiveFeatureEnabled(input.features, "agent.reasoningInMessage")),
     generalSubagents: effectiveFeatureEnabled(input.features, "agent.generalSubagents"),
     projectCoordination: effectiveFeatureEnabled(input.features, "agent.projectCoordination"),
   };
@@ -81,6 +108,8 @@ export function buildBetterT3SettingsPreviewModel(input: {
     classicSidebar: effectiveFeatureEnabled(input.features, "chat.classicSidebar"),
     draftIndicators: effectiveFeatureEnabled(input.features, "chat.draftIndicators"),
     presentation: input.chatVisualMode,
+    presentationMotion: effectiveFeatureEnabled(input.features, "chat.presentationMotion"),
+    contentWidthPercent,
     contextWindowSelector: input.contextWindowSelector,
     sidebarPosition: input.sidebarPosition,
   };

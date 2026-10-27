@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   filePreviewKind,
+  fileThumbnailKind,
   decodeFilePreviewText,
   FILE_TEXT_PREVIEW_MAX_BYTES,
   hostPreviewMimeTypeFromExtension,
@@ -90,6 +91,25 @@ describe("attachment preview classification", () => {
   ])("classifies %s (%s) as %s", (name, mimeType, expected) => {
     expect(filePreviewKind({ name, mimeType })).toBe(expected);
   });
+  it.each([
+    [
+      "Kick Off.DOCX",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "document",
+    ],
+    ["notes.docx", "application/octet-stream", "document"],
+    ["source.ts", "", "text"],
+    ["README.md", "", "text"],
+    ["report.pdf", "", "pdf"],
+    ["screenshot.png", "", "image"],
+    ["clip.mp4", "", "video"],
+    ["archive.zip", "application/zip", null],
+    ["notes.doc", "application/msword", null],
+    ["recording.wav", "", null],
+  ])("chooses a thumbnail for %s only when it can be rendered", (name, mimeType, expected) => {
+    expect(fileThumbnailKind({ name, mimeType })).toBe(expected);
+  });
+
   it("rejects binary and invalid UTF-8 data", () => {
     expect(() => decodeFilePreviewText(new Uint8Array([65, 0, 66]))).toThrow("binary");
     expect(() => decodeFilePreviewText(new Uint8Array([255]))).toThrow("UTF-8");

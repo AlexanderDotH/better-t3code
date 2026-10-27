@@ -20,6 +20,8 @@ import {
 } from "react";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+vi.mock("./ChatBubble", () => ({ useChatBubblePalette: () => ({ better: false }) }));
+
 const fixture = vi.hoisted(() => ({
   states: [] as unknown[],
   cursor: 0,

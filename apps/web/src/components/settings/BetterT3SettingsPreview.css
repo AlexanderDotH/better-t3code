@@ -31,6 +31,16 @@
   }
 }
 
+@utility better-t3-preview-presentation-reveal {
+  @media (prefers-reduced-motion: no-preference) {
+    .better-t3-feature-option:is(:hover, :focus):not(:active, :disabled)
+      [data-presentation-motion="true"]
+      & {
+      animation: better-t3-preview-bubble-enter 240ms var(--preview-ease) both;
+    }
+  }
+}
+
 @utility better-t3-preview-deck-top {
   @media (prefers-reduced-motion: no-preference) {
     .better-t3-feature-option:is(:hover, :focus):not(:active, :disabled)
@@ -215,4 +225,43 @@
   100% {
     transform: translateX(0);
   }
+}
+
+@keyframes better-t3-preview-bubble-enter {
+  from {
+    opacity: 0;
+    transform: translateY(0.25rem) scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.better-t3-preview-message {
+  position: relative;
+  border-top-left-radius: 6px;
+}
+
+.better-t3-preview-message::before {
+  content: "";
+  position: absolute;
+  left: -4px;
+  top: 0;
+  width: 10px;
+  height: 10px;
+  background: var(--message-surface);
+  clip-path: path("M10 0H1C0 0 0 1 1 2C3 4 4 7 4 10H10Z");
+}
+
+.better-t3-preview-message.ml-auto {
+  border-top-left-radius: 12px;
+  border-top-right-radius: 6px;
+}
+
+.better-t3-preview-message.ml-auto::before {
+  left: auto;
+  right: -4px;
+  transform: scaleX(-1);
 }

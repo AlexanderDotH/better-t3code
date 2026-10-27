@@ -1,4 +1,5 @@
 import {
+  CHAT_VISUAL_MODES,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MAX_PROJECT_THREAD_PREVIEW_COUNT,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
@@ -31,6 +32,7 @@ import {
 import { Link } from "@tanstack/react-router";
 import { useMemo, type ReactNode } from "react";
 
+import { ChatVisualModeSyncNotice } from "./ChatVisualModeSyncNotice";
 import { useChatVisualMode, useSetChatVisualMode } from "../../chatVisualModeSync";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
@@ -622,16 +624,19 @@ export function useBetterT3PreparedControls(input: {
       />
     ),
     "chat.presentation": (
-      <BetterT3SelectControl<ChatVisualMode>
-        value={chatVisualMode}
-        options={(["current", "classic"] as const).map((value) => ({
-          value,
-          label: input.translate(`settings.betterT3.value.${value}`),
-        }))}
-        ariaLabel={input.translate("betterT3.chat.presentation.label")}
-        disabled={scalarControlDisabled("chat.presentation")}
-        onChange={setChatVisualMode}
-      />
+      <div className="space-y-2">
+        <BetterT3SelectControl<ChatVisualMode>
+          value={chatVisualMode}
+          options={CHAT_VISUAL_MODES.map((value) => ({
+            value,
+            label: input.translate(`settings.chatVisuals.${value}`),
+          }))}
+          ariaLabel={input.translate("betterT3.chat.presentation.label")}
+          disabled={scalarControlDisabled("chat.presentation")}
+          onChange={setChatVisualMode}
+        />
+        <ChatVisualModeSyncNotice translate={input.translate} />
+      </div>
     ),
     "chat.contextWindowSelector": (
       <BetterT3SelectControl<ContextWindowSelector>

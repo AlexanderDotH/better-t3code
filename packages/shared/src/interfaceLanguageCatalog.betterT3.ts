@@ -262,6 +262,7 @@ const betterT3SettingsCatalog = defineLocalizedInterfaceCatalog({
     "Aucune trace de raisonnement",
   ],
   "settings.betterT3.reasoning.chat": ["In chat", "Im Chat", "Dans la discussion"],
+  "settings.betterT3.reasoning.message": ["In message", "In der Nachricht", "Dans le message"],
   "settings.betterT3.preview.reasoning.previous": [
     "Reading the relevant files",
     "Relevante Dateien lesen",
@@ -519,6 +520,26 @@ const betterT3SettingsCatalog = defineLocalizedInterfaceCatalog({
     "Here is the live response",
     "Hier ist die Live-Antwort",
     "Voici la réponse en direct",
+  ],
+  "settings.betterT3.preview.chat.thought": [
+    "Inspecting files",
+    "Dateien prüfen",
+    "Examen des fichiers",
+  ],
+  "settings.betterT3.preview.chat.tool": [
+    "Read settings.ts",
+    "settings.ts gelesen",
+    "Lecture de settings.ts",
+  ],
+  "settings.betterT3.preview.chat.toolGroup": [
+    "Read 2 files",
+    "2 Dateien gelesen",
+    "2 fichiers lus",
+  ],
+  "settings.betterT3.preview.chat.moreTools": [
+    "Show 1 more",
+    "1 weiteren anzeigen",
+    "Afficher 1 autre",
   ],
   "settings.betterT3.preview.chat.instant": [
     "Without animation",
@@ -932,6 +953,11 @@ const featureLabels = {
     "Darstellung der Thinking-Traces",
     "Affichage des traces de raisonnement",
   ],
+  "agent.reasoningInMessage": [
+    "Thinking traces in messages",
+    "Thinking-Traces in Nachrichten",
+    "Traces de raisonnement dans les messages",
+  ],
   "chat.messageEditing": [
     "Edit chat messages",
     "Chatnachrichten bearbeiten",
@@ -968,6 +994,11 @@ const featureLabels = {
     "Character streaming motion",
     "Zeichen-Streaming-Animation",
     "Animation du texte diffusé",
+  ],
+  "chat.presentationMotion": [
+    "Better T3 transitions",
+    "Better-T3-Übergänge",
+    "Transitions Better T3",
   ],
   "chat.presentation": ["Chat presentation", "Chat-Darstellung", "Présentation de la discussion"],
   "chat.contextWindowSelector": [
@@ -1147,9 +1178,14 @@ const featureDescriptionOverrides: Partial<Record<BetterT3FeatureId, FeatureLabe
     "Activé : panneau Agents et résumés natifs de T3 Code. Désactivé : pastilles flottantes et dialogues de transcription Better T3. Seul l’affichage change, pas la délégation.",
   ],
   "agent.reasoningVisibility": [
-    "Hide thinking traces, keep the full traces in chat, or follow live thoughts in the Working dialog. Uses your character streaming setting.",
-    "Thinking-Traces ausblenden, vollständig im Chat lesen oder live im Working-Dialog verfolgen. Nutzt deine Character-Streaming-Einstellung.",
-    "Masquez les traces de raisonnement, lisez-les dans la discussion ou suivez-les en direct dans la bulle de travail. Utilise votre animation de texte.",
+    "Hide thinking traces, show them in chat or at the top of the response, or follow live thoughts in the Working dialog.",
+    "Thinking-Traces ausblenden, im Chat oder oben in der Antwort anzeigen oder live im Working-Dialog verfolgen.",
+    "Masquez les traces de raisonnement, affichez-les dans la discussion ou en haut de la réponse, ou suivez-les en direct dans la bulle de travail.",
+  ],
+  "agent.reasoningInMessage": [
+    "Combine thinking traces at the top of the agent’s response. Until a response arrives, they stay visible in chat.",
+    "Thinking-Traces oben in der Agentenantwort zusammenfassen. Bis eine Antwort vorliegt, bleiben sie im Chat sichtbar.",
+    "Regroupez les traces de raisonnement en haut de la réponse de l’agent. En attendant une réponse, elles restent visibles dans la discussion.",
   ],
   "agent.reasoningWorkingOverlay": [
     "Follow live thoughts in the Working overlay as scrolling lyrics, or keep the full traces in chat. Uses your character streaming setting.",
@@ -1177,9 +1213,14 @@ const featureDescriptionOverrides: Partial<Record<BetterT3FeatureId, FeatureLabe
     "Choisissez entre la liste de projets classique et la barre latérale actuelle.",
   ],
   "chat.presentation": [
-    "Choose between the current grouped chat layout and the classic transcript view.",
-    "Wechselt zwischen der aktuellen gruppierten Chatansicht und der klassischen Transkriptansicht.",
-    "Choisit entre la présentation groupée actuelle et la vue classique de la transcription.",
+    "Choose Current, Classic, or Better T3. Current is the default; each mode keeps your other settings.",
+    "Wähle Aktuell, Klassisch oder Better T3. Aktuell ist der Standard; deine anderen Einstellungen bleiben erhalten.",
+    "Choisissez Actuel, Classique ou Better T3. Actuel est le réglage par défaut ; vos autres réglages sont conservés.",
+  ],
+  "chat.presentationMotion": [
+    "Use brief transitions in Better T3 mode on this device. Reduced motion disables them; text streaming has its own setting.",
+    "Kurze Übergänge im Better-T3-Modus auf diesem Gerät. Reduzierte Bewegung deaktiviert sie; Zeichen-Streaming wird separat eingestellt.",
+    "Utilise de brèves transitions en mode Better T3 sur cet appareil. La réduction des animations les désactive ; le texte diffusé a son propre réglage.",
   ],
   "chat.contextWindowSelector": [
     "Use the native T3 Code menu or the Better T3 slider for Codex. Only one is shown; your selected context size is preserved.",

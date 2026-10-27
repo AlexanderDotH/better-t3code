@@ -10,11 +10,17 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { AppState, Appearance, Platform, useColorScheme } from "react-native";
+import { AccessibilityInfo, AppState, Appearance, Platform, useColorScheme } from "react-native";
 
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
-import type { ChatVisualMode, ProjectThreadPreviewCount } from "@t3tools/contracts";
+import {
+  DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
+  resolveBetterT3FeatureFlag,
+  type ChatVisualMode,
+  type ProjectThreadPreviewCount,
+} from "@t3tools/contracts";
+import { resolveChatPresentation } from "@t3tools/client-runtime/chat-presentation";
 
 import { ScopedTheme, ScopedVariables, Uniwind } from "uniwind";
 
@@ -82,8 +88,12 @@ interface AppearancePreferencesContextValue {
   readonly setCodeWordBreak: (value: boolean) => void;
   readonly setProjectThreadPreviewCount: (value: ProjectThreadPreviewCount) => void;
   readonly chatVisualMode: ChatVisualMode;
+  readonly chatPresentation: ReturnType<typeof resolveChatPresentation>;
+  readonly presentationMotion: boolean;
+  readonly setPresentationMotion: (value: boolean) => void;
   readonly setChatVisualMode: (value: ChatVisualMode) => void;
   readonly chatVisualModeSyncStatus: {
+    readonly isLocalOnly: boolean;
     readonly isSyncing: boolean;
     readonly failedEnvironmentLabels: readonly string[];
     readonly deferredEnvironmentLabels: readonly string[];
@@ -110,6 +120,36 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   const storedPreferences = AsyncResult.isSuccess(preferencesResult)
     ? preferencesResult.value
     : null;
+  const [reducedMotion, setReducedMotion] = useState(true);
+  useEffect(() => {
+    let active = true;
+    void AccessibilityInfo.isReduceMotionEnabled().then((value) => {
+      if (active) setReducedMotion(value);
+    });
+    const subscription = AccessibilityInfo.addEventListener(
+      "reduceMotionChanged",
+      setReducedMotion,
+    );
+    return () => {
+      active = false;
+      subscription.remove();
+    };
+  }, []);
+  const presentationMotion = resolveBetterT3FeatureFlag(
+    storedPreferences?.betterT3Device ?? DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
+    "chat.presentationMotion",
+  );
+  const chatPresentation = useMemo(
+    () =>
+      resolveChatPresentation({
+        mode: chatVisualModeSync.mode,
+        presentationMotion,
+        // Native markdown has no character-streaming renderer.
+        characterStreamingMotion: false,
+        reducedMotion,
+      }),
+    [chatVisualModeSync.mode, presentationMotion, reducedMotion],
+  );
   const preferences = useMemo(
     () => resolveAppearancePreferences(storedPreferences),
     [storedPreferences],
@@ -300,6 +340,20 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     [updatePreferences],
   );
 
+  const setPresentationMotion = useCallback(
+    (value: boolean) => {
+      savePreferences({
+        transform: (current) => ({
+          betterT3Device: {
+            ...(current.betterT3Device ?? DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1),
+            flags: { ...current.betterT3Device?.flags, "chat.presentationMotion": value },
+          },
+        }),
+      });
+    },
+    [savePreferences],
+  );
+
   const value = useMemo(
     (): AppearancePreferencesContextValue => ({
       appearance: {
@@ -324,8 +378,12 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       setCodeFontSize,
       setCodeWordBreak,
       chatVisualMode: chatVisualModeSync.mode,
+      chatPresentation,
+      presentationMotion,
+      setPresentationMotion,
       setChatVisualMode: chatVisualModeSync.setMode,
       chatVisualModeSyncStatus: {
+        isLocalOnly: chatVisualModeSync.isLocalOnly,
         isSyncing: chatVisualModeSync.isSyncing,
         failedEnvironmentLabels: chatVisualModeSync.failedEnvironmentLabels,
         deferredEnvironmentLabels: chatVisualModeSync.deferredEnvironmentLabels,
@@ -343,6 +401,9 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     [
       appearance,
       chatVisualModeSync,
+      chatPresentation,
+      presentationMotion,
+      setPresentationMotion,
       projectThreadPreviewSync,
       interfaceLanguage,
       themeId,

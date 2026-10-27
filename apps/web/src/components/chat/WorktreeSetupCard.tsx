@@ -1,3 +1,5 @@
+import { ChatSizeMotion } from "./ChatSizeMotion";
+import { useChatVisualMode } from "../../chatVisualModeSync";
 import {
   worktreeSetupStageLabel,
   type WorktreeSetupSnapshot,
@@ -57,11 +59,16 @@ function useNowWhile(active: boolean): number {
 
 function StageIcon({ status }: { status: WorktreeSetupStage["status"] }) {
   const className = "size-4 shrink-0 stroke-2";
+  const better = useChatVisualMode() === "better-t3";
   switch (status) {
     case "done":
       return <CheckIcon aria-hidden className={className} />;
     case "running":
-      return <Spinner size="md" className="shrink-0" />;
+      return better ? (
+        <CircleIcon aria-hidden className={className} />
+      ) : (
+        <Spinner size="md" className="shrink-0" />
+      );
     case "failed":
       return <XIcon aria-hidden className={className} />;
     case "warning":
@@ -90,6 +97,8 @@ function stageRowClassName(status: WorktreeSetupStage["status"]): string {
 
 /** Same shimmer treatment as the live tool rows in the timeline. */
 function ShimmerOverlay({ children }: { children: ReactNode }) {
+  const better = useChatVisualMode() === "better-t3";
+  if (better) return null;
   return (
     <span
       aria-hidden
@@ -372,64 +381,66 @@ export function WorktreeSetupCard({
 
   return (
     <section aria-label="Worktree setup" data-worktree-setup-phase={snapshot.phase}>
-      {showHeader ? <SetupHeaderRow snapshot={snapshot} totalElapsed={totalElapsed} /> : null}
-      {collapsed ? (
-        <CollapsedSummaryRow snapshot={snapshot} totalElapsed={totalElapsed} />
-      ) : (
-        <div className={showHeader ? "pt-1.5" : undefined}>
-          {snapshot.stages.map((stage) => (
-            <div key={stage.id}>
-              <StageRow
-                stage={stage}
-                nowMs={nowMs}
-                scriptName={snapshot.setupScript?.name ?? null}
-              />
-              {stage.id === "setup-script" && showTail ? (
-                <OutputTail lines={stage.tail} failed={stage.status === "failed"} />
-              ) : null}
-            </div>
-          ))}
-        </div>
-      )}
+      <ChatSizeMotion>
+        {showHeader ? <SetupHeaderRow snapshot={snapshot} totalElapsed={totalElapsed} /> : null}
+        {collapsed ? (
+          <CollapsedSummaryRow snapshot={snapshot} totalElapsed={totalElapsed} />
+        ) : (
+          <div className={showHeader ? "pt-1.5" : undefined}>
+            {snapshot.stages.map((stage) => (
+              <div key={stage.id}>
+                <StageRow
+                  stage={stage}
+                  nowMs={nowMs}
+                  scriptName={snapshot.setupScript?.name ?? null}
+                />
+                {stage.id === "setup-script" && showTail ? (
+                  <OutputTail lines={stage.tail} failed={stage.status === "failed"} />
+                ) : null}
+              </div>
+            ))}
+          </div>
+        )}
 
-      {snapshot.phase === "failed" && snapshot.error ? (
-        <p className="mt-1 ml-8 text-xs text-muted-foreground">{snapshot.error}</p>
-      ) : null}
+        {snapshot.phase === "failed" && snapshot.error ? (
+          <p className="mt-1 ml-8 text-xs text-muted-foreground">{snapshot.error}</p>
+        ) : null}
 
-      {detailsOpen ? <SetupDetails snapshot={snapshot} /> : null}
+        {detailsOpen ? <SetupDetails snapshot={snapshot} /> : null}
 
-      {/* Indented so the first label lines up with the stage labels: the icon
+        {/* Indented so the first label lines up with the stage labels: the icon
           column, minus the xs button's own horizontal padding. */}
-      <div className="mt-0.5 ml-[calc(--spacing(6)+2px-(--spacing(2)-1px))] flex flex-wrap items-center gap-0.5">
-        <Button
-          type="button"
-          size="xs"
-          variant="ghost-muted"
-          aria-expanded={detailsOpen}
-          onClick={() => setDetailsOpen((open) => !open)}
-        >
-          {detailsOpen ? <ChevronDownIcon aria-hidden /> : <ChevronRightIcon aria-hidden />}
-          Details
-        </Button>
-        {showTerminal ? (
-          <Button type="button" size="xs" variant="ghost-muted" onClick={onOpenTerminal}>
-            <TerminalIcon aria-hidden />
-            Open terminal
+        <div className="mt-0.5 ml-[calc(--spacing(6)+2px-(--spacing(2)-1px))] flex flex-wrap items-center gap-0.5">
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost-muted"
+            aria-expanded={detailsOpen}
+            onClick={() => setDetailsOpen((open) => !open)}
+          >
+            {detailsOpen ? <ChevronDownIcon aria-hidden /> : <ChevronRightIcon aria-hidden />}
+            Details
           </Button>
-        ) : null}
-        {onWorkLocally ? (
-          <Button type="button" size="xs" variant="ghost-muted" onClick={onWorkLocally}>
-            <LaptopIcon aria-hidden />
-            Work locally
-          </Button>
-        ) : null}
-        {onCancel && running ? (
-          <Button type="button" size="xs" variant="ghost-muted" onClick={onCancel}>
-            <XIcon aria-hidden />
-            Cancel
-          </Button>
-        ) : null}
-      </div>
+          {showTerminal ? (
+            <Button type="button" size="xs" variant="ghost-muted" onClick={onOpenTerminal}>
+              <TerminalIcon aria-hidden />
+              Open terminal
+            </Button>
+          ) : null}
+          {onWorkLocally ? (
+            <Button type="button" size="xs" variant="ghost-muted" onClick={onWorkLocally}>
+              <LaptopIcon aria-hidden />
+              Work locally
+            </Button>
+          ) : null}
+          {onCancel && running ? (
+            <Button type="button" size="xs" variant="ghost-muted" onClick={onCancel}>
+              <XIcon aria-hidden />
+              Cancel
+            </Button>
+          ) : null}
+        </div>
+      </ChatSizeMotion>
     </section>
   );
 }

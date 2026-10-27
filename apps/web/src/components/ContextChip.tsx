@@ -1,9 +1,11 @@
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
-import type * as React from "react";
+import { createContext, use, type ComponentProps } from "react";
 
 import { cn } from "~/lib/utils";
+
+export const ContextChipFileAppearanceContext = createContext<"default" | "message">("default");
 
 /**
  * The inline pill for one piece of chat context. It lives with the chat components rather than
@@ -25,8 +27,13 @@ import { cn } from "~/lib/utils";
 const contextChipVariants = cva(
   "inline-flex h-[1.41em] max-w-full items-center gap-[0.33em] rounded-[0.5em] border px-[0.5em] align-middle font-medium text-[0.86em] leading-none [&_svg]:block [&_svg]:size-[1.17em] [&_svg]:shrink-0 [&_svg]:self-center [button&,a&,[data-popup-open]&]:cursor-pointer [button&,a&]:transition-colors [button&,a&]:motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-default",
   {
-    defaultVariants: { kind: "neutral" },
+    defaultVariants: { kind: "neutral", appearance: "default" },
     variants: {
+      appearance: {
+        default: "",
+        message:
+          "h-[1.55em] rounded-full border-foreground/40 bg-transparent font-normal text-inherit",
+      },
       kind: {
         neutral: "border-border/70 bg-accent/40 text-foreground",
         image: "[--context-chip-accent:oklch(0.62_0.16_16)]",
@@ -53,6 +60,7 @@ const contextChipVariants = cva(
     },
     compoundVariants: [
       {
+        appearance: "default",
         kind: [
           "image",
           "video",
@@ -87,10 +95,17 @@ interface ContextChipProps extends useRender.ComponentProps<"span"> {
   state?: "unresolved" | "invalid";
 }
 
-function ContextChip({ className, kind, state, render, ...props }: ContextChipProps) {
+function ContextChip({ className, kind, state, render, style, ...props }: ContextChipProps) {
+  const fileAppearance = use(ContextChipFileAppearanceContext);
+  const appearance =
+    kind === "file" || kind === "image" || kind === "video" || kind === "mention"
+      ? fileAppearance
+      : "default";
   const defaultProps = {
-    className: cn(contextChipVariants({ kind, state }), className),
+    className: cn(contextChipVariants({ kind, state, appearance }), className),
+    style: appearance === "message" ? { ...style, fontSize: "inherit" } : style,
     "data-slot": "context-chip",
+    "data-context-chip-appearance": appearance,
     "data-state": state,
   };
   return useRender({
@@ -101,7 +116,7 @@ function ContextChip({ className, kind, state, render, ...props }: ContextChipPr
 }
 
 /** The chip's text. Truncates to the chip's width. */
-function ContextChipLabel({ className, ...props }: React.ComponentProps<"span">) {
+function ContextChipLabel({ className, ...props }: ComponentProps<"span">) {
   return (
     <span
       className={cn("block min-w-0 self-center truncate leading-tight", className)}

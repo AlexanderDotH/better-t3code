@@ -329,7 +329,6 @@ it("shows current-turn canonical and legacy thinking once, excluding prior turns
           environmentId={environmentId}
           threadRef={{ environmentId, threadId: ThreadId.make("thread") }}
           cwd={undefined}
-          streamingMotionEnabled
           active={false}
         />
       </WorkingReasoningDialogProvider>,

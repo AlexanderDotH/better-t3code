@@ -26,7 +26,12 @@ const subgroupDefinitions = [
   {
     id: "chat-display",
     categoryId: "chat",
-    featureIds: ["chat.visualizations", "chat.presentation", "chat.characterStreamingMotion"],
+    featureIds: [
+      "chat.visualizations",
+      "chat.presentation",
+      "chat.presentationMotion",
+      "chat.characterStreamingMotion",
+    ],
     targetIds: [],
     collapsible: false,
   },
@@ -40,7 +45,11 @@ const subgroupDefinitions = [
   {
     id: "reasoning",
     categoryId: "chat",
-    featureIds: ["agent.reasoningVisibility", "agent.reasoningWorkingOverlay"],
+    featureIds: [
+      "agent.reasoningVisibility",
+      "agent.reasoningWorkingOverlay",
+      "agent.reasoningInMessage",
+    ],
     targetIds: [],
     collapsible: false,
   },

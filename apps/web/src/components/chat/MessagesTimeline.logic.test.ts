@@ -46,7 +46,189 @@ import {
 } from "../../session-logic";
 import { isImageAttachment, type ChatMessage, type TurnDiffSummary } from "../../types";
 
+describe("waiting thinking", () => {
+  it("keeps a separate Better T3 waiting pill alongside tools until live text arrives", () => {
+    const turnId = TurnId.make("waiting-tool");
+    const startedAt = "2026-10-27T09:00:00.000Z";
+    const tool: WorkLogEntry = {
+      id: "running-build",
+      turnId,
+      createdAt: startedAt,
+      tone: "tool",
+      label: "Build",
+      command: "vp run build",
+      toolLifecycleStatus: "inProgress",
+    };
+    const input = {
+      chatVisualMode: "better-t3" as const,
+      showReasoning: true,
+      hideWorkingIndicator: true,
+      timelineEntries: deriveTimelineEntries([], [], [tool]),
+      latestTurn: { turnId, state: "running" as const, startedAt, completedAt: null },
+      isWorking: true,
+      activeTurnStartedAt: startedAt,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    };
+    const waiting = deriveMessagesTimelineRows(input);
+    expect(waiting.some((row) => row.kind === "work-live")).toBe(true);
+    expect(waiting.filter((row) => row.kind === "thinking")).toHaveLength(1);
+    expect(waiting.some((row) => row.kind === "working")).toBe(false);
+    expect(new Set(waiting.map((row) => row.id)).size).toBe(waiting.length);
+    expect(
+      deriveMessagesTimelineRows({ ...input, isWorking: false }).some(
+        (row) => row.kind === "thinking",
+      ),
+    ).toBe(false);
+    expect(
+      deriveMessagesTimelineRows({ ...input, chatVisualMode: "current" }).some(
+        (row) => row.kind === "thinking",
+      ),
+    ).toBe(false);
+
+    for (const role of ["assistant", "reasoning"] as const) {
+      const message: ChatMessage = {
+        id: MessageId.make(role),
+        role,
+        text: "",
+        turnId,
+        streaming: true,
+        createdAt: "2026-10-27T09:00:01.000Z",
+        updatedAt: "2026-10-27T09:00:01.000Z",
+      };
+      const empty = deriveMessagesTimelineRowsWithState({
+        ...input,
+        timelineEntries: deriveTimelineEntries([message], [], [tool]),
+      });
+      expect(empty.rows.some((row) => row.kind === "thinking")).toBe(true);
+      const liveInput = {
+        ...input,
+        timelineEntries: deriveTimelineEntries([{ ...message, text: "Live text" }], [], [tool]),
+      };
+      const live = deriveMessagesTimelineRowsWithState(liveInput, empty);
+      expect(live.rows.some((row) => row.kind === "thinking")).toBe(false);
+      expect(live.rows).toEqual(deriveMessagesTimelineRows(liveInput));
+      if (role === "reasoning") {
+        expect(
+          deriveMessagesTimelineRows({ ...liveInput, showReasoning: false }).some(
+            (row) => row.kind === "thinking",
+          ),
+        ).toBe(true);
+      }
+    }
+  });
+});
+
 describe("canonical thinking display", () => {
+  it("combines continuation and orphan reasoning across tools without mixing user requests or losing streamed text", () => {
+    const turnId = TurnId.make("combined-reasoning");
+    const otherTurn = TurnId.make("other-reasoning");
+    const thought = (id: string, second: number, scope: TurnId | null = turnId): ChatMessage => ({
+      id: MessageId.make(id),
+      role: "reasoning",
+      text: id,
+      turnId: scope,
+      streaming: true,
+      createdAt: new Date(Date.UTC(2026, 9, 26, 10, 0, 0, second * 1000)).toISOString(),
+      updatedAt: new Date(Date.UTC(2026, 9, 26, 10, 0, 0, second * 1000)).toISOString(),
+    });
+    const first = thought("first", 0);
+    const second = thought("second", 3);
+    const other = thought("other", 6, otherTurn);
+    const orphan = thought("orphan", 2.5, null);
+    const continued = thought("continued", 3.5, TurnId.make("continuation"));
+    const nextRequest = {
+      ...thought("next-request", 5, null),
+      role: "user" as const,
+      streaming: false,
+    };
+    const commentary = { ...thought("commentary", 2), role: "assistant" as const };
+    const tool: WorkLogEntry = {
+      id: "tool",
+      turnId,
+      createdAt: "2026-10-26T10:00:01Z",
+      tone: "tool",
+      label: "Read file",
+      command: "cat file.ts",
+      toolLifecycleStatus: "completed",
+    };
+    const legacy: WorkLogEntry = {
+      id: "legacy",
+      turnId,
+      createdAt: "2026-10-26T10:00:04Z",
+      tone: "thinking",
+      sourceActivityKind: "reasoning.summary",
+      label: "Thinking",
+      detail: "Legacy trace",
+    };
+    const input = {
+      chatVisualMode: "better-t3" as const,
+      showReasoning: true,
+      timelineEntries: deriveTimelineEntries(
+        [first, commentary, orphan, second, continued, nextRequest, other],
+        [],
+        [tool, legacy],
+      ),
+      isWorking: true,
+      activeTurnStartedAt: first.createdAt,
+      latestTurn: {
+        turnId,
+        state: "running" as const,
+        startedAt: first.createdAt,
+        completedAt: null,
+      },
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    };
+    const projection = deriveMessagesTimelineRowsWithState(input);
+    const groups = projection.rows.filter((row) => row.kind === "activity-group");
+    expect(groups).toHaveLength(2);
+    expect(groups[0]?.entries.map((entry) => entry.id)).toEqual([
+      first.id,
+      orphan.id,
+      second.id,
+      continued.id,
+      legacy.id,
+    ]);
+    expect(groups[1]?.entries.map((entry) => entry.id)).toEqual([other.id]);
+    expect(
+      projection.rows.some((row) => row.kind === "message" && row.message.id === commentary.id),
+    ).toBe(true);
+    expect(
+      projection.rows.some((row) => row.kind === "work" && row.groupedEntries.includes(tool)),
+    ).toBe(true);
+
+    const streamed = { ...second, text: "second updated" };
+    const updated = deriveMessagesTimelineRowsWithState(
+      {
+        ...input,
+        timelineEntries: input.timelineEntries.map((entry) =>
+          entry.kind === "message" && entry.message === second
+            ? { ...entry, message: streamed }
+            : entry,
+        ),
+      },
+      projection,
+    );
+    expect(updated.rows.find((row) => row.id === groups[0]?.id)).toMatchObject({
+      entries: [
+        { id: first.id },
+        { id: orphan.id },
+        { message: { text: "second updated" } },
+        { id: continued.id },
+        { id: legacy.id },
+      ],
+    });
+    const hidden = deriveMessagesTimelineRows({ ...input, showReasoning: false });
+    expect(hidden.some((row) => row.kind === "activity-group")).toBe(false);
+    const workingOnly = deriveMessagesTimelineRows({
+      ...input,
+      showReasoning: false,
+      showWorkingReasoning: true,
+    });
+    expect(workingOnly.filter((row) => row.kind === "activity-group")).toHaveLength(2);
+  });
+
   it.each(["classic", "current"] as const)(
     "keeps Working-only traces inside %s activity groups across settlement and preference changes",
     (chatVisualMode) => {
@@ -136,6 +318,97 @@ describe("canonical thinking display", () => {
       expect(reasoning.text).toContain("Full multiline body");
     },
   );
+
+  it("keeps classic tools between Working traces when switching layouts during and after a turn", () => {
+    const turnId = TurnId.make("classic-working-tools");
+    const firstThought: ChatMessage = {
+      id: MessageId.make("first-thought"),
+      role: "reasoning",
+      text: "**Inspecting files**\n\nFirst detailed trace",
+      turnId,
+      createdAt: "2026-09-30T10:00:00Z",
+      updatedAt: "2026-09-30T10:00:00Z",
+      streaming: false,
+    };
+    const lastThought: ChatMessage = {
+      ...firstThought,
+      id: MessageId.make("last-thought"),
+      text: "**Checking the result**\n\nSecond detailed trace",
+      createdAt: "2026-09-30T10:00:03Z",
+      updatedAt: "2026-09-30T10:00:03Z",
+      streaming: true,
+    };
+    const tools: WorkLogEntry[] = [1, 2].map((index) => ({
+      id: `classic-tool-${index}`,
+      turnId,
+      createdAt: `2026-09-30T10:00:0${index}Z`,
+      label: `Read file ${index}`,
+      tone: "tool",
+      toolLifecycleStatus: "completed",
+    }));
+    const timelineEntries = deriveTimelineEntries([firstThought, lastThought], [], tools);
+    const input = {
+      timelineEntries,
+      showReasoning: false,
+      showWorkingReasoning: true,
+      latestTurn: {
+        turnId,
+        state: "running" as const,
+        startedAt: firstThought.createdAt,
+        completedAt: null,
+      },
+      isWorking: true,
+      activeTurnStartedAt: firstThought.createdAt,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+      expandedTurnIds: new Set([turnId]),
+    };
+    let projection: MessagesTimelineRowsProjection | undefined;
+    for (const isWorking of [true, false]) {
+      const turnInput = {
+        ...input,
+        isWorking,
+        latestTurn: {
+          ...input.latestTurn,
+          state: isWorking ? ("running" as const) : ("completed" as const),
+          completedAt: isWorking ? null : "2026-09-30T10:00:04Z",
+        },
+      };
+      for (const chatVisualMode of ["current", "classic", "current", "classic"] as const) {
+        projection = deriveMessagesTimelineRowsWithState(
+          { ...turnInput, chatVisualMode },
+          projection,
+        );
+        const rows = projection.rows.filter(
+          (row) => row.kind !== "working" && row.kind !== "turn-fold",
+        );
+        if (chatVisualMode === "current") {
+          expect(rows).toMatchObject([{ kind: "activity-group", entries: timelineEntries }]);
+          continue;
+        }
+        expect(rows).toMatchObject([
+          { kind: "activity-group", entries: [{ message: firstThought }] },
+          { kind: "work", groupedEntries: [tools[1]] },
+          { kind: "work-toggle", hiddenCount: 1 },
+          { kind: "activity-group", entries: [{ message: lastThought }] },
+        ]);
+        const toggle = rows.find((row) => row.kind === "work-toggle")!;
+        const expanded = deriveMessagesTimelineRowsWithState(
+          {
+            ...turnInput,
+            chatVisualMode,
+            expandedWorkGroupIds: new Set([toggle.groupId]),
+          },
+          projection,
+        );
+        expect(
+          expanded.rows
+            .filter((row) => row.kind === "work")
+            .flatMap((row) => row.groupedEntries.map((entry) => entry.id)),
+        ).toEqual(tools.map((tool) => tool.id));
+      }
+    }
+  });
 
   it("retains unassigned canonical traces in the Working log without treating them as live chat messages", () => {
     const reasoning: ChatMessage = {
@@ -2366,6 +2639,17 @@ describe("deriveMessagesTimelineRows", () => {
       timelineEntries,
       chatVisualMode: "classic",
     });
+    const betterRows = deriveMessagesTimelineRows({
+      ...input,
+      timelineEntries,
+      chatVisualMode: "better-t3",
+    });
+    expect(betterRows.find((row) => row.id === "assistant-final-entry")).toMatchObject({
+      kind: "message",
+      showAssistantMeta: true,
+      showAssistantCopyButton: true,
+    });
+    expect(betterRows.some(({ kind }) => kind === "assistant-meta")).toBe(false);
     expect(classicRows.some(({ kind }) => kind === "assistant-meta")).toBe(false);
     expect(classicRows.find((row) => row.id === "assistant-final-entry")).toMatchObject({
       kind: "message",

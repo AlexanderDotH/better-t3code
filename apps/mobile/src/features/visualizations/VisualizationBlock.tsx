@@ -203,7 +203,8 @@ export function VisualizationBlock({
   isStreaming?: boolean;
   onAction?: (prompt: string) => void;
 }) {
-  const { themeAppearance, themeVariables, interfaceLanguage } = useAppearancePreferences();
+  const { themeAppearance, themeVariables, interfaceLanguage, chatVisualMode } =
+    useAppearancePreferences();
   const fontFamily = useFontFamily("regular");
   const locale = interfaceLanguage.language === "de" ? "de" : "en";
   const labels = visualizationLabels(locale);
@@ -212,16 +213,23 @@ export function VisualizationBlock({
     () =>
       normalizeVisualizationAppearance(
         {
+          ...(chatVisualMode === "better-t3" ? { presentation: "better-t3" as const } : {}),
           fontFamily: `${fontFamily}, sans-serif`,
-          background: themeVariables["--color-card"],
-          foreground: themeVariables["--color-foreground"],
+          background:
+            themeVariables[chatVisualMode === "better-t3" ? "--color-user-bubble" : "--color-card"],
+          foreground:
+            themeVariables[
+              chatVisualMode === "better-t3"
+                ? "--color-user-bubble-foreground"
+                : "--color-foreground"
+            ],
           mutedForeground: themeVariables["--color-foreground-muted"],
           surface: themeVariables["--color-card-alt"],
           border: themeVariables["--color-border"],
         },
         themeAppearance,
       ),
-    [fontFamily, themeVariables, themeAppearance],
+    [fontFamily, themeVariables, themeAppearance, chatVisualMode],
   );
   const parsed = useMemo(() => {
     try {
@@ -457,7 +465,14 @@ export function VisualizationBlock({
   ) : null;
 
   return (
-    <View className="my-2 gap-2 rounded-xl border border-border bg-card p-3">
+    <View
+      className="my-2 gap-2 rounded-xl border border-border bg-card p-3"
+      style={
+        chatVisualMode === "better-t3"
+          ? { borderWidth: 0, backgroundColor: "transparent", padding: 0 }
+          : undefined
+      }
+    >
       <View className="flex-row items-center">
         <Text
           accessibilityRole="header"

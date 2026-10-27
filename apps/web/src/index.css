@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./components/chat/ChatPresentation.css";
 @import "./components/chat/ComposerFloatingBubble.css";
 @import "./components/chat/ComposerReasoningScroller.css";
 @import "./components/git-workbench/GitWorkspaceDeck.css";
@@ -2140,9 +2141,14 @@ code {
 }
 
 @container chat-column (min-width: 40rem) {
-  .chat-markdown .chat-markdown-table-container[data-expanded="true"] {
+  .chat-markdown .chat-markdown-table-container {
     position: relative;
     left: 50%;
+    width: 100%;
+    transform: translateX(-50%);
+  }
+
+  .chat-markdown .chat-markdown-table-container[data-expanded="true"] {
     width: min(
       var(--chat-markdown-table-expanded-width),
       calc(100cqw - var(--chat-markdown-table-viewport-gutter))
@@ -2156,6 +2162,10 @@ code {
     .chat-markdown-table-resize-handle {
     display: block;
   }
+}
+
+.chat-markdown .chat-markdown-table-container[data-table-animating] {
+  overflow: clip;
 }
 
 .chat-markdown .chat-markdown-table-resize-handle {

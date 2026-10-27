@@ -225,13 +225,18 @@ export function NativeMarkdownSelectableText(props: {
       const contextRecord = contextReference
         ? contextRecords.find((record) => record.contextId === contextReference.contextId)
         : undefined;
+      const chipKind = contextReference?.kind ?? (run.skillName ? "skill" : "mention");
+      const messageFileChip =
+        props.textStyle.fileChipAppearance === "message" &&
+        (chipKind === "file" ||
+          chipKind === "image" ||
+          chipKind === "video" ||
+          chipKind === "mention");
       const chip =
         contextReference || run.skillName || run.fileIcon
           ? {
-              ...contextChipPresentation(
-                contextReference?.kind ?? (run.skillName ? "skill" : "mention"),
-                contextRecord,
-              ),
+              ...contextChipPresentation(chipKind, contextRecord),
+              appearance: messageFileChip ? "message" : "default",
               label: run.skillLabel ?? run.text,
               interactive: Boolean(run.href),
               iconUri:
@@ -242,7 +247,7 @@ export function NativeMarkdownSelectableText(props: {
                         markdownFileIconSource(resolveMarkdownFileIcon(contextRecord.path)),
                       ).uri
                     : undefined,
-              fontSize: props.textStyle.fontSize * 0.8,
+              fontSize: props.textStyle.fontSize * (messageFileChip ? 1 : 0.8),
               foreground: props.textStyle.color,
               border: props.textStyle.contextChipBorderColor ?? props.textStyle.dividerColor,
             }
@@ -324,6 +329,7 @@ export function NativeMarkdownSelectableText(props: {
     props.textStyle.quoteMarkerColor,
     props.textStyle.dividerColor,
     props.textStyle.contextChipBorderColor,
+    props.textStyle.fileChipAppearance,
   ].join(":");
 
   return (

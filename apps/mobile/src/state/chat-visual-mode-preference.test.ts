@@ -17,6 +17,7 @@ describe("mobile chat visual mode preference", () => {
 
     expect(mobileChatVisualModePreferencePatch(record)).toEqual({
       chatVisualModeSyncRecord: record,
+      chatVisualModeSyncRecordV2: record,
     });
   });
 
@@ -24,11 +25,8 @@ describe("mobile chat visual mode preference", () => {
     const record = createMobileChatVisualModeRecord("current", 1_787_178_400_001, "mobile:current");
 
     expect(mobileChatVisualModePreferencePatch(record)).toEqual({
-      chatVisualModeSyncRecord: {
-        mode: "current",
-        updatedAt: 1_787_178_400_001,
-        updateId: "mobile:current",
-      },
+      chatVisualModeSyncRecord: record,
+      chatVisualModeSyncRecordV2: record,
     });
   });
 
@@ -40,5 +38,13 @@ describe("mobile chat visual mode preference", () => {
         previousLocalUpdatedAt: 110,
       }),
     ).toBe(111);
+  });
+});
+
+it("stores Better T3 with a compatible Current mirror sharing its clock", () => {
+  const record = createMobileChatVisualModeRecord("better-t3", 200, "mobile:better");
+  expect(mobileChatVisualModePreferencePatch(record)).toEqual({
+    chatVisualModeSyncRecordV2: record,
+    chatVisualModeSyncRecord: { ...record, mode: "current" },
   });
 });

@@ -1,5 +1,25 @@
-import type { ChatVisualMode, ResponseMetricsSnapshot } from "@t3tools/contracts";
+import {
+  CHAT_STATUS_COMPACT_VERTICAL_SPACE,
+  ChatBubbleSurface,
+  ChatStatusBubble,
+  useChatBubblePalette,
+} from "./ChatBubble";
+import type {
+  ChatVisualMode,
+  OrchestrationCheckpointSummary,
+  ResponseMetricsSnapshot,
+} from "@t3tools/contracts";
 import { ResponseMetricsDetails } from "./ResponseMetricsDetails";
+import { ChatPresentationMotion, ChatPresentationMotionContext } from "./ChatPresentationMotion";
+import { useNativeChatPresentationMotion } from "./use-chat-presentation-motion";
+import { ChangedFilesSummary } from "./ChangedFilesSummary";
+import {
+  changedFileMotionId,
+  COLLAPSED_CHANGED_FILE_COUNT,
+  messageCheckpoints,
+} from "./changed-files-summary";
+import { getReviewSectionIdForCheckpoint } from "../review/reviewModel";
+import { setReviewSelectedSectionId } from "../review/reviewState";
 import type {
   OrchestrationMessage,
   OrchestrationSubagentSummary,
@@ -89,6 +109,7 @@ import {
   resolveChatListAnchoredEndSpace,
 } from "@t3tools/shared/chatList";
 import { imageMimeType } from "@t3tools/shared/image";
+import { fileThumbnailKind } from "@t3tools/shared/filePreview";
 import { videoMimeType } from "@t3tools/shared/video";
 import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
 import { HeaderHeightContext } from "@react-navigation/elements";
@@ -106,6 +127,7 @@ import {
   useId,
   type ReactNode,
   type RefObject,
+  type ComponentProps,
 } from "react";
 import {
   Markdown,
@@ -273,11 +295,15 @@ function formatMessageTime(input: string): string {
 
 // Fixed heights mirror renderFeedEntry's classNames and are only used while
 // text fits at the current font settings. Larger accessibility text is measured.
-const TURN_FOLD_HEIGHT = { current: 56, classic: 44 } as const;
+const TURN_FOLD_HEIGHT = { current: 56, classic: 44, "better-t3": 44 } as const satisfies Record<
+  ChatVisualMode,
+  number
+>;
 const TURN_FOLD_MARGIN = 3.5; // mb-1 at the mobile 14px rem.
 // Tailwind spacing on the mobile 14px rem: px-3.5 on the user bubble, px-1 on
 // assistant rows. Images size their frame from these before their own layout.
 const USER_BUBBLE_HORIZONTAL_PADDING = 3.5 * 3.5;
+const BETTER_CHAT_BUBBLE_HORIZONTAL_PADDING = 4 * 3.5;
 const ASSISTANT_ROW_HORIZONTAL_PADDING = 3.5;
 // Let neighboring rows move out of the new rows' space before showing their text.
 const THREAD_FEED_DISCLOSURE_ENTER_TRANSITION = FadeIn.delay(
@@ -294,6 +320,8 @@ function isFreshTimestamp(input: string): boolean {
 }
 
 export interface ThreadFeedProps {
+  readonly connected?: boolean;
+  readonly checkpoints?: readonly OrchestrationCheckpointSummary[];
   readonly responseMetrics?: ReadonlyMap<TurnId, ResponseMetricsSnapshot> | null | undefined;
   readonly messageRepliesEnabled?: boolean;
   readonly onReplyToMessage?: (message: OrchestrationMessage) => void;
@@ -412,6 +440,15 @@ const MobileProposedPlanCard = memo(function MobileProposedPlanCard(props: {
   readonly unavailableReason?: string | null;
 }) {
   const translator = useMobileInterfaceTranslator();
+  const palette = useChatBubblePalette(props.plan.deepPlan ? "warning" : "info");
+  const actionStyle: ComponentProps<typeof Pressable>["style"] = palette.better
+    ? ({ pressed }) => ({
+        borderRadius: 999,
+        borderWidth: 0,
+        backgroundColor: pressed ? palette.hover : palette.control,
+      })
+    : undefined;
+  const actionTextStyle = palette.better ? { color: palette.foreground } : undefined;
   const [expanded, setExpanded] = useState(false);
   const [sourcesExpanded, setSourcesExpanded] = useState(false);
   const deepPlan = props.deepPlan;
@@ -439,6 +476,11 @@ const MobileProposedPlanCard = memo(function MobileProposedPlanCard(props: {
 
   return (
     <View
+      style={
+        palette.better
+          ? { backgroundColor: palette.surface, borderWidth: 0, borderRadius: 25 }
+          : undefined
+      }
       className={
         isDeepPlan
           ? "mb-5 overflow-hidden rounded-[22px] border border-orange-500/35 bg-orange-500/10"
@@ -447,6 +489,7 @@ const MobileProposedPlanCard = memo(function MobileProposedPlanCard(props: {
     >
       <View className="flex-row items-center gap-2 border-b border-adaptive-neutral-200-white-a6 px-4 py-3">
         <View
+          style={palette.better ? { backgroundColor: palette.control } : undefined}
           className={
             isDeepPlan
               ? "rounded-full bg-orange-500/10 px-2 py-1"
@@ -454,6 +497,7 @@ const MobileProposedPlanCard = memo(function MobileProposedPlanCard(props: {
           }
         >
           <Text
+            style={palette.better ? { color: palette.accent } : undefined}
             className={
               isDeepPlan
                 ? "font-t3-bold text-2xs uppercase tracking-widest text-adaptive-orange-700-400"
@@ -583,6 +627,7 @@ const MobileProposedPlanCard = memo(function MobileProposedPlanCard(props: {
               accessibilityRole="button"
               disabled={props.implementing || deepPlan?.phase !== "awaitingApproval"}
               className="min-h-11 items-center justify-center rounded-xl border border-border px-4 active:opacity-60 disabled:opacity-50"
+              style={actionStyle}
               onPress={props.onRefine}
             >
               <Text className="font-t3-medium text-sm text-foreground">
@@ -594,12 +639,19 @@ const MobileProposedPlanCard = memo(function MobileProposedPlanCard(props: {
             accessibilityRole="button"
             disabled={props.implementing || approvalBlocked}
             className="min-h-11 flex-1 items-center justify-center rounded-xl bg-primary px-4 active:opacity-75 disabled:opacity-50"
+            style={actionStyle}
             onPress={() => props.onImplement?.({ kind: "standard" })}
           >
             {props.implementing ? (
-              <ActivityIndicator color="white" size="small" />
+              <ActivityIndicator
+                color={palette.better ? palette.foreground : "white"}
+                size="small"
+              />
             ) : (
-              <Text className="font-t3-bold text-sm text-primary-foreground">
+              <Text
+                style={actionTextStyle}
+                className="font-t3-bold text-sm text-primary-foreground"
+              >
                 {translator.message("mobile.thread.implement")}
               </Text>
             )}
@@ -609,6 +661,7 @@ const MobileProposedPlanCard = memo(function MobileProposedPlanCard(props: {
               accessibilityRole="button"
               disabled={props.implementing || approvalBlocked}
               className="min-h-11 flex-1 items-center justify-center rounded-xl border border-adaptive-neutral-300-a60-white-a12 px-4 active:opacity-60 disabled:opacity-50"
+              style={actionStyle}
               onPress={() => props.onImplement?.(props.suggestion!.strategy)}
             >
               <Text className="font-t3-bold text-sm text-foreground">
@@ -623,6 +676,7 @@ const MobileProposedPlanCard = memo(function MobileProposedPlanCard(props: {
               accessibilityRole="button"
               disabled={props.implementing || approvalBlocked}
               className="min-h-11 w-full items-center justify-center rounded-xl border border-border px-4 active:opacity-60 disabled:opacity-50"
+              style={actionStyle}
               onPress={() => props.onImplementNewThread?.({ kind: "standard" })}
             >
               <Text className="font-t3-medium text-sm text-foreground">
@@ -722,6 +776,7 @@ function isFileAttachment(attachment: ChatAttachment): attachment is ChatFileAtt
 function MessageAttachmentFile(props: {
   readonly environmentId: EnvironmentId;
   readonly attachment: ChatFileAttachment;
+  readonly compact?: boolean;
   readonly onPressPreview: (source: FilePreviewSource) => void;
   readonly onPressVideo: (attachment: ChatFileAttachment, sourceIdentifier: string) => void;
 }) {
@@ -839,7 +894,7 @@ function MessageAttachmentFile(props: {
       <PresentationSource
         identifier={sourceIdentifier}
         className="my-1"
-        style={{ width: 280, maxWidth: "100%" }}
+        style={{ maxWidth: "100%", ...(props.compact ? {} : { width: 280 }) }}
       >
         <Pressable
           accessibilityRole="button"
@@ -847,7 +902,11 @@ function MessageAttachmentFile(props: {
           accessibilityValue={{ text: `${fileTypeLabel}, ${sizeLabel}` }}
           accessibilityState={{ disabled: opening || httpBaseUrl === null, busy: opening }}
           disabled={opening || httpBaseUrl === null}
-          className="min-w-0 flex-row items-center gap-3 rounded-xl border border-border bg-card p-3 active:bg-subtle"
+          className={
+            props.compact
+              ? "min-w-0 flex-row items-center gap-2 rounded-lg bg-user-bubble-foreground/5 px-2 py-1.5 active:bg-subtle"
+              : "min-w-0 flex-row items-center gap-3 rounded-xl border border-border bg-card p-3 active:bg-subtle"
+          }
           onLongPress={() => shareFile(sourceIdentifier)}
           onPress={() =>
             isPdf
@@ -873,20 +932,31 @@ function MessageAttachmentFile(props: {
                 })
           }
         >
-          <View className="h-12 w-10 shrink-0 items-center justify-center rounded-lg bg-subtle">
+          <View
+            className={
+              props.compact
+                ? "shrink-0"
+                : "h-12 w-10 shrink-0 items-center justify-center rounded-lg bg-subtle"
+            }
+          >
             {opening ? (
               <ActivityIndicator size="small" />
             ) : (
-              <PierreEntryIcon path={attachment.name} kind="file" size={26} />
+              <PierreEntryIcon path={attachment.name} kind="file" size={props.compact ? 16 : 26} />
             )}
           </View>
           <View className="min-w-0 flex-1 gap-1">
-            <Text className="font-t3-medium text-sm text-foreground" numberOfLines={2}>
+            <Text
+              className="font-t3-medium text-sm text-foreground"
+              numberOfLines={props.compact ? 1 : 2}
+            >
               {attachment.name}
             </Text>
-            <Text className="text-xs text-foreground-muted" numberOfLines={1}>
-              {fileTypeLabel} · {sizeLabel}
-            </Text>
+            {!props.compact ? (
+              <Text className="text-xs text-foreground-muted" numberOfLines={1}>
+                {fileTypeLabel} · {sizeLabel}
+              </Text>
+            ) : null}
           </View>
           <SymbolView
             name="chevron.right"
@@ -919,12 +989,16 @@ const ThreadMediaVisibleContext = createContext(false);
 // LegendList only computes hook visibility when the list has a viewability config.
 const THREAD_MEDIA_VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 0 };
 
-function ThreadMediaVisibility(props: { readonly children: ReactNode }) {
+function ThreadMediaVisibility(props: { readonly children: ReactNode; readonly motionId: string }) {
   const [visible, setVisible] = useState(false);
   useViewabilityAmount<ThreadFeedEntry>(
     useCallback((token) => setVisible(token.sizeVisible > 0), []),
   );
-  return <ThreadMediaVisibleContext value={visible}>{props.children}</ThreadMediaVisibleContext>;
+  return (
+    <ThreadMediaVisibleContext value={visible}>
+      <ChatPresentationMotion motionId={props.motionId}>{props.children}</ChatPresentationMotion>
+    </ThreadMediaVisibleContext>
+  );
 }
 
 function ThreadMarkdownVideo(props: { readonly source: MediaVideoPreviewSource }) {
@@ -966,7 +1040,9 @@ const MARKDOWN_MONO_FONT = Platform.select({
 
 interface MarkdownStyleSets {
   readonly user: MarkdownStyleSet;
+  readonly userBetterT3: MarkdownStyleSet;
   readonly assistant: MarkdownStyleSet;
+  readonly assistantBubble: MarkdownStyleSet;
 }
 
 interface MarkdownStyleSet {
@@ -1645,75 +1721,82 @@ function useMarkdownStyles(
       ...baseStyles,
     };
 
+    const user: MarkdownStyleSet = {
+      theme: userTheme,
+      styles: userStyles,
+      renderers: createMarkdownRenderers(
+        markdownUserCodeText,
+        markdownUserInlineCodeText,
+        markdownUserFenceBg,
+        markdownUserFenceText,
+        userBubbleForegroundMuted,
+        true,
+        false,
+      ),
+      nativeTextStyle: {
+        color: markdownUserBodyColor,
+        strongColor: markdownUserBodyColor,
+        mutedColor: markdownUserBodyColor,
+        linkColor: markdownUserBodyColor,
+        inlineCodeColor: markdownUserInlineCodeText,
+        codeColor: markdownUserCodeText,
+        codeBackgroundColor: markdownUserCodeBg,
+        codeBlockBackgroundColor: markdownUserFenceBg,
+        fileTextColor: markdownUserBodyColor,
+        skillTextColor: userBubbleSkillForeground,
+        quoteMarkerColor: markdownUserBodyColor,
+        dividerColor: markdownUserBodyColor,
+        contextChipBorderColor,
+        fontSize: nativeMarkdownTypography.fontSize,
+        lineHeight: nativeMarkdownTypography.lineHeight,
+        headingFontSizes: nativeMarkdownTypography.headingFontSizes,
+        fontFamily: regularFontFamily,
+        headingFontFamily: boldFontFamily,
+        boldFontFamily,
+      },
+    };
+    const assistant: MarkdownStyleSet = {
+      theme: assistantTheme,
+      styles: assistantStyles,
+      renderers: createMarkdownRenderers(
+        markdownCodeText,
+        markdownInlineCodeText,
+        markdownCodeBg,
+        markdownCodeText,
+        iconSubtleColor,
+        false,
+        true,
+      ),
+      nativeTextStyle: {
+        color: markdownBodyColor,
+        strongColor: markdownStrongColor,
+        mutedColor: markdownBodyColor,
+        linkColor: markdownLinkColor,
+        inlineCodeColor: markdownInlineCodeText,
+        codeColor: markdownCodeText,
+        codeBackgroundColor: markdownCodeBg,
+        codeBlockBackgroundColor: markdownCodeBg,
+        fileTextColor: markdownCodeText,
+        skillTextColor: inlineSkillForeground,
+        quoteMarkerColor: markdownBlockquoteBorder,
+        dividerColor: markdownHrColor,
+        contextChipBorderColor,
+        fontSize: nativeMarkdownTypography.fontSize,
+        lineHeight: nativeMarkdownTypography.lineHeight,
+        headingFontSizes: nativeMarkdownTypography.headingFontSizes,
+        fontFamily: regularFontFamily,
+        headingFontFamily: boldFontFamily,
+        boldFontFamily,
+      },
+    };
     return {
-      user: {
-        theme: userTheme,
-        styles: userStyles,
-        renderers: createMarkdownRenderers(
-          markdownUserCodeText,
-          markdownUserInlineCodeText,
-          markdownUserFenceBg,
-          markdownUserFenceText,
-          userBubbleForegroundMuted,
-          true,
-          false,
-        ),
-        nativeTextStyle: {
-          color: markdownUserBodyColor,
-          strongColor: markdownUserBodyColor,
-          mutedColor: markdownUserBodyColor,
-          linkColor: markdownUserBodyColor,
-          inlineCodeColor: markdownUserInlineCodeText,
-          codeColor: markdownUserCodeText,
-          codeBackgroundColor: markdownUserCodeBg,
-          codeBlockBackgroundColor: markdownUserFenceBg,
-          fileTextColor: markdownUserBodyColor,
-          skillTextColor: userBubbleSkillForeground,
-          quoteMarkerColor: markdownUserBodyColor,
-          dividerColor: markdownUserBodyColor,
-          contextChipBorderColor,
-          fontSize: nativeMarkdownTypography.fontSize,
-          lineHeight: nativeMarkdownTypography.lineHeight,
-          headingFontSizes: nativeMarkdownTypography.headingFontSizes,
-          fontFamily: regularFontFamily,
-          headingFontFamily: boldFontFamily,
-          boldFontFamily,
-        },
+      user,
+      userBetterT3: {
+        ...user,
+        nativeTextStyle: { ...user.nativeTextStyle, fileChipAppearance: "message" },
       },
-      assistant: {
-        theme: assistantTheme,
-        styles: assistantStyles,
-        renderers: createMarkdownRenderers(
-          markdownCodeText,
-          markdownInlineCodeText,
-          markdownCodeBg,
-          markdownCodeText,
-          iconSubtleColor,
-          false,
-          true,
-        ),
-        nativeTextStyle: {
-          color: markdownBodyColor,
-          strongColor: markdownStrongColor,
-          mutedColor: markdownBodyColor,
-          linkColor: markdownLinkColor,
-          inlineCodeColor: markdownInlineCodeText,
-          codeColor: markdownCodeText,
-          codeBackgroundColor: markdownCodeBg,
-          codeBlockBackgroundColor: markdownCodeBg,
-          fileTextColor: markdownCodeText,
-          skillTextColor: inlineSkillForeground,
-          quoteMarkerColor: markdownBlockquoteBorder,
-          dividerColor: markdownHrColor,
-          contextChipBorderColor,
-          fontSize: nativeMarkdownTypography.fontSize,
-          lineHeight: nativeMarkdownTypography.lineHeight,
-          headingFontSizes: nativeMarkdownTypography.headingFontSizes,
-          fontFamily: regularFontFamily,
-          headingFontFamily: boldFontFamily,
-          boldFontFamily,
-        },
-      },
+      assistant,
+      assistantBubble: { ...user, renderers: assistant.renderers },
     };
   }, [
     boldFontFamily,
@@ -1763,6 +1846,13 @@ function renderFeedEntry(
     readonly availableReplySourceIds: ReadonlySet<string>;
     readonly onOpenReplySource: (messageId: MessageId, replyTopicId?: SubagentId) => void;
     readonly chatVisualMode: ChatVisualMode;
+    readonly checkpointsByMessage: ReadonlyMap<string, OrchestrationCheckpointSummary>;
+    readonly expandedCheckpointIds: ReadonlySet<string>;
+    readonly onToggleCheckpoint: (
+      messageId: string,
+      checkpoint: OrchestrationCheckpointSummary,
+    ) => void;
+    readonly onOpenCheckpoint: (checkpoint: OrchestrationCheckpointSummary) => void;
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
     readonly expandedReasoningMessageIds: ReadonlySet<string>;
@@ -1799,23 +1889,16 @@ function renderFeedEntry(
   if (entry.type === "proposed-plan") return null;
 
   if (entry.type === "turn-fold") {
-    return (
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ expanded: entry.expanded }}
-        onPress={() => props.onToggleTurnFold(entry.turnId)}
-        hitSlop={4}
-        className="mb-1 min-h-11 flex-row items-center gap-2 border-b border-border-subtle px-2"
-        style={{
-          minHeight: Math.max(
-            TURN_FOLD_HEIGHT[props.chatVisualMode],
-            props.workRowSizing.estimatedRowHeight,
-          ),
-        }}
-      >
+    const better = props.chatVisualMode === "better-t3";
+    const content = (
+      <>
         <Text
           key={props.workRowSizing.textSizeKey}
-          className="font-t3-medium text-sm tabular-nums text-foreground-muted"
+          className={cn(
+            "font-t3-medium tabular-nums",
+            better ? "shrink text-center text-xs text-foreground" : "text-sm text-foreground-muted",
+          )}
+          numberOfLines={better ? 1 : undefined}
         >
           {entry.label}
         </Text>
@@ -1825,51 +1908,115 @@ function renderFeedEntry(
           size={15}
           tintColor={iconSubtleColor}
         />
+      </>
+    );
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: entry.expanded }}
+        onPress={() => props.onToggleTurnFold(entry.turnId)}
+        hitSlop={4}
+        className={cn(
+          "mb-1 min-h-11 flex-row items-center gap-2 px-2",
+          better ? "self-center justify-center active:opacity-90" : "border-b border-border-subtle",
+        )}
+        style={{
+          minHeight: Math.max(
+            TURN_FOLD_HEIGHT[props.chatVisualMode],
+            props.workRowSizing.estimatedRowHeight,
+          ),
+          ...(props.chatVisualMode === "better-t3"
+            ? ({ width: "72%", maxWidth: 480 } as const)
+            : {}),
+        }}
+      >
+        {better ? (
+          <>
+            <View
+              pointerEvents="none"
+              accessible={false}
+              className="h-px flex-1 bg-border-subtle"
+              style={{ maxWidth: 96 }}
+            />
+            <View className="min-w-0 shrink flex-row items-center gap-2 rounded-full bg-subtle px-3 py-1.5">
+              {content}
+            </View>
+            <View
+              pointerEvents="none"
+              accessible={false}
+              className="h-px flex-1 bg-border-subtle"
+              style={{ maxWidth: 96 }}
+            />
+          </>
+        ) : (
+          content
+        )}
       </Pressable>
     );
   }
 
   if (entry.type === "thinking") {
     return (
-      <ThreadThinkingRow
-        chatVisualMode={props.chatVisualMode}
-        rowSizing={props.workRowSizing}
-        iconSubtleColor={iconSubtleColor}
-      />
+      <ChatStatusBubble compact>
+        <ThreadThinkingRow
+          chatVisualMode={props.chatVisualMode}
+          rowSizing={props.workRowSizing}
+          iconSubtleColor={iconSubtleColor}
+        />
+      </ChatStatusBubble>
     );
   }
 
   if (entry.type === "agent-spawn") {
     return (
-      <ThreadAgentSpawnCard
-        summary={entry.summary}
-        expanded={entry.expanded}
-        iconSubtleColor={iconSubtleColor}
-        rowSizing={props.workRowSizing}
-        onToggle={() => props.onToggleWorkGroup(entry.id, entry.id)}
-        onCopy={() => props.onCopyWorkRow(entry.activity.id, entry.activity.getCopyText())}
-      />
+      <ChatStatusBubble
+        tone={
+          entry.summary.tone === "failed"
+            ? "error"
+            : entry.summary.tone === "working"
+              ? "info"
+              : entry.summary.tone === "stopped"
+                ? "warning"
+                : "success"
+        }
+        compact
+      >
+        <ThreadAgentSpawnCard
+          motionId={`detail:${entry.id}`}
+          summary={entry.summary}
+          expanded={entry.expanded}
+          iconSubtleColor={iconSubtleColor}
+          rowSizing={props.workRowSizing}
+          onToggle={() => props.onToggleWorkGroup(entry.id, entry.id)}
+          onCopy={() => props.onCopyWorkRow(entry.activity.id, entry.activity.getCopyText())}
+        />
+      </ChatStatusBubble>
     );
   }
 
   if (entry.type === "work-toggle") {
     return (
-      <ThreadWorkGroupToggle
-        environmentId={props.environmentId}
-        rowSizing={props.workRowSizing}
-        expanded={entry.expanded}
-        hiddenCount={entry.hiddenCount}
-        iconSubtleColor={iconSubtleColor}
-        summary={entry.summary}
-        summaryKind={entry.summaryKind}
-        themeAppearance={props.themeAppearance}
-        toolSurface={entry.toolSurface}
-        toolIcon={entry.toolIcon}
-        summaryToolIcon={entry.summaryToolIcon}
-        hasFailure={entry.hasFailure}
-        shimmer={entry.shimmer && props.chatVisualMode === "current"}
-        onToggle={() => props.onToggleWorkGroup(entry.groupId, entry.id)}
-      />
+      <ChatStatusBubble
+        compact
+        tone={entry.hasFailure ? "error" : entry.shimmer ? "info" : "success"}
+      >
+        <ThreadWorkGroupToggle
+          environmentId={props.environmentId}
+          rowSizing={props.workRowSizing}
+          expanded={entry.expanded}
+          hiddenCount={entry.hiddenCount}
+          iconSubtleColor={iconSubtleColor}
+          summary={entry.summary}
+          summaryKind={entry.summaryKind}
+          themeAppearance={props.themeAppearance}
+          toolSurface={entry.toolSurface}
+          toolIcon={entry.toolIcon}
+          summaryToolIcon={entry.summaryToolIcon}
+          hasFailure={entry.hasFailure}
+          shimmer={entry.shimmer && props.chatVisualMode === "current"}
+          onToggle={() => props.onToggleWorkGroup(entry.groupId, entry.id)}
+        />
+      </ChatStatusBubble>
     );
   }
 
@@ -1898,15 +2045,22 @@ function renderFeedEntry(
 
   if (entry.type === "message") {
     const { message } = entry;
+    const checkpoint =
+      props.chatVisualMode === "better-t3" ? props.checkpointsByMessage.get(entry.id) : undefined;
     if (message.role === "reasoning") {
       const messages = entry.reasoningMessages ?? [message];
+      const thinking =
+        props.chatVisualMode === "better-t3" &&
+        props.isWorking &&
+        messages.some((trace) => trace.streaming && trace.turnId === props.unsettledTurnId);
       return (
         <ThreadReasoningRow
+          motionId={`detail:${entry.id}`}
           rowSizing={props.workRowSizing}
           iconSubtleColor={iconSubtleColor}
           expanded={props.expandedReasoningMessageIds.has(entry.id)}
-          label={`Thought${messages.length > 1 ? ` (×${messages.length})` : ""}`}
-          streaming={false}
+          label={`${thinking ? "Thinking" : "Thought"}${messages.length > 1 ? ` (×${messages.length})` : ""}`}
+          streaming={thinking}
           onToggle={() => props.onToggleReasoning(entry.id)}
         >
           <MarkdownImageAvailableWidthContext
@@ -1932,7 +2086,13 @@ function renderFeedEntry(
     const isUser = message.role === "user";
     const visibleText = isUser ? extractVoiceFileContext(message.text).text : message.text;
     const renderedText = renderAssistantCitationsAsText(visibleText);
-    const styles = isUser ? markdownStyles.user : markdownStyles.assistant;
+    const styles = isUser
+      ? props.chatVisualMode === "better-t3"
+        ? markdownStyles.userBetterT3
+        : markdownStyles.user
+      : props.chatVisualMode === "better-t3"
+        ? markdownStyles.assistantBubble
+        : markdownStyles.assistant;
     const timestampLabel = formatMessageTime(isUser ? message.createdAt : message.updatedAt);
     const attachments = message.attachments ?? [];
     const hasReviewCommentContext = message.text.includes("<review_comment");
@@ -1984,9 +2144,42 @@ function renderFeedEntry(
             : [],
         ),
       );
-      const visibleAttachments = attachments.filter(
-        (attachment) => isImageAttachment(attachment) || !inlineAttachmentIds.has(attachment.id),
-      );
+      const visibleAttachments =
+        props.chatVisualMode === "better-t3"
+          ? [...attachments].sort((left, right) => {
+              const hasPreview = (attachment: ChatAttachment) =>
+                isImageAttachment(attachment) ||
+                (isFileAttachment(attachment) && fileThumbnailKind(attachment) !== null);
+              return Number(hasPreview(right)) - Number(hasPreview(left));
+            })
+          : attachments.filter(
+              (attachment) =>
+                isImageAttachment(attachment) || !inlineAttachmentIds.has(attachment.id),
+            );
+      const messageBody =
+        message.text.trim().length > 0 ? (
+          <MarkdownImageAvailableWidthContext
+            key="message-body"
+            value={
+              userBubbleMaxWidth -
+              (props.chatVisualMode === "better-t3"
+                ? BETTER_CHAT_BUBBLE_HORIZONTAL_PADDING
+                : USER_BUBBLE_HORIZONTAL_PADDING) *
+                2
+            }
+          >
+            <UserMessageContent
+              text={renderedText}
+              environmentId={props.environmentId}
+              context={message.context}
+              markdownStyles={styles}
+              reviewCommentColors={props.reviewCommentColors}
+              skills={props.skills}
+              linkHandlers={props.markdownLinkHandlers}
+              renderImage={props.renderMarkdownImage}
+            />
+          </MarkdownImageAvailableWidthContext>
+        ) : null;
       return (
         <MessageReplyGesture
           message={message}
@@ -1995,9 +2188,15 @@ function renderFeedEntry(
         >
           <View className="mb-5 items-end">
             <View
-              className="min-w-0 gap-2 rounded-[20px] px-3.5 py-2.5"
+              className={cn(
+                "min-w-0 gap-2 px-3.5 py-2.5",
+                props.chatVisualMode === "better-t3"
+                  ? "rounded-[25px] px-4 py-3.5"
+                  : "rounded-[20px]",
+              )}
               style={{
-                backgroundColor: userBubbleColor,
+                backgroundColor:
+                  props.chatVisualMode === "better-t3" ? "transparent" : userBubbleColor,
                 maxWidth: userBubbleMaxWidth,
                 ...(hasReviewCommentContext
                   ? { width: props.reviewCommentBubbleWidth }
@@ -2006,7 +2205,17 @@ function renderFeedEntry(
                     : null),
               }}
             >
+              {props.chatVisualMode === "better-t3" ? (
+                <ChatPresentationMotion
+                  motionId={`surface:${entry.id}`}
+                  pointerEvents="none"
+                  style={StyleSheet.absoluteFill}
+                >
+                  <ChatBubbleSurface color={userBubbleColor} side="user" />
+                </ChatPresentationMotion>
+              ) : null}
               {quote}
+              {props.chatVisualMode === "better-t3" ? messageBody : null}
               {entry.pendingMessage?.attachments.map((attachment) =>
                 attachment.type === "image" && attachment.uploadedAttachmentId ? (
                   <MessageAttachmentImage
@@ -2052,6 +2261,10 @@ function renderFeedEntry(
                         key={attachment.id}
                         environmentId={props.environmentId}
                         attachment={attachment}
+                        compact={
+                          props.chatVisualMode === "better-t3" &&
+                          fileThumbnailKind(attachment) === null
+                        }
                         onPressPreview={props.onPressPreview}
                         onPressVideo={props.onPressVideo}
                       />
@@ -2061,22 +2274,7 @@ function renderFeedEntry(
                   })}
                 </View>
               ) : null}
-              {message.text.trim().length > 0 ? (
-                <MarkdownImageAvailableWidthContext
-                  value={userBubbleMaxWidth - USER_BUBBLE_HORIZONTAL_PADDING * 2}
-                >
-                  <UserMessageContent
-                    text={renderedText}
-                    environmentId={props.environmentId}
-                    context={message.context}
-                    markdownStyles={styles}
-                    reviewCommentColors={props.reviewCommentColors}
-                    skills={props.skills}
-                    linkHandlers={props.markdownLinkHandlers}
-                    renderImage={props.renderMarkdownImage}
-                  />
-                </MarkdownImageAvailableWidthContext>
-              ) : null}
+              {props.chatVisualMode !== "better-t3" ? messageBody : null}
             </View>
             <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
               {replyEnabled ? (
@@ -2128,7 +2326,7 @@ function renderFeedEntry(
 
     // Skip empty assistant messages (no text, no attachments) — they would
     // render as an orphaned timestamp and break adjacent activity-group merging.
-    if (renderedText.trim().length === 0 && attachments.length === 0) {
+    if (renderedText.trim().length === 0 && attachments.length === 0 && checkpoint === undefined) {
       return null;
     }
 
@@ -2136,96 +2334,168 @@ function renderFeedEntry(
     // bubbles: wide markdown blocks cause children to be positioned at
     // intrinsic width before the container is clamped, overlapping the
     // timestamp/copy button row. Pinning the width removes that pass.
-    const enterAnimated = isFreshTimestamp(message.createdAt);
+    const enterAnimated =
+      props.chatVisualMode !== "better-t3" && isFreshTimestamp(message.createdAt);
+    const bubbleInset =
+      props.chatVisualMode === "better-t3" ? BETTER_CHAT_BUBBLE_HORIZONTAL_PADDING : 0;
+    const assistantMeta = showAssistantMeta ? (
+      <View className="mt-1 flex-row flex-wrap items-center gap-x-2 gap-y-1">
+        {props.chatVisualMode !== "better-t3" ? (
+          <>
+            {replyEnabled ? (
+              <MessageReplyAction onReply={onReply} tintColor={iconSubtleColor} />
+            ) : null}
+            <CopyTextButton
+              accessibilityLabel="Copy message"
+              text={renderedText}
+              tintColor={iconSubtleColor}
+              buttonSize={28}
+              iconSize={13}
+            />
+          </>
+        ) : null}
+        <Text
+          className="shrink-0 font-t3-medium text-xs tabular-nums text-foreground-secondary"
+          numberOfLines={1}
+        >
+          {timestampLabel}
+        </Text>
+        {props.responseMetrics != null && !message.replyTopicId ? (
+          <ResponseMetricsDetails
+            snapshot={message.turnId ? (props.responseMetrics.get(message.turnId) ?? null) : null}
+          />
+        ) : null}
+      </View>
+    ) : replyEnabled && props.chatVisualMode !== "better-t3" ? (
+      <View className="absolute right-0 top-0">
+        <MessageReplyAction onReply={onReply} tintColor={iconSubtleColor} />
+      </View>
+    ) : null;
+    const showBubbleCopy = props.chatVisualMode === "better-t3" && !message.streaming;
     const sideReplyActionWidth =
-      replyEnabled && !showAssistantMeta ? MESSAGE_REPLY_ACTION_WIDTH : 0;
+      props.chatVisualMode === "better-t3"
+        ? (showBubbleCopy ? 28 : 0) +
+          (replyEnabled ? MESSAGE_REPLY_ACTION_WIDTH : 0) +
+          (showBubbleCopy && replyEnabled ? 3.5 : 0)
+        : replyEnabled && !showAssistantMeta
+          ? MESSAGE_REPLY_ACTION_WIDTH
+          : 0;
     return (
       <MessageReplyGesture
         message={message}
         enabled={replyEnabled}
         onReply={props.onReplyToMessage ?? (() => undefined)}
       >
-        <Animated.View
-          className={cn(showAssistantMeta ? "mb-5 px-1" : "mb-1 px-1", hasWideBlock && "w-full")}
-          style={
-            sideReplyActionWidth > 0
-              ? { paddingRight: sideReplyActionWidth, minHeight: 28 }
-              : undefined
-          }
-          {...(enterAnimated ? { entering: FadeIn.duration(220) } : {})}
-        >
-          {quote}
-          {renderedText.trim().length > 0 ? (
-            <MarkdownImageAvailableWidthContext
-              value={props.markdownContentWidth - sideReplyActionWidth}
-            >
-              <AssistantMarkdownContent
-                environmentId={props.environmentId}
-                markdown={renderedText}
-                markdownStyles={styles}
-                linkHandlers={props.markdownLinkHandlers}
-                onUseArtifactTemplate={props.onUseArtifactTemplate}
-                onVisualizationAction={props.onVisualizationAction}
-                renderImage={props.renderMarkdownImage}
-                skills={props.skills}
-              />
-            </MarkdownImageAvailableWidthContext>
-          ) : null}
-          {attachments.map((attachment) => {
-            return isImageAttachment(attachment) ? (
-              <MessageAttachmentImage
-                key={attachment.id}
-                environmentId={props.environmentId}
-                attachmentId={attachment.id}
-                name={attachment.name}
-                mimeType={attachment.mimeType}
-                className="mt-1.5 aspect-[1.3] w-full rounded-[18px] bg-subtle-strong"
-                onPressPreview={props.onPressPreview}
-              />
-            ) : isFileAttachment(attachment) ? (
-              <MessageAttachmentFile
-                key={attachment.id}
-                environmentId={props.environmentId}
-                attachment={attachment}
-                onPressPreview={props.onPressPreview}
-                onPressVideo={props.onPressVideo}
-              />
-            ) : (
-              <MessageAttachmentUnknown key={attachment.id} name={attachment.name} />
-            );
-          })}
-          {showAssistantMeta ? (
-            <View className="mt-1 flex-row flex-wrap items-center gap-x-2 gap-y-1">
-              {replyEnabled ? (
-                <MessageReplyAction onReply={onReply} tintColor={iconSubtleColor} />
-              ) : null}
-              <CopyTextButton
-                accessibilityLabel="Copy message"
-                text={renderedText}
-                tintColor={iconSubtleColor}
-                buttonSize={28}
-                iconSize={13}
-              />
-              <Text
-                className="shrink-0 font-t3-medium text-xs tabular-nums text-foreground-secondary"
-                numberOfLines={1}
-              >
-                {timestampLabel}
-              </Text>
-              {props.responseMetrics != null && !message.replyTopicId ? (
-                <ResponseMetricsDetails
-                  snapshot={
-                    message.turnId ? (props.responseMetrics.get(message.turnId) ?? null) : null
+        <View className={showAssistantMeta ? "mb-5" : "mb-1"}>
+          <Animated.View
+            className={cn(
+              props.chatVisualMode === "better-t3"
+                ? "self-start rounded-[25px] px-4 py-3.5"
+                : "px-1",
+              hasWideBlock && "w-full",
+            )}
+            style={[
+              props.chatVisualMode === "better-t3"
+                ? {
+                    maxWidth: userBubbleMaxWidth,
+                    ...(hasWideBlock || attachments.length > 0 || checkpoint || message.replyTo
+                      ? { width: userBubbleMaxWidth }
+                      : {}),
                   }
+                : undefined,
+              sideReplyActionWidth > 0
+                ? { paddingRight: sideReplyActionWidth + bubbleInset, minHeight: 28 }
+                : undefined,
+            ]}
+            {...(enterAnimated ? { entering: FadeIn.duration(220) } : {})}
+          >
+            {props.chatVisualMode === "better-t3" ? (
+              <ChatPresentationMotion
+                motionId={`surface:${entry.id}`}
+                pointerEvents="none"
+                accessible={false}
+                accessibilityElementsHidden
+                importantForAccessibility="no-hide-descendants"
+                style={StyleSheet.absoluteFill}
+              >
+                <ChatBubbleSurface color={userBubbleColor} />
+              </ChatPresentationMotion>
+            ) : null}
+            {props.chatVisualMode === "better-t3" && (showBubbleCopy || replyEnabled) ? (
+              <View className="absolute right-3 top-3 flex-row items-center justify-end gap-1">
+                {showBubbleCopy ? (
+                  <CopyTextButton
+                    accessibilityLabel="Copy message"
+                    text={renderedText}
+                    tintColor={iconSubtleColor}
+                    buttonSize={28}
+                    iconSize={13}
+                    showLabelOnLongPress
+                  />
+                ) : null}
+                {replyEnabled ? (
+                  <MessageReplyAction onReply={onReply} tintColor={iconSubtleColor} />
+                ) : null}
+              </View>
+            ) : null}
+            {quote}
+            {renderedText.trim().length > 0 ? (
+              <MarkdownImageAvailableWidthContext
+                value={
+                  props.chatVisualMode === "better-t3"
+                    ? userBubbleMaxWidth -
+                      BETTER_CHAT_BUBBLE_HORIZONTAL_PADDING * 2 -
+                      sideReplyActionWidth
+                    : props.markdownContentWidth - sideReplyActionWidth
+                }
+              >
+                <AssistantMarkdownContent
+                  environmentId={props.environmentId}
+                  markdown={renderedText}
+                  markdownStyles={styles}
+                  linkHandlers={props.markdownLinkHandlers}
+                  onUseArtifactTemplate={props.onUseArtifactTemplate}
+                  onVisualizationAction={props.onVisualizationAction}
+                  renderImage={props.renderMarkdownImage}
+                  skills={props.skills}
                 />
-              ) : null}
-            </View>
-          ) : replyEnabled ? (
-            <View className="absolute right-0 top-0">
-              <MessageReplyAction onReply={onReply} tintColor={iconSubtleColor} />
-            </View>
-          ) : null}
-        </Animated.View>
+              </MarkdownImageAvailableWidthContext>
+            ) : null}
+            {attachments.map((attachment) => {
+              return isImageAttachment(attachment) ? (
+                <MessageAttachmentImage
+                  key={attachment.id}
+                  environmentId={props.environmentId}
+                  attachmentId={attachment.id}
+                  name={attachment.name}
+                  mimeType={attachment.mimeType}
+                  className="mt-1.5 aspect-[1.3] w-full rounded-[18px] bg-subtle-strong"
+                  onPressPreview={props.onPressPreview}
+                />
+              ) : isFileAttachment(attachment) ? (
+                <MessageAttachmentFile
+                  key={attachment.id}
+                  environmentId={props.environmentId}
+                  attachment={attachment}
+                  onPressPreview={props.onPressPreview}
+                  onPressVideo={props.onPressVideo}
+                />
+              ) : (
+                <MessageAttachmentUnknown key={attachment.id} name={attachment.name} />
+              );
+            })}
+            {checkpoint ? (
+              <ChangedFilesSummary
+                checkpoint={checkpoint}
+                expanded={props.expandedCheckpointIds.has(checkpoint.turnId)}
+                onToggle={() => props.onToggleCheckpoint(entry.id, checkpoint)}
+                onOpenReview={() => props.onOpenCheckpoint(checkpoint)}
+              />
+            ) : null}
+            {props.chatVisualMode !== "better-t3" ? assistantMeta : null}
+          </Animated.View>
+          {props.chatVisualMode === "better-t3" ? assistantMeta : null}
+        </View>
       </MessageReplyGesture>
     );
   }
@@ -2234,7 +2504,7 @@ function renderFeedEntry(
     <ThreadWorkLog
       // Fixed native rows need fresh measurement after a text-size change.
       // Anchors/details live in ThreadFeed and survive this group-only remount.
-      key={`${entry.id}:${props.workRowSizing.textSizeKey}:${props.chatVisualMode}`}
+      key={`${entry.id}:${props.workRowSizing.textSizeKey}`}
       chatVisualMode={props.chatVisualMode}
       activities={entry.activities}
       environmentId={props.environmentId}
@@ -2431,11 +2701,12 @@ function ThreadFeedPlaceholder(props: {
 }
 
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
-  const { chatVisualMode } = useAppearancePreferences();
+  const { chatVisualMode, chatPresentation } = useAppearancePreferences();
   const [implementingPlanId, setImplementingPlanId] = useState<string | null>(null);
   const navigation = useNavigation();
   const { themeAppearance } = useAppearancePreferences();
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const discardPendingMotionRef = useRef<() => void>(() => {});
   const disclosureSettleFrameRef = useRef<number | null>(null);
   const disclosureSettleSecondFrameRef = useRef<number | null>(null);
   const disclosureAnchorKeyRef = useRef<string | null>(null);
@@ -2448,16 +2719,16 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     () => deriveThreadWorkLogSizing({ baseFontSize: appearance.baseFontSize, fontScale }),
     [appearance.baseFontSize, fontScale],
   );
-  const previousTextSize = useRef(workRowSizing.textSizeKey);
+  const measurementKey = `${workRowSizing.textSizeKey}:${chatVisualMode}`;
+  const previousTextSize = useRef(measurementKey);
   useLayoutEffect(() => {
-    if (previousTextSize.current === workRowSizing.textSizeKey) {
+    if (previousTextSize.current === measurementKey) {
       return;
     }
-    previousTextSize.current = workRowSizing.textSizeKey;
-    // Text-size changes invalidate the outer list's fixed-height cache too.
-    // This never runs for scrolling, streamed output, or disclosure toggles.
+    previousTextSize.current = measurementKey;
+    // Font and presentation changes invalidate measured heights while preserving list identity.
     props.listRef.current?.clearCaches({ mode: "sizes" });
-  }, [workRowSizing.textSizeKey, props.listRef]);
+  }, [measurementKey, props.listRef]);
   const [viewportWidth, setViewportWidth] = useState(() =>
     props.layoutVariant === "split" ? 0 : windowWidth,
   );
@@ -2526,6 +2797,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         ? expandedTurnIds
         : new Set([...expandedTurnIds, ...currentFoldRetention.retainedTurnIds]),
     [currentFoldRetention.retainedTurnIds, expandedTurnIds],
+  );
+  const [expandedCheckpointIds, setExpandedCheckpointIds] = useState<ReadonlySet<string>>(
+    new Set(),
   );
   const [expandedFile, setExpandedFile] = useState<FilePreviewSource | null>(null);
   const [expandedVideo, setExpandedVideo] = useState<VideoPreviewSource | null>(null);
@@ -2871,6 +3145,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     }
   }, []);
   const handleScrollBeginDrag = useCallback(() => {
+    discardPendingMotionRef.current();
     clearUserScrollSettle();
     userScrollSessionRef.current = true;
     // Pause before the first scroll event. Otherwise a stream update can run
@@ -2970,13 +3245,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           expandedTurnIdsForFeed,
           expandedWorkGroupIds,
           props.activeWorkStartedAt,
-          chatVisualMode,
+          chatPresentation.grouping,
         ),
         props.feed,
         props.queuedMessages,
       ),
     [
-      chatVisualMode,
+      chatPresentation.grouping,
       props.queuedMessages,
       expandedTurnIdsForFeed,
       expandedWorkGroupIds,
@@ -2985,6 +3260,32 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       props.latestTurn,
     ],
   );
+  const checkpointsByMessage = useMemo(
+    () =>
+      chatVisualMode === "better-t3"
+        ? messageCheckpoints(props.feed, props.checkpoints ?? [])
+        : new Map<string, OrchestrationCheckpointSummary>(),
+    [chatVisualMode, props.feed, props.checkpoints],
+  );
+  const motionSourceFeed = useMemo(
+    () =>
+      chatVisualMode === "better-t3"
+        ? appendPendingThreadMessages(props.feed, props.feed, props.queuedMessages)
+        : props.feed,
+    [chatVisualMode, props.feed, props.queuedMessages],
+  );
+  const { motion, disclose, discardPending } = useNativeChatPresentationMotion({
+    threadKey: feedThreadKey,
+    environmentId: props.environmentId,
+    connected: props.connected === true,
+    ready: props.contentPresentation.kind === "ready",
+    feed: motionSourceFeed,
+    checkpointsByMessage,
+    presentedFeed,
+  });
+  useLayoutEffect(() => {
+    discardPendingMotionRef.current = discardPending;
+  }, [discardPending]);
   const setupAnchorIndex = presentedFeed.findIndex(
     (entry) => entry.type === "message" && entry.message.role === "user",
   );
@@ -3017,6 +3318,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       (entry) => entry.type === "message" && entry.id === replySourceTarget,
     );
     if (index < 0) return;
+    discardPendingMotionRef.current();
     transitionEndFollow({ type: "user-scroll-begin" });
     props.listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.25 });
     setReplySourceTarget(null);
@@ -3196,6 +3498,22 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
   const onToggleWorkGroup = useCallback(
     (groupId: string, anchorKey: string) => {
+      disclose(`detail:${groupId}`, Date.now());
+      if (motion.enabled && !expandedWorkGroupIds.has(groupId)) {
+        const visibleIds = new Set(presentedFeed.map((entry) => entry.id));
+        const expandedGroups = new Set(expandedWorkGroupIds).add(groupId);
+        const revealed = deriveThreadFeedPresentation(
+          props.feed,
+          props.latestTurn,
+          expandedTurnIdsForFeed,
+          expandedGroups,
+          props.activeWorkStartedAt,
+          chatPresentation.grouping,
+        );
+        for (const entry of revealed) {
+          if (!visibleIds.has(entry.id)) disclose(entry.id, Date.now());
+        }
+      }
       suspendEndScrollMaintenanceForDisclosure(anchorKey);
       setInteractionState((current) => ({
         ...current,
@@ -3205,11 +3523,23 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         },
       }));
     },
-    [suspendEndScrollMaintenanceForDisclosure],
+    [
+      chatPresentation.grouping,
+      disclose,
+      expandedTurnIdsForFeed,
+      expandedWorkGroupIds,
+      motion.enabled,
+      presentedFeed,
+      props.activeWorkStartedAt,
+      props.feed,
+      props.latestTurn,
+      suspendEndScrollMaintenanceForDisclosure,
+    ],
   );
 
   const onToggleWorkRow = useCallback(
     (rowId: string, anchorKey: string) => {
+      disclose(`detail:${rowId}`, Date.now());
       suspendEndScrollMaintenanceForDisclosure(anchorKey);
       setInteractionState((current) => ({
         ...current,
@@ -3219,7 +3549,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         },
       }));
     },
-    [suspendEndScrollMaintenanceForDisclosure],
+    [disclose, suspendEndScrollMaintenanceForDisclosure],
   );
 
   const onToggleTurnFold = useCallback(
@@ -3244,6 +3574,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
   const onToggleReasoning = useCallback(
     (messageId: string) => {
+      disclose(`detail:${messageId}`, Date.now());
       // Reasoning details use their own row within the expanded activity history.
       suspendEndScrollMaintenanceForDisclosure(messageId);
       setInteractionState((current) => {
@@ -3256,7 +3587,35 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         return { ...current, expandedReasoningMessageIds: next };
       });
     },
-    [suspendEndScrollMaintenanceForDisclosure],
+    [disclose, suspendEndScrollMaintenanceForDisclosure],
+  );
+
+  const onToggleCheckpoint = useCallback(
+    (messageId: string, checkpoint: OrchestrationCheckpointSummary) => {
+      if (!expandedCheckpointIds.has(checkpoint.turnId)) {
+        for (const file of checkpoint.files.slice(COLLAPSED_CHANGED_FILE_COUNT)) {
+          disclose(changedFileMotionId(checkpoint, file.path), Date.now());
+        }
+      }
+      suspendEndScrollMaintenanceForDisclosure(messageId);
+      setExpandedCheckpointIds((current) => {
+        const next = new Set(current);
+        if (next.has(checkpoint.turnId)) next.delete(checkpoint.turnId);
+        else next.add(checkpoint.turnId);
+        return next;
+      });
+    },
+    [disclose, expandedCheckpointIds, suspendEndScrollMaintenanceForDisclosure],
+  );
+  const onOpenCheckpoint = useCallback(
+    (checkpoint: OrchestrationCheckpointSummary) => {
+      setReviewSelectedSectionId(feedThreadKey, getReviewSectionIdForCheckpoint(checkpoint));
+      navigation.navigate("ThreadReview", {
+        environmentId: props.environmentId,
+        threadId: props.threadId,
+      });
+    },
+    [feedThreadKey, navigation, props.environmentId, props.threadId],
   );
 
   const onPressPreview = useCallback((source: FilePreviewSource) => {
@@ -3286,16 +3645,25 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       }
       switch (entry.type) {
         case "message":
-          // A collapsed reasoning row is the same chrome as a work toggle.
-          return entry.message.role === "reasoning" && !expandedReasoningMessageIds.has(entry.id)
+          // Better T3 reasoning measures its padded icon and disclosure.
+          return chatVisualMode !== "better-t3" &&
+            entry.message.role === "reasoning" &&
+            !expandedReasoningMessageIds.has(entry.id)
             ? WORK_GROUP_TOGGLE_HEIGHT
             : undefined;
         case "turn-fold":
           return TURN_FOLD_HEIGHT[chatVisualMode] + TURN_FOLD_MARGIN;
         case "work-toggle":
-          return WORK_GROUP_TOGGLE_HEIGHT;
+          return (
+            WORK_GROUP_TOGGLE_HEIGHT +
+            (chatVisualMode === "better-t3" ? CHAT_STATUS_COMPACT_VERTICAL_SPACE : 0)
+          );
         case "thinking":
-          return chatVisualMode === "current" ? 56 : WORK_GROUP_TOGGLE_HEIGHT;
+          return chatVisualMode === "better-t3"
+            ? undefined
+            : chatVisualMode === "current"
+              ? 56
+              : WORK_GROUP_TOGGLE_HEIGHT;
         case "activity-group":
           if (isContextCompactionActivityGroup(entry)) {
             return undefined;
@@ -3318,9 +3686,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     (info: { item: PendingThreadFeedEntry; index: number }) => (
       <Animated.View
         key={info.item.id}
-        entering={disclosureToggleSettling ? THREAD_FEED_DISCLOSURE_ENTER_TRANSITION : undefined}
+        entering={
+          chatVisualMode !== "better-t3" && disclosureToggleSettling
+            ? THREAD_FEED_DISCLOSURE_ENTER_TRANSITION
+            : undefined
+        }
       >
-        <ThreadMediaVisibility>
+        <ThreadMediaVisibility motionId={info.item.id}>
           {info.item.type === "proposed-plan" ? (
             <MobileProposedPlanCard
               plan={info.item.proposedPlan}
@@ -3393,6 +3765,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               availableReplySourceIds,
               onOpenReplySource,
               copiedRowId,
+              checkpointsByMessage,
+              expandedCheckpointIds,
+              onToggleCheckpoint,
+              onOpenCheckpoint,
               expandedWorkRows,
               expandedReasoningMessageIds,
               isWorking: props.activeWorkStartedAt !== null,
@@ -3493,6 +3869,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       props.dispatchingMessageId,
       props.onEditPendingMessage,
       copiedRowId,
+      checkpointsByMessage,
+      expandedCheckpointIds,
+      onToggleCheckpoint,
+      onOpenCheckpoint,
       disclosureToggleSettling,
       expandedWorkRows,
       expandedReasoningMessageIds,
@@ -3539,7 +3919,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     );
   }
 
-  return (
+  const feedContent = (
     <PresentationSource identifier={fileShareSourceIdentifier} style={{ flex: 1 }}>
       <View className="flex-1" onLayout={handleViewportLayout}>
         <View className="flex-1">
@@ -3717,5 +4097,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         <FilePreviewModal source={expandedFile} onRequestClose={() => setExpandedFile(null)} />
       </View>
     </PresentationSource>
+  );
+  return (
+    <ChatPresentationMotionContext value={motion}>{feedContent}</ChatPresentationMotionContext>
   );
 });

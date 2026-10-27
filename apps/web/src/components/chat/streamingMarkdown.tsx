@@ -21,7 +21,6 @@ import {
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 const STREAM_TEXT_TAG_NAME = "stream-text";
-const STREAMING_WORD_WRAP_GRAPHEME_LIMIT = 24;
 const STREAMING_SKILL_TOKEN_PATTERN = /^[$/]([a-zA-Z][a-zA-Z0-9:_-]*)$/;
 
 interface ChatMarkdownHastPoint {
@@ -306,23 +305,19 @@ function StreamingTextRun({
           );
         }
 
-        const characters = group.map((grapheme) => (
-          <StreamingCharacter
-            key={`${frame.generation}:${grapheme.sourceOffset}:${grapheme.text}`}
-            animationTimeMs={animationTimeMs}
-            frame={frame}
-            grapheme={grapheme}
-            graphemeIndex={graphemeIndexStart + grapheme.index}
-          />
-        ));
-        if (group.length <= STREAMING_WORD_WRAP_GRAPHEME_LIMIT) {
-          return (
-            <span key={groupKey} className="inline-block" data-stream-word="">
-              {characters}
-            </span>
-          );
-        }
-        return <React.Fragment key={groupKey}>{characters}</React.Fragment>;
+        return (
+          <React.Fragment key={groupKey}>
+            {group.map((grapheme) => (
+              <StreamingCharacter
+                key={`${frame.generation}:${grapheme.sourceOffset}:${grapheme.text}`}
+                animationTimeMs={animationTimeMs}
+                frame={frame}
+                grapheme={grapheme}
+                graphemeIndex={graphemeIndexStart + grapheme.index}
+              />
+            ))}
+          </React.Fragment>
+        );
       })}
     </span>
   );

@@ -1,4 +1,8 @@
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
+import {
+  CHAT_THINKING_ROW_ID,
+  createChatReasoningScope,
+} from "@t3tools/client-runtime/chat-presentation";
 export { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import * as Equal from "effect/Equal";
 import { shallow } from "zustand/vanilla/shallow";
@@ -342,10 +346,14 @@ const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
 
 type ActivityEntry = Extract<TimelineEntry, { kind: "message" | "work" }>;
 
-function isActivityEntry(entry: TimelineEntry): entry is ActivityEntry {
+function isActivityEntry(
+  entry: TimelineEntry,
+  chatVisualMode: ChatVisualMode | undefined,
+): entry is ActivityEntry {
   return entry.kind === "message"
     ? entry.message.role === "reasoning"
     : entry.kind === "work" &&
+        (chatVisualMode !== "classic" || workEntryIsProviderReasoning(entry.entry)) &&
         entry.entry.agentSpawn === undefined &&
         entry.entry.questionAnswer === undefined &&
         entry.entry.sourceActivityKind !== "context-compaction" &&
@@ -390,6 +398,7 @@ export type MessagesTimelineRow =
       hiddenCount: number;
       expanded: boolean;
       summary: string;
+      detailEntries?: WorkLogEntry[];
       summaryKind: ToolGroupSummaryKind;
       toolSurface?: WorkLogEntry["toolSurface"];
       toolIcon?: WorkLogEntry["toolIcon"];
@@ -415,6 +424,7 @@ export type MessagesTimelineRow =
       id: string;
       createdAt: string;
       message: ChatMessage;
+      reasoningGroup?: Extract<MessagesTimelineRow, { kind: "activity-group" }>;
       durationStart: string;
       showAssistantMeta: boolean;
       showAssistantCopyButton: boolean;
@@ -506,6 +516,119 @@ function workGroupIdentity(timelineEntryId: string, entry: WorkLogEntry): string
 
 function workGroupId(timelineEntryId: string, entry: WorkLogEntry): string {
   return `work-group:${workGroupIdentity(timelineEntryId, entry)}`;
+}
+
+type ToolTimelineRow = Extract<MessagesTimelineRow, { kind: "work" | "work-live" | "work-toggle" }>;
+
+function combinableToolEntries(row: MessagesTimelineRow): WorkLogEntry[] | null {
+  const entries =
+    row.kind === "work-toggle"
+      ? row.detailEntries
+      : row.kind === "work" || row.kind === "work-live"
+        ? row.groupedEntries
+        : undefined;
+  if (
+    !entries?.length ||
+    entries.some(
+      (entry) =>
+        workEntryIsProviderReasoning(entry) ||
+        entry.agentSpawn !== undefined ||
+        entry.questionAnswer !== undefined ||
+        entry.sourceActivityKind === "context-compaction" ||
+        entry.tone === "error",
+    )
+  )
+    return null;
+  return entries;
+}
+
+/** Thinking, turn markers, and empty placeholders do not split tools between visible messages. */
+function combineToolRowsBetweenMessages(
+  rows: MessagesTimelineRow[],
+  expandedGroupIds: ReadonlySet<string> | undefined,
+): MessagesTimelineRow[] {
+  const result: MessagesTimelineRow[] = [];
+  let group: { row: ToolTimelineRow; entries: WorkLogEntry[] }[] = [];
+  let groupIndex = -1;
+  const flush = () => {
+    const first = group[0];
+    if (group.length > 1 && first) {
+      const entries = omitSupersededLifecycleMarkers(
+        group.flatMap((item) => item.entries),
+        (entry) => entry,
+      );
+      const groupId =
+        first.row.kind === "work"
+          ? workGroupId(first.row.id, first.entries[0]!)
+          : first.row.groupId;
+      const identity = {
+        id: `tools:${groupId}`,
+        createdAt: first.row.createdAt,
+        groupId,
+        expanded: expandedGroupIds?.has(groupId) ?? false,
+      };
+      const live = group.findLast((item) => item.row.kind === "work-live" && item.row.active)?.row;
+      if (live?.kind === "work-live") {
+        result[groupIndex] = { ...live, ...identity, groupedEntries: entries };
+      } else {
+        const source =
+          entries.find((entry) => entry.toolSource) ??
+          entries.findLast((entry) => entry.toolSurface || entry.toolIcon);
+        const icon = source?.toolIcon ?? source?.toolSource?.icon;
+        result[groupIndex] = {
+          kind: "work-toggle",
+          ...identity,
+          turnId: first.entries[0]?.turnId ?? null,
+          hiddenCount: entries.length,
+          detailEntries: entries,
+          summary: summarizeToolGroup(entries),
+          summaryKind: toolGroupSummaryKind(entries),
+          ...(source?.toolSurface ? { toolSurface: source.toolSurface } : {}),
+          ...(icon ? { toolIcon: icon } : {}),
+          hasFailure: entries.some(workEntryDisplayIndicatesToolFailure),
+        };
+      }
+    }
+    group = [];
+    groupIndex = -1;
+  };
+  for (const row of rows) {
+    const entries = combinableToolEntries(row);
+    if (
+      entries &&
+      (row.kind === "work" || row.kind === "work-live" || row.kind === "work-toggle")
+    ) {
+      if (group.length === 0) {
+        groupIndex = result.length;
+        result.push(row);
+      }
+      group.push({ row, entries });
+      continue;
+    }
+    const reasoning =
+      row.kind === "activity-group" &&
+      row.entries.every((entry) =>
+        entry.kind === "message"
+          ? entry.message.role === "reasoning"
+          : workEntryIsProviderReasoning(entry.entry),
+      );
+    const emptyAssistant =
+      row.kind === "message" &&
+      row.message.role === "assistant" &&
+      !row.message.text.trim() &&
+      !row.message.attachments?.length;
+    if (
+      !reasoning &&
+      !emptyAssistant &&
+      row.kind !== "thinking" &&
+      row.kind !== "working" &&
+      row.kind !== "turn-fold"
+    )
+      flush();
+    result.push(row);
+  }
+  flush();
+  return result;
 }
 
 function expandedWorkGroupRow(
@@ -857,6 +980,7 @@ function deriveTurnFolds(input: {
  */
 function attachTrailingToolGroupsToAssistant(
   rows: ReadonlyArray<MessagesTimelineRow>,
+  keepMessageCopyButton: boolean,
 ): MessagesTimelineRow[] {
   const messageRowsWithoutMeta = new Set<string>();
   const metaRowsAfterIndex = new Map<
@@ -935,7 +1059,11 @@ function attachTrailingToolGroupsToAssistant(
   const result: MessagesTimelineRow[] = [];
   for (const [index, row] of rows.entries()) {
     if (row.kind === "message" && messageRowsWithoutMeta.has(row.id)) {
-      result.push({ ...row, showAssistantMeta: false, showAssistantCopyButton: false });
+      result.push({
+        ...row,
+        showAssistantMeta: false,
+        showAssistantCopyButton: keepMessageCopyButton && row.showAssistantCopyButton,
+      });
     } else {
       result.push(row);
     }
@@ -994,10 +1122,12 @@ function buildRevertTurnCountByUserMessageId(input: {
 export function deriveMessagesTimelineRows(input: {
   chatVisualMode?: ChatVisualMode;
   composerPlanTurnId?: TurnId | null;
+  hideWorkingIndicator?: boolean;
   /** Explicit preferences show full traces or hide them; other callers retain compact activity groups. */
   showReasoning?: boolean;
   /** Working-only traces stay in activity groups and open their full text in a dialog. */
   showWorkingReasoning?: boolean;
+  showMessageReasoning?: boolean;
   timelineEntries: ReadonlyArray<TimelineEntry>;
   latestTurn?: TimelineLatestTurn | null;
   runningTurnId?: TurnId | null;
@@ -1029,6 +1159,12 @@ export function deriveMessagesTimelineRows(input: {
       : {},
   });
   const nextRows: MessagesTimelineRow[] = [];
+  const reasoningGroups = new Map<
+    string,
+    Extract<MessagesTimelineRow, { kind: "activity-group" }>
+  >();
+  const reasoningMessageRows = new Map<string, Extract<MessagesTimelineRow, { kind: "message" }>>();
+  const embeddedReasoningGroupIds = new Set<string>();
   const durationStartByMessageId = computeMessageDurationStart(
     input.timelineEntries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
   );
@@ -1142,6 +1278,7 @@ export function deriveMessagesTimelineRows(input: {
     activeWorkRow !== null || latestToolFailed ? activeToolEntries.map((entry) => entry.id) : [],
   );
   const appendWorkingRow = () => {
+    if (input.hideWorkingIndicator) return;
     const latestUserMessage = input.timelineEntries[lastUserMessageIndex(input.timelineEntries)];
     const visualResponseStartedAt =
       activeVisualResponseTurnIds.size > 1 &&
@@ -1160,7 +1297,12 @@ export function deriveMessagesTimelineRows(input: {
     if (activeWorkRow === null) return;
     nextRows.push(activeWorkRow);
     hasActivityRow ||= activeWorkRow.active;
-    if (!activeWorkRow.expanded || activeWorkRow.entry.agentSpawn) return;
+    if (
+      input.chatVisualMode === "better-t3" ||
+      !activeWorkRow.expanded ||
+      activeWorkRow.entry.agentSpawn
+    )
+      return;
     nextRows.push(
       expandedWorkGroupRow(
         activeWorkRow.groupId,
@@ -1170,12 +1312,17 @@ export function deriveMessagesTimelineRows(input: {
     );
   };
 
+  const reasoningScope = createChatReasoningScope();
   let scannedActivityThrough = -1;
   for (let index = 0; index < input.timelineEntries.length; index += 1) {
     const timelineEntry = input.timelineEntries[index];
     if (!timelineEntry) {
       continue;
     }
+
+    const requestScope = reasoningScope(
+      timelineEntry.kind === "message" ? timelineEntry.message : undefined,
+    );
 
     if (input.isWorking && index === activeTurnHeaderIndex) {
       appendWorkingRow();
@@ -1211,18 +1358,50 @@ export function deriveMessagesTimelineRows(input: {
     }
 
     const activityTurnId = timelineEntryTurnId(timelineEntry);
+    const reasoningEntry =
+      timelineEntry.kind === "message"
+        ? timelineEntry.message.role === "reasoning"
+        : timelineEntry.kind === "work" && workEntryIsProviderReasoning(timelineEntry.entry);
+    if ((input.chatVisualMode === "better-t3" || input.showMessageReasoning) && reasoningEntry) {
+      if (input.showReasoning === false && !input.showWorkingReasoning) continue;
+      if (timelineEntry.kind !== "message" && timelineEntry.kind !== "work") continue;
+      let group = reasoningGroups.get(requestScope);
+      if (!group) {
+        const groupId = `activity-group:${timelineEntry.id}`;
+        group = {
+          kind: "activity-group",
+          id: groupId,
+          createdAt: timelineEntry.createdAt,
+          turnId: activityTurnId,
+          groupId,
+          entries: [],
+          expanded: false,
+          active: false,
+        };
+        reasoningGroups.set(requestScope, group);
+        nextRows.push(group);
+      }
+      group.entries.push(timelineEntry);
+      group.active ||=
+        input.isWorking &&
+        (activityTurnId === unsettledTurnId ||
+          (activityTurnId === null && index >= activeTurnHeaderIndex));
+      hasActivityRow ||= group.active && index === input.timelineEntries.length - 1;
+      continue;
+    }
     if (
+      input.chatVisualMode !== "better-t3" &&
       (input.showReasoning === undefined || input.showWorkingReasoning) &&
       index > scannedActivityThrough &&
       (activityTurnId || (input.showWorkingReasoning && timelineEntry.kind === "message")) &&
-      isActivityEntry(timelineEntry)
+      isActivityEntry(timelineEntry, input.chatVisualMode)
     ) {
       const entries = [timelineEntry];
       let cursor = index + 1;
       while (cursor < input.timelineEntries.length) {
         const next = input.timelineEntries[cursor]!;
         if (
-          !isActivityEntry(next) ||
+          !isActivityEntry(next, input.chatVisualMode) ||
           timelineEntryTurnId(next) !== activityTurnId ||
           collapsedEntryIds.has(next.id) ||
           foldsByAnchorEntryId.has(next.id)
@@ -1409,7 +1588,7 @@ export function deriveMessagesTimelineRows(input: {
             active: true,
           });
           hasActivityRow = true;
-          if (expanded) {
+          if (expanded && input.chatVisualMode !== "better-t3") {
             nextRows.push(
               expandedWorkGroupRow(groupId, timelineEntry.createdAt, visibleGroupedEntries),
             );
@@ -1468,6 +1647,9 @@ export function deriveMessagesTimelineRows(input: {
             groupId,
             hiddenCount: visibleGroupedEntries.length,
             expanded,
+            ...(input.chatVisualMode === "better-t3"
+              ? { detailEntries: visibleGroupedEntries }
+              : {}),
             summary: usesSingleToolCallLabel
               ? singleToolCallLabel(singleEntry)
               : singleEntry !== null && !workLogEntryIsToolLike(singleEntry)
@@ -1481,7 +1663,7 @@ export function deriveMessagesTimelineRows(input: {
               latestToolEntry !== undefined &&
               workEntryDisplayIndicatesToolFailure(latestToolEntry),
           });
-          if (expanded) {
+          if (expanded && input.chatVisualMode !== "better-t3") {
             nextRows.push(
               expandedWorkGroupRow(groupId, timelineEntry.createdAt, visibleGroupedEntries),
             );
@@ -1528,7 +1710,7 @@ export function deriveMessagesTimelineRows(input: {
       terminalAssistantMessageIds.has(timelineMessageKey(timelineEntry.message)) &&
       !assistantResponseStillInProgress;
 
-    nextRows.push({
+    const messageRow: Extract<MessagesTimelineRow, { kind: "message" }> = {
       kind: "message",
       id: timelineEntry.id,
       createdAt: timelineEntry.createdAt,
@@ -1545,7 +1727,17 @@ export function deriveMessagesTimelineRows(input: {
         timelineEntry.message.role === "user" && !timelineEntry.message.replyTopicId
           ? revertTurnCountByUserMessageId.get(timelineEntry.message.id)
           : undefined,
-    });
+    };
+    nextRows.push(messageRow);
+    if (input.showMessageReasoning && timelineEntry.message.role === "assistant") {
+      reasoningMessageRows.set(requestScope, messageRow);
+    }
+  }
+  for (const [scope, group] of reasoningGroups) {
+    const messageRow = reasoningMessageRows.get(scope);
+    if (!messageRow) continue;
+    messageRow.reasoningGroup = group;
+    embeddedReasoningGroupIds.add(group.id);
   }
 
   // Until the agent's turn is live, the setup card sits under the send with
@@ -1603,20 +1795,42 @@ export function deriveMessagesTimelineRows(input: {
   if (input.isWorking && !hasWorkingRow && activeTurnHeaderIndex === input.timelineEntries.length) {
     appendWorkingRow();
   }
+  const tail = input.timelineEntries.at(-1);
+  const tailTurnId = tail ? timelineEntryTurnId(tail) : null;
+  const tailInActiveTurn =
+    input.timelineEntries.length - 1 >= activeTurnHeaderIndex &&
+    (unsettledTurnId === null || tailTurnId === null || tailTurnId === unsettledTurnId);
+  const reasoningVisible = input.showReasoning !== false || input.showWorkingReasoning;
+  const hasLiveText =
+    tailInActiveTurn &&
+    (tail?.kind === "message"
+      ? tail.message.streaming &&
+        tail.message.text.trim().length > 0 &&
+        (tail.message.role === "assistant" ||
+          (tail.message.role === "reasoning" && reasoningVisible))
+      : tail?.kind === "work" && workEntryIsProviderReasoning(tail.entry) && reasoningVisible);
   if (
     input.chatVisualMode !== "classic" &&
     input.isWorking &&
     !setupRunning &&
-    (!hasActivityRow || latestToolFailed)
+    (input.chatVisualMode === "better-t3" ? !hasLiveText : !hasActivityRow || latestToolFailed)
   ) {
     nextRows.push({
       kind: "thinking",
-      id: LIVE_ACTIVITY_ROW_ID,
+      id: input.chatVisualMode === "better-t3" ? CHAT_THINKING_ROW_ID : LIVE_ACTIVITY_ROW_ID,
       createdAt: input.activeTurnStartedAt,
     });
   }
+  const visibleRows =
+    embeddedReasoningGroupIds.size > 0
+      ? nextRows.filter((row) => !embeddedReasoningGroupIds.has(row.id))
+      : nextRows;
   const rows =
-    input.chatVisualMode === "classic" ? nextRows : attachTrailingToolGroupsToAssistant(nextRows);
+    input.chatVisualMode === "better-t3"
+      ? combineToolRowsBetweenMessages(visibleRows, input.expandedWorkGroupIds)
+      : input.chatVisualMode === "classic"
+        ? visibleRows
+        : attachTrailingToolGroupsToAssistant(visibleRows, false);
   input.queuedMessages?.forEach((queuedMessage, index) => {
     rows.push({
       kind: "queued-message",
@@ -1682,24 +1896,36 @@ function replaceStreamingMessageRows(
     }
     if (entry.message === previousEntry.message) continue;
     if (!isStreamingMessageTextUpdate(previousEntry.message, entry.message)) return null;
+    if (
+      input.chatVisualMode === "better-t3" &&
+      Boolean(previousEntry.message.text.trim()) !== Boolean(entry.message.text.trim())
+    )
+      return null;
     replacements.set(previousEntry.message, entry.message);
   }
   if (replacements.size === 0) return previous.rows;
+  const replaceGroup = (row: Extract<MessagesTimelineRow, { kind: "activity-group" }>) => {
+    if (!row.entries.some((entry) => entry.kind === "message" && replacements.has(entry.message)))
+      return row;
+    return {
+      ...row,
+      entries: row.entries.map((entry) => {
+        if (entry.kind !== "message") return entry;
+        const message = replacements.get(entry.message);
+        return message ? { ...entry, message } : entry;
+      }),
+    };
+  };
   return previous.rows.map((row) => {
-    if (row.kind === "activity-group") {
-      if (!row.entries.some((entry) => entry.kind === "message" && replacements.has(entry.message)))
-        return row;
-      return {
-        ...row,
-        entries: row.entries.map((entry) => {
-          if (entry.kind !== "message") return entry;
-          const message = replacements.get(entry.message);
-          return message ? { ...entry, message } : entry;
-        }),
-      };
-    }
+    if (row.kind === "activity-group") return replaceGroup(row);
     if (row.kind !== "message" && row.kind !== "assistant-meta") return row;
     const message = replacements.get(row.message);
+    if (row.kind === "message" && row.reasoningGroup) {
+      const reasoningGroup = replaceGroup(row.reasoningGroup);
+      return message || reasoningGroup !== row.reasoningGroup
+        ? { ...row, message: message ?? row.message, reasoningGroup }
+        : row;
+    }
     return message ? { ...row, message } : row;
   });
 }
@@ -1816,6 +2042,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.turnId === bw.turnId &&
         a.groupId === bw.groupId &&
         a.hiddenCount === bw.hiddenCount &&
+        Equal.equals(a.detailEntries, bw.detailEntries) &&
         a.expanded === bw.expanded &&
         a.summary === bw.summary &&
         a.summaryKind === bw.summaryKind &&
@@ -1829,6 +2056,10 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       const bm = b as typeof a;
       return (
         a.message === bm.message &&
+        (a.reasoningGroup === bm.reasoningGroup ||
+          (a.reasoningGroup !== undefined &&
+            bm.reasoningGroup !== undefined &&
+            isRowUnchanged(a.reasoningGroup, bm.reasoningGroup))) &&
         a.durationStart === bm.durationStart &&
         a.showAssistantMeta === bm.showAssistantMeta &&
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&

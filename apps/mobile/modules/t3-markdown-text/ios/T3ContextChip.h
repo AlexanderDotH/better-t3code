@@ -129,15 +129,16 @@ static inline UIImage *T3ContextChipImage(NSDictionary *payload, CGSize size, UI
   if (cached) return cached;
   UIFont *font = T3ContextChipFont(payload);
   CGFloat em = font.pointSize;
+  BOOL messageAppearance = [payload[@"appearance"] isEqual:@"message"];
   UIColor *accent = T3ContextChipColor(payload[@"accent"]);
-  UIColor *foreground = T3ContextChipBlend(accent, T3ContextChipColor(payload[@"foreground"]), 0.22);
-  UIColor *border = T3ContextChipBlend(accent, T3ContextChipColor(payload[@"border"]), 0.34);
+  UIColor *foreground = T3ContextChipBlend(accent, T3ContextChipColor(payload[@"foreground"]), messageAppearance ? 0 : 0.22);
+  UIColor *border = T3ContextChipBlend(accent, T3ContextChipColor(payload[@"border"]), messageAppearance ? 0 : 0.34);
   UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:size];
   UIImage *image = [renderer imageWithActions:^(UIGraphicsImageRendererContext *context) {
     UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:
         CGRectInset(CGRectMake(0, 0, size.width, size.height), 0.5, 0.5)
-        cornerRadius:em * 0.5];
-    [[accent colorWithAlphaComponent:0.11] setFill];
+        cornerRadius:messageAppearance ? size.height / 2 : em * 0.5];
+    [[accent colorWithAlphaComponent:messageAppearance ? 0 : 0.11] setFill];
     [path fill];
     [border setStroke];
     path.lineWidth = 1;

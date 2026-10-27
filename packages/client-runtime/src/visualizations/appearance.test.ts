@@ -172,6 +172,26 @@ describe("visualization render appearance validation", () => {
 });
 
 describe("visualization preview cache keys", () => {
+  it("keeps Better T3 previews separate through normalization and mode changes", () => {
+    const appearance = normalizeVisualizationAppearance({
+      ...APPEARANCE,
+      presentation: "better-t3",
+    });
+    const request = { ...REQUEST, appearance };
+    expect(isVisualizationRequest(request)).toBe(true);
+    expect(appearance.presentation).toBe("better-t3");
+    expect(visualizationPreviewCacheKey(request)).not.toBe(visualizationPreviewCacheKey(REQUEST));
+    expect(visualizationPreviewCacheKey({ ...request, appearance: APPEARANCE })).toBe(
+      visualizationPreviewCacheKey(REQUEST),
+    );
+    expect(
+      isVisualizationRequest({
+        ...request,
+        appearance: { ...appearance, presentation: "invalid" },
+      }),
+    ).toBe(false);
+  });
+
   it("shares rendered previews across request IDs and interactive modes", () => {
     expect(
       visualizationPreviewCacheKey({ ...REQUEST, requestId: "preview-2", interactive: true }),

@@ -2,7 +2,12 @@ import {
   planChatVisualModeSync,
   type ChatVisualModeSyncPlan,
 } from "@t3tools/client-runtime/chat-visual-mode-sync";
-import type { ChatVisualMode, ChatVisualModeSyncRecord } from "@t3tools/contracts";
+import {
+  resolveChatVisualModeRecord,
+  type ChatVisualMode,
+  type ChatVisualModeSyncRecord,
+  type ChatVisualModeSyncRecordV2,
+} from "@t3tools/contracts";
 
 import {
   mobileChatVisualModePreferencePatch,
@@ -17,6 +22,7 @@ export interface MobileChatVisualModeSyncEnvironment<EnvironmentId extends strin
   readonly configLoaded: boolean;
   readonly environmentSettingsVersion: number | null | undefined;
   readonly record: ChatVisualModeSyncRecord | null;
+  readonly recordV2?: ChatVisualModeSyncRecordV2 | null;
 }
 
 export interface MobileChatVisualModeSyncResult<EnvironmentId extends string = string> {
@@ -29,8 +35,8 @@ export interface MobileChatVisualModeSyncResult<EnvironmentId extends string = s
 }
 
 function recordsMatch(
-  left: ChatVisualModeSyncRecord | undefined,
-  right: ChatVisualModeSyncRecord,
+  left: ChatVisualModeSyncRecordV2 | undefined,
+  right: ChatVisualModeSyncRecordV2,
 ): boolean {
   return (
     left?.mode === right.mode &&
@@ -52,6 +58,7 @@ export function deriveMobileChatVisualModeSync<EnvironmentId extends string = st
   readonly preferencesReady: boolean;
   readonly catalogReady: boolean;
   readonly localRecord: ChatVisualModeSyncRecord | undefined;
+  readonly localRecordV2?: ChatVisualModeSyncRecordV2 | undefined;
   readonly environments: readonly MobileChatVisualModeSyncEnvironment<EnvironmentId>[];
 }): MobileChatVisualModeSyncResult<EnvironmentId> {
   const configuredEnvironments = input.environments.filter(
@@ -59,11 +66,13 @@ export function deriveMobileChatVisualModeSync<EnvironmentId extends string = st
   );
   const plan = planChatVisualModeSync({
     localRecord: input.localRecord ?? null,
+    localRecordV2: input.localRecordV2 ?? null,
     environments: configuredEnvironments.map((environment) => ({
       environmentId: environment.environmentId,
       environmentSettingsVersion: environment.environmentSettingsVersion,
       connected: environment.connected,
       record: environment.record,
+      recordV2: environment.recordV2 ?? null,
     })),
   });
   const isReady =
@@ -71,7 +80,7 @@ export function deriveMobileChatVisualModeSync<EnvironmentId extends string = st
     input.catalogReady &&
     input.environments.every((environment) => !environment.connected || environment.configLoaded);
   const preferencePatch =
-    isReady && plan.winner !== null && !recordsMatch(input.localRecord, plan.winner)
+    isReady && plan.winner !== null && !recordsMatch(input.localRecordV2, plan.winner)
       ? mobileChatVisualModePreferencePatch(plan.winner)
       : null;
   const labelByEnvironmentId = new Map(
@@ -83,7 +92,11 @@ export function deriveMobileChatVisualModeSync<EnvironmentId extends string = st
   return {
     isReady,
     mode: resolveMobileChatVisualMode(
-      input.preferencesReady ? (plan.winner ?? input.localRecord) : undefined,
+      input.preferencesReady
+        ? (plan.winner ??
+            resolveChatVisualModeRecord(input.localRecord, input.localRecordV2) ??
+            undefined)
+        : undefined,
     ),
     preferencePatch,
     plan,

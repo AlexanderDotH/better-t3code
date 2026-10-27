@@ -78,16 +78,46 @@ export type ProjectThreadPreviewSyncRecord = typeof ProjectThreadPreviewSyncReco
 
 // ── Synchronized Chat Visual Settings ──────────────────────────
 
-export const ChatVisualMode = Schema.Literals(["current", "classic"]);
+export const CHAT_VISUAL_MODES = ["current", "classic", "better-t3"] as const;
+export const ChatVisualMode = Schema.Literals(CHAT_VISUAL_MODES);
 export type ChatVisualMode = typeof ChatVisualMode.Type;
 export const DEFAULT_CHAT_VISUAL_MODE: ChatVisualMode = "current";
 
+export const LegacyChatVisualMode = Schema.Literals(["current", "classic"]);
+export type LegacyChatVisualMode = typeof LegacyChatVisualMode.Type;
+
 export const ChatVisualModeSyncRecord = Schema.Struct({
-  mode: ChatVisualMode,
+  mode: LegacyChatVisualMode,
   updatedAt: NonNegativeInt,
   updateId: TrimmedNonEmptyString,
 });
 export type ChatVisualModeSyncRecord = typeof ChatVisualModeSyncRecord.Type;
+
+export const ChatVisualModeSyncRecordV2 = Schema.Struct({
+  mode: ChatVisualMode,
+  updatedAt: NonNegativeInt,
+  updateId: TrimmedNonEmptyString,
+});
+export type ChatVisualModeSyncRecordV2 = typeof ChatVisualModeSyncRecordV2.Type;
+
+export function chatVisualModeToLegacyRecord(
+  record: ChatVisualModeSyncRecordV2,
+): ChatVisualModeSyncRecord {
+  return { ...record, mode: record.mode === "better-t3" ? "current" : record.mode };
+}
+
+export function resolveChatVisualModeRecord(
+  legacy: ChatVisualModeSyncRecord | null | undefined,
+  v2: ChatVisualModeSyncRecordV2 | null | undefined,
+): ChatVisualModeSyncRecordV2 | null {
+  if (legacy == null) return v2 ?? null;
+  if (v2 == null) return legacy;
+  if (legacy.updatedAt !== v2.updatedAt) {
+    return legacy.updatedAt > v2.updatedAt ? legacy : v2;
+  }
+  // An identical clock identifies the V2 record's compatible legacy mirror.
+  return legacy.updateId > v2.updateId ? legacy : v2;
+}
 
 // ── Synchronized Interface Language ────────────────────────────
 
@@ -484,6 +514,9 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE)),
   ),
   chatVisualModeLocalRecord: Schema.NullOr(ChatVisualModeSyncRecord).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  chatVisualModeLocalRecordV2: Schema.NullOr(ChatVisualModeSyncRecordV2).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   /** Local cache participating in cross-environment interface-language sync. */
@@ -1646,6 +1679,7 @@ export const ServerSettings = Schema.Struct({
   ),
   projectThreadPreviewSyncRecord: Schema.optionalKey(ProjectThreadPreviewSyncRecord),
   chatVisualModeSyncRecord: Schema.optionalKey(ChatVisualModeSyncRecord),
+  chatVisualModeSyncRecordV2: Schema.optionalKey(ChatVisualModeSyncRecordV2),
   interfaceLanguageSyncRecord: Schema.optionalKey(InterfaceLanguageSyncRecord),
   interfaceLocaleSyncRecordV1: Schema.optionalKey(InterfaceLocaleSyncRecordV1),
   enableLegacyTokenStreaming: Schema.optionalKey(Schema.Boolean),
@@ -2132,6 +2166,7 @@ export const ServerSettingsPatch = Schema.Struct({
   betterT3Environment: Schema.optionalKey(BetterT3SettingsPatchV1),
   projectThreadPreviewSyncRecord: Schema.optionalKey(ProjectThreadPreviewSyncRecord),
   chatVisualModeSyncRecord: Schema.optionalKey(ChatVisualModeSyncRecord),
+  chatVisualModeSyncRecordV2: Schema.optionalKey(ChatVisualModeSyncRecordV2),
   interfaceLanguageSyncRecord: Schema.optionalKey(InterfaceLanguageSyncRecord),
   interfaceLocaleSyncRecordV1: Schema.optionalKey(InterfaceLocaleSyncRecordV1),
   enableLegacyTokenStreaming: Schema.optionalKey(Schema.Boolean),
@@ -2321,6 +2356,7 @@ export const ClientSettingsPatch = Schema.Struct({
   experimentalParallelPlanImplementation: Schema.optionalKey(Schema.Boolean),
   environmentIdentificationMode: Schema.optionalKey(EnvironmentIdentificationMode),
   chatVisualModeLocalRecord: Schema.optionalKey(Schema.NullOr(ChatVisualModeSyncRecord)),
+  chatVisualModeLocalRecordV2: Schema.optionalKey(Schema.NullOr(ChatVisualModeSyncRecordV2)),
   interfaceLanguageLocalRecord: Schema.optionalKey(Schema.NullOr(InterfaceLanguageSyncRecord)),
   interfaceLocaleLocalRecordV1: Schema.optionalKey(Schema.NullOr(InterfaceLocaleSyncRecordV1)),
   glassOpacity: Schema.optionalKey(GlassOpacity),

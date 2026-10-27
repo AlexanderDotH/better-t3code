@@ -1,9 +1,19 @@
 import { decodeFilePreviewText, FILE_TEXT_PREVIEW_MAX_BYTES } from "@t3tools/shared/filePreview";
 
-/** Consume only a bounded prefix, even when a host ignores the requested HTTP range. */
 export async function readFilePreviewResponse(
   response: Pick<Response, "ok" | "body">,
   signal: AbortSignal,
+  maxBytes = FILE_TEXT_PREVIEW_MAX_BYTES,
+) {
+  const bytes = await readFilePreviewBytes(response, signal, maxBytes);
+  return decodeFilePreviewText(bytes.subarray(0, maxBytes), bytes.length > maxBytes);
+}
+
+/** Read at most the limit plus one overflow byte, even when the host ignores HTTP ranges. */
+export async function readFilePreviewBytes(
+  response: Pick<Response, "ok" | "body">,
+  signal: AbortSignal,
+  maxBytes: number,
 ) {
   if (!response.ok) {
     // A streamed error body holds the connection open until GC otherwise.
@@ -11,7 +21,7 @@ export async function readFilePreviewResponse(
     throw new Error("The file could not be loaded. Reconnect and try again.");
   }
   if (signal.aborted) throw new Error("Preview cancelled.");
-  const limit = FILE_TEXT_PREVIEW_MAX_BYTES + 1;
+  const limit = maxBytes + 1;
   const reader = response.body?.getReader();
   if (!reader) throw new Error("Streaming file previews are unavailable in this runtime.");
   const cancel = () => {
@@ -40,5 +50,5 @@ export async function readFilePreviewResponse(
     bytes.set(chunk, offset);
     offset += chunk.length;
   }
-  return decodeFilePreviewText(bytes);
+  return bytes;
 }

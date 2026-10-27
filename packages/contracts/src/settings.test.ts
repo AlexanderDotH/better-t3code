@@ -5,8 +5,12 @@ import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ProjectId } from "./baseSchemas.ts";
 import { ExecutionEnvironmentCapabilities } from "./environment.ts";
 import {
+  CHAT_VISUAL_MODES,
   ChatVisualMode,
   ChatVisualModeSyncRecord,
+  ChatVisualModeSyncRecordV2,
+  chatVisualModeToLegacyRecord,
+  resolveChatVisualModeRecord,
   ChatGptSettings,
   ClientSettingsSchema,
   ClientSettingsPatch,
@@ -52,6 +56,7 @@ const decodeProjectThreadPreviewSyncRecord = Schema.decodeUnknownSync(
 );
 const decodeChatVisualMode = Schema.decodeUnknownSync(ChatVisualMode);
 const decodeChatVisualModeSyncRecord = Schema.decodeUnknownSync(ChatVisualModeSyncRecord);
+const decodeChatVisualModeSyncRecordV2 = Schema.decodeUnknownSync(ChatVisualModeSyncRecordV2);
 const decodeInterfaceLanguagePreference = Schema.decodeUnknownSync(InterfaceLanguagePreference);
 const decodeInterfaceLanguageSyncRecord = Schema.decodeUnknownSync(InterfaceLanguageSyncRecord);
 const decodeInterfaceLocalePreferenceV1 = Schema.decodeUnknownSync(InterfaceLocalePreferenceV1);
@@ -916,10 +921,12 @@ describe("ChatVisualModeSyncRecord", () => {
     updateId: "device-a:classic",
   } as const;
 
-  it("defaults to Current and accepts both supported chat visual modes", () => {
+  it("defaults to Current and accepts the ordered chat visual modes", () => {
     expect(DEFAULT_CHAT_VISUAL_MODE).toBe("current");
-    expect(decodeChatVisualMode("current")).toBe("current");
-    expect(decodeChatVisualMode("classic")).toBe("classic");
+    expect(CHAT_VISUAL_MODES).toEqual(["current", "classic", "better-t3"]);
+    for (const mode of CHAT_VISUAL_MODES) {
+      expect(decodeChatVisualMode(mode)).toBe(mode);
+    }
     expect(() => decodeChatVisualMode("legacy")).toThrow();
   });
 
@@ -963,6 +970,7 @@ describe("ChatVisualModeSyncRecord", () => {
 
   it.each([
     { ...record, mode: "legacy" },
+    { ...record, mode: "better-t3" },
     { ...record, updatedAt: -1 },
     { ...record, updatedAt: 1.5 },
     { ...record, updateId: "   " },
@@ -971,6 +979,81 @@ describe("ChatVisualModeSyncRecord", () => {
     expect(() => decodeServerSettingsPatch({ chatVisualModeSyncRecord: invalidRecord })).toThrow();
     expect(() => decodeClientSettings({ chatVisualModeLocalRecord: invalidRecord })).toThrow();
     expect(() => decodeClientSettingsPatch({ chatVisualModeLocalRecord: invalidRecord })).toThrow();
+  });
+});
+
+describe("ChatVisualModeSyncRecordV2", () => {
+  const record = { mode: "better-t3", updatedAt: 30, updateId: "device-b:30" } as const;
+
+  it("persists all modes in V2 settings while preserving optional legacy files", () => {
+    expect(decodeServerSettings({}).chatVisualModeSyncRecordV2).toBeUndefined();
+    expect(decodeServerSettingsPatch({})).not.toHaveProperty("chatVisualModeSyncRecordV2");
+    expect(decodeClientSettings({}).chatVisualModeLocalRecordV2).toBeNull();
+    expect(DEFAULT_CLIENT_SETTINGS.chatVisualModeLocalRecordV2).toBeNull();
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("chatVisualModeLocalRecordV2");
+    for (const mode of CHAT_VISUAL_MODES) {
+      const selected = { ...record, mode };
+      expect(decodeChatVisualModeSyncRecordV2(selected)).toEqual(selected);
+      expect(
+        encodeServerSettings(decodeServerSettings({ chatVisualModeSyncRecordV2: selected }))
+          .chatVisualModeSyncRecordV2,
+      ).toEqual(selected);
+      expect(
+        decodeServerSettingsPatch({ chatVisualModeSyncRecordV2: selected })
+          .chatVisualModeSyncRecordV2,
+      ).toEqual(selected);
+      const saved = encodeClientSettings(
+        decodeClientSettings({ chatVisualModeLocalRecordV2: selected }),
+      );
+      expect(decodeClientSettings(saved).chatVisualModeLocalRecordV2).toEqual(selected);
+      expect(
+        decodeClientSettingsPatch({ chatVisualModeLocalRecordV2: selected })
+          .chatVisualModeLocalRecordV2,
+      ).toEqual(selected);
+    }
+    expect(
+      decodeClientSettingsPatch({ chatVisualModeLocalRecordV2: null }).chatVisualModeLocalRecordV2,
+    ).toBeNull();
+  });
+
+  it("mirrors Better T3 as Current without changing its synchronization clock", () => {
+    for (const mode of CHAT_VISUAL_MODES) {
+      const mirror = chatVisualModeToLegacyRecord({ ...record, mode });
+      expect(mirror).toEqual({ ...record, mode: mode === "better-t3" ? "current" : mode });
+      expect(decodeChatVisualModeSyncRecord(mirror)).toEqual(mirror);
+    }
+  });
+
+  it("prefers V2 over its own mirror and accepts newer legacy choices", () => {
+    const mirror = chatVisualModeToLegacyRecord(record);
+    expect(resolveChatVisualModeRecord(mirror, record)).toEqual(record);
+    expect(resolveChatVisualModeRecord({ ...mirror, updatedAt: 29 }, record)).toEqual(record);
+    expect(resolveChatVisualModeRecord({ ...mirror, updateId: "device-a:30" }, record)).toEqual(
+      record,
+    );
+    const newerByTime = { ...mirror, mode: "classic", updatedAt: 31 } as const;
+    const newerById = { ...mirror, mode: "classic", updateId: "device-c:30" } as const;
+    expect(resolveChatVisualModeRecord(newerByTime, record)).toEqual(newerByTime);
+    expect(resolveChatVisualModeRecord(newerById, record)).toEqual(newerById);
+    expect(resolveChatVisualModeRecord(mirror, null)).toEqual(mirror);
+    expect(resolveChatVisualModeRecord(undefined, record)).toEqual(record);
+    expect(resolveChatVisualModeRecord(null, undefined)).toBeNull();
+  });
+
+  it.each([
+    { ...record, mode: "legacy" },
+    { ...record, updatedAt: -1 },
+    { ...record, updatedAt: 1.5 },
+    { ...record, updateId: "   " },
+  ])("rejects an invalid V2 chat visual record: $record", (invalidRecord) => {
+    expect(() => decodeChatVisualModeSyncRecordV2(invalidRecord)).toThrow();
+    expect(() =>
+      decodeServerSettingsPatch({ chatVisualModeSyncRecordV2: invalidRecord }),
+    ).toThrow();
+    expect(() => decodeClientSettings({ chatVisualModeLocalRecordV2: invalidRecord })).toThrow();
+    expect(() =>
+      decodeClientSettingsPatch({ chatVisualModeLocalRecordV2: invalidRecord }),
+    ).toThrow();
   });
 });
 

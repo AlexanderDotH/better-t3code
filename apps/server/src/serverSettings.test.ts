@@ -9,6 +9,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   resolveBetterT3FeatureFlag,
+  resolveChatVisualModeRecord,
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
@@ -2291,6 +2292,68 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         replacement,
       );
       assert.equal(persisted.addProjectBaseDirectory, "~/Development");
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("persists a V2 chat mode and its legacy mirror in the same settings write", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const record = { mode: "better-t3", updatedAt: 30, updateId: "device-b:30" } as const;
+      const mirror = { ...record, mode: "current" } as const;
+
+      yield* serverSettings.updateSettings({ chatVisualModeSyncRecord: mirror });
+      const saved = yield* serverSettings.updateSettings({ chatVisualModeSyncRecordV2: record });
+      const afterUnrelatedPatch = yield* serverSettings.updateSettings({
+        addProjectBaseDirectory: "~/Development",
+      });
+      for (const settings of [saved, afterUnrelatedPatch, redactServerSettingsForClient(saved)]) {
+        assert.deepEqual(settings.chatVisualModeSyncRecordV2, record);
+        assert.deepEqual(settings.chatVisualModeSyncRecord, mirror);
+      }
+
+      const persisted = yield* fileSystem
+        .readFileString(serverConfig.settingsPath)
+        .pipe(Effect.flatMap(decodePersistedServerSettings));
+      assert.deepEqual(persisted.chatVisualModeSyncRecordV2, record);
+      assert.deepEqual(persisted.chatVisualModeSyncRecord, mirror);
+      assert.equal(persisted.addProjectBaseDirectory, "~/Development");
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("preserves newer legacy choices through concurrent V2 and legacy writes", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const v2 = { mode: "better-t3", updatedAt: 30, updateId: "device-b:30" } as const;
+      const legacy = { mode: "classic", updatedAt: 30, updateId: "device-c:30" } as const;
+
+      yield* Effect.all(
+        [
+          serverSettings.updateSettings({ chatVisualModeSyncRecordV2: v2 }),
+          serverSettings.updateSettings({ chatVisualModeSyncRecord: legacy }),
+          serverSettings.updateSettings({ defaultAutoPull: true }),
+        ],
+        { concurrency: "unbounded" },
+      );
+      const saved = yield* serverSettings.getSettings;
+      const persisted = yield* fileSystem
+        .readFileString(serverConfig.settingsPath)
+        .pipe(Effect.flatMap(decodePersistedServerSettings));
+      for (const settings of [saved, persisted]) {
+        assert.deepEqual(settings.chatVisualModeSyncRecordV2, v2);
+        assert.deepEqual(settings.chatVisualModeSyncRecord, legacy);
+        assert.deepEqual(
+          resolveChatVisualModeRecord(
+            settings.chatVisualModeSyncRecord,
+            settings.chatVisualModeSyncRecordV2,
+          ),
+          legacy,
+        );
+        assert.equal(settings.defaultAutoPull, true);
+      }
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 

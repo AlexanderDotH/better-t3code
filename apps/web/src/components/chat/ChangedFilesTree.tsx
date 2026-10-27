@@ -26,6 +26,7 @@ import {
   summarizeChangedFileScopes,
 } from "./changedFilesPresentation";
 import { MiddleTruncate } from "../ui/middle-truncate";
+import { ChatDetailPanel } from "./ChatDetailPanel";
 
 const EMPTY_DIRECTORY_OVERRIDES: Record<string, boolean> = {};
 
@@ -44,6 +45,11 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
     showCompactPreview: boolean;
     onExpandedChange: (expanded: boolean) => void;
   };
+  compactPresentation?: {
+    expanded: boolean;
+    motionEnabled?: boolean;
+    onExpandedChange: (expanded: boolean) => void;
+  };
   onFileContextMenu?: ChangedFileContextMenuHandler | undefined;
 }) {
   const {
@@ -60,6 +66,10 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
 
   if (props.classicPresentation) {
     return <ClassicChangedFilesCard {...props} {...props.classicPresentation} />;
+  }
+
+  if (props.compactPresentation) {
+    return <CompactChangedFilesCard {...props} {...props.compactPresentation} />;
   }
 
   return (
@@ -143,6 +153,85 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
     </div>
   );
 });
+
+const COMPACT_FILE_LIMIT = 3;
+
+function CompactChangedFilesCard({
+  turnId,
+  files,
+  expanded,
+  onExpandedChange,
+  resolvedTheme,
+  onOpenTurnDiff,
+  onFileContextMenu,
+  motionEnabled = false,
+}: {
+  turnId: TurnId;
+  files: ReadonlyArray<TurnDiffFileChange>;
+  expanded: boolean;
+  onExpandedChange: (expanded: boolean) => void;
+  resolvedTheme: "light" | "dark";
+  onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onFileContextMenu?: ChangedFileContextMenuHandler | undefined;
+  motionEnabled?: boolean;
+}) {
+  const translate = useInterfaceTranslator().message;
+  const renderFiles = (visibleFiles: ReadonlyArray<TurnDiffFileChange>) => (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+      {visibleFiles.map((file) => (
+        <Tooltip key={file.path}>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                className="group inline-flex max-w-full cursor-pointer items-center gap-1.5 py-1 text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                data-presentation-file={file.path}
+                aria-label={file.path}
+                onClick={() => onOpenTurnDiff(turnId, file.path)}
+                onContextMenu={
+                  onFileContextMenu
+                    ? (event) => {
+                        event.preventDefault();
+                        onFileContextMenu(file.path, event);
+                      }
+                    : undefined
+                }
+              />
+            }
+          >
+            <PierreEntryIcon pathValue={file.path} kind="file" theme={resolvedTheme} />
+            <span className="min-w-0 max-w-72 truncate font-medium group-hover:underline">
+              {changedFileName(file.path)}
+            </span>
+            <DiffStatLabel additions={file.additions} deletions={file.deletions} layout="inline" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">{file.path}</TooltipPopup>
+        </Tooltip>
+      ))}
+    </div>
+  );
+  return (
+    <div className="mt-3" data-changed-files-state="compact">
+      {renderFiles(files.slice(0, COMPACT_FILE_LIMIT))}
+      <ChatDetailPanel expanded={expanded} motion={motionEnabled}>
+        {renderFiles(files.slice(COMPACT_FILE_LIMIT))}
+      </ChatDetailPanel>
+      {files.length > COMPACT_FILE_LIMIT ? (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          data-scroll-anchor-ignore
+          className="mt-1 w-full rounded-md py-1.5 text-center text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={() => onExpandedChange(!expanded)}
+        >
+          {expanded
+            ? translate("chat.files.showFewer")
+            : translate("chat.files.showAll", { count: files.length })}
+        </button>
+      ) : null}
+    </div>
+  );
+}
 
 const ClassicChangedFilesCard = memo(function ClassicChangedFilesCard(props: {
   turnId: TurnId;

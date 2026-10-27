@@ -1,10 +1,79 @@
+// @vitest-environment jsdom
+
 import { TurnId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { act, useState } from "react";
+import { createRoot } from "react-dom/client";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { ChangedFilesCard, ChangedFilesTree } from "./ChangedFilesTree";
 
 describe("ChangedFilesCard", () => {
+  it("shows three compact results and preserves diff, context menu, and expand/collapse actions", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const onOpenTurnDiff = vi.fn();
+    const onFileContextMenu = vi.fn();
+    const turnId = TurnId.make("compact-turn");
+    const files = Array.from({ length: 5 }, (_, index) => ({
+      path: `src/file-${index}.ts`,
+      kind: "modified",
+      additions: index + 1,
+      deletions: 0,
+    }));
+    function Harness() {
+      const [expanded, onExpandedChange] = useState(false);
+      return (
+        <ChangedFilesCard
+          turnId={turnId}
+          files={files}
+          allDirectoriesExpanded={false}
+          resolvedTheme="light"
+          onToggleAllDirectories={() => {}}
+          onOpenTurnDiff={onOpenTurnDiff}
+          onFileContextMenu={onFileContextMenu}
+          compactPresentation={{ expanded, onExpandedChange }}
+        />
+      );
+    }
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    try {
+      await act(() => root.render(<Harness />));
+      const fileButtons = () => [
+        ...host.querySelectorAll<HTMLButtonElement>("button[data-presentation-file]"),
+      ];
+      expect(fileButtons().map((button) => button.dataset.presentationFile)).toEqual(
+        files.slice(0, 3).map((file) => file.path),
+      );
+      await act(() => fileButtons()[1]!.click());
+      expect(onOpenTurnDiff).toHaveBeenCalledWith(turnId, "src/file-1.ts");
+      const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+      await act(() => {
+        fileButtons()[1]!.dispatchEvent(event);
+      });
+      expect(event.defaultPrevented).toBe(true);
+      expect(onFileContextMenu).toHaveBeenCalledWith(
+        "src/file-1.ts",
+        expect.objectContaining({ nativeEvent: event }),
+      );
+      await act(() =>
+        host.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')!.click(),
+      );
+      expect(fileButtons()).toHaveLength(5);
+      await act(() => fileButtons()[4]!.click());
+      expect(onOpenTurnDiff).toHaveBeenLastCalledWith(turnId, "src/file-4.ts");
+      await act(() =>
+        host.querySelector<HTMLButtonElement>('button[aria-expanded="true"]')!.click(),
+      );
+      expect(fileButtons()).toHaveLength(3);
+    } finally {
+      await act(() => root.unmount());
+      host.remove();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("keeps its compact header sticky while preserving singular labels", () => {
     const markup = renderToStaticMarkup(
       <ChangedFilesCard

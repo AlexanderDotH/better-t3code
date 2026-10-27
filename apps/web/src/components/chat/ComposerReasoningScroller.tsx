@@ -78,7 +78,6 @@ export const ComposerReasoningScroller = memo(function ComposerReasoningScroller
   readonly threadRef: ScopedThreadRef;
   readonly environmentId: EnvironmentId;
   readonly cwd: string | undefined;
-  readonly streamingMotionEnabled: boolean;
 }) {
   const entries = useMemo(
     () => reasoningTracesForTurn(props.entries, props.messages ?? [], props.turnId),

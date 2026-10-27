@@ -281,7 +281,7 @@ export function buildBetterT3SwitchSettingsPatch(
   };
 }
 
-export type ReasoningDisplayMode = "none" | "chat" | "working";
+export type ReasoningDisplayMode = "none" | "chat" | "working" | "message";
 
 export function buildReasoningDisplaySettingsPatch(
   mode: ReasoningDisplayMode,
@@ -293,6 +293,7 @@ export function buildReasoningDisplaySettingsPatch(
       flags: {
         "agent.reasoningVisibility": mode !== "none",
         "agent.reasoningWorkingOverlay": mode === "working",
+        "agent.reasoningInMessage": mode === "message",
       },
     },
   };

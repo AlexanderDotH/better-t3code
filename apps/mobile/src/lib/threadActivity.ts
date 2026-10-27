@@ -1,4 +1,8 @@
 import * as Option from "effect/Option";
+import {
+  CHAT_THINKING_ROW_ID,
+  createChatReasoningScope,
+} from "@t3tools/client-runtime/chat-presentation";
 import { mobileReplyMessageKey } from "./message-replies";
 import { foldUserInputActivities } from "@t3tools/client-runtime/work-log/user-input";
 import * as Schema from "effect/Schema";
@@ -8,6 +12,7 @@ import {
 } from "@t3tools/client-runtime/pending-requests";
 import { UserInputAttachmentAnswerPayload, isToolLifecycleItemType } from "@t3tools/contracts";
 import type {
+  ChatVisualMode,
   OrchestrationLatestTurn,
   OrchestrationThread,
   OrchestrationThreadActivity,
@@ -57,7 +62,7 @@ export interface ThreadFeedActivity {
   readonly summary: string;
   readonly detail: string | null;
   readonly canExpand: boolean;
-  readonly getFullDetail: () => string | null;
+  readonly getFullDetail: (includeLabel?: boolean) => string | null;
   readonly getCopyText: () => string;
   readonly icon:
     | "agent"
@@ -1012,10 +1017,11 @@ function workEntryIcon(entry: DerivedWorkLogEntry): ThreadFeedActivity["icon"] {
   return "zap";
 }
 
-function buildWorkEntryExpandedBody(entry: WorkLogEntry): string | null {
+function buildWorkEntryExpandedBody(entry: WorkLogEntry, includeLabel = false): string | null {
   if (entry.agentSpawn) return agentSpawnExpandedBody(entry.agentSpawn);
   const blocks: string[] = [];
-  const visibleLabel = workEntryRowLabel(entry, true).trim();
+  const label = workEntryRowLabel(entry, true).trim();
+  const visibleLabel = includeLabel ? null : label;
   const appendBlock = (value: string | null | undefined) => {
     const trimmed = value?.trim();
     if (trimmed && (entry.command || (trimmed !== visibleLabel && !blocks.includes(trimmed)))) {
@@ -1032,7 +1038,7 @@ function buildWorkEntryExpandedBody(entry: WorkLogEntry): string | null {
     appendBlock(entry.changedFiles!.join("\n"));
   }
 
-  return blocks.length > 0 ? blocks.join("\n\n") : null;
+  return blocks.length > 0 ? blocks.join("\n\n") : includeLabel ? label : null;
 }
 
 /**
@@ -1807,7 +1813,7 @@ export function deriveThreadFeedPresentation(
   expandedTurnIds: ReadonlySet<TurnId>,
   expandedWorkGroupIds: ReadonlySet<string> = new Set(),
   activeWorkStartedAt: string | null = null,
-  chatVisualMode: "current" | "classic" = "current",
+  chatVisualMode: ChatVisualMode = "current",
 ): ThreadFeedEntry[] {
   const visibleFeed =
     chatVisualMode === "classic"
@@ -1881,7 +1887,7 @@ export function deriveThreadFeedPresentation(
     }
     if (!collapsedEntryIds.has(entry.id)) {
       const runTurnId = activityRunTurnId(entry);
-      if (runTurnId !== null) {
+      if (chatVisualMode !== "better-t3" && runTurnId !== null) {
         let end = index + 1;
         while (
           end < sourceFeed.length &&
@@ -1915,27 +1921,78 @@ export function deriveThreadFeedPresentation(
       );
     }
   }
-  // A working turn always shows one live activity. When no tool row is
-  // shimmering (no tools yet, or the latest failed), that row is "Thinking".
-  // The trailing group's live row and this row share LIVE_ACTIVITY_ROW_ID, so
-  // the handoff between them happens in place (one row, new content) instead
-  // of a row being inserted below the group every time a call fails.
+  const hasLiveText =
+    activeTailGroup?.type === "message" &&
+    (activeTailGroup.message.role === "assistant" ||
+      activeTailGroup.message.role === "reasoning") &&
+    activeTailGroup.message.streaming &&
+    activeTailGroup.message.text.trim().length > 0 &&
+    (activeTailGroup.message.turnId === null || activeTailGroup.message.turnId === unsettledTurnId);
+  // Better T3 keeps a separate waiting indicator while tools are running.
+  // The other layouts retain their single live slot.
+  const hasLiveActivity = result.some(
+    (row) =>
+      (row.type === "work-toggle" && row.shimmer) ||
+      row.id === LIVE_ACTIVITY_ROW_ID ||
+      // A working spawn card is the live activity: its status line shows
+      // what the agents are doing, so a Thinking row under it would lie.
+      (row.type === "agent-spawn" &&
+        row.summary.tone === "working" &&
+        row.turnId === unsettledTurnId),
+  );
   if (
     activeWorkStartedAt !== null &&
-    !result.some(
-      (row) =>
-        (row.type === "work-toggle" && row.shimmer) ||
-        row.id === LIVE_ACTIVITY_ROW_ID ||
-        // A working spawn card is the live activity: its status line shows
-        // what the agents are doing, so a Thinking row under it would lie.
-        (row.type === "agent-spawn" &&
-          row.summary.tone === "working" &&
-          row.turnId === unsettledTurnId),
-    )
+    (chatVisualMode === "better-t3" ? !hasLiveText : !hasLiveActivity)
   ) {
-    result.push(thinkingRow(activeWorkStartedAt, unsettledTurnId));
+    result.push(
+      thinkingRow(
+        activeWorkStartedAt,
+        unsettledTurnId,
+        chatVisualMode === "better-t3" ? CHAT_THINKING_ROW_ID : LIVE_ACTIVITY_ROW_ID,
+      ),
+    );
   }
-  return result;
+  return chatVisualMode === "better-t3" ? groupResponseReasoningMessages(result) : result;
+}
+
+function groupResponseReasoningMessages(feed: ReadonlyArray<ThreadFeedEntry>): ThreadFeedEntry[] {
+  const reasoningScope = createChatReasoningScope();
+  const groups = new Map<
+    string,
+    {
+      entry: Extract<ThreadFeedEntry, { type: "message" }>;
+      messages: Array<OrchestrationThread["messages"][number]>;
+    }
+  >();
+  const result: ThreadFeedEntry[] = [];
+  for (const entry of feed) {
+    const scope = reasoningScope(entry.type === "message" ? entry.message : undefined);
+    if (entry.type !== "message" || entry.message.role !== "reasoning") {
+      result.push(entry);
+      continue;
+    }
+    const group = groups.get(scope);
+    if (group) {
+      group.messages.push(...(entry.reasoningMessages ?? [entry.message]));
+    } else {
+      groups.set(scope, { entry, messages: [...(entry.reasoningMessages ?? [entry.message])] });
+      result.push(entry);
+    }
+  }
+  const groupedEntries = new Map<ThreadFeedEntry, ThreadFeedEntry>();
+  for (const { entry, messages } of groups.values()) {
+    let group = reasoningGroupsCache.get(entry);
+    if (
+      !group ||
+      group.reasoningMessages?.length !== messages.length ||
+      !messages.every((message, index) => group?.reasoningMessages?.[index] === message)
+    ) {
+      group = { ...entry, reasoningMessages: messages };
+      reasoningGroupsCache.set(entry, group);
+    }
+    groupedEntries.set(entry, group);
+  }
+  return result.map((entry) => groupedEntries.get(entry) ?? entry);
 }
 
 function activityRunTurnId(entry: ThreadFeedEntry): TurnId | null {
@@ -2091,16 +2148,16 @@ function groupConsecutiveReasoningMessages(
   return result;
 }
 
-/**
- * Shared by the trailing tool group's live row and the "Thinking" row so the
- * list keeps one mounted row for the turn's live slot (mirrors web's
- * LIVE_ACTIVITY_ROW_ID). Anything keyed by row id must not distinguish them.
- */
+/** Current and Classic reuse one live slot; Better T3 gives waiting thinking its own row. */
 export const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
 
-function thinkingRow(createdAt: string, turnId: TurnId | null) {
-  if (cachedThinkingRow?.createdAt !== createdAt || cachedThinkingRow.turnId !== turnId) {
-    cachedThinkingRow = { type: "thinking", id: LIVE_ACTIVITY_ROW_ID, createdAt, turnId };
+function thinkingRow(createdAt: string, turnId: TurnId | null, id: string) {
+  if (
+    cachedThinkingRow?.createdAt !== createdAt ||
+    cachedThinkingRow.turnId !== turnId ||
+    cachedThinkingRow.id !== id
+  ) {
+    cachedThinkingRow = { type: "thinking", id, createdAt, turnId };
   }
   return cachedThinkingRow;
 }
@@ -2529,7 +2586,10 @@ function toThreadFeedActivityEntry(
 ): Extract<RawThreadFeedEntry, { readonly type: "activity" }> {
   const summary = workEntryHeading(entry);
   const detail = workEntryPreview(entry);
-  const getFullDetail = memoizeValue(() => buildWorkEntryExpandedBody(entry));
+  const getBodyDetail = memoizeValue(() => buildWorkEntryExpandedBody(entry));
+  const getDetailIncludingLabel = memoizeValue(() => buildWorkEntryExpandedBody(entry, true));
+  const getFullDetail = (includeLabel = false) =>
+    includeLabel ? getDetailIncludingLabel() : getBodyDetail();
   const getCopyText = memoizeValue(() => {
     const copyLabel = capitalizePhrase(normalizeCompactToolLabel(entry.toolTitle || entry.label));
     const fullDetail = getFullDetail();

@@ -68,6 +68,7 @@ export function normalizeVisualizationAppearance(
   const opaqueColor = (value: string, fallbackColor: string) =>
     formatHex(compositeColor(value, background, fallbackColor));
   return {
+    ...(appearance.presentation === "better-t3" ? { presentation: "better-t3" as const } : {}),
     fontFamily: appearance.fontFamily.trim() || fallback.fontFamily,
     background: formatHex(background),
     foreground: opaqueColor(appearance.foreground, fallback.foreground),
@@ -107,6 +108,7 @@ export function visualizationPreviewCacheKey(request: VisualizationRenderRequest
     request.format,
     request.source,
     request.theme,
+    appearance.presentation ?? null,
     appearance.fontFamily,
     appearance.background,
     appearance.foreground,

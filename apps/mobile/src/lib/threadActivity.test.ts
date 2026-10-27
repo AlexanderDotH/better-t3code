@@ -1,4 +1,5 @@
 import { derivePendingRequests } from "@t3tools/client-runtime/pending-requests";
+import { resolveChatPresentation } from "@t3tools/client-runtime/chat-presentation";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
@@ -758,6 +759,8 @@ describe("buildThreadFeed", () => {
       expect(row.canExpand).toBe(true);
       expect(workEntryRowLabel(row.workEntry, true)).toBe(message);
       expect(row.getFullDetail()).toBeNull();
+      expect(row.getFullDetail(true)).toBe(message);
+      expect(row.getFullDetail()).toBeNull();
       expect(row.getCopyText()).toBe(`Runtime error\n${message}`);
     },
   );
@@ -828,6 +831,8 @@ describe("buildThreadFeed", () => {
     expect(row.canExpand).toBe(true);
     expect(workEntryRowLabel(row.workEntry)).toBe(input.detail.replace(/\s+/g, " "));
     expect(workEntryRowLabel(row.workEntry, true)).toBe(input.detail);
+    expect(row.getFullDetail()).toBeNull();
+    expect(row.getFullDetail(true)).toBe(input.detail);
     expect(row.getFullDetail()).toBeNull();
     expect(row.getCopyText()).toBe(`${input.summary}\n${input.detail}`);
   });
@@ -2377,6 +2382,93 @@ describe("buildThreadFeed", () => {
     },
   );
 
+  it("keeps one Better T3 thinking disclosure across tools and commentary and updates its traces", () => {
+    const turnId = TurnId.make("combined-thinking");
+    const presentation = resolveChatPresentation({
+      mode: "better-t3",
+      presentationMotion: false,
+      characterStreamingMotion: false,
+      reducedMotion: false,
+    });
+    const messages: OrchestrationThread["messages"] = [1, 3, 5].map((second) => ({
+      id: MessageId.make(`thought-${second}`),
+      role: "reasoning",
+      text: `Trace ${second}`,
+      turnId: second === 3 ? null : second === 5 ? TurnId.make("continuation") : turnId,
+      streaming: second === 5,
+      createdAt: `2026-10-26T10:00:0${second}Z`,
+      updatedAt: `2026-10-26T10:00:0${second}Z`,
+    }));
+    const thread = makeThread({
+      id: ThreadId.make("combined"),
+      projectId: ProjectId.make("project"),
+      title: "Combined",
+      messages: [
+        ...messages,
+        {
+          ...messages[0]!,
+          id: MessageId.make("commentary"),
+          role: "assistant",
+          text: "Progress",
+          createdAt: "2026-10-26T10:00:04Z",
+          updatedAt: "2026-10-26T10:00:04Z",
+        },
+      ],
+      activities: [
+        makeActivity({
+          id: EventId.make("tool"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Read files",
+          createdAt: "2026-10-26T10:00:02Z",
+          turnId,
+          payload: { itemType: "file_read", status: "completed" },
+        }),
+      ],
+      latestTurn: {
+        turnId,
+        state: "running",
+        requestedAt: messages[0]!.createdAt,
+        startedAt: messages[0]!.createdAt,
+        completedAt: null,
+        assistantMessageId: null,
+      },
+    });
+    const feed = buildThreadFeed(thread);
+    const present = (entries: readonly ThreadFeedEntry[]) =>
+      deriveThreadFeedPresentation(
+        entries,
+        thread.latestTurn,
+        new Set(),
+        new Set(),
+        thread.latestTurn!.startedAt,
+        presentation.grouping,
+      );
+    const rows = present(feed);
+    const thinking = rows.filter(
+      (row) => row.type === "message" && row.message.role === "reasoning",
+    );
+    expect(thinking).toHaveLength(1);
+    expect(thinking[0]).toMatchObject({ id: messages[0]!.id, reasoningMessages: messages });
+    expect(rows.some((row) => row.type === "work-toggle" && row.hiddenCount > 0)).toBe(true);
+    expect(rows.some((row) => row.type === "message" && row.message.text === "Progress")).toBe(
+      true,
+    );
+    expect(present(feed).find((row) => row.id === thinking[0]!.id)).toBe(thinking[0]);
+
+    const updated = present(
+      feed.map((entry) =>
+        entry.type === "message" && entry.id === messages[2]!.id
+          ? { ...entry, message: { ...entry.message, text: "Trace updated" } }
+          : entry,
+      ),
+    );
+    const group = updated.find((row) => row.id === thinking[0]!.id);
+    expect(group?.type === "message" && group.reasoningMessages?.at(-1)?.text).toBe(
+      "Trace updated",
+    );
+  });
+
   it("groups ordered reasoning blocks, keeps the live slot, and restores the group after unfolding", () => {
     const turnId = TurnId.make("reasoning-group");
     const messages: OrchestrationThread["messages"] = [1, 2, 3, 4].map((second) => ({
@@ -2697,6 +2789,74 @@ describe("buildThreadFeed", () => {
         (entry) => entry.type,
       ),
     ).toEqual(["message"]);
+  });
+
+  it("shows Better T3 waiting thinking alongside a running tool and yields to live text", () => {
+    const turnId = TurnId.make("waiting-tool");
+    const startedAt = "2026-10-27T09:00:00.000Z";
+    const latestTurn = {
+      turnId,
+      state: "running" as const,
+      requestedAt: startedAt,
+      startedAt,
+      completedAt: null,
+      assistantMessageId: null,
+    };
+    const thread = makeThread({
+      id: ThreadId.make("waiting-tool"),
+      projectId: ProjectId.make("project-1"),
+      title: "Waiting",
+      latestTurn,
+      activities: [
+        makeActivity({
+          id: EventId.make("tool-started"),
+          kind: "tool.updated",
+          tone: "tool",
+          summary: "Run build",
+          createdAt: startedAt,
+          turnId,
+          payload: {
+            itemType: "command_execution",
+            toolCallId: "build",
+            status: "inProgress",
+            command: "vp run build",
+          },
+        }),
+      ],
+    });
+    const present = (source = thread, working: string | null = startedAt) =>
+      deriveThreadFeedPresentation(
+        buildThreadFeed(source),
+        latestTurn,
+        new Set(),
+        new Set(),
+        working,
+        "better-t3",
+      );
+    const waiting = present();
+    expect(waiting.some((row) => row.type === "work-toggle")).toBe(true);
+    expect(waiting.filter((row) => row.type === "thinking")).toHaveLength(1);
+    expect(new Set(waiting.map((row) => row.id)).size).toBe(waiting.length);
+    expect(present(thread, null).some((row) => row.type === "thinking")).toBe(false);
+    for (const role of ["assistant", "reasoning"] as const) {
+      const message = {
+        id: MessageId.make(role),
+        role,
+        text: "Live text",
+        turnId,
+        streaming: true,
+        createdAt: "2026-10-27T09:00:01.000Z",
+        updatedAt: "2026-10-27T09:00:01.000Z",
+      };
+      expect(
+        present({ ...thread, messages: [message] }).some((row) => row.type === "thinking"),
+      ).toBe(false);
+      expect(
+        present({ ...thread, messages: [{ ...message, streaming: false }] }).some(
+          (row) => row.type === "thinking",
+        ),
+      ).toBe(true);
+    }
   });
 
   it("keeps one live slot while calls fail and restart", () => {
@@ -3831,5 +3991,93 @@ describe("proposed plan feed", () => {
         proposedPlan: plan,
       },
     ]);
+  });
+});
+
+describe("chat presentation modes", () => {
+  it("keeps Current and Better T3 grouping identities and all three modes' disclosure state", () => {
+    const turnId = TurnId.make("presentation-turn");
+    const thread = makeThread({
+      id: ThreadId.make("presentation-thread"),
+      projectId: ProjectId.make("project-1"),
+      title: "Presentation",
+      messages: [
+        {
+          id: MessageId.make("answer"),
+          role: "assistant",
+          text: "Answer",
+          turnId,
+          streaming: false,
+          createdAt: "2026-10-26T12:00:02Z",
+          updatedAt: "2026-10-26T12:00:02Z",
+        },
+      ],
+      activities: [
+        makeActivity({
+          id: EventId.make("tool"),
+          kind: "tool.completed",
+          summary: "Read files",
+          turnId,
+          createdAt: "2026-10-26T12:00:01Z",
+          payload: {
+            itemType: "file_read",
+            status: "completed",
+            result: "Complete ordered output",
+          },
+        }),
+      ],
+    });
+    const feed = buildThreadFeed(thread);
+    const turns = new Set([turnId]);
+    const groups = new Set(["work-group:tool"]);
+    const current = deriveThreadFeedPresentation(feed, null, turns, groups, null, "current");
+    const better = deriveThreadFeedPresentation(feed, null, turns, groups, null, "better-t3");
+    expect(better).toEqual(current);
+    for (const mode of ["current", "classic", "better-t3", "current"] as const) {
+      const rows = deriveThreadFeedPresentation(feed, null, turns, groups, null, mode);
+      expect(rows.find((row) => row.type === "work-toggle")).toMatchObject({ expanded: true });
+      expect(rows.find((row) => row.id === "answer")).toBe(feed.find((row) => row.id === "answer"));
+      expect(
+        rows.flatMap((row) =>
+          row.type === "activity-group" ? row.activities.map((activity) => activity.id) : [],
+        ),
+      ).toEqual(["tool"]);
+    }
+    expect([...turns]).toEqual([turnId]);
+    expect([...groups]).toEqual(["work-group:tool"]);
+  });
+
+  it("keeps real running tools in Better T3 while retaining Classic filtering", () => {
+    const turnId = TurnId.make("running-presentation-turn");
+    const feed = buildThreadFeed(
+      makeThread({
+        id: ThreadId.make("running-presentation"),
+        projectId: ProjectId.make("project-1"),
+        title: "Running",
+        activities: [
+          makeActivity({
+            id: EventId.make("live-tool"),
+            kind: "tool.updated",
+            summary: "Run tests",
+            turnId,
+            createdAt: "2026-10-26T12:00:01Z",
+            payload: { itemType: "command_execution", command: "vp test", status: "inProgress" },
+          }),
+        ],
+      }),
+    );
+    const latest = {
+      turnId,
+      state: "running" as const,
+      startedAt: "2026-10-26T12:00:00Z",
+      completedAt: null,
+    };
+    const present = (mode: "current" | "classic" | "better-t3") =>
+      deriveThreadFeedPresentation(feed, latest, new Set(), new Set(), latest.startedAt, mode);
+    expect(present("better-t3").filter((row) => row.type !== "thinking")).toEqual(
+      present("current"),
+    );
+    expect(present("better-t3").some((row) => row.type === "work-toggle")).toBe(true);
+    expect(present("classic").some((row) => row.type === "work-toggle")).toBe(false);
   });
 });

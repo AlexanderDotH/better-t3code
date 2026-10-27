@@ -646,3 +646,43 @@ describe("sanitizeMobilePreferences", () => {
     ).toEqual({});
   });
 });
+
+it.effect(
+  "retains Better T3, its legacy mirror, and unrelated preferences after storage reload",
+  () => {
+    const dependencies = makeMemoryPreferenceDependencies();
+    const better = { mode: "better-t3", updatedAt: 500, updateId: "mobile:better" } as const;
+    const mirror = { ...better, mode: "current" } as const;
+    return Effect.gen(function* () {
+      const store = yield* make();
+      yield* store.savePatch({
+        chatVisualModeSyncRecordV2: better,
+        chatVisualModeSyncRecord: mirror,
+        markdownFontSize: 18,
+        composerUsageLimitsVisible: true,
+      });
+      yield* store.savePatch({ codeWordBreak: true });
+      const reloaded = yield* store.load;
+      expect(reloaded).toMatchObject({
+        chatVisualModeSyncRecordV2: better,
+        chatVisualModeSyncRecord: mirror,
+        markdownFontSize: 18,
+        codeWordBreak: true,
+        composerUsageLimitsVisible: true,
+      });
+    }).pipe(
+      Effect.provideService(MobileDatabase, dependencies.database),
+      Effect.provideService(MobileSecureStorage, dependencies.secureStorage),
+    );
+  },
+);
+
+it("drops an invalid V2 chat mode without dropping a valid legacy selection", () => {
+  const classic = { mode: "classic", updatedAt: 500, updateId: "legacy:classic" } as const;
+  expect(
+    sanitizeMobilePreferences({
+      chatVisualModeSyncRecord: classic,
+      chatVisualModeSyncRecordV2: { ...classic, mode: "unsupported" },
+    } as never),
+  ).toEqual({ chatVisualModeSyncRecord: classic });
+});

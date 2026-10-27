@@ -176,23 +176,24 @@ export function useRetrySettingsSearchTarget(): () => void {
 export function useSettingsSearchTarget<T extends HTMLElement>(id: string | undefined) {
   const context = useContext(SettingsSearchTargetContext);
   const handledRequest = useRef<object | null>(null);
-  const targetRef = useCallback(
-    (target: T | null) => {
-      const { targetId, highlightTarget, requestKey, onTargetHandled } = context;
-      if (
-        target &&
-        id !== undefined &&
-        id === targetId &&
-        handledRequest.current !== requestKey &&
-        isSettingsTargetVisible(target)
-      ) {
-        handledRequest.current = requestKey;
-        scrollAndFocusSettingsTarget(target, highlightTarget);
-        onTargetHandled();
-      }
-    },
-    [context, id],
-  );
+  const targetRef = useRef<T>(null);
+
+  // Search popups temporarily hide the page; resolve targets after their cleanup.
+  useEffect(() => {
+    const target = targetRef.current;
+    const { targetId, highlightTarget, requestKey, onTargetHandled } = context;
+    if (
+      target &&
+      id !== undefined &&
+      id === targetId &&
+      handledRequest.current !== requestKey &&
+      isSettingsTargetVisible(target)
+    ) {
+      handledRequest.current = requestKey;
+      scrollAndFocusSettingsTarget(target, highlightTarget);
+      onTargetHandled();
+    }
+  }, [context, id]);
 
   return targetRef;
 }

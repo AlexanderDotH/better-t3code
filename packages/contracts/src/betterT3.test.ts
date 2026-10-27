@@ -16,6 +16,25 @@ const decodeBootstrapInput = Schema.decodeUnknownSync(BetterT3SettingsBootstrapI
 const encodeSettings = Schema.encodeSync(BetterT3SettingsV1);
 
 describe("Better T3 feature registry", () => {
+  it("persists message reasoning without enabling it for existing preferences", () => {
+    const settings = decodeSettings({
+      ...makeBetterT3SettingsV1("existing-install-migration"),
+      flags: {
+        "agent.reasoningVisibility": true,
+        "agent.reasoningWorkingOverlay": false,
+        "agent.reasoningInMessage": true,
+      },
+    });
+    expect(decodeSettings(encodeSettings(settings)).flags).toEqual(settings.flags);
+    expect(resolveBetterT3FeatureFlag(settings, "agent.reasoningInMessage")).toBe(true);
+    expect(
+      resolveBetterT3FeatureFlag(
+        makeBetterT3SettingsV1("existing-install-migration"),
+        "agent.reasoningInMessage",
+      ),
+    ).toBe(false);
+  });
+
   it("gives every feature one localized descriptor and valid dependencies", () => {
     const ids = BETTER_T3_FEATURE_REGISTRY.map(({ id }) => id);
     const knownIds = new Set(ids);
@@ -127,6 +146,7 @@ describe("Better T3 feature registry", () => {
       "agent.expandedComposerControls",
       "agent.reasoningVisibility",
       "agent.reasoningWorkingOverlay",
+      "agent.reasoningInMessage",
       "agent.nativeSubagentDisplay",
       "chat.workspaceCardDeck",
       "chat.cardMorphing",
@@ -253,6 +273,37 @@ describe("Better T3 feature registry", () => {
 });
 
 describe("BetterT3SettingsV1", () => {
+  it("defaults presentation motion on independently and retains either device choice", () => {
+    expect(
+      BETTER_T3_FEATURE_REGISTRY.find(({ id }) => id === "chat.presentationMotion"),
+    ).toMatchObject({
+      scope: "device",
+      controlKind: "switch",
+      dependencies: [],
+      compatibilityMirrors: [],
+      availability: {
+        surfaces: ["web", "desktop", "phone", "tablet"],
+        capabilities: [],
+      },
+    });
+    for (const origin of ["clean-install", "existing-install-migration"] as const) {
+      expect(
+        resolveBetterT3FeatureFlag(makeBetterT3SettingsV1(origin), "chat.presentationMotion"),
+      ).toBe(true);
+      for (const enabled of [true, false]) {
+        const settings = makeBetterT3SettingsV1(origin, {
+          "chat.presentationMotion": enabled,
+          "chat.cardMorphing": !enabled,
+          "chat.characterStreamingMotion": !enabled,
+        });
+        const saved = decodeSettings(encodeSettings(settings));
+        expect(resolveBetterT3FeatureFlag(saved, "chat.presentationMotion")).toBe(enabled);
+        expect(resolveBetterT3FeatureFlag(saved, "chat.cardMorphing")).toBe(!enabled);
+        expect(resolveBetterT3FeatureFlag(saved, "chat.characterStreamingMotion")).toBe(!enabled);
+      }
+    }
+  });
+
   it("defaults message replies on for every surface and retains an explicit device opt-out", () => {
     expect(BETTER_T3_FEATURE_REGISTRY.find(({ id }) => id === "chat.messageReplies")).toMatchObject(
       {
@@ -342,6 +393,7 @@ describe("BetterT3SettingsV1", () => {
       "agent.expandedComposerControls",
       "chat.messageEditing",
       "chat.messageReplies",
+      "chat.presentationMotion",
     ]);
     expect(
       switchFeatureIds.filter((featureId) => resolveBetterT3FeatureFlag(existing, featureId)),
@@ -355,6 +407,7 @@ describe("BetterT3SettingsV1", () => {
       "chat.messageEditing",
       "chat.messageReplies",
       "chat.characterStreamingMotion",
+      "chat.presentationMotion",
       "chat.shiftClickShowLess",
       "chat.draftIndicators",
       "workspace.gitWorkbench",

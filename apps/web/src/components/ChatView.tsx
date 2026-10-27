@@ -440,6 +440,7 @@ import { MessagesTimeline } from "./chat/MessagesTimeline";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { resolveTimelineIsAtEnd, worktreeSetupAgentStarted } from "./chat/MessagesTimeline.logic";
 import { resolveComposerTimelineInset, resolveScrollToEndClearance } from "./composerFooterLayout";
+import { measureComposerOcclusion, observeComposerOcclusion } from "./chat/composerOcclusion";
 import { ComposerFloatingBubble } from "./chat/ComposerFloatingBubble";
 import {
   resolveComposerFloatingBubbleEnabled,
@@ -1584,6 +1585,7 @@ export default function ChatView(props: ChatViewProps) {
   const [voiceRecordingActive, setVoiceRecordingActive] = useState(false);
   const [composerFloatingBubbleHost, setComposerFloatingBubbleHost] =
     useState<HTMLDivElement | null>(null);
+  const [composerWorkingStatusVisible, setComposerWorkingStatusVisible] = useState(false);
   const interfaceLanguage = useInterfaceLanguage().language;
   const translate = useInterfaceTranslator().message;
   const [nonChatWorkspaceCardActive, setNonChatWorkspaceCardActive] = useState(false);
@@ -2471,6 +2473,9 @@ export default function ChatView(props: ChatViewProps) {
   }, [activeDraftLogicalProjectKey, navigate]);
   const activeEnvironmentShell = useEnvironmentQuery(
     activeThread ? environmentShell.stateAtom(activeThread.environmentId) : null,
+  );
+  const activeConnectionState = useEnvironmentQuery(
+    activeThread ? environmentCatalog.stateAtom(activeThread.environmentId) : null,
   );
   const activeEnvironmentBootstrapComplete = activeEnvironmentShell.data?.snapshot._tag === "Some";
   const activeProjectKey = activeProject
@@ -5704,6 +5709,12 @@ export default function ChatView(props: ChatViewProps) {
   const anchorUserScrollGenerationRef = useRef(0);
   const cancelPositionRestoreRef = useRef<(() => void) | null>(null);
   const liveFollowUserScrollGenerationRef = useRef<number | null>(0);
+  const isTimelineFollowingEnd = useCallback(
+    () =>
+      timelineScrollModeRef.current !== "free-scrolling" &&
+      liveFollowUserScrollGenerationRef.current === anchorUserScrollGenerationRef.current,
+    [],
+  );
   // Manual navigation stops live-follow without removing anchored end space.
   // Collapsing that space during a gesture clamps the viewport back to the end.
   const cancelTimelineLiveFollowForUserNavigation = useCallback(() => {
@@ -5763,7 +5774,7 @@ export default function ChatView(props: ChatViewProps) {
   useEffect(() => {
     const controller = createPageScrollController({
       getContainer: () => legendListRef.current?.getScrollableNode() ?? null,
-      getScrollPaddingBottomPx: () => composerOverlayElement?.getBoundingClientRect().height ?? 0,
+      getScrollPaddingBottomPx: () => composerTimelineInsetRef.current,
       onScrollStart: handlePageScrollStart,
     });
     pageScrollControllerRef.current = controller;
@@ -6323,7 +6334,9 @@ export default function ChatView(props: ChatViewProps) {
   );
   const publishComposerOverlayHeight = useCallback(
     (height: number) => {
-      const nextHeight = Math.ceil(height);
+      const nextHeight = composerOverlayElement
+        ? measureComposerOcclusion(composerOverlayElement, height)
+        : Math.ceil(height);
       if (nextHeight <= 0) return;
       composerOverlayHeightRef.current = nextHeight;
       const nextInset = resolveComposerTimelineInset({
@@ -6337,7 +6350,7 @@ export default function ChatView(props: ChatViewProps) {
       }
       publishScrollToEndClearance(nextHeight);
     },
-    [publishScrollToEndClearance],
+    [composerOverlayElement, publishScrollToEndClearance],
   );
   // The composer reports its resting flag from a layout effect, which runs
   // before this component's own layout effects and before any resize
@@ -6363,14 +6376,7 @@ export default function ChatView(props: ChatViewProps) {
       publishComposerOverlayHeight(composerOverlayElement.getBoundingClientRect().height);
     };
 
-    updateHeight();
-    if (typeof ResizeObserver === "undefined") return;
-
-    const resizeObserver = new ResizeObserver(updateHeight);
-    resizeObserver.observe(composerOverlayElement);
-    return () => {
-      resizeObserver.disconnect();
-    };
+    return observeComposerOcclusion(composerOverlayElement, updateHeight);
   }, [composerOverlayElement, publishComposerOverlayHeight]);
   // The pill mounts and unmounts in the same commits that expand or rest the
   // composer, and a fast fling lands there while the previous resting tween
@@ -11125,7 +11131,7 @@ export default function ChatView(props: ChatViewProps) {
                 threadRef={activeThreadRef}
                 subagents={liveSubagents}
                 timestampFormat={settings.timestampFormat}
-                streamingMotionEnabled={settings.responseStreamingMode !== "turn"}
+                streamingMotionEnabled
                 {...(gitCwd ? { markdownCwd: gitCwd } : {})}
               />
             ) : null}
@@ -11164,6 +11170,10 @@ export default function ChatView(props: ChatViewProps) {
             <div className="relative flex min-h-0 flex-1 flex-col window-surface bg-background">
               {/* Messages — LegendList handles virtualization and scrolling internally */}
               <MessagesTimeline
+                presentationConnected={
+                  !paintOnlyDisplayedTimeline && activeEnvironmentConnectionPhase === "connected"
+                }
+                presentationConnectionGeneration={activeConnectionState.data?.generation ?? 0}
                 deepPlanReview={paintOnlyDisplayedTimeline ? null : deepPlanReview}
                 replyControlsEnabled={
                   !paintOnlyDisplayedTimeline &&
@@ -11181,6 +11191,12 @@ export default function ChatView(props: ChatViewProps) {
                   paintOnlyDisplayedTimeline ? undefined : activeThread?.replyActivities
                 }
                 composerPlanTurnId={paintOnlyDisplayedTimeline ? null : composerPlanTurnId}
+                composerWorkingStatusVisible={
+                  !paintOnlyDisplayedTimeline &&
+                  composerWorkingStatusVisible &&
+                  !nonChatWorkspaceCardActive &&
+                  !workspaceCardExpanded
+                }
                 {...(!paintOnlyDisplayedTimeline
                   ? {
                       retryAction: timelineRetryAction,
@@ -11243,7 +11259,7 @@ export default function ChatView(props: ChatViewProps) {
                 }
                 resolvedTheme={resolvedTheme}
                 timestampFormat={timestampFormat}
-                streamingMotionEnabled={settings.responseStreamingMode !== "turn"}
+                streamingMotionEnabled
                 workspaceRoot={
                   paintOnlyDisplayedTimeline
                     ? (heldPaintContext?.workspaceRoot ?? undefined)
@@ -11258,6 +11274,7 @@ export default function ChatView(props: ChatViewProps) {
                 onAnchorReady={onTimelineAnchorReady}
                 contentInsetEndAdjustment={composerTimelineInset}
                 liveFollowEnabled={!paintOnlyDisplayedTimeline && timelineLiveFollowEnabled}
+                isFollowingEnd={isTimelineFollowingEnd}
                 onIsAtEndChange={onIsAtEndChange}
                 onContentOverflowChange={setTimelineOverflows}
                 onToolOutputCollapsedAtEnd={onToolOutputCollapsedAtEnd}
@@ -11474,6 +11491,7 @@ export default function ChatView(props: ChatViewProps) {
                                 activeWorkStartedAt={activeWorkStartedAt}
                                 reasoningEntries={workLogEntries}
                                 floatingBubbleHost={activeComposerFloatingBubbleHost}
+                                onWorkingStatusVisibleChange={setComposerWorkingStatusVisible}
                                 // With attachments or contexts aboard the pick just inserts the
                                 // text, so it sends as a prompt like the typed path would.
                                 onUsageLimitsCommand={
@@ -11939,7 +11957,7 @@ export default function ChatView(props: ChatViewProps) {
       activeTurnId={deriveUnsettledTurnId(activeLatestTurn, activeRunningTurnId)}
       isWorking={isWorking}
       streamIdPrefix={routeThreadKey}
-      streamingMotionEnabled={settings.responseStreamingMode !== "turn"}
+      streamingMotionEnabled
       markdownOptions={{
         cwd: gitCwd ?? undefined,
         threadRef: activeThreadRef ?? undefined,

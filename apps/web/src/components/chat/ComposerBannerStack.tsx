@@ -9,6 +9,7 @@ import {
 } from "../ui/notificationSuppression";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { ComposerBanner, type ComposerBannerVariant } from "./ComposerBanner";
+import { ChatSizeMotion } from "./ChatSizeMotion";
 
 // Match the duration-220 exit transition before removing a dismissed notice.
 const DISMISS_TRANSITION_MS = 220;
@@ -57,7 +58,17 @@ interface ComposerBannerStackProps {
   readonly placement?: "attached" | "floating";
 }
 
-export function ComposerBannerStack({
+export function ComposerBannerStack(props: ComposerBannerStackProps) {
+  return props.placement === "floating" ? (
+    <ChatSizeMotion>
+      <ComposerBannerStackBody {...props} />
+    </ChatSizeMotion>
+  ) : (
+    <ComposerBannerStackBody {...props} />
+  );
+}
+
+function ComposerBannerStackBody({
   className,
   items,
   placement = "attached",

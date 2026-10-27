@@ -1,4 +1,5 @@
 import { ComposerInteractionModeButton } from "./ComposerInteractionModeButton";
+import { useChatSizeMotionEnabled } from "./ChatSizeMotion";
 import {
   getProviderInteractionMode,
   parseDeepPlanComposerCommand,
@@ -443,6 +444,7 @@ function useComposerRestingTransition(
   onOverlayHeightChange: (height: number) => void,
   animationsActive: boolean,
   animationDurationMs: number,
+  animateContentChanges: boolean,
 ) {
   const elementRef = useRef<HTMLDivElement>(null);
   const isCollapsedRef = useRef(isCollapsed);
@@ -494,7 +496,7 @@ function useComposerRestingTransition(
   isCollapsedRef.current = isCollapsed;
 
   const transitionToCurrentGeometry = useCallback(
-    (stateChanged: boolean) => {
+    (stateChanged: boolean, contentChanged = false) => {
       const element = elementRef.current;
       const surface = element?.querySelector<HTMLElement>('[data-chat-composer-surface="true"]');
       if (!element || !surface) return;
@@ -563,7 +565,7 @@ function useComposerRestingTransition(
         interruptedTargetHeight === null || Math.abs(interruptedTargetHeight - nextHeight) >= 0.5;
       const shouldAnimate = shouldAnimateComposerRestingTransition({
         hasCompletedInitialLayout: hasCompletedInitialLayoutRef.current,
-        stateChanged,
+        stateChanged: stateChanged || contentChanged,
         hasInterruptedAnimation: interruptedHeight !== null,
       });
 
@@ -822,6 +824,17 @@ function useComposerRestingTransition(
     if (!element || typeof ResizeObserver === "undefined") return;
 
     const body = element.querySelector<HTMLElement>('[data-chat-composer-body="true"]');
+    let previousWidth = element.getBoundingClientRect().width;
+    let pointerDown = false;
+    const startPointer = () => {
+      pointerDown = true;
+    };
+    const endPointer = () => {
+      pointerDown = false;
+    };
+    element.addEventListener("pointerdown", startPointer);
+    window.addEventListener("pointerup", endPointer);
+    window.addEventListener("pointercancel", endPointer);
     const observer = new ResizeObserver((entries) => {
       if (animationRef.current) {
         if (body && entries.some((entry) => entry.target === body)) {
@@ -830,6 +843,21 @@ function useComposerRestingTransition(
         return;
       }
       const elementRect = element.getBoundingClientRect();
+      const widthChanged = Math.abs(previousWidth - elementRect.width) >= 0.5;
+      previousWidth = elementRect.width;
+      if (
+        animateContentChanges &&
+        !pointerDown &&
+        !widthChanged &&
+        document.visibilityState === "visible" &&
+        previousHeightRef.current !== null &&
+        Math.abs(previousHeightRef.current - elementRect.height) >= 0.5 &&
+        body &&
+        entries.some((entry) => entry.target === body)
+      ) {
+        transitionToCurrentGeometry(false, true);
+        return;
+      }
       const visibleTransitionElement = (selector: string) =>
         Array.from(element.querySelectorAll<HTMLElement>(selector)).find(
           (candidate) => candidate.getClientRects().length > 0,
@@ -849,8 +877,13 @@ function useComposerRestingTransition(
     });
     observer.observe(element);
     if (body) observer.observe(body);
-    return () => observer.disconnect();
-  }, [transitionToCurrentGeometry]);
+    return () => {
+      observer.disconnect();
+      element.removeEventListener("pointerdown", startPointer);
+      window.removeEventListener("pointerup", endPointer);
+      window.removeEventListener("pointercancel", endPointer);
+    };
+  }, [transitionToCurrentGeometry, animateContentChanges]);
 
   useEffect(() => {
     // Host discovery and width measurement settle through layout updates on
@@ -1404,6 +1437,7 @@ export interface ChatComposerProps {
   activeTaskSteps: readonly ComposerTaskStep[] | null;
   threadSyncPhase: ThreadSyncPhase | null;
   isWorking?: boolean;
+  onWorkingStatusVisibleChange?: (visible: boolean) => void;
   activeWorkStartedAt?: string | null;
   activeTokenUsage?: ThreadTokenUsage | undefined;
   floatingBubbleHost?: HTMLElement | null;
@@ -1644,11 +1678,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 threadRef={routeThreadRef}
                 environmentId={environmentId}
                 cwd={gitCwd ?? undefined}
-                streamingMotionEnabled={settings.responseStreamingMode !== "turn"}
               />
             ) : null,
         }
       : undefined;
+  const workingStatusVisible = activityStatus?.kind === "working";
+  const onWorkingStatusVisibleChange = props.onWorkingStatusVisibleChange;
+  useLayoutEffect(() => {
+    onWorkingStatusVisibleChange?.(workingStatusVisible);
+    return () => onWorkingStatusVisibleChange?.(false);
+  }, [onWorkingStatusVisibleChange, workingStatusVisible]);
   const activeTasksProgress = shownSyncPhase === null ? props.activeTasksProgress : null;
   const activeTaskSteps = shownSyncPhase === null ? props.activeTaskSteps : null;
   // ------------------------------------------------------------------
@@ -5235,6 +5274,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ) : null;
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
+  const chatSizeMotionEnabled = useChatSizeMotionEnabled();
   const composerMainSurfaceRef = useComposerRestingTransition(
     composerControlsInStrip,
     isComposerResting,
@@ -5242,6 +5282,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onComposerOverlayHeightChange,
     panelAnimationsActive,
     panelAnimationDurationMs,
+    chatSizeMotionEnabled,
   );
   const canTrackComposerScrollGesture =
     routeKind === "server" && activeThreadId !== null && !isMobileViewport;
@@ -6672,7 +6713,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       <ComposerFloatingBannerPortal host={props.floatingBubbleHost ?? null}>
         <ComposerBanner.Dock>
           <ComposerBanner.Column>
-            {props.deepPlanningContent ? (
+            {composerMode === "deep-plan" && props.deepPlanningContent ? (
               <div
                 data-chat-composer-deep-plan="true"
                 className="min-h-0 max-h-[min(55dvh,32rem)] overflow-y-auto overscroll-contain"

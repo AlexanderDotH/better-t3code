@@ -1,10 +1,10 @@
-import type { ChatVisualMode, ChatVisualModeSyncRecord } from "@t3tools/contracts";
+import type { LegacyChatVisualMode, ChatVisualModeSyncRecord } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { deriveMobileChatVisualModeSync } from "./chat-visual-mode-sync";
 
 function record(
-  mode: ChatVisualMode,
+  mode: LegacyChatVisualMode,
   updatedAt: number,
   updateId: string,
 ): ChatVisualModeSyncRecord {
@@ -55,7 +55,10 @@ describe("mobile chat visual mode synchronization", () => {
     });
 
     expect(result.mode).toBe("classic");
-    expect(result.preferencePatch).toEqual({ chatVisualModeSyncRecord: serverRecord });
+    expect(result.preferencePatch).toEqual({
+      chatVisualModeSyncRecord: serverRecord,
+      chatVisualModeSyncRecordV2: serverRecord,
+    });
     expect(result.plan.writes).toEqual([]);
   });
 
@@ -78,7 +81,10 @@ describe("mobile chat visual mode synchronization", () => {
     });
 
     expect(result.mode).toBe("classic");
-    expect(result.preferencePatch).toEqual({ chatVisualModeSyncRecord: connectedRecord });
+    expect(result.preferencePatch).toEqual({
+      chatVisualModeSyncRecord: connectedRecord,
+      chatVisualModeSyncRecordV2: connectedRecord,
+    });
   });
 
   it("renders Current without minting a record when no choice exists", () => {
@@ -153,5 +159,46 @@ describe("mobile chat visual mode synchronization", () => {
     expect(result.deferredEnvironmentLabels).toEqual(["Offline server"]);
     expect(result.unsupportedEnvironmentLabels).toEqual(["Version 1", "Version 2"]);
     expect(result.plan.writes).toEqual([]);
+  });
+});
+
+it("keeps Better T3 offline and exposes unsupported sync to an older environment", () => {
+  const better = { mode: "better-t3", updatedAt: 5_000, updateId: "mobile:better" } as const;
+  const result = deriveMobileChatVisualModeSync({
+    preferencesReady: true,
+    catalogReady: true,
+    localRecord: { ...better, mode: "current" },
+    localRecordV2: better,
+    environments: [
+      {
+        environmentId: "old",
+        label: "Old server",
+        connected: true,
+        configLoaded: true,
+        environmentSettingsVersion: 3,
+        record: { ...better, mode: "current" },
+      },
+    ],
+  });
+  expect(result.mode).toBe("better-t3");
+  expect(result.preferencePatch).toBeNull();
+  expect(result.plan.writes).toEqual([]);
+  expect(result.unsupportedEnvironmentLabels).toEqual(["Old server"]);
+});
+
+it("adopts a newer legacy edit while preserving the V2 local cache", () => {
+  const better = { mode: "better-t3", updatedAt: 5_000, updateId: "mobile:better" } as const;
+  const classic = record("classic", 6_000, "older-client:classic");
+  const result = deriveMobileChatVisualModeSync({
+    preferencesReady: true,
+    catalogReady: true,
+    localRecord: classic,
+    localRecordV2: better,
+    environments: [],
+  });
+  expect(result.mode).toBe("classic");
+  expect(result.preferencePatch).toEqual({
+    chatVisualModeSyncRecord: classic,
+    chatVisualModeSyncRecordV2: classic,
   });
 });

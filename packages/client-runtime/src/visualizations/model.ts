@@ -25,6 +25,7 @@ export type VisualizationDocument = {
   datasets: VisualizationDataset[];
 };
 export type VisualizationAppearance = {
+  presentation?: "better-t3";
   fontFamily: string;
   background: string;
   foreground: string;
@@ -68,6 +69,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isVisualizationAppearance(value: unknown): value is VisualizationAppearance {
   return (
     isRecord(value) &&
+    (value.presentation === undefined || value.presentation === "better-t3") &&
     typeof value.fontFamily === "string" &&
     typeof value.background === "string" &&
     typeof value.foreground === "string" &&

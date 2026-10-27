@@ -302,6 +302,16 @@ export const chatInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Die Umgebung ist nicht verbunden.",
     "L’environnement n’est pas connecté.",
   ],
+  "chat.files.showAll": [
+    "Show all {{count}} files",
+    "Alle {{count}} Dateien anzeigen",
+    "Afficher les {{count}} fichiers",
+  ],
+  "chat.files.showFewer": [
+    "Show fewer files",
+    "Weniger Dateien anzeigen",
+    "Afficher moins de fichiers",
+  ],
   "chat.currentThread": ["Current thread", "Aktueller Thread", "Fil actuel"],
   "chat.empty.startConversation": [
     "Send a message to start the conversation.",
@@ -340,6 +350,109 @@ export const chatInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Revenir à ce message",
   ],
   "chat.timeline.thinking": ["Thinking", "Denkt nach", "Réflexion"],
+  "chat.timeline.thought": ["Thought", "Nachgedacht", "Réflexion terminée"],
+  "chat.timeline.thinkingDurationUnavailable": [
+    "Duration unavailable",
+    "Dauer nicht verfügbar",
+    "Durée indisponible",
+  ],
+  "chat.timeline.lessThanASecond": [
+    "Less than a second",
+    "Weniger als eine Sekunde",
+    "Moins d’une seconde",
+  ],
+  "chat.thinking.squiggling": ["Squiggling…", "Gedankenkringeln…", "Gribouillage mental…"],
+  "chat.thinking.noodles": [
+    "Untangling brain noodles…",
+    "Gedankennudeln entwirren…",
+    "Démêlage de nouilles mentales…",
+  ],
+  "chat.thinking.ducks": [
+    "Consulting the rubber duck…",
+    "Die Gummiente befragen…",
+    "Consultation du canard en plastique…",
+  ],
+  "chat.thinking.hypothesis": [
+    "Marinating a hypothesis…",
+    "Eine Hypothese marinieren…",
+    "Une hypothèse mijote…",
+  ],
+  "chat.thinking.pixels": ["Tickling the pixels…", "Die Pixel kitzeln…", "Chatouillage de pixels…"],
+  "chat.thinking.synapses": [
+    "Teaching synapses to tap-dance…",
+    "Synapsen steppen lassen…",
+    "Leçon de claquettes aux synapses…",
+  ],
+  "chat.thinking.gremlins": [
+    "Negotiating with the gremlins…",
+    "Mit den Kobolden verhandeln…",
+    "Négociation avec les gremlins…",
+  ],
+  "chat.thinking.eureka": [
+    "Polishing a tiny eureka…",
+    "Ein kleines Heureka polieren…",
+    "Polissage d’un petit eurêka…",
+  ],
+  "chat.thinking.hamsters": [
+    "Briefing the brain hamsters…",
+    "Die Denkhamster briefen…",
+    "Briefing des hamsters du cerveau…",
+  ],
+  "chat.thinking.clouds": [
+    "Rearranging thought clouds…",
+    "Gedankenwolken umparken…",
+    "Réorganisation des nuages d’idées…",
+  ],
+  "chat.thinking.confetti": [
+    "Sorting the idea confetti…",
+    "Ideenkonfetti sortieren…",
+    "Tri des confettis d’idées…",
+  ],
+  "chat.thinking.wizards": [
+    "Warming up the tiny wizards…",
+    "Die Mini-Zauberer aufwärmen…",
+    "Échauffement des mini-sorciers…",
+  ],
+  "chat.thinking.pretzels": [
+    "Unknotting a logic pretzel…",
+    "Eine Logikbrezel entknoten…",
+    "Dénouage d’un bretzel logique…",
+  ],
+  "chat.thinking.fireflies": [
+    "Herding idea fireflies…",
+    "Ideen-Glühwürmchen hüten…",
+    "Rassemblement des lucioles d’idées…",
+  ],
+  "chat.thinking.teapot": [
+    "Steeping a fresh thought…",
+    "Einen Gedanken ziehen lassen…",
+    "Infusion d’une pensée fraîche…",
+  ],
+  "chat.thinking.goblins": [
+    "Checking with the code goblins…",
+    "Kurz die Codekobolde fragen…",
+    "Consultation des lutins du code…",
+  ],
+  "chat.thinking.bubbles": [
+    "Blowing a few brain bubbles…",
+    "Ein paar Denkblasen pusten…",
+    "Quelques bulles de réflexion…",
+  ],
+  "chat.thinking.stardust": [
+    "Adding a pinch of stardust…",
+    "Eine Prise Sternenstaub dazu…",
+    "Une pincée de poussière d’étoiles…",
+  ],
+  "chat.thinking.sock": [
+    "Finding the missing brain sock…",
+    "Die verlorene Denksocke suchen…",
+    "À la recherche de la chaussette mentale…",
+  ],
+  "chat.thinking.tinyDrumroll": [
+    "Preparing a tiny drumroll…",
+    "Einen Mini-Trommelwirbel proben…",
+    "Préparation d’un mini-roulement de tambour…",
+  ],
   "chat.timeline.audioUnavailable": [
     "Audio unavailable",
     "Audio nicht verfügbar",

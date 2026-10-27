@@ -45,6 +45,22 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
 ];
 
 describe("searchSettings", () => {
+  it("finds all chat modes and the independent presentation motion setting", () => {
+    for (const query of [
+      "Current",
+      "Classic",
+      "Better T3",
+      "Aktuell",
+      "Klassisch",
+      "Actuel",
+      "Classique",
+    ]) {
+      expect(searchSettings(query)).toContainEqual(
+        expect.objectContaining({ targetId: "chat.presentation" }),
+      );
+    }
+    expect(searchSettings("Better-T3-Übergänge")[0]?.targetId).toBe("chat.presentationMotion");
+  });
   it("finds the Codex and Better T3 compaction settings and their environment targets", () => {
     for (const query of ["Codex compaction", "custom context engine", "Kontextkompaktierung"]) {
       expect(searchSettings(query)).toContainEqual(
