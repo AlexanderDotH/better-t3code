@@ -65,6 +65,8 @@ it("stops the real preview bridge and releases its SVG when the feature switches
   const messages = Object.assign(new EventTarget(), {
     requestAnimationFrame: vi.fn(() => 1),
     cancelAnimationFrame: vi.fn(),
+    matchMedia: (media: string) => Object.assign(new EventTarget(), { media, matches: false }),
+    localStorage: { getItem: () => null },
   });
   const emit = (source: unknown, data: unknown) => {
     messages.dispatchEvent(Object.assign(new Event("message"), { source, data }));

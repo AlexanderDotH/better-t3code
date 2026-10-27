@@ -44,7 +44,7 @@ function Harness({
 let container: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
 beforeEach(() => {
-  vi.useFakeTimers();
+  vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("matchMedia", () => ({ matches: false }));
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
@@ -52,38 +52,38 @@ beforeEach(() => {
   document.body.append(container);
   root = createRoot(container);
 });
-afterEach(async () => {
-  await act(() => root.unmount());
+afterEach(() => {
+  act(() => root.unmount());
   container.remove();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
 
-it("retains closing rows, reverses without remounting, and releases them after collapse", async () => {
-  await act(() => root.render(<Harness expanded />));
+it("retains closing rows, reverses without remounting, and releases them after collapse", () => {
+  act(() => root.render(<Harness expanded />));
   const detailNode = container.querySelector('[data-row="detail"]')!;
-  await act(() => root.render(<Harness expanded={false} />));
+  act(() => root.render(<Harness expanded={false} />));
   expect(detailNode.isConnected).toBe(true);
   expect(detailNode.closest("[inert]")).not.toBeNull();
-  await act(() => vi.advanceTimersByTime(100));
-  await act(() => root.render(<Harness expanded />));
+  act(() => vi.advanceTimersByTime(100));
+  act(() => root.render(<Harness expanded />));
   expect(container.querySelector('[data-row="detail"]')).toBe(detailNode);
   expect(detailNode.closest("[inert]")).toBeNull();
-  await act(() => vi.advanceTimersByTime(300));
+  act(() => vi.advanceTimersByTime(300));
   expect(detailNode.isConnected).toBe(true);
-  await act(() => root.render(<Harness expanded={false} />));
-  await act(() => vi.advanceTimersByTime(300));
+  act(() => root.render(<Harness expanded={false} />));
+  act(() => vi.advanceTimersByTime(300));
   expect(detailNode.isConnected).toBe(false);
 });
 
-it("never carries exiting rows into a different thread or disabled motion", async () => {
-  await act(() => root.render(<Harness expanded />));
-  await act(() => root.render(<Harness expanded={false} />));
-  await act(() => root.render(<Harness expanded={false} identity="other" />));
+it("never carries exiting rows into a different thread or disabled motion", () => {
+  act(() => root.render(<Harness expanded />));
+  act(() => root.render(<Harness expanded={false} />));
+  act(() => root.render(<Harness expanded={false} identity="other" />));
   expect(container.querySelector('[data-row="detail"]')).toBeNull();
-  await act(() => root.render(<Harness expanded identity="other" />));
-  await act(() => root.render(<Harness expanded={false} identity="other" enabled={false} />));
+  act(() => root.render(<Harness expanded identity="other" />));
+  act(() => root.render(<Harness expanded={false} identity="other" enabled={false} />));
   expect(container.querySelector('[data-row="detail"]')).toBeNull();
   expect(vi.getTimerCount()).toBe(0);
 });
