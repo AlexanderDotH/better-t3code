@@ -2,9 +2,11 @@ import {
   DeepPlanRunId,
   DeepPlanSourceId,
   EnvironmentId,
+  MessageId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
   type DeepPlanRun,
 } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -273,19 +275,30 @@ describe("DeepPlan turn preparation", () => {
     });
   });
 
-  it("pauses failed source collection and propagates the error without allowing a normal send", async () => {
+  it("keeps interrupted source collection active for automatic recovery and propagates the error", async () => {
     const target = api();
     const failure = new Error("Selected environment disconnected");
     vi.mocked(transferDeepPlanSources).mockRejectedValue(failure);
+    await expect(prepare(target)).rejects.toBe(failure);
+    expect(target.dispatchCommand.mock.calls.map(([command]) => command.type)).toEqual([
+      "thread.deep-plan.start",
+    ]);
+  });
+
+  it("pauses collection when the user cancels it", async () => {
+    const target = api();
+    const controller = new AbortController();
+    vi.mocked(transferDeepPlanSources).mockImplementation(async () => {
+      controller.abort();
+      throw new Error("DeepPlan source collection was canceled.");
+    });
     target.getRun
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(run({ id: nextRunId, phase: "collecting", revision: 8 }));
-    await expect(prepare(target)).rejects.toBe(failure);
+    await expect(prepare(target, { signal: controller.signal })).rejects.toThrow("canceled");
     expect(target.dispatchCommand.mock.calls[1]?.[0]).toMatchObject({
-      type: "thread.deep-plan.update",
-      runId: nextRunId,
+      mutation: { type: "pause" },
       expectedRevision: 8,
-      mutation: { type: "pause", reason: failure.message },
     });
   });
 
@@ -316,9 +329,9 @@ describe("DeepPlan turn preparation", () => {
       .mockResolvedValueOnce(null)
       .mockResolvedValue(run({ id: nextRunId, phase: "collecting" }));
     await expect(prepare(target)).rejects.toThrow("not been confirmed");
-    expect(target.dispatchCommand.mock.calls[1]?.[0]).toMatchObject({
-      mutation: { type: "pause" },
-    });
+    expect(target.dispatchCommand.mock.calls.map(([command]) => command.type)).toEqual([
+      "thread.deep-plan.start",
+    ]);
   });
 
   it("does not start a run after cancellation", async () => {
@@ -389,7 +402,11 @@ function implementationRun(phase: DeepPlanRun["phase"] = "paused"): DeepPlanRun 
   });
 }
 
-function continueRun(target: DeepPlanningApi, current: DeepPlanRun) {
+function continueRun(
+  target: DeepPlanningApi,
+  current: DeepPlanRun,
+  options?: Partial<Parameters<typeof continueDeepPlanForTurn>[0]>,
+) {
   let nextId = 0;
   return continueDeepPlanForTurn({
     run: current,
@@ -403,17 +420,83 @@ function continueRun(target: DeepPlanningApi, current: DeepPlanRun) {
     apiForEnvironment: () => target,
     createId: () => `continue-${++nextId}`,
     now: () => createdAt,
+    ...options,
   });
 }
 
 describe("Deep Plan continuation", () => {
+  it.each([false, true])(
+    "only a manual Resume reactivates planning after leaving Build, automatic=%s",
+    async (automatic) => {
+      const current = run();
+      const target = api();
+      target.getRun.mockResolvedValue(current);
+      await continueRun(target, current, { automatic });
+      const commands = target.dispatchCommand.mock.calls.map(([command]) => command);
+      expect(commands.map((command) => command.type)).toEqual(
+        automatic ? ["thread.turn.start"] : ["thread.interaction-mode.set", "thread.turn.start"],
+      );
+      if (!automatic) expect(commands[0]).toMatchObject({ interactionMode: "plan", threadId });
+      expect(commands.at(-1)).toMatchObject({ background: { runId: current.id } });
+    },
+  );
+
+  it("does not start a planning turn when its requested mode change fails", async () => {
+    const current = run();
+    const target = api();
+    target.getRun.mockResolvedValue(current);
+    target.dispatchCommand.mockRejectedValueOnce(new Error("Disconnected"));
+    await expect(continueRun(target, current)).rejects.toThrow("Disconnected");
+    expect(target.dispatchCommand).toHaveBeenCalledOnce();
+    expect(target.dispatchCommand.mock.calls[0]?.[0].type).toBe("thread.interaction-mode.set");
+  });
+
+  it("shares simultaneous continuations instead of starting duplicate turns", async () => {
+    const current = implementationRun("implementing");
+    const target = api();
+    target.getRun.mockResolvedValue(current);
+    const results = await Promise.all([
+      continueRun(target, current),
+      continueRun(target, current),
+      continueRun(target, current),
+    ]);
+    expect(results).toEqual([current, current, current]);
+    expect(target.dispatchCommand.mock.calls.map(([command]) => command.type)).toEqual([
+      "thread.turn.start",
+    ]);
+  });
+
+  it.each(["paused", "awaitingApproval", "blocked", "failed"] as const)(
+    "does not automatically override a run that changed to %s",
+    async (phase) => {
+      const current = run();
+      const changed = run({ phase });
+      const target = api();
+      target.getRun.mockResolvedValue(changed);
+      expect(await continueRun(target, current, { automatic: true })).toEqual(changed);
+      expect(target.dispatchCommand).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not automatically start an implementation from the planning thread", async () => {
+    const current = implementationRun("implementing");
+    const target = api();
+    target.getRun.mockResolvedValue(current);
+    await continueRun(target, current, { automatic: true, threadId });
+    expect(target.dispatchCommand).not.toHaveBeenCalled();
+  });
+
   it("confirms resumption and starts the approved implementing thread with the approved model", async () => {
     const paused = implementationRun();
     const target = api();
     target.getRun
       .mockResolvedValueOnce(paused)
       .mockResolvedValueOnce({ ...paused, phase: "implementing", revision: 6 });
-    await continueRun(target, paused);
+    const idleGuard = {
+      latestTurnId: TurnId.make("previous-turn"),
+      latestUserMessageId: MessageId.make("previous-message"),
+    };
+    await continueRun(target, paused, { idleGuard });
     expect(target.dispatchCommand.mock.calls.map(([command]) => command.type)).toEqual([
       "thread.deep-plan.update",
       "thread.turn.start",
@@ -422,8 +505,17 @@ describe("Deep Plan continuation", () => {
       threadId: paused.approval!.implementationThreadId,
       modelSelection: paused.approval!.implementation,
       interactionMode: "default",
+      idleGuard: {},
+      background: { runId: paused.id },
       message: { text: expect.stringContaining("approved plan version 1") },
     });
+    const started = target.dispatchCommand.mock.calls[1]?.[0];
+    expect(started?.type === "thread.turn.start" && started.message.text).toContain(
+      "CONTINUE THE EXISTING APPROVED DEEPPLAN IMPLEMENTATION",
+    );
+    expect(started?.type === "thread.turn.start" && started.message.text).not.toContain(
+      "PLEASE IMPLEMENT THIS COMPLETE PLAN",
+    );
   });
 
   it("keeps final validation with the server instead of starting a second validation turn", async () => {
@@ -452,6 +544,38 @@ describe("Deep Plan continuation", () => {
     expect(target.dispatchCommand).not.toHaveBeenCalled();
   });
 
+  it("resumes an interrupted final validation in the background with the same request", async () => {
+    const current = implementationRun("validating");
+    const validating: DeepPlanRun = {
+      ...current,
+      stepStates: [
+        {
+          stepId: "save",
+          status: "verified",
+          evidence: [{ kind: "test", summary: "Restore passes", createdAt }],
+          updatedAt: createdAt,
+        },
+      ],
+      finalValidation: {
+        ...current.finalValidation,
+        status: "inProgress",
+        requestId: "saved-validation-request",
+      },
+    };
+    const target = api();
+    target.getRun.mockResolvedValue(validating);
+    await continueRun(target, validating);
+    expect(target.dispatchCommand).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        type: "thread.turn.start",
+        background: { runId: validating.id },
+        message: expect.objectContaining({
+          text: expect.stringContaining("saved-validation-request"),
+        }),
+      }),
+    );
+  });
+
   it("does not start work until resumed state is confirmed", async () => {
     const paused = implementationRun();
     const target = api();
@@ -468,7 +592,11 @@ describe("Deep Plan continuation", () => {
     target.getRun.mockResolvedValue(planning);
     await continueRun(target, planning);
     expect(transferDeepPlanSources).not.toHaveBeenCalled();
-    expect(target.dispatchCommand.mock.calls[0]?.[0]).toMatchObject({
+    expect(target.dispatchCommand.mock.calls.map(([command]) => command.type)).toEqual([
+      "thread.interaction-mode.set",
+      "thread.turn.start",
+    ]);
+    expect(target.dispatchCommand.mock.calls[1]?.[0]).toMatchObject({
       type: "thread.turn.start",
       threadId,
       interactionMode: "plan",

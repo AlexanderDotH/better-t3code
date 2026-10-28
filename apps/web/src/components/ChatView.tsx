@@ -15,7 +15,7 @@ import {
 import { approveWebDeepPlan, getWebDeepPlanningApi } from "../state/deepPlanning";
 import { useDeepPlanSources } from "../hooks/useDeepPlanSources";
 import { DeepPlanSourcePicker } from "./chat/DeepPlanSourcePicker";
-import { DeepPlanAnalysisProgress, DeepPlanChecklist } from "./chat/DeepPlanProgress";
+import { DeepPlanAnalysisProgress } from "./chat/DeepPlanProgress";
 import { DeepPlanReviewCard } from "./chat/DeepPlanReviewCard";
 import { DeepPlanRunControls } from "./chat/DeepPlanRunControls";
 import {
@@ -10055,57 +10055,76 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
 
-  const continueDeepPlan = useCallback(async () => {
-    if (
-      !activeDeepPlan ||
-      !activeThread ||
-      isSendBusy ||
-      isConnecting ||
-      activeEnvironmentUnavailable ||
-      sendInFlightRef.current
-    )
-      return;
-    const sendContext = composerRef.current?.getSendContext();
-    if (!sendContext?.providerAvailable)
-      throw new Error("Select an available provider before continuing this Deep Plan.");
-    sendInFlightRef.current = true;
-    beginLocalDispatch({ preparingWorktree: false });
-    try {
-      const run = await continueDeepPlanForTurn({
-        run: activeDeepPlan,
-        environmentId,
-        projectId: activeThread.projectId,
-        fallbackModelSelection: sendContext.selectedModelSelection,
-        runtimeMode,
-        providers: providerStatuses,
-        apiForEnvironment: getWebDeepPlanningApi,
-        createId: randomUUID,
-      });
-      const targetThreadId = run.approval?.implementationThreadId ?? run.threadId;
-      if (targetThreadId !== activeThread.id && currentRouteThreadKeyRef.current === routeThreadKey)
-        await navigate({
-          to: "/$environmentId/$threadId",
-          params: { environmentId, threadId: targetThreadId },
+  const continueDeepPlan = useCallback(
+    async (automatic = false) => {
+      if (
+        !activeDeepPlan ||
+        !activeThread ||
+        isSendBusy ||
+        isConnecting ||
+        activeEnvironmentUnavailable ||
+        sendInFlightRef.current
+      )
+        return;
+      const sendContext = composerRef.current?.getSendContext();
+      if (!sendContext?.providerAvailable)
+        throw new Error("Select an available provider before continuing this Deep Plan.");
+      sendInFlightRef.current = true;
+      beginLocalDispatch({ preparingWorktree: false });
+      try {
+        const run = await continueDeepPlanForTurn({
+          run: activeDeepPlan,
+          automatic,
+          threadId: activeThread.id,
+          idleGuard:
+            (activeDeepPlan.approval?.implementationThreadId ?? activeDeepPlan.threadId) ===
+            activeThread.id
+              ? {
+                  latestTurnId: activeThread.latestTurn?.turnId ?? null,
+                  latestUserMessageId:
+                    activeThread.messages.findLast(
+                      (message) => message.role === "user" && message.historyOrigin === undefined,
+                    )?.id ?? null,
+                }
+              : {},
+          environmentId,
+          projectId: activeThread.projectId,
+          fallbackModelSelection: sendContext.selectedModelSelection,
+          runtimeMode,
+          providers: providerStatuses,
+          apiForEnvironment: getWebDeepPlanningApi,
+          createId: randomUUID,
         });
-    } finally {
-      sendInFlightRef.current = false;
-      resetLocalDispatch();
-    }
-  }, [
-    activeDeepPlan,
-    activeThread,
-    isSendBusy,
-    isConnecting,
-    activeEnvironmentUnavailable,
-    composerRef,
-    beginLocalDispatch,
-    environmentId,
-    providerStatuses,
-    runtimeMode,
-    routeThreadKey,
-    navigate,
-    resetLocalDispatch,
-  ]);
+        const targetThreadId = run.approval?.implementationThreadId ?? run.threadId;
+        if (
+          targetThreadId !== activeThread.id &&
+          currentRouteThreadKeyRef.current === routeThreadKey
+        )
+          await navigate({
+            to: "/$environmentId/$threadId",
+            params: { environmentId, threadId: targetThreadId },
+          });
+      } finally {
+        sendInFlightRef.current = false;
+        resetLocalDispatch();
+      }
+    },
+    [
+      activeDeepPlan,
+      activeThread,
+      isSendBusy,
+      isConnecting,
+      activeEnvironmentUnavailable,
+      composerRef,
+      beginLocalDispatch,
+      environmentId,
+      providerStatuses,
+      runtimeMode,
+      routeThreadKey,
+      navigate,
+      resetLocalDispatch,
+    ],
+  );
   const deepPlanReview = useMemo(() => {
     if (!activeDeepPlan?.plan) return null;
     return {
@@ -11565,23 +11584,29 @@ export default function ChatView(props: ChatViewProps) {
                                       <DeepPlanRunControls
                                         key={`controls:${environmentId}:${threadId}:${activeDeepPlan.id}`}
                                         run={activeDeepPlan}
+                                        environmentId={environmentId}
+                                        threadId={threadId}
+                                        latestTurnId={activeLatestTurn?.turnId ?? null}
+                                        connected={!isConnecting && !activeEnvironmentUnavailable}
                                         canContinue={
-                                          phase !== "running" && !isSendBusy && !isConnecting
+                                          phase !== "running" &&
+                                          activeThread.session?.status !== "starting" &&
+                                          activeLatestTurn?.state !== "running" &&
+                                          !isSendBusy &&
+                                          !isConnecting &&
+                                          activePendingApproval === null &&
+                                          activePendingUserInput === null
                                         }
                                         disabled={
                                           isSendBusy ||
                                           isConnecting ||
                                           activeEnvironmentUnavailable ||
-                                          phase === "running"
+                                          phase === "running" ||
+                                          activeThread.session?.status === "starting" ||
+                                          activeLatestTurn?.state === "running"
                                         }
                                         onResume={continueDeepPlan}
                                         onFinalValidation={continueDeepPlan}
-                                      />
-                                    ) : null}
-                                    {activeDeepPlan?.approval ? (
-                                      <DeepPlanChecklist
-                                        key={`checklist:${environmentId}:${threadId}:${activeDeepPlan.id}`}
-                                        run={activeDeepPlan}
                                       />
                                     ) : null}
                                   </>

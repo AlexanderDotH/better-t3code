@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, useState } from "react";
+import { act, StrictMode, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import {
@@ -13,6 +13,7 @@ import {
   ProviderInstanceId,
   ProviderDriverKind,
   ThreadId,
+  TurnId,
   type OrchestrationProposedPlan,
   type ServerProvider,
   type PlanParallelismReviewInput,
@@ -261,6 +262,7 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  localStorage.clear();
   __resetPlanParallelismReviewCacheForTests();
   planReview.request
     .mockReset()
@@ -456,7 +458,7 @@ it("keeps the unfinished source visible as reading advances to a saved summary",
   ).toBe(true);
 });
 
-it("resumes preparation before starting analysis and replaces the unknown total with imported sources", async () => {
+it("automatically finishes preparation before starting analysis without a Resume click", async () => {
   let current = makeRun({
     phase: "collecting",
     revision: 0,
@@ -536,6 +538,7 @@ it("resumes preparation before starting analysis and replaces the unknown total 
       <>
         <DeepPlanAnalysisProgress run={current} />
         <DeepPlanRunControls
+          environmentId={environmentId}
           run={current}
           disabled={false}
           canContinue
@@ -549,11 +552,9 @@ it("resumes preparation before starting analysis and replaces the unknown total 
   expect(container.textContent).toContain("Preparing chat histories…");
   expect(container.textContent).not.toContain("0 of 0");
   expect(container.querySelector("progress")).toBeNull();
-  await act(async () => {
-    button("Resume").click();
-    await exportStarted;
-  });
-  expect(button("Resuming…").disabled).toBe(true);
+  await exportStarted;
+  expect(container.textContent).not.toContain("Resume to finish");
+  expect(container.textContent).not.toContain("Resume");
   expect(commands.some((command) => command.type === "thread.turn.start")).toBe(false);
   await act(async () => {
     releaseExport({
@@ -591,7 +592,9 @@ it("separates implemented work from verified steps and final validation while ke
       { stepId: "verify", status: "inProgress", evidence: [], updatedAt: createdAt },
     ],
   });
-  await act(() => root.render(<DeepPlanChecklist key="owner" run={run} />));
+  await act(() =>
+    root.render(<DeepPlanChecklist environmentId={environmentId} key="owner" run={run} />),
+  );
   expect(container.textContent).toContain("0 of 2 verified");
   expect(container.textContent).toContain("Current: Verify the workflow");
   expect(container.textContent).toContain("Final validation has not run");
@@ -611,19 +614,69 @@ it("separates implemented work from verified steps and final validation while ke
       evidence,
     })),
   };
-  await act(() => root.render(<DeepPlanChecklist key="owner" run={verified} />));
+  await act(() =>
+    root.render(<DeepPlanChecklist environmentId={environmentId} key="owner" run={verified} />),
+  );
   expect(container.textContent).toContain("2 of 2 verified");
   expect(button("Expand checklist").getAttribute("aria-expanded")).toBe("false");
   await act(() =>
     root.render(
       <DeepPlanChecklist
+        environmentId={environmentId}
         key="different-thread"
-        run={makeRun({ id: DeepPlanRunId.make("different-run") })}
+        run={makeRun({ id: DeepPlanRunId.make("different-run"), threadId: ThreadId.make("other") })}
       />,
     ),
   );
   expect(button("Collapse checklist").getAttribute("aria-expanded")).toBe("true");
   expect(container.textContent).not.toContain("Focused workflow checks passed");
+});
+
+it.each([false, true])("restores the checklist expansion %s after remounting", async (expanded) => {
+  const run = makeRun();
+  await act(() => root.render(<DeepPlanChecklist environmentId={environmentId} run={run} />));
+  await act(() => button("Collapse checklist").click());
+  if (expanded) await act(() => button("Expand checklist").click());
+
+  await act(() => root.unmount());
+  root = createRoot(container);
+  await act(() => root.render(<DeepPlanChecklist environmentId={environmentId} run={run} />));
+
+  expect(container.querySelector("ol") !== null).toBe(expanded);
+  expect(
+    button(expanded ? "Collapse checklist" : "Expand checklist").getAttribute("aria-expanded"),
+  ).toBe(String(expanded));
+});
+
+it("keeps checklist choices separate by chat and environment, including implementation chats", async () => {
+  const run = makeRun();
+  const implementationThreadId = ThreadId.make("implementation");
+  const remoteEnvironmentId = EnvironmentId.make("remote");
+  const render = (
+    environment = environmentId,
+    currentThreadId = threadId,
+    placement: "composer" | "plan" = "composer",
+  ) =>
+    root.render(
+      <DeepPlanChecklist
+        run={run}
+        environmentId={environment}
+        threadId={currentThreadId}
+        placement={placement}
+      />,
+    );
+
+  await act(() => render(environmentId, implementationThreadId));
+  await act(() => button("Collapse checklist").click());
+  await act(() => render());
+  expect(container.querySelector("ol")).not.toBeNull();
+  await act(() => render(remoteEnvironmentId, implementationThreadId));
+  expect(container.querySelector("ol")).not.toBeNull();
+  await act(() => render(environmentId, implementationThreadId, "plan"));
+  expect(container.querySelector("ol")).toBeNull();
+  await act(() => button("Expand checklist").click());
+  await act(() => render(environmentId, implementationThreadId));
+  expect(container.querySelector("ol")).not.toBeNull();
 });
 
 function completedRun(updatedAt: string): DeepPlanRun {
@@ -655,12 +708,16 @@ it("removes the composer checklist a minute after an active run completes", asyn
   vi.useFakeTimers();
   vi.setSystemTime(createdAt);
   const run = completedRun(createdAt);
-  await act(() => root.render(<DeepPlanChecklist run={{ ...run, phase: "implementing" }} />));
+  await act(() =>
+    root.render(
+      <DeepPlanChecklist environmentId={environmentId} run={{ ...run, phase: "implementing" }} />,
+    ),
+  );
   await act(() => vi.advanceTimersByTime(120_000));
   expect(container.textContent).toContain("Deep checklist");
 
   const finished = { ...run, updatedAt: new Date().toISOString() };
-  await act(() => root.render(<DeepPlanChecklist run={finished} />));
+  await act(() => root.render(<DeepPlanChecklist environmentId={environmentId} run={finished} />));
   await act(() => vi.advanceTimersByTime(59_999));
   expect(container.textContent).toContain("2 of 2 verified");
   await act(() => vi.advanceTimersByTime(1));
@@ -671,12 +728,16 @@ it("keeps old completed checklists out of the composer on revisit but available 
   vi.useFakeTimers();
   vi.setSystemTime("2026-10-16T10:10:00.000Z");
   const run = completedRun(createdAt);
-  await act(() => root.render(<DeepPlanChecklist run={run} />));
+  await act(() => root.render(<DeepPlanChecklist environmentId={environmentId} run={run} />));
   expect(container.textContent).toBe("");
-  await act(() => root.render(<DeepPlanChecklist key="revisit" run={run} />));
+  await act(() =>
+    root.render(<DeepPlanChecklist environmentId={environmentId} key="revisit" run={run} />),
+  );
   expect(container.textContent).toBe("");
 
-  await act(() => root.render(<DeepPlanChecklist run={run} placement="plan" />));
+  await act(() =>
+    root.render(<DeepPlanChecklist environmentId={environmentId} run={run} placement="plan" />),
+  );
   expect(container.textContent).toContain("2 of 2 verified");
   expect(container.textContent).toContain("Focused workflow checks passed");
 });
@@ -684,20 +745,22 @@ it("keeps old completed checklists out of the composer on revisit but available 
 it("uses the remaining completion time and cancels it when another plan becomes active", async () => {
   vi.useFakeTimers();
   vi.setSystemTime("2026-10-16T10:00:45.000Z");
-  await act(() => root.render(<DeepPlanChecklist run={completedRun(createdAt)} />));
+  await act(() =>
+    root.render(<DeepPlanChecklist environmentId={environmentId} run={completedRun(createdAt)} />),
+  );
   await act(() => vi.advanceTimersByTime(14_999));
   expect(container.textContent).toContain("Deep checklist");
   await act(() => vi.advanceTimersByTime(1));
   expect(container.textContent).toBe("");
 
   const next = makeRun({ id: DeepPlanRunId.make("next"), phase: "implementing" });
-  await act(() => root.render(<DeepPlanChecklist run={next} />));
+  await act(() => root.render(<DeepPlanChecklist environmentId={environmentId} run={next} />));
   await act(() => vi.advanceTimersByTime(120_000));
   expect(container.textContent).toContain("Current: Build the workflow");
 
   const finished = completedRun(new Date().toISOString());
-  await act(() => root.render(<DeepPlanChecklist run={finished} />));
-  await act(() => root.render(<DeepPlanChecklist run={next} />));
+  await act(() => root.render(<DeepPlanChecklist environmentId={environmentId} run={finished} />));
+  await act(() => root.render(<DeepPlanChecklist environmentId={environmentId} run={next} />));
   await act(() => vi.advanceTimersByTime(60_000));
   expect(container.textContent).toContain("Current: Build the workflow");
 });
@@ -744,7 +807,9 @@ it("keeps the in-plan checklist live with named sources, dependencies and final 
       })),
     },
   });
-  await act(() => root.render(<DeepPlanChecklist run={run} placement="plan" />));
+  await act(() =>
+    root.render(<DeepPlanChecklist environmentId={environmentId} run={run} placement="plan" />),
+  );
   const checklist = container.querySelector("[data-deep-plan-checklist]")!;
   const steps = checklist.querySelectorAll("details");
   await act(() => {
@@ -757,6 +822,7 @@ it("keeps the in-plan checklist live with named sources, dependencies and final 
   await act(() =>
     root.render(
       <DeepPlanChecklist
+        environmentId={environmentId}
         run={{
           ...run,
           stepStates: [{ stepId: "build", status: "verified", evidence, updatedAt: createdAt }],
@@ -815,11 +881,45 @@ it("analyzes a Deep Plan through the normal composer and offers the reviewed age
   expect(menu.some((label) => label?.includes("new thread"))).toBe(true);
 });
 
+it("keeps Resume and retry errors in the checklist when collapsed", async () => {
+  const run = {
+    ...completedRun(createdAt),
+    phase: "paused" as const,
+    pauseReason: "Reconnect to continue.",
+  };
+  const resume = vi.fn(async () => {
+    throw new Error("Connection is still unavailable.");
+  });
+  await act(() =>
+    root.render(
+      <DeepPlanRunControls
+        run={run}
+        environmentId={environmentId}
+        disabled={false}
+        onResume={resume}
+        onFinalValidation={async () => {}}
+      />,
+    ),
+  );
+  const checklist = container.querySelector("[data-deep-plan-checklist]")!;
+  expect(button("Resume").parentElement).toBe(button("Collapse checklist").parentElement);
+  await act(() => button("Collapse checklist").click());
+  expect(checklist.querySelector("ol")).toBeNull();
+  expect(checklist.contains(button("Resume"))).toBe(true);
+  await act(() => button("Resume").click());
+  expect(resume).toHaveBeenCalledTimes(1);
+  expect(checklist.querySelector('[role="alert"]')?.textContent).toBe(
+    "Connection is still unavailable.",
+  );
+  expect(button("Resume").disabled).toBe(false);
+});
+
 it("shows a recoverable resume error without hiding the durable blocker", async () => {
   const run = makeRun({ phase: "blocked", pauseReason: "Reconnect the source environment." });
   await act(() =>
     root.render(
       <DeepPlanRunControls
+        environmentId={environmentId}
         run={run}
         disabled={false}
         onResume={async () => {
@@ -861,8 +961,8 @@ it("keeps final validation separate after all steps are verified", async () => {
   const render = (value: DeepPlanRun) =>
     root.render(
       <>
-        <DeepPlanChecklist run={value} />
         <DeepPlanRunControls
+          environmentId={environmentId}
           run={value}
           disabled={false}
           onResume={async () => {}}
@@ -951,4 +1051,118 @@ it("cycles the existing composer control through Build, Plan, and Deep Plan with
   expect(button("Deep Plan").getAttribute("aria-pressed")).toBe("true");
   await act(() => button("Deep Plan").click());
   expect(button("Build").getAttribute("aria-pressed")).toBe("false");
+});
+
+it("automatically continues once per idle turn, including under Strict Mode", async () => {
+  const resume = vi.fn(async () => {});
+  let run = makeRun({ phase: "planning", plan: null });
+  let latestTurnId = TurnId.make("initial-turn");
+  const renderControls = (canContinue = true) =>
+    root.render(
+      <StrictMode>
+        <DeepPlanRunControls
+          environmentId={environmentId}
+          run={run}
+          disabled={!canContinue}
+          canContinue={canContinue}
+          latestTurnId={latestTurnId}
+          onResume={resume}
+          onFinalValidation={resume}
+        />
+      </StrictMode>,
+    );
+  await act(() => renderControls());
+  expect(resume).toHaveBeenCalledExactlyOnceWith(true);
+  expect(button("Resume").disabled).toBe(false);
+  run = { ...run, revision: run.revision + 1 };
+  await act(() => renderControls());
+  expect(resume).toHaveBeenCalledTimes(1);
+  latestTurnId = TurnId.make("continued-turn");
+  await act(() => renderControls(false));
+  expect(resume).toHaveBeenCalledTimes(1);
+  await act(() => renderControls());
+  expect(resume).toHaveBeenCalledTimes(2);
+  run = { ...run, phase: "paused", pauseReason: "Stopped by the user." };
+  latestTurnId = TurnId.make("stopped-turn");
+  await act(() => renderControls());
+  expect(resume).toHaveBeenCalledTimes(2);
+  expect(button("Resume").disabled).toBe(false);
+});
+
+it("shows a failed automatic continuation and lets the user retry", async () => {
+  const resume = vi
+    .fn<() => Promise<void>>()
+    .mockRejectedValueOnce(new Error("Source environment disconnected"))
+    .mockResolvedValue(undefined);
+  await act(() =>
+    root.render(
+      <DeepPlanRunControls
+        environmentId={environmentId}
+        run={makeRun({ phase: "planning", plan: null })}
+        disabled={false}
+        canContinue
+        onResume={resume}
+        onFinalValidation={resume}
+      />,
+    ),
+  );
+  expect(resume).toHaveBeenCalledTimes(1);
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+    "Source environment disconnected",
+  );
+  await act(() => button("Resume").click());
+  expect(resume).toHaveBeenCalledTimes(2);
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+});
+
+it("automatically retries unfinished work after reconnecting", async () => {
+  const resume = vi
+    .fn<() => Promise<void>>()
+    .mockRejectedValueOnce(new Error("Environment disconnected"))
+    .mockResolvedValue(undefined);
+  const run = makeRun({ phase: "collecting", plan: null });
+  const renderControls = (connected: boolean) =>
+    root.render(
+      <DeepPlanRunControls
+        environmentId={environmentId}
+        run={run}
+        connected={connected}
+        disabled={!connected}
+        canContinue={connected}
+        onResume={resume}
+        onFinalValidation={resume}
+      />,
+    );
+  await act(() => renderControls(true));
+  expect(resume).toHaveBeenCalledTimes(1);
+  await act(() => renderControls(false));
+  expect(resume).toHaveBeenCalledTimes(1);
+  await act(() => renderControls(true));
+  expect(resume).toHaveBeenCalledTimes(2);
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+});
+
+it("does not automatically repeat a manual Resume while startup is being acknowledged", async () => {
+  let run = makeRun({ phase: "paused", plan: null });
+  const resume = vi.fn(async () => {});
+  const latestTurnId = TurnId.make("last-completed-turn");
+  const renderControls = (canContinue = true) =>
+    root.render(
+      <DeepPlanRunControls
+        environmentId={environmentId}
+        run={run}
+        disabled={!canContinue}
+        canContinue={canContinue}
+        latestTurnId={latestTurnId}
+        onResume={resume}
+        onFinalValidation={resume}
+      />,
+    );
+  await act(() => renderControls());
+  await act(() => button("Resume").click());
+  expect(resume).toHaveBeenCalledTimes(1);
+  run = { ...run, phase: "planning", revision: run.revision + 1 };
+  await act(() => renderControls(false));
+  await act(() => renderControls());
+  expect(resume).toHaveBeenCalledTimes(1);
 });

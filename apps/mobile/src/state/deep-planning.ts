@@ -15,6 +15,7 @@ import {
   type ModelSelection,
   type ProjectId,
   type RuntimeMode,
+  type ThreadId,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { continueDeepPlanForTurn } from "@t3tools/client-runtime/deep-planning";
@@ -91,6 +92,9 @@ export async function resumeMobileDeepPlan(
   run: DeepPlanRun,
   options: {
     readonly projectId: ProjectId;
+    readonly automatic?: boolean;
+    readonly threadId?: ThreadId;
+    readonly idleGuard?: Parameters<typeof continueDeepPlanForTurn>[0]["idleGuard"];
     readonly fallbackModelSelection: ModelSelection;
     readonly runtimeMode: RuntimeMode;
     readonly providers?: ReadonlyArray<ServerProvider>;

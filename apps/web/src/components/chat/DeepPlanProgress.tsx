@@ -1,5 +1,7 @@
-import { useEffect, useId, useState } from "react";
-import type { DeepPlanRun, DeepPlanStepStatus } from "@t3tools/contracts";
+import { useEffect, useId, useState, type ReactNode } from "react";
+import type { DeepPlanRun, DeepPlanStepStatus, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { threadKey } from "@t3tools/client-runtime/state/entities";
+import * as Schema from "effect/Schema";
 import {
   deepPlanCitationTitles,
   deepPlanSourceTitle,
@@ -18,6 +20,7 @@ import {
   TriangleAlertIcon,
 } from "lucide-react";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
+import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { Button } from "../ui/button";
 import { ComposerBanner } from "./ComposerBanner";
 import { ChatSizeMotion } from "./ChatSizeMotion";
@@ -118,13 +121,25 @@ export function DeepPlanAnalysisProgress({ run }: { run: DeepPlanRun }) {
 
 export function DeepPlanChecklist({
   run,
+  environmentId,
+  threadId = run.threadId,
   placement = "composer",
+  actions,
+  notice,
 }: {
   run: DeepPlanRun;
+  environmentId: EnvironmentId;
+  threadId?: ThreadId;
   placement?: "composer" | "plan";
+  actions?: ReactNode;
+  notice?: ReactNode;
 }) {
   const translate = useInterfaceTranslator().message;
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useLocalStorage(
+    `t3code:deep-plan-checklist-expanded:${threadKey({ environmentId, threadId })}`,
+    true,
+    Schema.Boolean,
+  );
   const detailsId = useId();
   const [now, setNow] = useState(() => Date.now());
   const expiresAt = placement === "composer" ? getDeepPlanComposerChecklistExpiresAt(run) : null;
@@ -156,13 +171,14 @@ export function DeepPlanChecklist({
               {translate("chat.deepPlan.stepProgress", { completed, total: plan.steps.length })}
             </p>
           </div>
+          {actions}
           <Button
             variant="ghost-muted"
             size="icon"
             aria-label={translate(expanded ? "chat.deepPlan.collapse" : "chat.deepPlan.expand")}
             aria-controls={detailsId}
             aria-expanded={expanded}
-            onClick={() => setExpanded(!expanded)}
+            onClick={() => setExpanded((current) => !current)}
           >
             {expanded ? (
               <ChevronDownIcon aria-hidden="true" />
@@ -171,6 +187,7 @@ export function DeepPlanChecklist({
             )}
           </Button>
         </div>
+        {notice ? <div className="mt-2 space-y-2">{notice}</div> : null}
         {current ? (
           <p className="mt-2 break-words text-xs text-muted-foreground">
             {translate("chat.deepPlan.currentStep", { title: current.title })}

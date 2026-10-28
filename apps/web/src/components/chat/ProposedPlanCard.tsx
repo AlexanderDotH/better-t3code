@@ -314,7 +314,12 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
         </div>
         {deepPlan?.plan ? (
           <div className="mt-4 border-t border-primary/20 pt-3">
-            <DeepPlanChecklist run={deepPlan} placement="plan" />
+            <DeepPlanChecklist
+              run={deepPlan}
+              environmentId={environmentId}
+              threadId={threadRef?.threadId ?? deepPlan.threadId}
+              placement="plan"
+            />
           </div>
         ) : null}
 

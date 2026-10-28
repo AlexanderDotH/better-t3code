@@ -11,6 +11,8 @@ import {
   type DeepPlanSourceRef,
 } from "@t3tools/contracts";
 import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
+import { AsyncResult } from "effect/unstable/reactivity";
+import type { Preferences } from "../../persistence/mobile-preferences";
 import {
   cloneElement,
   createElement,
@@ -20,19 +22,38 @@ import {
 } from "react";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-vi.mock("./ChatBubble", () => ({ useChatBubblePalette: () => ({ better: false }) }));
-
 const fixture = vi.hoisted(() => ({
+  preferences: {} as Preferences,
   states: [] as unknown[],
   cursor: 0,
   platform: "ios",
   shortcut: null as (() => unknown) | null,
+  effects: null as Array<() => void> | null,
+}));
+vi.mock("./ChatBubble", () => ({ useChatBubblePalette: () => ({ better: false }) }));
+
+vi.mock("../../state/preferences", () => ({
+  mobilePreferencesAtom: {},
+  updateMobilePreferencesAtom: {},
+}));
+vi.mock("@effect/atom-react", () => ({
+  useAtomValue: () => AsyncResult.success(fixture.preferences),
+  useAtomSet: () => (update: { transform: (current: Preferences) => Partial<Preferences> }) => {
+    fixture.preferences = { ...fixture.preferences, ...update.transform(fixture.preferences) };
+  },
 }));
 vi.mock("react", async (importOriginal) => ({
   ...(await importOriginal<typeof import("react")>()),
   memo: (component: unknown) => component,
   useCallback: (callback: unknown) => callback,
-  useEffect: () => {},
+  useEffect: (effect: () => void) => {
+    fixture.effects?.push(effect);
+  },
+  useRef: (initial: unknown) => {
+    const index = fixture.cursor++;
+    if (!(index in fixture.states)) fixture.states[index] = { current: initial };
+    return fixture.states[index];
+  },
   useState: (initial: unknown) => {
     const index = fixture.cursor++;
     if (!(index in fixture.states))
@@ -257,6 +278,7 @@ function runFixture(): DeepPlanRun {
 }
 
 beforeEach(() => {
+  fixture.preferences = {};
   fixture.states = [];
   fixture.cursor = 0;
   fixture.platform = "ios";
@@ -338,7 +360,7 @@ describe("native Deep Planning", () => {
 
   it("expands step requirements and shows updated evidence without losing the open step", () => {
     let run = runFixture();
-    const checklist = () => render(() => DeepPlanChecklist({ run }));
+    const checklist = () => render(() => DeepPlanChecklist({ environmentId, run }));
     expect(text(checklist())).toContain("12 of 28 sources analyzed");
     expect(text(checklist())).not.toContain("Selections survive reconnect");
     press(checklist(), "Choose sources");
@@ -383,7 +405,7 @@ describe("native Deep Planning", () => {
         },
       ],
     };
-    const checklist = () => render(() => DeepPlanChecklist({ run }));
+    const checklist = () => render(() => DeepPlanChecklist({ environmentId, run }));
     expect(text(checklist())).toContain(source.threadTitle);
     expect(text(checklist())).toContain("Reading · 37%");
     expect(text(checklist())).toContain("0 of 1 sources analyzed");
@@ -425,7 +447,7 @@ describe("native Deep Planning", () => {
         ],
       },
     };
-    const result = render(() => DeepPlanChecklist({ run }));
+    const result = render(() => DeepPlanChecklist({ environmentId, run }));
     expect(text(result)).toContain("Source collection failed");
     expect(text(result)).toContain("Remote source disconnected");
     expect(text(result)).toContain("Final validation found a regression");
@@ -441,7 +463,8 @@ describe("native Deep Planning", () => {
     const resume = vi.fn(async () => {
       throw new Error("Reconnect to resume this run");
     });
-    const checklist = () => render(() => DeepPlanChecklist({ run, onResume: resume }));
+    const checklist = () =>
+      render(() => DeepPlanChecklist({ environmentId, run, onResume: resume }));
     await press(checklist(), "Resume");
     const failed = checklist();
     expect(text(failed)).toContain("Validation needs another check");
@@ -454,14 +477,31 @@ describe("native Deep Planning", () => {
   });
 });
 
-it("offers continuation after the provider stops and keeps it hidden during active work", async () => {
+it("automatically continues idle work once and waits while the provider is busy", async () => {
   const run = runFixture();
   const resume = vi.fn(async () => {});
-  const idle = render(() => DeepPlanChecklist({ run, canContinue: true, onResume: resume }));
-  await press(idle, "Resume");
-  expect(resume).toHaveBeenCalledTimes(1);
-  const busy = render(() => DeepPlanChecklist({ run, canContinue: false, onResume: resume }));
-  expect(hosts(busy, "pressable").some((button) => text(button) === "Resume")).toBe(false);
+  const effects: Array<() => void> = [];
+  fixture.effects = effects;
+  const checklist = (canContinue: boolean) => {
+    effects.length = 0;
+    const result = render(() =>
+      DeepPlanChecklist({ environmentId, run, canContinue, onResume: resume }),
+    );
+    for (const effect of effects) effect();
+    return result;
+  };
+  try {
+    checklist(false);
+    expect(resume).not.toHaveBeenCalled();
+    const idle = checklist(true);
+    await resume.mock.results[0]?.value;
+    expect(resume).toHaveBeenCalledExactlyOnceWith(true);
+    expect(hosts(idle, "pressable").some((button) => text(button) === "Resume")).toBe(true);
+    checklist(true);
+    expect(resume).toHaveBeenCalledTimes(1);
+  } finally {
+    fixture.effects = null;
+  }
 });
 
 it("shows named source references and dependencies in the embedded checklist", async () => {
@@ -481,7 +521,7 @@ it("shows named source references and dependencies in the embedded checklist", a
       })),
     },
   };
-  const checklist = () => render(() => DeepPlanChecklist({ run, embedded: true }));
+  const checklist = () => render(() => DeepPlanChecklist({ environmentId, run, embedded: true }));
   await press(checklist(), "Show checklist");
   const result = checklist();
   expect(text(result)).toContain("Depends on");
@@ -491,4 +531,70 @@ it("shows named source references and dependencies in the embedded checklist", a
   expect(text(result)).toContain("Run focused native interaction tests");
   expect(text(result)).not.toContain("internal-message-reference");
   expect(text(result)).not.toContain(sourceId);
+});
+
+it("does not automatically repeat a manual Resume as the run becomes active", async () => {
+  let run: DeepPlanRun = { ...runFixture(), phase: "paused" };
+  const resume = vi.fn(async () => {});
+  const effects: Array<() => void> = [];
+  fixture.effects = effects;
+  const checklist = (canContinue = true) => {
+    effects.length = 0;
+    const result = render(() =>
+      DeepPlanChecklist({
+        environmentId,
+        run,
+        canContinue,
+        resumeDisabled: !canContinue,
+        onResume: resume,
+      }),
+    );
+    for (const effect of effects) effect();
+    return result;
+  };
+  try {
+    await press(checklist(), "Resume");
+    await resume.mock.results[0]?.value;
+    run = { ...run, phase: "implementing", revision: run.revision + 1 };
+    checklist(false);
+    checklist();
+    expect(resume).toHaveBeenCalledTimes(1);
+  } finally {
+    fixture.effects = null;
+  }
+});
+
+it.each([false, true])(
+  "retains native checklist expansion %s across remounts and chat switches",
+  (expanded) => {
+    const run = runFixture();
+    const implementationThreadId = ThreadId.make("implementation");
+    const checklist = (currentEnvironmentId = environmentId, threadId = implementationThreadId) =>
+      render(() => DeepPlanChecklist({ run, environmentId: currentEnvironmentId, threadId }));
+    press(checklist(), "Collapse checklist");
+    if (expanded) press(checklist(), "Expand checklist");
+
+    fixture.states = [];
+    expect(hosts(checklist(), "scroll-view").length > 0).toBe(expanded);
+    expect(hosts(checklist(environmentId, run.threadId), "scroll-view").length).toBeGreaterThan(0);
+    expect(hosts(checklist(EnvironmentId.make("remote")), "scroll-view").length).toBeGreaterThan(0);
+    expect(hosts(checklist(), "scroll-view").length > 0).toBe(expanded);
+  },
+);
+
+it("keeps native Resume and retry errors available with a collapsed checklist", async () => {
+  const run = { ...runFixture(), phase: "paused" as const, pauseReason: "Reconnect to continue." };
+  const resume = vi.fn(async () => {
+    throw new Error("Connection is still unavailable.");
+  });
+  const checklist = () => render(() => DeepPlanChecklist({ environmentId, run, onResume: resume }));
+  press(checklist(), "Collapse checklist");
+  expect(hosts(checklist(), "scroll-view")).toHaveLength(0);
+  await press(checklist(), "Resume");
+  expect(resume).toHaveBeenCalledTimes(1);
+  expect(text(checklist())).toContain("Connection is still unavailable.");
+  expect(text(checklist())).toContain("Reconnect to continue.");
+  expect(
+    hosts(checklist(), "pressable").find((entry) => text(entry) === "Resume")?.props.disabled,
+  ).toBe(false);
 });

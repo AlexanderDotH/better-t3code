@@ -15,7 +15,11 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { buildDeepPlanImplementationPrompt, selectDeepPlanProgress } from "./deepPlanningRun.ts";
+import {
+  buildDeepPlanContinuationPrompt,
+  selectDeepPlanProgress,
+  shouldAutoContinueDeepPlan,
+} from "./deepPlanningRun.ts";
 
 import {
   awaitDeepPlanSourceOperation,
@@ -186,6 +190,7 @@ async function prepareDeepPlan(input: {
     }
     return prepared;
   } catch (error) {
+    if (!input.signal?.aborted) throw error;
     try {
       const failed = await api.getRun({ threadId: input.threadId, runId });
       if (failed)
@@ -242,8 +247,14 @@ export async function prepareDeepPlanForTurn(
   return preparation.result;
 }
 
-export async function continueDeepPlanForTurn(input: {
+async function continueDeepPlan(input: {
   readonly run: DeepPlanRun;
+  readonly automatic?: boolean;
+  readonly threadId?: ThreadId;
+  readonly idleGuard?: Extract<
+    ClientOrchestrationCommand,
+    { type: "thread.turn.start" }
+  >["idleGuard"];
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
   readonly fallbackModelSelection: ModelSelection;
@@ -259,6 +270,8 @@ export async function continueDeepPlanForTurn(input: {
   let run = await api.getRun({ threadId: input.run.threadId, runId: input.run.id });
   if (!run || run.id !== input.run.id || run.phase === "completed")
     throw new Error("This Deep Plan is no longer waiting to continue.");
+  if (input.automatic && !shouldAutoContinueDeepPlan(run, input.threadId ?? input.run.threadId))
+    return run;
   const preparation = preparations.get(preparationKey(input.environmentId, run.threadId));
   // The original sender owns starting the turn once this collection finishes.
   if (preparation) return preparation.result;
@@ -293,35 +306,69 @@ export async function continueDeepPlanForTurn(input: {
       throw new Error("Deep Plan resumption was not confirmed. Refresh before continuing.");
     run = resumed;
   }
-  // The durable validation reactor owns the validation turn, including resumed attempts.
-  if (run.approval && selectDeepPlanProgress(run).allStepsVerified) return run;
+  // Pending validation belongs to the durable reactor; an interrupted attempt can continue.
+  if (
+    run.approval &&
+    selectDeepPlanProgress(run).allStepsVerified &&
+    run.finalValidation.status !== "inProgress"
+  )
+    return run;
   if (run.phase === "awaitingApproval") return run;
+  if (!run.approval && !input.automatic) {
+    await api.dispatchCommand({
+      type: "thread.interaction-mode.set",
+      commandId: CommandId.make(input.createId()),
+      threadId: run.threadId,
+      interactionMode: "plan",
+      createdAt: now(),
+    });
+  }
   const selection = run.approval?.implementation ?? input.fallbackModelSelection;
   const modelSelection: ModelSelection = {
     instanceId: selection.instanceId,
     model: selection.model,
     ...(selection.options === undefined ? {} : { options: selection.options }),
   };
-  const requestedParallelism = run.approval?.requestedParallelism ?? 1;
-  const provider = input.providers?.find((entry) => entry.instanceId === modelSelection.instanceId);
-  const text = run.approval
-    ? buildDeepPlanImplementationPrompt(run, {
-        strategy:
-          requestedParallelism > 1
-            ? { kind: "subagents", count: requestedParallelism }
-            : { kind: "standard" },
-        ...(provider ? { provider } : {}),
-      })
-    : `Resume Deep Plan run ${run.id} owned by thread ${run.threadId}. Read its durable state with deep_plan_state, continue reading and summarizing every frozen source, and publish the complete structured plan with deep_plan_publish. Do not omit unavailable sources or begin implementation before approval.`;
+  const text =
+    run.phase === "validating" && run.finalValidation.requestId
+      ? `Continue the final overall validation for Deep Plan ${run.id}, request ${run.finalValidation.requestId}. Read deep_plan_state and the saved evidence, finish every required check, then record the result with deep_plan_validation and the same requestId. Preserve completed checks and fix failures within the approved scope.`
+      : run.approval
+        ? buildDeepPlanContinuationPrompt(run)
+        : `Resume Deep Plan run ${run.id} owned by thread ${run.threadId}. Read its durable state with deep_plan_state, continue reading and summarizing every frozen source, and publish the complete structured plan with deep_plan_publish. Do not omit unavailable sources or begin implementation before approval.`;
+  const commandId = CommandId.make(input.createId());
   await api.dispatchCommand({
     type: "thread.turn.start",
-    commandId: CommandId.make(input.createId()),
+    commandId,
     threadId: run.approval?.implementationThreadId ?? run.threadId,
-    message: { messageId: MessageId.make(input.createId()), role: "user", text, attachments: [] },
+    message: {
+      messageId: MessageId.make(commandId + ":message"),
+      role: "user",
+      text,
+      attachments: [],
+    },
+    background: { runId: run.id },
     modelSelection,
     runtimeMode: input.runtimeMode,
     interactionMode: run.approval ? "default" : "plan",
+    idleGuard: input.automatic ? (input.idleGuard ?? {}) : {},
     createdAt: now(),
   });
   return run;
+}
+
+const continuations = new Map<string, Promise<DeepPlanRun>>();
+
+export async function continueDeepPlanForTurn(
+  input: Parameters<typeof continueDeepPlan>[0],
+): Promise<DeepPlanRun> {
+  const key = JSON.stringify([input.environmentId, input.run.threadId, input.run.id]);
+  const active = continuations.get(key);
+  if (active) return active;
+  const result = continueDeepPlan(input);
+  continuations.set(key, result);
+  try {
+    return await result;
+  } finally {
+    if (continuations.get(key) === result) continuations.delete(key);
+  }
 }

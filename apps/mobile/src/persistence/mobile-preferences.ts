@@ -47,6 +47,9 @@ const decodeChatVisualModeSyncRecordV2 = Schema.decodeUnknownOption(ChatVisualMo
 const decodeInterfaceLanguageSyncRecord = Schema.decodeUnknownOption(InterfaceLanguageSyncRecord);
 const decodeInterfaceLocaleSyncRecordV1 = Schema.decodeUnknownOption(InterfaceLocaleSyncRecordV1);
 const decodeBetterT3SettingsV1 = Schema.decodeUnknownOption(BetterT3SettingsV1);
+const decodeChecklistExpansion = Schema.decodeUnknownOption(
+  Schema.Record(Schema.String, Schema.Boolean),
+);
 
 const MOBILE_BETTER_T3_BOOLEAN_MIRRORS = [
   ["experimentalFetch", "agent.fetch"],
@@ -83,6 +86,7 @@ export interface Preferences {
   readonly collapsedProjectGroups?: readonly string[];
   readonly composerEnterBehavior?: ComposerEnterBehavior;
   readonly olderProjectsExpanded?: boolean;
+  readonly deepPlanChecklistExpandedByThread?: Readonly<Record<string, boolean>>;
   /** Offline mirror of the newest synchronized per-project Classic preview limit. */
   readonly projectThreadPreviewSyncRecord?: ProjectThreadPreviewSyncRecordType;
   /** Offline mirror of the newest synchronized chat transcript presentation. */
@@ -193,6 +197,7 @@ export function sanitizeMobilePreferences(
     connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
     collapsedProjectGroups?: readonly string[];
     olderProjectsExpanded?: boolean;
+    deepPlanChecklistExpandedByThread?: Readonly<Record<string, boolean>>;
     projectThreadPreviewSyncRecord?: ProjectThreadPreviewSyncRecordType;
     chatVisualModeSyncRecord?: ChatVisualModeSyncRecordType;
     chatVisualModeSyncRecordV2?: ChatVisualModeSyncRecordV2Type;
@@ -215,6 +220,11 @@ export function sanitizeMobilePreferences(
     threadListV2SettledShelfExpanded?: boolean;
     threadListV2SnoozedShelfExpanded?: boolean;
   } = {};
+
+  const checklistExpansion = decodeChecklistExpansion(parsed.deepPlanChecklistExpandedByThread);
+  if (Option.isSome(checklistExpansion)) {
+    preferences.deepPlanChecklistExpandedByThread = checklistExpansion.value;
+  }
 
   if (typeof parsed.composerUsageLimitsVisible === "boolean") {
     preferences.composerUsageLimitsVisible = parsed.composerUsageLimitsVisible;

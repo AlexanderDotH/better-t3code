@@ -1048,6 +1048,9 @@ it.layer(TestLayer)("DeepPlanSources", (it) => {
           0,
         );
         const runId = DeepPlanRunId.make(`${threadId}-empty-run`);
+        const uninitialized = yield* sources.listSources({ threadId, runId }).pipe(Effect.flip);
+        assert.equal(uninitialized.code, "run-not-found");
+        assert.include(uninitialized.message, "has not been initialized");
         assert.equal(
           (yield* sources.assertCompleteCoverage(runId).pipe(Effect.flip)).code,
           "run-not-found",
@@ -1065,6 +1068,13 @@ it.layer(TestLayer)("DeepPlanSources", (it) => {
           localExportId: emptyExport.exportId,
         });
         assert.deepStrictEqual((yield* sources.assertCompleteCoverage(runId)).sources, []);
+        assert.deepStrictEqual(
+          (yield* sources.listSources({ threadId: emptyOwner, runId })).sources,
+          [],
+        );
+        const wrongOwner = yield* sources.listSources({ threadId, runId }).pipe(Effect.flip);
+        assert.equal(wrongOwner.code, "run-not-found");
+        assert.include(wrongOwner.message, "does not belong to this run");
       }),
   );
 });

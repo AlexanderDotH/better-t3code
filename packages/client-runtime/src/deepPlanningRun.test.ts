@@ -22,6 +22,7 @@ import {
   approveDeepPlanImplementation,
   buildDeepPlanFinalValidationPrompt,
   buildDeepPlanImplementationPrompt,
+  buildDeepPlanContinuationPrompt,
   formatDeepPlanMarkdown,
   getApprovedDeepPlanReference,
   getDeepPlanApprovalBlockReason,
@@ -29,6 +30,7 @@ import {
   selectDeepPlanProgress,
   selectDeepPlanSteps,
   selectDurableDeepPlan,
+  shouldAutoContinueDeepPlan,
 } from "./deepPlanningRun.ts";
 
 const threadId = ThreadId.make("owner");
@@ -512,4 +514,61 @@ describe("DeepPlan approval dispatch", () => {
       }),
     ).rejects.toThrow("not confirmed");
   });
+});
+
+describe("automatic Deep Plan continuation", () => {
+  it.each(["collecting", "planning"] as const)("continues %s in the owning thread", (phase) => {
+    const current = run({ phase, plan: null, approval: null });
+    expect(shouldAutoContinueDeepPlan(current, threadId)).toBe(true);
+    expect(shouldAutoContinueDeepPlan(current, implementationThreadId)).toBe(false);
+  });
+
+  it("continues approved work only in the implementing thread", () => {
+    const current = run();
+    expect(shouldAutoContinueDeepPlan(current, implementationThreadId)).toBe(true);
+    expect(shouldAutoContinueDeepPlan(current, threadId)).toBe(false);
+  });
+
+  it.each(["paused", "blocked", "failed", "awaitingApproval", "validating", "completed"] as const)(
+    "keeps %s runs waiting for their owner",
+    (phase) => {
+      expect(shouldAutoContinueDeepPlan(run({ phase }), implementationThreadId)).toBe(false);
+      expect(shouldAutoContinueDeepPlan(run({ phase, approval: null }), threadId)).toBe(false);
+    },
+  );
+
+  it("leaves verified work to the server's validation reactor", () => {
+    const current = run();
+    const verified = {
+      ...current,
+      stepStates: current.plan!.steps.map((step) => ({
+        stepId: step.id,
+        status: "verified" as const,
+        evidence,
+        updatedAt: createdAt,
+      })),
+    };
+    expect(shouldAutoContinueDeepPlan(verified, implementationThreadId)).toBe(false);
+  });
+});
+
+it("continues from saved progress and agents without restarting the implementation contract", () => {
+  const current = run();
+  const continuing = {
+    ...current,
+    approval: { ...current.approval!, requestedParallelism: 4 },
+    stepStates: [
+      { stepId: "build", status: "verified" as const, evidence, updatedAt: createdAt },
+      { stepId: "verify", status: "blocked" as const, evidence: [], updatedAt: createdAt },
+    ],
+  };
+  const prompt = buildDeepPlanContinuationPrompt(continuing);
+  expect(prompt).toContain("approved plan version 2");
+  expect(prompt).toContain("- build: verified");
+  expect(prompt).toContain("- verify: blocked");
+  expect(prompt).toContain("Reuse the existing subagents and their results");
+  expect(prompt).toContain("approved parallelism of 4");
+  expect(prompt).toContain("required user decisions and external prerequisites");
+  expect(prompt).not.toContain("PLEASE IMPLEMENT THIS COMPLETE PLAN");
+  expect(continuing.stepStates[0]?.evidence).toEqual(evidence);
 });
