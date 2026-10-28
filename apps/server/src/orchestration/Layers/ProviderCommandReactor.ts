@@ -24,6 +24,7 @@ import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/Projectio
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import {
   type ChatAttachment,
+  type ProviderInteractionMode,
   CODEX_REASONING_EFFORT_OPTION_ID,
   CommandId,
   EventId,
@@ -639,7 +640,7 @@ const make = Effect.gen(function* () {
     readonly decisionModelSelection: ModelSelection;
     readonly cwd: string;
     readonly userPrompt: string;
-    readonly interactionMode: "default" | "plan";
+    readonly interactionMode: ProviderInteractionMode;
     readonly attachments: ReadonlyArray<ChatAttachment>;
     readonly conversation: ReadonlyArray<{
       readonly role: "user" | "assistant";
@@ -1072,7 +1073,7 @@ const make = Effect.gen(function* () {
     options?: {
       readonly modelSelection?: ModelSelection;
       readonly pendingTurnStart?: boolean;
-      readonly interactionMode?: "default" | "plan";
+      readonly interactionMode?: ProviderInteractionMode;
       readonly forceFreshSession?: boolean;
       readonly projectMemoryMode?: ProjectMemoryMode;
       readonly nativeFork?: {
@@ -1467,7 +1468,7 @@ const make = Effect.gen(function* () {
     readonly background?: boolean;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly modelSelection?: ModelSelection;
-    readonly interactionMode?: "default" | "plan";
+    readonly interactionMode?: ProviderInteractionMode;
     readonly resultOnly?: boolean;
     readonly retryOfTurnId?: TurnId;
     readonly createdAt: string;
@@ -3034,7 +3035,10 @@ const make = Effect.gen(function* () {
           Effect.catchCause(recoverTurnStartFailure),
         );
 
-      if (event.payload.fetchMode === undefined) {
+      if (
+        event.payload.fetchMode === undefined ||
+        sendTurnRequest.value.interactionMode === "chat"
+      ) {
         yield* sendMainTurn(sendTurnRequest.value);
         return;
       }

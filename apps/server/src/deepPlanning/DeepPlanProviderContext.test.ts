@@ -89,7 +89,15 @@ const approvedRun: DeepPlanRun = {
 };
 
 describe("deepPlanProviderContext", () => {
-  it.each(["collecting", "planning", "awaitingApproval"] as const)(
+  it("keeps Chat free of pending and approved Deep Plan work", () => {
+    for (const run of [planningRun, approvedRun]) {
+      const threadId = run.approval?.implementationThreadId ?? owner;
+      expect(deepPlanProviderContext(run, threadId, selectedModel, "chat")).toBeUndefined();
+      expect(canContinueDeepPlan(run, "chat")).toBe(false);
+    }
+  });
+
+  it.each(["planning", "awaitingApproval"] as const)(
     "only binds %s to a planning turn and never overrides Build",
     (phase) => {
       expect(
@@ -109,14 +117,20 @@ describe("deepPlanProviderContext", () => {
     },
   );
 
-  it.each(["collecting", "planning"] as const)(
-    "does not automatically continue an unapproved %s run outside Plan mode",
-    (phase) => {
-      expect(canContinueDeepPlan({ ...planningRun, phase }, "default")).toBe(false);
-      expect(canContinueDeepPlan({ ...planningRun, phase }, "plan")).toBe(true);
-      expect(canContinueDeepPlan(approvedRun, "default")).toBe(true);
+  it.each(["default", "plan"] as const)(
+    "does not activate an unfinished collection in %s mode",
+    (mode) => {
+      const run: DeepPlanRun = { ...planningRun, phase: "collecting" };
+      expect(deepPlanProviderContext(run, owner, selectedModel, mode)).toBeUndefined();
+      expect(canContinueDeepPlan(run, mode)).toBe(false);
     },
   );
+
+  it("does not automatically continue an unapproved planning run outside Plan mode", () => {
+    expect(canContinueDeepPlan(planningRun, "default")).toBe(false);
+    expect(canContinueDeepPlan(planningRun, "plan")).toBe(true);
+    expect(canContinueDeepPlan(approvedRun, "default")).toBe(true);
+  });
 
   it("preserves explicit Plan mode while keeping the approved implementing model", () => {
     expect(deepPlanProviderContext(approvedRun, implementer, selectedModel, "plan")).toMatchObject({

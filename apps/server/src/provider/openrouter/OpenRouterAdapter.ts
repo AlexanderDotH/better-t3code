@@ -356,6 +356,7 @@ export function buildOpenRouterSystemInstructions(input: {
   readonly interactionMode: ProviderInteractionMode | undefined;
   readonly fetchWorker: boolean;
 }): string {
+  if (input.interactionMode === "chat") return nativeHarnessWorkspaceInstructions(input);
   const access =
     input.interactionMode === "plan" ||
     input.sandboxMode === "read-only" ||

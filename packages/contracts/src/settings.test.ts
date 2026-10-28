@@ -143,7 +143,7 @@ describe("project chat settings", () => {
       model: "gpt-5.4",
       options: [{ id: "reasoningEffort", value: "high" }],
     };
-    for (const composerMode of ["default", "plan", "deep-plan"] as const) {
+    for (const composerMode of ["default", "plan", "deep-plan", "chat"] as const) {
       const settings = decodeServerSettings({
         projectChatSettings: {
           [projectId]: { modelSelection: selection, runtimeMode: "auto", composerMode },

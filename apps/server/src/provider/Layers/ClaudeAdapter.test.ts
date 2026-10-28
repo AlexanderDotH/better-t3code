@@ -1,5 +1,7 @@
+import { buildChatModeInstructions } from "../ChatModeInstructions.ts";
 // @effect-diagnostics abortControllerInEffect:off - Tests hand-built AbortSignals to the SDK query stub to exercise cancellation.
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
+import { buildDeepPlanInstructions } from "../DeepPlanInstructions.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -54,6 +56,7 @@ import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import type { ClaudeScopedLimitNames } from "./claudeUsageLimits.ts";
 import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
+const inactiveDeepPlanBlock = { type: "text", text: buildDeepPlanInstructions() } as const;
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -924,7 +927,7 @@ describe("ClaudeAdapterLive", () => {
           attachments: [],
         });
         const prompt = yield* Effect.promise(() =>
-          readFirstPromptText(customHarness.getLastCreateQueryInput()),
+          readFirstPromptMessage(customHarness.getLastCreateQueryInput()),
         );
         return { options, prompt };
       }).pipe(
@@ -941,7 +944,10 @@ describe("ClaudeAdapterLive", () => {
           `${SYNTHETIC_CLAUDE_CAPABLE_MODEL}[expanded]`,
           SYNTHETIC_CLAUDE_COLLIDING_ALIAS,
         ]);
-        assert.equal(customPrompt, "keep this prompt literal");
+        assert.deepEqual(customPrompt?.message.content, [
+          inactiveDeepPlanBlock,
+          { type: "text", text: "keep this prompt literal" },
+        ]);
 
         const builtInOptions = yield* start(builtInHarness, SYNTHETIC_CLAUDE_CAPABLE_MODEL);
         assert.equal(builtInOptions.model, `${SYNTHETIC_CLAUDE_CAPABLE_MODEL}[expanded]`);
@@ -982,8 +988,11 @@ describe("ClaudeAdapterLive", () => {
 
       const createInput = harness.getLastCreateQueryInput();
       assert.equal(createInput?.options.effort, "high");
-      const promptText = yield* Effect.promise(() => readFirstPromptText(createInput));
-      assert.equal(promptText, "Ultrathink:\nInvestigate the edge cases");
+      const prompt = yield* Effect.promise(() => readFirstPromptMessage(createInput));
+      assert.deepEqual(prompt?.message.content, [
+        inactiveDeepPlanBlock,
+        { type: "text", text: "Ultrathink:\nInvestigate the edge cases" },
+      ]);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -1069,6 +1078,7 @@ describe("ClaudeAdapterLive", () => {
       const promptMessage = yield* Effect.promise(() => readFirstPromptMessage(createInput));
       assert.isDefined(promptMessage);
       assert.deepEqual(promptMessage?.message.content, [
+        inactiveDeepPlanBlock,
         {
           type: "image",
           source: {
@@ -1214,6 +1224,7 @@ describe("ClaudeAdapterLive", () => {
         readFirstPromptMessage(harness.getLastCreateQueryInput()),
       );
       assert.deepEqual(promptMessage?.message.content, [
+        inactiveDeepPlanBlock,
         { type: "text", text: "ok, now" },
         { type: "text", text: "/implement all the tickets\nstart with auth" },
       ]);
@@ -1269,7 +1280,7 @@ describe("ClaudeAdapterLive", () => {
       const blocks = promptMessage.message.content as Array<{ type: string; text?: string }>;
       assert.deepEqual(
         blocks.map((block) => (block.type === "text" ? block.text : block.type)),
-        ["image", "/review this screenshot"],
+        [inactiveDeepPlanBlock.text, "image", "/review this screenshot"],
       );
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -1305,10 +1316,13 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
       });
 
-      const promptText = yield* Effect.promise(() =>
-        readFirstPromptText(harness.getLastCreateQueryInput()),
+      const prompt = yield* Effect.promise(() =>
+        readFirstPromptMessage(harness.getLastCreateQueryInput()),
       );
-      assert.equal(promptText, "run $deploy and echo $HOME");
+      assert.deepEqual(prompt?.message.content, [
+        inactiveDeepPlanBlock,
+        { type: "text", text: "run $deploy and echo $HOME" },
+      ]);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -7689,12 +7703,67 @@ describe("ClaudeAdapterLive", () => {
           canUseTool("Bash", { command: "git status" }, callback),
         );
         assert.equal(command?.behavior, "allow");
+        McpProviderSession.clearMcpProviderSession(THREAD_ID);
+        yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: "Draft the current proposal",
+          interactionMode: "plan",
+        });
+        const next = yield* Effect.promise(() => readFirstPromptMessage(createInput));
+        assert.deepEqual(next?.message.content, [
+          {
+            ...inactiveDeepPlanBlock,
+            text: `${inactiveDeepPlanBlock.text}\n\n${buildChatModeInstructions("plan")}`,
+          },
+          { type: "text", text: "Draft the current proposal" },
+        ]);
       }).pipe(
         Effect.provideService(Random.Random, makeDeterministicRandomService()),
         Effect.provide(harness.layer),
       );
     },
   );
+
+  it.effect("blocks tools in Chat and restores Build permissions on the next turn", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "Could we simplify this?",
+        interactionMode: "chat",
+      });
+      const createInput = harness.getLastCreateQueryInput();
+      const prompt = yield* Effect.promise(() => readFirstPromptText(createInput));
+      assert.include(prompt, "Chat mode is active");
+      const canUseTool = createInput?.options.canUseTool;
+      assert.isDefined(canUseTool);
+      if (!canUseTool) return;
+      const callback = {
+        signal: new AbortController().signal,
+        toolUseID: "chat-tool",
+        requestId: "chat-permission",
+      };
+      for (const tool of ["Bash", "Edit", "Agent", "mcp__docs__query"]) {
+        const result = yield* Effect.promise(() => canUseTool(tool, {}, callback));
+        assert.equal(result?.behavior, "deny");
+      }
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "Implement the change",
+        interactionMode: "default",
+      });
+      assert.deepEqual(harness.query.setPermissionModeCalls, ["dontAsk", "bypassPermissions"]);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
 
   it.effect("sets plan permission mode on sendTurn when interactionMode is plan", () => {
     const harness = makeHarness();

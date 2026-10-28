@@ -250,6 +250,7 @@ export function NewTaskDraftScreen(props: {
     ],
   );
   const shouldImprovePromptBeforeSend =
+    flow.composerMode !== "chat" &&
     workflowSettings.supported &&
     (flow.editingPendingTask
       ? flow.editingPendingTask.improvePromptBeforeSend === true
@@ -1414,7 +1415,7 @@ export function NewTaskDraftScreen(props: {
     }
     const message = {
       ...pendingMessage,
-      fetchMode: workflowSettings.fetchMode,
+      fetchMode: pendingMessage.composerMode === "chat" ? undefined : workflowSettings.fetchMode,
       improvePromptBeforeSend: shouldImprovePromptBeforeSend,
     };
     if (!queuesInsteadOfStarting) {
@@ -1561,7 +1562,11 @@ export function NewTaskDraftScreen(props: {
         onBlur={() => setIsComposerFocused(false)}
         onPasteImages={(uris) => void handleNativePasteImages(uris)}
         onPasteText={(paste) => void handleNativePasteText(paste)}
-        placeholder="Ask anything…"
+        placeholder={
+          flow.composerMode === "chat"
+            ? translator.message("chat.composer.interaction.chatPlaceholder")
+            : "Ask anything…"
+        }
         singleLineCentered={false}
         contentInsetVertical={0}
         style={{

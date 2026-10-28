@@ -27,6 +27,7 @@ export interface CodexT3ToolAvailability {
   readonly knowledgeGraph: boolean;
 }
 import { buildRuntimeInstructions } from "./RuntimeInstructions.ts";
+import { buildChatModeInstructions } from "./ChatModeInstructions.ts";
 
 const ALL_T3_TOOLS: CodexT3ToolAvailability = {
   preview: true,
@@ -178,9 +179,11 @@ export interface CodexRuntimeInfo {
 
 /** The collaboration mode carries only mode rules; Codex may replace it with its own catalog text. */
 export function buildCodexDeveloperInstructions(interactionMode: ProviderInteractionMode): string {
-  return interactionMode === "plan"
-    ? CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS
-    : CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS;
+  return interactionMode === "chat"
+    ? buildChatModeInstructions("chat")
+    : interactionMode === "plan"
+      ? CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS
+      : CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS;
 }
 
 /** Keep application context separate so Codex retains it when models supply their own mode prompt. */
@@ -189,18 +192,18 @@ export function buildCodexAdditionalContext(
   tools: boolean | CodexT3ToolAvailability | T3CodeToolAvailability = ALL_T3_TOOLS,
   interactionMode: ProviderInteractionMode = "default",
 ): Record<string, V2TurnStartParams__AdditionalContextEntry> {
-  const attachedTools = toolInstructions(tools, interactionMode !== "plan");
-  const deepPlan = availability(tools).deepPlan;
+  const attachedTools = toolInstructions(tools, interactionMode === "default");
+  const deepPlan = interactionMode === "chat" ? undefined : availability(tools).deepPlan;
   return {
     t3_code_runtime: {
       kind: "application",
-      value: buildRuntimeInstructions({ harness: "Codex", ...runtime }),
+      value: buildRuntimeInstructions({ harness: "Codex", ...runtime, interactionMode }),
     },
     t3_code_delegation: { kind: "application", value: delegationInstructions(tools) },
     // Replace the previous application-context entry when this turn leaves Deep Plan.
     t3_code_deep_plan: {
       kind: "application",
-      value: deepPlan ? buildDeepPlanInstructions(deepPlan) : "",
+      value: buildDeepPlanInstructions(deepPlan),
     },
     ...(attachedTools ? { t3_code_tools: { kind: "application", value: attachedTools } } : {}),
   };

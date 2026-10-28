@@ -4880,9 +4880,9 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
   const toggleInteractionMode = useCallback(() => {
-    if (!interactionModeEnabled && composerMode !== "deep-plan") return;
     handleInteractionModeChange(
       getNextComposerMode(composerMode, {
+        planningSupported: interactionModeEnabled,
         deepPlanningSupported: deepPlanningAvailability.supported,
       }),
     );
@@ -8126,6 +8126,7 @@ export default function ChatView(props: ChatViewProps) {
     }
     if (
       !directAnnotation &&
+      sendCtx.composerMode !== "chat" &&
       (activeDeepPlanProposal || sendCtx.composerMode !== "deep-plan") &&
       sendInteractionModeEnabled &&
       showPlanFollowUpPrompt &&
@@ -8322,7 +8323,7 @@ export default function ChatView(props: ChatViewProps) {
     }
 
     let messagePromptForSend = promptForSend;
-    if (settings.improvePromptBeforeSend && trimmed.length > 0) {
+    if (sendCtx.composerMode !== "chat" && settings.improvePromptBeforeSend && trimmed.length > 0) {
       sendInFlightRef.current = true;
       setIsImprovingPrompt(true);
       try {

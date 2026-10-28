@@ -6,6 +6,21 @@ import {
 } from "./legacy-plan-mode";
 
 describe("resolveProviderInteractionMode", () => {
+  it("preserves Chat when native planning is unavailable or its preference is disabled", () => {
+    expect(resolveProviderInteractionMode({ showInteractionModeToggle: false }, "chat")).toBe(
+      "chat",
+    );
+    expect(
+      resolvePendingTaskInteractionMode({
+        preferenceLoaded: true,
+        planModeEnabled: false,
+        draftInteractionMode: "chat",
+        queuedInteractionMode: undefined,
+        provider: { showInteractionModeToggle: false },
+      }),
+    ).toBe("chat");
+  });
+
   it("clears saved plan mode when the provider cannot use T3 interaction modes", () => {
     expect(resolveProviderInteractionMode({ showInteractionModeToggle: false }, "plan")).toBe(
       "default",

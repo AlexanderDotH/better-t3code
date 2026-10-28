@@ -613,6 +613,7 @@ export function useThreadComposerState() {
     );
 
     const shouldImprovePromptBeforeSend =
+      sendComposerMode !== "chat" &&
       workflowSettings.supported &&
       preferences.improvePromptBeforeSend === true &&
       text.length > 0 &&
@@ -667,7 +668,7 @@ export function useThreadComposerState() {
       attachments,
       context: draft.context,
       modelSelection: durableModelSelection,
-      ...(workflowSettings.fetchMode === undefined
+      ...(sendComposerMode === "chat" || workflowSettings.fetchMode === undefined
         ? {}
         : { fetchMode: workflowSettings.fetchMode }),
       ...(shouldImprovePromptBeforeSend && !environmentConnected

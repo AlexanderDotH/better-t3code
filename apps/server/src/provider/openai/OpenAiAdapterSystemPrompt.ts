@@ -2,6 +2,7 @@ import type { OpenAiSystemInstructionInput } from "./OpenAiAdapterTypes.ts";
 import { nativeHarnessWorkspaceInstructions } from "../nativeHarness/NativeHarnessPrompt.ts";
 
 export function buildOpenAiSystemInstructions(input: OpenAiSystemInstructionInput): string {
+  if (input.interactionMode === "chat") return nativeHarnessWorkspaceInstructions(input);
   const access =
     input.interactionMode === "plan" ||
     input.sandboxMode === "read-only" ||

@@ -11,9 +11,9 @@ export function canContinueDeepPlan(
   run: DeepPlanRun,
   interactionMode: ProviderInteractionMode,
 ): boolean {
+  if (interactionMode === "chat") return false;
   if (run.approval === null && interactionMode !== "plan") return false;
   return (
-    run.phase === "collecting" ||
     run.phase === "planning" ||
     run.phase === "implementing" ||
     (run.phase === "validating" && run.finalValidation.status === "inProgress")

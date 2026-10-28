@@ -9,6 +9,7 @@ import type {
 } from "@google/genai";
 import {
   GEMINI_DEFAULT_MODEL,
+  type ProviderInteractionMode,
   type GeminiSettings,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -163,9 +164,10 @@ function parsePersistedSession(
 function systemInstruction(input: {
   readonly cwd: string;
   readonly sandboxMode: "read-only" | "workspace-write" | "danger-full-access" | undefined;
-  readonly interactionMode: "default" | "plan" | undefined;
+  readonly interactionMode: ProviderInteractionMode | undefined;
   readonly fetchWorker: boolean;
 }): string {
+  if (input.interactionMode === "chat") return nativeHarnessWorkspaceInstructions(input);
   const access =
     input.interactionMode === "plan" || input.sandboxMode === "read-only" || input.fetchWorker
       ? "Read-only: inspect the workspace but do not modify files or run commands."

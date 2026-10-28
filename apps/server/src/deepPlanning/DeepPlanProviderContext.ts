@@ -13,7 +13,9 @@ export function deepPlanProviderContext(
   interactionMode?: ProviderInteractionMode,
 ): McpDeepPlanContext | undefined {
   if (
+    interactionMode === "chat" ||
     run == null ||
+    run.phase === "collecting" ||
     run.phase === "completed" ||
     run.phase === "failed" ||
     run.phase === "paused" ||
@@ -44,7 +46,7 @@ export function deepPlanProviderContext(
   if (
     interactionMode !== "plan" ||
     run.threadId !== threadId ||
-    (run.phase !== "collecting" && run.phase !== "planning" && run.phase !== "awaitingApproval")
+    (run.phase !== "planning" && run.phase !== "awaitingApproval")
   )
     return undefined;
   return {

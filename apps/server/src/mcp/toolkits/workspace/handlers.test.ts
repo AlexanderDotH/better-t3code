@@ -372,6 +372,11 @@ it.effect(
           writableInvocation,
           "plan_mode",
         ],
+        [
+          makeEditLayer({ shell: activeShell({ interactionMode: "chat" }) }),
+          writableInvocation,
+          "chat_mode",
+        ],
         [makeEditLayer(), invocation(new Set(["workspace"])), "credential_not_authorized"],
       ] as const;
 
@@ -460,6 +465,7 @@ it.effect(
           "runtime_mode_not_authorized",
         ],
         [{ ...replyContext, interactionMode: "plan" as const }, "plan_mode"],
+        [{ ...replyContext, interactionMode: "chat" as const }, "chat_mode"],
       ] as const) {
         const test = makeEditLayer({ replySummary: makeReplySummary(context) });
         const error = yield* invokeWorkspaceEdit(editInput).pipe(

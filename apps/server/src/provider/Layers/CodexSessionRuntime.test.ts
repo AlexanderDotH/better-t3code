@@ -212,6 +212,27 @@ describe("buildTurnStartParams", () => {
     NodeAssert.doesNotMatch(JSON.stringify(directDiagnostics), new RegExp(secret));
   });
 
+  it.effect("uses read-only sandboxing for Chat and restores the selected access on Build", () =>
+    Effect.gen(function* () {
+      const input = {
+        threadId: "chat-thread",
+        runtimeMode: "full-access" as const,
+        prompt: "Could we simplify this?",
+      };
+      const chat = yield* buildTurnStartParams({ ...input, interactionMode: "chat" });
+      NodeAssert.equal(chat.collaborationMode?.mode, "default");
+      NodeAssert.deepEqual(chat.sandboxPolicy, { type: "readOnly" });
+      NodeAssert.equal(chat.approvalPolicy, "never");
+      NodeAssert.match(chat.additionalContext?.t3_code_runtime?.value ?? "", /Chat mode is active/);
+      const build = yield* buildTurnStartParams({ ...input, interactionMode: "default" });
+      NodeAssert.deepEqual(build.sandboxPolicy, { type: "dangerFullAccess" });
+      NodeAssert.match(
+        build.additionalContext?.t3_code_runtime?.value ?? "",
+        /Chat mode is inactive/,
+      );
+    }),
+  );
+
   it("includes plan collaboration mode when requested", () => {
     const params = Effect.runSync(
       buildTurnStartParams({
@@ -378,7 +399,10 @@ describe("buildTurnStartParams", () => {
         build.collaborationMode?.settings.developer_instructions ?? "",
         /Any earlier Plan Mode has ended/,
       );
-      NodeAssert.equal(build.additionalContext?.t3_code_deep_plan?.value, "");
+      NodeAssert.match(
+        build.additionalContext?.t3_code_deep_plan?.value ?? "",
+        /Deep Plan is inactive for this turn/,
+      );
       NodeAssert.equal(build.sandboxPolicy?.type, "dangerFullAccess");
     }),
   );

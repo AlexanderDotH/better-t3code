@@ -18,10 +18,12 @@ export function parseDeepPlanComposerCommand(text: string): { readonly prompt: s
 
 export function getNextComposerMode(
   mode: ComposerMode,
-  options?: { readonly deepPlanningSupported?: boolean },
+  options?: { readonly deepPlanningSupported?: boolean; readonly planningSupported?: boolean },
 ): ComposerMode {
+  if (options?.planningSupported === false) return mode === "chat" ? "default" : "chat";
   if (mode === "default") return "plan";
   if (mode === "plan" && options?.deepPlanningSupported !== false) return "deep-plan";
+  if (mode === "plan" || mode === "deep-plan") return "chat";
   return "default";
 }
 

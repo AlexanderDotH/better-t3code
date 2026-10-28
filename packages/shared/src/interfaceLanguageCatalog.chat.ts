@@ -1494,6 +1494,16 @@ export const chatInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Développer tous les dossiers",
   ],
   "chat.composer.interaction.build": ["Build", "Erstellen", "Créer"],
+  "chat.composer.interaction.chatDescription": [
+    "Discuss ideas and ask questions without starting work. Switch to Build to make changes.",
+    "Ideen besprechen und Fragen stellen, ohne Arbeiten zu starten. Zum Umsetzen auf Build wechseln.",
+    "Discuter et poser des questions sans lancer de travaux. Passer à Créer pour effectuer des modifications.",
+  ],
+  "chat.composer.interaction.chatPlaceholder": [
+    "Ask a question or discuss an idea…",
+    "Stelle eine Frage oder besprich eine Idee…",
+    "Posez une question ou discutez d’une idée…",
+  ],
   "chat.composer.interaction.buildDescription": [
     "Work directly on the task",
     "Direkt an der Aufgabe arbeiten",

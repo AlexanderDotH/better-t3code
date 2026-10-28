@@ -85,6 +85,13 @@ export function buildComposerSlashCommandItems(input: {
       description: "Switch to plan mode",
     },
     {
+      id: "cmd:chat",
+      type: "slash-command",
+      command: "chat",
+      label: "/chat",
+      description: "Discuss without starting work",
+    },
+    {
       id: "cmd:default",
       type: "slash-command",
       command: "default",
@@ -93,7 +100,12 @@ export function buildComposerSlashCommandItems(input: {
     },
   ] satisfies ComposerCommandItem[];
   const items: ComposerCommandItem[] = builtIn.filter(
-    (item) => item.command.includes(query) && (item.command === "model" || allowInteractionMode),
+    (item) =>
+      item.command.includes(query) &&
+      (item.command === "model" ||
+        item.command === "chat" ||
+        item.command === "default" ||
+        allowInteractionMode),
   );
   if (input.allowDeepPlan && "deep-plan".includes(query)) {
     items.push({
@@ -156,9 +168,10 @@ export function resolveComposerCommandSelection(input: {
     };
   }
   if (
-    input.allowInteractionMode &&
     item.type === "slash-command" &&
-    (item.command === "plan" || item.command === "default")
+    ((input.allowInteractionMode && item.command === "plan") ||
+      item.command === "default" ||
+      item.command === "chat")
   ) {
     return {
       ...replaceTextRange(draftMessage, trigger.rangeStart, trigger.rangeEnd, ""),

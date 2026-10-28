@@ -883,7 +883,7 @@ function buildCodexTurnInstructions(input: {
   const reasoningEffort = input.effort ?? "medium";
   return {
     collaborationMode: {
-      mode: input.interactionMode,
+      mode: input.interactionMode === "chat" ? "default" : input.interactionMode,
       settings: {
         model,
         reasoning_effort: reasoningEffort,
@@ -951,9 +951,12 @@ export function buildTurnStartParams(input: {
     input: turnInput,
     // Collect summaries independently of each client's display preference.
     summary: "auto",
-    approvalPolicy: config.approvalPolicy,
+    approvalPolicy: input.interactionMode === "chat" ? "never" : config.approvalPolicy,
     approvalsReviewer: config.approvalsReviewer,
-    sandboxPolicy: runtimeModeToTurnSandboxPolicy(input.runtimeMode),
+    sandboxPolicy:
+      input.interactionMode === "chat"
+        ? { type: "readOnly" }
+        : runtimeModeToTurnSandboxPolicy(input.runtimeMode),
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
     ...(input.effort ? { effort: input.effort } : {}),

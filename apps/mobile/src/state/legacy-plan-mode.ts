@@ -11,6 +11,7 @@ export function resolveProviderInteractionMode(
   provider: InteractionModeProvider | null | undefined,
   interactionMode: ProviderInteractionMode | null | undefined,
 ): ProviderInteractionMode {
+  if (interactionMode === "chat") return "chat";
   return provider?.showInteractionModeToggle === false
     ? DEFAULT_PROVIDER_INTERACTION_MODE
     : (interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE);
@@ -30,6 +31,11 @@ export function resolvePendingTaskInteractionMode(input: {
   readonly queuedInteractionMode: ProviderInteractionMode | undefined;
   readonly provider?: InteractionModeProvider | null;
 }): ProviderInteractionMode {
+  if (
+    input.draftInteractionMode === "chat" ||
+    (!input.preferenceLoaded && input.queuedInteractionMode === "chat")
+  )
+    return "chat";
   if (input.provider?.showInteractionModeToggle === false) {
     return DEFAULT_PROVIDER_INTERACTION_MODE;
   }
