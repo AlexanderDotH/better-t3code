@@ -28,7 +28,10 @@ describe("mobileThemeRuntime", () => {
       (operation) => operation.kind === "update-text-variables",
     );
 
-    expect(variableOperations).toHaveLength(12);
+    expect(variableOperations).toHaveLength(14);
+    expect(variableOperations.map((operation) => operation.themeName)).toEqual(
+      expect.arrayContaining(["pastel-light", "pastel-dark"]),
+    );
     expect(variableOperations.at(-1)?.themeName).toBe("iris-dark");
     expect(operations.at(-1)).toEqual({
       kind: "set-appearance-mode",
@@ -68,7 +71,13 @@ describe("mobileThemeRuntime", () => {
       baseFontSize: 18,
     });
 
-    expect(operations).toHaveLength(12);
+    expect(operations).toHaveLength(14);
+    expect(operations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "update-text-variables", themeName: "pastel-light" }),
+        expect.objectContaining({ kind: "update-text-variables", themeName: "pastel-dark" }),
+      ]),
+    );
     expect(operations.every((operation) => operation.kind === "update-text-variables")).toBe(true);
     expect(operations.at(-1)).toMatchObject({
       kind: "update-text-variables",

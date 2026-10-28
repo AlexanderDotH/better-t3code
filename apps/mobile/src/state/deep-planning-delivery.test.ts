@@ -369,12 +369,12 @@ describe("mobile Deep Planning outbox", () => {
     expect(harness.state()).toEqual(prepared);
   });
 
-  it("pauses incomplete collection and rejects delivery when a selected remote history is unavailable", async () => {
+  it("rejects delivery without marking a source failure as a user pause", async () => {
     const harness = deliveryHarness(remoteSource.sourceId);
     await expect(harness.prepare()).rejects.toThrow("selected remote chat is unavailable");
     const state = harness.state();
-    expect(state.run?.phase).toBe("paused");
-    expect(state.run?.pauseReason).toContain("selected remote chat is unavailable");
+    expect(state.run?.phase).toBe("collecting");
+    expect(state.run?.pauseReason).toBeNull();
     expect(state.run?.sources).toEqual(sources);
     expect(
       state.run?.sourceCoverage.find((entry) => entry.sourceId === remoteSource.sourceId)?.status,
