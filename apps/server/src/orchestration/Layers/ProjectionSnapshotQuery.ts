@@ -1,6 +1,8 @@
 import { ProjectionCheckpoint } from "../../persistence/Services/ProjectionCheckpoints.ts";
 import {
   AgentSessionImportSource,
+  WORKTREE_SETUP_ACTIVITY_ID_PREFIX,
+  WORKTREE_SETUP_ACTIVITY_KIND,
   ApprovalRequestId,
   ChatAttachment,
   DeepPlanRun,
@@ -2300,6 +2302,45 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         ),
       ),
     );
+
+  // Probe one primary key per active thread; filtering by kind scans its entire history.
+  const listWorktreeSetupRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionThreadActivityDbRowSchema,
+    execute: () => sql`
+      SELECT
+        a.activity_id AS "activityId",
+        a.thread_id AS "threadId",
+        a.turn_id AS "turnId",
+        a.tone,
+        a.kind,
+        a.summary,
+        a.payload_json AS "payload",
+        a.sequence,
+        a.created_at AS "createdAt",
+        a.history_origin_json AS "historyOrigin"
+      FROM projection_threads t
+      JOIN projection_thread_activities a
+        ON a.activity_id = ${WORKTREE_SETUP_ACTIVITY_ID_PREFIX} || t.thread_id
+        AND a.thread_id = t.thread_id
+        AND a.kind = ${WORKTREE_SETUP_ACTIVITY_KIND}
+      WHERE t.deleted_at IS NULL
+        AND t.archived_at IS NULL
+      ORDER BY a.created_at ASC, a.activity_id ASC
+    `,
+  });
+
+  const listWorktreeSetupActivities: ProjectionSnapshotQueryShape["listWorktreeSetupActivities"] =
+    () =>
+      listWorktreeSetupRows(undefined).pipe(
+        Effect.map((rows) => rows.map(mapThreadActivityRow)),
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.listWorktreeSetupActivities:query",
+            "ProjectionSnapshotQuery.listWorktreeSetupActivities:decodeRow",
+          ),
+        ),
+      );
 
   const listThreadActivityIdsByThread = SqlSchema.findAll({
     Request: ThreadIdLookupInput,
@@ -5374,6 +5415,7 @@ pending_approval_requests AS (
     getMessageReplyRequestEvents,
     getUserInputActivity,
     listActivitiesByKind,
+    listWorktreeSetupActivities,
     getSnapshot,
     getShellSnapshot,
     listThreadsWithPullRequests,

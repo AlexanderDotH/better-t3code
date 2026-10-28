@@ -110,12 +110,17 @@ export interface ProjectionSnapshotQueryShape {
 
   /**
    * Read every activity of one kind across active (not deleted, not archived)
-   * threads, without hydrating the threads. Used at startup to find state a
-   * crashed process left behind.
+   * threads, without hydrating the threads.
    */
   readonly listActivitiesByKind: (
     kind: string,
   ) => Effect.Effect<ReadonlyArray<OrchestrationThreadActivity>, ProjectionRepositoryError>;
+
+  /** Read canonical worktree setup records by id, without scanning activity history. */
+  readonly listWorktreeSetupActivities: () => Effect.Effect<
+    ReadonlyArray<OrchestrationThreadActivity>,
+    ProjectionRepositoryError
+  >;
 
   /**
    * Read the lightweight command snapshot used to bootstrap the in-memory

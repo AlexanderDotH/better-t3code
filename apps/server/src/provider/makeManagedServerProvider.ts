@@ -17,6 +17,7 @@ import * as Semaphore from "effect/Semaphore";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
+import { forkParked } from "../serverActivation.ts";
 import { applyUsageLimitsUpdate, resolveUsageLimitsAfterProbe } from "./providerUsageLimits.ts";
 import type { ServerProviderShape } from "./Services/ServerProvider.ts";
 
@@ -245,13 +246,13 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       ),
       Stream.changes,
       Stream.runForEach(() => Queue.offer(refreshIntervalChanges, undefined).pipe(Effect.asVoid)),
-      Effect.forkScoped,
+      forkParked,
     );
   }
 
   yield* Stream.runForEach(input.streamSettings, (nextSettings) =>
     Effect.asVoid(applySnapshot(nextSettings)),
-  ).pipe(Effect.forkScoped);
+  ).pipe(forkParked);
 
   yield* Effect.forever(
     getRefreshInterval.pipe(
@@ -280,14 +281,14 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       ),
       Effect.ignoreCause({ log: true }),
     ),
-  ).pipe(Effect.forkScoped);
+  ).pipe(forkParked);
 
   const initialRefresh = applySnapshot(initialSettings, { forceRefresh: true });
   yield* (
     input.initialRefreshDelay
       ? Effect.sleep(input.initialRefreshDelay).pipe(Effect.flatMap(() => initialRefresh))
       : initialRefresh
-  ).pipe(Effect.ignoreCause({ log: true }), Effect.forkScoped);
+  ).pipe(Effect.ignoreCause({ log: true }), forkParked);
 
   return {
     resolveMaintenance: input.resolveMaintenance,
