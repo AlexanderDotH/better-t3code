@@ -107,6 +107,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
                       allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"
                     }
                     data-scroll-anchor-ignore
+                    aria-expanded={allDirectoriesExpanded}
                     onClick={onToggleAllDirectories}
                   />
                 }
@@ -324,6 +325,7 @@ const ClassicChangedFilesCard = memo(function ClassicChangedFilesCard(props: {
                         : translate("chat.changedFiles.expandFolders")
                     }
                     data-scroll-anchor-ignore
+                    aria-expanded={allDirectoriesExpanded}
                     onClick={onToggleAllDirectories}
                   />
                 }
@@ -416,6 +418,8 @@ const ClassicChangedFilesCard = memo(function ClassicChangedFilesCard(props: {
             ))}
             <button
               type="button"
+              aria-expanded={false}
+              data-scroll-anchor-ignore
               className="rounded-md px-1.5 py-1 text-2xs font-medium text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               onClick={() => onExpandedChange(true)}
             >

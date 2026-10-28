@@ -194,7 +194,9 @@ import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
   getAnchoredTurnMetrics,
   readTimelinePosition,
+  shouldResumeTimelineEndFollow,
   timelineContentOverflowsViewport,
+  type TimelineScrollIntent,
   type TimelineScrollMode,
 } from "./chat/timelineScrollAnchoring";
 import {
@@ -439,7 +441,7 @@ import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { resolveTimelineIsAtEnd, worktreeSetupAgentStarted } from "./chat/MessagesTimeline.logic";
-import { resolveComposerTimelineInset, resolveScrollToEndClearance } from "./composerFooterLayout";
+import { resolveComposerOverflowInset, resolveScrollToEndClearance } from "./composerFooterLayout";
 import { measureComposerOcclusion, observeComposerOcclusion } from "./chat/composerOcclusion";
 import { ComposerFloatingBubble } from "./chat/ComposerFloatingBubble";
 import {
@@ -1917,11 +1919,13 @@ export default function ChatView(props: ChatViewProps) {
     [],
   );
   const [composerOverlayElement, setComposerOverlayElement] = useState<HTMLDivElement | null>(null);
-  // Space the timeline keeps clear above its end. Tracks the overlay while the
-  // composer is expanded and holds that height while it rests, so the resting
-  // composer never exposes rows that its expansion will cover.
+  // Visible spacing follows the current overlay. Overflow uses the expanded
+  // height so collapsing cannot make itself ineligible and immediately reopen.
   const [composerTimelineInset, setComposerTimelineInset] = useState(0);
   const composerTimelineInsetRef = useRef(0);
+  const [composerInsetTransitionDurationMs, setComposerInsetTransitionDurationMs] = useState(0);
+  const [composerOverflowInset, setComposerOverflowInset] = useState(0);
+  const composerOverflowInsetRef = useRef(0);
   const composerRestingRef = useRef(false);
   // The last overlay height the composer published for its settled layout.
   const composerOverlayHeightRef = useRef(0);
@@ -5696,7 +5700,7 @@ export default function ChatView(props: ChatViewProps) {
   const showScrollDebouncer = useRef(
     new Debouncer(() => setShowScrollToBottom(true), { wait: 150 }),
   );
-  const timelineScrollIntentRef = useRef<"toward-end" | "away-from-end" | null>(null);
+  const timelineScrollIntentRef = useRef<TimelineScrollIntent>(null);
   const timelineScrollModeRef = useRef<TimelineScrollMode>("following-end");
   // State mirror of the follow mode refs. LegendList's maintainScrollAtEnd
   // re-pins on its own (independent of the refs), so the timeline needs a
@@ -5717,17 +5721,21 @@ export default function ChatView(props: ChatViewProps) {
   );
   // Manual navigation stops live-follow without removing anchored end space.
   // Collapsing that space during a gesture clamps the viewport back to the end.
-  const cancelTimelineLiveFollowForUserNavigation = useCallback(() => {
-    cancelPositionRestoreRef.current?.();
-    anchorUserScrollGenerationRef.current += 1;
-    timelineScrollModeRef.current = "free-scrolling";
-    liveFollowUserScrollGenerationRef.current = null;
-    setTimelineLiveFollowEnabled(false);
-    pendingTimelineAnchorRef.current = null;
-    positionedTimelineAnchorRef.current = null;
-    settledTimelineAnchorRef.current = null;
-    activeTimelineAnchorIndexRef.current = null;
-  }, []);
+  const cancelTimelineLiveFollowForUserNavigation = useCallback(
+    (intent: TimelineScrollIntent = null) => {
+      timelineScrollIntentRef.current = intent;
+      cancelPositionRestoreRef.current?.();
+      anchorUserScrollGenerationRef.current += 1;
+      timelineScrollModeRef.current = "free-scrolling";
+      liveFollowUserScrollGenerationRef.current = null;
+      setTimelineLiveFollowEnabled(false);
+      pendingTimelineAnchorRef.current = null;
+      positionedTimelineAnchorRef.current = null;
+      settledTimelineAnchorRef.current = null;
+      activeTimelineAnchorIndexRef.current = null;
+    },
+    [],
+  );
   const cancelTimelineLiveFollowForUserNavigationRef = useRef(
     cancelTimelineLiveFollowForUserNavigation,
   );
@@ -5756,19 +5764,24 @@ export default function ChatView(props: ChatViewProps) {
   const timelineRealContentOverflowsViewport = useCallback(
     (list?: LegendListRef | null) =>
       timelineContentOverflowsViewport((list ?? legendListRef.current)?.getState(), {
-        composerInset: composerTimelineInset,
+        composerInset: composerOverflowInset,
         anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET,
       }),
-    [composerTimelineInset],
+    [composerOverflowInset],
   );
   const pageScrollControllerRef = useRef<ReturnType<typeof createPageScrollController> | null>(
     null,
   );
   const handlePageScrollStart = useEffectEvent((key: PageScrollKey) => {
     timelineScrollIntentRef.current = key === "PageUp" ? "away-from-end" : "toward-end";
+    if (key === "PageDown" && isTimelineAtLogicalEnd()) {
+      if (timelineScrollModeRef.current === "free-scrolling") scrollToEnd();
+      composerRef.current?.restoreAfterTimelineReachedEnd();
+      return;
+    }
     composerRef.current?.collapseForTimelineScrollKey(key);
     if ((key === "PageUp" && timelineRealContentOverflowsViewport()) || !isTimelineAtLogicalEnd()) {
-      cancelTimelineLiveFollowForUserNavigation();
+      cancelTimelineLiveFollowForUserNavigation(timelineScrollIntentRef.current);
     }
   });
   useEffect(() => {
@@ -5856,8 +5869,8 @@ export default function ChatView(props: ChatViewProps) {
           }
           return;
         }
-        const handleManualNavigation = () => {
-          cancelTimelineLiveFollowForUserNavigationRef.current();
+        const handleManualNavigation = (intent: TimelineScrollIntent = null) => {
+          cancelTimelineLiveFollowForUserNavigationRef.current(intent);
         };
         // The gestures below must only break follow when they can actually
         // move the viewport away from the live edge. Follow now gates
@@ -5879,14 +5892,15 @@ export default function ChatView(props: ChatViewProps) {
             return;
           if (event.deltaY > 0) {
             timelineScrollIntentRef.current = "toward-end";
-            if (isAtEndRef.current) {
+            if (isTimelineAtLogicalEnd()) {
+              if (timelineScrollModeRef.current === "free-scrolling") scrollToEnd();
               composerRef.current?.restoreAfterTimelineReachedEnd();
             }
           } else if (event.deltaY < 0) {
             timelineScrollIntentRef.current = "away-from-end";
           }
           if (event.deltaY < 0 && contentScrollsUp()) {
-            handleManualNavigation();
+            handleManualNavigation("away-from-end");
           }
         };
         // Touch direction isn't observable here (touchmove fires on any
@@ -5949,7 +5963,7 @@ export default function ChatView(props: ChatViewProps) {
             case "ArrowUp":
               timelineScrollIntentRef.current = "away-from-end";
               if (contentScrollsUp()) {
-                handleManualNavigation();
+                handleManualNavigation("away-from-end");
                 composerRef.current?.collapseForTimelineScrollKey(event.key);
               }
               break;
@@ -5958,10 +5972,11 @@ export default function ChatView(props: ChatViewProps) {
             case "ArrowDown":
               timelineScrollIntentRef.current = "toward-end";
               if (viewportIsAwayFromEnd()) {
-                handleManualNavigation();
+                handleManualNavigation("toward-end");
               }
               composerRef.current?.collapseForTimelineScrollKey(event.key);
               if (isTimelineAtLogicalEnd()) {
+                if (timelineScrollModeRef.current === "free-scrolling") scrollToEnd();
                 composerRef.current?.restoreAfterTimelineReachedEnd();
               }
               break;
@@ -5999,6 +6014,7 @@ export default function ChatView(props: ChatViewProps) {
     routeThreadKey,
     activeThread?.id,
     isTimelineAtLogicalEnd,
+    scrollToEnd,
     timelineRealContentOverflowsViewport,
   ]);
 
@@ -6070,9 +6086,22 @@ export default function ChatView(props: ChatViewProps) {
       setShowScrollToBottom(false);
       return;
     }
-    if (isAtEndRef.current === isAtEnd) return;
+    if (
+      isAtEndRef.current === isAtEnd &&
+      (!isAtEnd || timelineScrollModeRef.current !== "free-scrolling")
+    )
+      return;
     isAtEndRef.current = isAtEnd;
     if (isAtEnd) {
+      if (
+        !shouldResumeTimelineEndFollow(
+          timelineScrollModeRef.current,
+          timelineScrollIntentRef.current,
+        )
+      ) {
+        showScrollDebouncer.current.maybeExecute();
+        return;
+      }
       if (timelineScrollIntentRef.current === "toward-end") {
         composerRef.current?.restoreAfterTimelineReachedEnd();
       }
@@ -6333,20 +6362,25 @@ export default function ChatView(props: ChatViewProps) {
     [composerOverlayElement],
   );
   const publishComposerOverlayHeight = useCallback(
-    (height: number) => {
+    (height: number, transitionDurationMs = 0) => {
       const nextHeight = composerOverlayElement
         ? measureComposerOcclusion(composerOverlayElement, height)
         : Math.ceil(height);
       if (nextHeight <= 0) return;
       composerOverlayHeightRef.current = nextHeight;
-      const nextInset = resolveComposerTimelineInset({
-        currentInset: composerTimelineInsetRef.current,
+      const nextOverflowInset = resolveComposerOverflowInset({
+        currentInset: composerOverflowInsetRef.current,
         overlayHeight: nextHeight,
         isResting: composerRestingRef.current,
       });
-      if (composerTimelineInsetRef.current !== nextInset) {
-        composerTimelineInsetRef.current = nextInset;
-        setComposerTimelineInset(nextInset);
+      if (composerTimelineInsetRef.current !== nextHeight) {
+        composerTimelineInsetRef.current = nextHeight;
+        setComposerTimelineInset(nextHeight);
+        setComposerInsetTransitionDurationMs(transitionDurationMs);
+      }
+      if (composerOverflowInsetRef.current !== nextOverflowInset) {
+        composerOverflowInsetRef.current = nextOverflowInset;
+        setComposerOverflowInset(nextOverflowInset);
       }
       publishScrollToEndClearance(nextHeight);
     },
@@ -6361,11 +6395,11 @@ export default function ChatView(props: ChatViewProps) {
   const onComposerRestingChange = useCallback((resting: boolean) => {
     composerRestingRef.current = resting;
   }, []);
-  // A held reservation belongs to the previous thread's draft. Rebuild it from
-  // this thread's overlay so a tall draft elsewhere does not pad this one.
+  // Each thread starts from its own draft and visible overlay geometry.
   useLayoutEffect(() => {
     if (!composerOverlayElement) return;
     composerTimelineInsetRef.current = 0;
+    composerOverflowInsetRef.current = 0;
     publishComposerOverlayHeight(composerOverlayElement.getBoundingClientRect().height);
   }, [activeThreadKey, composerOverlayElement, publishComposerOverlayHeight]);
 
@@ -6378,12 +6412,8 @@ export default function ChatView(props: ChatViewProps) {
 
     return observeComposerOcclusion(composerOverlayElement, updateHeight);
   }, [composerOverlayElement, publishComposerOverlayHeight]);
-  // The pill mounts and unmounts in the same commits that expand or rest the
-  // composer, and a fast fling lands there while the previous resting tween
-  // still pins the overlay at its old height. Measuring the overlay here would
-  // publish that stale height against the new resting flag, drop the timeline
-  // reservation, and yank the scroll position. The pill only needs its
-  // clearance, so it reuses the height the composer last published.
+  // Mounting the button can happen mid-transition; reuse the published
+  // occlusion instead of feeding its intermediate placement back into layout.
   useLayoutEffect(() => {
     if (!composerOverlayElement) return;
     publishScrollToEndClearance(composerOverlayHeightRef.current);
@@ -11293,6 +11323,8 @@ export default function ChatView(props: ChatViewProps) {
                 anchorMessageId={paintOnlyDisplayedTimeline ? null : timelineAnchorMessageId}
                 onAnchorReady={onTimelineAnchorReady}
                 contentInsetEndAdjustment={composerTimelineInset}
+                composerInsetTransitionDurationMs={composerInsetTransitionDurationMs}
+                contentOverflowInset={composerOverflowInset}
                 liveFollowEnabled={!paintOnlyDisplayedTimeline && timelineLiveFollowEnabled}
                 isFollowingEnd={isTimelineFollowingEnd}
                 onIsAtEndChange={onIsAtEndChange}

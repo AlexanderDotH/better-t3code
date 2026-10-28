@@ -1,8 +1,21 @@
 const COMPOSER_SURFACES =
   "[data-chat-composer-floating-bubble-host], [data-composer-banner-surface]";
 
+const pinnedOcclusions = new WeakMap<HTMLElement, { height: number }>();
+
+/** Keep intermediate widget positions from changing the destination during a resize. */
+export function pinComposerOcclusion(overlay: HTMLElement, height: number) {
+  const pin = { height };
+  pinnedOcclusions.set(overlay, pin);
+  return () => {
+    if (pinnedOcclusions.get(overlay) === pin) pinnedOcclusions.delete(overlay);
+  };
+}
+
 /** Include floating surfaces that can extend above the composer's layout box. */
 export function measureComposerOcclusion(overlay: HTMLElement, layoutHeight: number): number {
+  const pinned = pinnedOcclusions.get(overlay);
+  if (pinned) return pinned.height;
   const bounds = overlay.getBoundingClientRect();
   let top = bounds.top;
   for (const surface of overlay.querySelectorAll<HTMLElement>(COMPOSER_SURFACES)) {
@@ -18,15 +31,23 @@ export function measureComposerOcclusion(overlay: HTMLElement, layoutHeight: num
 
 /** Watch portal content as well as the outer box, including dismiss/expand transitions. */
 export function observeComposerOcclusion(overlay: HTMLElement, onChange: () => void) {
+  let frame: number | null = null;
+  const scheduleChange = () => {
+    if (frame !== null) return;
+    frame = requestAnimationFrame(() => {
+      frame = null;
+      onChange();
+    });
+  };
   const resizeObserver =
-    typeof ResizeObserver === "undefined" ? null : new ResizeObserver(onChange);
+    typeof ResizeObserver === "undefined" ? null : new ResizeObserver(scheduleChange);
   const observeSurfaces = () => {
     resizeObserver?.disconnect();
     resizeObserver?.observe(overlay);
     for (const surface of overlay.querySelectorAll<HTMLElement>(COMPOSER_SURFACES)) {
       resizeObserver?.observe(surface);
     }
-    onChange();
+    scheduleChange();
   };
   const mutations = new MutationObserver(observeSurfaces);
   mutations.observe(overlay, {
@@ -35,13 +56,14 @@ export function observeComposerOcclusion(overlay: HTMLElement, onChange: () => v
     attributes: true,
     attributeFilter: ["aria-hidden", "inert", "data-hide-empty"],
   });
-  overlay.addEventListener("transitionend", onChange);
-  overlay.addEventListener("animationend", onChange);
+  overlay.addEventListener("transitionend", scheduleChange);
+  overlay.addEventListener("animationend", scheduleChange);
   observeSurfaces();
   return () => {
     resizeObserver?.disconnect();
     mutations.disconnect();
-    overlay.removeEventListener("transitionend", onChange);
-    overlay.removeEventListener("animationend", onChange);
+    overlay.removeEventListener("transitionend", scheduleChange);
+    overlay.removeEventListener("animationend", scheduleChange);
+    if (frame !== null) cancelAnimationFrame(frame);
   };
 }

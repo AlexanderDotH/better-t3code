@@ -1,6 +1,7 @@
 import { ChatStatusSurface } from "./ChatPresentation";
 import { ChatReasoningDisclosure } from "./ChatReasoningDisclosure";
 import { ChatThinkingIndicator } from "./ChatThinkingIndicator";
+import { TimelineComposerSpacer } from "./TimelineComposerSpacer";
 import { MessageImageAttachment } from "./MessageImageAttachment";
 import { ButtonAppearanceContext } from "../ui/button";
 import { ResponseMetricsDetails } from "./ResponseMetricsDetails";
@@ -469,10 +470,22 @@ function TimelineLoadEarlierHeader({
     </div>
   );
 }
-function TimelineListFooter({ composerInset }: { readonly composerInset: number }) {
+function TimelineListFooter({
+  composerInset,
+  transitionDurationMs,
+  onHeightChange,
+}: {
+  readonly composerInset: number;
+  readonly transitionDurationMs: number;
+  readonly onHeightChange: () => void;
+}) {
   return (
     <div aria-hidden>
-      <div style={{ height: composerInset }} />
+      <TimelineComposerSpacer
+        height={composerInset}
+        transitionDurationMs={transitionDurationMs}
+        onHeightChange={onHeightChange}
+      />
       <div className="h-3 sm:h-4" />
     </div>
   );
@@ -592,6 +605,9 @@ interface MessagesTimelineProps {
   anchorMessageId: MessageId | null;
   onAnchorReady: (messageId: MessageId, anchorIndex: number) => void;
   contentInsetEndAdjustment: number;
+  composerInsetTransitionDurationMs?: number;
+  /** Expanded composer height used only to keep collapse eligibility stable. */
+  contentOverflowInset?: number;
   /**
    * Whether the timeline should keep pinning to the live edge as content
    * grows. Off while the user is reading history; LegendList's own
@@ -679,6 +695,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   anchorMessageId,
   onAnchorReady,
   contentInsetEndAdjustment,
+  composerInsetTransitionDurationMs = 0,
+  contentOverflowInset = contentInsetEndAdjustment,
   liveFollowEnabled,
   isFollowingEnd,
   onIsAtEndChange,
@@ -862,6 +880,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     row: HTMLElement;
     width: number;
     height: number;
+    preserveViewport: boolean;
   } | null>(null);
   const disclosureSettleFrameRef = useRef<number | null>(null);
   const disclosureSettleSecondFrameRef = useRef<number | null>(null);
@@ -925,7 +944,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             disclosureControlRef.current = null;
             const list = listRef.current;
             const viewport = list?.getScrollableNode();
-            if (!followingEnd() && disclosure?.control.isConnected && viewport) {
+            if (
+              !followingEnd() &&
+              !disclosure?.preserveViewport &&
+              disclosure?.control.isConnected &&
+              viewport
+            ) {
               const row = disclosure.row.getBoundingClientRect();
               if (row.height !== disclosure.height || row.width !== disclosure.width) {
                 const bounds = viewport.getBoundingClientRect();
@@ -945,6 +969,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               }
             }
             disclosureAnchorKeyRef.current = null;
+            if (disclosure?.preserveViewport) {
+              const isAtEnd = resolveTimelineIsAtEnd(listRef.current?.getState());
+              if (isAtEnd !== undefined) onIsAtEndChange(isAtEnd);
+            }
             setDisclosureToggleSettling(false);
             disclosureSettleFrameRef.current = null;
             disclosureSettleSecondFrameRef.current = null;
@@ -971,7 +999,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         });
       });
     },
-    [followingEnd, listIdentityKey, listRef, onToolOutputCollapsedAtEnd, prefersReducedMotion],
+    [
+      followingEnd,
+      listIdentityKey,
+      listRef,
+      onIsAtEndChange,
+      onToolOutputCollapsedAtEnd,
+      prefersReducedMotion,
+    ],
   );
 
   const handleDisclosureClickCapture = useCallback(
@@ -983,10 +1018,21 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       const row = control?.closest<HTMLElement>("[data-timeline-row-id]");
       if (!control || !row?.dataset.timelineRowId) return;
       const bounds = row.getBoundingClientRect();
-      disclosureControlRef.current = { control, row, width: bounds.width, height: bounds.height };
-      suspendEndScrollMaintenanceForDisclosure(row.dataset.timelineRowId);
+      const preserveViewport = control.closest("[data-changed-files-state]") !== null;
+      disclosureControlRef.current = {
+        control,
+        row,
+        width: bounds.width,
+        height: bounds.height,
+        preserveViewport,
+      };
+      if (preserveViewport) onManualNavigation();
+      const collapsed =
+        control.getAttribute("aria-expanded") === "true" ||
+        (control.matches("summary") && control.parentElement?.hasAttribute("open") === true);
+      suspendEndScrollMaintenanceForDisclosure(row.dataset.timelineRowId, collapsed);
     },
-    [suspendEndScrollMaintenanceForDisclosure],
+    [onManualNavigation, suspendEndScrollMaintenanceForDisclosure],
   );
 
   const cancelDisclosureScroll = useCallback(() => {
@@ -1441,17 +1487,29 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     revision: rows,
   });
   const timelineListFooter = useMemo(
-    () => <TimelineListFooter composerInset={anchoredEndSpace ? 0 : contentInsetEndAdjustment} />,
-    [anchoredEndSpace, contentInsetEndAdjustment],
+    () => (
+      <TimelineListFooter
+        key={anchoredEndSpace ? "anchored" : "following"}
+        composerInset={anchoredEndSpace ? 0 : contentInsetEndAdjustment}
+        transitionDurationMs={composerInsetTransitionDurationMs}
+        onHeightChange={scheduleEndFollow}
+      />
+    ),
+    [
+      anchoredEndSpace,
+      contentInsetEndAdjustment,
+      composerInsetTransitionDurationMs,
+      scheduleEndFollow,
+    ],
   );
 
   const measureContentOverflow = useCallback(
     () =>
       timelineContentOverflowsViewport(listRef.current?.getState?.(), {
-        composerInset: contentInsetEndAdjustment,
+        composerInset: contentOverflowInset,
         anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET,
       }),
-    [contentInsetEndAdjustment, listRef],
+    [contentOverflowInset, listRef],
   );
   // LegendList lays rows out from layout effects, so a read on the next frame
   // sees the settled positions. One frame is shared across bursts of size
@@ -1514,7 +1572,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         });
       }
     }
-    if (isAtEnd !== undefined && !citationPositioning) {
+    if (
+      isAtEnd !== undefined &&
+      !citationPositioning &&
+      !disclosureControlRef.current?.preserveViewport
+    ) {
       onIsAtEndChange(isAtEnd);
     }
     reportContentOverflow();
