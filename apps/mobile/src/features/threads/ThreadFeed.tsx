@@ -27,6 +27,7 @@ import type {
 } from "@t3tools/contracts";
 import { mobileReplyMessageKey } from "../../lib/message-replies";
 import { MessageReplyAction } from "./MessageReplyAction";
+import { MessageImageCard } from "./MessageImageCard";
 import { MessageReplyGesture } from "./MessageReplyGesture";
 import { MessageReplyPreview } from "./MessageReplyPreview";
 import { ThreadReplyTopicStatus } from "./ThreadReplyTopicStatus";
@@ -698,6 +699,7 @@ const MobileProposedPlanCard = memo(function MobileProposedPlanCard(props: {
 });
 
 function MessageAttachmentImage(props: {
+  readonly source?: ChatImageAttachment["source"];
   readonly environmentId: EnvironmentId;
   readonly attachmentId: string;
   readonly name: string;
@@ -706,6 +708,7 @@ function MessageAttachmentImage(props: {
   readonly onPressPreview: (source: FilePreviewSource) => void;
 }) {
   const sourceIdentifier = useId();
+  const { better } = useChatBubblePalette();
   const resource = useMemo(
     () => ({
       _tag: "attachment" as const,
@@ -719,51 +722,55 @@ function MessageAttachmentImage(props: {
   const refreshAssetUrl = useRefreshAssetUrl(props.environmentId, resource);
   const retriedImage = useRef(false);
 
-  if (uri === null) {
-    return (
+  const preview =
+    uri === null ? (
       <View className={`${props.className} items-center justify-center`}>
         <ActivityIndicator />
       </View>
-    );
-  }
-
-  return (
-    <PresentationSource identifier={sourceIdentifier}>
-      <Pressable
-        accessibilityRole="imagebutton"
-        accessibilityLabel={`Open ${props.name}`}
-        onPress={() =>
-          // The viewer mints its own URL from the resource so the image survives a refresh.
-          props.onPressPreview({
-            kind: "image",
-            environmentId: props.environmentId,
-            resource,
-            name: props.name,
-            sourceIdentifier,
-            actionsSource: {
-              name: props.name,
-              mimeType: props.mimeType,
+    ) : (
+      <PresentationSource identifier={sourceIdentifier}>
+        <Pressable
+          accessibilityRole="imagebutton"
+          accessibilityLabel={`Open ${props.name}`}
+          onPress={() =>
+            // The viewer mints its own URL from the resource so the image survives a refresh.
+            props.onPressPreview({
+              kind: "image",
               environmentId: props.environmentId,
               resource,
-            },
-          })
-        }
-      >
-        <Image
-          source={{ uri }}
-          className={props.className}
-          resizeMode="cover"
-          onLoad={() => {
-            retriedImage.current = false;
-          }}
-          onError={() => {
-            if (retriedImage.current) return;
-            retriedImage.current = true;
-            void refreshAssetUrl();
-          }}
-        />
-      </Pressable>
-    </PresentationSource>
+              name: props.name,
+              sourceIdentifier,
+              actionsSource: {
+                name: props.name,
+                mimeType: props.mimeType,
+                environmentId: props.environmentId,
+                resource,
+              },
+            })
+          }
+        >
+          <Image
+            source={{ uri }}
+            className={props.className}
+            resizeMode={better ? "contain" : "cover"}
+            onLoad={() => {
+              retriedImage.current = false;
+            }}
+            onError={() => {
+              if (retriedImage.current) return;
+              retriedImage.current = true;
+              void refreshAssetUrl();
+            }}
+          />
+        </Pressable>
+      </PresentationSource>
+    );
+  return better ? (
+    <MessageImageCard name={props.name} source={props.source}>
+      {preview}
+    </MessageImageCard>
+  ) : (
+    preview
   );
 }
 
@@ -789,6 +796,7 @@ function MessageAttachmentFile(props: {
 }) {
   const sourceIdentifier = useId();
   const navigation = useNavigation();
+  const { better } = useChatBubblePalette();
   const { selectedThread } = useThreadSelection();
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     refresh: true,
@@ -911,8 +919,10 @@ function MessageAttachmentFile(props: {
           disabled={opening || httpBaseUrl === null}
           className={
             props.compact
-              ? "min-w-0 flex-row items-center gap-2 rounded-lg bg-user-bubble-foreground/5 px-2 py-1.5 active:bg-subtle"
-              : "min-w-0 flex-row items-center gap-3 rounded-xl border border-border bg-card p-3 active:bg-subtle"
+              ? "min-w-0 flex-row items-center gap-2 rounded-full bg-card px-3 py-2 active:opacity-65"
+              : better
+                ? "min-w-0 flex-row items-center gap-3 rounded-2xl bg-card p-3.5 active:opacity-65"
+                : "min-w-0 flex-row items-center gap-3 rounded-xl border border-border bg-card p-3 active:bg-subtle"
           }
           onLongPress={() => shareFile(sourceIdentifier)}
           onPress={() =>
@@ -1172,26 +1182,45 @@ function ArtifactTemplateCard(props: {
   readonly template: CodexArtifactTemplate;
   readonly onUse?: ((template: CodexArtifactTemplate) => void) | undefined;
 }) {
+  const palette = useChatBubblePalette();
+  const translate = useMobileInterfaceTranslator().message;
   return (
-    <View className="my-2 min-w-0 flex-row items-center gap-3 rounded-2xl border border-border bg-card px-3 py-3">
-      <View className="relative h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border bg-subtle">
+    <View
+      className={
+        palette.better
+          ? "my-1 min-w-0 items-start gap-3 rounded-2xl bg-card p-3.5"
+          : "my-2 min-w-0 flex-row items-center gap-3 rounded-2xl border border-border bg-card px-3 py-3"
+      }
+    >
+      <View
+        className={
+          palette.better
+            ? "size-5"
+            : "relative h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border bg-subtle"
+        }
+      >
         <SymbolView
           name={ARTIFACT_TEMPLATE_SYMBOL_BY_KIND[props.template.artifactKind]}
           size={20}
           tintColorClassName="accent-foreground-muted"
           type="monochrome"
         />
-        <View className="absolute -right-1 -bottom-1 h-4 w-4 items-center justify-center rounded-full bg-fuchsia-500">
-          <SymbolView
-            name={{ ios: "sparkles", android: "auto_awesome" }}
-            size={9}
-            tintColor="white"
-            type="monochrome"
-          />
-        </View>
+        {palette.better ? null : (
+          <View className="absolute -right-1 -bottom-1 h-4 w-4 items-center justify-center rounded-full bg-fuchsia-500">
+            <SymbolView
+              name={{ ios: "sparkles", android: "auto_awesome" }}
+              size={9}
+              tintColor="white"
+              type="monochrome"
+            />
+          </View>
+        )}
       </View>
-      <View className="min-w-0 flex-1">
-        <Text className="font-t3-bold text-sm text-foreground" numberOfLines={1}>
+      <View className={palette.better ? "min-w-0 gap-1.5" : "min-w-0 flex-1"}>
+        <Text
+          className="font-t3-bold text-sm text-foreground"
+          numberOfLines={palette.better ? 2 : 1}
+        >
           {props.template.displayName}
         </Text>
         <Text className="text-xs text-foreground-muted">
@@ -1202,10 +1231,20 @@ function ArtifactTemplateCard(props: {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`Use ${props.template.displayName} template`}
-          className="min-h-9 justify-center rounded-lg border border-border bg-subtle px-3 active:opacity-65"
+          className={
+            palette.better
+              ? "min-h-11 justify-center rounded-full px-3 active:opacity-65"
+              : "min-h-9 justify-center rounded-lg border border-border bg-subtle px-3 active:opacity-65"
+          }
+          style={palette.better ? { backgroundColor: palette.control } : undefined}
           onPress={() => props.onUse?.(props.template)}
         >
-          <Text className="font-t3-bold text-xs text-foreground">Use template</Text>
+          <Text
+            className="font-t3-medium text-xs text-foreground"
+            style={palette.better ? { color: palette.foreground } : undefined}
+          >
+            {translate("chat.templates.use")}
+          </Text>
         </Pressable>
       ) : null}
     </View>
@@ -2208,7 +2247,9 @@ function renderFeedEntry(
                 maxWidth: userBubbleMaxWidth,
                 ...(hasReviewCommentContext
                   ? { width: props.reviewCommentBubbleWidth }
-                  : hasWideBlock || message.replyTo
+                  : hasWideBlock ||
+                      message.replyTo ||
+                      (props.chatVisualMode === "better-t3" && visibleAttachments.length > 0)
                     ? { width: userBubbleMaxWidth }
                     : null),
               }}
@@ -2248,7 +2289,15 @@ function renderFeedEntry(
               )}
               {/* An empty container still takes a gap, which pads every attachment-free bubble. */}
               {visibleAttachments.length > 0 ? (
-                <View className={inlineAttachmentIds.size ? "flex-row flex-wrap gap-2" : "gap-2"}>
+                <View
+                  className={
+                    props.chatVisualMode === "better-t3"
+                      ? "gap-2.5"
+                      : inlineAttachmentIds.size
+                        ? "flex-row flex-wrap gap-2"
+                        : "gap-2"
+                  }
+                >
                   {visibleAttachments.map((attachment) => {
                     return isImageAttachment(attachment) ? (
                       <MessageAttachmentImage
@@ -2257,10 +2306,13 @@ function renderFeedEntry(
                         attachmentId={attachment.id}
                         name={attachment.name}
                         mimeType={attachment.mimeType}
+                        source={attachment.source}
                         className={
-                          inlineAttachmentIds.size
-                            ? "h-24 w-24 rounded-[14px] bg-user-bubble-foreground/15"
-                            : "aspect-[1.3] w-full rounded-[14px] bg-user-bubble-foreground/15"
+                          props.chatVisualMode === "better-t3"
+                            ? "aspect-[1.6] w-full"
+                            : inlineAttachmentIds.size
+                              ? "h-24 w-24 rounded-[14px] bg-user-bubble-foreground/15"
+                              : "aspect-[1.3] w-full rounded-[14px] bg-user-bubble-foreground/15"
                         }
                         onPressPreview={props.onPressPreview}
                       />

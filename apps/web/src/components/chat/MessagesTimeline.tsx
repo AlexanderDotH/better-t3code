@@ -1,6 +1,7 @@
 import { ChatStatusSurface } from "./ChatPresentation";
 import { ChatReasoningDisclosure } from "./ChatReasoningDisclosure";
 import { ChatThinkingIndicator } from "./ChatThinkingIndicator";
+import { MessageImageAttachment } from "./MessageImageAttachment";
 import { ButtonAppearanceContext } from "../ui/button";
 import { ResponseMetricsDetails } from "./ResponseMetricsDetails";
 import type { ResponseMetricsSnapshot } from "@t3tools/contracts";
@@ -2457,7 +2458,7 @@ function WorktreeSetupTimelineRow({
   );
 }
 
-/** A message waiting for the running turn: a dashed user bubble with icon actions inside it. */
+/** A message waiting for the running turn, with actions to send it or restore its draft. */
 function QueuedMessageTimelineRow({
   row,
 }: {
@@ -2465,6 +2466,8 @@ function QueuedMessageTimelineRow({
 }) {
   const ctx = use(TimelineRowCtx);
   const { queuedMessage } = row;
+  const translate = useInterfaceTranslator().message;
+  const better = ctx.chatVisualMode === "better-t3";
   const attachmentCount = queuedMessage.images.length + queuedMessage.files.length;
   const contextCount =
     queuedMessage.terminalContexts.length +
@@ -2485,16 +2488,9 @@ function QueuedMessageTimelineRow({
         data-presentation-bubble={ctx.chatVisualMode === "better-t3" ? "user" : undefined}
         className={cn(
           "max-w-[80%] rounded-2xl border border-dashed border-border p-3 text-message-foreground/80",
-          ctx.chatVisualMode === "better-t3" && "better-chat-bubble",
+          better && "better-chat-bubble better-chat-queued",
         )}
       >
-        {ctx.chatVisualMode === "better-t3" ? (
-          <div
-            aria-hidden
-            data-presentation-surface
-            className="pointer-events-none absolute inset-0 -z-10 rounded-[inherit]"
-          />
-        ) : null}
         {text.length > 0 ? (
           <UserMessageBody
             messageId={row.id}
@@ -2518,7 +2514,11 @@ function QueuedMessageTimelineRow({
           </div>
         ) : null}
         <div
-          className="mt-2 flex items-center gap-4 text-secondary-label text-xs"
+          className={
+            better
+              ? "better-chat-queued-footer"
+              : "mt-2 flex items-center gap-4 text-secondary-label text-xs"
+          }
           data-scroll-anchor-ignore
         >
           <Tooltip>
@@ -2526,26 +2526,45 @@ function QueuedMessageTimelineRow({
               render={<span className="inline-flex h-6 items-center gap-1" />}
               aria-label={`${sending ? "Sending" : "Queued"}. ${statusLabel}.`}
             >
-              <ClockIcon className="size-3.5" aria-hidden />
-              {sending ? "Sending" : "Queued"}
+              {better ? null : <ClockIcon className="size-3.5" aria-hidden />}
+              {better
+                ? translate(
+                    sending
+                      ? "chat.queue.sending"
+                      : row.isNext && !queuedMessage.holdUntilUserAction
+                        ? "chat.queue.next"
+                        : "chat.queue.waiting",
+                  )
+                : sending
+                  ? "Sending"
+                  : "Queued"}
             </TooltipTrigger>
             <TooltipPopup side="bottom">{statusLabel}</TooltipPopup>
           </Tooltip>
-          <div className={cn("ml-auto flex items-center gap-0.5", sending && "invisible")}>
+          <div
+            className={cn(
+              better ? "better-chat-queued-actions" : "ml-auto flex items-center gap-0.5",
+              sending && "invisible",
+            )}
+          >
             <Tooltip>
               <TooltipTrigger
                 render={
                   <Button
                     type="button"
-                    size="icon-xs"
-                    variant="ghost-muted"
+                    size={better ? "sm" : "icon-xs"}
+                    variant={better ? "soft" : "ghost-muted"}
                     onPointerDown={(event) => event.preventDefault()}
                     onClick={() => ctx.onSteerQueuedMessage(queuedMessage.id)}
-                    aria-label="Send now"
+                    aria-label={better ? translate("chat.queue.sendNow") : "Send now"}
                   />
                 }
               >
-                <ArrowUpIcon className="size-3.5" aria-hidden />
+                {better ? (
+                  translate("chat.queue.sendNow")
+                ) : (
+                  <ArrowUpIcon className="size-3.5" aria-hidden />
+                )}
               </TooltipTrigger>
               <TooltipPopup side="bottom">
                 Send now
@@ -2559,15 +2578,23 @@ function QueuedMessageTimelineRow({
                 render={
                   <Button
                     type="button"
-                    size="icon-xs"
-                    variant="ghost-muted"
+                    size={better ? "sm" : "icon-xs"}
+                    variant={better ? "soft" : "ghost-muted"}
                     onPointerDown={(event) => event.preventDefault()}
                     onClick={() => ctx.onRemoveQueuedMessage(queuedMessage.id)}
-                    aria-label="Cancel and return to the composer"
+                    aria-label={
+                      better
+                        ? translate("chat.queue.returnToDraft")
+                        : "Cancel and return to the composer"
+                    }
                   />
                 }
               >
-                <XIcon className="size-3.5" aria-hidden />
+                {better ? (
+                  translate("chat.queue.returnToDraft")
+                ) : (
+                  <XIcon className="size-3.5" aria-hidden />
+                )}
               </TooltipTrigger>
               <TooltipPopup side="bottom">Cancel and return to the composer</TooltipPopup>
             </Tooltip>
@@ -2896,48 +2923,59 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         <div
           className={
             ctx.chatVisualMode === "better-t3"
-              ? "grid max-w-[300px] grid-cols-2 gap-2.5"
+              ? "better-chat-attachment-grid"
               : "mb-2 grid max-w-[210px] grid-cols-2 gap-2"
           }
         >
-          {regularImages.map((image) => (
-            <div
-              key={image.id}
-              className={cn(
-                "bg-background/70",
-                image.source?.kind === "snap-shot" && image.previewUrl
-                  ? cn(SNAP_SHOT_ATTACHMENT_FRAME_CLASS, "col-span-2")
-                  : "aspect-[4/3] overflow-hidden rounded-lg border border-border/80",
-              )}
-            >
-              {image.previewUrl ? (
-                <button
-                  type="button"
-                  className="block h-full w-full cursor-zoom-in"
-                  data-chat-media-preview
-                  aria-label={`Preview ${image.name}`}
-                  onClick={() => {
-                    const preview = buildExpandedImagePreview(regularImages, image.id);
-                    if (!preview) return;
-                    ctx.onImageExpand(preview);
-                  }}
-                >
-                  <img
-                    src={image.previewUrl}
-                    alt={image.name}
-                    className="block size-full object-cover"
-                  />
-                </button>
-              ) : (
-                <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-secondary-label text-2xs">
-                  {image.name}
-                </div>
-              )}
-              {image.previewUrl && image.source?.kind === "snap-shot" ? (
-                <SnapShotAttachmentDetails source={image.source} />
-              ) : null}
-            </div>
-          ))}
+          {regularImages.map((image) =>
+            ctx.chatVisualMode === "better-t3" ? (
+              <MessageImageAttachment
+                key={image.id}
+                image={image}
+                onOpen={() => {
+                  const preview = buildExpandedImagePreview(regularImages, image.id);
+                  if (preview) ctx.onImageExpand(preview);
+                }}
+              />
+            ) : (
+              <div
+                key={image.id}
+                className={cn(
+                  "bg-background/70",
+                  image.source?.kind === "snap-shot" && image.previewUrl
+                    ? cn(SNAP_SHOT_ATTACHMENT_FRAME_CLASS, "col-span-2")
+                    : "aspect-[4/3] overflow-hidden rounded-lg border border-border/80",
+                )}
+              >
+                {image.previewUrl ? (
+                  <button
+                    type="button"
+                    className="block h-full w-full cursor-zoom-in"
+                    data-chat-media-preview
+                    aria-label={`Preview ${image.name}`}
+                    onClick={() => {
+                      const preview = buildExpandedImagePreview(regularImages, image.id);
+                      if (!preview) return;
+                      ctx.onImageExpand(preview);
+                    }}
+                  >
+                    <img
+                      src={image.previewUrl}
+                      alt={image.name}
+                      className="block size-full object-cover"
+                    />
+                  </button>
+                ) : (
+                  <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-secondary-label text-2xs">
+                    {image.name}
+                  </div>
+                )}
+                {image.previewUrl && image.source?.kind === "snap-shot" ? (
+                  <SnapShotAttachmentDetails source={image.source} />
+                ) : null}
+              </div>
+            ),
+          )}
           {userVideos.map((file) => (
             <UserVideoAttachment key={file.id} file={file} />
           ))}

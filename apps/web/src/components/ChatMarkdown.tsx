@@ -1,5 +1,6 @@
 import { useBetterT3DeviceFeature } from "../hooks/useBetterT3Feature";
 import { useChatVisualMode } from "../chatVisualModeSync";
+import { useInterfaceTranslator } from "../hooks/useInterfaceTranslator";
 import { ChatSizeMotion } from "./chat/ChatSizeMotion";
 import { markdownTableBubblePadding, observeMarkdownTableBubble } from "./chat/markdownTableBubble";
 import { useVisualizationsEnabled } from "../hooks/useVisualizationsEnabled";
@@ -344,6 +345,7 @@ function CodexArtifactTemplateCard(props: {
   readonly template: CodexArtifactTemplate;
   readonly onUse?: ((template: CodexArtifactTemplate) => void) | undefined;
 }) {
+  const translate = useInterfaceTranslator().message;
   const Icon = ARTIFACT_TEMPLATE_ICON_BY_KIND[props.template.artifactKind];
   const presentationLabel = codexArtifactTemplatePresentationLabel(props.template.artifactKind);
 
@@ -357,18 +359,20 @@ function CodexArtifactTemplateCard(props: {
       data-markdown-copy={`${props.template.displayName} (${presentationLabel})\n\n`}
       data-skill-name={props.template.skillName}
     >
-      <div className="flex min-w-0 flex-1 items-center gap-3">
-        <span className="relative flex size-9 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-background text-muted-foreground shadow-xs">
+      <div className="chat-artifact-template-body flex min-w-0 flex-1 items-center gap-3">
+        <span className="chat-artifact-template-icon relative flex size-9 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-background text-muted-foreground shadow-xs">
           <Icon aria-hidden className="size-5" />
           <span className="absolute -right-1 -bottom-1 flex size-4 items-center justify-center rounded-full border border-background bg-primary text-primary-foreground shadow-xs">
             <SparklesIcon aria-hidden className="size-2.5" />
           </span>
         </span>
         <span className="min-w-0">
-          <span className="block truncate text-sm font-medium text-foreground">
+          <span className="chat-artifact-template-title block truncate text-sm font-medium text-foreground">
             {props.template.displayName}
           </span>
-          <span className="block text-xs text-muted-foreground">{presentationLabel}</span>
+          <span className="chat-artifact-template-description block text-xs text-muted-foreground">
+            {presentationLabel}
+          </span>
         </span>
       </div>
       {props.onUse ? (
@@ -379,7 +383,7 @@ function CodexArtifactTemplateCard(props: {
           className="shrink-0"
           onClick={() => props.onUse?.(props.template)}
         >
-          Use template
+          {translate("chat.templates.use")}
         </Button>
       ) : null}
     </div>

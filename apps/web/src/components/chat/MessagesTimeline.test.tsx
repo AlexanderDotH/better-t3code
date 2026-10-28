@@ -3206,7 +3206,7 @@ describe("MessagesTimeline", () => {
     },
   );
 
-  it.each(["classic", "current"] as const)(
+  it.each(["classic", "current", "better-t3"] as const)(
     "opens full Working thinking in the real dialog and retains it at completion in the %s layout",
     async (mode) => {
       const { __setClientSettingsForTests, getClientSettings } =

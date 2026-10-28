@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./snapShot": "./src/snapShot.ts",
     "./codexContext": "./src/codexContext.ts",
     "./resetCredits": "./src/resetCredits.ts",
     "./projectIndexLanguages": "./src/projectIndexLanguages.ts",
