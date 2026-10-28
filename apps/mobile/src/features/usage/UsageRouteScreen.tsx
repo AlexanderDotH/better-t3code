@@ -67,7 +67,8 @@ const METRIC_OPTIONS = [
 ] as const satisfies readonly { value: UsageChartMetric; label: string }[];
 
 const CHART_HEIGHT = 180;
-const CURSOR_KEYCHAIN_COPY = "Requires access to your Cursor login in macOS Keychain.";
+const CURSOR_KEYCHAIN_COPY =
+  "Uses an already accessible Cursor login without opening password dialogs.";
 
 /**
  * Two tabs over one screen. Usage is the transcript-derived spend for a
