@@ -10,7 +10,7 @@ import {
   runCodexResourceGovernorHook,
 } from "./CodexResourceGovernorHook.ts";
 
-function hookInput(toolName: string): NodeStream.Readable {
+function hookInput(toolName: string, agentId?: string): NodeStream.Readable {
   return NodeStream.Readable.from([
     JSON.stringify({
       hook_event_name: "PreToolUse",
@@ -18,6 +18,7 @@ function hookInput(toolName: string): NodeStream.Readable {
       turn_id: "turn-1",
       tool_use_id: "tool-use-1",
       tool_name: toolName,
+      ...(agentId ? { agent_id: agentId } : {}),
     }),
   ]);
 }
@@ -45,6 +46,85 @@ function hookEnvironment(): NodeJS.ProcessEnv {
 }
 
 describe("CodexResourceGovernorHook", () => {
+  it.each([
+    "spawn_agent",
+    "Agent",
+    "collaboration.spawn_agent",
+    "mcp__t3_code__spawn_agent",
+    "mcp__t3-code__subagent_spawn",
+    "spawn_agents_on_csv",
+  ])("blocks a subagent calling %s before requesting admission", async (toolName) => {
+    const output: string[] = [];
+    let requests = 0;
+    await runCodexResourceGovernorHook({
+      input: hookInput(toolName, "child-agent"),
+      environment: hookEnvironment(),
+      fetch: async () => {
+        requests++;
+        return Response.json({ admitted: true });
+      },
+      write: (value) => output.push(value),
+    });
+    expect(JSON.parse(output[0] ?? "{}").hookSpecificOutput).toMatchObject({
+      permissionDecision: "deny",
+      permissionDecisionReason: expect.stringContaining("Subagents cannot spawn"),
+    });
+    expect(requests).toBe(0);
+  });
+
+  it("blocks a T3 worker even when the provider reports it as a root", async () => {
+    const output: string[] = [];
+    await runCodexResourceGovernorHook({
+      input: hookInput("spawn_agent"),
+      nestingGuardOnly: true,
+      leafWorker: true,
+      environment: {},
+      write: (value) => output.push(value),
+    });
+    expect(JSON.parse(output[0] ?? "{}").hookSpecificOutput.permissionDecision).toBe("deny");
+  });
+
+  it("allows root delegation without a resource admission service", async () => {
+    const output: string[] = [];
+    await runCodexResourceGovernorHook({
+      input: hookInput("spawn_agent"),
+      nestingGuardOnly: true,
+      environment: {},
+      write: (value) => output.push(value),
+    });
+    expect(JSON.parse(output[0] ?? "{}").hookSpecificOutput.permissionDecision).toBe("allow");
+  });
+
+  it("retains the nesting ban with oversized tool input", async () => {
+    const output: string[] = [];
+    await runCodexResourceGovernorHook({
+      input: NodeStream.Readable.from([
+        JSON.stringify({
+          tool_input: { prompt: "x".repeat(128 * 1024) },
+          hook_event_name: "PreToolUse",
+          tool_name: "spawn_agent",
+          tool_use_id: "nested-start",
+          agent_id: "child-agent",
+        }),
+      ]),
+      environment: {},
+      write: (value) => output.push(value),
+    });
+    expect(JSON.parse(output[0] ?? "{}").hookSpecificOutput.permissionDecisionReason).toContain(
+      "Subagents cannot spawn",
+    );
+  });
+
+  it("keeps ordinary subagent tools available", async () => {
+    const output: string[] = [];
+    await runCodexResourceGovernorHook({
+      input: hookInput("shell", "child-agent"),
+      environment: {},
+      write: (value) => output.push(value),
+    });
+    expect(JSON.parse(output[0] ?? "{}").hookSpecificOutput.permissionDecision).toBe("allow");
+  });
+
   it("builds an additive synchronous PreToolUse hook for native subagent tools", () => {
     const configuration = codexResourceGovernorHookLaunchConfiguration({
       executablePath: "/opt/node 24/bin/node",
@@ -61,6 +141,29 @@ describe("CodexResourceGovernorHook", () => {
     expect(configuration?.appServerArgs.join(" ")).toContain("hooks.Stop=");
     expect(configuration?.appServerArgs.join(" ")).toContain("hooks.SubagentStart=");
     expect(configuration?.appServerArgs.join(" ")).toContain("hooks.SubagentStop=");
+  });
+
+  it("installs the worker guard without memory-admission lifecycle hooks", () => {
+    const configuration = codexResourceGovernorHookLaunchConfiguration({
+      executablePath: "/opt/node",
+      serverEntryPath: "/opt/t3/bin.mjs",
+      resourceProtection: false,
+      leafWorker: true,
+    });
+    const overrides = configuration?.appServerArgs.filter((value) => value.startsWith("hooks."));
+    expect(overrides).toHaveLength(1);
+    expect(overrides?.[0]).toContain("--nesting-guard-only --leaf-worker");
+    const encodedMatcher = /matcher=("(?:\\\\.|[^"\\\\])*")/u.exec(overrides?.[0] ?? "")?.[1];
+    const matcher = new RegExp(JSON.parse(encodedMatcher ?? '""'), "u");
+    for (const name of [
+      "spawn_agent",
+      "Agent",
+      "collaboration.spawn_agent",
+      "mcp__t3_code__subagent_spawn",
+    ]) {
+      expect(matcher.test(name)).toBe(true);
+    }
+    expect(matcher.test("shell")).toBe(false);
   });
 
   it("holds root turns from prompt submission through Stop", async () => {

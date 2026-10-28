@@ -5,6 +5,9 @@ export const RESOURCE_PROTECTION_URL_ENV = "T3_RESOURCE_PROTECTION_URL";
 export const RESOURCE_PROTECTION_TOKEN_ENV = "T3_MCP_BEARER_TOKEN";
 export const RESOURCE_PROTECTION_CONFIGURATION_ENV = "T3_RESOURCE_PROTECTION_CONFIGURATION";
 
+const SUBAGENT_SPAWN_TOOL_MATCHER =
+  "(^|[._])(spawn_agent|Agent|subagent_spawn|spawn_agents_on_csv)$";
+const subagentSpawnToolPattern = new RegExp(SUBAGENT_SPAWN_TOOL_MATCHER, "u");
 const MAX_HOOK_INPUT_BYTES = 64 * 1024;
 const RETRY_DELAY_MS = 250;
 const LIFECYCLE_RETRY_ATTEMPTS = 40;
@@ -22,12 +25,15 @@ function quoteWindowsArgument(value: string): string {
 export function codexResourceGovernorHookLaunchConfiguration(input: {
   readonly executablePath?: string;
   readonly serverEntryPath?: string;
+  readonly resourceProtection?: boolean;
+  readonly leafWorker?: boolean;
 }) {
   const executablePath = input.executablePath ?? process.execPath;
   const serverEntryPath = input.serverEntryPath ?? process.argv[1];
   if (!serverEntryPath) return undefined;
-  const command = `${quotePosixArgument(executablePath)} ${quotePosixArgument(serverEntryPath)} resource-governor-hook`;
-  const commandWindows = `${quoteWindowsArgument(executablePath)} ${quoteWindowsArgument(serverEntryPath)} resource-governor-hook`;
+  const modeArgs = `${input.resourceProtection === false ? " --nesting-guard-only" : ""}${input.leafWorker ? " --leaf-worker" : ""}`;
+  const command = `${quotePosixArgument(executablePath)} ${quotePosixArgument(serverEntryPath)} resource-governor-hook${modeArgs}`;
+  const commandWindows = `${quoteWindowsArgument(executablePath)} ${quoteWindowsArgument(serverEntryPath)} resource-governor-hook${modeArgs}`;
   const override = (input: {
     readonly event: "PreToolUse" | "UserPromptSubmit" | "Stop" | "SubagentStart" | "SubagentStop";
     readonly matcher?: string;
@@ -38,9 +44,15 @@ export function codexResourceGovernorHookLaunchConfiguration(input: {
   const overrides = [
     override({
       event: "PreToolUse",
-      matcher: "^(spawn_agent|Agent)$",
-      timeout: EFFECTIVELY_UNBOUNDED_HOOK_TIMEOUT_SECONDS,
-      statusMessage: "Subagent wartet auf freien Speicher",
+      matcher: SUBAGENT_SPAWN_TOOL_MATCHER,
+      timeout:
+        input.resourceProtection === false
+          ? LIFECYCLE_HOOK_TIMEOUT_SECONDS
+          : EFFECTIVELY_UNBOUNDED_HOOK_TIMEOUT_SECONDS,
+      statusMessage:
+        input.resourceProtection === false
+          ? "Subagent-Start wird geprüft"
+          : "Subagent wartet auf freien Speicher",
     }),
     override({
       event: "UserPromptSubmit",
@@ -63,6 +75,7 @@ export function codexResourceGovernorHookLaunchConfiguration(input: {
       statusMessage: "Subagent-Speicher wird freigegeben",
     }),
   ];
+  if (input.resourceProtection === false) overrides.splice(1);
   return {
     globalArgs: ["--dangerously-bypass-hook-trust"],
     appServerArgs: overrides.flatMap((entry) => ["-c", entry]),
@@ -165,6 +178,8 @@ interface HookInput {
 }
 
 export interface CodexResourceGovernorHookOptions {
+  readonly nestingGuardOnly?: boolean;
+  readonly leafWorker?: boolean;
   readonly input?: NodeStream.Readable;
   readonly environment?: NodeJS.ProcessEnv;
   readonly fetch?: (
@@ -192,7 +207,22 @@ export async function runCodexResourceGovernorHook(
   const hookEventName = hookInput.hook_event_name;
 
   if (hookEventName === "PreToolUse") {
-    if (hookInput.tool_name !== "spawn_agent" && hookInput.tool_name !== "Agent") {
+    const spawnTool =
+      typeof hookInput.tool_name === "string" && subagentSpawnToolPattern.test(hookInput.tool_name);
+    const childAgent = typeof hookInput.agent_id === "string" && hookInput.agent_id.length > 0;
+    if (spawnTool && (options.leafWorker || childAgent)) {
+      write(
+        hookDecision(
+          "deny",
+          "Subagents cannot spawn further subagents. Return additional work to the parent agent.",
+        ),
+      );
+      return;
+    }
+    if (
+      options.nestingGuardOnly ||
+      (hookInput.tool_name !== "spawn_agent" && hookInput.tool_name !== "Agent")
+    ) {
       write(hookDecision("allow"));
       return;
     }

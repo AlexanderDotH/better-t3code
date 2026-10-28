@@ -4,7 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { Argument, Command } from "effect/unstable/cli";
+import { Argument, Command, Flag } from "effect/unstable/cli";
 import * as CliError from "effect/unstable/cli/CliError";
 
 import * as NetService from "@t3tools/shared/Net";
@@ -59,9 +59,12 @@ const connectUnavailableCommand = Command.make("connect", {
   ),
 );
 
-const resourceGovernorHookCommand = Command.make("resource-governor-hook").pipe(
+const resourceGovernorHookCommand = Command.make("resource-governor-hook", {
+  nestingGuardOnly: Flag.Boolean("nesting-guard-only").pipe(Flag.withDefault(false)),
+  leafWorker: Flag.Boolean("leaf-worker").pipe(Flag.withDefault(false)),
+}).pipe(
   Command.unlisted,
-  Command.withHandler(() => Effect.promise(() => runCodexResourceGovernorHook())),
+  Command.withHandler((options) => Effect.promise(() => runCodexResourceGovernorHook(options))),
 );
 
 export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>

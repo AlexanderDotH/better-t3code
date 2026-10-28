@@ -2364,6 +2364,12 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           !transientWorker && resourceGovernor && mcpSession
             ? codexResourceGovernorHookLaunchConfiguration({})
             : undefined;
+        const sessionHook =
+          resourceHook ??
+          codexResourceGovernorHookLaunchConfiguration({
+            resourceProtection: false,
+            leafWorker: transientWorker,
+          });
         const resourceConfigurationKey = ResourceProtection.resourceConfigurationKey([
           PROVIDER,
           boundInstanceId,
@@ -2385,7 +2391,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                 'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
               ]
             : []),
-          ...(resourceHook?.appServerArgs ?? []),
+          ...(sessionHook?.appServerArgs ?? []),
         ];
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
@@ -2439,7 +2445,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               }
             : {}),
           ...(appServerArgs.length > 0 ? { appServerArgs } : {}),
-          ...(resourceHook ? { appServerGlobalArgs: resourceHook.globalArgs } : {}),
+          ...(sessionHook ? { appServerGlobalArgs: sessionHook.globalArgs } : {}),
           ...(options?.resolveMcpServers ? { mcpServers: resolvedMcpServers } : {}),
         };
         const turnTokenUsage = makeCodexTurnTokenUsageState();

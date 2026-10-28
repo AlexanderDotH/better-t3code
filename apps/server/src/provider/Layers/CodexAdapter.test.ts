@@ -46,6 +46,7 @@ import { describe } from "vite-plus/test";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as ResourceProtection from "../../resourceProtection/SubagentResourceGovernor.ts";
+import { codexResourceGovernorHookLaunchConfiguration } from "../../resourceProtection/CodexResourceGovernorHook.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
@@ -951,7 +952,7 @@ validationLayer("CodexAdapterLive validation", (it) => {
       NodeAssert.equal(validationRuntimeFactory.factory.mock.calls.length, 0);
     }),
   );
-  it.effect("maps codex model options before starting a session", () =>
+  it.effect("keeps Ultra root options while enforcing the nesting guard without MCP", () =>
     Effect.gen(function* () {
       validationRuntimeFactory.factory.mockClear();
       const adapter = yield* CodexAdapter;
@@ -959,8 +960,9 @@ validationLayer("CodexAdapterLive validation", (it) => {
       yield* adapter.startSession({
         provider: ProviderDriverKind.make("codex"),
         threadId: asThreadId("thread-1"),
-        modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.3-codex", [
+        modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.6-sol", [
           { id: "serviceTier", value: "priority" },
+          { id: "reasoningEffort", value: "ultra" },
         ]),
         runtimeMode: "full-access",
       });
@@ -969,11 +971,15 @@ validationLayer("CodexAdapterLive validation", (it) => {
         binaryPath: "codex",
         cwd: process.cwd(),
         launchArgs: "",
-        model: "gpt-5.3-codex",
+        model: "gpt-5.6-sol",
+        reasoningEffort: "ultra",
         providerInstanceId: ProviderInstanceId.make("codex"),
         serviceTier: "priority",
         threadId: asThreadId("thread-1"),
         runtimeMode: "full-access",
+        appServerArgs: codexResourceGovernorHookLaunchConfiguration({ resourceProtection: false })
+          ?.appServerArgs,
+        appServerGlobalArgs: ["--dangerously-bypass-hook-trust"],
       });
     }),
   );
@@ -1003,16 +1009,18 @@ validationLayer("CodexAdapterLive validation", (it) => {
       });
 
       NodeAssert.deepStrictEqual(
-        validationRuntimeFactory.factory.mock.calls[0]?.[0]?.appServerArgs,
+        validationRuntimeFactory.factory.mock.calls[0]?.[0]?.appServerArgs?.slice(0, 4),
         ["-c", "memories.use_memories=false", "-c", "memories.generate_memories=false"],
       );
       NodeAssert.deepStrictEqual(
-        validationRuntimeFactory.factory.mock.calls[1]?.[0]?.appServerArgs,
+        validationRuntimeFactory.factory.mock.calls[1]?.[0]?.appServerArgs?.slice(0, 4),
         ["-c", "memories.use_memories=false", "-c", "memories.generate_memories=false"],
       );
       NodeAssert.equal(
-        validationRuntimeFactory.factory.mock.calls[2]?.[0]?.appServerArgs,
-        undefined,
+        validationRuntimeFactory.factory.mock.calls[2]?.[0]?.appServerArgs?.some((arg) =>
+          arg.startsWith("memories."),
+        ),
+        false,
       );
     }),
   );
@@ -1078,6 +1086,10 @@ validationLayer("CodexAdapterLive validation", (it) => {
         "mcp_servers.t3-code.url=http://127.0.0.1:43123/mcp/workspace",
         "-c",
         'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+        ...(codexResourceGovernorHookLaunchConfiguration({
+          resourceProtection: false,
+          leafWorker: true,
+        })?.appServerArgs ?? []),
       ]);
       NodeAssert.equal(runtimeInput?.resumeCursor, undefined);
       NodeAssert.deepStrictEqual(runtimeInput?.mcpServers, []);
@@ -1151,6 +1163,10 @@ validationLayer("CodexAdapterLive validation", (it) => {
         "mcp_servers.t3-code.url=http://127.0.0.1:43123/mcp/workspace",
         "-c",
         'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+        ...(codexResourceGovernorHookLaunchConfiguration({
+          resourceProtection: false,
+          leafWorker: true,
+        })?.appServerArgs ?? []),
       ]);
       NodeAssert.equal(runtimeInput?.resumeCursor, undefined);
       NodeAssert.deepStrictEqual(runtimeInput?.mcpServers, [configuredMcp]);
