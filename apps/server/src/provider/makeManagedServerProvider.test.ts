@@ -19,6 +19,7 @@ import { TestClock } from "effect/testing";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
+import { ServerActivation } from "../serverActivation.ts";
 import { makeManagedServerProvider } from "./makeManagedServerProvider.ts";
 
 const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
@@ -150,6 +151,34 @@ const enrichedSnapshotSecond: ServerProvider = {
 };
 
 describe("makeManagedServerProvider", () => {
+  it.effect("parks background provider checks until the server is activated", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const activation = yield* Deferred.make<void>();
+        const checked = yield* Deferred.make<void>();
+        const calls = yield* Ref.make(0);
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.update(calls, (count) => count + 1).pipe(
+            Effect.andThen(Deferred.succeed(checked, undefined)),
+            Effect.as(refreshedSnapshot),
+          ),
+          refreshInterval: "1 hour",
+        }).pipe(Effect.provideService(ServerActivation, Deferred.await(activation)));
+
+        assert.deepStrictEqual(yield* provider.getSnapshot, initialSnapshot);
+        assert.equal(yield* Ref.get(calls), 0);
+        yield* Deferred.succeed(activation, undefined);
+        yield* Deferred.await(checked);
+        assert.equal(yield* Ref.get(calls), 1);
+      }),
+    ).pipe(Effect.provide(AlwaysRunTestLayer)),
+  );
+
   it.effect(
     "runs the initial provider check in the background and streams the refreshed snapshot",
     () =>

@@ -83,8 +83,7 @@ const run = (activities: ReadonlyArray<ReturnType<typeof recordedSetup>>) =>
     const dispatched: Array<OrchestrationCommand> = [];
     yield* ServerRuntimeStartup.reconcileWorktreeSetups.pipe(
       Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
-        listActivitiesByKind: (kind: string) =>
-          Effect.succeed(kind === WORKTREE_SETUP_ACTIVITY_KIND ? activities : []),
+        listWorktreeSetupActivities: () => Effect.succeed(activities),
       } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]),
       Effect.provideService(OrchestrationEngine.OrchestrationEngineService, {
         readEvents: () => Stream.empty,

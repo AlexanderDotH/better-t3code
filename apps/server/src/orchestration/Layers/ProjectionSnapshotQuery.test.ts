@@ -3867,4 +3867,58 @@ projectionSnapshotLayer("ProjectionSnapshotQuery activities by kind", (it) => {
       assert.deepEqual(yield* query.listActivitiesByKind("nope"), []);
     }),
   );
+
+  it.effect("loads canonical worktree setups only for active threads", () =>
+    Effect.gen(function* () {
+      const query = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      const timestamp = "2026-03-02T00:00:00.000Z";
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id, title, workspace_root, scripts_json, created_at, updated_at
+        ) VALUES ('project-setups', 'Project', '/tmp/project-setups', '[]', ${timestamp}, ${timestamp})
+      `;
+      for (const id of ["live", "done", "gone", "archived", "empty", "wrong-kind", "wrong-owner"]) {
+        yield* sql`
+          INSERT INTO projection_threads (
+            thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
+            created_at, updated_at
+          ) VALUES (${id}, 'project-setups', ${id}, '{"instanceId":"codex","model":"gpt-5"}',
+            'full-access', 'default', ${timestamp}, ${timestamp})
+        `;
+      }
+      yield* sql`UPDATE projection_threads SET deleted_at = ${timestamp} WHERE thread_id = 'gone'`;
+      yield* sql`UPDATE projection_threads SET archived_at = ${timestamp} WHERE thread_id = 'archived'`;
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at
+        ) VALUES
+          ('worktree-setup:live', 'live', NULL, 'info', 'worktree-setup', 'Setting up',
+            '{"phase":"running"}', ${timestamp}),
+          ('worktree-setup:done', 'done', NULL, 'info', 'worktree-setup', 'Finished',
+            '{"phase":"done"}', ${timestamp}),
+          ('worktree-setup:gone', 'gone', NULL, 'info', 'worktree-setup', 'Deleted',
+            'invalid-json', ${timestamp}),
+          ('worktree-setup:archived', 'archived', NULL, 'info', 'worktree-setup', 'Archived',
+            'invalid-json', ${timestamp}),
+          ('worktree-setup:wrong-kind', 'wrong-kind', NULL, 'info', 'tool.completed', 'Other',
+            'invalid-json', ${timestamp}),
+          ('worktree-setup:wrong-owner', 'live', NULL, 'info', 'worktree-setup', 'Wrong owner',
+            'invalid-json', ${timestamp}),
+          ('legacy-setup', 'live', NULL, 'info', 'worktree-setup', 'Legacy',
+            'invalid-json', ${timestamp}),
+          ('large-tool-output', 'live', NULL, 'info', 'tool.completed', 'Other',
+            'invalid-json', ${timestamp})
+      `;
+
+      const setups = yield* query.listWorktreeSetupActivities();
+      assert.deepEqual(
+        setups.map((activity) => [activity.id, activity.payload]),
+        [
+          ["worktree-setup:done", { phase: "done" }],
+          ["worktree-setup:live", { phase: "running" }],
+        ],
+      );
+    }),
+  );
 });

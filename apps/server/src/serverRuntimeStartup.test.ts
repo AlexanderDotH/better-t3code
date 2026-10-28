@@ -166,7 +166,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
       Effect.provide(
         Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
           getUserInputActivity: () => Effect.die("unused"),
-          listActivitiesByKind: () => Effect.succeed([]),
+          listWorktreeSetupActivities: () => Effect.succeed([]),
           getDeletedWorktreeThreads: () => Effect.succeed([]),
           listThreadsWithPullRequests: () => Effect.succeed([]),
           getProjectShells: () => Effect.succeed([]),
@@ -302,7 +302,7 @@ it.effect.each([
       Effect.provide(
         Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
           getUserInputActivity: () => Effect.die("unused"),
-          listActivitiesByKind: () => Effect.succeed([]),
+          listWorktreeSetupActivities: () => Effect.succeed([]),
           getDeletedWorktreeThreads: () => Effect.succeed([]),
           listThreadsWithPullRequests: () => Effect.succeed([]),
           getProjectShells: () => Effect.succeed([]),
@@ -394,7 +394,7 @@ it.effect(
         Effect.provide(
           Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
             getUserInputActivity: () => Effect.die("unused"),
-            listActivitiesByKind: () => Effect.succeed([]),
+            listWorktreeSetupActivities: () => Effect.succeed([]),
             getDeletedWorktreeThreads: () => Effect.succeed([]),
             listThreadsWithPullRequests: () => Effect.succeed([]),
             getProjectShells: () => Effect.succeed([]),
@@ -462,7 +462,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets preserves typed UUID generation fa
       Effect.provide(
         Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
           getUserInputActivity: () => Effect.die("unused"),
-          listActivitiesByKind: () => Effect.succeed([]),
+          listWorktreeSetupActivities: () => Effect.succeed([]),
           getDeletedWorktreeThreads: () => Effect.succeed([]),
           listThreadsWithPullRequests: () => Effect.succeed([]),
           getProjectShells: () => Effect.succeed([]),

@@ -796,9 +796,7 @@ export const reconcileWorktreeSetups = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
   const query = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-  // The command read model carries no activity bodies; read the setup
-  // records directly, live threads only.
-  const recordedSetups = yield* query.listActivitiesByKind(WORKTREE_SETUP_ACTIVITY_KIND);
+  const recordedSetups = yield* query.listWorktreeSetupActivities();
   const interruptedAt = DateTime.formatIso(yield* DateTime.now);
 
   for (const recorded of recordedSetups) {

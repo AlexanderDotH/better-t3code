@@ -3,6 +3,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import { ServerActivation } from "../../serverActivation.ts";
 import * as ProjectIndexingRecovery from "./ProjectIndexingRecovery.ts";
 import * as ProjectIndexingRuntime from "./ProjectIndexingRuntime.ts";
 
@@ -27,6 +28,27 @@ it.effect("makes server layers available while project indexing recovers", () =>
 
       yield* Deferred.succeed(release, undefined);
       yield* Deferred.await(finished);
+    }),
+  ),
+);
+
+it.effect("parks project indexing until startup recovery has activated the server", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const activation = yield* Deferred.make<void>();
+      const recovered = yield* Deferred.make<void>();
+      const layer = ProjectIndexingRecovery.layer.pipe(
+        Layer.provide(
+          Layer.mock(ProjectIndexingRuntime.ProjectIndexingRuntime)({
+            recover: Deferred.succeed(recovered, undefined).pipe(Effect.asVoid),
+          }),
+        ),
+        Layer.provide(Layer.succeed(ServerActivation, Deferred.await(activation))),
+      );
+      yield* Layer.build(layer);
+      assert.isFalse(yield* Deferred.isDone(recovered));
+      yield* Deferred.succeed(activation, undefined);
+      yield* Deferred.await(recovered);
     }),
   ),
 );
