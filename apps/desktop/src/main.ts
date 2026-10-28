@@ -42,6 +42,8 @@ import * as DesktopAppActivation from "./app/DesktopAppActivation.ts";
 import * as DesktopAppIdentity from "./app/DesktopAppIdentity.ts";
 import * as DesktopConnectionCatalogStore from "./app/DesktopConnectionCatalogStore.ts";
 import * as DesktopClerk from "./app/DesktopClerk.ts";
+import * as DesktopLocalSecrets from "./app/DesktopLocalSecrets.ts";
+import * as DesktopCredentialMigration from "./app/DesktopCredentialMigration.ts";
 import * as DesktopApplicationMenu from "./window/DesktopApplicationMenu.ts";
 import * as DesktopAssets from "./app/DesktopAssets.ts";
 import * as DesktopBackendConfiguration from "./backend/DesktopBackendConfiguration.ts";
@@ -118,20 +120,26 @@ const desktopSshEnvironmentLayer = Layer.unwrap(
   }),
 );
 
+const desktopLocalSecretsLayer = DesktopLocalSecrets.layer.pipe(
+  Layer.provideMerge(desktopEnvironmentLayer),
+);
+const desktopSafeStorageLayer = ElectronSafeStorage.layer.pipe(
+  Layer.provideMerge(desktopLocalSecretsLayer),
+);
+
 const electronLayer = Layer.mergeAll(
-  ElectronApp.layer,
   ElectronDialog.layer,
   ElectronMenu.layer,
   ElectronMediaPermissions.layer,
   ElectronPowerMonitor.layer,
   ElectronProtocol.layer,
-  ElectronSafeStorage.layer,
+  desktopSafeStorageLayer,
   ElectronShell.layer,
   ElectronTheme.layer,
   ElectronUpdater.layer,
   ElectronWindow.layer,
   DesktopIpc.layer(Electron.ipcMain),
-);
+).pipe(Layer.provideMerge(ElectronApp.layer));
 
 const desktopFoundationLayer = Layer.mergeAll(
   MacPermissions.layer,
@@ -199,6 +207,10 @@ const desktopLocalEnvironmentAuthLayer = DesktopLocalEnvironmentAuth.layer.pipe(
   Layer.provideMerge(desktopBackendLayer),
 );
 
+const desktopCredentialMigrationLayer = DesktopCredentialMigration.layer.pipe(
+  Layer.provideMerge(desktopFoundationLayer),
+);
+
 const desktopApplicationLayer = Layer.mergeAll(
   DesktopLifecycle.layer,
   desktopAppActivationLayer,
@@ -207,6 +219,7 @@ const desktopApplicationLayer = Layer.mergeAll(
   DesktopShellEnvironment.layer,
   desktopSshLayer,
 ).pipe(
+  Layer.provideMerge(desktopCredentialMigrationLayer),
   Layer.provideMerge(desktopSnapShotLayer),
   Layer.provideMerge(DesktopUpdates.layer),
   Layer.provideMerge(desktopWslBackendLayer),
@@ -214,6 +227,7 @@ const desktopApplicationLayer = Layer.mergeAll(
 );
 
 const desktopClerkLayer = DesktopClerk.layer.pipe(
+  Layer.provideMerge(desktopLocalSecretsLayer),
   Layer.provideMerge(ElectronShell.layer),
   Layer.provideMerge(desktopEnvironmentLayer),
   Layer.provideMerge(NodeServices.layer),

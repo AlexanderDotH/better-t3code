@@ -20,6 +20,7 @@ import { translateDesktopInterfaceMessage } from "../settings/DesktopInterfaceLa
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import * as DesktopLocalSecrets from "./DesktopLocalSecrets.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 
 declare const __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: string | undefined;
@@ -85,9 +86,13 @@ export const desktopClerkFrontendApiHostname = resolveDesktopClerkFrontendApiHos
     : __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__,
 );
 
-function createDesktopClerkBridge(stateDir: string, isDevelopment: boolean) {
+function createDesktopClerkBridge(
+  stateDir: string,
+  isDevelopment: boolean,
+  localStorage?: Parameters<typeof createClerkBridge>[0]["storage"],
+) {
   return createClerkBridge({
-    storage: storage({ path: stateDir }),
+    storage: localStorage ?? storage({ path: stateDir }),
     passkeys: true,
     registerRendererScheme: false,
     renderer: {
@@ -112,9 +117,14 @@ export const make = Effect.gen(function* () {
   const userDataPath = yield* DesktopAppIdentity.resolveUserDataPath;
   yield* electronApp.setPath("userData", userDataPath);
 
+  const localStorage =
+    environment.platform === "darwin"
+      ? (yield* DesktopLocalSecrets.DesktopLocalSecrets).tokens
+      : undefined;
   const bridge = yield* Effect.acquireRelease(
     Effect.try({
-      try: () => createDesktopClerkBridge(environment.stateDir, environment.isDevelopment),
+      try: () =>
+        createDesktopClerkBridge(environment.stateDir, environment.isDevelopment, localStorage),
       catch: (cause) =>
         new DesktopClerkBridgeInitializationError({
           stateDir: environment.stateDir,
