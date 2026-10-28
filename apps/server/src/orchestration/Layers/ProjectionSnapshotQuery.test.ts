@@ -1407,6 +1407,88 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
     }),
   );
 
+  it.effect("reads current workspace bindings without loading checkpoint history", () =>
+    Effect.gen(function* () {
+      const query = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("thread-workspace-context");
+      const projectId = asProjectId("project-workspace-context");
+
+      yield* sql`DELETE FROM projection_turns`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`INSERT INTO projection_projects
+        (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+        VALUES (${projectId}, 'Workspace', '/tmp/workspace', 'invalid-json',
+          '2026-03-02T00:00:00.000Z', '2026-03-02T00:00:00.000Z')`;
+      yield* sql`INSERT INTO projection_threads
+        (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
+          worktree_path, created_at, updated_at)
+        VALUES (${threadId}, ${projectId}, 'Workspace thread', 'invalid-json', 'full-access',
+          'default', '/tmp/worktree', '2026-03-02T00:00:00.000Z', '2026-03-02T00:00:00.000Z')`;
+
+      const expected = {
+        threadId,
+        projectId,
+        workspaceRoot: "/tmp/workspace",
+        worktreePath: "/tmp/worktree",
+      };
+      assert.deepStrictEqual(
+        yield* query.getThreadWorkspaceContext(threadId),
+        Option.some(expected),
+      );
+
+      yield* sql`INSERT INTO projection_turns
+        (thread_id, turn_id, state, requested_at, completed_at, checkpoint_turn_count,
+          checkpoint_ref, checkpoint_status, checkpoint_files_json)
+        VALUES (${threadId}, 'turn-workspace-context', 'completed', '2026-03-02T00:00:01.000Z',
+          '2026-03-02T00:00:02.000Z', 1, 'checkpoint-workspace', 'ready', 'invalid-json')`;
+      const checkpointError = yield* query.getThreadCheckpointContext(threadId).pipe(Effect.flip);
+      assert.equal(checkpointError._tag, "PersistenceDecodeError");
+      assert.deepStrictEqual(
+        yield* query.getThreadWorkspaceContext(threadId),
+        Option.some(expected),
+      );
+
+      yield* sql`UPDATE projection_projects
+        SET workspace_root = '/tmp/current-workspace' WHERE project_id = ${projectId}`;
+      yield* sql`UPDATE projection_threads
+        SET worktree_path = NULL, archived_at = '2026-03-02T00:00:03.000Z'
+        WHERE thread_id = ${threadId}`;
+      assert.deepStrictEqual(
+        yield* query.getThreadWorkspaceContext(threadId),
+        Option.some({ ...expected, workspaceRoot: "/tmp/current-workspace", worktreePath: null }),
+      );
+    }),
+  );
+
+  it.effect("returns no workspace context for deleted or missing threads", () =>
+    Effect.gen(function* () {
+      const query = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("thread-workspace-deleted");
+
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`INSERT INTO projection_projects
+        (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+        VALUES ('project-workspace-deleted', 'Workspace', '/tmp/workspace', '[]',
+          '2026-03-02T00:00:00.000Z', '2026-03-02T00:00:00.000Z')`;
+      yield* sql`INSERT INTO projection_threads
+        (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
+          created_at, updated_at, deleted_at)
+        VALUES (${threadId}, 'project-workspace-deleted', 'Deleted', 'invalid-json',
+          'full-access', 'default', '2026-03-02T00:00:00.000Z', '2026-03-02T00:00:00.000Z',
+          '2026-03-02T00:00:01.000Z')`;
+
+      assert.deepStrictEqual(yield* query.getThreadWorkspaceContext(threadId), Option.none());
+      assert.deepStrictEqual(
+        yield* query.getThreadWorkspaceContext(ThreadId.make("thread-workspace-missing")),
+        Option.none(),
+      );
+    }),
+  );
+
   it.effect("reads single-thread checkpoint context without hydrating unrelated threads", () =>
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;

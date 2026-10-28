@@ -54,11 +54,14 @@ export interface ProjectionEventReplayStats {
   readonly payloadBytes: number;
 }
 
-export interface ProjectionThreadCheckpointContext {
+export interface ProjectionThreadWorkspaceContext {
   readonly threadId: ThreadId;
   readonly projectId: ProjectId;
   readonly workspaceRoot: string;
   readonly worktreePath: string | null;
+}
+
+export interface ProjectionThreadCheckpointContext extends ProjectionThreadWorkspaceContext {
   readonly checkpointsEnabled: boolean;
   readonly checkpoints: ReadonlyArray<OrchestrationCheckpointSummary>;
   readonly baselineCheckpointThreadId?: ThreadId;
@@ -259,6 +262,11 @@ export interface ProjectionSnapshotQueryShape {
   readonly hasActiveProjectAgentPeer: (
     threadId: ThreadId,
   ) => Effect.Effect<boolean, ProjectionRepositoryError>;
+
+  /** Read the current thread workspace without loading checkpoint history. */
+  readonly getThreadWorkspaceContext: (
+    threadId: ThreadId,
+  ) => Effect.Effect<Option.Option<ProjectionThreadWorkspaceContext>, ProjectionRepositoryError>;
 
   /**
    * Read the checkpoint context needed to resolve a single thread diff.

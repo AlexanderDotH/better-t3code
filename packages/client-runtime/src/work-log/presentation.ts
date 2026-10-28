@@ -196,11 +196,18 @@ function resolveT3McpToolPresentation(
   };
 }
 
-/** Latest live activity stays present-tense unless the call itself failed, declined, or stopped. */
+/** Parent activity is a fallback for legacy entries without lifecycle data. */
 export function liveActivityToolStatus(status: string | undefined, presentTense: boolean) {
-  if (status === "failed" || status === "declined" || status === "stopped") return status;
-  if (presentTense || status === "inProgress") return "inProgress";
-  return "completed";
+  switch (status) {
+    case "completed":
+    case "failed":
+    case "declined":
+    case "stopped":
+    case "inProgress":
+      return status;
+    default:
+      return status === undefined && presentTense ? "inProgress" : "completed";
+  }
 }
 
 /** Resolves tool identity before choosing labels or icons in either client. */

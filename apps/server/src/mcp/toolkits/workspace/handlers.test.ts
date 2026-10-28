@@ -67,12 +67,18 @@ const input: WorkspaceContextInput = { reads: [{ path: "README.md" }] };
 const makeLayer = (options?: {
   readonly contextMissing?: boolean;
   readonly worktreePath?: string | null;
+  readonly replySummary?: OrchestrationSubagentSummary | null;
   readonly runtimeCurrent?: boolean;
 }) => {
   const roots: Array<string> = [];
   const projection = Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
-    getSubagentSummaryById: () => Effect.succeedSome(makeReplySummary()),
-    getThreadCheckpointContext: (requestedThreadId) => {
+    getSubagentSummaryById: () =>
+      Effect.succeed(
+        Option.fromNullishOr(
+          options?.replySummary === undefined ? makeReplySummary() : options.replySummary,
+        ),
+      ),
+    getThreadWorkspaceContext: (requestedThreadId) => {
       expect(requestedThreadId).toBe(threadId);
       return Effect.succeed(
         options?.contextMissing === true
@@ -85,8 +91,6 @@ const makeLayer = (options?: {
                 options?.worktreePath === undefined
                   ? "/workspace/project/.t3/worktrees/feature"
                   : options.worktreePath,
-              checkpointsEnabled: true,
-              checkpoints: [],
             }),
       );
     },
@@ -228,6 +232,7 @@ const activeShell = (overrides?: {
 
 const makeEditLayer = (options?: {
   readonly shell?: OrchestrationThreadShell | null;
+  readonly worktreePath?: string | null;
   readonly contextMissing?: boolean;
   readonly editError?: WorkspaceEditError;
   readonly replySummary?: OrchestrationSubagentSummary | null;
@@ -243,7 +248,7 @@ const makeEditLayer = (options?: {
           options?.replySummary === undefined ? makeReplySummary() : options.replySummary,
         ),
       ),
-    getThreadCheckpointContext: () =>
+    getThreadWorkspaceContext: () =>
       Effect.succeed(
         options?.contextMissing === true
           ? Option.none()
@@ -251,9 +256,10 @@ const makeEditLayer = (options?: {
               threadId,
               projectId: ProjectId.make("project-workspace-context"),
               workspaceRoot: "/workspace/project",
-              worktreePath: "/workspace/project/.t3/worktrees/feature",
-              checkpointsEnabled: true,
-              checkpoints: [],
+              worktreePath:
+                options?.worktreePath === undefined
+                  ? "/workspace/project/.t3/worktrees/feature"
+                  : options.worktreePath,
             }),
       ),
     getThreadShellById: () =>
@@ -296,6 +302,17 @@ it.effect("edits only the authenticated thread worktree during its active writab
   );
 });
 
+it.effect("edits the project workspace when the authenticated thread has no worktree", () => {
+  const test = makeEditLayer({ worktreePath: null });
+  return Effect.gen(function* () {
+    expect(yield* invokeWorkspaceEdit(editInput)).toEqual(editResult);
+    expect(test.requests).toEqual([{ workspaceRoot: "/workspace/project", input: editInput }]);
+  }).pipe(
+    Effect.provideService(McpInvocationContext.McpInvocationContext, writableInvocation),
+    Effect.provide(test.layer),
+  );
+});
+
 it.effect("returns a bounded structural failure without submitted file contents", () => {
   const secret = "SENSITIVE_EDIT_BODY";
   const input: WorkspaceEditInput = {
@@ -327,6 +344,12 @@ it.effect(
     Effect.gen(function* () {
       const cases = [
         [makeEditLayer({ contextMissing: true }), writableInvocation, "thread_not_found"],
+        [makeEditLayer({ shell: null }), writableInvocation, "thread_not_found"],
+        [
+          makeEditLayer({ shell: { ...activeShell(), session: null } }),
+          writableInvocation,
+          "inactive_turn",
+        ],
         [
           makeEditLayer({ shell: activeShell({ activeTurn: false }) }),
           writableInvocation,
@@ -404,6 +427,9 @@ it.effect(
     Effect.gen(function* () {
       for (const test of [
         makeEditLayer({ runtimeCurrent: false }),
+        makeEditLayer({
+          shell: { ...activeShell(), archivedAt: "2026-09-01T00:00:00.000Z" },
+        }),
         makeEditLayer({ replySummary: null }),
         makeEditLayer({ replySummary: { ...makeReplySummary(), status: "completed" } }),
         makeEditLayer({
@@ -451,7 +477,7 @@ it.effect(
 );
 
 it.effect(
-  "keeps reply reads in the inherited workspace and rejects reads from a stale runtime",
+  "keeps reply reads in the inherited workspace and rejects stale or mismatched reply credentials",
   () =>
     Effect.gen(function* () {
       const live = makeLayer({ worktreePath: "/workspace/new" });
@@ -466,16 +492,24 @@ it.effect(
       ).toEqual(result);
       expect(live.roots).toEqual([replyContext.workspacePath]);
 
-      const stale = makeLayer({ runtimeCurrent: false });
-      const error = yield* invokeWorkspaceContext(input).pipe(
-        Effect.provideService(
-          McpInvocationContext.McpInvocationContext,
-          makeReplyInvocation(threadId),
-        ),
-        Effect.provide(stale.layer),
-        Effect.flip,
-      );
-      expect(error.reason).toBe("credential_not_authorized");
-      expect(stale.roots).toEqual([]);
+      for (const rejected of [
+        makeLayer({ runtimeCurrent: false }),
+        makeLayer({ replySummary: null }),
+        makeLayer({ replySummary: { ...makeReplySummary(), status: "completed" } }),
+        makeLayer({
+          replySummary: makeReplySummary({ ...replyContext, workspacePath: "/workspace/other" }),
+        }),
+      ]) {
+        const error = yield* invokeWorkspaceContext(input).pipe(
+          Effect.provideService(
+            McpInvocationContext.McpInvocationContext,
+            makeReplyInvocation(threadId),
+          ),
+          Effect.provide(rejected.layer),
+          Effect.flip,
+        );
+        expect(error.reason).toBe("credential_not_authorized");
+        expect(rejected.roots).toEqual([]);
+      }
     }),
 );

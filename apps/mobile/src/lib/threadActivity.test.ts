@@ -1496,7 +1496,7 @@ describe("buildThreadFeed", () => {
     },
   );
 
-  it("retains Claude MCP metadata behind friendly row and running labels", () => {
+  it("retains Claude MCP metadata behind friendly completed labels while thinking", () => {
     const turnId = TurnId.make("turn-claude-mcp");
     const toolData = {
       toolName: "mcp__t3-code__preview_click",
@@ -1564,10 +1564,12 @@ describe("buildThreadFeed", () => {
     ).toMatchObject([
       {
         type: "work-toggle",
-        summary: "Clicking in the preview browser",
+        summary: "Clicked in the preview browser",
         summaryToolIcon: "browser",
-        live: true,
+        live: false,
+        shimmer: false,
       },
+      { type: "thinking", id: "live-activity-row", turnId },
     ]);
   });
 
@@ -1575,20 +1577,30 @@ describe("buildThreadFeed", () => {
     {
       status: "completed",
       displayName: "Clicked in the preview browser",
-      liveDisplayName: "Clicking in the preview browser",
       detail: "Clicked Continue",
       hasFailure: false,
     },
     {
       status: "failed",
       displayName: "Failed to click in the preview browser",
-      liveDisplayName: "Failed to click in the preview browser",
       detail: "Timed out waiting for Continue",
       hasFailure: true,
     },
+    {
+      status: "declined",
+      displayName: "Declined to click in the preview browser",
+      detail: "Approval declined",
+      hasFailure: true,
+    },
+    {
+      status: "stopped",
+      displayName: "Stopped clicking in the preview browser",
+      detail: "Action cancelled",
+      hasFailure: false,
+    },
   ])(
     "uses the browser call label once its action settles as $status",
-    ({ status, displayName, liveDisplayName, detail, hasFailure }) => {
+    ({ status, displayName, detail, hasFailure }) => {
       const turnId = TurnId.make("turn-preview-lifecycle");
       const toolCallId = "preview-click";
       const groupId = `work-group:tool:${turnId}:${toolCallId}`;
@@ -1636,7 +1648,8 @@ describe("buildThreadFeed", () => {
           currentThread.latestTurn?.state === "running" ? currentThread.latestTurn.startedAt : null,
         );
 
-      expect(present(thread)).toMatchObject([
+      const runningRows = present(thread);
+      expect(runningRows).toMatchObject([
         {
           type: "work-toggle",
           groupId,
@@ -1683,12 +1696,12 @@ describe("buildThreadFeed", () => {
           groupId,
           hiddenCount: 1,
           expanded: true,
-          summary: liveDisplayName,
+          id: `work-toggle:${groupId}`,
+          summary: displayName,
           summaryToolIcon: "browser",
           hasFailure,
-          live: true,
-          // A successful trailing call keeps shining; a failure hands off to "Thinking".
-          shimmer: !hasFailure,
+          live: false,
+          shimmer: false,
         },
         {
           type: "activity-group",
@@ -1702,8 +1715,29 @@ describe("buildThreadFeed", () => {
             },
           ],
         },
-        ...(hasFailure ? [{ type: "thinking", turnId }] : []),
+        { type: "thinking", id: "live-activity-row", turnId },
       ]);
+      expect(terminalRows[1]?.id).toBe(runningRows[1]?.id);
+      expect(terminalRows[1]?.createdAt).toBe(runningRows[1]?.createdAt);
+      for (const mode of ["classic", "better-t3"] as const) {
+        const rows = deriveThreadFeedPresentation(
+          buildThreadFeed(terminalThread),
+          terminalThread.latestTurn,
+          new Set([turnId]),
+          new Set([groupId]),
+          terminalThread.latestTurn!.startedAt,
+          mode,
+        );
+        expect(rows.find((row) => row.type === "work-toggle")).toMatchObject({
+          groupId,
+          hiddenCount: 1,
+          expanded: true,
+          summary: displayName,
+          live: false,
+          shimmer: false,
+        });
+        expect(rows.filter((row) => row.type === "thinking")).toHaveLength(1);
+      }
       const terminalGroup = terminalRows[1];
       if (terminalGroup?.type !== "activity-group") return;
       const activity = terminalGroup.activities[0]!;
@@ -1711,6 +1745,40 @@ describe("buildThreadFeed", () => {
       expect(activity.workEntry.toolData).toBe(toolData);
       expect(activity.getFullDetail()).toBe(fullDetail);
       expect(activity.getCopyText()).toBe(`MCP tool call\n${detail}\n${fullDetail}`);
+
+      const resumedRows = present({
+        ...terminalThread,
+        activities: [
+          ...terminalThread.activities,
+          makeActivity({
+            id: EventId.make("preview-click-again"),
+            kind: "tool.updated",
+            tone: "tool",
+            summary: "MCP tool call",
+            createdAt: "2026-04-01T00:00:04.000Z",
+            turnId,
+            payload: {
+              itemType: "mcp_tool_call",
+              toolCallId: "preview-click-again",
+              status: "inProgress",
+              data: { item: toolData },
+            },
+          }),
+        ],
+      });
+      expect(resumedRows).toMatchObject([
+        {
+          type: "work-toggle",
+          id: "live-activity-row",
+          groupId,
+          hiddenCount: 2,
+          expanded: true,
+          summary: "Clicking in the preview browser",
+          live: true,
+          shimmer: true,
+        },
+        { type: "activity-group", id: terminalGroup.id, createdAt: terminalGroup.createdAt },
+      ]);
 
       const settledRows = present({
         ...terminalThread,
@@ -1721,6 +1789,7 @@ describe("buildThreadFeed", () => {
         },
       });
       expect(settledRows.find((entry) => entry.type === "work-toggle")).toMatchObject({
+        id: terminalRows[0]?.id,
         groupId,
         hiddenCount: 1,
         expanded: true,
@@ -2250,13 +2319,17 @@ describe("buildThreadFeed", () => {
     ].flatMap((command) =>
       (
         [
-          { lifecycleStatus: "inProgress", summary: "Running pnpm", shimmer: true },
-          { lifecycleStatus: "completed", summary: "Running pnpm", shimmer: true },
-          { lifecycleStatus: "failed", summary: "Failed pnpm", shimmer: false },
-          { lifecycleStatus: "declined", summary: "Declined pnpm", shimmer: false },
-          { lifecycleStatus: "stopped", summary: "Stopped pnpm", shimmer: false },
+          { lifecycleStatus: "inProgress", shimmer: true },
+          { lifecycleStatus: "completed", shimmer: false },
+          { lifecycleStatus: "failed", shimmer: false },
+          { lifecycleStatus: "declined", shimmer: false },
+          { lifecycleStatus: "stopped", shimmer: false },
         ] as const
-      ).map((state) => ({ command, ...state })),
+      ).map((state) => ({
+        command,
+        ...state,
+        summary: state.lifecycleStatus === "inProgress" ? "Running pnpm" : command,
+      })),
     ),
   )(
     "keeps the command summary in sync with $lifecycleStatus: $command",
@@ -2339,21 +2412,21 @@ describe("buildThreadFeed", () => {
       expect(rows.slice(0, 3).map((entry) => [entry.id, entry.type])).toEqual([
         ["work-toggle:work-group:activity-1", "work-toggle"],
         ["activity-2", "activity-group"],
-        [shimmer ? "live-activity-row" : "work-live:work-group:activity-3", "work-toggle"],
+        [shimmer ? "live-activity-row" : "work-toggle:work-group:activity-3", "work-toggle"],
       ]);
       expect(rows.slice(0, 3).map((entry) => entry.type === "work-toggle" && entry.live)).toEqual([
         false,
         false,
-        true,
+        shimmer,
       ]);
       expect(rows[2]).toMatchObject({
         summary,
         summaryKind: "command",
-        live: true,
+        live: shimmer,
         shimmer,
       });
       expect(rows[0]).toMatchObject({ live: false, shimmer: false });
-      // Exactly one live activity: the shimmering call, or "Thinking" once it fails.
+      // Settled calls hand the live slot back to "Thinking".
       expect(rows.filter((entry) => entry.type === "thinking")).toHaveLength(shimmer ? 0 : 1);
       expect(rows.at(-1)?.type).toBe(shimmer ? "work-toggle" : "thinking");
 
@@ -2538,17 +2611,22 @@ describe("buildThreadFeed", () => {
         }),
       ],
     });
-    const toolRunning = deriveThreadFeedPresentation(
+    const toolCompleted = deriveThreadFeedPresentation(
       feedWithWork,
       thread.latestTurn,
       new Set(),
       new Set(),
       "now",
     );
-    expect(toolRunning).toMatchObject([
-      { type: "work-toggle", id: "live-activity-row", shimmer: true, hiddenCount: 5 },
+    expect(toolCompleted).toMatchObject([
+      {
+        type: "work-toggle",
+        id: "live-activity-row",
+        summary: "Thinking",
+        shimmer: true,
+        hiddenCount: 5,
+      },
     ]);
-    expect(toolRunning[0]).not.toMatchObject({ summary: "Thinking" });
     const nextThought = {
       ...messages[3]!,
       id: MessageId.make("reasoning-after-tool"),
@@ -2662,7 +2740,7 @@ describe("buildThreadFeed", () => {
       "now",
     );
     expect(afterStrandedTool).toMatchObject([
-      { type: "work-toggle", id: "live-activity-row", summary: toolFirst.summary, hiddenCount: 6 },
+      { type: "work-toggle", id: "live-activity-row", summary: "Thinking", hiddenCount: 6 },
     ]);
   });
 
@@ -2908,7 +2986,7 @@ describe("buildThreadFeed", () => {
 
     expect(liveIds([call(1, "inProgress")])).toEqual(["work-toggle:live-activity-row"]);
     expect(liveIds([call(1, "inProgress"), call(1, "failed")])).toEqual([
-      "work-toggle:work-live:work-group:tool:turn-failing-calls:call-1",
+      "work-toggle:work-toggle:work-group:tool:turn-failing-calls:call-1",
       "thinking:live-activity-row",
     ]);
     expect(liveIds([call(1, "inProgress"), call(1, "failed"), call(2, "inProgress")])).toEqual([
@@ -3119,10 +3197,145 @@ describe("buildThreadFeed", () => {
     };
 
     expect(deriveThreadFeedPresentation(feed, latestTurn, new Set())).toEqual([]);
+    const nextTurnId = TurnId.make("turn-after-stale-tool");
+    expect(
+      deriveThreadFeedPresentation(
+        feed,
+        { ...latestTurn, turnId: nextTurnId },
+        new Set(),
+        new Set(),
+        latestTurn.startedAt,
+      ),
+    ).toMatchObject([
+      { type: "turn-fold", turnId, expanded: false },
+      { type: "thinking", turnId: nextTurnId },
+    ]);
     expect(
       deriveThreadFeedPresentation(feed, latestTurn, new Set(), new Set(), latestTurn.startedAt),
     ).toMatchObject([{ type: "work-toggle", live: true, shimmer: true }]);
   });
+
+  it.each(["completed", "failed", "declined", "stopped", undefined] as const)(
+    "uses the running parallel call when a newer call has status %s",
+    (newerStatus) => {
+      const turnId = TurnId.make("turn-concurrent-statuses");
+      const groupId = `work-group:tool:${turnId}:call-a`;
+      const thread = makeThread({
+        id: ThreadId.make("thread-concurrent-statuses"),
+        projectId: ProjectId.make("project-1"),
+        title: "Concurrent tool status",
+        latestTurn: {
+          turnId,
+          state: "running",
+          requestedAt: "2026-04-01T00:00:00.000Z",
+          startedAt: "2026-04-01T00:00:00.000Z",
+          completedAt: null,
+          assistantMessageId: null,
+        },
+        activities: [
+          makeActivity({
+            id: EventId.make("call-a-start"),
+            kind: "tool.updated",
+            tone: "tool",
+            summary: "Command run",
+            createdAt: "2026-04-01T00:00:01.000Z",
+            turnId,
+            payload: {
+              toolCallId: "call-a",
+              itemType: "command_execution",
+              data: { item: { command: "vp test run" } },
+              status: "inProgress",
+            },
+          }),
+          makeActivity({
+            id: EventId.make("call-b-update"),
+            kind: newerStatus === undefined ? "tool.updated" : "tool.completed",
+            tone: "tool",
+            summary: "Command run",
+            createdAt: "2026-04-01T00:00:02.000Z",
+            turnId,
+            payload: {
+              toolCallId: "call-b",
+              itemType: "command_execution",
+              data: { item: { command: "bun run lint" } },
+              status: newerStatus,
+            },
+          }),
+        ],
+      });
+      const present = (currentThread: OrchestrationThread) =>
+        deriveThreadFeedPresentation(
+          buildThreadFeed(currentThread),
+          currentThread.latestTurn,
+          new Set(),
+          new Set([groupId]),
+          currentThread.latestTurn!.startedAt,
+        );
+
+      const runningRows = present(thread);
+      expect(runningRows).toMatchObject([
+        {
+          type: "work-toggle",
+          id: "live-activity-row",
+          groupId,
+          hiddenCount: 2,
+          expanded: true,
+          summary: "Running vp",
+          live: true,
+          shimmer: true,
+        },
+        {
+          type: "activity-group",
+          id: `work-details:${groupId}`,
+          activities: [
+            { id: "call-a-start", lifecycleStatus: "inProgress", live: true },
+            { id: "call-b-update", live: false },
+          ],
+        },
+      ]);
+      const terminalRows = present({
+        ...thread,
+        activities: [
+          ...thread.activities,
+          makeActivity({
+            id: EventId.make("call-a-completed"),
+            kind: "tool.completed",
+            tone: "tool",
+            summary: "Command run",
+            createdAt: "2026-04-01T00:00:03.000Z",
+            turnId,
+            payload: {
+              toolCallId: "call-a",
+              itemType: "command_execution",
+              status: "completed",
+            },
+          }),
+        ],
+      });
+      expect(terminalRows[0]).toMatchObject({
+        type: "work-toggle",
+        id: newerStatus === undefined ? "live-activity-row" : `work-toggle:${groupId}`,
+        groupId,
+        hiddenCount: 2,
+        expanded: true,
+        summary: newerStatus === undefined ? "Running bun" : "Ran 2 commands",
+        live: newerStatus === undefined,
+        shimmer: newerStatus === undefined,
+      });
+      expect(terminalRows[1]).toMatchObject({
+        type: "activity-group",
+        id: runningRows[1]?.id,
+        createdAt: runningRows[1]?.createdAt,
+        activities: [
+          { id: "call-a-start", lifecycleStatus: "completed", live: false },
+          { id: "call-b-update", live: false },
+        ],
+      });
+      expect(terminalRows.filter((row) => row.type === "thinking")).toHaveLength(
+        newerStatus === undefined ? 0 : 1,
+      );
+    },
+  );
 
   it("collapses interleaved tool lifecycles by call identity", () => {
     const turnId = TurnId.make("turn-parallel-tools");

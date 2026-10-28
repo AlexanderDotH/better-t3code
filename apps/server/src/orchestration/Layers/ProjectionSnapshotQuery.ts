@@ -362,11 +362,14 @@ const ProjectionThreadIdLookupRowSchema = Schema.Struct({
 const ProjectionActiveProjectAgentPeerRowSchema = Schema.Struct({
   hasActivePeer: Schema.Number,
 });
-const ProjectionThreadCheckpointContextThreadRowSchema = Schema.Struct({
+const ProjectionThreadWorkspaceContextRowSchema = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
   workspaceRoot: Schema.String,
   worktreePath: Schema.NullOr(Schema.String),
+});
+const ProjectionThreadCheckpointContextThreadRowSchema = Schema.Struct({
+  ...ProjectionThreadWorkspaceContextRowSchema.fields,
   checkpointsEnabled: Schema.Number,
 });
 const FullThreadDiffContextLookupInput = Schema.Struct({
@@ -1841,6 +1844,25 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             )
           LIMIT 1
         ) AS "hasActivePeer"
+      `,
+  });
+
+  const getThreadWorkspaceContextRow = SqlSchema.findOneOption({
+    Request: ThreadIdLookupInput,
+    Result: ProjectionThreadWorkspaceContextRowSchema,
+    execute: ({ threadId }) =>
+      sql`
+        SELECT
+          threads.thread_id AS "threadId",
+          threads.project_id AS "projectId",
+          projects.workspace_root AS "workspaceRoot",
+          threads.worktree_path AS "worktreePath"
+        FROM projection_threads AS threads
+        INNER JOIN projection_projects AS projects
+          ON projects.project_id = threads.project_id
+        WHERE threads.thread_id = ${threadId}
+          AND threads.deleted_at IS NULL
+        LIMIT 1
       `,
   });
 
@@ -4437,6 +4459,18 @@ pending_approval_requests AS (
       Effect.map((row) => row.hasActivePeer === 1),
     );
 
+  const getThreadWorkspaceContext: ProjectionSnapshotQueryShape["getThreadWorkspaceContext"] = (
+    threadId,
+  ) =>
+    getThreadWorkspaceContextRow({ threadId }).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.getThreadWorkspaceContext:query",
+          "ProjectionSnapshotQuery.getThreadWorkspaceContext:decodeRow",
+        ),
+      ),
+    );
+
   const getThreadCheckpointContext: ProjectionSnapshotQueryShape["getThreadCheckpointContext"] = (
     threadId,
   ) =>
@@ -5431,6 +5465,7 @@ pending_approval_requests AS (
     getFirstActiveThreadIdByProjectId,
     getImportedAgentSessionSources,
     hasActiveProjectAgentPeer,
+    getThreadWorkspaceContext,
     getThreadCheckpointContext,
     getFullThreadDiffContext,
     getThreadShellById,

@@ -6,6 +6,7 @@ import {
   commandDetailRepeatsCommand,
   isCompactionConflictWorkEntry,
   extractCommandOutputText,
+  liveActivityToolStatus,
   resolveViewedImageAsset,
   resolveWorkEntryToolPresentation,
   summarizeToolGroup,
@@ -241,6 +242,43 @@ describe("summarizeToolGroup", () => {
         },
       ]),
     ).toBe("Used Browser and Computer Use");
+  });
+});
+
+describe("liveActivityToolStatus", () => {
+  it("keeps a completed call in past tense while the parent is still working", () => {
+    const status = liveActivityToolStatus("completed", true);
+
+    expect(status).toBe("completed");
+    expect(
+      resolveWorkEntryToolPresentation({
+        label: "T3-code.preview_click",
+        toolLifecycleStatus: status,
+      })?.displayName,
+    ).toBe("Clicked in the preview browser");
+  });
+
+  it.each(["failed", "declined", "stopped"])(
+    "preserves the call's %s state regardless of parent activity",
+    (status) => {
+      expect(liveActivityToolStatus(status, true)).toBe(status);
+      expect(liveActivityToolStatus(status, false)).toBe(status);
+    },
+  );
+
+  it("keeps an in-progress call running regardless of parent activity", () => {
+    expect(liveActivityToolStatus("inProgress", true)).toBe("inProgress");
+    expect(liveActivityToolStatus("inProgress", false)).toBe("inProgress");
+  });
+
+  it("uses parent activity for legacy calls without a lifecycle status", () => {
+    expect(liveActivityToolStatus(undefined, true)).toBe("inProgress");
+    expect(liveActivityToolStatus(undefined, false)).toBe("completed");
+  });
+
+  it("does not infer running from parent activity for an unknown explicit status", () => {
+    expect(liveActivityToolStatus("unknown", true)).toBe("completed");
+    expect(liveActivityToolStatus("unknown", false)).toBe("completed");
   });
 });
 
