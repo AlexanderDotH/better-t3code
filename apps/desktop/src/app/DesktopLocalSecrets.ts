@@ -22,7 +22,7 @@ function hasCode(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
 }
 
-export function isLocalSecret(value: Uint8Array): boolean {
+function isLocalSecret(value: Uint8Array): boolean {
   return Buffer.from(value).subarray(0, HEADER.length).equals(HEADER);
 }
 
