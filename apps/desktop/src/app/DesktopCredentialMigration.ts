@@ -60,7 +60,7 @@ function mergeByKey<A>(
   return [...new Map([...older, ...current].map((value) => [key(value), value])).values()];
 }
 
-export function mergeCredentialCatalogs(
+function mergeCredentialCatalogs(
   older: ConnectionCatalogDocument,
   current: ConnectionCatalogDocument,
 ): ConnectionCatalogDocument {
@@ -127,7 +127,7 @@ function legacyTokenEntries(value: unknown, prefix = ""): Array<readonly [string
   });
 }
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const local = yield* DesktopLocalSecrets.DesktopLocalSecrets;
   const catalogStore = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
