@@ -32,7 +32,7 @@ export function compactActivityPayload(value: unknown): unknown {
   };
 }
 
-export function expandActivityPayload(value: unknown): unknown {
+function expandActivityPayload(value: unknown): unknown {
   const payload = record(value);
   const canonical = record(payload?.canonicalPayload);
   if (
