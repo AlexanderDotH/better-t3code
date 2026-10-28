@@ -7,6 +7,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
 import { toPersistenceDecodeError, toPersistenceSqlError } from "../Errors.ts";
+import { ActivityPayloadFromJsonString, compactActivityPayload } from "../activityPayload.ts";
 import {
   DeleteProjectionThreadSubagentActivitiesByThreadInput,
   DeleteProjectionThreadSubagentActivitiesInput,
@@ -19,7 +20,7 @@ import {
 
 const ProjectionThreadSubagentActivityDbRow = ProjectionThreadSubagentActivity.mapFields(
   Struct.assign({
-    payload: Schema.fromJsonString(Schema.Unknown),
+    payload: ActivityPayloadFromJsonString,
     sequence: Schema.NullOr(NonNegativeInt),
   }),
 );
@@ -55,7 +56,7 @@ const makeProjectionThreadSubagentActivityRepository = Effect.gen(function* () {
         ${row.tone},
         ${row.kind},
         ${row.summary},
-        ${JSON.stringify(row.payload)},
+        ${JSON.stringify(compactActivityPayload(row.payload))},
         ${row.sequence ?? null},
         ${row.createdAt}
       )

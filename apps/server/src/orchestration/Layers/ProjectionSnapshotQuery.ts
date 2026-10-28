@@ -1,4 +1,5 @@
 import { ProjectionCheckpoint } from "../../persistence/Services/ProjectionCheckpoints.ts";
+import { ActivityPayloadFromJsonString } from "../../persistence/activityPayload.ts";
 import {
   AgentSessionImportSource,
   WORKTREE_SETUP_ACTIVITY_ID_PREFIX,
@@ -8,6 +9,7 @@ import {
   DeepPlanRun,
   DeepPlanRunReference,
   OrchestrationMessageContext,
+  OrchestrationMessageRole,
   OrchestrationEvent,
   CheckpointRef,
   IsoDateTime,
@@ -184,6 +186,7 @@ const ProjectionTurnStartMessageDbRowSchema = ProjectionThreadMessageDbRowSchema
   }),
 );
 const RECENT_THREAD_MESSAGE_LIMIT = 200;
+const THREAD_CONTEXT_MESSAGE_PAGE_LIMIT = 100;
 const REPLY_MESSAGE_LIMIT = 2_000;
 const REPLY_ACTIVITY_LIMIT = 500;
 const REPLY_ACTIVITY_MAX_BYTES = 4 * 1024 * 1024;
@@ -199,7 +202,7 @@ const ProjectionReplyMessageDbRowSchema = ProjectionThreadSubagentMessage.mapFie
 );
 const ProjectionReplyActivityDbRowSchema = ProjectionThreadSubagentActivity.mapFields(
   Struct.assign({
-    payload: Schema.fromJsonString(Schema.Unknown),
+    payload: ActivityPayloadFromJsonString,
     sequence: Schema.NullOr(NonNegativeInt),
   }),
 );
@@ -232,7 +235,7 @@ const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
 );
 const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
   Struct.assign({
-    payload: Schema.fromJsonString(Schema.Unknown),
+    payload: ActivityPayloadFromJsonString,
     sequence: Schema.NullOr(NonNegativeInt),
     historyOrigin: Schema.NullOr(Schema.fromJsonString(OrchestrationHistoryOrigin)),
   }),
@@ -2137,15 +2140,31 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   });
 
   const listRecentThreadMessageRows = SqlSchema.findAll({
-    Request: Schema.Struct({ threadId: ThreadId, limit: NonNegativeInt }),
+    Request: Schema.Struct({
+      threadId: ThreadId,
+      limit: NonNegativeInt,
+      beforeMessageId: Schema.optional(MessageId),
+      conversationOnly: Schema.optional(Schema.Boolean),
+    }),
     Result: ProjectionThreadMessageDbRowSchema,
-    execute: ({ threadId, limit }) => sql`
+    execute: ({ threadId, limit, beforeMessageId, conversationOnly }) => sql`
       SELECT message_id AS "messageId", thread_id AS "threadId", turn_id AS "turnId", role, text,
         attachments_json AS "attachments", context_json AS "context", is_streaming AS "isStreaming",
         created_at AS "createdAt", updated_at AS "updatedAt", history_origin_json AS "historyOrigin"
       FROM (
-        SELECT * FROM projection_thread_messages
+        SELECT * FROM projection_thread_messages AS message
         WHERE thread_id = ${threadId}
+          ${conversationOnly ? sql`AND role IN ('user', 'assistant')` : sql``}
+          ${
+            beforeMessageId === undefined
+              ? sql``
+              : sql`AND NOT EXISTS (
+            SELECT 1 FROM projection_thread_messages AS boundary
+            WHERE boundary.thread_id = ${threadId}
+              AND boundary.message_id = ${beforeMessageId}
+              AND (message.created_at, message.message_id) >= (boundary.created_at, boundary.message_id)
+          )`
+          }
         ORDER BY created_at DESC, message_id DESC
         LIMIT ${limit}
       )
@@ -2155,16 +2174,120 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const getRecentThreadMessages: ProjectionSnapshotQueryShape["getRecentThreadMessages"] = (
     threadId,
     limit,
+    options,
   ) =>
     listRecentThreadMessageRows({
       threadId,
       limit: Math.max(0, Math.min(limit, RECENT_THREAD_MESSAGE_LIMIT)),
+      ...options,
     }).pipe(
       Effect.map((rows) => rows.map(mapMessageRow)),
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "ProjectionSnapshotQuery.getRecentThreadMessages:query",
           "ProjectionSnapshotQuery.getRecentThreadMessages:decodeRows",
+        ),
+      ),
+    );
+
+  const listThreadMessageSourceThreadIds = SqlSchema.findAll({
+    Request: ThreadIdLookupInput,
+    Result: Schema.Struct({ threadId: ThreadId }),
+    execute: ({ threadId }) => sql`
+      SELECT DISTINCT json_extract(history_origin_json, '$.sourceThreadId') AS "threadId"
+      FROM projection_thread_messages
+      WHERE thread_id = ${threadId} AND history_origin_json IS NOT NULL
+    `,
+  });
+  const getThreadMessageSourceThreadIds: ProjectionSnapshotQueryShape["getThreadMessageSourceThreadIds"] =
+    (threadId) =>
+      listThreadMessageSourceThreadIds({ threadId }).pipe(
+        Effect.map((rows) => rows.map((row) => row.threadId)),
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.getThreadMessageSourceThreadIds:query",
+            "ProjectionSnapshotQuery.getThreadMessageSourceThreadIds:decodeRows",
+          ),
+        ),
+      );
+
+  const ThreadContextMessageKey = Schema.Struct({
+    createdAt: IsoDateTime,
+    threadId: ThreadId,
+    messageId: MessageId,
+  });
+  const listThreadContextMessagePage = SqlSchema.findAll({
+    Request: Schema.Struct({
+      threadId: ThreadId,
+      limit: NonNegativeInt,
+      before: Schema.optional(ThreadContextMessageKey),
+    }),
+    Result: ThreadContextMessageKey.mapFields(
+      Struct.assign({
+        role: OrchestrationMessageRole,
+        text: Schema.String,
+      }),
+    ),
+    execute: ({ threadId, limit, before }) => sql`
+      SELECT
+        COALESCE(json_extract(history_origin_json, '$.sourceId'), message_id) AS "messageId",
+        COALESCE(json_extract(history_origin_json, '$.sourceThreadId'), thread_id) AS "threadId",
+        role, text, created_at AS "createdAt"
+      FROM projection_thread_messages
+      WHERE thread_id = ${threadId}
+        AND is_streaming = 0 AND role != 'system'
+        ${
+          before === undefined
+            ? sql``
+            : sql`AND created_at <= ${before.createdAt}
+          AND (created_at,
+            COALESCE(json_extract(history_origin_json, '$.sourceThreadId'), thread_id),
+            COALESCE(json_extract(history_origin_json, '$.sourceId'), message_id)
+          ) < (${before.createdAt}, ${before.threadId}, ${before.messageId})`
+        }
+      ORDER BY created_at DESC, "threadId" COLLATE BINARY DESC, "messageId" COLLATE BINARY DESC
+      LIMIT ${limit}
+    `,
+  });
+  const getThreadContextMessagePage: ProjectionSnapshotQueryShape["getThreadContextMessagePage"] = (
+    input,
+  ) =>
+    listThreadContextMessagePage({
+      ...input,
+      limit: Math.max(0, Math.min(input.limit, THREAD_CONTEXT_MESSAGE_PAGE_LIMIT)),
+    }).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.getThreadContextMessagePage:query",
+          "ProjectionSnapshotQuery.getThreadContextMessagePage:decodeRows",
+        ),
+      ),
+    );
+
+  const getThreadToolResultActivityRow = SqlSchema.findOneOption({
+    Request: Schema.Struct({ threadId: ThreadId, itemId: Schema.String }),
+    Result: ProjectionThreadActivityDbRowSchema,
+    execute: ({ threadId, itemId }) => sql`
+      SELECT activity_id AS "activityId", thread_id AS "threadId", turn_id AS "turnId",
+        tone, kind, summary, payload_json AS "payload", sequence,
+        created_at AS "createdAt", history_origin_json AS "historyOrigin"
+      FROM projection_thread_activities
+      WHERE thread_id = ${threadId} AND kind = 'tool.completed'
+        AND json_extract(payload_json, '$.itemId') = ${itemId}
+      ORDER BY sequence DESC, created_at DESC, activity_id DESC
+      LIMIT 1
+    `,
+  });
+  const getThreadToolResultActivity: ProjectionSnapshotQueryShape["getThreadToolResultActivity"] = (
+    threadId,
+    itemId,
+  ) =>
+    getThreadToolResultActivityRow({ threadId, itemId }).pipe(
+      Effect.map(Option.map(mapThreadActivityRow)),
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.getThreadToolResultActivity:query",
+          "ProjectionSnapshotQuery.getThreadToolResultActivity:decodeRow",
         ),
       ),
     );
@@ -5473,6 +5596,9 @@ pending_approval_requests AS (
     getTurnStartState,
     getTurnStartMessage,
     getRecentThreadMessages,
+    getThreadMessageSourceThreadIds,
+    getThreadContextMessagePage,
+    getThreadToolResultActivity,
     getThreadDetailById,
     getThreadForkHistory,
     getSubagentSummaryById,

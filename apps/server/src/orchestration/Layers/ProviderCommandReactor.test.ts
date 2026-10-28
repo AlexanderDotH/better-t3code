@@ -196,6 +196,7 @@ describe("ProviderCommandReactor", () => {
     readonly serverActivation?: Effect.Effect<void>;
     readonly beforeReadySessionDispatch?: () => Effect.Effect<void>;
     readonly beforeTurnStartDispatch?: () => Effect.Effect<void>;
+    readonly beforeProjectMemoryRead?: () => Effect.Effect<void>;
     readonly afterTurnStartDispatch?: () => Effect.Effect<void>;
     readonly compactThreadEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
     readonly interruptTurnEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
@@ -515,15 +516,17 @@ describe("ProviderCommandReactor", () => {
       Layer.provide(
         Layer.mock(ProjectMemoryStore, {
           read: () =>
-            Effect.succeed({
-              mode: "provider",
-              storage: null,
-              entries: [],
-              markdown: "",
-              tokenBudget: 2560,
-              estimatedTokens: 0,
-              truncated: false,
-            }),
+            (input?.beforeProjectMemoryRead?.() ?? Effect.void).pipe(
+              Effect.as({
+                mode: "provider" as const,
+                storage: null,
+                entries: [],
+                markdown: "",
+                tokenBudget: 2560,
+                estimatedTokens: 0,
+                truncated: false,
+              }),
+            ),
         }),
       ),
       Layer.provide(Layer.mock(ProviderAuthService, { tryHandlePromptCommand })),
@@ -1172,6 +1175,54 @@ describe("ProviderCommandReactor", () => {
       expect(harness.sendTurn).toHaveBeenCalledTimes(matchesTurn ? 2 : 1);
       expect((await harness.readModel()).threads[0]?.messages).toEqual([]);
     },
+  );
+
+  effectIt.effect(
+    "loads project memory and indexed context concurrently before starting a turn",
+    () =>
+      Effect.gen(function* () {
+        const memoryStarted = yield* Deferred.make<void>();
+        const indexStarted = yield* Deferred.make<void>();
+        let overlapped = false;
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            beforeProjectMemoryRead: () =>
+              Deferred.succeed(memoryStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(indexStarted)),
+              ),
+            projectContext: {
+              query: () =>
+                Effect.gen(function* () {
+                  yield* Deferred.succeed(indexStarted, undefined);
+                  yield* Deferred.await(memoryStarted);
+                  overlapped = true;
+                  return yield* new ProjectIndexOperationError({
+                    code: "store-unavailable",
+                    message: "No index in this fixture",
+                    retryable: true,
+                  });
+                }),
+            },
+          }),
+        );
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("parallel-context-turn"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("parallel-context-message"),
+            role: "user",
+            text: "Continue implementation",
+            attachments: [],
+          },
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          createdAt: "2026-01-01T00:00:01.000Z",
+        });
+        yield* Effect.promise(() => harness.drain());
+        expect(overlapped).toBe(true);
+        expect(harness.sendTurn).toHaveBeenCalledOnce();
+      }),
   );
 
   it("refreshes indexed task context inside an existing provider session and falls back on index failure", async () => {
@@ -1941,9 +1992,9 @@ describe("ProviderCommandReactor", () => {
       }
       await harness.drain();
       expect(summaryRequests).toEqual(["test-luna"]);
-      expect(decisionRequests).toEqual([mode === "selection" ? "test-classifier" : "test-luna"]);
+      expect(decisionRequests).toEqual(mode === "selection" ? ["test-classifier"] : []);
       expect(summaryTranscripts[0]).toContain("Keep this application offline.");
-      expect(summaryTranscripts[0]).not.toContain("History message 1");
+      expect(summaryTranscripts[0]?.includes("History message 1")).toBe(mode === "summary");
       const prepared = await Effect.runPromise(
         harness.snapshotQuery.getThreadDetailById(threadId, {
           activityKinds: ["context-engine.prepared"],

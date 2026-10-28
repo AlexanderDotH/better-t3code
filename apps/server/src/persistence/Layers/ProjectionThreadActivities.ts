@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 
 import { toPersistenceDecodeError, toPersistenceSqlError } from "../Errors.ts";
+import { ActivityPayloadFromJsonString, compactActivityPayload } from "../activityPayload.ts";
 
 import {
   DeleteProjectionThreadActivitiesInput,
@@ -20,7 +21,7 @@ import {
 
 const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
   Struct.assign({
-    payload: Schema.fromJsonString(Schema.Unknown),
+    payload: ActivityPayloadFromJsonString,
     sequence: Schema.NullOr(NonNegativeInt),
     historyOrigin: Schema.NullOr(Schema.fromJsonString(OrchestrationHistoryOrigin)),
   }),
@@ -80,7 +81,7 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
               ${row.tone},
               ${row.kind},
               ${row.summary},
-              ${JSON.stringify(row.payload)},
+              ${JSON.stringify(compactActivityPayload(row.payload))},
               ${row.sequence ?? null},
               ${row.createdAt}
               , ${row.historyOrigin === undefined ? null : JSON.stringify(row.historyOrigin)}

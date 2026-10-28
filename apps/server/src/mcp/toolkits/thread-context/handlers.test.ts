@@ -89,10 +89,51 @@ function projection(input: {
   readonly subagents?: ReadonlyMap<SubagentId, OrchestrationSubagentDetail>;
 }) {
   return Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
-    getThreadDetailById: (requestedThreadId) =>
-      Effect.succeed(requestedThreadId === input.root.id ? Option.some(input.root) : Option.none()),
     getThreadShellById: (requestedThreadId) =>
-      Effect.succeed(Option.fromNullishOr(input.ancestors?.get(requestedThreadId))),
+      Effect.succeed(
+        requestedThreadId === input.root.id
+          ? Option.some(input.root as unknown as OrchestrationThreadShell)
+          : Option.fromNullishOr(input.ancestors?.get(requestedThreadId)),
+      ),
+    getThreadMessageSourceThreadIds: () =>
+      Effect.succeed([
+        ...new Set(
+          input.root.messages.flatMap((item) =>
+            item.historyOrigin ? [item.historyOrigin.sourceThreadId] : [],
+          ),
+        ),
+      ]),
+    getThreadContextMessagePage: ({ before, limit }) => {
+      const key = (value: { createdAt: string; threadId: ThreadId; messageId: MessageId }) =>
+        [value.createdAt, value.threadId, value.messageId].join("\0");
+      return Effect.succeed(
+        input.root.messages
+          .filter((item) => !item.streaming && item.role !== "system")
+          .map((item) => ({
+            threadId: item.historyOrigin?.sourceThreadId ?? input.root.id,
+            messageId: MessageId.make(item.historyOrigin?.sourceId ?? item.id),
+            role: item.role,
+            text: item.text,
+            createdAt: item.createdAt,
+          }))
+          .filter((item) => before === undefined || key(item) < key(before))
+          .toSorted((left, right) => (key(left) < key(right) ? 1 : key(left) > key(right) ? -1 : 0))
+          .slice(0, limit),
+      );
+    },
+    getThreadToolResultActivity: (_threadId, itemId) =>
+      Effect.succeed(
+        Option.fromNullishOr(
+          input.root.activities.find(
+            (activity) =>
+              activity.kind === "tool.completed" &&
+              typeof activity.payload === "object" &&
+              activity.payload !== null &&
+              "itemId" in activity.payload &&
+              activity.payload.itemId === itemId,
+          ),
+        ),
+      ),
     getSubagentDetailById: (requestedThreadId, subagentId) =>
       Effect.succeed(
         requestedThreadId === input.root.id
@@ -159,6 +200,27 @@ it.effect(
     }).pipe((effect) => provide(effect, query));
   },
 );
+
+it.effect("searches Unicode text across bounded pages of unrelated messages", () => {
+  const messages = Array.from({ length: 205 }, (_, index) => {
+    const createdAt = `2026-01-01T00:${String(Math.floor(index / 60)).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}.000Z`;
+    return {
+      ...message(index, index % 40 === 0 ? "ÄRGER exact" : "unrelated"),
+      createdAt,
+      updatedAt: createdAt,
+    };
+  });
+  return invokeThreadContext({ query: "ärger" }).pipe(
+    Effect.tap((result) =>
+      Effect.sync(() => {
+        expect(result.messages).toHaveLength(6);
+        expect(result.hasMore).toBe(false);
+        expect(result.messages.every((item) => item.text === "ÄRGER exact")).toBe(true);
+      }),
+    ),
+    (effect) => provide(effect, projection({ root: thread({ messages }) })),
+  );
+});
 
 it.effect("keeps inherited message provenance inside same-project fork ancestry", () => {
   const sourceThreadId = ThreadId.make("thread-context-source");

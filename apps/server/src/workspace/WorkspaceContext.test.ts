@@ -234,12 +234,50 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceContextLive", (it) 
           expect(result.queries[4]?.matches).toEqual([
             expect.objectContaining({ path: "src/WorkspaceSearch.ts", kind: "content" }),
           ]);
+          expect(result.queries[2]?.warnings).toContain(
+            "No literal matches; returned matches for individual query terms.",
+          );
           expect(result.queries[5]?.matches).toEqual([]);
           expect(
             result.queries.flatMap((query) => query.matches.map((match) => match.path)),
           ).not.toContain("ignored/secret.ts");
           expect(createSpy).not.toHaveBeenCalled();
         }),
+    );
+
+    it.effect("finds files after a large vendor tree without truncating search coverage", () =>
+      Effect.gen(function* () {
+        const context = yield* WorkspaceContext.WorkspaceContext;
+        const cwd = yield* makeTempDir;
+        yield* initializeGit(cwd);
+        yield* writeTextFile(cwd, "apps/target.ts", "target");
+        yield* gitAdd(cwd, ["apps/target.ts"]);
+        const { stdout } = yield* Effect.promise(() =>
+          execFile("git", ["-C", cwd, "rev-parse", ":apps/target.ts"]),
+        );
+        const entries = Array.from(
+          { length: WORKSPACE_CONTEXT_MAX_PATH_ENTRIES + 1 },
+          (_, index) => `100644 ${stdout.trim()}\t.repos/vendor/file-${index}.ts\n`,
+        ).join("");
+        yield* Effect.promise(
+          () =>
+            new Promise<void>((resolve, reject) => {
+              const child = NodeChildProcess.execFile(
+                "git",
+                ["-C", cwd, "update-index", "--index-info"],
+                (error) => (error ? reject(error) : resolve()),
+              );
+              child.stdin?.end(entries);
+            }),
+        );
+        const result = yield* context.execute({
+          workspaceRoot: cwd,
+          input: { queries: [{ text: "target.ts", mode: "path" }] },
+        });
+        expect(result.queries[0]?.matches[0]?.path).toBe("apps/target.ts");
+        expect(result.queries[0]?.truncated).toBe(false);
+        expect(result.warnings).toEqual([]);
+      }),
     );
 
     it.effect("ranks token coverage before match count and reports capped path results", () =>

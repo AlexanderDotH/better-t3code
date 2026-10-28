@@ -63,6 +63,7 @@ import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -1523,6 +1524,38 @@ const make = Effect.gen(function* () {
       process.cwd();
     const settings = yield* serverSettingsService.getSettings;
     const projectIndexDecisionModelSelection = settings.projectIndexingDecisionModelSelection;
+    const projectMemoryReadFiber = yield* (
+      project
+        ? projectMemory
+            .read(
+              {
+                projectId: thread.projectId,
+                workspaceRoot: project.workspaceRoot,
+                threadId: input.threadId,
+                actor: "root",
+              },
+              {
+                projectId: thread.projectId,
+                query: input.messageText,
+                contextWindowTokens:
+                  resolveCodexContextWindowTokens(durableModelSelection) ??
+                  DEFAULT_PROJECT_MEMORY_CONTEXT_WINDOW_TOKENS,
+              },
+            )
+            .pipe(
+              Effect.asSome,
+              Effect.catchCauseIf(
+                (cause) => !Cause.hasInterruptsOnly(cause),
+                (cause) =>
+                  Effect.logWarning("provider command reactor could not load project memory", {
+                    threadId: input.threadId,
+                    projectId: thread.projectId,
+                    cause: Cause.pretty(cause),
+                  }).pipe(Effect.as(Option.none())),
+              ),
+            )
+        : Effect.succeedNone
+    ).pipe(Effect.forkChild);
     const legacyIndexContext =
       project && Option.isSome(projectContext) && projectIndexDecisionModelSelection === null
         ? yield* prepareProjectIndexTurnContext(
@@ -1546,12 +1579,25 @@ const make = Effect.gen(function* () {
           ).pipe(Effect.withSpan("ProviderCommandReactor.projectIndexContext"))
         : undefined;
     const reasoningHistory =
-      isAutoReasoningEnabled(durableModelSelection) ||
-      (projectIndexCandidate !== undefined && input.retryOfTurnId !== undefined)
+      input.retryOfTurnId !== undefined &&
+      (isAutoReasoningEnabled(durableModelSelection) || projectIndexCandidate !== undefined)
         ? yield* projectionSnapshotQuery
-            .getThreadDetailById(input.threadId)
+            .getThreadDetailById(input.threadId, {
+              activityKinds: [
+                "auto-reasoning.resolved",
+                PROJECT_INDEX_CONTEXT_DECISION_ACTIVITY_KIND,
+              ],
+            })
             .pipe(Effect.map(Option.getOrUndefined))
         : undefined;
+    const reasoningMessages =
+      input.resultOnly !== true && isAutoReasoningEnabled(durableModelSelection)
+        ? yield* projectionSnapshotQuery.getRecentThreadMessages(
+            input.threadId,
+            AUTO_REASONING_CONVERSATION_MESSAGE_LIMIT,
+            { beforeMessageId: input.boundaryMessageId, conversationOnly: true },
+          )
+        : [];
     const reusedAutoReasoning =
       input.resultOnly === true
         ? reuseAutoReasoningForRetry({
@@ -1575,7 +1621,7 @@ const make = Effect.gen(function* () {
             interactionMode: input.interactionMode ?? "default",
             attachments: input.attachments ?? [],
             conversation: collectAutoReasoningConversation(
-              reasoningHistory?.messages ?? [],
+              reasoningMessages,
               input.boundaryMessageId,
             ),
           });
@@ -1660,35 +1706,7 @@ const make = Effect.gen(function* () {
     }
     const effectiveInputModelSelection =
       pinnedDeepPlanModel ?? autoReasoning?.effectiveSelection ?? input.modelSelection;
-    const memoryModelSelection = autoReasoning?.effectiveSelection ?? durableModelSelection;
-    const projectMemoryRead = project
-      ? yield* projectMemory
-          .read(
-            {
-              projectId: thread.projectId,
-              workspaceRoot: project.workspaceRoot,
-              threadId: input.threadId,
-              actor: "root",
-            },
-            {
-              projectId: thread.projectId,
-              query: input.messageText,
-              contextWindowTokens:
-                resolveCodexContextWindowTokens(memoryModelSelection) ??
-                DEFAULT_PROJECT_MEMORY_CONTEXT_WINDOW_TOKENS,
-            },
-          )
-          .pipe(
-            Effect.map(Option.some),
-            Effect.catchCause((cause) =>
-              Effect.logWarning("provider command reactor could not load project memory", {
-                threadId: input.threadId,
-                projectId: thread.projectId,
-                cause: Cause.pretty(cause),
-              }).pipe(Effect.as(Option.none())),
-            ),
-          )
-      : Option.none();
+    const projectMemoryRead = yield* Fiber.join(projectMemoryReadFiber);
     const preparedContext =
       !input.hasPendingMessageEdits &&
       !forkHandoffRequired &&

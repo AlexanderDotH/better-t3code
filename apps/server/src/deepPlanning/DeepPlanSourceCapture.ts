@@ -25,6 +25,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { resolveAttachmentPath } from "../attachmentStore.ts";
+import { ActivityPayloadFromJsonString } from "../persistence/activityPayload.ts";
 import {
   canonicalSourceJson,
   sourceContentHash,
@@ -60,7 +61,7 @@ const ActivityRow = Schema.Struct({
   tone: OrchestrationThreadActivityTone,
   kind: Schema.String,
   summary: Schema.String,
-  payload: Schema.fromJsonString(Schema.Unknown),
+  payload: ActivityPayloadFromJsonString,
   turnId: Schema.NullOr(TurnId),
   sequence: Schema.NullOr(Schema.Number),
   historyOrigin: Schema.NullOr(Schema.fromJsonString(OrchestrationHistoryOrigin)),
