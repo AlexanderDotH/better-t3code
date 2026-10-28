@@ -20,6 +20,7 @@ const THEME_PREVIEW_ROLES = [
   "accentSurface",
   "accent",
   "messageSurface",
+  "assistantMessageSurface",
   "messageAction",
 ] as const;
 type ThemePreviewRole = (typeof THEME_PREVIEW_ROLES)[number];
@@ -44,6 +45,7 @@ const STANDARD_THEME_PREVIEW_COLORS: Record<
     surface: "#ffffff",
     accentSurface: "#f4f4f5",
     messageSurface: "#e4e4e7",
+    assistantMessageSurface: "#e4e4e7",
     ...SHARED_STANDARD_THEME_PREVIEW_COLORS.light,
   },
   dark: {
@@ -51,6 +53,7 @@ const STANDARD_THEME_PREVIEW_COLORS: Record<
     surface: "#121212",
     accentSurface: "#27272a",
     messageSurface: "#27272a",
+    assistantMessageSurface: "#27272a",
     ...SHARED_STANDARD_THEME_PREVIEW_COLORS.dark,
   },
 };
@@ -88,6 +91,7 @@ export function getThemeCardDefinition(theme: ThemeDefinition): ThemeCardDefinit
           accentSurface: colors.accentSurface,
           accent: colors.accent,
           messageSurface: colors.messageSurface,
+          assistantMessageSurface: colors.assistantMessageSurface,
           messageAction: colors.messageAction,
         },
       };

@@ -21,6 +21,18 @@ Android uses **Material You Layout** by default unless you have turned it off in
 It changes shapes, spacing, and controls independently
 of the selected theme.
 
+## Pastel theme
+
+Choose **Pastel** next to **T3 Code** in **Settings → Appearance**, or use **Change theme**
+in the command palette on web and desktop. It includes light and dark variants and is also
+available on mobile. Choose either preview to use it for that appearance, or select the theme
+to use both variants.
+
+Pastel adds lavender user messages, soft accents, and mint assistant bubbles in the
+**Better T3** chat presentation. Enable that layout under **Settings → Better T3 → Chat**
+on web and desktop, or **Appearance → Chat visuals** on mobile. Images and file previews
+keep their original colors. Select **T3 Code** again to restore the standard palette.
+
 ## Motion
 
 The main sidebar, right panel, and terminal drawer open and close immediately by default. Move the

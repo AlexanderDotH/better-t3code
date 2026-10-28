@@ -87,6 +87,10 @@
   background: transparent;
 }
 
+.better-chat-bubble[data-presentation-bubble="assistant"] {
+  --chat-surface: var(--app-theme-assistant-message-surface, var(--message-surface));
+}
+
 .better-chat-bubble[data-presentation-bubble="user"] {
   border-start-start-radius: 25px;
   border-start-end-radius: 0;

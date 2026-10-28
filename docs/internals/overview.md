@@ -50,6 +50,14 @@ connections and project membership. An unavailable target must not fall back to 
 default or a promise to synchronize offline or future environments. Project-group targets similarly
 select known environment-local checkouts; the group itself does not store inherited defaults.
 
+The **Pastel** palette is an explicit exception to keeping Better T3 additions
+in the Better T3 settings page: it extends the native **Appearance** library and theme color
+roles. Reusing that path keeps light/dark selection, previews, custom-theme copies, and mobile
+palettes consistent. This exception is limited to theme selection and colors; it does not move
+unrelated Better T3 controls into native settings. Color adjustments belong in the
+[shared palette](../../packages/shared/src/themePalettes.ts), so content previews retain their
+original colors instead of inheriting a filter over the app.
+
 ## Durable intent and side effects
 
 The event log is the source of truth for orchestration state. The

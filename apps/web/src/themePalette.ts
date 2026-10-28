@@ -4,6 +4,7 @@ import "culori/css";
 import { converter, parse } from "culori/fn";
 import {
   BUILT_IN_THEMES,
+  PASTEL_THEME,
   EMBER_THEME,
   GROVE_THEME,
   IRIS_THEME,
@@ -20,7 +21,15 @@ import {
   type ThemeVariants,
 } from "@t3tools/shared/themePalettes";
 
-export { EMBER_THEME, GROVE_THEME, IRIS_THEME, OCEAN_THEME, T3_CHAT_THEME, THEME_COLOR_ROLES };
+export {
+  PASTEL_THEME,
+  EMBER_THEME,
+  GROVE_THEME,
+  IRIS_THEME,
+  OCEAN_THEME,
+  T3_CHAT_THEME,
+  THEME_COLOR_ROLES,
+};
 export type { ThemeAppearance, ThemeColorRole, ThemeColors, ThemeDefinition, ThemeVariants };
 
 export const T3_CHAT_THEME_ID = "t3-chat" as const;
@@ -124,6 +133,12 @@ function parseThemeCollection(value: unknown): ThemeCollection | undefined {
     : undefined;
 }
 
+function withMessageSurfaceFallback(overrides: ThemeColorOverrides): ThemeColorOverrides {
+  return overrides.assistantMessageSurface === undefined && overrides.messageSurface !== undefined
+    ? { ...overrides, assistantMessageSurface: overrides.messageSurface }
+    : overrides;
+}
+
 /**
  * Tolerates unknown roles and malformed values so themes written by other
  * builds (for example one that adds a new role) keep their remaining colors.
@@ -140,7 +155,7 @@ export function lenientThemeColorOverrides(
       overrides[role as ThemeColorRole] = normalized;
     }
   }
-  return overrides;
+  return withMessageSurfaceFallback(overrides);
 }
 
 function parseStoredThemeColors(value: unknown, appearance: ThemeAppearance): ThemeColors | null {
@@ -780,6 +795,7 @@ export function createVividThemeColors(
     accentSurface: themeColor(accentSurface),
     accentSurfaceForeground: foregroundOn(accentSurfaceRgb),
     messageSurface: themeColor(messageSurface),
+    assistantMessageSurface: themeColor(messageSurface),
     messageForeground: foregroundOn(messageSurfaceRgb),
     messageAction: themeRgbToThemeColor(actionRgb),
     messageActionForeground: themeRgbToThemeColor(actionForeground),
@@ -1346,7 +1362,7 @@ function parseThemeColorOverrides(value: unknown): ThemeColorOverrides {
   if (Object.keys(overrides).length === 0) {
     throw new Error("Add at least one color role to the theme file.");
   }
-  return overrides;
+  return withMessageSurfaceFallback(overrides);
 }
 
 export function parseThemeFile(value: unknown): ThemeDefinition {
@@ -1463,6 +1479,7 @@ const APP_THEME_VARIABLES: Readonly<Record<ThemeColorRole, string>> = {
   accentSurface: "--app-theme-accent-surface",
   accentSurfaceForeground: "--app-theme-accent-surface-foreground",
   messageSurface: "--app-theme-message-surface",
+  assistantMessageSurface: "--app-theme-assistant-message-surface",
   messageForeground: "--app-theme-message-foreground",
   messageAction: "--app-theme-message-action",
   messageActionForeground: "--app-theme-message-action-foreground",
