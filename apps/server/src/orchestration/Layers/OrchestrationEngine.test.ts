@@ -2585,6 +2585,18 @@ describe("Deep Plan continuation after restart", () => {
           createdAt: now(),
         }),
       );
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.deep-plan.update",
+          commandId: CommandId.make("hidden-plan-freeze-sources"),
+          threadId,
+          runId,
+          operationId: "hidden-plan-freeze-sources",
+          expectedRevision: 0,
+          mutation: { type: "sources-set", sources: [] },
+          createdAt: now(),
+        }),
+      );
       const hidden = (id: string) => ({ ...continuation(id), background: { runId } });
       const before = await system.run(system.engine.latestSequence);
       const results = await Promise.all(
