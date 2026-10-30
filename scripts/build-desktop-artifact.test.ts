@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - Tests use Node's glob matcher to verify electron-builder exclusions.
 import * as NodeCrypto from "node:crypto";
+import * as NodeChildProcess from "node:child_process";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -1942,7 +1943,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           try: () =>
             import("sharp").then(({ default: sharp }) =>
               sharp({
-                create: { width: 1024, height: 1024, channels: 4, background: "#000" },
+                create: { width: 1024, height: 1024, channels: 4, background: "#175bb1" },
               })
                 .png()
                 .toFile(sourcePath),
@@ -1962,8 +1963,85 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.equal(new TextDecoder().decode(icns.slice(0, 4)), "icns");
         const view = new DataView(icns.buffer, icns.byteOffset, icns.byteLength);
         assert.equal(view.getUint32(4), icns.byteLength);
-        for (const type of ["icp4", "icp5", "icp6", "ic07", "ic08", "ic09", "ic10"]) {
+        for (const type of [
+          "ic04",
+          "ic05",
+          "ic11",
+          "ic12",
+          "ic07",
+          "ic13",
+          "ic08",
+          "ic14",
+          "ic09",
+          "ic10",
+        ]) {
           assert.include(new TextDecoder().decode(icns), type);
+        }
+        if ((yield* HostProcessPlatform) === "darwin") {
+          const decodedPath = path.join(tempDir, "decoded.iconset");
+          yield* Effect.tryPromise(async () => {
+            NodeChildProcess.execFileSync("iconutil", [
+              "-c",
+              "iconset",
+              "-o",
+              decodedPath,
+              targetPath,
+            ]);
+            const { default: sharp } = await import("sharp");
+            for (const size of [16, 32]) {
+              const expected = await sharp(sourcePath)
+                .resize(size, size)
+                .ensureAlpha()
+                .raw()
+                .toBuffer();
+              const decoded = await sharp(path.join(decodedPath, `icon_${size}x${size}.png`))
+                .ensureAlpha()
+                .raw()
+                .toBuffer();
+              assert.deepEqual(decoded, expected);
+            }
+          });
+        }
+        if ((yield* HostProcessPlatform) === "darwin") {
+          const brandSource = path.resolve("assets/prod/black-macos-1024.png");
+          const brandTarget = path.join(tempDir, "brand.icns");
+          const decodedBrand = path.join(tempDir, "brand.iconset");
+          yield* generateMacIconSet(brandSource, brandTarget);
+          yield* Effect.tryPromise(async () => {
+            NodeChildProcess.execFileSync("iconutil", [
+              "-c",
+              "iconset",
+              "-o",
+              decodedBrand,
+              brandTarget,
+            ]);
+            const { default: sharp } = await import("sharp");
+            for (const size of [16, 32]) {
+              const expected = await sharp(brandSource)
+                .resize(size, size)
+                .toColourspace("srgb")
+                .ensureAlpha()
+                .raw()
+                .toBuffer();
+              const decoded = await sharp(path.join(decodedBrand, `icon_${size}x${size}.png`))
+                .ensureAlpha()
+                .raw()
+                .toBuffer();
+              assert.equal(decoded.length, expected.length);
+              for (let pixel = 0; pixel < decoded.length; pixel += 4) {
+                assert.equal(decoded[pixel + 3], expected[pixel + 3]);
+                for (let channel = 0; channel < 3; channel++) {
+                  const alpha = expected[pixel + 3]! / 255;
+                  assert.isAtMost(
+                    Math.abs(
+                      decoded[pixel + channel]! * alpha - expected[pixel + channel]! * alpha,
+                    ),
+                    1,
+                  );
+                }
+              }
+            }
+          });
         }
       }),
     ),

@@ -2401,35 +2401,85 @@ export const stageBrowserSecret = Effect.fn("stageBrowserSecret")(function* (inp
   );
 });
 
+// Small macOS renditions use planar ARGB with icon RLE, not PNG data.
+function encodeMacArgbIcon(rgba: Buffer): Buffer {
+  const pixelCount = rgba.length / 4;
+  const chunks = [Buffer.from("ARGB")];
+  for (const channel of [3, 0, 1, 2]) {
+    const plane = Buffer.alloc(pixelCount);
+    for (let index = 0; index < pixelCount; index++) {
+      const value = rgba[index * 4 + channel]!;
+      plane[index] = channel === 3 ? value : Math.round((value * rgba[index * 4 + 3]!) / 255);
+    }
+    let offset = 0;
+    const repeatedLength = (start: number) => {
+      let length = 1;
+      while (
+        length < 130 &&
+        start + length < pixelCount &&
+        plane[start + length] === plane[start]
+      ) {
+        length++;
+      }
+      return length;
+    };
+    while (offset < pixelCount) {
+      const repeated = repeatedLength(offset);
+      if (repeated >= 3) {
+        chunks.push(Buffer.from([repeated + 125, plane[offset]!]));
+        offset += repeated;
+        continue;
+      }
+      const start = offset++;
+      while (offset - start < 128 && offset < pixelCount && repeatedLength(offset) < 3) offset++;
+      chunks.push(Buffer.from([offset - start - 1]), plane.subarray(start, offset));
+    }
+  }
+  // Icon Services needs a sentinel after the final run to decode its last pixels.
+  return Buffer.concat([...chunks, Buffer.alloc(1)]);
+}
+
 export function generateMacIconSet(sourcePng: string, targetIcns: string) {
   return Effect.tryPromise({
     try: async () => {
       const entries = await Promise.all(
         (
           [
-            ["icp4", 16],
-            ["icp5", 32],
-            ["icp6", 64],
-            ["ic07", 128],
-            ["ic08", 256],
-            ["ic09", 512],
-            ["ic10", 1024],
+            ["ic04", 16, "argb"],
+            ["ic05", 32, "argb"],
+            ["ic11", 32, "png"],
+            ["ic12", 64, "png"],
+            ["ic07", 128, "png"],
+            ["ic13", 256, "png"],
+            ["ic08", 256, "png"],
+            ["ic14", 512, "png"],
+            ["ic09", 512, "png"],
+            ["ic10", 1024, "png"],
           ] as const
-        ).map(async ([type, size]) => ({
-          type,
-          png: await sharp(sourcePng).resize(size, size, { fit: "fill" }).png().toBuffer(),
-        })),
+        ).map(async ([type, size, encoding]) => {
+          const image = sharp(sourcePng)
+            .resize(size, size, { fit: "fill" })
+            .toColourspace("srgb")
+            .ensureAlpha();
+          return {
+            type,
+            data:
+              encoding === "argb"
+                ? encodeMacArgbIcon(await image.raw().toBuffer())
+                : await image.png().toBuffer(),
+          };
+        }),
       );
-      const totalLength = 8 + entries.reduce((length, entry) => length + 8 + entry.png.length, 0);
+      const totalLength = 8 + entries.reduce((length, entry) => length + 8 + entry.data.length, 0);
       const icns = Buffer.allocUnsafe(totalLength);
       icns.write("icns", 0, 4, "ascii");
       icns.writeUInt32BE(totalLength, 4);
       let offset = 8;
       for (const entry of entries) {
         icns.write(entry.type, offset, 4, "ascii");
-        icns.writeUInt32BE(entry.png.length + 8, offset + 4);
-        entry.png.copy(icns, offset + 8);
-        offset += entry.png.length + 8;
+        icns.writeUInt32BE(entry.data.length + 8, offset + 4);
+        entry.data.copy(icns, offset + 8);
+        offset += entry.data.length + 8;
       }
       await NodeFSP.writeFile(targetIcns, icns);
     },
