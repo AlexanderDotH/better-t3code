@@ -3435,7 +3435,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-timeline-row-id="live-activity-row"');
   });
 
-  it("keeps the completed command in the shared activity row with a present-tense label", () => {
+  it("settles a completed command and returns the shared activity row to Thinking", () => {
     const turnId = TurnId.make("turn-live");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -3470,11 +3470,11 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("Running pnpm");
+    expect(markup).toContain("Ran pnpm");
     expect(markup).toContain("lucide-terminal");
-    expect(markup).not.toContain("Ran pnpm");
-    expect(markup).not.toContain("Thinking");
-    expect(markup).not.toContain('data-timeline-row-kind="thinking"');
+    expect(markup).not.toContain("Running pnpm");
+    expect(markup).toContain("Thinking");
+    expect(markup).toContain('data-timeline-row-kind="thinking"');
   });
 
   it("renders review comment contexts as structured cards instead of raw tags", () => {

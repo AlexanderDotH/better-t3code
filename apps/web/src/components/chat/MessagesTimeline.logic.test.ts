@@ -26,6 +26,7 @@ import {
   deriveMessagesTimelineRowsWithState,
   liveWorkEntryLabel,
   normalizeCompactToolLabel,
+  resolveActiveWorkEntry,
   resolveAssistantMessageCopyState,
   resolveWorkGroupScrollIndex,
   shouldFollowWorkGroupAppend,
@@ -117,6 +118,291 @@ describe("waiting thinking", () => {
       }
     }
   });
+});
+
+describe("tool group lifecycle", () => {
+  const turnId = TurnId.make("tool-lifecycle");
+  const startedAt = "2026-10-28T10:00:00.000Z";
+  const input = {
+    runningTurnId: turnId,
+    isWorking: true,
+    activeTurnStartedAt: startedAt,
+    turnDiffSummaries: [],
+    supportsConversationRollback: false,
+  };
+  const tool = (
+    id: string,
+    toolLifecycleStatus: WorkLogEntry["toolLifecycleStatus"],
+    second: number,
+  ): WorkLogEntry => ({
+    id,
+    toolCallId: id,
+    turnId,
+    createdAt: new Date(Date.UTC(2026, 9, 28, 10, 0, second)).toISOString(),
+    tone: "tool",
+    label: "Run command",
+    command: `echo ${id}`,
+    itemType: "command_execution",
+    ...(toolLifecycleStatus ? { toolLifecycleStatus } : {}),
+  });
+
+  it.each(["current", "better-t3"] as const)(
+    "hands activity back to Thinking after tools complete in %s",
+    (chatVisualMode) => {
+      const work = [tool("first", "completed", 1), tool("second", "completed", 2)];
+      const rows = deriveMessagesTimelineRows({
+        ...input,
+        chatVisualMode,
+        timelineEntries: deriveTimelineEntries([], [], work),
+      });
+      expect(rows.find((row) => row.kind === "work-live")).toMatchObject({
+        active: false,
+        entry: work[1],
+        groupedEntries: work,
+      });
+      expect(rows.filter((row) => row.kind === "thinking")).toHaveLength(1);
+      expect(rows.some((row) => row.kind === "work-live" && row.active)).toBe(false);
+      expect(new Set(rows.map((row) => row.id)).size).toBe(rows.length);
+    },
+  );
+
+  it.each(["completed", "failed", "declined", "stopped"] as const)(
+    "keeps an older parallel tool active when the newer call is %s",
+    (status) => {
+      const work = [tool("running", "inProgress", 1), tool("finished", status, 2)];
+      for (const chatVisualMode of ["current", "better-t3"] as const) {
+        const rows = deriveMessagesTimelineRows({
+          ...input,
+          chatVisualMode,
+          timelineEntries: deriveTimelineEntries([], [], work),
+        });
+        expect(rows.find((row) => row.kind === "work-live")).toMatchObject({
+          active: true,
+          entry: work[0],
+        });
+        expect(
+          rows.flatMap((row) =>
+            row.kind === "work" || row.kind === "work-live" ? row.groupedEntries : [],
+          ),
+        ).toEqual(work);
+        if (chatVisualMode === "current") {
+          expect(rows.some((row) => row.kind === "thinking")).toBe(false);
+        }
+        expect(new Set(rows.map((row) => row.id)).size).toBe(rows.length);
+      }
+    },
+  );
+
+  it.each(["completed", "failed", "declined", "stopped"] as const)(
+    "retains the %s result while the agent continues thinking",
+    (status) => {
+      const work = [tool("finished", status, 1)];
+      for (const chatVisualMode of ["current", "better-t3"] as const) {
+        const rows = deriveMessagesTimelineRows({
+          ...input,
+          chatVisualMode,
+          timelineEntries: deriveTimelineEntries([], [], work),
+        });
+        const entries = rows.flatMap((row) =>
+          row.kind === "work" || row.kind === "work-live" ? row.groupedEntries : [],
+        );
+        expect(entries).toEqual(work);
+        expect(rows.some((row) => row.kind === "work-live" && row.active)).toBe(false);
+        expect(rows.filter((row) => row.kind === "thinking")).toHaveLength(1);
+      }
+    },
+  );
+
+  it.each(["current", "better-t3"] as const)(
+    "prefers a known running call over newer legacy activity in %s",
+    (chatVisualMode) => {
+      const running = tool("running", "inProgress", 1);
+      const legacy = tool("legacy", undefined, 2);
+      const derive = (first: WorkLogEntry) =>
+        deriveMessagesTimelineRows({
+          ...input,
+          chatVisualMode,
+          timelineEntries: deriveTimelineEntries([], [], [first, legacy]),
+        });
+      expect(derive(running).find((row) => row.kind === "work-live")).toMatchObject({
+        active: true,
+        entry: running,
+      });
+      expect(resolveActiveWorkEntry([running, legacy])).toBe(running);
+
+      const completed = { ...running, toolLifecycleStatus: "completed" as const };
+      expect(derive(completed).find((row) => row.kind === "work-live")).toMatchObject({
+        active: true,
+        entry: legacy,
+      });
+      expect(resolveActiveWorkEntry([completed, legacy])).toBe(legacy);
+      expect(resolveActiveWorkEntry([completed])).toBeUndefined();
+    },
+  );
+
+  it("keeps a mixed reasoning group active until its last parallel tool settles", () => {
+    const thought: ChatMessage = {
+      id: MessageId.make("parallel-thought"),
+      turnId,
+      role: "reasoning",
+      text: "Checking both commands.",
+      createdAt: startedAt,
+      updatedAt: startedAt,
+      streaming: false,
+    };
+    const running = tool("running", "inProgress", 1);
+    const failed = tool("failed", "failed", 2);
+    const derive = (first: WorkLogEntry) =>
+      deriveMessagesTimelineRows({
+        ...input,
+        timelineEntries: deriveTimelineEntries([thought], [], [first, failed]),
+      });
+    const active = derive(running);
+    expect(active.find((row) => row.kind === "activity-group")).toMatchObject({
+      active: true,
+      entries: [{ message: thought }, { entry: running }, { entry: failed }],
+    });
+    expect(active.some((row) => row.kind === "thinking")).toBe(false);
+
+    const completed = derive({ ...running, toolLifecycleStatus: "completed" });
+    expect(completed.find((row) => row.kind === "activity-group")).toMatchObject({
+      active: false,
+    });
+    expect(completed.filter((row) => row.kind === "thinking")).toHaveLength(1);
+  });
+
+  it("keeps known child activity live across reasoning and completed parallel tools", () => {
+    const thought: ChatMessage = {
+      id: MessageId.make("child-thought"),
+      turnId,
+      role: "reasoning",
+      text: "Delegating the checks.",
+      createdAt: startedAt,
+      updatedAt: startedAt,
+      streaming: false,
+    };
+    const spawn: WorkLogEntry = {
+      ...tool("spawn", "completed", 1),
+      agentSpawn: { workflowId: "workflow", agentTaskIds: ["child"] },
+    };
+    const finished = tool("finished", "completed", 2);
+    for (const liveAgentTaskIds of [new Set(["child"]), new Set(["workflow"]), new Set<string>()]) {
+      const running = liveAgentTaskIds.size > 0;
+      const rows = deriveMessagesTimelineRows({
+        ...input,
+        timelineEntries: deriveTimelineEntries([thought], [], [spawn, finished]),
+        liveAgentTaskIds,
+      });
+      expect(rows.find((row) => row.kind === "activity-group")).toMatchObject({
+        active: false,
+        entries: [{ message: thought }],
+      });
+      const active = rows.find((row) => row.kind === "work-live" && row.active);
+      if (running) {
+        expect(active).toMatchObject({ entry: spawn });
+        expect(resolveActiveWorkEntry([spawn, finished], liveAgentTaskIds)).toBe(spawn);
+      } else {
+        expect(active).toBeUndefined();
+        expect(resolveActiveWorkEntry([spawn, finished], liveAgentTaskIds)).toBeUndefined();
+      }
+      expect(rows.some((row) => row.kind === "thinking")).toBe(!running);
+    }
+  });
+
+  it.each(["current", "better-t3"] as const)(
+    "preserves expanded groups and scroll anchors through lifecycle changes in %s",
+    (chatVisualMode) => {
+      const first = tool("first", "inProgress", 1);
+      const finishedFirst = {
+        ...first,
+        id: "first-completed",
+        toolLifecycleStatus: "completed" as const,
+      };
+      const second = tool("second", "inProgress", 2);
+      const finishedSecond = { ...second, toolLifecycleStatus: "completed" as const };
+      const third = tool("third", "inProgress", 3);
+      const groupId = `work-group:tool:${turnId}:first`;
+      const stages = [
+        { work: [first, second], active: true, working: true },
+        {
+          work: [first, { ...second, detail: "More command output" }],
+          active: true,
+          working: true,
+        },
+        { work: [finishedFirst, finishedSecond], active: false, working: true },
+        { work: [finishedFirst, finishedSecond, third], active: true, working: true },
+        {
+          work: [
+            finishedFirst,
+            finishedSecond,
+            { ...third, toolLifecycleStatus: "stopped" as const },
+          ],
+          active: false,
+          working: true,
+        },
+        {
+          work: [
+            finishedFirst,
+            finishedSecond,
+            { ...third, toolLifecycleStatus: "stopped" as const },
+          ],
+          active: false,
+          working: false,
+        },
+      ];
+      let timeline: TimelineEntriesProjection | undefined;
+      let projection: MessagesTimelineRowsProjection | undefined;
+      let previousEntries: WorkLogEntry[] | undefined;
+      for (const { work, active, working } of stages) {
+        timeline = deriveTimelineEntriesWithState([], [], work, timeline);
+        const stageInput = {
+          ...input,
+          chatVisualMode,
+          isWorking: working,
+          runningTurnId: working ? turnId : null,
+          expandedTurnIds: new Set([turnId]),
+          expandedWorkGroupIds: new Set([groupId]),
+          timelineEntries: timeline.entries,
+        };
+        projection = deriveMessagesTimelineRowsWithState(stageInput, projection);
+        expect(projection.rows).toEqual(deriveMessagesTimelineRows(stageInput));
+        const header = projection.rows.find(
+          (row) => row.kind === "work-live" || row.kind === "work-toggle",
+        );
+        expect(header).toMatchObject({ groupId, expanded: true });
+        const details = projection.rows
+          .filter((row) => row.kind === "work")
+          .find((row) => row.isExpandedToolGroup);
+        const entries =
+          chatVisualMode === "current"
+            ? details?.groupedEntries
+            : header?.kind === "work-live"
+              ? header.groupedEntries
+              : header?.detailEntries;
+        expect(entries).toEqual(work);
+        if (!entries) throw new Error("Expected expanded tool entries");
+        if (working) {
+          expect(header).toMatchObject({ kind: "work-live", active });
+        } else {
+          expect(header).toMatchObject({ kind: "work-toggle" });
+        }
+        if (chatVisualMode === "current") {
+          expect(details?.id).toBe(`${groupId}:details`);
+        }
+        expect(resolveWorkGroupScrollIndex(entries, { entryId: second.id, offset: 64 })).toEqual({
+          index: 1,
+          viewOffset: -64,
+        });
+        if (previousEntries) {
+          expect(shouldFollowWorkGroupAppend(previousEntries, entries, 0)).toBe(
+            entries.length > previousEntries.length,
+          );
+        }
+        expect(new Set(projection.rows.map((row) => row.id)).size).toBe(projection.rows.length);
+        previousEntries = entries;
+      }
+    },
+  );
 });
 
 describe("canonical thinking display", () => {
@@ -1506,14 +1792,14 @@ describe("work entry labels", () => {
     );
   });
 
-  it("keeps the latest live activity in the present tense after the call completes", () => {
+  it("keeps a completed tool in the past tense while its agent is active", () => {
     const browserEntry = {
       ...entry,
       toolTitle: "T3-code.preview_click",
       toolLifecycleStatus: "completed" as const,
     };
     expect(liveWorkEntryLabel(browserEntry, undefined, true)).toBe(
-      "Clicking in the preview browser",
+      "Clicked in the preview browser",
     );
     expect(liveWorkEntryLabel(browserEntry, undefined, false)).toBe(
       "Clicked in the preview browser",
@@ -1545,12 +1831,12 @@ describe("work entry labels", () => {
 
   it.each([
     ["inProgress", "Running vp", "Running vp"],
-    ["completed", "Running vp", "Ran vp"],
+    ["completed", "Ran vp", "Ran vp"],
     ["failed", "Failed vp", "Failed vp"],
     ["declined", "Declined vp", "Declined vp"],
     ["stopped", "Stopped vp", "Stopped vp"],
   ] as const)(
-    "uses present tense for a live %s command and the outcome once it is no longer live",
+    "preserves the %s command lifecycle while its agent is active or settled",
     (toolLifecycleStatus, liveLabel, settledLabel) => {
       const commandEntry = {
         ...entry,
@@ -2252,7 +2538,12 @@ describe("deriveMessagesTimelineRows", () => {
         expect(rows.filter((row) => row.kind === "work-live")).toMatchObject([
           {
             id: "live-activity-row",
-            entry: { id: trailingEntries.length ? "later-tool" : "spawn-entry" },
+            entry: {
+              id:
+                trailingEntries.length && toolLifecycleStatus === "inProgress"
+                  ? "later-tool"
+                  : "spawn-entry",
+            },
             active: true,
           },
         ]);
@@ -2974,11 +3265,11 @@ describe("deriveMessagesTimelineRows", () => {
       supportsConversationRollback: false,
     } satisfies Parameters<typeof deriveMessagesTimelineRows>[0];
     const rows = deriveMessagesTimelineRows(input);
-    expect(rows.map((row) => row.kind)).toEqual(["working", "activity-group"]);
-    expect(rows.at(-1)).toMatchObject({
-      id: "live-activity-row",
+    expect(rows.map((row) => row.kind)).toEqual(["working", "activity-group", "thinking"]);
+    expect(rows[1]).toMatchObject({
+      id: "activity-group:reasoning-entry",
       entries: [thought, ...tools],
-      active: true,
+      active: false,
     });
     const settled = deriveMessagesTimelineRows({
       ...input,
@@ -3840,7 +4131,7 @@ describe("deriveMessagesTimelineRows", () => {
   it.each([
     [undefined, true],
     ["inProgress", true],
-    ["completed", true],
+    ["completed", false],
     ["failed", null],
     ["declined", false],
     ["stopped", false],
@@ -3937,7 +4228,8 @@ describe("deriveMessagesTimelineRows", () => {
 
     expect(initialActivityRow).toMatchObject({ kind: "thinking" });
     expect(runningActivityRow).toMatchObject({ kind: "work-live", active: true });
-    expect(completedActivityRow).toMatchObject({ kind: "work-live", active: true });
+    expect(completedActivityRow).toMatchObject({ kind: "thinking" });
+    expect(completedRows.find((row) => row.kind === "work-live")).toMatchObject({ active: false });
     expect(failedRows.some((row) => row.kind === "work-live")).toBe(false);
     expect(failedRows.at(-1)).toMatchObject({ kind: "thinking", id: "live-activity-row" });
     expect(declinedRows.find((row) => row.kind === "work-live")).toMatchObject({ active: false });

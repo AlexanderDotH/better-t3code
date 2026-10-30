@@ -1088,6 +1088,13 @@ it.effect(
           revokeAll: Effect.void,
         });
         const projectionLayer = Layer.mock(ProjectionSnapshotQuery)({
+          getThreadWorkspaceContext: () =>
+            Effect.succeedSome({
+              threadId,
+              projectId: ProjectId.make("project-mcp-test"),
+              workspaceRoot: "/workspace/project",
+              worktreePath: null,
+            }),
           getThreadCheckpointContext: () =>
             Effect.succeed(
               Option.some({

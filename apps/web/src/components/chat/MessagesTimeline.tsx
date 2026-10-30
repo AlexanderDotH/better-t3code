@@ -229,7 +229,7 @@ import {
   deriveUnsettledTurnId,
   type MessagesTimelineRowsProjection,
   liveWorkEntryLabel,
-  workEntryIsActiveTurnActivity,
+  resolveActiveWorkEntry,
   resolveAssistantMessageCopyState,
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
@@ -3901,7 +3901,7 @@ function ActivityGroupTimelineRow({
       ),
     (entry) => entry,
   );
-  const liveWork = trailingWork.findLast(workEntryIsActiveTurnActivity) ?? trailingWork.at(-1);
+  const liveWork = resolveActiveWorkEntry(trailingWork) ?? trailingWork.at(-1);
   const thinking = row.active && liveWork === undefined;
   const iconWork = row.active ? liveWork : work.at(-1);
   const failed = iconWork !== undefined && workEntryDisplayIndicatesToolFailure(iconWork);

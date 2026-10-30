@@ -28,7 +28,6 @@ import {
   isStreamingMessageTextUpdate,
   timelineMessageKey,
   workEntryDisplayIndicatesToolFailure,
-  workEntryIndicatesToolSuccess,
   workEntryIndicatesToolNeutralStatus,
   workEntryIsProviderReasoning,
   workLogEntryIsToolLike,
@@ -110,6 +109,7 @@ export function workEntryIsVisibleInGroup(
   expandedToolGroupEntry = false,
 ): boolean {
   return (
+    entry.toolLifecycleStatus === "stopped" ||
     (expandedToolGroupEntry &&
       (entry.toolLifecycleStatus === "inProgress" ||
         entry.sourceActivityKind === "task.progress")) ||
@@ -772,11 +772,30 @@ function deriveActiveVisualResponseTurnIds(input: {
   return turnIds;
 }
 
-export function workEntryIsActiveTurnActivity(entry: WorkLogEntry): boolean {
+function workEntryIsActiveTurnActivity(entry: WorkLogEntry): boolean {
   return (
     entry.toolLifecycleStatus === "inProgress" ||
     (entry.toolLifecycleStatus === undefined &&
       (entry.sourceActivityKind === "task.progress" || workLogEntryIsToolLike(entry)))
+  );
+}
+
+export function resolveActiveWorkEntry(
+  entries: ReadonlyArray<WorkLogEntry>,
+  liveAgentTaskIds?: ReadonlySet<string>,
+): WorkLogEntry | undefined {
+  const running = entries.findLast((entry) => {
+    const spawn = entry.agentSpawn;
+    return spawn
+      ? (spawn.workflowId !== null && liveAgentTaskIds?.has(spawn.workflowId)) ||
+          spawn.agentTaskIds.some((taskId) => liveAgentTaskIds?.has(taskId))
+      : entry.toolLifecycleStatus === "inProgress";
+  });
+  return (
+    running ??
+    entries.findLast(
+      (entry) => entry.agentSpawn === undefined && workEntryIsActiveTurnActivity(entry),
+    )
   );
 }
 
@@ -1235,26 +1254,17 @@ export function deriveMessagesTimelineRows(input: {
   );
   const activeWorkAnchor = activeToolEntries[0];
   const latestVisibleToolEntry = visibleActiveToolEntries.at(-1);
-  const latestRunningToolEntry = visibleActiveToolEntries.findLast((entry) => {
-    const spawn = entry.entry.agentSpawn;
-    return spawn
-      ? entry === latestVisibleToolEntry &&
-          ((spawn.workflowId !== null && input.liveAgentTaskIds?.has(spawn.workflowId)) ||
-            spawn.agentTaskIds.some((taskId) => input.liveAgentTaskIds?.has(taskId)))
-      : workEntryIsActiveTurnActivity(entry.entry);
-  });
+  const groupedActiveWorkEntries = visibleActiveToolEntries.map((entry) => entry.entry);
+  const latestRunningToolEntry = resolveActiveWorkEntry(
+    groupedActiveWorkEntries,
+    input.liveAgentTaskIds,
+  );
   const latestToolFailed =
     latestRunningToolEntry === undefined &&
     latestVisibleToolEntry !== undefined &&
     latestVisibleToolEntry.entry.toolLifecycleStatus !== "declined" &&
     workEntryDisplayIndicatesToolFailure(latestVisibleToolEntry.entry);
-  const latestToolKeepsActivityLive =
-    latestRunningToolEntry !== undefined ||
-    (latestVisibleToolEntry !== undefined &&
-      latestVisibleToolEntry.entry.agentSpawn === undefined &&
-      (workEntryIndicatesToolSuccess(latestVisibleToolEntry.entry) ||
-        (latestVisibleToolEntry.entry.toolLifecycleStatus === "completed" &&
-          !workEntryDisplayIndicatesToolFailure(latestVisibleToolEntry.entry))));
+  const latestToolKeepsActivityLive = latestRunningToolEntry !== undefined;
   const activeWorkPlacementEntryId = latestVisibleToolEntry?.id;
   const activeWorkRow =
     activeWorkAnchor && latestVisibleToolEntry && !latestToolFailed
@@ -1266,8 +1276,8 @@ export function deriveMessagesTimelineRows(input: {
               ? LIVE_ACTIVITY_ROW_ID
               : `work-live:${workGroupIdentity(activeWorkAnchor.id, activeWorkAnchor.entry)}`,
             createdAt: activeWorkAnchor.createdAt,
-            entry: (latestRunningToolEntry ?? latestVisibleToolEntry).entry,
-            groupedEntries: visibleActiveToolEntries.map((entry) => entry.entry),
+            entry: latestRunningToolEntry ?? latestVisibleToolEntry.entry,
+            groupedEntries: groupedActiveWorkEntries,
             groupId,
             expanded: input.expandedWorkGroupIds?.has(groupId) ?? false,
             active: latestToolKeepsActivityLive,
@@ -1275,7 +1285,7 @@ export function deriveMessagesTimelineRows(input: {
         })()
       : null;
   const activeWorkEntryIds = new Set(
-    activeWorkRow !== null || latestToolFailed ? activeToolEntries.map((entry) => entry.id) : [],
+    activeWorkRow !== null ? activeToolEntries.map((entry) => entry.id) : [],
   );
   const appendWorkingRow = () => {
     if (input.hideWorkingIndicator) return;
@@ -1417,8 +1427,11 @@ export function deriveMessagesTimelineRows(input: {
           activityTurnId !== null &&
           activityTurnId === unsettledTurnId &&
           cursor === input.timelineEntries.length &&
-          !latestToolFailed &&
-          (latestVisibleToolEntry === undefined || latestToolKeepsActivityLive);
+          (latestVisibleToolEntry === undefined ||
+            resolveActiveWorkEntry(
+              entries.flatMap((entry) => (entry.kind === "work" ? [entry.entry] : [])),
+              input.liveAgentTaskIds,
+            ) !== undefined);
         const groupId =
           timelineEntry.kind === "work"
             ? workGroupId(timelineEntry.id, timelineEntry.entry)
@@ -1813,7 +1826,7 @@ export function deriveMessagesTimelineRows(input: {
     input.chatVisualMode !== "classic" &&
     input.isWorking &&
     !setupRunning &&
-    (input.chatVisualMode === "better-t3" ? !hasLiveText : !hasActivityRow || latestToolFailed)
+    (input.chatVisualMode === "better-t3" ? !hasLiveText : !hasActivityRow)
   ) {
     nextRows.push({
       kind: "thinking",

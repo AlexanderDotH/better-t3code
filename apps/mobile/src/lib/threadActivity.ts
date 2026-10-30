@@ -1822,9 +1822,7 @@ export function deriveThreadFeedPresentation(
             entry.type === "activity-group"
               ? {
                   ...entry,
-                  activities: entry.activities.filter(
-                    (activity) => !activity.toolLike || activity.status !== "neutral",
-                  ),
+                  activities: entry.activities.filter((activity) => isVisibleActivity(activity)),
                 }
               : entry,
           )
@@ -2267,19 +2265,25 @@ function appendActivityGroupRows(
   flushGroupableRun(true);
 }
 
+function isVisibleActivity(
+  activity: ThreadFeedActivity,
+  unsettledTurnId: TurnId | null = null,
+  isWorking = false,
+): boolean {
+  return (
+    !(activity.toolLike && activity.status === "neutral") ||
+    activity.lifecycleStatus === "stopped" ||
+    (isWorking && activity.lifecycleStatus === "inProgress" && activity.turnId === unsettledTurnId)
+  );
+}
+
 function visibleActivityGroupEntries(
   entry: ThreadFeedActivityGroup,
   unsettledTurnId: TurnId | null,
   isWorking: boolean,
 ) {
   return omitSupersededLifecycleMarkers(
-    entry.activities.filter(
-      (activity) =>
-        !(activity.toolLike && activity.status === "neutral") ||
-        (isWorking &&
-          activity.lifecycleStatus === "inProgress" &&
-          activity.turnId === unsettledTurnId),
-    ),
+    entry.activities.filter((activity) => isVisibleActivity(activity, unsettledTurnId, isWorking)),
     (activity) => activity.workEntry,
   );
 }
@@ -2300,23 +2304,25 @@ function appendToolGroupRows(
 ): void {
   const groupId = toolActivityGroupId(activities[0]!);
   const expanded = expandedWorkGroupIds.has(groupId);
-  const latestActiveActivity = activities.findLast(
+  const latestRunningActivity = activities.findLast(
     (activity) =>
-      isWorking &&
-      activity.turnId === unsettledTurnId &&
-      (activity.lifecycleStatus === "inProgress" ||
-        (activeTail &&
-          activity.lifecycleStatus === undefined &&
-          (activity.workEntry.sourceActivityKind === "task.progress" || activity.toolLike))),
+      isWorking && activity.turnId === unsettledTurnId && activity.lifecycleStatus === "inProgress",
   );
-  const active = latestActiveActivity !== undefined;
-  const live = activeTail || active;
+  const latestActiveActivity =
+    latestRunningActivity ??
+    activities.findLast(
+      (activity) =>
+        isWorking &&
+        activeTail &&
+        activity.turnId === unsettledTurnId &&
+        activity.lifecycleStatus === undefined &&
+        (activity.workEntry.sourceActivityKind === "task.progress" || activity.toolLike),
+    );
+  const live = latestActiveActivity !== undefined;
   const latestActivity = latestActiveActivity ?? activities.at(-1)!;
-  // Like web, the trailing run keeps shining after its latest call succeeds;
-  // only a failed, declined, or stopped call hands the live slot to "Thinking".
-  // Only the trailing run can be the turn's live slot; an in-progress row in
-  // an earlier run (a call whose end was never reported) stays in place.
-  const shimmer = activeTail && (active || latestActivity.status === "success");
+  // Only the trailing run can hold the turn's live slot. Earlier running
+  // calls keep their own row identity until their completion is reported.
+  const shimmer = activeTail && live;
   const singleActivity = activities.length === 1 ? latestActivity : null;
   const summary = live
     ? liveToolActivitySummary(latestActivity, live)

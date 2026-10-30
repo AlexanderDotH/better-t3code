@@ -29,7 +29,7 @@ export const invokeWorkspaceContext = Effect.fn("WorkspaceToolkit.invoke")(funct
 > {
   const invocation = yield* McpInvocationContext.requireWorkspaceMcpCapability();
   const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-  const context = yield* projections.getThreadCheckpointContext(invocation.threadId).pipe(
+  const context = yield* projections.getThreadWorkspaceContext(invocation.threadId).pipe(
     Effect.mapError(
       (cause) =>
         new WorkspaceContextUnavailableError({
@@ -90,7 +90,7 @@ export const invokeWorkspaceEdit = Effect.fn("WorkspaceToolkit.invokeEdit")(func
   const invocation = yield* McpInvocationContext.requireWorkspaceWriteMcpCapability();
   const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const [context, thread] = yield* Effect.all([
-    projections.getThreadCheckpointContext(invocation.threadId),
+    projections.getThreadWorkspaceContext(invocation.threadId),
     projections.getThreadShellById(invocation.threadId),
   ]).pipe(Effect.mapError(projectionUnavailable));
   if (Option.isNone(context) || Option.isNone(thread)) {
