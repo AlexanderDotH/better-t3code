@@ -2424,8 +2424,12 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
         </ChatStatusSurface>
       ) : null}
       {row.kind === "message" && row.message.role === "user" ? (
-        <MessageReplyGesture role="user" onReply={reply}>
-          <UserTimelineRow row={row} />
+        <MessageReplyGesture
+          role="user"
+          onReply={reply}
+          showAction={chatVisualMode !== "better-t3"}
+        >
+          <UserTimelineRow row={row} onReply={reply} />
         </MessageReplyGesture>
       ) : null}
       {row.kind === "message" && row.message.role === "assistant" ? (
@@ -2741,7 +2745,13 @@ function MessageAuthorHeading({ children }: { children: string }) {
   return <h3 className="sr-only select-none">{children}</h3>;
 }
 
-function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+function UserTimelineRow({
+  row,
+  onReply,
+}: {
+  row: Extract<TimelineRow, { kind: "message" }>;
+  onReply: (() => void) | undefined;
+}) {
   const ctx = use(TimelineRowCtx);
   const { onImageExpand, onFileOpen } = ctx;
   const resources = useMemo(
@@ -3159,6 +3169,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           variant="ghost"
         />
       )}
+      {ctx.chatVisualMode === "better-t3" && onReply ? (
+        <MessageReplyButton onReply={onReply} />
+      ) : null}
     </div>
   );
 
