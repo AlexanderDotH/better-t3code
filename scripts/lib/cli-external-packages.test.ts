@@ -87,7 +87,6 @@ describe("selectCliRuntimeExternalDependencies", () => {
       [
         "@ff-labs/fff-node",
         "@harperfast/rocksdb-js",
-        "@napi-rs/keyring",
         "@typescript/typescript6",
         "msgpackr",
         "node-pty",

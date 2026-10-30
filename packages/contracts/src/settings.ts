@@ -1914,7 +1914,7 @@ export const ServerSettings = Schema.Struct({
   usageLimitSources: Schema.Record(UsageLimitSourceId, UsageLimitSourceConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
-  /** Allows this server to read the Cursor CLI's macOS Keychain login for account usage. */
+  /** Allows background Cursor account usage reads without opening macOS password dialogs. */
   cursorKeychainUsageEnabled: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),

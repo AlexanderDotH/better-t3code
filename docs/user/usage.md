@@ -21,9 +21,10 @@ Cursor reads account usage from Cursor's dashboard API using the CLI login saved
 This includes headless T3 sessions and desktop usage across machines; the same account counts
 once across connected environments. Without an accessible CLI login, T3 shows a
 notice instead of incomplete local totals. T3 does not estimate missing tokens from conversation text.
-On macOS, choose **Enable Cursor usage** on Usage to allow T3 to read your existing CLI login
-from Keychain. You can turn it off in **Settings → Providers → Usage providers**. macOS may ask
-you to allow access on the server Mac.
+On macOS, choose **Enable Cursor usage** on Usage to use an already accessible CLI login.
+Background checks never open a password dialog; if the login needs approval or the Keychain is
+locked, account usage remains unavailable. You can turn it off in
+**Settings → Providers → Usage providers**.
 
 Usage includes each configured account's history, including disabled accounts. Custom homes follow
 the account's home setting or its `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, or `GROK_HOME` environment

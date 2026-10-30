@@ -776,7 +776,8 @@ export function UsagePage() {
   );
 }
 
-const CURSOR_KEYCHAIN_COPY = "Requires access to your Cursor login in macOS Keychain.";
+const CURSOR_KEYCHAIN_COPY =
+  "Uses an already accessible Cursor login without opening password dialogs.";
 
 function CursorEnableButton({
   environmentId,
