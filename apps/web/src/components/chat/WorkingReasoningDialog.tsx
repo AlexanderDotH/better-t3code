@@ -211,6 +211,7 @@ export function WorkingReasoningLog(props: {
     props.compact === true,
   );
   const latest = props.traces.at(-1);
+  const better = props.chatVisualMode === "better-t3" && !props.compact;
   if (!latest) return null;
   const renderTitle = (trace: WorkingReasoningTrace) => (
     <DialogTrigger
@@ -225,18 +226,25 @@ export function WorkingReasoningLog(props: {
             })
           }
           data-reasoning-log="true"
+          data-presentation-status={better || undefined}
           className={
             props.compact
               ? "flex min-w-0 w-full items-center justify-center gap-1.5 rounded-md text-2xs text-secondary-label focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              : cn(
-                  "flex min-h-6 min-w-0 w-full items-center gap-1.5 rounded-md px-0.5 text-start text-secondary-label hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  props.chatVisualMode === "classic" ? "text-xs" : "text-sm",
-                )
+              : better
+                ? "better-chat-pill-row max-w-full cursor-pointer text-start text-message-foreground focus-visible:outline-2 focus-visible:outline-ring"
+                : cn(
+                    "flex min-h-6 min-w-0 w-full items-center gap-1.5 rounded-md px-0.5 text-start text-secondary-label hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    props.chatVisualMode === "classic" ? "text-xs" : "text-sm",
+                  )
           }
         />
       }
     >
-      {props.compact ? null : (
+      {props.compact ? null : better ? (
+        <span className="flex size-6 shrink-0 items-center justify-center">
+          <BrainIcon aria-hidden className="size-4 shrink-0" />
+        </span>
+      ) : (
         <BrainIcon
           aria-hidden
           className={cn(
@@ -248,7 +256,10 @@ export function WorkingReasoningLog(props: {
       <span className="min-w-0 truncate">
         <ReasoningTitle title={reasoningTitleMarkdown(trace.detail, label)} fallback={label} />
       </span>
-      <ChevronRightIcon aria-hidden className="size-3 shrink-0 text-icon-muted" />
+      <ChevronRightIcon
+        aria-hidden
+        className={cn("size-3 shrink-0", better ? "better-chat-chevron" : "text-icon-muted")}
+      />
     </DialogTrigger>
   );
   return (
@@ -260,7 +271,11 @@ export function WorkingReasoningLog(props: {
       >
         <div
           ref={contentRef}
-          className={props.compact ? "composer-reasoning-lyrics-content" : undefined}
+          className={cn(
+            props.compact && "composer-reasoning-lyrics-content",
+            better && "better-chat-bubble better-chat-status",
+          )}
+          data-chat-compact={better || undefined}
         >
           {(props.compact ? props.traces : [latest]).map(renderTitle)}
         </div>

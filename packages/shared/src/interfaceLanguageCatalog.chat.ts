@@ -1,6 +1,29 @@
 import { defineLocalizedInterfaceCatalog } from "./interfaceLanguageCatalog.types.ts";
 
 export const chatInterfaceCatalog = defineLocalizedInterfaceCatalog({
+  "chat.attachments.preview": ["Preview {{name}}", "{{name}} ansehen", "Aperçu de {{name}}"],
+  "chat.attachments.contents": ["Contents", "Inhalt", "Contenu"],
+  "chat.attachments.captureAccessibility": [
+    "Accessibility data from capture",
+    "Accessibility-Daten der Aufnahme",
+    "Données d’accessibilité de la capture",
+  ],
+  "chat.attachments.noAccessibility": [
+    "No accessibility data was provided for this capture.",
+    "Für diese Aufnahme liegen keine Accessibility-Daten vor.",
+    "Aucune donnée d’accessibilité n’est disponible pour cette capture.",
+  ],
+  "chat.attachments.capturedWindow": [
+    "Captured window",
+    "Aufgenommenes Fenster",
+    "Fenêtre capturée",
+  ],
+  "chat.templates.use": ["Use template", "Vorlage verwenden", "Utiliser le modèle"],
+  "chat.queue.next": ["Up next", "Als Nächstes", "À suivre"],
+  "chat.queue.waiting": ["Queued", "In der Warteschlange", "En attente"],
+  "chat.queue.sending": ["Sending", "Wird gesendet", "Envoi en cours"],
+  "chat.queue.sendNow": ["Send now", "Jetzt senden", "Envoyer maintenant"],
+  "chat.queue.returnToDraft": ["Return to draft", "Zurück in den Entwurf", "Revenir au brouillon"],
   "chat.reply.action": ["Reply", "Antworten", "Répondre"],
   "chat.reply.replyingTo": [
     "Replying to {{author}}",
