@@ -104,6 +104,7 @@ export function materialYouPaletteToMobileThemeVariables(
     "--color-md-user-fence-text": userBubbleForeground,
     "--color-md-hr": withAlpha(palette.outlineVariant, dark ? 0.48 : 0.6),
     "--color-user-bubble": userBubble,
+    "--color-assistant-bubble": userBubble,
     "--color-user-bubble-foreground": userBubbleForeground,
     "--color-user-bubble-foreground-muted": withAlpha(userBubbleForeground, 0.78),
     "--color-user-bubble-skill-foreground": userBubbleForeground,

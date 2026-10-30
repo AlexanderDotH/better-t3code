@@ -1881,6 +1881,7 @@ function renderFeedEntry(
     readonly iconSubtleColor: string | import("react-native").ColorValue;
     readonly screenColor: string;
     readonly userBubbleColor: string | import("react-native").ColorValue;
+    readonly assistantBubbleColor: string | import("react-native").ColorValue;
     readonly markdownStyles: MarkdownStyleSets;
     readonly reviewCommentColors: ReviewCommentColors;
     readonly reviewCommentBubbleWidth: number;
@@ -2425,7 +2426,7 @@ function renderFeedEntry(
                 importantForAccessibility="no-hide-descendants"
                 style={StyleSheet.absoluteFill}
               >
-                <ChatBubbleSurface color={userBubbleColor} />
+                <ChatBubbleSurface color={props.assistantBubbleColor} />
               </ChatPresentationMotion>
             ) : null}
             {props.chatVisualMode === "better-t3" && (showBubbleCopy || replyEnabled) ? (
@@ -2856,6 +2857,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const iconSubtleColor = theme["--color-icon-subtle"];
   const screenColor = theme["--color-screen"];
   const userBubbleColor = theme["--color-user-bubble"];
+  const assistantBubbleColor = theme["--color-assistant-bubble"];
   const onMarkdownLinkPress = useCallback(
     (href: string) => {
       const presentation = resolveMarkdownLinkPresentation(href);
@@ -3086,6 +3088,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       reviewCommentColors,
       themeAppearance,
       userBubbleColor,
+      assistantBubbleColor,
       viewportWidth,
     }),
     [
@@ -3108,6 +3111,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       reviewCommentColors,
       themeAppearance,
       userBubbleColor,
+      assistantBubbleColor,
       viewportWidth,
     ],
   );
@@ -3798,6 +3802,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               iconSubtleColor,
               screenColor,
               userBubbleColor,
+              assistantBubbleColor,
               markdownStyles,
               reviewCommentColors,
               reviewCommentBubbleWidth,
@@ -3893,6 +3898,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       iconSubtleColor,
       screenColor,
       userBubbleColor,
+      assistantBubbleColor,
       markdownStyles,
       reviewCommentColors,
       reviewCommentBubbleWidth,

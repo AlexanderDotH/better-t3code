@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { BUILT_IN_THEMES } from "@t3tools/shared/themePalettes";
+import { BUILT_IN_THEMES, PASTEL_THEME } from "@t3tools/shared/themePalettes";
 
 import {
   applyThemeColorPreview,
@@ -80,6 +80,44 @@ function contrastRatio(first: string, second: string): number {
 }
 
 describe("theme files", () => {
+  it.each(["light", "dark"] as const)(
+    "keeps Pastel text readable on both message colors in %s",
+    (mode) => {
+      const colors = getThemeColorsForMode(PASTEL_THEME, mode)!;
+      expect(colors.messageSurface).not.toBe(colors.assistantMessageSurface);
+      for (const background of [colors.messageSurface, colors.assistantMessageSurface]) {
+        expect(contrastRatio(colors.messageForeground, background)).toBeGreaterThanOrEqual(4.5);
+        expect(contrastRatio(colors.text, background)).toBeGreaterThanOrEqual(4.5);
+        expect(contrastRatio(colors.textMuted, background)).toBeGreaterThanOrEqual(4.5);
+      }
+      expect(
+        contrastRatio(colors.messageActionForeground, colors.messageAction),
+      ).toBeGreaterThanOrEqual(4.5);
+    },
+  );
+
+  it("preserves separate message colors when a Pastel copy is exported and imported", () => {
+    const copy = { ...PASTEL_THEME, id: "pastel-copy", label: "Pastel copy" };
+    const imported = parseThemeFile(JSON.parse(serializeThemeFile(copy)));
+    expect(imported.colors).toEqual(copy.colors);
+    expect(imported.variants).toEqual(copy.variants);
+  });
+
+  it("inherits the message surface in older themes that omit an assistant color", () => {
+    const theme = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      id: "old-message-colors",
+      name: "Old message colors",
+      appearance: "light",
+      colors: { messageSurface: "#e7e0f4" },
+      variants: { dark: { messageSurface: "#38303f" } },
+    });
+    expect(theme.colors.assistantMessageSurface).toBe(theme.colors.messageSurface);
+    expect(theme.variants!.dark!.assistantMessageSurface).toBe(
+      theme.variants!.dark!.messageSurface,
+    );
+  });
+
   it("keeps every built-in palette value in canonical OKLCH form", () => {
     for (const theme of BUILT_IN_THEMES) {
       for (const colors of [theme.colors, ...Object.values(theme.variants ?? {})]) {

@@ -114,6 +114,11 @@ describe("mobile themes", () => {
         expect(variables["--color-user-bubble"]).toBe(
           themeColorToNativeColor(colors.messageSurface),
         );
+        expect(variables["--color-assistant-bubble"]).toBe(
+          themeColorToNativeColor(colors.assistantMessageSurface),
+        );
+      } else {
+        expect(variables["--color-assistant-bubble"]).toBe(variables["--color-user-bubble"]);
       }
       expect(
         contrastRatio(variables["--color-foreground"], variables["--color-screen"]),
@@ -137,6 +142,7 @@ describe("mobile themes", () => {
         ["--color-placeholder", "--color-grouped-card"],
         ["--color-secondary-foreground", "--color-secondary"],
         ["--color-user-bubble-foreground", "--color-user-bubble"],
+        ["--color-user-bubble-foreground", "--color-assistant-bubble"],
         ["--color-warning-foreground", "--color-warning"],
         ["--color-danger-foreground", "--color-danger"],
         ["--color-md-body", "--color-screen"],

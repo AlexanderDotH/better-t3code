@@ -160,6 +160,12 @@ const THEME_EDITOR_ROLE_GROUPS: ReadonlyArray<{
         roles: ["messageSurface", "messageForeground"],
       },
       {
+        id: "assistant-message-surface",
+        label: "Assistant message surface",
+        role: "assistantMessageSurface",
+        roles: ["assistantMessageSurface"],
+      },
+      {
         id: "code-surface",
         label: "Code surface",
         role: "codeBackground",

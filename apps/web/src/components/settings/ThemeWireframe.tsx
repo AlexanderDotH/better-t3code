@@ -56,6 +56,10 @@ function ThemeWireframePane({
         style={{ backgroundColor: colors.messageSurface }}
       />
       <span
+        className="absolute left-[25%] top-[25%] h-[21%] w-[38%] rounded-lg"
+        style={{ backgroundColor: colors.assistantMessageSurface }}
+      />
+      <span
         className="absolute left-[27%] top-[28%] h-[5%] w-[34%] rounded-sm"
         style={{ backgroundColor: line }}
       />

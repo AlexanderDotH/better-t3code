@@ -328,6 +328,7 @@ export function createMobileThemeVariables(
     "--color-md-user-fence-text": c.messageForeground,
     "--color-md-hr": c.border,
     "--color-user-bubble": c.messageSurface,
+    "--color-assistant-bubble": c.assistantMessageSurface,
     "--color-user-bubble-foreground": c.messageForeground,
     "--color-user-bubble-foreground-muted": withAlpha(c.messageForeground, 0.78),
     "--color-user-bubble-skill-foreground": readableTextColor(c.messageAction, c.messageSurface),
@@ -388,7 +389,17 @@ export function getMobileThemeVariables(
           ),
         }
       : colors;
-  const baseVariables = createMobileThemeVariables(mobileColors, appearance, groupedCard);
+  const baseVariables = createMobileThemeVariables(
+    {
+      ...mobileColors,
+      assistantMessageSurface:
+        colors.assistantMessageSurface === colors.messageSurface
+          ? mobileColors.messageSurface
+          : colors.assistantMessageSurface,
+    },
+    appearance,
+    groupedCard,
+  );
 
   // The complete base record guarantees that optional overrides cannot leave a token undefined.
   return overrides ? ({ ...baseVariables, ...overrides } as MobileThemeVariables) : baseVariables;

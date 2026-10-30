@@ -51,6 +51,20 @@
         // Keep this small boot-time copy in sync with the built-in palettes so
         // the selected theme is visible before the app has mounted.
         const BUILT_IN_THEME_PALETTES = {
+          pastel: {
+            light: {
+              background: "oklch(0.982324 0.002858 84.559)",
+              foreground: "oklch(0.323646 0.019468 293.62)",
+              accent: "oklch(0.540001 0.072623 308.971)",
+              chrome: "oklch(0.982324 0.002858 84.559)",
+            },
+            dark: {
+              background: "oklch(0.224309 0.009635 285.597)",
+              foreground: "oklch(0.942151 0.010235 311.175)",
+              accent: "oklch(0.787857 0.070647 304.726)",
+              chrome: "oklch(0.224309 0.009635 285.597)",
+            },
+          },
           "t3-chat": {
             light: {
               background: "oklch(0.982446 0.010114 325.653)",
@@ -134,6 +148,7 @@
           "system",
           "light",
           "dark",
+          "pastel",
           "t3-chat",
           "grove",
           "ocean",
