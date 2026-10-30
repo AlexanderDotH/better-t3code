@@ -13,6 +13,26 @@ export const desktopInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Nach Updates suchen...",
     "Rechercher les mises à jour...",
   ],
+  "desktop.menu.importCredentials": [
+    "Import Older Credentials...",
+    "Alte Zugangsdaten übernehmen...",
+    "Importer les anciens identifiants...",
+  ],
+  "desktop.credentials.title": [
+    "Saved credentials",
+    "Gespeicherte Zugangsdaten",
+    "Identifiants enregistrés",
+  ],
+  "desktop.credentials.imported": [
+    "Your credentials are stored with local encryption. Reload the window to use imported connections and sign-ins.",
+    "Deine Zugangsdaten sind lokal verschlüsselt gespeichert. Lade das Fenster neu, um übernommene Verbindungen und Anmeldungen zu verwenden.",
+    "Vos identifiants sont chiffrés localement. Rechargez la fenêtre pour utiliser les connexions et comptes importés.",
+  ],
+  "desktop.credentials.failed": [
+    "The credentials could not be imported. The original files have been preserved. You can try again.",
+    "Die Zugangsdaten konnten nicht übernommen werden. Die ursprünglichen Dateien bleiben erhalten. Du kannst es erneut versuchen.",
+    "Les identifiants n'ont pas pu être importés. Les fichiers d'origine sont conservés. Vous pouvez réessayer.",
+  ],
   "desktop.menu.actualSize": ["Actual Size", "Tatsächliche Größe", "Taille réelle"],
   "desktop.menu.zoomIn": ["Zoom In", "Vergrößern", "Agrandir"],
   "desktop.menu.zoomOut": ["Zoom Out", "Verkleinern", "Réduire"],

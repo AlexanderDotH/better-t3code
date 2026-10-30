@@ -2,7 +2,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ConnectionCatalogDocument } from "@t3tools/client-runtime/platform";
 import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -55,11 +57,12 @@ function makeLayer(
   encryptionAvailable = true,
   failDecrypt: Ref.Ref<boolean> | null = null,
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem> = NodeServices.layer,
+  safeStorageLayer = makeSafeStorageLayer(encryptionAvailable, failDecrypt),
 ) {
   const environmentLayer = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
     homeDirectory: baseDir,
-    platform: "darwin",
+    platform: "linux",
     processArch: "arm64",
     appVersion: "1.2.3",
     appPath: "/repo",
@@ -71,7 +74,6 @@ function makeLayer(
       Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ T3CODE_HOME: baseDir })),
     ),
   );
-  const safeStorageLayer = makeSafeStorageLayer(encryptionAvailable, failDecrypt);
   const dependencies = Layer.mergeAll(
     environmentLayer,
     safeStorageLayer,
@@ -112,6 +114,69 @@ describe("DesktopConnectionCatalogStore", () => {
 
         yield* store.clear;
         assert.deepStrictEqual(yield* store.get, Option.none());
+      }),
+    ),
+  );
+
+  it.effect("shares a pending catalog load and keeps concurrent writes and clearing fresh", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-desktop-connection-catalog-test-",
+        });
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const decryptCalls = yield* Ref.make(0);
+        const storage = makeSafeStorageLayer(true);
+        const safeStorageLayer = Layer.effect(
+          ElectronSafeStorage.ElectronSafeStorage,
+          Effect.gen(function* () {
+            const delegate = yield* ElectronSafeStorage.ElectronSafeStorage;
+            return {
+              ...delegate,
+              decryptString: (value: Uint8Array) =>
+                Ref.update(decryptCalls, (count) => count + 1).pipe(
+                  Effect.andThen(Deferred.succeed(started, undefined)),
+                  Effect.andThen(Deferred.await(release)),
+                  Effect.andThen(delegate.decryptString(value)),
+                ),
+            };
+          }),
+        ).pipe(Layer.provide(storage));
+        const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
+          Effect.provide(makeLayer(baseDir, true, null, NodeServices.layer, safeStorageLayer)),
+        );
+        yield* store.set("before");
+        const first = yield* store.get.pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        const second = yield* store.get.pipe(Effect.forkChild);
+        const write = yield* store.set("after").pipe(Effect.forkChild);
+        yield* Deferred.succeed(release, undefined);
+        assert.deepStrictEqual(yield* Fiber.join(first), Option.some("before"));
+        assert.deepStrictEqual(yield* Fiber.join(second), Option.some("before"));
+        assert.isTrue(yield* Fiber.join(write));
+        assert.equal(yield* Ref.get(decryptCalls), 1);
+        assert.deepStrictEqual(yield* store.get, Option.some("after"));
+        assert.deepStrictEqual(yield* store.get, Option.some("after"));
+        assert.equal(yield* Ref.get(decryptCalls), 2);
+        yield* store.clear;
+        assert.deepStrictEqual(yield* store.get, Option.none());
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("rejects a stale import without overwriting a newer catalog", () =>
+    withStore(
+      Effect.gen(function* () {
+        const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
+        yield* store.set("before");
+        const expected = yield* store.get;
+        yield* store.set("newer");
+        assert.isFalse(yield* store.set("stale-import", expected));
+        assert.deepStrictEqual(yield* store.get, Option.some("newer"));
+        assert.isTrue(yield* store.set("merged", Option.some("newer")));
+        assert.deepStrictEqual(yield* store.get, Option.some("merged"));
       }),
     ),
   );

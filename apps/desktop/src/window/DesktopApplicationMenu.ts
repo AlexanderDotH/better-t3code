@@ -18,6 +18,7 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopCredentialMigration from "../app/DesktopCredentialMigration.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
@@ -45,7 +46,8 @@ export class DesktopApplicationMenu extends Context.Service<
 type DesktopApplicationMenuRuntimeServices =
   | DesktopUpdates.DesktopUpdates
   | DesktopWindow.DesktopWindow
-  | ElectronDialog.ElectronDialog;
+  | ElectronDialog.ElectronDialog
+  | DesktopCredentialMigration.DesktopCredentialMigration;
 
 const { logInfo: logUpdaterInfo } = makeComponentLogger("desktop-updater");
 
@@ -127,6 +129,7 @@ export const make = Effect.gen(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
   const electronMenu = yield* ElectronMenu.ElectronMenu;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const migration = yield* DesktopCredentialMigration.DesktopCredentialMigration;
   const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
   const appName = yield* electronApp.name;
   const context = yield* Effect.context<DesktopApplicationMenuRuntimeServices>();
@@ -189,6 +192,10 @@ export const make = Effect.gen(function* () {
     const template: Electron.MenuItemConstructorOptions[] = [];
 
     if (environment.platform === "darwin") {
+      const hasOlderCredentials = yield* migration.pending.pipe(
+        Effect.tapError((error) => logMenuError("Could not inspect older credentials", { error })),
+        Effect.orElseSucceed(() => true),
+      );
       template.push({
         label: appName,
         submenu: [
@@ -203,6 +210,45 @@ export const make = Effect.gen(function* () {
             accelerator: "CmdOrCtrl+,",
             click: settingsClick,
           },
+          ...(hasOlderCredentials
+            ? [
+                {
+                  label: t("desktop.menu.importCredentials"),
+                  click: (item: Electron.MenuItem) => {
+                    runMenuEffect(
+                      "import-credentials",
+                      migration.run.pipe(
+                        Effect.matchEffect({
+                          onFailure: () =>
+                            ElectronDialog.ElectronDialog.pipe(
+                              Effect.flatMap((dialog) =>
+                                dialog.showMessageBox({
+                                  type: "warning",
+                                  title: t("desktop.credentials.title"),
+                                  message: t("desktop.credentials.failed"),
+                                  buttons: [t("common.ok")],
+                                }),
+                              ),
+                              Effect.asVoid,
+                            ),
+                          onSuccess: () =>
+                            Effect.gen(function* () {
+                              const dialog = yield* ElectronDialog.ElectronDialog;
+                              yield* dialog.showMessageBox({
+                                type: "info",
+                                title: t("desktop.credentials.title"),
+                                message: t("desktop.credentials.imported"),
+                                buttons: [t("common.ok")],
+                              });
+                              item.enabled = false;
+                            }),
+                        }),
+                      ),
+                    );
+                  },
+                },
+              ]
+            : []),
           { type: "separator" },
           { role: "services" },
           { type: "separator" },

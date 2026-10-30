@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 
 import * as Electron from "electron";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as DesktopLocalSecrets from "../app/DesktopLocalSecrets.ts";
 
 const electronSafeStorageErrorFields = {
   cause: Schema.Defect(),
@@ -18,7 +19,7 @@ export class ElectronSafeStorageAvailabilityError extends Schema.TaggedError<Ele
   },
 ) {
   override get message(): string {
-    return "Electron safe storage failed to check encryption availability.";
+    return "Desktop secret storage failed to check encryption availability.";
   }
 }
 
@@ -29,7 +30,7 @@ export class ElectronSafeStorageEncryptError extends Schema.TaggedError<Electron
   },
 ) {
   override get message(): string {
-    return "Electron safe storage failed to encrypt a string.";
+    return "Desktop secret storage failed to encrypt a string.";
   }
 }
 
@@ -40,7 +41,7 @@ export class ElectronSafeStorageDecryptError extends Schema.TaggedError<Electron
   },
 ) {
   override get message(): string {
-    return "Electron safe storage failed to decrypt a string.";
+    return "Desktop secret storage failed to decrypt a string.";
   }
 }
 
@@ -68,7 +69,23 @@ export class ElectronSafeStorage extends Context.Service<
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcessPlatform;
-
+  if (platform === "darwin") {
+    const { cipher } = yield* DesktopLocalSecrets.DesktopLocalSecrets;
+    return ElectronSafeStorage.of({
+      isEncryptionAvailable: Effect.succeed(true),
+      encryptString: (value) =>
+        Effect.tryPromise({
+          try: () => cipher.encrypt(value),
+          catch: (cause) => new ElectronSafeStorageEncryptError({ cause }),
+        }),
+      decryptString: (value) =>
+        Effect.tryPromise({
+          try: () => cipher.decrypt(value),
+          catch: (cause) => new ElectronSafeStorageDecryptError({ cause }),
+        }),
+      selectedStorageBackend: Effect.succeedSome("local-file"),
+    });
+  }
   return ElectronSafeStorage.of({
     isEncryptionAvailable: Effect.try({
       try: () => Electron.safeStorage.isEncryptionAvailable(),
@@ -85,9 +102,7 @@ export const make = Effect.gen(function* () {
         catch: (cause) => new ElectronSafeStorageDecryptError({ cause }),
       }),
     selectedStorageBackend: Effect.sync(() => {
-      if (platform !== "linux") {
-        return Option.none();
-      }
+      if (platform !== "linux") return Option.none();
       try {
         return Option.fromNullishOr(Electron.safeStorage.getSelectedStorageBackend());
       } catch {

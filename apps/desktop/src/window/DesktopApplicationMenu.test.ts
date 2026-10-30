@@ -18,6 +18,7 @@ import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as DesktopApplicationMenu from "./DesktopApplicationMenu.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopCredentialMigration from "../app/DesktopCredentialMigration.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
@@ -138,6 +139,10 @@ const configureMenu = (
   applicationMenuTemplate: Deferred.Deferred<readonly Electron.MenuItemConstructorOptions[]>,
   preference: InterfaceLanguagePreference = "en",
   localePreference?: InterfaceLocalePreferenceV1,
+  options?: {
+    platform: NodeJS.Platform;
+    migration: DesktopCredentialMigration.DesktopCredentialMigration["Service"];
+  },
 ) =>
   Effect.gen(function* () {
     const menu = yield* DesktopApplicationMenu.DesktopApplicationMenu;
@@ -148,19 +153,64 @@ const configureMenu = (
         Layer.provideMerge(makeElectronMenuLayer(applicationMenuTemplate)),
         Layer.provideMerge(makeDesktopWindowLayer(selectedAction)),
         Layer.provideMerge(desktopUpdatesLayer),
+        Layer.provideMerge(
+          Layer.succeed(
+            DesktopCredentialMigration.DesktopCredentialMigration,
+            options?.migration ?? {
+              pending: Effect.succeed(false),
+              run: Effect.die("Unexpected credential import"),
+            },
+          ),
+        ),
         Layer.provideMerge(electronDialogLayer),
         Layer.provideMerge(electronAppLayer),
         Layer.provideMerge(makeDesktopClientSettingsLayer(preference, localePreference)),
         Layer.provideMerge(
-          DesktopEnvironment.layer(environmentInput).pipe(
-            Layer.provide(Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({}))),
-          ),
+          DesktopEnvironment.layer({
+            ...environmentInput,
+            platform: options?.platform ?? environmentInput.platform,
+          }).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({})))),
         ),
       ),
     ),
   );
 
 describe("DesktopApplicationMenu", () => {
+  it.effect(
+    "offers older credentials on macOS and waits for the user's menu action to import",
+    () =>
+      Effect.gen(function* () {
+        const selectedAction = yield* Deferred.make<string>();
+        const applicationMenuTemplate =
+          yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+        const imported = yield* Deferred.make<void>();
+        yield* configureMenu(selectedAction, applicationMenuTemplate, "de", undefined, {
+          platform: "darwin",
+          migration: {
+            pending: Effect.succeed(true),
+            run: Deferred.succeed(imported, undefined).pipe(Effect.asVoid),
+          },
+        });
+        const template = yield* Deferred.await(applicationMenuTemplate);
+        const appMenu = template.find((item) => item.label === "T3 Code");
+        assert.isDefined(appMenu);
+        if (!Array.isArray(appMenu?.submenu)) return assert.fail("Expected the app submenu");
+        const action = appMenu.submenu.find(
+          (item) => typeof item === "object" && item.label === "Alte Zugangsdaten übernehmen...",
+        );
+        assert.isDefined(action);
+        assert.isFalse(yield* Deferred.isDone(imported));
+        if (typeof action !== "object" || action.click === undefined)
+          return assert.fail("Missing import action");
+        action.click(
+          { enabled: true } as Electron.MenuItem,
+          undefined,
+          {} as Electron.KeyboardEvent,
+        );
+        yield* Deferred.await(imported);
+      }),
+  );
+
   it.effect("uses the explicit German interface language", () =>
     Effect.gen(function* () {
       const selectedAction = yield* Deferred.make<string>();

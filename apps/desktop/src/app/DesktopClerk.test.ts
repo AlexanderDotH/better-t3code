@@ -36,6 +36,7 @@ import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import * as DesktopLocalSecrets from "./DesktopLocalSecrets.ts";
 
 const makeDesktopClerkLayer = (
   isDevelopment = true,
@@ -66,6 +67,15 @@ const makeDesktopClerkLayer = (
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(DesktopEnvironment.DesktopEnvironment, environment),
+        Layer.succeed(DesktopLocalSecrets.DesktopLocalSecrets, {
+          cipher: { encrypt: async () => new Uint8Array(), decrypt: async () => "" },
+          tokens: {
+            getItem: async () => null,
+            setItem: async () => undefined,
+            removeItem: async () => undefined,
+            importItems: async () => undefined,
+          },
+        }),
         Layer.succeed(ElectronApp.ElectronApp, electronApp),
         Layer.succeed(ElectronShell.ElectronShell, shell),
         Layer.succeed(
