@@ -988,16 +988,41 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     },
     [props.onRefineDeepPlan],
   );
-  const handleResumeDeepPlan = useCallback(async () => {
-    const run = props.deepPlan;
-    if (run)
+  const handleResumeDeepPlan = useCallback(
+    async (automatic = false) => {
+      const run = props.deepPlan;
+      if (!run) return;
+      const latestUserMessage = props.selectedThreadFeed.findLast(
+        (entry) =>
+          entry.type === "message" &&
+          entry.message.role === "user" &&
+          entry.message.historyOrigin === undefined,
+      );
       await resumeMobileDeepPlan(props.environmentId, run, {
+        automatic,
+        threadId: props.selectedThread.id,
+        idleGuard:
+          (run.approval?.implementationThreadId ?? run.threadId) === props.selectedThread.id
+            ? {
+                latestTurnId: props.selectedThread.latestTurn?.turnId ?? null,
+                latestUserMessageId:
+                  latestUserMessage?.type === "message" ? latestUserMessage.message.id : null,
+              }
+            : {},
         projectId: props.selectedThread.projectId,
         fallbackModelSelection: props.selectedThread.modelSelection,
         runtimeMode: props.selectedThread.runtimeMode,
         providers: props.serverConfig?.providers,
       });
-  }, [props.deepPlan, props.environmentId, props.selectedThread, props.serverConfig?.providers]);
+    },
+    [
+      props.deepPlan,
+      props.environmentId,
+      props.selectedThread,
+      props.selectedThreadFeed,
+      props.serverConfig?.providers,
+    ],
+  );
 
   const collapseComposer = useCallback(() => {
     composerEditorRef.current?.blur();
@@ -1206,15 +1231,28 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 onScrollToEnd={handleScrollToEnd}
               />
               <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
-                {props.deepPlan ? (
+                {props.composerMode === "deep-plan" && props.deepPlan ? (
                   <DeepPlanChecklist
                     key={`${props.environmentId}:${props.selectedThread.id}:${props.deepPlan.id}`}
                     run={props.deepPlan}
+                    environmentId={props.environmentId}
                     maxHeight={deepPlanChecklistMaxHeight}
                     onResume={handleResumeDeepPlan}
-                    canContinue={!props.activeThreadBusy}
+                    threadId={props.selectedThread.id}
+                    latestTurnId={props.selectedThread.latestTurn?.turnId ?? null}
+                    connected={props.connectionStateLabel === "connected"}
+                    canContinue={
+                      props.selectedThread.session?.status !== "starting" &&
+                      props.selectedThread.latestTurn?.state !== "running" &&
+                      !props.activeThreadBusy &&
+                      !props.activePendingUserInput &&
+                      !props.activePendingApproval
+                    }
                     resumeDisabled={
-                      props.connectionStateLabel !== "connected" || props.activeThreadBusy
+                      props.connectionStateLabel !== "connected" ||
+                      props.activeThreadBusy ||
+                      props.selectedThread.session?.status === "starting" ||
+                      props.selectedThread.latestTurn?.state === "running"
                     }
                   />
                 ) : null}

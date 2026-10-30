@@ -1,13 +1,25 @@
 import { useChatBubblePalette } from "./ChatBubble";
-import type { DeepPlanEvidence, DeepPlanRun, DeepPlanStepStatus } from "@t3tools/contracts";
+import type {
+  DeepPlanEvidence,
+  DeepPlanRun,
+  DeepPlanStepStatus,
+  EnvironmentId,
+  ThreadId,
+  TurnId,
+} from "@t3tools/contracts";
 import {
   deepPlanCitationTitles,
   getDeepPlanComposerChecklistExpiresAt,
   selectDeepPlanProgress,
   selectDeepPlanSteps,
   selectDeepPlanSourceAnalysis,
+  shouldAutoContinueDeepPlan,
 } from "@t3tools/client-runtime/deep-planning";
-import { memo, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/unstable/reactivity";
+import { threadKey } from "@t3tools/client-runtime/state/entities";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { Pressable, ScrollView, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
@@ -65,17 +77,41 @@ function StepStatus(props: { readonly status: DeepPlanStepStatus }) {
 
 export const DeepPlanChecklist = memo(function DeepPlanChecklist(props: {
   readonly run: DeepPlanRun;
+  readonly environmentId: EnvironmentId;
   readonly maxHeight?: number;
   readonly embedded?: boolean;
-  readonly onResume?: () => Promise<void>;
+  readonly onResume?: (automatic?: boolean) => Promise<void>;
   readonly resumeDisabled?: boolean;
   readonly canContinue?: boolean;
+  readonly connected?: boolean;
+  readonly threadId?: ThreadId;
+  readonly latestTurnId?: TurnId | null;
 }) {
   const translator = useMobileInterfaceTranslator();
   const palette = useChatBubblePalette("warning");
-  const [expanded, setExpanded] = useState(true);
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const checklistKey = threadKey({
+    environmentId: props.environmentId,
+    threadId: props.threadId ?? props.run.threadId,
+  });
+  const expanded = AsyncResult.isSuccess(preferences)
+    ? (preferences.value.deepPlanChecklistExpandedByThread?.[checklistKey] ?? true)
+    : true;
+  const toggleExpanded = () => {
+    savePreferences({
+      transform: (current) => ({
+        deepPlanChecklistExpandedByThread: {
+          ...current.deepPlanChecklistExpandedByThread,
+          [checklistKey]: !expanded,
+        },
+      }),
+    });
+  };
   const [expandedStepId, setExpandedStepId] = useState<string | null>(null);
   const [resuming, setResuming] = useState(false);
+  const attemptedContinuation = useRef<string | null>(null);
+  const resumeInFlight = useRef(false);
   const [resumeError, setResumeError] = useState<{
     readonly revision: number;
     readonly message: string;
@@ -102,11 +138,64 @@ export const DeepPlanChecklist = memo(function DeepPlanChecklist(props: {
   const currentStep = steps.find((row) => row.status === "inProgress")?.step;
   const validationStatus =
     run.finalValidation.status === "passed" ? "verified" : run.finalValidation.status;
+  const autoContinue = shouldAutoContinueDeepPlan(run, props.threadId ?? run.threadId);
+  const continuationKey = JSON.stringify([props.threadId ?? run.threadId, props.latestTurnId]);
   const resumable =
     ["paused", "failed", "blocked"].includes(run.phase) ||
-    (props.canContinue === true &&
-      ["collecting", "planning", "implementing"].includes(run.phase) &&
-      !progress.allStepsVerified);
+    (props.canContinue &&
+      ["collecting", "planning", "implementing", "validating"].includes(run.phase));
+  const { onResume, resumeDisabled } = props;
+  const performResume = useCallback(
+    async (automatic = false) => {
+      if (!onResume || resumeDisabled || resumeInFlight.current) return;
+      resumeInFlight.current = true;
+      attemptedContinuation.current = continuationKey;
+      setResuming(true);
+      setResumeError(null);
+      try {
+        await onResume(automatic);
+      } catch (error) {
+        setResumeError({
+          revision: run.revision,
+          message:
+            error instanceof Error
+              ? error.message
+              : translator.message("chat.deepPlan.resumeFailed"),
+        });
+      } finally {
+        resumeInFlight.current = false;
+        setResuming(false);
+      }
+    },
+    [onResume, resumeDisabled, run.revision, translator, continuationKey],
+  );
+  useEffect(() => {
+    if (props.connected === false) {
+      attemptedContinuation.current = null;
+      return;
+    }
+    if (
+      !autoContinue ||
+      !props.canContinue ||
+      resumeDisabled ||
+      resuming ||
+      resumeInFlight.current ||
+      !onResume ||
+      attemptedContinuation.current === continuationKey
+    )
+      return;
+    attemptedContinuation.current = continuationKey;
+    void performResume(true);
+  }, [
+    autoContinue,
+    props.canContinue,
+    props.connected,
+    resumeDisabled,
+    resuming,
+    onResume,
+    continuationKey,
+    performResume,
+  ]);
 
   if (expired) return null;
 
@@ -118,48 +207,85 @@ export const DeepPlanChecklist = memo(function DeepPlanChecklist(props: {
           : "mx-3 mb-2 overflow-hidden rounded-2xl border border-border bg-card"
       }
     >
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={translator.message(
-          expanded ? "chat.deepPlan.collapse" : "chat.deepPlan.expand",
-        )}
-        accessibilityState={{ expanded }}
-        onPress={() => setExpanded((current) => !current)}
-        className="min-h-11 flex-row items-center gap-2 px-3 py-2"
-      >
-        <SymbolView
-          name={{ ios: "list.bullet.clipboard", android: "auto_awesome" }}
-          size={17}
-          tintColorClassName="accent-icon"
-        />
-        <View className="min-w-0 flex-1">
-          <Text className="text-sm font-t3-semibold text-foreground" numberOfLines={1}>
-            {translator.message(plan ? "chat.deepPlan.checklist" : "chat.deepPlan.analysisTitle")}
-          </Text>
-          <Text
-            className="text-xs text-foreground-muted"
-            numberOfLines={1}
-            accessibilityLiveRegion="polite"
+      <View className="flex-row items-center pe-3">
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={translator.message(
+            expanded ? "chat.deepPlan.collapse" : "chat.deepPlan.expand",
+          )}
+          accessibilityState={{ expanded }}
+          onPress={toggleExpanded}
+          className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2 px-3 py-2"
+        >
+          <SymbolView
+            name={{ ios: "list.bullet.clipboard", android: "auto_awesome" }}
+            size={17}
+            tintColorClassName="accent-icon"
+          />
+          <View className="min-w-0 flex-1">
+            <Text className="text-sm font-t3-semibold text-foreground" numberOfLines={1}>
+              {translator.message(plan ? "chat.deepPlan.checklist" : "chat.deepPlan.analysisTitle")}
+            </Text>
+            <Text
+              className="text-xs text-foreground-muted"
+              numberOfLines={1}
+              accessibilityLiveRegion="polite"
+            >
+              {plan
+                ? translator.message("chat.deepPlan.stepProgress", {
+                    completed: verifiedCount,
+                    total: plan.steps.length,
+                  })
+                : run.phase === "collecting"
+                  ? translator.message("chat.deepPlan.collecting")
+                  : translator.message("chat.deepPlan.analysisProgress", {
+                      completed: analyzedCount,
+                      total: run.sources.length,
+                    })}
+            </Text>
+          </View>
+          <SymbolView
+            name={expanded ? "chevron.up" : "chevron.down"}
+            size={12}
+            tintColorClassName="accent-icon-muted"
+          />
+        </Pressable>
+        {resumable && props.onResume ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{
+              busy: resuming,
+              disabled: resuming || props.resumeDisabled === true,
+            }}
+            disabled={resuming || props.resumeDisabled === true}
+            className="min-h-11 items-center justify-center rounded-xl border border-border px-3"
+            style={
+              palette.better && props.embedded
+                ? ({ pressed }) => ({
+                    backgroundColor: pressed ? palette.hover : palette.control,
+                    borderRadius: 999,
+                    borderWidth: 0,
+                  })
+                : undefined
+            }
+            onPress={() => performResume()}
           >
-            {plan
-              ? translator.message("chat.deepPlan.stepProgress", {
-                  completed: verifiedCount,
-                  total: plan.steps.length,
-                })
-              : run.phase === "collecting"
-                ? translator.message("chat.deepPlan.collecting")
-                : translator.message("chat.deepPlan.analysisProgress", {
-                    completed: analyzedCount,
-                    total: run.sources.length,
-                  })}
-          </Text>
-        </View>
-        <SymbolView
-          name={expanded ? "chevron.up" : "chevron.down"}
-          size={12}
-          tintColorClassName="accent-icon-muted"
-        />
-      </Pressable>
+            <Text className="text-sm font-t3-medium text-foreground">
+              {translator.message(resuming ? "chat.deepPlan.resuming" : "chat.deepPlan.resume")}
+            </Text>
+          </Pressable>
+        ) : null}
+      </View>
+      {run.pauseReason ? (
+        <Text accessibilityRole="alert" className="px-3 pb-2 text-xs text-danger">
+          {run.pauseReason}
+        </Text>
+      ) : null}
+      {resumeError?.revision === run.revision ? (
+        <Text accessibilityRole="alert" className="px-3 pb-2 text-xs text-danger">
+          {resumeError.message}
+        </Text>
+      ) : null}
       {expanded ? (
         <ScrollView
           nestedScrollEnabled
@@ -198,57 +324,7 @@ export const DeepPlanChecklist = memo(function DeepPlanChecklist(props: {
                 {translator.message("chat.deepPlan.currentStep", { title: currentStep.title })}
               </Text>
             ) : null}
-            {run.pauseReason ? (
-              <Text accessibilityRole="alert" className="text-xs text-danger">
-                {run.pauseReason}
-              </Text>
-            ) : null}
-            {resumable && props.onResume ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityState={{
-                  busy: resuming,
-                  disabled: resuming || props.resumeDisabled === true,
-                }}
-                disabled={resuming || props.resumeDisabled === true}
-                className="min-h-11 items-center justify-center rounded-xl border border-border px-3"
-                style={
-                  palette.better && props.embedded
-                    ? ({ pressed }) => ({
-                        backgroundColor: pressed ? palette.hover : palette.control,
-                        borderRadius: 999,
-                        borderWidth: 0,
-                      })
-                    : undefined
-                }
-                onPress={async () => {
-                  setResuming(true);
-                  setResumeError(null);
-                  try {
-                    await props.onResume?.();
-                  } catch (error) {
-                    setResumeError({
-                      revision: run.revision,
-                      message:
-                        error instanceof Error
-                          ? error.message
-                          : translator.message("chat.deepPlan.resumeFailed"),
-                    });
-                  } finally {
-                    setResuming(false);
-                  }
-                }}
-              >
-                <Text className="text-sm font-t3-medium text-foreground">
-                  {translator.message(resuming ? "chat.deepPlan.resuming" : "chat.deepPlan.resume")}
-                </Text>
-              </Pressable>
-            ) : null}
-            {resumeError?.revision === run.revision ? (
-              <Text accessibilityRole="alert" className="text-xs text-danger">
-                {resumeError.message}
-              </Text>
-            ) : null}
+
             {sourceErrors.map((source) => (
               <Text key={source.sourceId} accessibilityRole="alert" className="text-xs text-danger">
                 {sourceTitles.get(source.sourceId) ??

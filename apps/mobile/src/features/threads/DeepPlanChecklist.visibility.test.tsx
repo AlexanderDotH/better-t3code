@@ -1,13 +1,28 @@
 // @vitest-environment jsdom
 
-import { DeepPlanRunId, ProviderInstanceId, ThreadId, type DeepPlanRun } from "@t3tools/contracts";
+import {
+  DeepPlanRunId,
+  EnvironmentId,
+  ProviderInstanceId,
+  ThreadId,
+  type DeepPlanRun,
+} from "@t3tools/contracts";
 import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { act, createElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 vi.mock("./ChatBubble", () => ({ useChatBubblePalette: () => ({ better: false }) }));
 
+vi.mock("../../state/preferences", () => ({
+  mobilePreferencesAtom: {},
+  updateMobilePreferencesAtom: {},
+}));
+vi.mock("@effect/atom-react", () => ({
+  useAtomValue: () => AsyncResult.success({}),
+  useAtomSet: () => () => {},
+}));
 vi.mock("react-native", () => {
   const Container = (props: { children?: ReactNode }) => createElement("div", {}, props.children);
   return { View: Container, ScrollView: Container, Pressable: Container };
@@ -99,7 +114,11 @@ afterEach(() => {
 
 it("hides completed composer checklists after the remaining minute", () => {
   vi.advanceTimersByTime(45_000);
-  act(() => root.render(<DeepPlanChecklist run={completedRun()} />));
+  act(() =>
+    root.render(
+      <DeepPlanChecklist environmentId={EnvironmentId.make("local")} run={completedRun()} />,
+    ),
+  );
   expect(host.textContent).toContain("1 of 1 verified");
   act(() => vi.advanceTimersByTime(14_999));
   expect(host.textContent).toContain("Deep checklist");
@@ -109,23 +128,54 @@ it("hides completed composer checklists after the remaining minute", () => {
 
 it("does not revive old composer checklists and retains the embedded plan checklist", () => {
   vi.advanceTimersByTime(600_000);
-  act(() => root.render(<DeepPlanChecklist run={completedRun()} />));
+  act(() =>
+    root.render(
+      <DeepPlanChecklist environmentId={EnvironmentId.make("local")} run={completedRun()} />,
+    ),
+  );
   expect(host.textContent).toBe("");
-  act(() => root.render(<DeepPlanChecklist key="revisit" run={completedRun()} />));
+  act(() =>
+    root.render(
+      <DeepPlanChecklist
+        environmentId={EnvironmentId.make("local")}
+        key="revisit"
+        run={completedRun()}
+      />,
+    ),
+  );
   expect(host.textContent).toBe("");
-  act(() => root.render(<DeepPlanChecklist run={completedRun()} embedded />));
+  act(() =>
+    root.render(
+      <DeepPlanChecklist
+        environmentId={EnvironmentId.make("local")}
+        run={completedRun()}
+        embedded
+      />,
+    ),
+  );
   expect(host.textContent).toContain("1 of 1 verified");
   expect(host.textContent).toContain("Native checks passed");
 });
 
 it("keeps active or paused plans visible after an earlier completion timer", () => {
   const run = completedRun();
-  act(() => root.render(<DeepPlanChecklist run={run} />));
+  act(() =>
+    root.render(<DeepPlanChecklist environmentId={EnvironmentId.make("local")} run={run} />),
+  );
   const active = { ...run, id: DeepPlanRunId.make("next"), phase: "implementing" as const };
-  act(() => root.render(<DeepPlanChecklist run={active} />));
+  act(() =>
+    root.render(<DeepPlanChecklist environmentId={EnvironmentId.make("local")} run={active} />),
+  );
   act(() => vi.advanceTimersByTime(120_000));
   expect(host.textContent).toContain("Deep checklist");
-  act(() => root.render(<DeepPlanChecklist run={{ ...active, phase: "paused" }} />));
+  act(() =>
+    root.render(
+      <DeepPlanChecklist
+        environmentId={EnvironmentId.make("local")}
+        run={{ ...active, phase: "paused" }}
+      />,
+    ),
+  );
   act(() => vi.advanceTimersByTime(120_000));
   expect(host.textContent).toContain("Deep checklist");
 });

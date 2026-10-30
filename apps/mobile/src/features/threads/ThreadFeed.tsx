@@ -423,6 +423,8 @@ const ForkChatButton = memo(function ForkChatButton(props: {
 });
 
 const MobileProposedPlanCard = memo(function MobileProposedPlanCard(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
   readonly plan: OrchestrationProposedPlan;
   readonly implementing: boolean;
   readonly markdownStyles: MarkdownStyleSet;
@@ -612,7 +614,12 @@ const MobileProposedPlanCard = memo(function MobileProposedPlanCard(props: {
       ) : null}
       {latestDeepPlan ? (
         <View className="border-t border-orange-500/20 px-4 py-3">
-          <DeepPlanChecklist run={deepPlan} embedded />
+          <DeepPlanChecklist
+            run={deepPlan}
+            environmentId={props.environmentId}
+            threadId={props.threadId}
+            embedded
+          />
         </View>
       ) : null}
       {!implemented && !props.inherited && props.onImplement && (!isDeepPlan || latestDeepPlan) ? (
@@ -3695,6 +3702,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         <ThreadMediaVisibility motionId={info.item.id}>
           {info.item.type === "proposed-plan" ? (
             <MobileProposedPlanCard
+              environmentId={props.environmentId}
+              threadId={props.threadId}
               plan={info.item.proposedPlan}
               implementing={implementingPlanId === info.item.proposedPlan.id}
               markdownStyles={markdownStyles.assistant}
@@ -3899,6 +3908,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       onToggleWorkGroup,
       onToggleWorkRow,
       props.environmentId,
+      props.threadId,
       props.onUseArtifactTemplate,
       props.onVisualizationAction,
       props.skills,

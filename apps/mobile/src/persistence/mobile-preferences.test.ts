@@ -65,6 +65,49 @@ function makeMemoryPreferenceDependencies() {
 }
 
 describe("sanitizeMobilePreferences", () => {
+  it("rejects malformed checklist expansion preferences", () => {
+    expect(sanitizeMobilePreferences({})).not.toHaveProperty("deepPlanChecklistExpandedByThread");
+    for (const value of [null, [], "expanded", { thread: "false" }]) {
+      expect(
+        sanitizeMobilePreferences({ deepPlanChecklistExpandedByThread: value } as never),
+      ).not.toHaveProperty("deepPlanChecklistExpandedByThread");
+    }
+  });
+
+  it.effect("retains expanded and collapsed checklists after reloads and unrelated edits", () => {
+    const dependencies = makeMemoryPreferenceDependencies();
+    const firstKey = "local\u0000first";
+    const secondKey = "remote\u0000second";
+    return Effect.gen(function* () {
+      const firstLaunch = yield* make();
+      yield* firstLaunch.savePatch({
+        deepPlanChecklistExpandedByThread: { [firstKey]: false, [secondKey]: true },
+      });
+      yield* firstLaunch.savePatch({ baseFontSize: 19 });
+
+      const secondLaunch = yield* make();
+      expect((yield* secondLaunch.load).deepPlanChecklistExpandedByThread).toEqual({
+        [firstKey]: false,
+        [secondKey]: true,
+      });
+      yield* secondLaunch.update((current) => ({
+        deepPlanChecklistExpandedByThread: {
+          ...current.deepPlanChecklistExpandedByThread,
+          [firstKey]: true,
+        },
+      }));
+      const thirdLaunch = yield* make();
+      expect((yield* thirdLaunch.load).deepPlanChecklistExpandedByThread).toEqual({
+        [firstKey]: true,
+        [secondKey]: true,
+      });
+      expect((yield* thirdLaunch.load).baseFontSize).toBe(19);
+    }).pipe(
+      Effect.provideService(MobileDatabase, dependencies.database),
+      Effect.provideService(MobileSecureStorage, dependencies.secureStorage),
+    );
+  });
+
   it("keeps only known expandable Better T3 groups from device preferences", () => {
     expect(sanitizeMobilePreferences({})).not.toHaveProperty("betterT3ExpandedSettingsGroups");
     expect(
@@ -659,7 +702,7 @@ it.effect(
         chatVisualModeSyncRecordV2: better,
         chatVisualModeSyncRecord: mirror,
         markdownFontSize: 18,
-        composerUsageLimitsVisible: true,
+        deepPlanChecklistExpandedByThread: { "local\u0000thread": true },
       });
       yield* store.savePatch({ codeWordBreak: true });
       const reloaded = yield* store.load;
@@ -668,7 +711,7 @@ it.effect(
         chatVisualModeSyncRecord: mirror,
         markdownFontSize: 18,
         codeWordBreak: true,
-        composerUsageLimitsVisible: true,
+        deepPlanChecklistExpandedByThread: { "local\u0000thread": true },
       });
     }).pipe(
       Effect.provideService(MobileDatabase, dependencies.database),

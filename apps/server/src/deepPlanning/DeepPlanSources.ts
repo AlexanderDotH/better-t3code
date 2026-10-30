@@ -330,7 +330,13 @@ export const makeDeepPlanSources = Effect.gen(function* () {
     const rows = yield* sql<{ readonly threadId: string }>`
       SELECT thread_id AS "threadId" FROM deep_plan_source_runs WHERE run_id = ${input.runId}
     `;
-    if (rows[0]?.threadId !== input.threadId) {
+    if (rows[0] === undefined) {
+      return yield* sourceError(
+        "run-not-found",
+        "The source collection has not been initialized. Finish source preparation in Deep Plan before using source tools.",
+      );
+    }
+    if (rows[0].threadId !== input.threadId) {
       return yield* sourceError(
         "run-not-found",
         "The source collection does not belong to this run.",

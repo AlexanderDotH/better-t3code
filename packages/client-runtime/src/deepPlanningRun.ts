@@ -43,6 +43,17 @@ export function selectDurableDeepPlan(
   return null;
 }
 
+export function shouldAutoContinueDeepPlan(run: DeepPlanRun, threadId: ThreadId): boolean {
+  if (run.approval) {
+    return (
+      run.approval.implementationThreadId === threadId &&
+      run.phase === "implementing" &&
+      !selectDeepPlanProgress(run).allStepsVerified
+    );
+  }
+  return run.threadId === threadId && (run.phase === "collecting" || run.phase === "planning");
+}
+
 export function isDeepPlanSourceSummarized(
   run: DeepPlanRun,
   source: DeepPlanSourceSnapshot,
@@ -324,6 +335,28 @@ export function buildDeepPlanImplementationPrompt(
   const approved = requireApprovedDeepPlan(run);
   const binding = deepPlanExecutionBinding(run, approved);
   return `${buildPlanImplementationPrompt(formatDeepPlanMarkdown(approved.plan), options)}\n\n${binding}`;
+}
+
+export function buildDeepPlanContinuationPrompt(run: DeepPlanRun): string {
+  const approved = requireApprovedDeepPlan(run);
+  return [
+    "CONTINUE THE EXISTING APPROVED DEEPPLAN IMPLEMENTATION.",
+    "",
+    deepPlanExecutionBinding(run, approved),
+    "",
+    "Read deep_plan_state and the existing step evidence before continuing. Resume unfinished work; preserve verified steps, evidence, and completed agent work.",
+    "Reuse the existing subagents and their results. Do not start another full implementation batch or spawn duplicate agents merely because this is a new turn.",
+    `Keep the approved parallelism of ${approved.approval.requestedParallelism ?? 1}. Replace unavailable agents only when needed for the remaining work.`,
+    "Continue within the approved scope until the remaining steps and final validation are finished. Fix failed checks and retry them before ending the turn when you can make progress.",
+    "Keep required user decisions and external prerequisites visible. Resuming does not verify a blocked criterion or change the approved plan.",
+    "",
+    "CURRENT CHECKLIST",
+    ...selectDeepPlanSteps(run).map(
+      ({ step, status }) => `- ${step.id}: ${status} — ${step.title}`,
+    ),
+    "",
+    formatDeepPlanMarkdown(approved.plan),
+  ].join("\n");
 }
 
 export function buildDeepPlanFinalValidationPrompt(run: DeepPlanRun): string {
