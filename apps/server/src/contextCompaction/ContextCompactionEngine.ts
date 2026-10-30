@@ -21,6 +21,8 @@ import {
   CONTEXT_CHECKPOINT_ACTIVITY,
   CONTEXT_PREPARATION_RATIO,
   CONTEXT_REPLACEMENT_RATIO,
+  CONTEXT_SELECTION_MAX_MESSAGES,
+  CONTEXT_SEGMENT_MAX_MESSAGES,
   contextPrefixFingerprint,
   contextPrefixLength,
   contextTranscriptSegments,
@@ -270,19 +272,29 @@ export const makeContextCompactionEngine = Effect.fn("ContextCompaction.make")(f
     attemptedPrefixes.set(threadId, attemptKey);
     let summary = reusable?.summary ?? "";
     const start = reusable?.prefixMessageCount ?? 0;
-    for (const transcript of contextTranscriptSegments(source.messages, start, count)) {
-      const selected = yield* selectTranscript({
-        cwd: source.cwd,
-        modelSelection: model.selection,
-        previousSummary: summary,
-        transcript,
-      }).pipe(
-        Effect.catch((cause) =>
-          Effect.logWarning("Context selection failed; summarizing the complete segment.", {
-            cause,
-          }).pipe(Effect.as(transcript)),
-        ),
-      );
+    const maxMessages =
+      model.mode === "selection" ? CONTEXT_SELECTION_MAX_MESSAGES : CONTEXT_SEGMENT_MAX_MESSAGES;
+    for (const transcript of contextTranscriptSegments(
+      source.messages,
+      start,
+      count,
+      maxMessages,
+    )) {
+      const selected =
+        model.mode === "selection"
+          ? yield* selectTranscript({
+              cwd: source.cwd,
+              modelSelection: model.selection,
+              previousSummary: summary,
+              transcript,
+            }).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Context selection failed; summarizing the complete segment.", {
+                  cause,
+                }).pipe(Effect.as(transcript)),
+              ),
+            )
+          : transcript;
       if (!selected) continue;
       const result = yield* dependencies.summarize({
         cwd: source.cwd,

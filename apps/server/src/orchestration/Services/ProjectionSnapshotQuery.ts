@@ -83,6 +83,14 @@ export type ProjectionThreadPullRequests = Pick<
   "id" | "projectId" | "settledOverride" | "settledAt" | "pullRequests"
 >;
 
+export type ProjectionThreadContextMessage = Pick<
+  OrchestrationMessage,
+  "role" | "text" | "createdAt"
+> & {
+  readonly threadId: ThreadId;
+  readonly messageId: MessageId;
+};
+
 export interface ProjectionThreadDetailQuery {
   /**
    * Limit activities before SQLite returns and decodes their payloads.
@@ -328,14 +336,32 @@ export interface ProjectionSnapshotQueryShape {
     ProjectionRepositoryError
   >;
 
-  /**
-   * Read a single retained (active or archived, but not deleted) thread detail snapshot by id.
-   */
+  /** Read recent messages, optionally restricted to conversation before one message. */
   readonly getRecentThreadMessages: (
     threadId: ThreadId,
     limit: number,
+    options?: {
+      readonly beforeMessageId?: MessageId;
+      readonly conversationOnly?: boolean;
+    },
   ) => Effect.Effect<ReadonlyArray<OrchestrationMessage>, ProjectionRepositoryError>;
 
+  readonly getThreadMessageSourceThreadIds: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionRepositoryError>;
+
+  readonly getThreadContextMessagePage: (input: {
+    readonly threadId: ThreadId;
+    readonly limit: number;
+    readonly before?: Pick<ProjectionThreadContextMessage, "createdAt" | "threadId" | "messageId">;
+  }) => Effect.Effect<ReadonlyArray<ProjectionThreadContextMessage>, ProjectionRepositoryError>;
+
+  readonly getThreadToolResultActivity: (
+    threadId: ThreadId,
+    itemId: string,
+  ) => Effect.Effect<Option.Option<OrchestrationThreadActivity>, ProjectionRepositoryError>;
+
+  /** Read a retained thread detail snapshot. */
   readonly getThreadDetailById: (
     threadId: ThreadId,
     query?: ProjectionThreadDetailQuery,

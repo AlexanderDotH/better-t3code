@@ -213,21 +213,37 @@ function pathMatchScore(path: string, query: string): number | null {
   return Math.min(fullScore, basenameScore);
 }
 
-function searchInventory(
-  inventory: WorkspaceInventory,
+function* searchablePaths(rawFilePaths: ReadonlyArray<string>): Generator<string> {
+  const directories = new Set<string>();
+  for (const rawPath of rawFilePaths) {
+    const path = normalizeWorkspaceContextPath(rawPath);
+    if (!path || !isWorkspaceContextSearchablePath(path)) continue;
+    yield path;
+    for (const directory of parentDirectories(path)) {
+      if (directories.has(directory)) continue;
+      directories.add(directory);
+      yield directory;
+    }
+  }
+}
+
+function rankPaths(
+  paths: Iterable<string>,
   query: WorkspaceContextEngineQuery,
+  literalOnly: boolean,
 ): ParsedContentMatches {
   const normalizedQuery = normalizeSearchQuery(query.text);
   const ranked: Array<{ item: WorkspaceContextMatch; score: number; tieBreaker: string }> = [];
   let totalMatches = 0;
-  for (const entry of inventory.entries) {
-    if (!isWithinWorkspaceContextScopes(entry.path, query.scopes)) continue;
-    const score = pathMatchScore(entry.path, normalizedQuery);
+  for (const path of paths) {
+    if (!isWithinWorkspaceContextScopes(path, query.scopes)) continue;
+    if (literalOnly && !path.toLowerCase().includes(normalizedQuery)) continue;
+    const score = pathMatchScore(path, normalizedQuery);
     if (score === null) continue;
     totalMatches += 1;
     insertRankedSearchResult(
       ranked,
-      { item: { path: entry.path, kind: "path" }, score, tieBreaker: entry.path },
+      { item: { path, kind: "path" }, score, tieBreaker: path },
       WORKSPACE_CONTEXT_MAX_INTERNAL_CANDIDATES,
     );
   }
@@ -281,6 +297,14 @@ function parseGitGrep(
     });
   }
   return { matches, truncated };
+}
+
+function searchPaths(
+  paths: () => Iterable<string>,
+  query: WorkspaceContextEngineQuery,
+): ParsedContentMatches {
+  const literal = rankPaths(paths(), query, true);
+  return literal.matches.length > 0 ? literal : rankPaths(paths(), query, false);
 }
 
 function queryTokens(query: string): ReadonlyArray<string> {
@@ -429,7 +453,10 @@ async function gitContentSearch(
       parsedTokens.truncated ||
       rankedTokens.candidateCount > query.maxResults ||
       parsedTokens.matches.length > WORKSPACE_CONTEXT_MAX_INTERNAL_CANDIDATES,
-    warnings: [],
+    warnings:
+      rankedTokens.matches.length > 0
+        ? ["No literal matches; returned matches for individual query terms."]
+        : [],
   };
 }
 
@@ -487,11 +514,8 @@ async function discoverGit(
     deadlineAt,
   );
   if (inventoryCommand.failed) return null;
-  const rawPaths = inventoryCommand.stdout.split("\0");
-  const inventory = makeInventory(
-    rawPaths.slice(0, WORKSPACE_CONTEXT_MAX_PATH_ENTRIES + 1),
-    rawPaths.length - 1 > WORKSPACE_CONTEXT_MAX_PATH_ENTRIES,
-  );
+  const rawPaths = inventoryCommand.stdout.split("\0").filter(Boolean);
+  const inventory = includeInventoryFilePaths ? makeInventory(rawPaths, false) : undefined;
   const queryResults = await mapConcurrent(
     queries,
     WORKSPACE_CONTEXT_CONCURRENCY,
@@ -499,7 +523,7 @@ async function discoverGit(
       const pathResult =
         query.mode === "content"
           ? { matches: [], truncated: false }
-          : searchInventory(inventory, query);
+          : searchPaths(() => searchablePaths(rawPaths), query);
       const contentResult =
         query.mode === "path"
           ? { matches: [], truncated: false, warnings: [] }
@@ -514,7 +538,7 @@ async function discoverGit(
         text: query.text,
         mode: query.mode,
         matches,
-        truncated: inventory.truncated || pathResult.truncated || contentResult.truncated,
+        truncated: pathResult.truncated || contentResult.truncated,
         warnings: contentResult.warnings,
       };
     },
@@ -522,16 +546,14 @@ async function discoverGit(
   return {
     backend: "git",
     queries: queryResults,
-    truncated: inventory.truncated || queryResults.some((query) => query.truncated),
-    warnings: inventory.truncated
+    truncated: inventory?.truncated === true || queryResults.some((query) => query.truncated),
+    warnings: inventory?.truncated
       ? [
           "Workspace inventory reached its 25,000-entry limit; path search coverage is incomplete. Narrow the query scopes.",
         ]
       : [],
-    inventoryCount: inventory.entries.length,
-    ...(includeInventoryFilePaths
-      ? { inventoryFilePaths: [...inventory.filePaths].toSorted() }
-      : {}),
+    inventoryCount: inventory?.entries.length ?? rawPaths.length,
+    ...(inventory ? { inventoryFilePaths: [...inventory.filePaths].toSorted() } : {}),
   };
 }
 
@@ -736,7 +758,7 @@ async function discoverFilesystem(
     const pathResult =
       query.mode === "content"
         ? { matches: [], truncated: false }
-        : searchInventory(scan.inventory, query);
+        : searchPaths(() => scan.inventory.entries.map((entry) => entry.path), query);
     const literalMatches = literalByQuery.get(query) ?? [];
     const tokenCandidates = tokensByQuery.get(query) ?? new Map<string, TokenFileCandidate>();
     const contentMatches =
@@ -760,7 +782,12 @@ async function discoverFilesystem(
         truncatedQueries.has(query) ||
         literalMatches.length > query.maxResults ||
         (literalMatches.length === 0 && tokenCandidates.size > query.maxResults),
-      warnings: deadlineReached ? ["Content search reached its deadline."] : [],
+      warnings: [
+        ...(deadlineReached ? ["Content search reached its deadline."] : []),
+        ...(literalMatches.length === 0 && contentMatches.length > 0
+          ? ["No literal matches; returned matches for individual query terms."]
+          : []),
+      ],
     };
   });
   const warnings = ["Git inventory unavailable; used filesystem fallback."];

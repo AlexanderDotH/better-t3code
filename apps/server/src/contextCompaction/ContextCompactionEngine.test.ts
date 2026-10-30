@@ -25,9 +25,11 @@ import {
   buildContextReplacementHandoff,
   contextTranscriptSegments,
   CONTEXT_SEGMENT_MAX_CHARS,
+  CONTEXT_SEGMENT_MAX_MESSAGES,
 } from "./contextCompactionPolicy.ts";
 import type { ContextSummaryInput } from "../textGeneration/ContextSummaryGeneration.ts";
 import type { DecisionGenerationRequest } from "../decisionGeneration/DecisionGenerationProvider.ts";
+import { boundDecisionState } from "../decisionGeneration/DecisionGeneration.ts";
 
 const threadId = ThreadId.make("context-thread");
 const selection = { instanceId: ProviderInstanceId.make("codex"), model: "test-luna" };
@@ -176,6 +178,40 @@ describe("background context compaction", () => {
         expect(yield* engine.replacement(threadId, MessageId.make("message-6"))).toEqual(prepared);
         expect(h.requests).toHaveLength(1);
         expect(h.source().messages).toHaveLength(7);
+      }),
+    ),
+  );
+
+  it.effect("keeps explicit selection requests within a small classifier's context window", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let validRequests = 0;
+        const h = harness({
+          mode: "selection",
+          decide: (request) =>
+            boundDecisionState(request, 16_384).pipe(
+              Effect.mapError((cause) => new ContextCompactionError({ detail: cause.detail })),
+              Effect.map((bounded) => {
+                validRequests += 1;
+                return {
+                  model: bounded.modelSelection.model,
+                  answers: Object.fromEntries(
+                    Object.keys(bounded.questions).map((key) => [key, { choice: "keep" }]),
+                  ),
+                };
+              }),
+            ),
+        });
+        h.setSource({
+          ...h.source(),
+          messages: Array.from({ length: 96 }, (_, index) => message(index)),
+        });
+        const engine = yield* makeContextCompactionEngine(h.dependencies);
+        yield* engine.observe(threadId, { usedTokens: 700, maxTokens: 1000 });
+        yield* engine.drain;
+        expect(validRequests).toBeGreaterThan(0);
+        expect(validRequests).toBe(h.decisions.length);
+        expect(h.published).toHaveLength(1);
       }),
     ),
   );
@@ -339,7 +375,7 @@ describe("background context compaction", () => {
   );
 
   it.effect.each(["summary", "selection"] as const)(
-    "selects relevant excerpts in %s mode and summarizes them with a regular model",
+    "prepares a checkpoint in %s mode with a regular summarizer",
     (mode) =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -348,14 +384,14 @@ describe("background context compaction", () => {
           yield* engine.observe(threadId, { usedTokens: 700, maxTokens: 1000 });
           yield* engine.drain;
           const result = yield* engine.replacement(threadId, MessageId.make("message-6"));
-          expect(h.decisions).toHaveLength(1);
-          expect(h.decisions[0]?.modelSelection.model).toBe(
-            mode === "selection" ? "classifier" : selection.model,
-          );
+          expect(h.decisions).toHaveLength(mode === "selection" ? 1 : 0);
+          if (mode === "selection") {
+            expect(h.decisions[0]?.modelSelection.model).toBe("classifier");
+          }
           expect(h.requests).toHaveLength(1);
           expect(h.requests[0]?.modelSelection).toEqual(selection);
           expect(h.requests[0]?.transcript).toContain("message 2");
-          expect(h.requests[0]?.transcript).not.toContain("message 0");
+          expect(h.requests[0]?.transcript.includes("message 0")).toBe(mode === "summary");
           expect(result?.checkpoint.summary).toBe("Preserved requirements and completed work.");
           expect(result?.checkpoint.summaryModelSelection).toEqual(selection);
         }),
@@ -429,6 +465,7 @@ describe("background context compaction", () => {
         const entered = yield* Deferred.make<void>();
         const release = yield* Deferred.make<DecisionGenerationResult>();
         const h = harness({
+          mode: "selection",
           decide: () =>
             Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release))),
         });
@@ -485,8 +522,8 @@ describe("background context compaction", () => {
         expect(h.requests).toHaveLength(2);
         expect(h.requests[1]?.previousSummary).toContain("Preserved requirements");
         expect(h.requests[1]?.transcript).not.toContain("message-0");
-        expect(h.decisions[1]?.state).toContain("message-4");
-        expect(h.decisions[1]?.state).not.toContain('"messageId":"message-0"');
+        expect(h.decisions).toEqual([]);
+        expect(h.requests[1]?.transcript).toContain("message-4");
         expect(h.requests[1]?.transcript).toContain("message-5");
       }),
     ),
@@ -494,6 +531,15 @@ describe("background context compaction", () => {
 });
 
 describe("context input and handoff bounds", () => {
+  it("fills context segments with short messages while preserving every message", () => {
+    const messages = Array.from({ length: 96 }, (_, index) => message(index));
+    const segments = [...contextTranscriptSegments(messages, 0, messages.length)];
+    expect(segments).toHaveLength(1);
+    expect(segments[0]?.split("\n").map((line) => JSON.parse(line).messageId)).toEqual(
+      messages.map((item) => item.id),
+    );
+  });
+
   it("processes huge individual messages in bounded segments without dropping text", () => {
     const messages = [
       message(0, "x".repeat(CONTEXT_SEGMENT_MAX_CHARS * 7)),
@@ -501,7 +547,9 @@ describe("context input and handoff bounds", () => {
     ];
     const segments = [...contextTranscriptSegments(messages, 0, messages.length)];
     expect(segments.every((segment) => segment.length <= CONTEXT_SEGMENT_MAX_CHARS)).toBe(true);
-    expect(segments.every((segment) => segment.split("\n").length <= 16)).toBe(true);
+    expect(
+      segments.every((segment) => segment.split("\n").length <= CONTEXT_SEGMENT_MAX_MESSAGES),
+    ).toBe(true);
     expect(segments.join("").match(/x/g)?.length).toBe(CONTEXT_SEGMENT_MAX_CHARS * 7 + 81);
   });
 

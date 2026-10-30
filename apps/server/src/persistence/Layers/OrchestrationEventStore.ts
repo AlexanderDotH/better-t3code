@@ -20,6 +20,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { EventPayloadFromJsonString } from "../activityPayload.ts";
 import {
   toPersistenceDecodeError,
   toPersistenceSqlError,
@@ -32,7 +33,6 @@ import {
 
 const encodeProjectIcon = Schema.encodeSync(ProjectIconOverride);
 const decodeEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
-const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
 const EventMetadataFromJsonString = Schema.fromJsonString(OrchestrationEventMetadata);
 
 const AppendEventRequestSchema = Schema.Struct({
@@ -45,7 +45,7 @@ const AppendEventRequestSchema = Schema.Struct({
   actorKind: OrchestrationActorKind,
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
-  payloadJson: UnknownFromJsonString,
+  payloadJson: EventPayloadFromJsonString,
   metadataJson: EventMetadataFromJsonString,
 });
 
@@ -59,7 +59,7 @@ const OrchestrationEventPersistedRowSchema = Schema.Struct({
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),
   correlationId: Schema.NullOr(CommandId),
-  payload: UnknownFromJsonString,
+  payload: EventPayloadFromJsonString,
   metadata: EventMetadataFromJsonString,
 });
 

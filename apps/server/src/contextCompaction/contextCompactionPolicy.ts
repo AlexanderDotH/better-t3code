@@ -10,7 +10,8 @@ export const CONTEXT_PREPARATION_RATIO = 0.45;
 export const CONTEXT_REPLACEMENT_RATIO = 0.6;
 const CONTEXT_RETAINED_USER_TURNS = 2;
 export const CONTEXT_SEGMENT_MAX_CHARS = 24_000;
-const CONTEXT_SEGMENT_MAX_MESSAGES = 16;
+export const CONTEXT_SEGMENT_MAX_MESSAGES = 128;
+export const CONTEXT_SELECTION_MAX_MESSAGES = 16;
 export const CONTEXT_CHECKPOINT_ACTIVITY = "context-engine.prepared";
 export const CONTEXT_APPLIED_ACTIVITY = "context-engine.applied";
 
@@ -75,6 +76,7 @@ export function* contextTranscriptSegments(
   messages: ReadonlyArray<OrchestrationMessage>,
   start: number,
   end: number,
+  maxMessages = CONTEXT_SEGMENT_MAX_MESSAGES,
 ) {
   let segment = "";
   let segmentMessages = 0;
@@ -85,7 +87,7 @@ export function* contextTranscriptSegments(
     for (let offset = 0; offset < rendered.length; offset += CONTEXT_SEGMENT_MAX_CHARS) {
       const part = rendered.slice(offset, offset + CONTEXT_SEGMENT_MAX_CHARS);
       if (
-        segmentMessages >= CONTEXT_SEGMENT_MAX_MESSAGES ||
+        segmentMessages >= maxMessages ||
         segment.length + part.length + 1 > CONTEXT_SEGMENT_MAX_CHARS
       ) {
         if (segment) yield segment;

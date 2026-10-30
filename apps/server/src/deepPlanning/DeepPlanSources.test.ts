@@ -24,6 +24,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { makeSqlStatementCounter } from "../../integration/SqlStatementCounter.integration.ts";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
+import { ActivityPayloadFromJsonString } from "../persistence/activityPayload.ts";
 import { ServerConfig } from "../config.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { layerConfig as SqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
@@ -38,6 +39,7 @@ import { DeepPlanSources, DeepPlanSourcesLive, makeDeepPlanSources } from "./Dee
 
 const at = "2026-10-16T10:00:00.000Z";
 const decodeSourceChunk = Schema.decodeUnknownEffect(DeepPlanReadSourceChunkResult);
+const encodeActivityPayload = Schema.encodeEffect(ActivityPayloadFromJsonString);
 const environmentId = EnvironmentId.make("deep-plan-source-test-environment");
 const descriptor = Schema.decodeUnknownSync(ExecutionEnvironmentDescriptor)({
   environmentId,
@@ -812,12 +814,15 @@ it.layer(TestLayer)("DeepPlanSources", (it) => {
         const projectId = yield* seedProject();
         const threadId = yield* seedThread(projectId, "giant");
         const text = "Read every detail 🧠\n".repeat(240_000);
-        const toolPayload = canonicalSourceJson({ output: "tool data".repeat(600_000) });
+        const data = { output: "tool data".repeat(300_000) };
+        const payload = { data, canonicalPayload: { data } };
+        const toolPayload = canonicalSourceJson(payload);
+        const storedToolPayload = yield* encodeActivityPayload(payload);
         yield* seedMessage({ threadId, id: `${threadId}-message`, text });
         yield* sql`
       INSERT INTO projection_thread_activities (activity_id, thread_id, tone, kind, summary, payload_json, created_at)
       VALUES (${`${threadId}-tool`}, ${threadId}, 'tool', 'tool.completed', 'Large inspection output',
-        ${toolPayload}, ${at})
+        ${storedToolPayload}, ${at})
     `;
         const exported = yield* sources.exportSources({ projectId, includeArchived: true });
         const snapshot = exported.sources[0]!;

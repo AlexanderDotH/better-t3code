@@ -14,6 +14,7 @@ import {
 } from "./tools.ts";
 
 const PAGE_SIZE = 20;
+const SEARCH_PAGE_SIZE = 100;
 const REFERENCE_PAGE_CHARS = 32 * 1024;
 
 const MessageCursorPayload = Schema.Struct({
@@ -59,16 +60,6 @@ function asRecord(value: unknown): Readonly<Record<string, unknown>> {
     : {};
 }
 
-type MessageKey = Pick<ThreadContextMessage, "createdAt" | "messageId" | "threadId">;
-
-function compareMessages(left: MessageKey, right: MessageKey): number {
-  return (
-    left.createdAt.localeCompare(right.createdAt) ||
-    String(left.threadId).localeCompare(String(right.threadId)) ||
-    String(left.messageId).localeCompare(String(right.messageId))
-  );
-}
-
 const projectionError = () =>
   new ThreadContextError({
     reason: "projection_unavailable",
@@ -85,7 +76,7 @@ export const invokeThreadContext = Effect.fn("ThreadContextToolkit.invoke")(func
   const invocation = yield* McpInvocationContext.McpInvocationContext;
   const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const rootOption = yield* projections
-    .getThreadDetailById(invocation.threadId)
+    .getThreadShellById(invocation.threadId)
     .pipe(Effect.mapError(projectionError));
   if (Option.isNone(rootOption)) {
     return yield* new ThreadContextError({
@@ -124,8 +115,11 @@ export const invokeThreadContext = Effect.fn("ThreadContextToolkit.invoke")(func
     fork = sourceOption.value.fork;
   }
 
-  for (const message of root.messages) {
-    if (message.historyOrigin && !ancestry.has(message.historyOrigin.sourceThreadId)) {
+  const sourceThreadIds = yield* projections
+    .getThreadMessageSourceThreadIds(root.id)
+    .pipe(Effect.mapError(projectionError));
+  for (const sourceThreadId of sourceThreadIds) {
+    if (!ancestry.has(sourceThreadId)) {
       return yield* new ThreadContextError({
         reason: "cross_project_denied",
         detail: "Inherited message provenance falls outside the authenticated fork ancestry.",
@@ -187,17 +181,19 @@ export const invokeThreadContext = Effect.fn("ThreadContextToolkit.invoke")(func
     if (ref.startsWith("tool-result:")) {
       const itemId = ref.slice("tool-result:".length);
       const activity = itemId
-        ? root.activities.find((candidate) => {
-            if (candidate.kind !== "tool.completed") return false;
-            if (candidate.historyOrigin && !ancestry.has(candidate.historyOrigin.sourceThreadId)) {
-              return false;
-            }
-            const payload = asRecord(candidate.payload);
-            return payload.itemId === itemId && Object.hasOwn(payload, "canonicalPayload");
-          })
+        ? Option.getOrUndefined(
+            yield* projections
+              .getThreadToolResultActivity(root.id, itemId)
+              .pipe(Effect.mapError(projectionError)),
+          )
         : undefined;
-      const payload = activity ? asRecord(activity.payload) : undefined;
-      if (payload) content = encodeUnknownJson(payload.canonicalPayload);
+      const payload =
+        activity && (!activity.historyOrigin || ancestry.has(activity.historyOrigin.sourceThreadId))
+          ? asRecord(activity.payload)
+          : undefined;
+      if (payload && Object.hasOwn(payload, "canonicalPayload")) {
+        content = encodeUnknownJson(payload.canonicalPayload);
+      }
     } else if (ref.startsWith("subagent:")) {
       const agentId = ref.slice("subagent:".length);
       if (agentId) {
@@ -265,25 +261,26 @@ export const invokeThreadContext = Effect.fn("ThreadContextToolkit.invoke")(func
 
   const query = messageCursor?.query ?? requestedQuery;
   const lexicalQuery = query?.toLowerCase();
-  const messages = root.messages
-    .filter(
-      (message) =>
-        !message.streaming &&
-        message.role !== "system" &&
-        (lexicalQuery === undefined || message.text.toLowerCase().includes(lexicalQuery)),
-    )
-    .map((message): ThreadContextMessage => ({
-      threadId: message.historyOrigin?.sourceThreadId ?? root.id,
-      messageId: MessageId.make(message.historyOrigin?.sourceId ?? message.id),
-      role: message.role,
-      text: message.text,
-      createdAt: message.createdAt,
-    }))
-    .filter(
-      (message) =>
-        messageCursor === undefined || compareMessages(message, messageCursor.before) < 0,
-    )
-    .toSorted((left, right) => compareMessages(right, left));
+  const messages: ThreadContextMessage[] = [];
+  let before = messageCursor?.before;
+  const limit = lexicalQuery === undefined ? PAGE_SIZE + 1 : SEARCH_PAGE_SIZE;
+  while (messages.length <= PAGE_SIZE) {
+    const candidates = yield* projections
+      .getThreadContextMessagePage({
+        threadId: root.id,
+        limit,
+        ...(before === undefined ? {} : { before }),
+      })
+      .pipe(Effect.mapError(projectionError));
+    for (const message of candidates) {
+      if (lexicalQuery === undefined || message.text.toLowerCase().includes(lexicalQuery)) {
+        messages.push(message);
+        if (messages.length > PAGE_SIZE) break;
+      }
+    }
+    if (messages.length > PAGE_SIZE || candidates.length < limit) break;
+    before = candidates.at(-1);
+  }
   const page = messages.slice(0, PAGE_SIZE);
   const hasMore = messages.length > PAGE_SIZE;
   const last = page.at(-1);
