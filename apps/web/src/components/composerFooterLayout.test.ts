@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolveContextStripLabelsCompact } from "./BranchToolbar.logic";
+import { timelineContentOverflowsViewport } from "./chat/timelineScrollAnchoring";
 import {
   COMPOSER_FOOTER_COMPACT_BREAKPOINT_PX,
   COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX,
-  COMPOSER_RESTING_EXPANSION_MIN_PX,
   getRestingComposerImagePreviewCounts,
-  resolveComposerTimelineInset,
+  resolveComposerOverflowInset,
   resolveScrollToEndClearance,
   resolveRestingComposerControlsLayout,
   resolveRestingComposerControlsNaturalWidth,
@@ -115,23 +115,45 @@ describe("shouldUseCompactComposerPrimaryActions", () => {
   });
 });
 
-describe("resolveComposerTimelineInset", () => {
+describe("resolveComposerOverflowInset", () => {
+  it("keeps a nearly fitting thread collapsed while the visible spacer shrinks", () => {
+    const state = {
+      data: ["message"],
+      scroll: 0,
+      scrollLength: 600,
+      positionAtIndex: () => 0,
+      sizeAtIndex: () => 400,
+    };
+    const restingHeight = 166;
+    const overflowInset = resolveComposerOverflowInset({
+      currentInset: 260,
+      overlayHeight: restingHeight,
+      isResting: true,
+    });
+    expect(
+      timelineContentOverflowsViewport(state, { composerInset: restingHeight, anchorOffset: 24 }),
+    ).toBe(false);
+    expect(
+      timelineContentOverflowsViewport(state, { composerInset: overflowInset, anchorOffset: 24 }),
+    ).toBe(true);
+  });
+
   it("follows the expanded overlay height", () => {
     expect(
-      resolveComposerTimelineInset({ currentInset: 160, overlayHeight: 140, isResting: false }),
+      resolveComposerOverflowInset({ currentInset: 160, overlayHeight: 140, isResting: false }),
     ).toBe(140);
   });
 
-  it("keeps a larger expanded reservation while resting", () => {
+  it("keeps collapse eligibility tied to the expanded height while resting", () => {
     expect(
-      resolveComposerTimelineInset({ currentInset: 200, overlayHeight: 60, isResting: true }),
+      resolveComposerOverflowInset({ currentInset: 200, overlayHeight: 60, isResting: true }),
     ).toBe(200);
   });
 
-  it("reserves the empty expansion when no larger height is known", () => {
+  it("uses measured geometry when no expanded height is known", () => {
     expect(
-      resolveComposerTimelineInset({ currentInset: 0, overlayHeight: 60, isResting: true }),
-    ).toBe(60 + COMPOSER_RESTING_EXPANSION_MIN_PX);
+      resolveComposerOverflowInset({ currentInset: 0, overlayHeight: 60, isResting: true }),
+    ).toBe(60);
   });
 });
 

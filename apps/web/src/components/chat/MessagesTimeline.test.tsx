@@ -474,6 +474,188 @@ it("reveals toggled details above the widgets and cancels that adjustment for a 
   }
 });
 
+it.each(["classic", "better-t3"] as const)(
+  "keeps the viewport stable when opening changed files at the end in %s",
+  async (mode) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextFrame = 0;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.set(++nextFrame, callback);
+      return nextFrame;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const flush = () =>
+      act(() => {
+        const pending = [...frames.values()];
+        frames.clear();
+        pending.forEach((callback) => callback(0));
+      });
+    const virtualizer = await import("@legendapp/list/react");
+    const originalList = virtualizer.LegendList;
+    let notifySizeChanged = () => {};
+    let notifyScroll = () => {};
+    let listData: ReadonlyArray<{ id: string }> = [];
+    vi.spyOn(virtualizer, "LegendList").mockImplementation((props) => {
+      notifySizeChanged = props.onItemSizeChanged as () => void;
+      notifyScroll = props.onScroll as () => void;
+      listData = props.data as ReadonlyArray<{ id: string }>;
+      return originalList(props);
+    });
+    const settings = await import("../../hooks/useSettings");
+    const originalSettings = settings.getClientSettings();
+    settings.__setClientSettingsForTests({
+      ...originalSettings,
+      betterT3Device: {
+        ...originalSettings.betterT3Device,
+        flags: { ...originalSettings.betterT3Device.flags, "chat.presentationMotion": false },
+      },
+    });
+    const originalMode = visualPreference.mode;
+    visualPreference.mode = mode;
+    const host = document.createElement("div");
+    document.body.append(host);
+    let contentHeight = 1500;
+    host.scrollTop = 900;
+    Object.defineProperties(host, {
+      scrollHeight: { get: () => contentHeight },
+      clientHeight: { value: 600 },
+    });
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this === host) return new DOMRect(0, 0, 800, 600);
+      if (this.hasAttribute("data-timeline-row-id"))
+        return new DOMRect(0, 100, 700, contentHeight - 1100);
+      if (this.hasAttribute("aria-expanded")) return new DOMRect(0, 450, 300, 36);
+      return new DOMRect(0, 0, 700, 0);
+    });
+    const props = buildProps();
+    let following = true;
+    const scrollToEnd = vi.fn(async () => {
+      host.scrollTop = contentHeight - 600;
+    });
+    const scrollToOffset = vi.fn(async ({ offset }: { offset: number }) => {
+      host.scrollTop = offset;
+    });
+    props.listRef.current = {
+      getScrollableNode: () => host,
+      getState: () => ({
+        isAtEnd: contentHeight - host.scrollTop - 600 <= 1,
+        data: listData,
+        contentLength: contentHeight,
+        scroll: host.scrollTop,
+        scrollLength: 600,
+        positionAtIndex: () => undefined,
+        sizeAtIndex: () => undefined,
+      }),
+      scrollToEnd,
+      scrollToOffset,
+    } as unknown as LegendListRef;
+    const turnId = TurnId.make("changed-files-scroll-" + mode);
+    const message = buildAssistantTimelineEntry("Updated all files.");
+    const files = Array.from({ length: 19 }, (_, index) => ({
+      path: `file-${index}.ts`,
+      kind: "modified",
+      additions: 1,
+      deletions: 0,
+    }));
+    function Harness() {
+      const [enabled, setEnabled] = useState(true);
+      return (
+        <MessagesTimeline
+          {...props}
+          routeThreadKey={"changed-files-scroll:" + mode}
+          liveFollowEnabled={enabled}
+          isFollowingEnd={() => following}
+          onManualNavigation={() => {
+            following = false;
+            setEnabled(false);
+          }}
+          onIsAtEndChange={(atEnd) => {
+            if (atEnd) {
+              following = true;
+              setEnabled(true);
+            }
+          }}
+          latestTurn={{
+            turnId,
+            state: "completed",
+            startedAt: MESSAGE_CREATED_AT,
+            completedAt: MESSAGE_CREATED_AT,
+          }}
+          timelineEntries={[{ ...message, message: { ...message.message, turnId } }]}
+          turnDiffSummaries={[
+            {
+              turnId,
+              checkpointTurnCount: 1,
+              checkpointRef: CheckpointRef.make("changed-files-scroll-checkpoint"),
+              status: "ready",
+              files,
+              assistantMessageId: message.message.id,
+              completedAt: MESSAGE_CREATED_AT,
+            },
+          ]}
+        />
+      );
+    }
+    const root = createRoot(host);
+    try {
+      await act(() => root.render(<Harness />));
+      await flush();
+      await flush();
+      const showAll = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
+        button.textContent?.includes("Show all 19 files"),
+      )!;
+      expect(showAll).toBeDefined();
+      await act(() => showAll.click());
+      contentHeight = 1510;
+      await act(() => notifyScroll());
+      expect(following).toBe(false);
+      contentHeight = 2300;
+      await act(() => notifySizeChanged());
+      await flush();
+      await flush();
+      await flush();
+      expect(host.textContent).toContain("file-18.ts");
+      expect(host.scrollTop).toBe(900);
+      expect(scrollToEnd).not.toHaveBeenCalled();
+      expect(scrollToOffset).not.toHaveBeenCalled();
+
+      const collapse = host.querySelector<HTMLButtonElement>(
+        '[data-changed-files-state] button[aria-expanded="true"]',
+      )!;
+      await act(() => collapse.click());
+      contentHeight = 1500;
+      await act(() => notifySizeChanged());
+      await flush();
+      await flush();
+      await flush();
+      expect(following).toBe(true);
+      expect(host.scrollTop).toBe(900);
+
+      contentHeight = 1700;
+      await act(() => notifySizeChanged());
+      await flush();
+      expect(host.scrollTop).toBe(1100);
+    } finally {
+      await act(() => root.unmount());
+      host.remove();
+      visualPreference.mode = originalMode;
+      settings.__setClientSettingsForTests(originalSettings);
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+    }
+  },
+);
+
 function buildLongUserMessageText(tail = "deep hidden detail only after expand") {
   return Array.from({ length: 9 }, (_, index) =>
     index === 8 ? tail : `Line ${index + 1}: ${"verbose prompt content ".repeat(8).trim()}`,
