@@ -94,6 +94,7 @@ const declarationIsAvailable = (
   declaration: NativeHarnessToolDeclaration,
   input: NativeHarnessToolAvailabilityInput,
 ): boolean => {
+  if (input.interactionMode === "chat") return false;
   if (declaration.availability === "read-only") return true;
   const planning =
     input.interactionMode === "plan" ||

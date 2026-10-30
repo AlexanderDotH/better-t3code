@@ -294,6 +294,15 @@ automatically. HTML previews cannot access your T3 Code session.
 On mobile, select a PDF attachment or link to open it. iOS uses the native viewer;
 Android opens a compatible installed file viewer.
 
+## Chat without starting work
+
+Choose **Chat** in the composer's mode control to ask questions and discuss ideas.
+The agent stays in conversation mode and asks you to switch to **Build** before doing work.
+Use **Shift+Tab** in the composer to cycle through the available modes.
+
+The selected mode applies to your next message. It does not stop a turn that is already
+running; choose **Stop** first if you want to interrupt that work.
+
 ## Create a deep plan
 
 Choose **Deep Plan** in the composer’s mode menu or use `/deep-plan` to plan from

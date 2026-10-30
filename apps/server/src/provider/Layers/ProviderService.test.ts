@@ -601,14 +601,15 @@ function makeProviderServiceLayer(
       deepPlan: { supported: true, readOnlyPlan: "native" },
     },
   };
+  const getThreadShellById = vi.fn(() => Effect.succeed(Option.some(thread)));
   const { layer } = makeProviderServiceLayer({
     registry: makeStaticInstanceRegistry([[codexInstanceId, adapter]]),
     projections: Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
-      getThreadShellById: () => Effect.succeed(Option.some(thread)),
+      getThreadShellById,
     }),
   });
   layer("Deep Plan mode synchronization", (it) => {
-    it.effect("removes the previous run binding when the same session switches to Build", () =>
+    it.effect("removes stale bindings for Build and unfinished source collection in Plan", () =>
       Effect.gen(function* () {
         const provider = yield* ProviderService.ProviderService;
         yield* provider.startSession(threadId, {
@@ -652,8 +653,32 @@ function makeProviderServiceLayer(
           thread.deepPlan!.id,
         );
         assert.equal(codex.sendTurn.mock.calls[2]?.[0].interactionMode, "plan");
+        getThreadShellById.mockReturnValue(
+          Effect.succeed(
+            Option.some({
+              ...thread,
+              deepPlan: { ...thread.deepPlan!, phase: "collecting" },
+            }),
+          ),
+        );
+        yield* provider.sendTurn({
+          threadId,
+          input: "Draft the current documentation proposal",
+          interactionMode: "plan",
+        });
+        assert.equal(codex.startSession.mock.calls.length, 1);
+        assert.equal(codex.sendTurn.mock.calls[3]?.[0].interactionMode, "plan");
+        assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId)?.deepPlan);
+        assert.isFalse(
+          McpProviderSession.readMcpProviderSession(threadId)?.capabilities.has("deep-plan"),
+        );
       }).pipe(
-        Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
+        Effect.ensuring(
+          Effect.sync(() => {
+            getThreadShellById.mockReturnValue(Effect.succeed(Option.some(thread)));
+            McpProviderSession.clearMcpProviderSession(threadId);
+          }),
+        ),
       ),
     );
   });

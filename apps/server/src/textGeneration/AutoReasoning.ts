@@ -1,6 +1,7 @@
 import {
   CODEX_REASONING_EFFORT_OPTION_ID,
   type ChatAttachment,
+  type ProviderInteractionMode,
   type DecisionGenerationError,
   type DecisionGenerationInput,
   type DecisionGenerationResult,
@@ -80,7 +81,7 @@ export interface AutoReasoningMessage {
 
 export interface AutoReasoningPromptInput {
   readonly userPrompt: string;
-  readonly interactionMode: "default" | "plan";
+  readonly interactionMode: ProviderInteractionMode;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly allowedEfforts: ReadonlyArray<string>;
   readonly conversation: ReadonlyArray<AutoReasoningMessage>;

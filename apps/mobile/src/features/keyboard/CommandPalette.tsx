@@ -264,9 +264,10 @@ export function CommandPalette(props: {
             translator.message("chat.composer.interaction.build"),
             translator.message("chat.composer.mode.plan"),
             translator.message("chat.deepPlan.label"),
+            translator.message("chat.composer.mode.chat"),
           ].join(" / "),
         }),
-        searchTerms: ["plan", "deep plan", "build", "mode", "shift tab"],
+        searchTerms: ["chat", "plan", "deep plan", "build", "mode", "shift tab"],
         run: () => runCommand("cycleComposerMode"),
       });
     }

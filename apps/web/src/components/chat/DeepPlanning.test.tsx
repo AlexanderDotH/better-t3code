@@ -1027,7 +1027,7 @@ it("selects Deep Plan from the compact menu and explains unsupported environment
   expect(container.querySelector("output")?.textContent).toBe("deep-plan");
 });
 
-it("cycles the existing composer control through Build, Plan, and Deep Plan with click and Shift+Tab", async () => {
+it("cycles Build, Plan, Deep Plan and Chat with click and Shift+Tab", async () => {
   function ModeButton() {
     const [mode, setMode] = useState<ComposerMode>("default");
     return (
@@ -1050,6 +1050,8 @@ it("cycles the existing composer control through Build, Plan, and Deep Plan with
   );
   expect(button("Deep Plan").getAttribute("aria-pressed")).toBe("true");
   await act(() => button("Deep Plan").click());
+  expect(button("Chat").getAttribute("aria-pressed")).toBe("true");
+  await act(() => button("Chat").click());
   expect(button("Build").getAttribute("aria-pressed")).toBe("false");
 });
 

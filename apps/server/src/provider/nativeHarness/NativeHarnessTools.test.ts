@@ -48,6 +48,36 @@ function extensionTool(name: string): NativeHarnessToolDeclaration {
 }
 
 describe("NativeHarnessTools", () => {
+  it.effect("exposes no built-in or extension tools during Chat even with full access", () =>
+    Effect.gen(function* () {
+      const extension = {
+        declarations: [extensionTool("external_action")],
+        execute: () => Effect.succeed(undefined),
+      };
+      const catalog = yield* buildNativeHarnessToolCatalog({
+        interactionMode: "chat",
+        sandboxMode: "danger-full-access",
+        extensions: [extension],
+      });
+      expect(catalog).toEqual([]);
+      for (const toolName of [
+        ...WORKSPACE_READ_TOOL_NAMES,
+        NATIVE_HARNESS_WORKSPACE_EDIT_TOOL,
+        NATIVE_HARNESS_EXEC_COMMAND_TOOL,
+        "external_action",
+      ]) {
+        expect(
+          nativeHarnessToolIsAvailable({
+            interactionMode: "chat",
+            sandboxMode: "danger-full-access",
+            toolName,
+            extensions: [extension],
+          }),
+        ).toBe(false);
+      }
+    }),
+  );
+
   it("keeps plan and read-only turns non-mutating while exposing the complete write harness", () => {
     expect(
       nativeHarnessToolDeclarations({

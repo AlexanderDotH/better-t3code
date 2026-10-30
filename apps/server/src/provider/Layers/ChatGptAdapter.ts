@@ -1,5 +1,6 @@
 import {
   type CanonicalRequestType,
+  type ProviderInteractionMode,
   type McpServerDefinition,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -136,7 +137,7 @@ export interface ChatGptHarness {
   readonly declarations: (input: {
     readonly threadId: ThreadId;
     readonly cwd: string;
-    readonly interactionMode: "default" | "plan" | undefined;
+    readonly interactionMode: ProviderInteractionMode | undefined;
     readonly sandboxMode: "read-only" | "workspace-write" | "danger-full-access" | undefined;
     readonly fetchWorker: boolean;
   }) => Effect.Effect<ReadonlyArray<ChatGptAdapterToolDefinition>, ChatGptAdapterBoundaryError>;
@@ -144,7 +145,7 @@ export interface ChatGptHarness {
     readonly threadId: ThreadId;
     readonly cwd: string;
     readonly toolName: string;
-    readonly interactionMode: "default" | "plan" | undefined;
+    readonly interactionMode: ProviderInteractionMode | undefined;
     readonly sandboxMode: "read-only" | "workspace-write" | "danger-full-access" | undefined;
     readonly fetchWorker: boolean;
   }) => Effect.Effect<boolean, ChatGptAdapterBoundaryError>;
@@ -269,9 +270,10 @@ function systemInstructions(input: {
   readonly deepPlan?: DeepPlanInstructionContext | undefined;
   readonly cwd: string;
   readonly sandboxMode: "read-only" | "workspace-write" | "danger-full-access" | undefined;
-  readonly interactionMode: "default" | "plan" | undefined;
+  readonly interactionMode: ProviderInteractionMode | undefined;
   readonly fetchWorker: boolean;
 }): string {
+  if (input.interactionMode === "chat") return nativeHarnessWorkspaceInstructions(input);
   const access =
     input.interactionMode === "plan" ||
     input.sandboxMode === "read-only" ||

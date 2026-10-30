@@ -20,6 +20,7 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
   deepPlanningDisabledReason?: string | null | undefined;
   runtimeMode: RuntimeMode;
   showInteractionModeToggle: boolean;
+  planningEnabled?: boolean;
   traitsMenuContent?: ReactNode;
   size?: "sm" | "xs";
   /**
@@ -71,14 +72,27 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
               value={composerMode}
               onValueChange={(value) => {
                 if (!value || value === composerMode) return;
-                if (value !== "default" && value !== "plan" && value !== "deep-plan") return;
+                if (
+                  value !== "default" &&
+                  value !== "plan" &&
+                  value !== "deep-plan" &&
+                  value !== "chat"
+                )
+                  return;
                 if (props.onComposerModeChange) props.onComposerModeChange(value);
                 else props.onToggleInteractionMode();
               }}
             >
-              <MenuRadioItem value="default">{translate("chat.composer.mode.chat")}</MenuRadioItem>
-              <MenuRadioItem value="plan">{translate("chat.composer.mode.plan")}</MenuRadioItem>
-              <MenuRadioItem value="deep-plan" disabled={!!props.deepPlanningDisabledReason}>
+              <MenuRadioItem value="default">
+                {translate("chat.composer.interaction.build")}
+              </MenuRadioItem>
+              <MenuRadioItem value="plan" disabled={props.planningEnabled === false}>
+                {translate("chat.composer.mode.plan")}
+              </MenuRadioItem>
+              <MenuRadioItem
+                value="deep-plan"
+                disabled={props.planningEnabled === false || !!props.deepPlanningDisabledReason}
+              >
                 <span className="grid min-w-0 gap-0.5">
                   <span>{translate("chat.deepPlan.label")}</span>
                   {props.deepPlanningDisabledReason ? (
@@ -88,6 +102,7 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
                   ) : null}
                 </span>
               </MenuRadioItem>
+              <MenuRadioItem value="chat">{translate("chat.composer.mode.chat")}</MenuRadioItem>
             </MenuRadioGroup>
             <MenuDivider />
           </>

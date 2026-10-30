@@ -15,11 +15,13 @@ export function ComposerModeControl(props: {
   const translator = useMobileInterfaceTranslator();
   const labelForMode = (mode: ComposerMode) =>
     translator.message(
-      mode === "deep-plan"
-        ? "chat.deepPlan.label"
-        : mode === "plan"
-          ? "chat.composer.mode.plan"
-          : "chat.composer.interaction.build",
+      mode === "chat"
+        ? "chat.composer.mode.chat"
+        : mode === "deep-plan"
+          ? "chat.deepPlan.label"
+          : mode === "plan"
+            ? "chat.composer.mode.plan"
+            : "chat.composer.interaction.build",
     );
   const nextMode = getNextComposerMode(props.mode);
   const cycleMode = useCallback(() => {
@@ -39,9 +41,11 @@ export function ComposerModeControl(props: {
       disabled={props.disabled}
       emphasized
       icon={
-        props.mode === "default"
-          ? { ios: "hammer", android: "construction" }
-          : { ios: "list.bullet.clipboard", android: "auto_awesome" }
+        props.mode === "chat"
+          ? { ios: "bubble.left.and.bubble.right", android: "chat_bubble" }
+          : props.mode === "default"
+            ? { ios: "hammer", android: "construction" }
+            : { ios: "list.bullet.clipboard", android: "auto_awesome" }
       }
       label={labelForMode(props.mode)}
       onPress={cycleMode}

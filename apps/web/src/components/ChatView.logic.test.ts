@@ -1420,6 +1420,16 @@ describe("resolveComposerProviderSelection", () => {
 });
 
 describe("resolveComposerInteractionMode", () => {
+  it("never turns a restored Chat selection into Build when Plan is unavailable", () => {
+    expect(
+      resolveComposerInteractionMode({
+        planModeEnabled: false,
+        provider: { showInteractionModeToggle: false },
+        interactionMode: "chat",
+      }),
+    ).toEqual({ enabled: false, interactionMode: "chat" });
+  });
+
   it("resets a restored plan draft when the selected instance does not support plan mode", () => {
     expect(
       resolveComposerInteractionMode({

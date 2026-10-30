@@ -421,7 +421,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         [
           [
             { type: "text", text: "please /review this" },
-            { type: "text", text: buildRuntimeInstructions({ harness: "Cursor" }) },
+            { type: "text", text: buildRuntimeInstructions({ harness: "Cursor", deepPlan: null }) },
           ],
           [{ type: "text", text: "/copy-request-id" }],
         ],

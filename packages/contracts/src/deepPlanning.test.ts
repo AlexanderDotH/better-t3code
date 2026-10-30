@@ -141,6 +141,9 @@ describe("Deep Planning compatibility", () => {
     expect(composerModeToProviderInteractionMode("plan")).toBe("plan");
     expect(composerModeToProviderInteractionMode("deep-plan")).toBe("plan");
     expect(() => decodeProviderMode("deep-plan")).toThrow();
+    expect(decodeMode("chat")).toBe("chat");
+    expect(decodeProviderMode("chat")).toBe("chat");
+    expect(composerModeToProviderInteractionMode("chat")).toBe("chat");
   });
 
   it("treats absent and unknown Deep Planning capabilities as unsupported", () => {

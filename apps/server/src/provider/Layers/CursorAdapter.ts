@@ -304,6 +304,10 @@ function resolveRequestedModeId(input: {
     return undefined;
   }
 
+  if (input.interactionMode === "chat") {
+    return findModeByAliases(modeState.availableModes, ACP_APPROVAL_MODE_ALIASES)?.id;
+  }
+
   if (input.interactionMode === "plan") {
     return findModeByAliases(modeState.availableModes, ACP_PLAN_MODE_ALIASES)?.id;
   }
@@ -1240,19 +1244,21 @@ export function makeCursorAdapter(
           // command into an ordinary model prompt or change its arguments.
           const result = yield* ctx.acp
             .prompt({
-              prompt: /^\/[^\s/]+(?:\s|$)/.test(rawPrompt)
-                ? promptParts
-                : [
-                    ...promptParts,
-                    {
-                      type: "text",
-                      text: buildRuntimeInstructions({
-                        harness: "Cursor",
-                        model: resolvedModel,
-                        deepPlan,
-                      }),
-                    },
-                  ],
+              prompt:
+                input.interactionMode !== "chat" && /^\/[^\s/]+(?:\s|$)/.test(rawPrompt)
+                  ? promptParts
+                  : [
+                      ...promptParts,
+                      {
+                        type: "text",
+                        text: buildRuntimeInstructions({
+                          harness: "Cursor",
+                          interactionMode: input.interactionMode,
+                          model: resolvedModel,
+                          deepPlan: deepPlan ?? null,
+                        }),
+                      },
+                    ],
             })
             .pipe(
               Effect.tapError(() => drainEventsUntilStopped),

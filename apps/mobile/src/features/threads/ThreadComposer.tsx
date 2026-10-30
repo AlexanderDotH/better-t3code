@@ -1075,7 +1075,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   }
                   insertPaste();
                 }}
-                placeholder={props.placeholder}
+                placeholder={
+                  props.composerMode === "chat"
+                    ? translator.message("chat.composer.interaction.chatPlaceholder")
+                    : props.placeholder
+                }
                 onFocus={handleFocus}
                 onBlur={handleBlur}
                 onSubmit={handleSend}

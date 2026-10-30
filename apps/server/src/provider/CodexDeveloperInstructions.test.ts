@@ -40,20 +40,21 @@ describe("buildCodexDeveloperInstructions delegation history policy", () => {
     });
   }
 
-  it("keeps character and token estimates thirty percent below the pre-change fixture", () => {
+  it("keeps baseline instructions thirty percent below the pre-change fixture", () => {
     const instructions = buildCodexDeveloperInstructions("default", {
       model: "gpt-5.6",
       reasoningEffort: "high",
     });
 
-    const forkPolicy = instructions.replace(
-      /<pull_request_linking>[\s\S]*?<\/pull_request_linking>/u,
+    // Runtime guards were added after the delegation-size baseline was captured.
+    const baselineInstructions = instructions.replace(
+      /<(pull_request_linking|chat_mode|deep_plan)>[\s\S]*?<\/\1>/gu,
       "",
     );
-    expect(forkPolicy.length).toBeLessThanOrEqual(
+    expect(baselineInstructions.length).toBeLessThanOrEqual(
       Math.floor(preChangeDefaultFixture.characters * 0.7),
     );
-    expect(estimatedTokens(forkPolicy)).toBeLessThanOrEqual(
+    expect(estimatedTokens(baselineInstructions)).toBeLessThanOrEqual(
       Math.floor(preChangeDefaultFixture.estimatedTokens * 0.7),
     );
   });

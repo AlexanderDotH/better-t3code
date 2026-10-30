@@ -93,6 +93,7 @@ export function resolveAvailableComposerMode(input: {
   readonly interactionModeEnabled: boolean;
   readonly deepPlanningSupported: boolean;
 }): ComposerMode {
+  if (input.mode === "chat") return "chat";
   if (input.mode === "deep-plan") {
     return input.deepPlanningSupported ? "deep-plan" : "default";
   }

@@ -1715,10 +1715,11 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 : undefined;
               // ACP slash commands must receive only their own arguments.
               const runtimeInstructions =
-                text && /^\/[^\s/]+(?:\s|$)/.test(text)
+                input.interactionMode !== "chat" && text && /^\/[^\s/]+(?:\s|$)/.test(text)
                   ? undefined
                   : buildRuntimeInstructions({
                       harness: "Grok",
+                      interactionMode: input.interactionMode,
                       model: displayModel,
                       reasoningEffort: normalizeGrokReasoningEffort(requestedTurnReasoningEffort),
                     });

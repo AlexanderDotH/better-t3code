@@ -1,7 +1,12 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type { ChatAttachment, ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
+import type {
+  ChatAttachment,
+  ModelSelection,
+  ProviderInstanceId,
+  ProviderInteractionMode,
+} from "@t3tools/contracts";
 import { TextGenerationError } from "@t3tools/contracts";
 
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
@@ -164,7 +169,7 @@ export type FetchExplorationGenerationResult = FetchExplorationPlan;
 export interface AutoReasoningGenerationInput {
   readonly cwd: string;
   readonly userPrompt: string;
-  readonly interactionMode: "default" | "plan";
+  readonly interactionMode: ProviderInteractionMode;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly allowedEfforts: ReadonlyArray<string>;
   readonly conversation: ReadonlyArray<AutoReasoningMessage>;

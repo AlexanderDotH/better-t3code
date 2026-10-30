@@ -8,6 +8,33 @@ import { buildOpenAiSystemInstructions } from "./openai/OpenAiAdapterSystemPromp
 import { buildOpenRouterSystemInstructions } from "./openrouter/OpenRouterAdapter.ts";
 
 describe("Deep Plan provider instructions", () => {
+  it("explicitly ends obsolete Deep Plan requirements for an unbound turn", () => {
+    const text = buildDeepPlanInstructions(undefined);
+    expect(text).toContain("Deep Plan is inactive for this turn");
+    expect(text).toContain("source-collection errors");
+    expect(text).toContain("do not require Deep Plan tools or registration");
+    expect(text).not.toContain("Start with deep_plan_state");
+    for (const mode of ["default", "plan"] as const) {
+      const context = buildCodexAdditionalContext(
+        { model: "gpt-6.1-sol", reasoningEffort: "high" },
+        false,
+        mode,
+      );
+      expect(context.t3_code_deep_plan?.value).toBe(text);
+    }
+    expect(buildRuntimeInstructions({ harness: "Cursor", deepPlan: null })).toContain(text);
+    for (const build of [buildOpenAiSystemInstructions, buildOpenRouterSystemInstructions]) {
+      expect(
+        build({
+          cwd: "/workspace",
+          sandboxMode: "read-only",
+          interactionMode: "plan",
+          fetchWorker: false,
+        }),
+      ).toContain(text);
+    }
+  });
+
   it("requires bounded parallel analysis and inherits composer permissions", () => {
     const text = buildDeepPlanInstructions({ phase: "planning" });
     expect(text).toContain("deep_plan_analyze_sources");
@@ -50,6 +77,9 @@ describe("Deep Plan provider instructions", () => {
       "requirements, decisions, open issues, rejected approaches, and conflicts",
     );
     expect(text).toContain("The current task wins over history");
+    expect(text).toContain(
+      "Do not carry resolved, superseded, or unrelated blockers into the current task",
+    );
     expect(text).toContain("ask the user about meaningful unresolved conflicts");
     expect(text).toContain("Every step needs an acceptance criterion and a concrete check");
     expect(text).toContain("Wait for the user to approve its exact version");

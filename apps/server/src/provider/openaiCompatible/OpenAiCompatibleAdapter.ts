@@ -225,6 +225,7 @@ function systemInstructions(input: {
   readonly interactionMode: ProviderInteractionMode | undefined;
   readonly fetchWorker: boolean;
 }) {
+  if (input.interactionMode === "chat") return nativeHarnessWorkspaceInstructions(input);
   const readOnly =
     input.interactionMode === "plan" ||
     input.sandboxMode === "read-only" ||

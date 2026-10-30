@@ -35,6 +35,10 @@ const provider = {
 } satisfies ServerProvider;
 
 describe("Deep Planning client acceptance", () => {
+  it("keeps Chat and Build available when planning is disabled", () => {
+    expect(getNextComposerMode("default", { planningSupported: false })).toBe("chat");
+    expect(getNextComposerMode("chat", { planningSupported: false })).toBe("default");
+  });
   it("preserves the saved deep mode while the provider receives ordinary plan mode", () => {
     const selected = getNextComposerMode(getNextComposerMode("default"));
     expect(selected).toBe("deep-plan");
@@ -42,7 +46,10 @@ describe("Deep Planning client acceptance", () => {
     const providerMode = getProviderInteractionMode(selected);
     expect(providerMode).toBe("plan");
     expect(resolveComposerMode(selected, providerMode)).toBe("deep-plan");
-    expect(getNextComposerMode(selected)).toBe("default");
+    expect(getNextComposerMode(selected)).toBe("chat");
+    expect(getProviderInteractionMode("chat")).toBe("chat");
+    expect(resolveComposerMode("chat", "chat")).toBe("chat");
+    expect(getNextComposerMode("chat")).toBe("default");
   });
 
   it("keeps the saved deep mode through disconnection and capability recovery", () => {
@@ -59,11 +66,11 @@ describe("Deep Planning client acceptance", () => {
     expect(resolveComposerMode(savedMode, "plan")).toBe(savedMode);
   });
 
-  it("leaves the two legacy modes available without Deep Planning support", () => {
+  it("keeps Build, Plan and Chat available without Deep Planning support", () => {
     const planMode = getNextComposerMode("default", { deepPlanningSupported: false });
     expect(planMode).toBe("plan");
     expect(getProviderInteractionMode(planMode)).toBe("plan");
-    expect(getNextComposerMode(planMode, { deepPlanningSupported: false })).toBe("default");
+    expect(getNextComposerMode(planMode, { deepPlanningSupported: false })).toBe("chat");
     expect(resolveComposerMode(undefined, "plan")).toBe("plan");
     expect(resolveComposerMode(undefined, "default")).toBe("default");
     expect(resolveComposerMode(undefined)).toBe("default");

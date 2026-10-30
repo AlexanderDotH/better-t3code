@@ -1,5 +1,5 @@
 import type { ComposerMode } from "@t3tools/contracts";
-import { BotIcon, PencilRulerIcon } from "lucide-react";
+import { BotIcon, MessageCircleIcon, PencilRulerIcon } from "lucide-react";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerControl, ComposerControlIcon, type ComposerControlSize } from "./ComposerControl";
@@ -17,11 +17,13 @@ export function ComposerInteractionModeButton({
 }) {
   const translate = useInterfaceTranslator().message;
   const description = translate(
-    mode === "deep-plan"
-      ? "chat.deepPlan.slashDescription"
-      : mode === "plan"
-        ? "chat.composer.interaction.planDescription"
-        : "chat.composer.interaction.buildDescription",
+    mode === "chat"
+      ? "chat.composer.interaction.chatDescription"
+      : mode === "deep-plan"
+        ? "chat.deepPlan.slashDescription"
+        : mode === "plan"
+          ? "chat.composer.interaction.planDescription"
+          : "chat.composer.interaction.buildDescription",
   );
   return (
     <Tooltip>
@@ -43,17 +45,21 @@ export function ComposerInteractionModeButton({
         }
       >
         <ComposerControlIcon
-          icon={mode === "default" ? BotIcon : PencilRulerIcon}
+          icon={
+            mode === "chat" ? MessageCircleIcon : mode === "default" ? BotIcon : PencilRulerIcon
+          }
           size={size}
           opticalSize={size === "xs" || mode !== "default" ? "default" : "large"}
         />
         <span data-composer-control-label className="sr-only sm:not-sr-only">
           {translate(
-            mode === "deep-plan"
-              ? "chat.deepPlan.label"
-              : mode === "plan"
-                ? "chat.composer.mode.plan"
-                : "chat.composer.interaction.build",
+            mode === "chat"
+              ? "chat.composer.mode.chat"
+              : mode === "deep-plan"
+                ? "chat.deepPlan.label"
+                : mode === "plan"
+                  ? "chat.composer.mode.plan"
+                  : "chat.composer.interaction.build",
           )}
         </span>
       </TooltipTrigger>

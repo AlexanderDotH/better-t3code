@@ -106,9 +106,13 @@ import { claudeSignedOutMessage, makeClaudeEnvironment } from "../Drivers/Claude
 import { planClaudeSkillDispatch } from "../Drivers/ClaudeSkillDispatch.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
+import { buildChatModeInstructions } from "../ChatModeInstructions.ts";
 import { DEEP_PLAN_PROVIDER_SUPPORT } from "../DeepPlanSupport.ts";
 import { deepPlanContextForThread, isBoundDeepPlanTool } from "../DeepPlanToolContext.ts";
-import { buildDeepPlanInstructions } from "../DeepPlanInstructions.ts";
+import {
+  buildDeepPlanInstructions,
+  type DeepPlanInstructionContext,
+} from "../DeepPlanInstructions.ts";
 import type { ClaudeGatewayModelProfile } from "../Drivers/ClaudeGatewayCatalog.ts";
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
@@ -453,6 +457,7 @@ function rememberPendingTaskModel(
 
 interface ClaudeSessionContext {
   session: ProviderSession;
+  interactionMode?: ProviderSendTurnInput["interactionMode"];
   readonly runtimeSessionId: RuntimeSessionId;
   readonly emitRuntimeEvent: (event: ProviderRuntimeEvent) => Effect.Effect<void>;
   startInput: Parameters<ClaudeAdapterShape["startSession"]>[0];
@@ -1685,16 +1690,30 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
     readonly modelCatalog: ClaudeModelCatalog;
     /** Names of the skills Claude Code can run for this session's cwd. */
     readonly skillNames: ReadonlySet<string>;
+    readonly deepPlan?: DeepPlanInstructionContext | undefined;
   },
 ) {
   const text = buildPromptText(input, dependencies.boundInstanceId, dependencies.modelCatalog);
+  const chatInstructions = buildChatModeInstructions(input.interactionMode);
   const sdkContent: Array<Record<string, unknown>> = [];
+  // Keep application context separate from native commands and skill arguments.
+  if (!/^\/[^\s/]+(?:\s|$)/.test(input.input ?? "")) {
+    sdkContent.push({
+      type: "text",
+      text: [buildDeepPlanInstructions(dependencies.deepPlan), chatInstructions]
+        .filter(Boolean)
+        .join("\n\n"),
+    });
+  }
 
   // Claude Code expands a skill only from the LAST text block, and only when
   // `/name` is its first character. A `$skill` chip anywhere in the prompt is
   // therefore split into [leading text, "/name trailing text"] so the CLI
   // runs it natively and the prose around it survives. See ClaudeSkillDispatch.
-  const dispatch = planClaudeSkillDispatch(text, dependencies.skillNames);
+  const dispatch =
+    input.interactionMode === "chat"
+      ? null
+      : planClaudeSkillDispatch(text, dependencies.skillNames);
   if (dispatch?.leadingText !== undefined) {
     sdkContent.push({ type: "text", text: dispatch.leadingText });
   }
@@ -1754,7 +1773,10 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
   if (dispatch) {
     sdkContent.push({ type: "text", text: dispatch.commandText });
   } else if (text.length > 0) {
-    sdkContent.push({ type: "text", text });
+    sdkContent.push({
+      type: "text",
+      text: input.interactionMode === "chat" ? `${chatInstructions}\n\n${text}` : text,
+    });
   }
 
   return buildUserMessage({ sdkContent });
@@ -4971,6 +4993,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           } satisfies PermissionResult;
         }
 
+        if (context.interactionMode === "chat") {
+          return {
+            behavior: "deny",
+            message: "Chat mode does not run tools. Switch to Build to perform work.",
+          } satisfies PermissionResult;
+        }
+
         if (toolName === "Agent" && resourceGovernor) {
           const abort = Effect.callback<boolean>((resume) => {
             const onAbort = () => resume(Effect.succeed(false));
@@ -5633,11 +5662,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ) ?? undefined;
     }
 
-    // Apply interaction mode by switching the SDK's permission mode.
-    // "plan" maps directly to the SDK's "plan" permission mode;
-    // "default" restores the session's original permission mode.
-    // When interactionMode is absent we leave the current mode unchanged.
-    if (input.interactionMode === "plan") {
+    // Restore the session policy when leaving a conversational or planning turn.
+    if (input.interactionMode !== undefined) context.interactionMode = input.interactionMode;
+    if (input.interactionMode === "chat") {
+      yield* Effect.tryPromise({
+        try: () => context.query.setPermissionMode("dontAsk"),
+        catch: (cause) => toRequestError(input.threadId, "turn/setPermissionMode", cause),
+      });
+    } else if (input.interactionMode === "plan") {
       yield* Effect.tryPromise({
         try: () => context.query.setPermissionMode("plan"),
         catch: (cause) => toRequestError(input.threadId, "turn/setPermissionMode", cause),
@@ -5703,11 +5735,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
     );
-    const deepPlan = deepPlanContextForThread(input.threadId);
-    const turnInput = deepPlan
-      ? { ...input, input: `${input.input ?? ""}\n\n${buildDeepPlanInstructions(deepPlan)}` }
-      : input;
-    const message = yield* buildUserMessageEffect(turnInput, {
+    const message = yield* buildUserMessageEffect(input, {
+      deepPlan: deepPlanContextForThread(input.threadId),
       fileSystem,
       attachmentsDir: serverConfig.attachmentsDir,
       boundInstanceId,

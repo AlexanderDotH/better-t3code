@@ -123,6 +123,9 @@ export const invokeWorkspaceEdit = Effect.fn("WorkspaceToolkit.invokeEdit")(func
   if (runtimeMode === "approval-required") {
     return yield* new WorkspaceEditError({ reason: "runtime_mode_not_authorized" });
   }
+  if (interactionMode === "chat") {
+    return yield* new WorkspaceEditError({ reason: "chat_mode" });
+  }
   if (interactionMode === "plan") {
     return yield* new WorkspaceEditError({ reason: "plan_mode" });
   }

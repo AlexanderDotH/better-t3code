@@ -1,3 +1,4 @@
+import { buildChatModeInstructions } from "../ChatModeInstructions.ts";
 import {
   type ProviderInteractionMode,
   type ProviderSandboxMode,
@@ -15,6 +16,7 @@ export function nativeHarnessWorkspaceInstructions(input: {
   readonly fetchWorker: boolean;
   readonly deepPlan?: DeepPlanInstructionContext | undefined;
 }): string {
+  if (input.interactionMode === "chat") return buildChatModeInstructions("chat");
   const canEdit =
     input.interactionMode !== "plan" &&
     input.sandboxMode !== "read-only" &&
@@ -24,5 +26,11 @@ export function nativeHarnessWorkspaceInstructions(input: {
   const workspace = canEdit
     ? `${reads} Prefer workspace_edit for small UTF-8 edits; create new files with write mode create and prefer exact replacements for existing text. Use an available command tool for large edits, formatters, generators, binaries, large files, or permissions.`
     : reads;
-  return input.deepPlan ? `${workspace}\n${buildDeepPlanInstructions(input.deepPlan)}` : workspace;
+  return [
+    workspace,
+    buildDeepPlanInstructions(input.deepPlan),
+    buildChatModeInstructions(input.interactionMode),
+  ]
+    .filter(Boolean)
+    .join("\n");
 }

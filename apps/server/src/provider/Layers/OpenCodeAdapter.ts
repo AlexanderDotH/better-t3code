@@ -3652,7 +3652,10 @@ export function makeOpenCodeAdapter(
       }
 
       const text = input.input?.trim();
-      const commandMatch = text?.match(/^\/([^\s/]+)(?:\s+([\s\S]*))?$/);
+      const commandMatch =
+        input.interactionMode === "chat"
+          ? undefined
+          : text?.match(/^\/([^\s/]+)(?:\s+([\s\S]*))?$/);
       const nativeCommand = commandMatch
         ? (yield* loadOpenCodeCommands(context.client).pipe(
             Effect.timeout("10 seconds"),
@@ -3818,6 +3821,7 @@ export function makeOpenCodeAdapter(
                     // OpenCode appends this after its own agent/provider prompts.
                     system: buildRuntimeInstructions({
                       harness: "OpenCode",
+                      interactionMode: input.interactionMode,
                       model: `${parsedModel.providerID}/${parsedModel.modelID}`,
                     }),
                     parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],

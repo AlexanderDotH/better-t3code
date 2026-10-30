@@ -287,7 +287,7 @@ beforeEach(() => {
 
 describe("native Deep Planning", () => {
   it.each(["ios", "android"])(
-    "cycles Build, Plan and Deep Plan by tap and keyboard on %s",
+    "cycles Build, Plan, Deep Plan and Chat by tap and keyboard on %s",
     (platform) => {
       fixture.platform = platform;
       let mode: ComposerMode = "default";
@@ -306,6 +306,8 @@ describe("native Deep Planning", () => {
       fixture.shortcut?.();
       expect(mode).toBe("deep-plan");
       press(modeControl(), "Deep Plan");
+      expect(mode).toBe("chat");
+      press(modeControl(), "Chat");
       expect(mode).toBe("default");
     },
   );

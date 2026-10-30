@@ -169,6 +169,7 @@ export const WorkspaceEditFailureReason = Schema.Literals([
   "inactive_turn",
   "runtime_mode_not_authorized",
   "plan_mode",
+  "chat_mode",
   "workspace_root_not_found",
   "workspace_root_not_directory",
   "workspace_root_unreadable",

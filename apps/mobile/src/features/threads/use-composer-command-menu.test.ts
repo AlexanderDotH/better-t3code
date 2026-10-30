@@ -27,6 +27,27 @@ import {
 } from "./use-composer-command-menu";
 
 describe("mobile slash commands", () => {
+  it.each([false, true])(
+    "selects Chat locally with planning enabled=%s",
+    (allowInteractionMode) => {
+      const item = buildComposerSlashCommandItems({
+        query: "chat",
+        atMessageStart: true,
+        hasThread: true,
+        allowInteractionMode,
+        selectedProviderStatus: null,
+      })[0]!;
+      expect(
+        resolveComposerCommandSelection({
+          draftMessage: "/chat Could we simplify this?",
+          trigger: { rangeStart: 0, rangeEnd: 5 },
+          item,
+          allowInteractionMode,
+        }),
+      ).toEqual({ text: " Could we simplify this?", cursor: 0, interactionMode: "chat" });
+    },
+  );
+
   it("selects Deep Plan locally in both existing and new-task drafts", () => {
     for (const hasThread of [true, false]) {
       const items = buildComposerSlashCommandItems({

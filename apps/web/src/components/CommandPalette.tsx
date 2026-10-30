@@ -1984,13 +1984,15 @@ function OpenCommandPaletteDialog(props: {
   actionItems.push(changeAppearanceItem);
   const composerModeState = composerHandleRef?.current?.getComposerModeState();
   if (composerModeState?.enabled) {
-    for (const mode of ["default", "plan", "deep-plan"] as const) {
+    for (const mode of ["default", "plan", "deep-plan", "chat"] as const) {
       const title =
-        mode === "deep-plan"
-          ? translate("chat.deepPlan.label")
-          : mode === "plan"
-            ? translate("chat.composer.mode.plan")
-            : translate("chat.composer.interaction.build");
+        mode === "chat"
+          ? translate("chat.composer.mode.chat")
+          : mode === "deep-plan"
+            ? translate("chat.deepPlan.label")
+            : mode === "plan"
+              ? translate("chat.composer.mode.plan")
+              : translate("chat.composer.interaction.build");
       actionItems.push({
         kind: "action",
         value: `action:composer-mode:${mode}`,
@@ -2001,7 +2003,10 @@ function OpenCommandPaletteDialog(props: {
             : undefined,
         searchTerms: [title, "composer", "mode", mode, "planning"],
         icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
-        disabled: mode === "deep-plan" && !!composerModeState.deepPlanningDisabledReason,
+        disabled:
+          ((mode === "plan" || mode === "deep-plan") &&
+            composerModeState.planningEnabled === false) ||
+          (mode === "deep-plan" && !!composerModeState.deepPlanningDisabledReason),
         run: async () => {
           composerHandleRef?.current?.setComposerMode(mode);
         },

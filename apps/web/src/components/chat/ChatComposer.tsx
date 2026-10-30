@@ -1311,6 +1311,7 @@ export interface ChatComposerHandle {
   getComposerModeState: () => {
     mode: ComposerMode;
     enabled: boolean;
+    planningEnabled?: boolean;
     deepPlanningDisabledReason: string | null;
   };
   isModelPickerOpen: () => boolean;
@@ -2542,6 +2543,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           label: translate("chat.composer.command.modelLabel"),
           description: translate("chat.composer.command.modelDescription"),
         },
+        {
+          id: "slash:chat",
+          type: "slash-command",
+          command: "chat",
+          label: "/chat",
+          description: translate("chat.composer.interaction.chatDescription"),
+        },
+        {
+          id: "slash:default",
+          type: "slash-command",
+          command: "default",
+          label: translate("chat.composer.command.defaultLabel"),
+          description: translate("chat.composer.command.defaultDescription"),
+        },
         ...(planModeUiEnabled
           ? ([
               {
@@ -2559,13 +2574,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 description:
                   props.deepPlanningDisabledReason ?? translate("chat.deepPlan.slashDescription"),
                 disabled: !!props.deepPlanningDisabledReason,
-              },
-              {
-                id: "slash:default",
-                type: "slash-command",
-                command: "default",
-                label: translate("chat.composer.command.defaultLabel"),
-                description: translate("chat.composer.command.defaultDescription"),
               },
             ] as const)
           : []),
@@ -3820,7 +3828,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           }
           return;
         }
-        if (!planModeUiEnabled) return;
+        if (!planModeUiEnabled && item.command !== "chat" && item.command !== "default") return;
         if (item.command === "deep-plan" && props.deepPlanningDisabledReason) return;
         void handleInteractionModeChange(item.command);
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
@@ -4380,7 +4388,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isTaskItem = false,
   ) => {
     if (key === "Tab" && event.shiftKey) {
-      if (!planModeUiEnabled && composerMode !== "deep-plan") return false;
       toggleInteractionMode();
       return true;
     }
@@ -5449,7 +5456,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       id: "mode",
       content: (
         <ComposerFooterModeControls
-          showInteractionModeToggle={planModeUiEnabled || composerMode === "deep-plan"}
+          showInteractionModeToggle
           composerMode={composerMode}
           deepPlanningDisabledReason={props.deepPlanningDisabledReason}
           runtimeMode={runtimeMode}
@@ -5612,10 +5619,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             runtimeMode={runtimeMode}
             size={composerControlsInStrip ? "xs" : "sm"}
             hidden={composerControlsHidden || hiddenRestingBlockIds.length === 0}
-            showInteractionModeToggle={
-              (planModeUiEnabled || composerMode === "deep-plan") &&
-              hiddenRestingBlockIds.includes("mode")
-            }
+            showInteractionModeToggle={hiddenRestingBlockIds.includes("mode")}
+            planningEnabled={planModeUiEnabled}
             traitsMenuContent={
               hiddenRestingBlockIds.includes("traits") ? providerTraitsMenuContent : undefined
             }
@@ -6448,7 +6453,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       setComposerMode: handleInteractionModeChange,
       getComposerModeState: () => ({
         mode: composerMode,
-        enabled: planModeUiEnabled || composerMode === "deep-plan",
+        enabled: true,
+        planningEnabled: planModeUiEnabled,
         deepPlanningDisabledReason: props.deepPlanningDisabledReason ?? null,
       }),
       isModelPickerOpen: () => isComposerModelPickerOpen,
@@ -7463,7 +7469,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                 ? "Enable a provider in Settings to send a message"
                                 : phase === "disconnected"
                                   ? DISCONNECTED_COMPOSER_PLACEHOLDER
-                                  : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                                  : composerMode === "chat"
+                                    ? translate("chat.composer.interaction.chatPlaceholder")
+                                    : "Ask anything, @tag files/folders, $use skills, or / for commands"
                     }
                     disabled={
                       isConnecting ||
