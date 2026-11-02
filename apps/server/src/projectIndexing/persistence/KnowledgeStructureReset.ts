@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import type * as SqlClient from "effect/unstable/sql/SqlClient";
+import type * as SqlClient from "effect/sql/SqlClient";
 
 import { isSafeProjectSourcePath } from "../privacy/WorkspacePrivacy.ts";
 import { KnowledgeStoreError } from "./KnowledgeStoreSchema.ts";

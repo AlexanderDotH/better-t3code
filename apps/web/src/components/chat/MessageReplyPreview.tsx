@@ -57,7 +57,7 @@ export function MessageReplyQuote({
   return (
     <button
       type="button"
-      className="mb-2 block w-full min-w-0 border-s-2 border-primary/50 ps-2 text-start text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
+      className="mb-2 block w-full min-w-0 border-s-2 border-primary/50 ps-2 text-start text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       aria-label={translate("chat.reply.jumpToSource")}
       onClick={() => onJumpToSource(replyTo)}
     >

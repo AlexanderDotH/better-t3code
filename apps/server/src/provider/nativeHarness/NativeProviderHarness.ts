@@ -99,20 +99,19 @@ export const makeNativeProviderHarness = Effect.fn("makeNativeProviderHarness")(
       : Effect.succeed<ReadonlyArray<NativeHarnessToolExtension>>([]);
 
   return {
-    declarations: (input) =>
-      Effect.gen(function* () {
-        const extensions = yield* extensionsForThread(input.threadId, input.cwd, input.fetchWorker);
-        const declarations = yield* buildNativeHarnessToolCatalog({
-          ...input,
-          extensions,
-          deepPlan: input.fetchWorker ? undefined : deepPlanContextForThread(input.threadId),
-        });
-        return declarations.map(({ name, description, inputSchema }) => ({
-          name,
-          description,
-          inputSchema,
-        }));
-      }),
+    declarations: Effect.fn("NativeProviderHarness.declarations")(function* (input) {
+      const extensions = yield* extensionsForThread(input.threadId, input.cwd, input.fetchWorker);
+      const declarations = yield* buildNativeHarnessToolCatalog({
+        ...input,
+        extensions,
+        deepPlan: input.fetchWorker ? undefined : deepPlanContextForThread(input.threadId),
+      });
+      return declarations.map(({ name, description, inputSchema }) => ({
+        name,
+        description,
+        inputSchema,
+      }));
+    }),
     isAvailable: (input) =>
       extensionsForThread(input.threadId, input.cwd, input.fetchWorker).pipe(
         Effect.map((extensions) =>
@@ -131,16 +130,19 @@ export const makeNativeProviderHarness = Effect.fn("makeNativeProviderHarness")(
     },
     requestType: nativeHarnessToolRequestType,
     approvalDetail: nativeHarnessToolApprovalDetail,
-    execute: ({ threadId, fetchWorker, ...input }) =>
-      Effect.gen(function* () {
-        const extensions = yield* extensionsForThread(threadId, input.cwd, fetchWorker);
-        const extension = extensions.find((candidate) =>
-          candidate.declarations.some((declaration) => declaration.name === input.name),
-        );
-        if (!extension) return yield* executor.execute(input);
-        const result = yield* extension.execute(input);
-        return result ?? (yield* executor.execute(input));
-      }),
+    execute: Effect.fn("NativeProviderHarness.execute")(function* ({
+      threadId,
+      fetchWorker,
+      ...input
+    }) {
+      const extensions = yield* extensionsForThread(threadId, input.cwd, fetchWorker);
+      const extension = extensions.find((candidate) =>
+        candidate.declarations.some((declaration) => declaration.name === input.name),
+      );
+      if (!extension) return yield* executor.execute(input);
+      const result = yield* extension.execute(input);
+      return result ?? (yield* executor.execute(input));
+    }),
     ...(options?.releaseThread ? { releaseThread: options.releaseThread } : {}),
   } satisfies NativeProviderHarness;
 });

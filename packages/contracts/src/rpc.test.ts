@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
-
+import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
+import { WS_METHODS, WsRpcGroup } from "./rpc.ts";
 import {
-  WS_METHODS,
   WsKnowledgeGraphCancelRpc,
   WsKnowledgeGraphClearRpc,
   WsKnowledgeGraphNodeContentRpc,
@@ -13,32 +13,92 @@ import {
   WsKnowledgeGraphSubscribeRpc,
   WsSubscribeServerConfigRpc,
 } from "./rpc.ts";
+const projectWriteRpc = WsRpcGroup.requests.get(WS_METHODS.projectsWriteFile);
+if (projectWriteRpc === undefined) throw new Error("projects.writeFile is not registered");
+const decodeProjectWriteError = Schema.decodeSync(projectWriteRpc.errorSchema);
 
-const decodeSubscribeServerConfig = Schema.decodeUnknownSync(
-  WsSubscribeServerConfigRpc.payloadSchema,
-);
-const decodeKnowledgeGraphSubscribe = Schema.decodeUnknownSync(
-  WsKnowledgeGraphSubscribeRpc.payloadSchema,
-);
-const decodeKnowledgeGraphQuery = Schema.decodeUnknownSync(WsKnowledgeGraphQueryRpc.payloadSchema);
-const decodeKnowledgeGraphNodeContent = Schema.decodeUnknownSync(
-  WsKnowledgeGraphNodeContentRpc.payloadSchema,
+const decodeKnowledgeGraphClear = Schema.decodeUnknownSync(WsKnowledgeGraphClearRpc.payloadSchema);
+const decodeKnowledgeGraphPause = Schema.decodeUnknownSync(WsKnowledgeGraphPauseRpc.payloadSchema);
+const decodeKnowledgeGraphCancel = Schema.decodeUnknownSync(
+  WsKnowledgeGraphCancelRpc.payloadSchema,
 );
 const decodeKnowledgeGraphRebuild = Schema.decodeUnknownSync(
   WsKnowledgeGraphRebuildRpc.payloadSchema,
 );
-const decodeKnowledgeGraphCancel = Schema.decodeUnknownSync(
-  WsKnowledgeGraphCancelRpc.payloadSchema,
+const decodeKnowledgeGraphNodeContent = Schema.decodeUnknownSync(
+  WsKnowledgeGraphNodeContentRpc.payloadSchema,
 );
-const decodeKnowledgeGraphPause = Schema.decodeUnknownSync(WsKnowledgeGraphPauseRpc.payloadSchema);
-const decodeKnowledgeGraphClear = Schema.decodeUnknownSync(WsKnowledgeGraphClearRpc.payloadSchema);
+const decodeKnowledgeGraphQuery = Schema.decodeUnknownSync(WsKnowledgeGraphQueryRpc.payloadSchema);
+const decodeKnowledgeGraphSubscribe = Schema.decodeUnknownSync(
+  WsKnowledgeGraphSubscribeRpc.payloadSchema,
+);
+const decodeSubscribeServerConfig = Schema.decodeUnknownSync(
+  WsSubscribeServerConfigRpc.payloadSchema,
+);
 
-/**
- * The client always sends `environmentThemes`, including to servers built
- * before the field existed, whose payload schema was an empty struct. What
- * makes that safe is that such a schema accepts the request rather than
- * rejecting it -- an error here would take down the config subscription.
- */
+describe("WebSocket RPC contracts", () => {
+  it("rejects server-internal commands sent to dispatchCommand", () => {
+    const dispatchCommand = WsRpcGroup.requests.get(ORCHESTRATION_V2_WS_METHODS.dispatchCommand);
+    if (dispatchCommand === undefined) throw new Error("dispatchCommand is not registered");
+    const decode = Schema.decodeUnknownExit(dispatchCommand.payloadSchema);
+
+    expect(
+      Exit.isFailure(
+        decode({
+          type: "checkpoint.rollback.fail",
+          commandId: "forged-rollback-failure",
+          threadId: "thread-1",
+          requestId: "rollback-1",
+          message: "Forged failure.",
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      Exit.isFailure(
+        decode({
+          type: "prepared-run.reasoning.complete",
+          commandId: "forged-reasoning",
+          threadId: "thread-1",
+          runId: "run-1",
+          selection: { instanceId: "codex", model: "gpt-6-astra" },
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      Exit.isSuccess(
+        decode({
+          type: "checkpoint.rollback",
+          commandId: "rollback-1",
+          threadId: "thread-1",
+          scopeId: "scope-1",
+          checkpointId: "checkpoint-1",
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("carries revision conflicts through the project write RPC", () => {
+    const decoded = decodeProjectWriteError({
+      _tag: "ProjectWriteConflictError",
+      cwd: "/workspace",
+      relativePath: "notes.txt",
+      expectedRevision: "before",
+      actualRevision: "after",
+    });
+    expect(decoded).toMatchObject({ _tag: "ProjectWriteConflictError", actualRevision: "after" });
+  });
+
+  it("lets the server pick a new worktree's folder", () => {
+    const createWorktree = WsRpcGroup.requests.get(WS_METHODS.vcsCreateWorktree);
+    if (createWorktree === undefined) throw new Error("vcs.createWorktree is not registered");
+    const decode = Schema.decodeUnknownExit(createWorktree.payloadSchema);
+    const request = { cwd: "/repo", refName: "main", newRefName: "feature/x" };
+
+    expect(Exit.isSuccess(decode({ ...request, path: null }))).toBe(true);
+    expect(Exit.isFailure(decode({ ...request, path: "/repo/.git/hooks" }))).toBe(true);
+  });
+});
+
 describe("subscribeServerConfig payload compatibility", () => {
   it("is accepted by a server whose schema predates the field", () => {
     const oldServerPayload = Schema.Struct({});

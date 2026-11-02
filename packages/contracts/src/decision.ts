@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { ModelSelection } from "./orchestration.ts";
+import { ModelSelection } from "./modelSelection.ts";
 
 const NonEmptyDecisionRecord = Schema.makeFilter(
   (record: Readonly<Record<string, unknown>>) => Object.keys(record).length > 0,

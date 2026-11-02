@@ -5,7 +5,7 @@ import type {
   DeepPlanStepStatus,
   EnvironmentId,
   ThreadId,
-  TurnId,
+  RunId,
 } from "@t3tools/contracts";
 import {
   deepPlanCitationTitles,
@@ -15,15 +15,15 @@ import {
   selectDeepPlanSourceAnalysis,
   shouldAutoContinueDeepPlan,
 } from "@t3tools/client-runtime/deep-planning";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { Pressable, ScrollView, View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 function Evidence(props: { readonly evidence: ReadonlyArray<DeepPlanEvidence> }) {
@@ -75,7 +75,7 @@ function StepStatus(props: { readonly status: DeepPlanStepStatus }) {
   );
 }
 
-export const DeepPlanChecklist = memo(function DeepPlanChecklist(props: {
+export function DeepPlanChecklist(props: {
   readonly run: DeepPlanRun;
   readonly environmentId: EnvironmentId;
   readonly maxHeight?: number;
@@ -85,7 +85,7 @@ export const DeepPlanChecklist = memo(function DeepPlanChecklist(props: {
   readonly canContinue?: boolean;
   readonly connected?: boolean;
   readonly threadId?: ThreadId;
-  readonly latestTurnId?: TurnId | null;
+  readonly latestRunId?: RunId | null;
 }) {
   const translator = useMobileInterfaceTranslator();
   const palette = useChatBubblePalette("warning");
@@ -119,6 +119,7 @@ export const DeepPlanChecklist = memo(function DeepPlanChecklist(props: {
   const run = props.run;
   const [now, setNow] = useState(() => Date.now());
   const expiresAt = props.embedded ? null : getDeepPlanComposerChecklistExpiresAt(run);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the expiration timer for the completed server checklist.
   useEffect(() => {
     if (expiresAt === null || expiresAt <= now) return;
     const timer = setTimeout(() => setNow(Date.now()), Math.max(0, expiresAt - Date.now()));
@@ -139,22 +140,21 @@ export const DeepPlanChecklist = memo(function DeepPlanChecklist(props: {
   const validationStatus =
     run.finalValidation.status === "passed" ? "verified" : run.finalValidation.status;
   const autoContinue = shouldAutoContinueDeepPlan(run, props.threadId ?? run.threadId);
-  const continuationKey = JSON.stringify([props.threadId ?? run.threadId, props.latestTurnId]);
+  const continuationKey = JSON.stringify([props.threadId ?? run.threadId, props.latestRunId]);
   const resumable =
     ["paused", "failed", "blocked"].includes(run.phase) ||
     (props.canContinue &&
       ["collecting", "planning", "implementing", "validating"].includes(run.phase));
   const { onResume, resumeDisabled } = props;
-  const performResume = useCallback(
-    async (automatic = false) => {
-      if (!onResume || resumeDisabled || resumeInFlight.current) return;
-      resumeInFlight.current = true;
-      attemptedContinuation.current = continuationKey;
-      setResuming(true);
-      setResumeError(null);
-      try {
-        await onResume(automatic);
-      } catch (error) {
+  const performResume = async (automatic = false) => {
+    if (!onResume || resumeDisabled || resumeInFlight.current) return;
+    resumeInFlight.current = true;
+    attemptedContinuation.current = continuationKey;
+    setResuming(true);
+    setResumeError(null);
+    await Promise.resolve()
+      .then(() => onResume(automatic))
+      .catch((error: unknown) => {
         setResumeError({
           revision: run.revision,
           message:
@@ -162,13 +162,14 @@ export const DeepPlanChecklist = memo(function DeepPlanChecklist(props: {
               ? error.message
               : translator.message("chat.deepPlan.resumeFailed"),
         });
-      } finally {
+      })
+      .finally(() => {
         resumeInFlight.current = false;
         setResuming(false);
-      }
-    },
-    [onResume, resumeDisabled, run.revision, translator, continuationKey],
-  );
+      });
+  };
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Continue the server-owned DeepPlan when its persisted continuation guard becomes eligible.
   useEffect(() => {
     if (props.connected === false) {
       attemptedContinuation.current = null;
@@ -436,4 +437,4 @@ export const DeepPlanChecklist = memo(function DeepPlanChecklist(props: {
       ) : null}
     </View>
   );
-});
+}

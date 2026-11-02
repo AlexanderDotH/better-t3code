@@ -1,82 +1,59 @@
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { derive as deriveV2Id } from "@t3tools/provider-core/server/IdAllocator";
+import { subagentThreadTitle } from "@t3tools/provider-core/server/subagentProjection";
+import { DeepPlanWorkflow } from "../deepPlanning/DeepPlanWorkflow.ts";
 import {
+  CommandId,
   MessageId,
+  NodeId,
+  SubagentId,
   resolveBetterT3FeatureFlag,
+  type OrchestrationV2Subagent,
   type ModelSelection,
-  type OrchestrationThreadActivity,
+  type ThreadId,
   type ProviderInstanceId,
-  type SubagentId,
-  ThreadId,
-  type DeepPlanSourceSnapshot,
   type DeepPlanSourceId,
-  type TurnId,
+  type DeepPlanSourceSnapshot,
 } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
+import type { McpDeepPlanContext } from "../mcp/McpInvocationContext.ts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
-import * as DateTime from "effect/DateTime";
-import * as Deferred from "effect/Deferred";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Scope from "effect/Scope";
-import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
-
-import type { McpDeepPlanContext } from "../mcp/McpInvocationContext.ts";
+import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
+import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
+import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import {
   buildDeepPlanSourceBatchTask,
   selectDeepPlanSourceBatches,
-  DEEP_PLAN_PARALLEL_SOURCE_BATCHES,
 } from "../deepPlanning/DeepPlanSourceBatches.ts";
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { ThreadBackgroundLivenessService } from "../orchestration/ThreadBackgroundLiveness.ts";
-import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
-import { ProviderService } from "../provider/Services/ProviderService.ts";
-import * as ResourceProtection from "../resourceProtection/SubagentResourceGovernor.ts";
-import { ServerSettingsService } from "../serverSettings.ts";
 import {
   listGeneralSubagentModels,
-  resolveGeneralSubagentParentSelection,
   resolveGeneralSubagentSelection,
 } from "./GeneralSubagentSelection.ts";
-import { buildGeneralSubagentPrompt } from "./GeneralSubagentPolicy.ts";
 import {
-  generalSubagentActionSnapshot as actionSnapshot,
-  generalSubagentIdentity as identity,
-  generalSubagentIsBusy as workerIsBusy,
-  generalSubagentSnapshot as snapshot,
-  makeActiveGeneralSubagent,
-  makeGeneralSubagentStateStore,
-  type ActiveGeneralSubagent,
-} from "./GeneralSubagentState.ts";
+  buildGeneralSubagentPrompt,
+  buildGeneralSubagentFollowUpPrompt,
+  parseGeneralSubagentFinalResult,
+} from "./GeneralSubagentPolicy.ts";
 import {
-  GENERAL_SUBAGENT_ABORT_FORCE_DELAY,
-  makeGeneralSubagentTransport,
-} from "./GeneralSubagentTransport.ts";
-import { makeGeneralSubagentProjection } from "./GeneralSubagentProjection.ts";
-import { makeGeneralSubagentLifecycle } from "./GeneralSubagentLifecycle.ts";
-
-import {
-  GeneralSubagentCancelInput,
-  GeneralSubagentCancelResult,
   GeneralSubagentError,
-  GeneralSubagentFollowUpInput,
-  GeneralSubagentFollowUpResult,
-  GeneralSubagentInterruptInput,
-  GeneralSubagentInterruptResult,
-  GeneralSubagentListResult,
-  GeneralSubagentModelsResult,
-  GeneralSubagentSendMessageInput,
-  GeneralSubagentSendMessageResult,
-  GeneralSubagentSpawnInput,
-  GeneralSubagentSpawnResult,
-  GeneralSubagentWaitInput,
-  GeneralSubagentWaitResult,
+  type GeneralSubagentSpawnInput,
+  type GeneralSubagentSpawnResult,
+  type GeneralSubagentWaitInput,
+  type GeneralSubagentWaitResult,
+  type GeneralSubagentCancelInput,
+  type GeneralSubagentCancelResult,
+  type GeneralSubagentListResult,
+  type GeneralSubagentModelsResult,
+  type GeneralSubagentSendMessageInput,
+  type GeneralSubagentSendMessageResult,
+  type GeneralSubagentFollowUpInput,
+  type GeneralSubagentFollowUpResult,
+  type GeneralSubagentInterruptInput,
+  type GeneralSubagentInterruptResult,
 } from "./GeneralSubagentProtocol.ts";
-
 export {
   assistantTextFromCompletedItem,
   buildGeneralSubagentPrompt,
@@ -84,11 +61,6 @@ export {
   parseGeneralSubagentFinalResult,
 } from "./GeneralSubagentPolicy.ts";
 export type { GeneralSubagentApprovalAction } from "./GeneralSubagentPolicy.ts";
-
-export const GENERAL_SUBAGENT_TIMEOUT = Duration.minutes(30);
-const GENERAL_SUBAGENT_MAX_DIRECT_CHILDREN = 40;
-const isGeneralSubagentError = Schema.is(GeneralSubagentError);
-
 export interface GeneralSubagentCaller {
   readonly parentThreadId: ThreadId;
   readonly callerProviderInstanceId: ProviderInstanceId;
@@ -109,7 +81,8 @@ export interface GeneralSubagentCoordinatorShape {
     input: GeneralSubagentCaller,
   ) => Effect.Effect<GeneralSubagentModelsResult, GeneralSubagentError>;
   readonly spawn: (
-    input: GeneralSubagentCaller & GeneralSubagentSpawnInput,
+    input: GeneralSubagentCaller &
+      GeneralSubagentSpawnInput & { readonly deepPlanExecution?: McpDeepPlanContext },
   ) => Effect.Effect<GeneralSubagentSpawnResult, GeneralSubagentError>;
   readonly wait: (
     input: GeneralSubagentCaller & GeneralSubagentWaitInput,
@@ -121,7 +94,8 @@ export interface GeneralSubagentCoordinatorShape {
     input: GeneralSubagentCaller,
   ) => Effect.Effect<GeneralSubagentListResult, GeneralSubagentError>;
   readonly spawnAgent: (
-    input: GeneralSubagentCaller & GeneralSubagentSpawnInput,
+    input: GeneralSubagentCaller &
+      GeneralSubagentSpawnInput & { readonly deepPlanExecution?: McpDeepPlanContext },
   ) => Effect.Effect<GeneralSubagentSpawnResult, GeneralSubagentError>;
   readonly sendMessage: (
     input: GeneralSubagentCaller & GeneralSubagentSendMessageInput,
@@ -143,498 +117,331 @@ export class GeneralSubagentCoordinator extends Context.Service<
 >()("t3/subagents/GeneralSubagentCoordinator") {}
 
 const make = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
-  const providerService = yield* ProviderService;
-  const providerRegistry = yield* ProviderRegistry;
-  const orchestrationEngine = yield* OrchestrationEngineService;
-  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
-  const threadBackgroundLiveness = yield* ThreadBackgroundLivenessService;
+  const orchestration = yield* OrchestratorV2;
+  const threads = yield* ThreadManagementService;
+  const providers = yield* ProviderRegistry;
   const settings = yield* ServerSettingsService;
-  const resourceGovernor = Option.getOrUndefined(
-    yield* Effect.serviceOption(ResourceProtection.SubagentResourceGovernor),
-  );
-  const transport = makeGeneralSubagentTransport({
-    providerService,
-    ...(resourceGovernor ? { resourceGovernor } : {}),
-  });
-  const coordinatorScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
-    Scope.close(scope, Exit.void),
-  );
-  const state = makeGeneralSubagentStateStore();
-  const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
-  const projection = makeGeneralSubagentProjection({
-    randomUUIDv4: crypto.randomUUIDv4,
-    orchestrationEngine,
-    threadBackgroundLiveness,
-  });
-  const { commandId, dispatchSummary } = projection;
-  const lifecycle = makeGeneralSubagentLifecycle({
-    state,
-    transport,
-    projection,
-    orchestrationEngine,
-    threadBackgroundLiveness,
-    coordinatorScope,
-    nowIso,
-    timeout: GENERAL_SUBAGENT_TIMEOUT,
-  });
-  const { cancelWorker, finalizeWorker, runRetainedWorker, runWorker, settleWorker } = lifecycle;
-  yield* lifecycle.startEventHandling;
-  const resolveParent = Effect.fn("GeneralSubagentCoordinator.resolveParent")(function* (
-    parentThreadId: ThreadId,
+  const workflow = yield* DeepPlanWorkflow;
+  const crypto = yield* Crypto.Crypto;
+  const failure = (cause: unknown) =>
+    new GeneralSubagentError({
+      reason: "operation-failed",
+      detail: cause instanceof Error ? cause.message : String(cause),
+    });
+  const nextId = () =>
+    crypto.randomUUIDv4().pipe(Effect.map(CommandId.make), Effect.mapError(failure));
+  const parent = Effect.fn("GeneralSubagentCoordinator.parent")(function* (
+    input: GeneralSubagentCaller,
+    requireEnabled = true,
   ) {
-    const [threadOption, workspaceOption] = yield* Effect.all([
-      projectionSnapshotQuery.getThreadDetailById(parentThreadId),
-      projectionSnapshotQuery.getThreadCheckpointContext(parentThreadId),
-    ]);
-    const thread = Option.getOrUndefined(threadOption);
-    const workspace = Option.getOrUndefined(workspaceOption);
-    if (!thread || !workspace || thread.deletedAt !== null || thread.archivedAt !== null) {
+    const configuration = yield* settings.getSettings.pipe(Effect.mapError(failure));
+    if (
+      requireEnabled &&
+      !resolveBetterT3FeatureFlag(configuration.betterT3Environment, "agent.generalSubagents")
+    )
+      return yield* new GeneralSubagentError({
+        reason: "spawn-failed",
+        detail: "General subagents are disabled in Better T3 settings.",
+      });
+    return yield* orchestration
+      .getThreadRecords(input.parentThreadId, ["runs", "subagents"])
+      .pipe(Effect.mapError(failure));
+  });
+  const identity = (
+    task: OrchestrationV2Subagent,
+    selection?: ModelSelection,
+  ): GeneralSubagentSpawnResult => ({
+    agentId: SubagentId.make(task.id),
+    status:
+      task.status === "failed"
+        ? "error"
+        : task.status === "cancelled"
+          ? "interrupted"
+          : task.status === "pending"
+            ? "starting"
+            : task.status === "idle"
+              ? "completed"
+              : task.status,
+    providerInstanceId: task.providerInstanceId,
+    providerDriver: task.driver,
+    model: task.model ?? "unknown",
+    reasoningEffort: selection
+      ? (getModelSelectionStringOptionValue(selection, "reasoningEffort") ??
+        getModelSelectionStringOptionValue(selection, "effort") ??
+        null)
+      : null,
+  });
+  const load = Effect.fn("GeneralSubagentCoordinator.load")(function* (
+    input: GeneralSubagentCaller & { readonly agentId: SubagentId },
+  ) {
+    const projection = yield* parent(input, false);
+    const task = projection.subagents.find(
+      (candidate) =>
+        candidate.id === NodeId.make(input.agentId) && candidate.origin === "app_owned",
+    );
+    if (!task || task.childThreadId === null)
+      return yield* new GeneralSubagentError({
+        reason: "agent-unavailable",
+        detail: "The delegated agent does not belong to this thread.",
+      });
+    const child = yield* orchestration
+      .getThreadRecords(task.childThreadId, ["messages", "runs"])
+      .pipe(Effect.mapError(failure));
+    return { task, child };
+  });
+  const action = (task: OrchestrationV2Subagent, selection?: ModelSelection) => ({
+    ...identity(task, selection),
+    task: task.prompt ?? "Delegated task",
+    output: task.result ?? null,
+    detail: null,
+  });
+  const spawn: GeneralSubagentCoordinatorShape["spawn"] = Effect.fn(
+    "GeneralSubagentCoordinator.spawn",
+  )(function* (input) {
+    const projection = yield* parent(input);
+    if (projection.thread.lineage.relationshipToParent === "subagent")
+      return yield* new GeneralSubagentError({
+        reason: "nested-spawn-disabled",
+        detail: "General subagents cannot spawn nested agents.",
+      });
+    const run = projection.runs
+      .filter((candidate) => ["running", "starting", "waiting"].includes(candidate.status))
+      .at(-1);
+    if (!run || run.rootNodeId === null)
       return yield* new GeneralSubagentError({
         reason: "thread-unavailable",
-        detail: `Parent thread '${parentThreadId}' is not available for delegation.`,
+        detail: "The parent has no active execution node.",
       });
-    }
-    return {
-      thread,
-      cwd: workspace.worktreePath ?? workspace.workspaceRoot,
-      parentTurnId: thread.session?.activeTurnId ?? null,
-      parentRuntimeSessionId: thread.session?.runtimeSessionId ?? null,
-      parentProviderInstanceId: thread.session?.providerInstanceId ?? null,
-    };
-  });
-
-  const parentModelSelection = (parent: {
-    readonly thread: {
-      readonly modelSelection: ModelSelection;
-      readonly activities: ReadonlyArray<OrchestrationThreadActivity>;
-    };
-    readonly parentTurnId: TurnId | null;
-  }) =>
-    resolveGeneralSubagentParentSelection({
-      selection: parent.thread.modelSelection,
-      activities: parent.thread.activities,
-      parentTurnId: parent.parentTurnId,
-    });
-
-  const publicError =
-    (operation: string) =>
-    (cause: unknown): GeneralSubagentError =>
-      isGeneralSubagentError(cause)
-        ? cause
-        : new GeneralSubagentError({
-            reason: "operation-failed",
-            detail: `${operation} failed: ${cause instanceof Error ? cause.message : String(cause)}`,
-          });
-
-  const ensureFeatureEnabled = Effect.fn("GeneralSubagentCoordinator.ensureFeatureEnabled")(
-    function* () {
-      const current = yield* settings.getSettings.pipe(
-        Effect.mapError(
-          (cause) =>
-            new GeneralSubagentError({
-              reason: "operation-failed",
-              detail: `Reading Better T3 settings failed: ${cause.message}`,
-            }),
-        ),
-      );
-      if (!resolveBetterT3FeatureFlag(current.betterT3Environment, "agent.generalSubagents")) {
-        return yield* new GeneralSubagentError({
-          reason: "operation-failed",
-          detail: "General subagents are disabled in Better T3 settings.",
-        });
-      }
-    },
-  );
-
-  const listModelsEffect = Effect.fn("GeneralSubagentCoordinator.listModels")(function* (
-    input: GeneralSubagentCaller,
-  ) {
-    const parent = yield* resolveParent(input.parentThreadId);
-    const providers = yield* providerRegistry.getProviders;
-    return {
-      providers: listGeneralSubagentModels({
-        providers,
-        callerProviderInstanceId: input.callerProviderInstanceId,
-        parentModelSelection: parentModelSelection(parent),
-      }),
-    };
-  });
-  const listModels: GeneralSubagentCoordinatorShape["listModels"] = (input) =>
-    listModelsEffect(input).pipe(Effect.mapError(publicError("Listing subagent models")));
-
-  const spawnWorkerEffect = Effect.fn("GeneralSubagentCoordinator.spawnWorker")(function* (
-    input: GeneralSubagentCaller &
-      GeneralSubagentSpawnInput & { readonly deepPlan?: McpDeepPlanContext },
-    retainSession: boolean,
-  ) {
-    if (state.getByThread(input.parentThreadId)) {
-      return yield* new GeneralSubagentError({
-        reason: "nested-spawn-disabled",
-        detail: "Direct T3-managed children cannot spawn nested agents in this release.",
-      });
-    }
-    const parent = yield* resolveParent(input.parentThreadId);
-    const providers = yield* providerRegistry.getProviders;
-    const resolution = resolveGeneralSubagentSelection({
-      providers,
-      callerProviderInstanceId: input.callerProviderInstanceId,
-      parentModelSelection: input.deepPlan?.modelSelection ?? parentModelSelection(parent),
-      request: {
-        ...(input.providerInstanceId !== undefined
-          ? { providerInstanceId: input.providerInstanceId }
-          : {}),
-        ...(input.model !== undefined ? { model: input.model } : {}),
-        ...(input.reasoningEffort !== undefined ? { reasoningEffort: input.reasoningEffort } : {}),
-      },
-    });
-    if (resolution.status === "unavailable") {
-      return yield* new GeneralSubagentError({
-        reason: resolution.reason,
-        detail: resolution.detail,
-      });
-    }
-
-    const uuid = yield* crypto.randomUUIDv4;
-    const startedAt = yield* nowIso;
-    const { worker, summary, reasoningEffort } = yield* makeActiveGeneralSubagent({
-      uuid,
-      parentThreadId: input.parentThreadId,
-      parentTurnId: parent.parentTurnId,
-      parentRuntimeSessionId: parent.parentRuntimeSessionId,
-      parentProviderInstanceId: parent.parentProviderInstanceId,
-      selection: resolution.selection,
-      providerDriver: resolution.provider.driver,
-      cwd: parent.cwd,
-      runtimeMode: parent.thread.runtimeMode,
-      ...(input.deepPlan?.sourceAnalysis
-        ? {
-            deepPlan: {
-              ...input.deepPlan,
-              sourceAnalysis: {
-                ...input.deepPlan.sourceAnalysis,
-                workerThreadId: ThreadId.make(`general:${input.parentThreadId}:${uuid}`),
-              },
-            },
-          }
-        : {}),
-      retainSession,
-      task: input.task,
-      ...(input.name !== undefined ? { name: input.name } : {}),
-      startedAt,
-    });
-    const { subagentId } = worker;
-    const admission = yield* Effect.sync(() =>
-      state.admit(worker, GENERAL_SUBAGENT_MAX_DIRECT_CHILDREN),
-    );
-    if (admission === "nested") {
-      return yield* new GeneralSubagentError({
-        reason: "nested-spawn-disabled",
-        detail: "Direct T3-managed children cannot spawn nested agents in this release.",
-      });
-    }
-    if (admission === "limit") {
+    if (
+      projection.subagents.filter((task) => ["running", "pending", "waiting"].includes(task.status))
+        .length >= 40
+    )
       return yield* new GeneralSubagentError({
         reason: "direct-child-limit",
-        detail: `Parent thread '${input.parentThreadId}' already owns ${GENERAL_SUBAGENT_MAX_DIRECT_CHILDREN} live direct children.`,
+        detail: "The parent already has 40 active agents.",
       });
-    }
-    threadBackgroundLiveness.recordTaskLiveness({
-      threadId: input.parentThreadId,
-      taskId: subagentId,
-      taskType: "subagent",
-      status: "starting",
-      kind: "started",
+    const selected = resolveGeneralSubagentSelection({
+      providers: yield* providers.getProviders,
+      callerProviderInstanceId: input.callerProviderInstanceId,
+      parentModelSelection: run.resolvedModelSelection ?? projection.thread.modelSelection,
+      request: input,
     });
-    const initialized = yield* Effect.exit(
-      Effect.gen(function* () {
-        yield* dispatchSummary(worker, summary);
-        const prompt = buildGeneralSubagentPrompt({
+    if (selected.status !== "resolved") return yield* new GeneralSubagentError(selected);
+    const commandId = yield* nextId();
+    const agentId = SubagentId.make(deriveV2Id.delegatedTaskNode({ commandId }));
+    const result = yield* orchestration
+      .dispatch({
+        type: "delegated_task.request",
+        commandId,
+        parentThreadId: input.parentThreadId,
+        parentRunId: run.id,
+        parentNodeId: run.rootNodeId,
+        task: buildGeneralSubagentPrompt({
           task: input.task,
           parentThreadId: input.parentThreadId,
-          agentId: subagentId,
-        });
-        yield* orchestrationEngine.dispatch({
-          type: "thread.message.import",
-          commandId: yield* commandId(worker, "user-message"),
-          threadId: input.parentThreadId,
-          subagentId,
-          message: {
-            id: MessageId.make(`${subagentId}:user`),
-            role: "user",
-            text: prompt,
-            turnId: null,
-            streaming: false,
-            createdAt: startedAt,
-            updatedAt: startedAt,
-          },
-        });
-      }),
-    );
-    if (Exit.isFailure(initialized)) {
-      const detail = `General subagent initialization failed: ${Cause.pretty(initialized.cause)}`;
-      yield* finalizeWorker(worker, { status: "error", detail }, true).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("General subagent initialization cleanup failed", {
-            subagentId,
-            cause: Cause.pretty(cause),
+          agentId,
+        }),
+        title:
+          input.name ??
+          subagentThreadTitle({
+            parentTitle: projection.thread.title,
+            prompt: input.task,
+            ordinal: projection.subagents.length + 1,
           }),
-        ),
-      );
-      state.forget(worker);
-      return yield* new GeneralSubagentError({ reason: "spawn-failed", detail });
-    }
-    const lifecycle = retainSession ? runRetainedWorker(worker) : runWorker(worker);
-    yield* lifecycle.pipe(
-      Effect.catchCause((cause) =>
-        worker.finalized
-          ? Effect.void
-          : finalizeWorker(
-              worker,
-              {
-                status: Cause.hasInterruptsOnly(cause) ? "interrupted" : "error",
-                detail: Cause.pretty(cause),
-              },
-              true,
-            ),
-      ),
-      Effect.forkIn(coordinatorScope),
-    );
-    return {
-      agentId: subagentId,
-      status: "starting" as const,
-      providerInstanceId: resolution.selection.instanceId,
-      providerDriver: resolution.provider.driver,
-      model: resolution.selection.model,
-      reasoningEffort,
-    };
+        ...(input.deepPlanExecution === undefined
+          ? {}
+          : { deepPlanExecution: input.deepPlanExecution }),
+        modelSelection: selected.selection,
+        runtimeMode: projection.thread.runtimeMode,
+        interactionMode: input.deepPlanExecution?.readOnly ? "plan" : "default",
+        createdBy: "agent",
+        creationSource: "server",
+      })
+      .pipe(Effect.mapError(failure));
+    const task = result.storedEvents.flatMap(({ event }) =>
+      event.type === "subagent.updated" ? [event.payload] : [],
+    )[0];
+    if (!task)
+      return yield* new GeneralSubagentError({
+        reason: "spawn-failed",
+        detail: "The delegated task was not persisted.",
+      });
+    return identity(task, selected.selection);
   });
-  const spawn: GeneralSubagentCoordinatorShape["spawn"] = (input) =>
-    ensureFeatureEnabled().pipe(
-      Effect.andThen(spawnWorkerEffect(input, false)),
-      Effect.mapError(publicError("Spawning the general subagent")),
-    );
-  const spawnAgent: GeneralSubagentCoordinatorShape["spawnAgent"] = (input) =>
-    ensureFeatureEnabled().pipe(
-      Effect.andThen(spawnWorkerEffect(input, true)),
-      Effect.mapError(publicError("Spawning the direct agent")),
-    );
-
-  const analyzeDeepPlanSources: GeneralSubagentCoordinatorShape["analyzeDeepPlanSources"] =
-    Effect.fn("GeneralSubagentCoordinator.analyzeDeepPlanSources")(
-      function* (input) {
-        const active = state
-          .allByThread()
-          .filter(
-            (worker) =>
-              worker.parentThreadId === input.parentThreadId &&
-              worker.deepPlan?.runId === input.binding.runId &&
-              worker.deepPlan.sourceAnalysis !== undefined &&
-              workerIsBusy(worker),
-          );
-        const batches = selectDeepPlanSourceBatches(
-          input.sources,
-          active.map((worker) => worker.deepPlan!.sourceAnalysis!.sourceIds),
-        );
-        const spawned = yield* Effect.forEach(
-          batches,
-          (sources) => {
-            const sourceIds = sources.map((source) => source.sourceId);
-            return spawnWorkerEffect(
-              {
-                parentThreadId: input.parentThreadId,
-                callerProviderInstanceId: input.callerProviderInstanceId,
-                task: buildDeepPlanSourceBatchTask(input.binding, sources),
-                name: `Deep Plan · ${sources.length} chats`,
-                deepPlan: {
-                  ...input.binding,
-                  readOnly: true,
-                  sourceAnalysis: { workerThreadId: input.parentThreadId, sourceIds },
-                },
-              },
-              false,
-            ).pipe(Effect.map((agent) => ({ ...agent, sourceIds })));
-          },
-          { concurrency: DEEP_PLAN_PARALLEL_SOURCE_BATCHES },
-        );
-        return [
-          ...active.map((worker) => ({
-            ...identity(worker),
-            sourceIds: worker.deepPlan!.sourceAnalysis!.sourceIds,
-          })),
-          ...spawned,
-        ];
-      },
-      Effect.mapError(publicError("Analyzing Deep Plan source batches")),
-    );
-
-  const resolveOwnedWorkers = Effect.fn("GeneralSubagentCoordinator.resolveOwnedWorkers")(
-    function* (parentThreadId: ThreadId, agentIds: ReadonlyArray<SubagentId>) {
-      const workers: ActiveGeneralSubagent[] = [];
-      for (const agentId of agentIds) {
-        const worker = state.getById(agentId);
-        if (!worker || worker.parentThreadId !== parentThreadId) {
-          return yield* new GeneralSubagentError({
-            reason: "agent-unavailable",
-            detail: `General subagent '${agentId}' is not owned by parent thread '${parentThreadId}'.`,
-          });
-        }
-        workers.push(worker);
-      }
-      return workers;
-    },
-  );
-
+  const sendMessage: GeneralSubagentCoordinatorShape["sendMessage"] = Effect.fn(
+    "GeneralSubagentCoordinator.sendMessage",
+  )(function* (input) {
+    yield* parent(input);
+    const { task, child } = yield* load(input);
+    const commandId = yield* nextId();
+    yield* threads
+      .dispatch({
+        type: "message.dispatch",
+        commandId,
+        threadId: child.thread.id,
+        messageId: MessageId.make(`${commandId}:message`),
+        text: input.message,
+        attachments: [],
+        modelSelection: child.thread.modelSelection,
+        createdBy: "agent",
+        creationSource: "server",
+        dispatchMode: { type: "queue_after_active" },
+      })
+      .pipe(Effect.mapError(failure));
+    return { agent: action(task, child.thread.modelSelection), queued: true };
+  });
   const wait: GeneralSubagentCoordinatorShape["wait"] = Effect.fn(
     "GeneralSubagentCoordinator.wait",
   )(function* (input) {
-    const workers = yield* resolveOwnedWorkers(input.parentThreadId, input.agentIds);
-    const active = workers.filter(workerIsBusy);
-    const timeoutSeconds = input.timeoutSeconds ?? 30;
-    const waited =
-      active.length === 0
-        ? Option.some<void>(undefined)
-        : yield* Effect.all(
-            active.map((worker) => Deferred.await(worker.completed)),
-            {
-              concurrency: "unbounded",
-              discard: true,
-            },
-          ).pipe(Effect.timeoutOption(Duration.seconds(timeoutSeconds)));
+    const loaded = yield* Effect.forEach(input.agentIds, (agentId) => load({ ...input, agentId }));
+    const results = yield* Effect.forEach(
+      loaded,
+      ({ child }) =>
+        threads
+          .waitForThread({
+            projectId: child.thread.projectId,
+            threadId: child.thread.id,
+            timeoutMs: (input.timeoutSeconds ?? 60) * 1000,
+            untilDelegatedWorkSettled: true,
+          })
+          .pipe(Effect.mapError(failure)),
+      { concurrency: "unbounded" },
+    );
+    const agents = yield* Effect.forEach(input.agentIds, (agentId) =>
+      Effect.gen(function* () {
+        const { task, child } = yield* load({ ...input, agentId });
+        const output =
+          child.messages.filter((message) => message.role === "assistant").at(-1)?.text ??
+          task.result;
+        return {
+          ...identity(task),
+          result: output ? parseGeneralSubagentFinalResult(output, agentId) : null,
+        };
+      }),
+    );
     return {
-      agents: workers.map(snapshot),
-      allTerminal: workers.every((worker) => !workerIsBusy(worker)),
-      timedOut: Option.isNone(waited),
+      agents,
+      allTerminal: results.every((result) => !result.timedOut),
+      timedOut: results.some((result) => result.timedOut),
     };
   });
-
-  const cancelEffect = Effect.fn("GeneralSubagentCoordinator.cancel")(function* (
-    input: GeneralSubagentCaller & GeneralSubagentCancelInput,
-  ) {
-    const [worker] = yield* resolveOwnedWorkers(input.parentThreadId, [input.agentId]);
-    if (!worker) {
-      return yield* new GeneralSubagentError({
-        reason: "agent-unavailable",
-        detail: `General subagent '${input.agentId}' is not available.`,
-      });
-    }
-    const cancelled = yield* cancelWorker(worker, "Cancelled by the parent agent.");
-    return { agent: actionSnapshot(worker), cancelled };
+  const interruptAgent: GeneralSubagentCoordinatorShape["interruptAgent"] = Effect.fn(
+    "GeneralSubagentCoordinator.interruptAgent",
+  )(function* (input) {
+    const { task, child } = yield* load(input);
+    yield* threads
+      .dispatch({ type: "thread.stop", commandId: yield* nextId(), threadId: child.thread.id })
+      .pipe(Effect.mapError(failure));
+    return { agent: action(task, child.thread.modelSelection), interrupted: true };
   });
-  const cancel: GeneralSubagentCoordinatorShape["cancel"] = (input) =>
-    cancelEffect(input).pipe(Effect.mapError(publicError("Cancelling the general subagent")));
-
-  const listAgents: GeneralSubagentCoordinatorShape["listAgents"] = (input) =>
-    Effect.succeed({
-      agents: state
-        .all()
-        .filter((worker) => worker.parentThreadId === input.parentThreadId)
-        .map(identity),
-    });
-
-  const sendMessageEffect = Effect.fn("GeneralSubagentCoordinator.sendMessage")(function* (
-    input: GeneralSubagentCaller & GeneralSubagentSendMessageInput,
-  ) {
-    const [worker] = yield* resolveOwnedWorkers(input.parentThreadId, [input.agentId]);
-    if (!worker || worker.finalized || !worker.retainSession) {
-      return yield* new GeneralSubagentError({
-        reason: "agent-unavailable",
-        detail: `Direct agent '${input.agentId}' has no reusable session.`,
-      });
-    }
-    worker.mailbox.push(input.message);
-    return { agent: actionSnapshot(worker), queued: true };
-  });
-  const sendMessage: GeneralSubagentCoordinatorShape["sendMessage"] = (input) =>
-    ensureFeatureEnabled().pipe(
-      Effect.andThen(sendMessageEffect(input)),
-      Effect.mapError(publicError("Messaging the direct agent")),
-    );
-
-  const followUpEffect = Effect.fn("GeneralSubagentCoordinator.followUp")(function* (
-    input: GeneralSubagentCaller & GeneralSubagentFollowUpInput,
-  ) {
-    const [worker] = yield* resolveOwnedWorkers(input.parentThreadId, [input.agentId]);
-    if (!worker || worker.finalized || !worker.retainSession) {
-      return yield* new GeneralSubagentError({
-        reason: "agent-unavailable",
-        detail: `Direct agent '${input.agentId}' has no reusable session.`,
-      });
-    }
-    if (!workerIsBusy(worker) && worker.followUps.length === 0) {
-      worker.completed = yield* Deferred.make<void>();
-    }
-    worker.followUps.push({ task: input.task });
-    yield* Deferred.succeed(worker.wake, undefined).pipe(Effect.ignore);
-    return { agent: actionSnapshot(worker), queued: true };
-  });
-  const followUp: GeneralSubagentCoordinatorShape["followUp"] = (input) =>
-    ensureFeatureEnabled().pipe(
-      Effect.andThen(followUpEffect(input)),
-      Effect.mapError(publicError("Following up with the direct agent")),
-    );
-
-  const interruptAgentEffect = Effect.fn("GeneralSubagentCoordinator.interruptAgent")(function* (
-    input: GeneralSubagentCaller & GeneralSubagentInterruptInput,
-  ) {
-    const [worker] = yield* resolveOwnedWorkers(input.parentThreadId, [input.agentId]);
-    if (!worker || worker.finalized || !worker.retainSession) {
-      return yield* new GeneralSubagentError({
-        reason: "agent-unavailable",
-        detail: `Direct agent '${input.agentId}' has no reusable session.`,
-      });
-    }
-    if (!workerIsBusy(worker)) return { agent: actionSnapshot(worker), interrupted: false };
-    worker.cancelled = true;
-    yield* transport
-      .interrupt(worker)
-      .pipe(Effect.timeoutOption(GENERAL_SUBAGENT_ABORT_FORCE_DELAY), Effect.asVoid);
-    yield* settleWorker(worker, "interrupted", "Interrupted by the parent agent.");
-    yield* Deferred.await(worker.completed).pipe(
-      Effect.timeoutOption(GENERAL_SUBAGENT_ABORT_FORCE_DELAY),
-      Effect.asVoid,
-    );
-    return { agent: actionSnapshot(worker), interrupted: true };
-  });
-  const interruptAgent: GeneralSubagentCoordinatorShape["interruptAgent"] = (input) =>
-    interruptAgentEffect(input).pipe(Effect.mapError(publicError("Interrupting the direct agent")));
-
-  const waitAgent: GeneralSubagentCoordinatorShape["waitAgent"] = wait;
-
-  yield* settings.streamChanges.pipe(
-    Stream.map((next) =>
-      resolveBetterT3FeatureFlag(next.betterT3Environment, "agent.generalSubagents"),
-    ),
-    Stream.changes,
-    Stream.filter((enabled) => !enabled),
-    Stream.runForEach(() =>
-      Effect.forEach(
-        state.all().filter((worker) => !worker.finalized && !worker.deepPlan?.sourceAnalysis),
-        (worker) => cancelWorker(worker, "General subagents were disabled in Better T3 settings."),
-        { concurrency: "unbounded", discard: true },
-      ),
-    ),
-    Effect.catchCause((cause) =>
-      Effect.logWarning("General subagent feature reconciliation failed", {
-        cause: Cause.pretty(cause),
+  return GeneralSubagentCoordinator.of({
+    spawn,
+    spawnAgent: spawn,
+    sendMessage,
+    followUp: Effect.fn("GeneralSubagentCoordinator.followUp")((input) =>
+      sendMessage({
+        ...input,
+        message: buildGeneralSubagentFollowUpPrompt({ task: input.task, agentId: input.agentId }),
       }),
     ),
-    Effect.forkIn(coordinatorScope),
-  );
-
-  return GeneralSubagentCoordinator.of({
-    analyzeDeepPlanSources,
-    listModels,
-    spawn,
     wait,
-    cancel,
-    listAgents,
-    spawnAgent,
-    sendMessage,
-    followUp,
-    waitAgent,
+    waitAgent: wait,
     interruptAgent,
+    cancel: Effect.fn("GeneralSubagentCoordinator.cancel")((input) =>
+      interruptAgent(input).pipe(
+        Effect.map((result) => ({ agent: result.agent, cancelled: result.interrupted })),
+      ),
+    ),
+    listAgents: Effect.fn("GeneralSubagentCoordinator.listAgents")(function* (input) {
+      const projection = yield* parent(input);
+      return {
+        agents: yield* Effect.forEach(
+          projection.subagents.filter((task) => task.origin === "app_owned"),
+          (task) =>
+            Effect.gen(function* () {
+              const child =
+                task.childThreadId === null
+                  ? null
+                  : yield* orchestration
+                      .getThreadRecords(task.childThreadId, [])
+                      .pipe(Effect.mapError(failure));
+              return identity(task, child?.thread.modelSelection);
+            }),
+        ),
+      };
+    }),
+    listModels: Effect.fn("GeneralSubagentCoordinator.listModels")(function* (input) {
+      const projection = yield* parent(input);
+      return {
+        providers: listGeneralSubagentModels({
+          providers: yield* providers.getProviders,
+          callerProviderInstanceId: input.callerProviderInstanceId,
+          parentModelSelection: projection.thread.modelSelection,
+        }),
+      };
+    }),
+    analyzeDeepPlanSources: Effect.fn("GeneralSubagentCoordinator.analyzeDeepPlanSources")(
+      function* (input) {
+        return yield* workflow.withRunLock(
+          input.binding.runId,
+          Effect.gen(function* () {
+            const run = yield* workflow
+              .getRun({ threadId: input.binding.runThreadId, runId: input.binding.runId })
+              .pipe(Effect.mapError(failure));
+            const projection = yield* parent(input);
+            const active: DeepPlanSourceAnalysisBatch[] = [];
+            for (const task of projection.subagents) {
+              if (
+                task.childThreadId === null ||
+                !["pending", "running", "waiting"].includes(task.status)
+              )
+                continue;
+              const child = yield* orchestration
+                .getThreadRecords(task.childThreadId, [])
+                .pipe(Effect.mapError(failure));
+              const grant = child.thread.deepPlanExecution;
+              if (grant?.runId === input.binding.runId && grant.sourceAnalysis)
+                active.push({
+                  ...identity(task, child.thread.modelSelection),
+                  sourceIds: grant.sourceAnalysis.sourceIds,
+                });
+            }
+            const summarized = new Set(
+              run?.sourceCoverage
+                .filter((entry) => entry.status === "summarized")
+                .map((entry) => entry.sourceId),
+            );
+            const pending = input.sources.filter((source) => !summarized.has(source.sourceId));
+            const created = yield* Effect.forEach(
+              selectDeepPlanSourceBatches(
+                pending,
+                active.map((agent) => agent.sourceIds),
+              ),
+              (batch) =>
+                spawn({
+                  ...input,
+                  task: buildDeepPlanSourceBatchTask(input.binding, batch),
+                  name: "Deep Plan source analysis",
+                  deepPlanExecution: {
+                    ...input.binding,
+                    readOnly: true,
+                    sourceAnalysis: {
+                      workerThreadId: input.parentThreadId,
+                      sourceIds: batch.map((source) => source.sourceId),
+                    },
+                  },
+                }).pipe(
+                  Effect.map((agent) => ({
+                    ...agent,
+                    sourceIds: batch.map((source) => source.sourceId),
+                  })),
+                ),
+            );
+            return [...active, ...created];
+          }),
+        );
+      },
+    ),
   });
 });
-
 export const GeneralSubagentCoordinatorLive = Layer.effect(GeneralSubagentCoordinator, make);

@@ -23,7 +23,7 @@ import {
   SearchIcon,
   TriangleAlertIcon,
 } from "lucide-react";
-import { type ChangeEvent, type ReactNode, useDeferredValue, useMemo, useState } from "react";
+import { type ChangeEvent, type ReactNode, useDeferredValue, useState } from "react";
 
 import { cn } from "../../lib/utils";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
@@ -270,7 +270,7 @@ function ProviderInstancePicker({
         aria-label={translator.message("settings.harness.providerAccount", {
           provider: source.label,
         })}
-        className="h-7 max-w-48 rounded-md border border-input bg-background px-2 text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="h-7 max-w-48 rounded-md border border-input bg-background px-2 text-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         value={value ?? ""}
         onChange={(event) => {
           const instanceId = source.instanceIds.find(
@@ -366,7 +366,7 @@ function HarnessChatSyncSourceView({
   isSyncing,
   result,
   errorMessage,
-  selectedProviderInstanceId = source.preferredInstanceId,
+  selectedProviderInstanceId: configuredProviderInstanceId,
   onProviderInstanceChange,
   onSearchChange,
   onArchiveChange,
@@ -377,6 +377,10 @@ function HarnessChatSyncSourceView({
   onRefresh,
   onSync,
 }: HarnessChatSyncSourceViewProps) {
+  const selectedProviderInstanceId =
+    configuredProviderInstanceId === undefined
+      ? source.preferredInstanceId
+      : configuredProviderInstanceId;
   const translator = useInterfaceTranslator();
   const visibleSessionIds = chats.map((chat) => chat.sessionId);
   const selectionState = getHarnessChatSelectionState(selection, visibleSessionIds);
@@ -650,7 +654,7 @@ function MissingProjectResolverContent({
           {translator.message("settings.harness.targetProject")}
           <select
             aria-label={translator.message("settings.harness.targetProjectAria")}
-            className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm font-normal outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm font-normal outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             value={selectedProjectId ?? ""}
             onChange={(event) => {
               const projectId = projects.find(
@@ -664,7 +668,7 @@ function MissingProjectResolverContent({
             </option>
             {projects.map((project) => (
               <option key={project.id} value={project.id}>
-                {project.title} — {project.workspaceRoot}
+                {project.title}, {project.workspaceRoot}
               </option>
             ))}
           </select>
@@ -767,15 +771,12 @@ function HarnessChatSyncSourceController({
   const [resolverOpen, setResolverOpen] = useState(false);
   const [resolverTargetProjectId, setResolverTargetProjectId] = useState<ProjectId | null>(null);
 
-  const listInput = useMemo(
-    () => ({
-      sourceId: source.id,
-      query: deferredSearchQuery,
-      includeArchived,
-      limit: HARNESS_CHAT_PAGE_SIZE,
-    }),
-    [source.id, deferredSearchQuery, includeArchived],
-  );
+  const listInput = {
+    sourceId: source.id,
+    query: deferredSearchQuery,
+    includeArchived,
+    limit: HARNESS_CHAT_PAGE_SIZE,
+  };
   const listQuery = useHarnessChatPages(
     environmentId,
     listInput,
@@ -783,11 +784,8 @@ function HarnessChatSyncSourceController({
   );
   const runSync = useSettingsCommand(agentSettingsEnvironment.harnessChatSync.run);
   const readStatus = useSettingsCommand(agentSettingsEnvironment.harnessChatSync.status);
-  const chats = useMemo(() => uniqueChats(listQuery.pages), [listQuery.pages]);
-  const displayedChats = useMemo(
-    () => applyStatusOverrides(chats, statusBySessionId),
-    [chats, statusBySessionId],
-  );
+  const chats = uniqueChats(listQuery.pages);
+  const displayedChats = applyStatusOverrides(chats, statusBySessionId);
   const pages = listQuery.pages;
   const lastPage = pages[pages.length - 1];
   const unresolvedSelectedChats = getSelectedUnresolvedHarnessChats(displayedChats, selection);
@@ -1033,7 +1031,7 @@ function HarnessChatSyncEnvironmentView({
   );
 }
 
-function supportsHarnessChatSync(config: ServerConfig | undefined): boolean {
+function supportsHarnessChatSync(config: Pick<ServerConfig, "environment"> | undefined): boolean {
   return (config?.environment.capabilities.harnessChatSyncVersion ?? 0) >= 1;
 }
 

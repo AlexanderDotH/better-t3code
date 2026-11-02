@@ -245,3 +245,12 @@ export class HarnessChatSyncError extends Schema.TaggedError<HarnessChatSyncErro
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
+
+export const OrchestrationHarnessSyncState = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  providerLabel: TrimmedNonEmptyString,
+  activity: HarnessChatActivity,
+  sourceUpdatedAt: Schema.NullOr(IsoDateTime),
+  lastSyncedAt: IsoDateTime,
+});
+export type OrchestrationHarnessSyncState = typeof OrchestrationHarnessSyncState.Type;

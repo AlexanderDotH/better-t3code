@@ -684,9 +684,9 @@ const betterT3SettingsCatalog = defineLocalizedInterfaceCatalog({
   ],
   "settings.betterT3.value.automatic": ["Automatic", "Automatisch", "Automatique"],
   "settings.betterT3.value.projectIndexDecisionOff": [
-    "Off — always use found context",
+    "Off: always use found context",
     "Aus – gefundenen Kontext immer verwenden",
-    "Désactivé — toujours utiliser le contexte trouvé",
+    "Désactivé : toujours utiliser le contexte trouvé",
   ],
   "chat.model.decision.native": ["Native decision", "Native Entscheidung", "Décision native"],
   "chat.model.decision.prompted": ["Prompted", "Prompt-basiert", "Guidé par prompt"],

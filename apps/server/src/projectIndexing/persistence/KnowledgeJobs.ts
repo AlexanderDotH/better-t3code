@@ -3,7 +3,7 @@ import * as NodeCrypto from "node:crypto";
 
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
-import type * as SqlClient from "effect/unstable/sql/SqlClient";
+import type * as SqlClient from "effect/sql/SqlClient";
 
 import { isSafeProjectSourcePath } from "../privacy/WorkspacePrivacy.ts";
 import { validateKnowledgeJobSource } from "./KnowledgeJobSource.ts";

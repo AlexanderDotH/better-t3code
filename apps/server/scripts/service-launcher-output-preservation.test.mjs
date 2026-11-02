@@ -52,4 +52,4 @@ it("preserves prepared CLI runtime assets when packing the standalone launcher",
   } finally {
     await NodeFSP.rm(directory, { recursive: true, force: true });
   }
-}, 15_000);
+});

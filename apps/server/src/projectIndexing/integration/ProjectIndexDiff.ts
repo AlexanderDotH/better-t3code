@@ -57,15 +57,12 @@ export const makeProjectIndexDiffReader = Effect.gen(function* () {
           appendTruncationMarker: false,
         })
         .pipe(
-          Effect.flatMap((result) =>
-            result.stdoutTruncated
-              ? Effect.fail(
-                  new ProjectIndexDiffError({
-                    message:
-                      "The selected diff exceeds the review capacity; review smaller changes.",
-                  }),
-                )
-              : Effect.succeed(result),
+          Effect.filterOrFail(
+            (result) => !result.stdoutTruncated,
+            () =>
+              new ProjectIndexDiffError({
+                message: "The selected diff exceeds the review capacity; review smaller changes.",
+              }),
           ),
         );
     const restoredFilePatch = (filePath: string, before: string, after: string) =>

@@ -1,5 +1,5 @@
-import { act, useLayoutEffect, useRef, useState } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { useLayoutEffect, useRef, useState } from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { StartAssemblyAiStreamingTranscriptionInput } from "../lib/assemblyAiStreamingTranscription";
@@ -68,15 +68,18 @@ async function renderComposer(props: Parameters<typeof Composer>[0] = {}) {
   await act(() => {
     renderer = create(<Composer {...props} />);
   });
-  await act(() => dictation.start());
+  await act(async () => {
+    await dictation.start();
+  });
 }
 
 async function speak(text: string) {
-  await act(() => transportInput.onTranscript({ text }));
+  await act(async () => {
+    await transportInput.onTranscript({ text });
+  });
 }
 
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const events = new EventTarget();
   vi.stubGlobal("window", {
     addEventListener: events.addEventListener.bind(events),
@@ -85,7 +88,9 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  await act(() => renderer?.unmount());
+  await act(async () => {
+    await renderer?.unmount();
+  });
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.clearAllMocks();
@@ -103,6 +108,7 @@ describe("voice dictation lifecycle", () => {
             { path: "apps/web/index.ts", symbols: [] },
             { path: "apps/server/index.ts", symbols: [] },
           ],
+
           truncated: false,
         },
       ],
@@ -113,14 +119,18 @@ describe("voice dictation lifecycle", () => {
     const original =
       "Rename the API. No, keep the API name. Change index ts. By the way, I need coffee.";
     await speak(original);
-    await act(() => dictation.stop());
+    await act(async () => {
+      await dictation.stop();
+    });
     expect(transform).toHaveBeenCalledExactlyOnceWith(original);
     expect(draft.text).toBe(
       "Existing requirement.\nChange [index.ts](apps/web/index.ts), but do not rename the API.",
     );
     expect(draft.references?.[0]?.candidates).toHaveLength(2);
     expect(dictation.canRestoreOriginal).toBe(true);
-    await act(() => dictation.restoreOriginal());
+    await act(async () => {
+      await dictation.restoreOriginal();
+    });
     expect(draft.text).toBe(`Existing requirement.\n${original}`);
     expect(draft.references).toBeUndefined();
     expect(dictation.canRestoreOriginal).toBe(false);
@@ -138,12 +148,18 @@ describe("voice dictation lifecycle", () => {
         stopping = dictation.stop();
       });
       expect(dictation.state).toBe("stopping");
-      if (interruption === "manual edit") await act(() => editDraft("My manually edited draft"));
-      else if (interruption === "cancel") await act(() => dictation.cancel());
+      if (interruption === "manual edit")
+        await act(async () => {
+          await editDraft("My manually edited draft");
+        });
+      else if (interruption === "cancel")
+        await act(async () => {
+          await dictation.cancel();
+        });
       else
-        await act(() =>
-          renderer.update(<Composer lifecycleKey="thread-two" transform={transform} />),
-        );
+        await act(async () => {
+          await renderer.update(<Composer lifecycleKey="thread-two" transform={transform} />);
+        });
       const preserved = draft.text;
       await act(async () => {
         processing.resolve("obsolete cleaned text");
@@ -163,8 +179,12 @@ describe("voice dictation lifecycle", () => {
     await act(() => {
       stopping = dictation.stop();
     });
-    await act(() => dictation.cancel());
-    await act(() => dictation.start());
+    await act(async () => {
+      await dictation.cancel();
+    });
+    await act(async () => {
+      await dictation.start();
+    });
     await speak("second recording");
     await act(async () => {
       processing.resolve("old output");
@@ -194,7 +214,9 @@ describe("voice dictation lifecycle", () => {
   it("manual edits while recording preserve the draft and stop late transcript writes", async () => {
     await renderComposer();
     await speak("original speech");
-    await act(() => editDraft("Edited by hand"));
+    await act(async () => {
+      await editDraft("Edited by hand");
+    });
     await speak("late transcript");
     expect(draft.text).toBe("Edited by hand");
     expect(dictation.active).toBe(false);
@@ -204,9 +226,15 @@ describe("voice dictation lifecycle", () => {
   it("does not restore over edits made after processing", async () => {
     await renderComposer({ transform: async () => "cleaned speech" });
     await speak("original speech");
-    await act(() => dictation.stop());
-    await act(() => editDraft("Edited after cleanup"));
-    await act(() => dictation.restoreOriginal());
+    await act(async () => {
+      await dictation.stop();
+    });
+    await act(async () => {
+      await editDraft("Edited after cleanup");
+    });
+    await act(async () => {
+      await dictation.restoreOriginal();
+    });
     expect(draft.text).toBe("Edited after cleanup");
     expect(dictation.canRestoreOriginal).toBe(false);
   });

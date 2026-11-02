@@ -1,36 +1,33 @@
-import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { NativeScrollView } from "../../native/NativeScrollViewMarker";
+import { Button } from "../../components/ui/Button";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import { LegendList } from "@legendapp/list/react-native";
 import {
+  AuthOrchestrationOperateScope,
   type EnvironmentId,
   type EnvironmentMachineKind,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
 import { useNavigation } from "@react-navigation/native";
-import { ScreenHeader } from "../../components/ScreenHeader";
-import { SymbolView } from "../../components/AppSymbol";
-import { useCallback, useMemo, useRef, type ComponentProps } from "react";
-import {
-  ActivityIndicator,
-  Platform,
-  Pressable,
-  RefreshControl,
-  useWindowDimensions,
-  View,
-} from "react-native";
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { AppBar } from "../../components/ui/AppBar";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { useMemo, useRef, type ComponentProps } from "react";
+import { Platform, RefreshControl, useWindowDimensions, View } from "react-native";
+import { GestureDetector, useNativeGesture } from "react-native-gesture-handler";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
-import { AppText as Text } from "../../components/AppText";
-import { EmptyState } from "../../components/EmptyState";
+import { AppText as Text } from "../../components/ui/AppText";
+import { EmptyState } from "../../components/ui/EmptyState";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
-import { relativeTime } from "../../lib/time";
+import { RelativeTime } from "../../components/RelativeTime";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useServerConfigs } from "../../state/entities";
+import { useEnvironmentScope } from "../../state/session";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import type { ArchivedThreadGroup, ArchivedThreadSortOrder } from "./archivedThreadList";
 import { SettingsScreenContent } from "../settings/components/SettingsScreen";
@@ -50,37 +47,36 @@ function ArchivedThreadsHeader(props: {
   readonly onSearchQueryChange: (query: string) => void;
   readonly onSortOrderChange: (sortOrder: ArchivedThreadSortOrder) => void;
 }) {
-  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const { width } = useWindowDimensions();
   const hasCustomFilter = props.selectedEnvironmentId !== null || props.sortOrder !== "newest";
   return (
-    <ScreenHeader
-      title={translator.message("mobile.archive.title")}
+    <AppBar
+      title="Archived threads"
       sidebar={false}
       onBack={() => navigation.goBack()}
       search={{
         value: props.searchQuery,
         onChangeText: props.onSearchQueryChange,
-        placeholder: translator.message("mobile.archive.search"),
-        compactPlaceholder: translator.message("mobile.archive.searchShort"),
+        placeholder: "Search archived threads",
+        compactPlaceholder: "Search",
         mode: "inline",
         compactToolbar: width < 700,
       }}
       menus={[
         {
-          title: translator.message("mobile.archive.options"),
+          title: "Archived thread options",
           icon: hasCustomFilter
             ? "line.3.horizontal.decrease.circle.fill"
             : "line.3.horizontal.decrease.circle",
           items: [
             {
               id: "environment",
-              title: translator.message("mobile.archive.environment"),
+              title: "Environment",
               items: [
                 {
                   id: "environment:all",
-                  title: translator.message("mobile.archive.allEnvironments"),
+                  title: "All environments",
                   selected: props.selectedEnvironmentId === null,
                   onPress: () => props.onEnvironmentChange(null),
                 },
@@ -94,17 +90,17 @@ function ArchivedThreadsHeader(props: {
             },
             {
               id: "sort",
-              title: translator.message("mobile.archive.sort"),
+              title: "Sort by archived date",
               items: [
                 {
                   id: "sort:newest",
-                  title: translator.message("mobile.archive.newest"),
+                  title: "Newest first",
                   selected: props.sortOrder === "newest",
                   onPress: () => props.onSortOrderChange("newest"),
                 },
                 {
                   id: "sort:oldest",
-                  title: translator.message("mobile.archive.oldest"),
+                  title: "Oldest first",
                   selected: props.sortOrder === "oldest",
                   onPress: () => props.onSortOrderChange("oldest"),
                 },
@@ -114,7 +110,7 @@ function ArchivedThreadsHeader(props: {
               ? [
                   {
                     id: "refresh",
-                    title: translator.message("mobile.archive.refresh"),
+                    title: "Refresh archived threads",
                     onPress: props.onRefresh,
                   },
                 ]
@@ -187,92 +183,92 @@ function ArchivedThreadRow(props: {
   readonly onDelete: () => void;
   readonly onSwipeableClose: (methods: SwipeableMethods) => void;
   readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
-  readonly simultaneousSwipeGesture?: ComponentProps<
-    typeof ThreadSwipeable
-  >["simultaneousWithExternalGesture"];
+  readonly simultaneousSwipeGesture?: ComponentProps<typeof ThreadSwipeable>["simultaneousWith"];
   readonly onUnarchive: () => void;
   readonly thread: EnvironmentThreadShell;
 }) {
-  const translator = useMobileInterfaceTranslator();
   const { width: windowWidth } = useWindowDimensions();
-  const cardColor = useUniwindTheme()["--color-card"];
-  const timestamp = relativeTime(props.thread.archivedAt ?? props.thread.updatedAt);
+  const cardColor = useUniwindTheme()["--color-grouped-card"];
+  const canOperateThread = useEnvironmentScope(
+    props.thread.environmentId,
+    AuthOrchestrationOperateScope,
+  );
   const subtitle = [props.environmentLabel, props.thread.branch].filter((part): part is string =>
     Boolean(part),
   );
+  const rowContent = (
+    <View
+      className={`flex-row items-center gap-3 bg-grouped-card px-4 py-3 ${props.isLast ? "" : "border-b border-separator"}`}
+    >
+      <View className="h-[34px] w-[34px] items-center justify-center rounded-[11px] bg-subtle">
+        <SymbolView
+          name="archivebox.fill"
+          size={15}
+          tintColorClassName="accent-icon-subtle"
+          type="monochrome"
+        />
+      </View>
+
+      <View className="min-w-0 flex-1 gap-1">
+        <View className="flex-row items-center gap-2">
+          <Text
+            className="min-w-0 flex-1 text-base font-t3-bold leading-snug text-foreground"
+            numberOfLines={1}
+          >
+            {props.thread.title}
+          </Text>
+          <Text className="min-w-[30px] text-right text-xs tabular-nums text-foreground-tertiary">
+            <RelativeTime timestamp={props.thread.archivedAt ?? props.thread.updatedAt} />
+          </Text>
+        </View>
+        {subtitle.length > 0 ? (
+          <View className="flex-row items-center gap-1.5">
+            <SymbolView
+              name="arrow.triangle.branch"
+              size={10}
+              tintColorClassName="accent-icon-subtle"
+              type="monochrome"
+            />
+            <Text
+              className="min-w-0 flex-1 font-mono text-2xs text-foreground-tertiary"
+              numberOfLines={1}
+            >
+              {subtitle.join(" · ")}
+            </Text>
+          </View>
+        ) : null}
+      </View>
+    </View>
+  );
+  const containerStyle = {
+    borderTopLeftRadius: props.isFirst ? 20 : 0,
+    borderTopRightRadius: props.isFirst ? 20 : 0,
+    borderBottomLeftRadius: props.isLast ? 20 : 0,
+    borderBottomRightRadius: props.isLast ? 20 : 0,
+    overflow: "hidden" as const,
+  };
+  if (!canOperateThread) return <View style={containerStyle}>{rowContent}</View>;
+
   return (
     <ThreadSwipeable
       resetKey={`${props.thread.environmentId}:${props.thread.id}`}
       threadKey={`${props.thread.environmentId}:${props.thread.id}`}
       backgroundColor={cardColor}
-      // Round + clip the swipeable container so the group's corners stay
-      // rounded while rows swipe; the row itself stays square inside.
-      containerStyle={{
-        borderTopLeftRadius: props.isFirst ? 20 : 0,
-        borderTopRightRadius: props.isFirst ? 20 : 0,
-        borderBottomLeftRadius: props.isLast ? 20 : 0,
-        borderBottomRightRadius: props.isLast ? 20 : 0,
-        overflow: "hidden",
-      }}
+      containerStyle={containerStyle}
       fullSwipeWidth={windowWidth - 32}
       onDelete={props.onDelete}
       onSwipeableClose={props.onSwipeableClose}
       onSwipeableWillOpen={props.onSwipeableWillOpen}
       primaryAction={{
-        accessibilityLabel: translator.message("mobile.archive.unarchiveNamed", {
-          title: props.thread.title,
-        }),
+        accessibilityLabel: `Unarchive ${props.thread.title}`,
         icon: "arrow.uturn.backward",
-        label: translator.message("mobile.archive.unarchive"),
+        label: "Unarchive",
         onPress: props.onUnarchive,
       }}
-      simultaneousWithExternalGesture={props.simultaneousSwipeGesture}
+      simultaneousWith={props.simultaneousSwipeGesture}
       threadTitle={props.thread.title}
     >
-      {() => (
-        <View
-          className={`flex-row items-center gap-3 bg-card px-4 py-3 ${props.isLast ? "" : "border-b border-separator"}`}
-        >
-          <View className="h-[34px] w-[34px] items-center justify-center rounded-[11px] bg-subtle">
-            <SymbolView
-              name="archivebox.fill"
-              size={15}
-              tintColorClassName="accent-icon-subtle"
-              type="monochrome"
-            />
-          </View>
-
-          <View className="min-w-0 flex-1 gap-1">
-            <View className="flex-row items-center gap-2">
-              <Text
-                className="min-w-0 flex-1 text-base font-t3-bold leading-snug text-foreground"
-                numberOfLines={1}
-              >
-                {props.thread.title}
-              </Text>
-              <Text className="min-w-[30px] text-right text-xs tabular-nums text-foreground-tertiary">
-                {timestamp}
-              </Text>
-            </View>
-            {subtitle.length > 0 ? (
-              <View className="flex-row items-center gap-1.5">
-                <SymbolView
-                  name="arrow.triangle.branch"
-                  size={10}
-                  tintColorClassName="accent-icon-subtle"
-                  type="monochrome"
-                />
-                <Text
-                  className="min-w-0 flex-1 font-mono text-2xs text-foreground-tertiary"
-                  numberOfLines={1}
-                >
-                  {subtitle.join(" · ")}
-                </Text>
-              </View>
-            ) : null}
-          </View>
-        </View>
-      )}
+      {() => rowContent}
     </ThreadSwipeable>
   );
 }
@@ -284,9 +280,9 @@ function ArchiveError(props: { readonly message: string; readonly onRetry: () =>
         Could not load every archive
       </Text>
       <Text className="mt-1 text-sm text-foreground-muted">{props.message}</Text>
-      <Pressable className="mt-3 self-start active:opacity-60" onPress={props.onRetry}>
-        <Text className="text-sm font-t3-bold text-danger-foreground">Try again</Text>
-      </Pressable>
+      <View className="mt-3">
+        <Button label="Try again" tone="secondary" onPress={props.onRetry} />
+      </View>
     </View>
   );
 }
@@ -306,10 +302,9 @@ export function ArchivedThreadsScreen(props: {
   readonly onSortOrderChange: (sortOrder: ArchivedThreadSortOrder) => void;
   readonly onUnarchiveThread: (thread: EnvironmentThreadShell) => void;
 }) {
-  const translator = useMobileInterfaceTranslator();
   const { onDeleteThread, onUnarchiveThread } = props;
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
-  const archiveScrollGesture = useMemo(() => Gesture.Native(), []);
+  const archiveScrollGesture = useNativeGesture();
   const environmentLabelsById = useMemo(
     () =>
       new Map(
@@ -345,60 +340,51 @@ export function ArchivedThreadsScreen(props: {
     }
     return items;
   }, [environmentLabelsById, props.groups, serverConfigs]);
-  const handleSwipeableWillOpen = useCallback((methods: SwipeableMethods) => {
+  const handleSwipeableWillOpen = (methods: SwipeableMethods) => {
     if (openSwipeableRef.current && openSwipeableRef.current !== methods) {
       openSwipeableRef.current.close();
     }
     openSwipeableRef.current = methods;
-  }, []);
-  const handleSwipeableClose = useCallback((methods: SwipeableMethods) => {
+  };
+  const handleSwipeableClose = (methods: SwipeableMethods) => {
     if (openSwipeableRef.current === methods) {
       openSwipeableRef.current = null;
     }
-  }, []);
+  };
   const isInitialLoad = props.isLoading && props.groups.length === 0 && props.error === null;
   const isFiltered = props.searchQuery.trim().length > 0 || props.selectedEnvironmentId !== null;
-  const renderListItem = useCallback(
-    ({ item }: { item: ArchivedThreadListItem }) => {
-      if (item.kind === "project") {
-        return (
-          <View className="pt-4">
-            <ProjectGroupLabel
-              environmentLabel={item.environmentLabel}
-              environmentMachine={item.environmentMachine}
-              project={item.project}
-            />
-          </View>
-        );
-      }
-
+  const renderListItem = ({ item }: { item: ArchivedThreadListItem }) => {
+    if (item.kind === "project") {
       return (
-        <ArchivedThreadRow
-          environmentLabel={item.environmentLabel}
-          isFirst={item.isFirst}
-          isLast={item.isLast}
-          onDelete={() => onDeleteThread(item.thread)}
-          onSwipeableClose={handleSwipeableClose}
-          onSwipeableWillOpen={handleSwipeableWillOpen}
-          onUnarchive={() => onUnarchiveThread(item.thread)}
-          simultaneousSwipeGesture={archiveScrollGesture}
-          thread={item.thread}
-        />
+        <View className="pt-4">
+          <ProjectGroupLabel
+            environmentLabel={item.environmentLabel}
+            environmentMachine={item.environmentMachine}
+            project={item.project}
+          />
+        </View>
       );
-    },
-    [
-      archiveScrollGesture,
-      handleSwipeableClose,
-      handleSwipeableWillOpen,
-      onDeleteThread,
-      onUnarchiveThread,
-    ],
-  );
+    }
+
+    return (
+      <ArchivedThreadRow
+        environmentLabel={item.environmentLabel}
+        isFirst={item.isFirst}
+        isLast={item.isLast}
+        onDelete={() => onDeleteThread(item.thread)}
+        onSwipeableClose={handleSwipeableClose}
+        onSwipeableWillOpen={handleSwipeableWillOpen}
+        onUnarchive={() => onUnarchiveThread(item.thread)}
+        simultaneousSwipeGesture={archiveScrollGesture}
+        thread={item.thread}
+      />
+    );
+  };
   const listEmptyComponent = useMemo(() => {
     if (isInitialLoad) {
       return (
         <View className="items-center py-16">
-          <ActivityIndicator colorClassName="accent-icon" />
+          <AppActivityIndicator colorClassName="accent-icon" />
           <Text className="mt-3 text-sm text-foreground-muted">Loading archive...</Text>
         </View>
       );
@@ -406,19 +392,18 @@ export function ArchivedThreadsScreen(props: {
 
     return (
       <EmptyState
-        detail={translator.message(
-          isFiltered ? "mobile.archive.filteredEmptyDetail" : "mobile.archive.emptyDetail",
-        )}
-        title={translator.message(
-          isFiltered ? "mobile.archive.filteredEmpty" : "mobile.archive.empty",
-        )}
+        detail={
+          isFiltered
+            ? "Try another search or environment."
+            : "Threads you archive will appear here."
+        }
+        title={isFiltered ? "No matching threads" : "No archived threads"}
       />
     );
-  }, [isFiltered, isInitialLoad, translator]);
+  }, [isFiltered, isInitialLoad]);
 
   return (
-    // Keep the list inside this native container. Form-sheet resizing otherwise
-    // treats the flattened background as a header and shrinks the list to zero.
+    // Without this native container, formSheet resizing mistakes the background for a header and collapses the list.
     <View collapsable={false} className="flex-1 bg-sheet">
       <ArchivedThreadsHeader
         environments={props.environments}
@@ -434,6 +419,7 @@ export function ArchivedThreadsScreen(props: {
       <SettingsScreenContent>
         <GestureDetector gesture={archiveScrollGesture}>
           <LegendList
+            renderScrollComponent={Platform.OS === "ios" ? NativeScrollView : undefined}
             className="flex-1"
             contentContainerStyle={{
               paddingBottom: 32,

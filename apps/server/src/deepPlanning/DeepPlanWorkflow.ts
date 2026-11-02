@@ -1,3 +1,4 @@
+import { ProviderAdapterRegistryV2 } from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
   CommandId,
   DeepPlanError,
@@ -19,9 +20,7 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
-import type { OrchestrationDispatchError } from "../orchestration/Errors.ts";
-import { ProjectionThreadRepository } from "../persistence/Services/ProjectionThreads.ts";
+import { OrchestratorV2, type OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
 import { DeepPlanSources } from "./DeepPlanSources.ts";
 
 export type DeepPlanStartInput = Omit<
@@ -68,28 +67,30 @@ function coverageEqual(
   );
 }
 
-function dispatchError(error: OrchestrationDispatchError): DeepPlanError {
-  if (error._tag === "OrchestrationCommandInvariantError") {
+function dispatchError(error: OrchestratorV2Error): DeepPlanError {
+  const cause = error._tag === "OrchestratorDispatchError" ? error.cause : error;
+  if (Predicate.isObject(cause) && "context" in cause && "detail" in cause) {
+    const context = cause.context;
     const code =
-      Predicate.isObject(error.context) && "deepPlanCode" in error.context
+      Predicate.isObject(context) && "deepPlanCode" in context
         ? Option.getOrElse(
-            decodeErrorCode(error.context.deepPlanCode),
+            decodeErrorCode(context.deepPlanCode),
             () => "invalid-transition" as const,
           )
         : "invalid-transition";
-    return new DeepPlanError({ code, message: error.detail });
+    return new DeepPlanError({ code, message: String(cause.detail) });
   }
   return new DeepPlanError({ code: "storage-failed", message: error.message });
 }
 
 const make = Effect.gen(function* () {
-  const engine = yield* OrchestrationEngineService;
-  const threads = yield* ProjectionThreadRepository;
+  const engine = yield* OrchestratorV2;
+  const adapters = yield* ProviderAdapterRegistryV2;
   const sources = yield* DeepPlanSources;
   const runLocks = new Map<DeepPlanRunId, Semaphore.Semaphore>();
   const crypto = yield* Crypto.Crypto;
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
-  const nextCommandId = crypto.randomUUIDv4.pipe(
+  const nextCommandId = crypto.randomUUIDv4().pipe(
     Effect.map(CommandId.make),
     Effect.mapError(
       () =>
@@ -102,32 +103,19 @@ const make = Effect.gen(function* () {
 
   const getRun: DeepPlanWorkflow["Service"]["getRun"] = Effect.fn("DeepPlanWorkflow.getRun")(
     function* (input) {
-      const row = yield* threads.getById({ threadId: input.threadId }).pipe(
-        Effect.mapError(
-          () =>
-            new DeepPlanError({
-              code: "storage-failed",
-              message: "Could not read Deep Plan state.",
-            }),
-        ),
-      );
-      if (Option.isNone(row) || row.value.deletedAt !== null) return null;
-      if (input.runId !== undefined && row.value.deepPlan?.id === input.runId)
-        return row.value.deepPlan;
+      const row = yield* engine.getThreadShell(input.threadId);
+      if (row === null || row.deletedAt !== null) return null;
+      if (input.runId !== undefined && row.deepPlan?.id === input.runId) return row.deepPlan;
+      const snapshot = yield* engine.getShellSnapshot();
       const run =
-        Option.getOrNull(
-          yield* threads.getDeepPlanByImplementationThreadId(input.threadId).pipe(
-            Effect.mapError(
-              () =>
-                new DeepPlanError({
-                  code: "storage-failed",
-                  message: "Could not read the implementing Deep Plan.",
-                }),
-            ),
-          ),
-        ) ?? row.value.deepPlan;
+        snapshot.threads.find(
+          (thread) =>
+            thread.deletedAt === null &&
+            thread.deepPlan?.approval?.implementationThreadId === input.threadId,
+        )?.deepPlan ?? row.deepPlan;
       return run != null && (input.runId === undefined || input.runId === run.id) ? run : null;
     },
+    Effect.mapError(dispatchError),
   );
 
   const requireRun = Effect.fn("DeepPlanWorkflow.requireRun")(function* (
@@ -142,8 +130,43 @@ const make = Effect.gen(function* () {
     return run;
   });
 
+  const requireProvider = Effect.fn("DeepPlanWorkflow.requireProvider")(function* (
+    instanceId: import("@t3tools/contracts").ProviderInstanceId,
+  ) {
+    const adapter = yield* adapters
+      .get(instanceId)
+      .pipe(
+        Effect.mapError(
+          (cause) => new DeepPlanError({ code: "invalid-transition", message: cause.message }),
+        ),
+      );
+    const capabilities = yield* adapter
+      .getCapabilities()
+      .pipe(
+        Effect.mapError(
+          (cause) => new DeepPlanError({ code: "invalid-transition", message: cause.message }),
+        ),
+      );
+    if (capabilities.deepPlan?.supported !== true)
+      return yield* new DeepPlanError({
+        code: "invalid-transition",
+        message:
+          capabilities.deepPlan?.supported === false
+            ? capabilities.deepPlan.reason
+            : "This provider does not declare read-only planning with the Deep Plan toolkit.",
+      });
+  });
   const start: DeepPlanWorkflow["Service"]["start"] = Effect.fn("DeepPlanWorkflow.start")(
     function* (input) {
+      const thread = yield* engine
+        .getThreadShell(input.threadId)
+        .pipe(Effect.mapError(dispatchError));
+      if (thread === null)
+        return yield* new DeepPlanError({
+          code: "run-not-found",
+          message: "The planning thread was not found.",
+        });
+      yield* requireProvider(thread.providerInstanceId);
       yield* engine
         .dispatch({
           ...input,
@@ -159,6 +182,8 @@ const make = Effect.gen(function* () {
   const update: DeepPlanWorkflow["Service"]["update"] = Effect.fn("DeepPlanWorkflow.update")(
     function* (input) {
       const run = yield* requireRun({ threadId: input.threadId, runId: input.runId });
+      if (input.mutation.type === "approve")
+        yield* requireProvider(input.mutation.implementation.instanceId);
       if (input.mutation.type === "publish-plan" || input.mutation.type === "approve") {
         const actual = yield* sources
           .assertCompleteCoverage(run.id)

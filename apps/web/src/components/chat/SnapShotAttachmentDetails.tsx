@@ -1,83 +1,22 @@
 import type { SnapShotSource } from "@t3tools/contracts";
-import {
-  snapShotAccessibilityDetails,
-  snapShotIncludesAccessibility,
-  type SnapShotAccessibilityDetails,
-} from "@t3tools/shared/snapShot";
-
+import { snapShotIncludesAccessibility } from "@t3tools/shared/snapShot";
 import { ImageIcon, TextIcon } from "lucide-react";
-import { Suspense, use, useMemo, type CSSProperties } from "react";
+import { Suspense } from "react";
 
-import { useTheme } from "../../hooks/useTheme";
-import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
-import { resolveDiffThemeName } from "../../lib/diffRendering";
-import { getSyntaxHighlighterPromise } from "../../lib/syntaxHighlighting";
+import { useRenderedAppearance } from "../../hooks/useTheme";
 import { cn } from "../../lib/utils";
 import { RenderErrorBoundary } from "../RenderErrorBoundary";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-
-export {
-  snapShotAccessibilityDetails,
-  snapShotIncludesAccessibility,
-} from "@t3tools/shared/snapShot";
-export type { SnapShotAccessibilityDetails } from "@t3tools/shared/snapShot";
+import { HighlightedTokens } from "./HighlightedTokens";
 
 export const SNAP_SHOT_ATTACHMENT_FRAME_CLASS =
   "relative h-28 w-52 max-w-full overflow-hidden rounded-lg border border-border/80";
 
-interface SyntaxToken {
-  readonly content: string;
-  readonly offset: number;
-  readonly color?: string;
-  readonly fontStyle?: number;
-}
-
-function syntaxTokenStyle(token: SyntaxToken): CSSProperties {
-  const fontStyle = token.fontStyle ?? 0;
-  return {
-    ...(token.color ? { color: token.color } : {}),
-    ...(fontStyle & 1 ? { fontStyle: "italic" } : {}),
-    ...(fontStyle & 2 ? { fontWeight: 700 } : {}),
-    ...(fontStyle & 4 ? { textDecoration: "underline" } : {}),
-  };
-}
-
-function HighlightedAccessibilityJson({
-  content,
-  theme,
-}: {
+interface SnapShotAccessibilityDetails {
   content: string;
-  theme: "light" | "dark";
-}) {
-  const highlighter = use(getSyntaxHighlighterPromise("json"));
-  const lines = useMemo(
-    () =>
-      highlighter.codeToTokens(content, {
-        lang: "json",
-        theme: resolveDiffThemeName(theme),
-      }).tokens,
-    [content, highlighter, theme],
-  );
-
-  let lineOffset = 0;
-  return lines.map((line) => {
-    const lineContent = line.map((token) => token.content).join("");
-    const lineKey = `${lineOffset}:${lineContent}`;
-    const hasNextLine = lineOffset + lineContent.length < content.length;
-    lineOffset += lineContent.length + 1;
-    return (
-      <span key={lineKey}>
-        {line.map((token) => (
-          <span key={`${token.offset}:${token.content}`} style={syntaxTokenStyle(token)}>
-            {token.content}
-          </span>
-        ))}
-        {hasNextLine ? "\n" : null}
-      </span>
-    );
-  });
+  format: "json" | "text";
 }
 
 export function SnapShotAccessibilityData({
@@ -87,12 +26,12 @@ export function SnapShotAccessibilityData({
   details: SnapShotAccessibilityDetails;
   className?: string;
 }) {
-  const { resolvedTheme } = useTheme();
+  const resolvedTheme = useRenderedAppearance();
   const content =
     details.format === "json" ? (
       <RenderErrorBoundary fallback={details.content}>
         <Suspense fallback={details.content}>
-          <HighlightedAccessibilityJson content={details.content} theme={resolvedTheme} />
+          <HighlightedTokens code={details.content} language="json" theme={resolvedTheme} />
         </Suspense>
       </RenderErrorBoundary>
     ) : (
@@ -102,7 +41,7 @@ export function SnapShotAccessibilityData({
   return (
     <pre
       className={cn(
-        "overflow-auto whitespace-pre-wrap break-words font-mono focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+        "overflow-auto whitespace-pre-wrap break-words font-mono focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-inset focus-visible:ring-ring/70",
         className,
       )}
       tabIndex={0}
@@ -112,21 +51,35 @@ export function SnapShotAccessibilityData({
   );
 }
 
+export function snapShotAccessibilityDetails(
+  source: SnapShotSource,
+): SnapShotAccessibilityDetails | undefined {
+  if (source.accessibility?.format === "element-tree") {
+    return {
+      content: JSON.stringify(source.accessibility, null, 2),
+      format: "json",
+    };
+  }
+
+  const text =
+    source.accessibility?.format === "flat-text"
+      ? source.accessibility.text.trim()
+      : source.accessibleText?.trim();
+  return text ? { content: text, format: "text" } : undefined;
+}
+
 export function SnapShotContentsButton({
   source,
   className,
   side = "top",
-  appearance = "compact",
 }: {
   source: SnapShotSource;
   className?: string;
   side?: "top" | "right" | "bottom" | "left";
-  appearance?: "compact" | "message";
 }) {
-  const translate = useInterfaceTranslator().message;
   const includesAccessibility = snapShotIncludesAccessibility(source);
   const ContentsIcon = includesAccessibility ? TextIcon : ImageIcon;
-  const accessibilityDetails = useMemo(() => snapShotAccessibilityDetails(source), [source]);
+  const accessibilityDetails = snapShotAccessibilityDetails(source);
   const tooltip = includesAccessibility ? "Accessibility data" : "No accessibility data";
 
   return (
@@ -136,32 +89,20 @@ export function SnapShotContentsButton({
           render={
             <PopoverTrigger
               render={
-                appearance === "message" ? (
-                  <button
-                    type="button"
-                    className={cn("better-chat-capture-contents", className)}
-                    onClick={(event) => event.stopPropagation()}
-                  />
-                ) : (
-                  <Button
-                    aria-label={
-                      includesAccessibility ? "View accessibility data" : "No accessibility data"
-                    }
-                    className={className}
-                    onClick={(event) => event.stopPropagation()}
-                    size="icon-micro"
-                    variant="overlay"
-                  />
-                )
+                <Button
+                  aria-label={
+                    includesAccessibility ? "View accessibility data" : "No accessibility data"
+                  }
+                  className={className}
+                  onClick={(event) => event.stopPropagation()}
+                  size="icon-micro"
+                  variant="overlay"
+                />
               }
             />
           }
         >
-          {appearance === "message" ? (
-            translate("chat.attachments.contents")
-          ) : (
-            <ContentsIcon className="size-3" aria-hidden="true" />
-          )}
+          <ContentsIcon className="size-3" aria-hidden="true" />
         </TooltipTrigger>
         <TooltipPopup side={side}>{tooltip}</TooltipPopup>
       </Tooltip>
@@ -192,18 +133,14 @@ export function SnapShotContentsButton({
 export function SnapShotAttachmentDetails({
   source,
   className,
-  appearance = "compact",
 }: {
   source: SnapShotSource;
   className?: string;
-  appearance?: "compact" | "message";
 }) {
-  const translate = useInterfaceTranslator().message;
   return (
     <div
       className={cn(
         "pointer-events-none absolute inset-x-0 bottom-0 flex min-w-0 items-center gap-1.5 bg-linear-to-t from-black/85 via-black/55 to-transparent px-2.5 pb-2 pt-6",
-        appearance === "message" && "better-chat-capture-caption",
         className,
       )}
     >
@@ -214,31 +151,15 @@ export function SnapShotAttachmentDetails({
           {source.appName.slice(0, 1)}
         </div>
       )}
-      {appearance === "message" ? (
-        <>
-          <div className="better-chat-capture-identity">
-            <div className="better-chat-capture-title">{source.appName}</div>
-            <div className="better-chat-capture-subtitle">
-              {source.windowTitle || translate("chat.attachments.capturedWindow")}
-            </div>
-          </div>
-          <SnapShotContentsButton
-            source={source}
-            appearance="message"
-            className="pointer-events-auto"
-          />
-        </>
-      ) : (
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-1.5 text-2xs font-medium leading-3.5 text-white">
-            <span className="truncate">{source.appName}</span>
-            <SnapShotContentsButton source={source} className="pointer-events-auto" />
-          </div>
-          <div className="truncate text-3xs leading-3.5 text-white/70">
-            {source.windowTitle || "Captured window"}
-          </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-center gap-1.5 text-2xs font-medium leading-3.5 text-white">
+          <span className="truncate">{source.appName}</span>
+          <SnapShotContentsButton source={source} className="pointer-events-auto" />
         </div>
-      )}
+        <div className="truncate text-3xs leading-3.5 text-white/70">
+          {source.windowTitle || "Captured window"}
+        </div>
+      </div>
     </div>
   );
 }

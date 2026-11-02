@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Git state tokens require synchronous SHA-256 fingerprints.
 import * as NodeCrypto from "node:crypto";
 
 export interface GitChangeStats {

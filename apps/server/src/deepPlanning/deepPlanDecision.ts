@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - Approval fingerprints must be computed in the pure command decision.
 import {
   type DeepPlanActor,
   type DeepPlanDocument,
@@ -12,7 +13,16 @@ import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 
-import { OrchestrationCommandInvariantError } from "../orchestration/Errors.ts";
+import * as Schema from "effect/Schema";
+
+export class DeepPlanDecisionError extends Schema.TaggedError<DeepPlanDecisionError>()(
+  "DeepPlanDecisionError",
+  {
+    commandType: Schema.String,
+    detail: Schema.String,
+    context: Schema.Struct({ deepPlanCode: Schema.String }),
+  },
+) {}
 
 function canonicalValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalValue);
@@ -39,7 +49,7 @@ function invalid(
   detail: string,
   code: DeepPlanError["code"] = "invalid-transition",
 ) {
-  return new OrchestrationCommandInvariantError({
+  return new DeepPlanDecisionError({
     commandType: command.type,
     detail,
     context: { deepPlanCode: code },
@@ -128,7 +138,7 @@ const allowedStepTransitions: Record<DeepPlanStepStatus, ReadonlyArray<DeepPlanS
 export const startDeepPlanRun = Effect.fn("startDeepPlanRun")(function* (
   command: ThreadDeepPlanStartCommand,
   current?: DeepPlanRun | null,
-): Effect.fn.Return<DeepPlanRun, OrchestrationCommandInvariantError> {
+): Effect.fn.Return<DeepPlanRun, DeepPlanDecisionError> {
   if (current != null && current.threadId !== command.threadId) {
     return yield* invalid(
       command,
@@ -178,7 +188,7 @@ export const startDeepPlanRun = Effect.fn("startDeepPlanRun")(function* (
 export const updateDeepPlanRun = Effect.fn("updateDeepPlanRun")(function* (
   run: DeepPlanRun | null | undefined,
   command: ThreadDeepPlanUpdateCommand,
-): Effect.fn.Return<DeepPlanRun, OrchestrationCommandInvariantError> {
+): Effect.fn.Return<DeepPlanRun, DeepPlanDecisionError> {
   if (run == null || run.id !== command.runId || run.threadId !== command.threadId) {
     return yield* invalid(
       command,

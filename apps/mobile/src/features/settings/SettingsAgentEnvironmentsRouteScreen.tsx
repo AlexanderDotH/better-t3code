@@ -1,4 +1,4 @@
-import { ThemedSwitch } from "../../components/ThemedSwitch";
+import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import { type EnvironmentProject } from "@t3tools/client-runtime/state/shell";
@@ -17,14 +17,14 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { isProviderInstanceEnabled } from "@t3tools/shared/serverSettings";
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Linking, Modal, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
-import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
+import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { uuidv4 } from "../../lib/uuid";
@@ -416,7 +416,7 @@ function MobileProviderAuthentication(props: {
     await refreshProviders({ environmentId: props.environmentId, input: {} });
   }, [props.environmentId, refreshProviders]);
 
-  const connect = useCallback(async () => {
+  const connect = async () => {
     if (presentation.method === "api-key") return;
     setBusy(true);
     setLocalError(null);
@@ -431,16 +431,9 @@ function MobileProviderAuthentication(props: {
       return;
     }
     await refresh();
-  }, [
-    connectProviderAuth,
-    presentation.method,
-    presentation.providerLabel,
-    props.environmentId,
-    props.provider.instanceId,
-    refresh,
-  ]);
+  };
 
-  const saveCredential = useCallback(async () => {
+  const saveCredential = async () => {
     const credential = credentialDraft.trim();
     if (!credential) return;
     setCredentialDraft("");
@@ -458,17 +451,9 @@ function MobileProviderAuthentication(props: {
       return;
     }
     await refresh();
-  }, [
-    credentialDraft,
-    presentation.credentialLabel,
-    presentation.providerLabel,
-    props.environmentId,
-    props.provider.instanceId,
-    refresh,
-    setProviderAuthCredential,
-  ]);
+  };
 
-  const disconnect = useCallback(async () => {
+  const disconnect = async () => {
     setBusy(true);
     const result = await disconnectProviderAuth({
       environmentId: props.environmentId,
@@ -483,13 +468,7 @@ function MobileProviderAuthentication(props: {
       return;
     }
     await refresh();
-  }, [
-    disconnectProviderAuth,
-    presentation.providerLabel,
-    props.environmentId,
-    props.provider.instanceId,
-    refresh,
-  ]);
+  };
 
   if (props.readOnly) {
     return (
@@ -692,7 +671,9 @@ function SkillSettings(props: { readonly environmentId: EnvironmentId }) {
     setSkills(result.value.skills);
   }, [listSkills, props.environmentId]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Load the remote skill catalog for this environment.
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- Clear the previous error when starting this environment skill-catalog request.
     void reload();
   }, [reload]);
 
@@ -792,7 +773,9 @@ function McpSettings(props: { readonly environmentId: EnvironmentId }) {
     setServers(result.value.servers);
   }, [listMcp, props.environmentId]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Load the remote MCP server catalog for this environment.
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- Clear the previous error when starting this environment MCP-catalog request.
     void reload();
   }, [reload]);
 

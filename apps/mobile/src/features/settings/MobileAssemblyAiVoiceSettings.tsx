@@ -13,7 +13,7 @@ import { useEffect, useState } from "react";
 import { Modal, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -262,13 +262,15 @@ function MobileVoiceSettingsForm({
       return;
     }
     setBusy(true);
-    try {
+    return (async () => {
       setMessage((await onSave(next)) ? "saved" : "saveFailed");
-    } catch {
-      setMessage("saveFailed");
-    } finally {
-      setBusy(false);
-    }
+    })()
+      .catch(() => {
+        setMessage("saveFailed");
+      })
+      .finally(() => {
+        setBusy(false);
+      });
   }
 
   return (
@@ -571,6 +573,7 @@ export function MobileAssemblyAiVoiceSettings({
   const [projectBusy, setProjectBusy] = useState<ProjectId | null>(null);
   const [projectError, setProjectError] = useState<ProjectId | null>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Load the remote speech model catalog for this environment and ignore replaced requests.
   useEffect(() => {
     if (!supported) return;
     let cancelled = false;
@@ -607,13 +610,15 @@ export function MobileAssemblyAiVoiceSettings({
   const changeOverride = async (projectId: ProjectId, voice: AssemblyAiVoiceSettings | null) => {
     setProjectBusy(projectId);
     setProjectError(null);
-    try {
+    return (async () => {
       if (!(await save(voice, projectId))) setProjectError(projectId);
-    } catch {
-      setProjectError(projectId);
-    } finally {
-      setProjectBusy(null);
-    }
+    })()
+      .catch(() => {
+        setProjectError(projectId);
+      })
+      .finally(() => {
+        setProjectBusy(null);
+      });
   };
 
   return (

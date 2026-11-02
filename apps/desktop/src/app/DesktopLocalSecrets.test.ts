@@ -5,11 +5,11 @@ import * as NodeOS from "node:os";
 import { afterEach, beforeEach, describe, expect } from "vite-plus/test";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createLocalSecretCipher, createLocalTokenStorage } from "./DesktopLocalSecrets.ts";
 
 const onHost = (run: (platform: NodeJS.Platform) => Promise<void>) =>
-  HostProcessPlatform.pipe(Effect.flatMap((platform) => Effect.promise(() => run(platform))));
+  HostProcess.Platform.pipe(Effect.flatMap((platform) => Effect.promise(() => run(platform))));
 
 let directory: string;
 beforeEach(async () => {

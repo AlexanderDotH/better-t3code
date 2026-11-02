@@ -1,5 +1,5 @@
 import { ChevronRightIcon, ImageIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import type { ChatImageAttachment } from "../../types";
@@ -20,10 +20,8 @@ export function MessageImageAttachment({
   const translate = useInterfaceTranslator().message;
   const [accessibilityOpen, setAccessibilityOpen] = useState(false);
   const source = image.source?.kind === "snap-shot" ? image.source : undefined;
-  const accessibility = useMemo(
-    () => (accessibilityOpen && source ? snapShotAccessibilityDetails(source) : undefined),
-    [accessibilityOpen, source],
-  );
+  const accessibility =
+    accessibilityOpen && source ? snapShotAccessibilityDetails(source) : undefined;
   const preview = (
     <button
       type="button"
@@ -59,7 +57,7 @@ export function MessageImageAttachment({
     <div className="better-chat-capture">
       <div className="better-chat-capture-preview">
         {preview}
-        <SnapShotAttachmentDetails source={source} appearance="message" />
+        <SnapShotAttachmentDetails source={source} />
       </div>
       <details
         className="better-chat-capture-accessibility"

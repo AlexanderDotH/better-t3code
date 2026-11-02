@@ -1,6 +1,6 @@
 import { EnvironmentId, ProjectId, type PullRequestCheckLog } from "@t3tools/contracts";
-import { act, type ReactNode } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { type ReactNode } from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { PullRequestJobLogDialog } from "./PullRequestJobLogDialog";
 
@@ -50,16 +50,21 @@ const view = () => (
     onClose={() => {}}
   />
 );
+
 const update = async () => {
-  await act(async () => renderer.update(view()));
+  await act(async () => {
+    await renderer.update(view());
+  });
 };
 const tick = async () => {
-  await act(async () => vi.advanceTimersByTime(5_000));
+  await act(async () => {
+    await vi.advanceTimersByTime(5_000);
+  });
 };
 
 beforeEach(async () => {
   vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+
   visibility = "visible";
   documentEvents = new EventTarget();
   vi.stubGlobal("document", {
@@ -84,7 +89,9 @@ beforeEach(async () => {
   });
 });
 afterEach(async () => {
-  await act(async () => renderer.unmount());
+  await act(async () => {
+    await renderer.unmount();
+  });
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -109,16 +116,22 @@ describe("job log updates", () => {
   });
   it("pauses hidden windows and cancels updates when closed", async () => {
     visibility = "hidden";
-    await act(async () => documentEvents.dispatchEvent(new Event("visibilitychange")));
+    await act(async () => {
+      await documentEvents.dispatchEvent(new Event("visibilitychange"));
+    });
     await tick();
     expect(state.query.refresh).not.toHaveBeenCalled();
     visibility = "visible";
-    await act(async () => documentEvents.dispatchEvent(new Event("visibilitychange")));
+    await act(async () => {
+      await documentEvents.dispatchEvent(new Event("visibilitychange"));
+    });
     await tick();
     expect(state.query.refresh).toHaveBeenCalledTimes(1);
     state.query.data = { ...state.query.data!, text: "next" };
     await update();
-    await act(async () => renderer.unmount());
+    await act(async () => {
+      await renderer.unmount();
+    });
     await tick();
     expect(state.query.refresh).toHaveBeenCalledTimes(1);
   });
@@ -134,7 +147,9 @@ describe("job log updates", () => {
     expect(state.query.refresh).toHaveBeenCalledTimes(1);
     state.query.isPending = true;
     await update();
-    await act(async () => vi.advanceTimersByTime(30_000));
+    await act(async () => {
+      await vi.advanceTimersByTime(30_000);
+    });
     expect(state.query.refresh).toHaveBeenCalledTimes(1);
     state.query = {
       ...state.query,
@@ -156,11 +171,11 @@ describe("job log updates", () => {
   it("does not pull a reader back to the end after they scroll up", async () => {
     expect(scroll.scrollTop).toBe(1000);
     scroll.scrollTop = 100;
-    await act(async () =>
-      renderer.root
+    await act(async () => {
+      await renderer.root
         .findByProps({ "aria-label": "Job log" })
-        .props.onScroll({ currentTarget: scroll }),
-    );
+        .props.onScroll({ currentTarget: scroll });
+    });
     scroll.scrollHeight = 1200;
     state.query.data = { ...state.query.data!, text: "more output" };
     await update();
@@ -168,7 +183,9 @@ describe("job log updates", () => {
     const follow = renderer.root
       .findAllByType("button")
       .find((button) => button.children.includes("Follow output"))!;
-    await act(async () => follow.props.onClick());
+    await act(async () => {
+      await follow.props.onClick();
+    });
     expect(scroll.scrollTop).toBe(1200);
   });
 });

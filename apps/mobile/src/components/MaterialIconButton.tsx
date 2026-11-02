@@ -1,7 +1,7 @@
 import { cn } from "../lib/cn";
 import { Pressable } from "react-native";
 
-import { SymbolView, type AppSymbolName } from "./AppSymbol";
+import { SymbolView, type AppSymbolName } from "./ui/AppSymbol";
 
 const VARIANT_CLASS_NAMES = {
   standard: ["", "accent-foreground"],

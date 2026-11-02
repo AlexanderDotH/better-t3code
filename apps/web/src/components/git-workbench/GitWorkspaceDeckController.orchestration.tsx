@@ -1,5 +1,7 @@
+import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import { useEnvironmentScope } from "~/state/session";
 import { useAtomValue } from "@effect/atom-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { useBetterT3DeviceFeature } from "~/hooks/useBetterT3Feature";
@@ -48,33 +50,31 @@ import { useGitWorkspaceDeckEffects } from "./GitWorkspaceDeckController.effects
 import { useGitWorkspaceDeckQueries } from "./GitWorkspaceDeckController.queries";
 import { GitWorkspaceDeckGitCard } from "./GitWorkspaceDeckController.presentation";
 
-export function useGitWorkspaceDeckController(props: GitWorkspaceDeckControllerProps) {
+export function useGitWorkspaceDeckController({
+  composerRef,
+  ...props
+}: GitWorkspaceDeckControllerProps) {
   const translate = useInterfaceTranslator().message;
   const isDesktop = useMediaQuery(DESKTOP_WORKBENCH_MEDIA_QUERY);
   const workspaceCardDeckEnabled = useBetterT3DeviceFeature("chat.workspaceCardDeck");
   const gitWorkbenchEnabled = useBetterT3DeviceFeature("workspace.gitWorkbench");
   const scopeKey = `${props.environmentId}:${props.cwd ?? ""}:${props.threadId ?? ""}`;
   const currentScopeRef = useRef<string | null>(scopeKey);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- binds pending Git command responses to the currently mounted workspace
   useLayoutEffect(() => {
     currentScopeRef.current = scopeKey;
     return () => {
       currentScopeRef.current = null;
     };
   }, [scopeKey]);
-  const availableCardIds = useMemo(() => {
+  const availableCardIds = (() => {
     if (!workspaceCardDeckEnabled) return ["chat"] as const;
     return resolveGitDeckCardIds({
       cwd: props.cwd,
       isRepository: props.legacyStatus?.isRepo ?? null,
       workbenchSupported: props.workbenchSupported && gitWorkbenchEnabled,
     });
-  }, [
-    gitWorkbenchEnabled,
-    props.cwd,
-    props.legacyStatus?.isRepo,
-    props.workbenchSupported,
-    workspaceCardDeckEnabled,
-  ]);
+  })();
   const gitAvailable = workspaceCardDeckEnabled && isDesktop && availableCardIds.includes("git");
   const selectionBlocked = props.actionRequired || props.isRecording;
   const deckResetKey = scopeKey;
@@ -90,7 +90,7 @@ export function useGitWorkspaceDeckController(props: GitWorkspaceDeckControllerP
     commitFocusRequest,
     currentFile,
     currentSelection,
-    expandedCard,
+    expandedCard: storedExpandedCard,
     expandButtonRef,
     historyItems,
     historyNextCursor,
@@ -119,12 +119,22 @@ export function useGitWorkspaceDeckController(props: GitWorkspaceDeckControllerP
     setSelectedFilePath,
     workbenchReturnFocusRef,
   } = session;
-  const resolvedActiveCard = resolveScopedWorkspaceDeckActiveCard({
-    availableCardIds,
-    currentSelection,
-    rememberedCard: deckSelectionByThread.get(scopeKey) ?? null,
-    scopeKey,
-  });
+  const expandedCard =
+    props.actionRequired ||
+    (storedExpandedCard !== null && !availableCardIds.includes(storedExpandedCard))
+      ? null
+      : storedExpandedCard;
+  if (storedExpandedCard !== expandedCard) setExpandedCard(expandedCard);
+  if (props.actionRequired && currentSelection.card !== "chat")
+    setCurrentSelection({ card: "chat", scopeKey });
+  const resolvedActiveCard = props.actionRequired
+    ? "chat"
+    : resolveScopedWorkspaceDeckActiveCard({
+        availableCardIds,
+        currentSelection,
+        rememberedCard: deckSelectionByThread.get(scopeKey) ?? null,
+        scopeKey,
+      });
   const gitExpanded = expandedCard === "git";
   const mcpExpanded = expandedCard === "mcp";
   const scopeReady = currentSelection.scopeKey === scopeKey;
@@ -141,37 +151,26 @@ export function useGitWorkspaceDeckController(props: GitWorkspaceDeckControllerP
     scopeKey,
     scopeReady,
   });
-  const changeTab = useCallback(
-    (tab: typeof activeTab) => {
-      if (tab === activeTab) return;
-      navigateFile(() => setActiveTab(tab));
-    },
-    [activeTab, navigateFile, setActiveTab],
-  );
-  const changeExpandedCard = useCallback(
-    (card: ChatWorkspaceCardId | null) => {
-      navigateFile(() => setExpandedCard(card));
-    },
-    [navigateFile, setExpandedCard],
-  );
-  const selectCard = useCallback(
-    (card: ChatWorkspaceCardId) => {
-      navigateFile(() => {
-        rememberDeckSelection(scopeKey, card);
-        setCurrentSelection({ card, scopeKey });
-      });
-    },
-    [navigateFile, scopeKey, setCurrentSelection],
-  );
+  const changeTab = (tab: typeof activeTab) => {
+    if (tab === activeTab) return;
+    navigateFile(() => setActiveTab(tab));
+  };
+  const changeExpandedCard = (card: ChatWorkspaceCardId | null) => {
+    navigateFile(() => setExpandedCard(card));
+  };
+  const selectCard = (card: ChatWorkspaceCardId) => {
+    navigateFile(() => {
+      rememberDeckSelection(scopeKey, card);
+      setCurrentSelection({ card, scopeKey });
+    });
+  };
 
-  const openChanges = useCallback(
-    (options?: GitWorkbenchOpenChangesOptions): boolean => {
-      if (!gitAvailable || selectionBlocked) return false;
-      openSessionChanges(options);
-      return true;
-    },
-    [gitAvailable, openSessionChanges, selectionBlocked],
-  );
+  const openChanges = (options?: GitWorkbenchOpenChangesOptions): boolean => {
+    if (!gitAvailable || selectionBlocked) return false;
+    openSessionChanges(options);
+    return true;
+  };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this workspace's imperative Git entry handler and removes it when the workspace unmounts
   useEffect(
     () =>
       subscribeGitWorkbenchEntry((request) => {
@@ -192,7 +191,22 @@ export function useGitWorkspaceDeckController(props: GitWorkspaceDeckControllerP
     isDesktop,
     props,
     resolvedActiveCard,
-    session,
+    session: {
+      activeTab: session.activeTab,
+      bufferFlushQueue: session.bufferFlushQueue,
+      commitPatchTarget: session.commitPatchTarget,
+      currentSelection: session.currentSelection,
+      diffs: session.diffs,
+      expandedCard: session.expandedCard,
+      historyCursor: session.historyCursor,
+      historyPath: session.historyPath,
+      historyRefName: session.historyRefName,
+      historySnapshotOid: session.historySnapshotOid,
+      rebasePlanTarget: session.rebasePlanTarget,
+      selectedChangeId: session.selectedChangeId,
+      selectedCommitOid: session.selectedCommitOid,
+      selectedFilePath: session.selectedFilePath,
+    },
   });
   const {
     changes,
@@ -204,71 +218,44 @@ export function useGitWorkspaceDeckController(props: GitWorkspaceDeckControllerP
     insights,
     projection,
     refsQuery,
-    sessionAccessQuery,
     snapshot,
     workbenchQuery,
   } = queries;
 
   const readOnly =
-    !sessionAccessQuery.data?.scopes?.includes("orchestration:operate") ||
+    !useEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope) ||
     contractSnapshot?.truncated === true;
-  const selectedPathRef = useRef<{ scopeKey: string; path: string } | null>(null);
-  useEffect(() => {
-    if (selectedChangeId === null) {
-      selectedPathRef.current = null;
-      return;
-    }
-    const selected = changes.find((change) => change.id === selectedChangeId);
-    if (selected) {
-      selectedPathRef.current = { scopeKey, path: selected.path };
-      return;
-    }
-    const previous = selectedPathRef.current;
-    if (previous?.scopeKey !== scopeKey) return;
-    const file = gitReviewFiles(changes).find((entry) => entry.path === previous.path);
-    setSelectedChangeId(file ? (defaultGitReviewChange(file)?.id ?? null) : null);
-  }, [changes, scopeKey, selectedChangeId, setSelectedChangeId]);
+  const [selectedPath, setSelectedPath] = useState<{ scopeKey: string; path: string } | null>(null);
+  const selected = changes.find((change) => change.id === selectedChangeId);
+  if (selected && (selectedPath?.scopeKey !== scopeKey || selectedPath.path !== selected.path))
+    setSelectedPath({ scopeKey, path: selected.path });
+  else if (selectedChangeId === null && selectedPath !== null) setSelectedPath(null);
+  else if (!selected && selectedChangeId !== null && selectedPath?.scopeKey === scopeKey) {
+    const file = gitReviewFiles(changes).find((entry) => entry.path === selectedPath.path);
+    const nextId = file ? (defaultGitReviewChange(file)?.id ?? null) : null;
+    if (nextId !== selectedChangeId) setSelectedChangeId(nextId);
+  }
 
-  const actionInput = useMemo(
-    () => ({
-      activeTurn: props.activeTurn,
-      changes,
-      contractSnapshot,
-      currentFile,
-      cwd: props.cwd,
-      environmentId: props.environmentId,
-      queuedWorkflow: projection?.queuedWorkflow ?? null,
-      readOnly,
-      refreshChangesDiff: changesDiffQuery.refresh,
-      refreshFile: fileQuery.refresh,
-      refreshWorkbenchQuery: workbenchQuery.refresh,
-      setCurrentFile,
-      setDiffs,
-      snapshot,
-      threadId: props.threadId ?? null,
-      translate,
-      turnId: props.turnId ?? null,
-    }),
-    [
-      changes,
-      changesDiffQuery.refresh,
-      contractSnapshot,
-      currentFile,
-      fileQuery.refresh,
-      projection?.queuedWorkflow,
-      props.activeTurn,
-      props.cwd,
-      props.environmentId,
-      props.threadId,
-      props.turnId,
-      readOnly,
-      setCurrentFile,
-      setDiffs,
-      snapshot,
-      translate,
-      workbenchQuery.refresh,
-    ],
-  );
+  const actionInput = {
+    activeTurn: props.activeTurn,
+    changes,
+    contractSnapshot,
+    currentFile,
+    cwd: props.cwd,
+    environmentId: props.environmentId,
+    queuedWorkflow: projection?.queuedWorkflow ?? null,
+    readOnly,
+    refreshChangesDiff: changesDiffQuery.refresh,
+    refreshFile: fileQuery.refresh,
+    refreshWorkbenchQuery: workbenchQuery.refresh,
+    setCurrentFile,
+    setDiffs,
+    snapshot,
+    threadId: props.threadId ?? null,
+    translate,
+    turnId: props.turnId ?? null,
+    runId: props.runId ?? null,
+  };
 
   const actions = useGitWorkspaceDeckActions(actionInput);
   const {
@@ -297,7 +284,7 @@ export function useGitWorkspaceDeckController(props: GitWorkspaceDeckControllerP
     actions,
     availableCardIds,
     isDesktop,
-    props,
+    props: { ...props, composerRef },
     queries,
     resolvedActiveCard,
     scopeKey,
@@ -308,11 +295,11 @@ export function useGitWorkspaceDeckController(props: GitWorkspaceDeckControllerP
   const operation = mapOperation(contractSnapshot);
   const undoSnapshots = (projection?.undoSnapshots ?? []).map(mapUndo);
   const branches: readonly GitBranch[] =
-    refsQuery.data?.refs.map((ref) => ({
-      current: ref.current,
-      name: ref.name,
-      oid: ref.current ? (contractSnapshot?.headOid ?? null) : null,
-      remote: ref.isRemote ?? false,
+    refsQuery.data?.refs.map((branch) => ({
+      current: branch.current,
+      name: branch.name,
+      oid: branch.current ? (contractSnapshot?.headOid ?? null) : null,
+      remote: branch.isRemote ?? false,
     })) ?? [];
   const history: GitHistoryState = {
     ...EMPTY_HISTORY,
@@ -419,39 +406,33 @@ export function useGitWorkspaceDeckController(props: GitWorkspaceDeckControllerP
     },
   };
 
-  const openCurrentFileInWorkbench = useCallback(
-    (path: string) => {
-      if (selectedFilePath === path) {
-        setActiveTab("changes");
-        return;
-      }
-      navigateFile(() => {
-        setSelectedFilePath(path);
-        setCurrentFile({
-          baseContent: "",
-          content: "",
-          loading: true,
-          path,
-          revision: "loading",
-          saveState: "idle",
-        });
-        setActiveTab("changes");
+  const openCurrentFileInWorkbench = (path: string) => {
+    if (selectedFilePath === path) {
+      setActiveTab("changes");
+      return;
+    }
+    navigateFile(() => {
+      setSelectedFilePath(path);
+      setCurrentFile({
+        baseContent: "",
+        content: "",
+        loading: true,
+        path,
+        revision: "loading",
+        saveState: "idle",
       });
-    },
-    [navigateFile, selectedFilePath, setActiveTab, setCurrentFile, setSelectedFilePath],
-  );
+      setActiveTab("changes");
+    });
+  };
 
-  const selectChange = useCallback(
-    (changeId: string | null) => {
-      navigateFile(() => {
-        setActiveTab("changes");
-        setSelectedChangeId(changeId);
-        setSelectedFilePath(null);
-        setCurrentFile(null);
-      });
-    },
-    [navigateFile, setActiveTab, setCurrentFile, setSelectedChangeId, setSelectedFilePath],
-  );
+  const selectChange = (changeId: string | null) => {
+    navigateFile(() => {
+      setActiveTab("changes");
+      setSelectedChangeId(changeId);
+      setSelectedFilePath(null);
+      setCurrentFile(null);
+    });
+  };
 
   async function queuePreparedCommit(message: {
     commitMessage?: string;
@@ -496,6 +477,7 @@ export function useGitWorkspaceDeckController(props: GitWorkspaceDeckControllerP
         },
         ...(props.threadId ? { threadId: props.threadId } : {}),
         ...(props.turnId ? { turnId: props.turnId } : {}),
+        ...(props.runId ? { runId: props.runId } : {}),
       },
     });
     if (result._tag === "Success") return { status: "queued" };
@@ -737,9 +719,9 @@ export function useGitWorkspaceDeckController(props: GitWorkspaceDeckControllerP
     isDesktop,
     isRecording: props.isRecording,
     mcpExpanded,
-    mcpRuntime: props,
+    mcpRuntime: { ...props, composerRef },
     onActiveCardChange: selectCard,
-    onBeforeHideChat: () => props.composerRef.current?.dismissTransientUi(),
+    onBeforeHideChat: () => composerRef.current?.dismissTransientUi(),
     onCardSelectionBlocked: (reason: "recording" | "action-required") =>
       toastManager.add({
         type: "info",
@@ -748,7 +730,7 @@ export function useGitWorkspaceDeckController(props: GitWorkspaceDeckControllerP
         ),
       }),
     onExpandedCardChange: changeExpandedCard,
-    onRestoreChatFocus: () => props.composerRef.current?.focusAtEnd(),
+    onRestoreChatFocus: () => composerRef.current?.focusAtEnd(),
     resetKey: deckResetKey,
   };
 }

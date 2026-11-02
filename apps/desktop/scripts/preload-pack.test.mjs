@@ -127,4 +127,4 @@ it("emits isolated preloads that initialize inside Electron's sandbox scope", as
   } finally {
     await NodeFSP.rm(outputDirectory, { recursive: true, force: true });
   }
-}, 15_000);
+});

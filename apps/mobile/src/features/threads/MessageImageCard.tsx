@@ -4,8 +4,8 @@ import { useId, useMemo, useState, type ReactNode } from "react";
 import { Image, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function MessageImageCard({

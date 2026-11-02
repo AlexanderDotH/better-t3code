@@ -1,11 +1,4 @@
-import {
-  useCallback,
-  useLayoutEffect,
-  useMemo,
-  useReducer,
-  useState,
-  type RefCallback,
-} from "react";
+import { useLayoutEffect, useReducer, useState, type RefCallback } from "react";
 
 const LEGACY_SIDEBAR_VIRTUAL_THREAD_ROW_THRESHOLD = 24;
 export const LEGACY_SIDEBAR_VIRTUAL_THREAD_ROW_CONTENT_HEIGHT_PX = 28;
@@ -260,20 +253,19 @@ export function useLegacySidebarVirtualThreadRows(
     }),
   );
   const forcedKeys = options.forcedKeys ?? EMPTY_FORCED_KEYS;
-  const forcedKeySet = useMemo(() => new Set(forcedKeys), [forcedKeys]);
-  const rowIndexByKey = useMemo(
-    () => new Map(options.rowKeys.map((key, index) => [key, index] as const)),
-    [options.rowKeys],
-  );
+  const forcedKeySet = new Set(forcedKeys);
+  const rowIndexByKey = new Map(options.rowKeys.map((key, index) => [key, index] as const));
   const mode = resolveLegacySidebarVirtualThreadRowsMode(
     options.rowKeys.length,
     rowObserver.observerAvailable,
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases intersection-observer registrations for rows removed from the sidebar
   useLayoutEffect(() => {
     rowObserver.retainKeys(options.rowKeys);
   }, [options.rowKeys, rowObserver]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- enables the sidebar's intersection observer for virtualized lists and disconnects it on cleanup
   useLayoutEffect(() => {
     rowObserver.setEnabled(mode.isVirtualized);
     return () => {
@@ -281,17 +273,14 @@ export function useLegacySidebarVirtualThreadRows(
     };
   }, [mode.isVirtualized, rowObserver]);
 
-  const isHydrated = useCallback(
-    (key: string) =>
-      shouldHydrateLegacySidebarVirtualThreadRow({
-        isVirtualized: mode.isVirtualized,
-        rowIndex: rowIndexByKey.get(key) ?? -1,
-        previewRowCount: options.previewRowCount,
-        isForced: forcedKeySet.has(key),
-        isIntersecting: rowObserver.isIntersecting(key),
-      }),
-    [forcedKeySet, mode.isVirtualized, options.previewRowCount, rowIndexByKey, rowObserver],
-  );
+  const isHydrated = (key: string) =>
+    shouldHydrateLegacySidebarVirtualThreadRow({
+      isVirtualized: mode.isVirtualized,
+      rowIndex: rowIndexByKey.get(key) ?? -1,
+      previewRowCount: options.previewRowCount,
+      isForced: forcedKeySet.has(key),
+      isIntersecting: rowObserver.isIntersecting(key),
+    });
 
   return {
     containerRef: rowObserver.containerRef,

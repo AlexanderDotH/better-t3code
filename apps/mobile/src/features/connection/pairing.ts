@@ -1,7 +1,7 @@
 import { readHostedPairingRequest, resolveRemotePairingTarget } from "@t3tools/shared/remote";
 import * as Schema from "effect/Schema";
 
-import type { PairingOnboardingStage } from "../../connection/onboarding";
+type PairingOnboardingStage = "validating" | "checking-host" | "validating-code" | "saving";
 
 const MOBILE_PAIRING_URL_PARAM = "pairingUrl";
 
@@ -157,9 +157,7 @@ export function extractPairingUrlFromQrPayload(payload: string): string {
         return pairingUrl;
       }
     }
-  } catch {
-    // Treat non-URL payloads as raw pairing-url text so the normal input validation can decide.
-  }
+  } catch {}
 
   return trimmed;
 }

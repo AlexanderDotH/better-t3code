@@ -1,9 +1,9 @@
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import type {
   OrchestrationMessage,
   OrchestrationSubagentDetail,
   OrchestrationThreadActivity,
-  ScopedThreadRef,
-} from "@t3tools/contracts";
+} from "@t3tools/contracts/legacy";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { LegendList } from "@legendapp/list/react";
 import {
@@ -13,7 +13,7 @@ import {
   MessageSquareIcon,
   WrenchIcon,
 } from "lucide-react";
-import { memo, useCallback, useMemo, type ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { useInterfaceTranslator } from "../hooks/useInterfaceTranslator";
@@ -67,31 +67,22 @@ export const SubagentTranscriptPanel = memo(function SubagentTranscriptPanel({
   onLoadOlderActivities,
 }: SubagentTranscriptPanelProps) {
   const translate = useInterfaceTranslator().message;
-  const entries = useMemo(
-    () => (subagent ? deriveSubagentTranscriptEntries(subagent) : []),
-    [subagent],
-  );
+  const entries = subagent ? deriveSubagentTranscriptEntries(subagent) : [];
   const name = subagent ? resolveSubagentDisplayName(subagent) : "";
-  const renderEntry = useCallback(
-    (entry: SubagentTranscriptEntry) => (
-      <SubagentTranscriptEntryView
-        entry={entry}
-        agentName={name}
-        markdownCwd={markdownCwd}
-        threadRef={threadRef}
-        timestampFormat={timestampFormat}
-        streamingMotionEnabled={streamingMotionEnabled}
-      />
-    ),
-    [markdownCwd, name, threadRef, timestampFormat, streamingMotionEnabled],
+  const renderEntry = (entry: SubagentTranscriptEntry) => (
+    <SubagentTranscriptEntryView
+      entry={entry}
+      agentName={name}
+      markdownCwd={markdownCwd}
+      threadRef={threadRef}
+      timestampFormat={timestampFormat}
+      streamingMotionEnabled={streamingMotionEnabled}
+    />
   );
-  const renderVirtualizedEntry = useCallback(
-    ({ item }: { readonly item: SubagentTranscriptEntry }) => (
-      <div role="listitem" className="mx-auto w-full max-w-3xl px-4 pb-3 sm:px-5">
-        {renderEntry(item)}
-      </div>
-    ),
-    [renderEntry],
+  const renderVirtualizedEntry = ({ item }: { readonly item: SubagentTranscriptEntry }) => (
+    <div role="listitem" className="mx-auto w-full max-w-3xl px-4 pb-3 sm:px-5">
+      {renderEntry(item)}
+    </div>
   );
   const olderActivityControl = hasOlderActivities ? (
     <div className="mx-auto flex w-full max-w-3xl justify-center px-4 pt-4 sm:px-5">
@@ -422,7 +413,7 @@ function TranscriptActivity({
       </p>
       {serializedPayload ? (
         <details className="mt-2 text-2xs text-muted-foreground">
-          <summary className="cursor-pointer select-none outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+          <summary className="cursor-pointer select-none outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
             {translate("chat.agent.transcript.eventDetails")}
           </summary>
           <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-background/80 p-2.5 font-mono text-3xs leading-4 text-foreground/75">

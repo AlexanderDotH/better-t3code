@@ -23,14 +23,14 @@ import {
   buildThreadMetadataPrompt,
   buildThreadTitlePrompt,
   buildTranscriptTranslationPrompt,
-} from "./TextGenerationPrompts.ts";
+} from "@t3tools/provider-core/server/textGenerationPrompts";
 import { buildAutoReasoningPrompt, validateAutoReasoningDecision } from "./AutoReasoning.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import {
   sanitizeCommitSubject,
   sanitizePrTitle,
   sanitizeThreadTitle,
-} from "./TextGenerationUtils.ts";
+} from "@t3tools/provider-core/server/textGenerationUtils";
 
 const OPENROUTER_TEXT_GENERATION_TIMEOUT_MS = 180_000;
 const isOpenRouterReasoningEffort = Schema.is(
@@ -180,6 +180,13 @@ export function makeOpenRouterTextGeneration(
 
   return {
     decisionGeneration,
+    generateReviewGuide: () =>
+      Effect.fail(
+        new TextGenerationError({
+          operation: "generateReviewGuide",
+          detail: "This provider does not support repository review guides.",
+        }),
+      ),
     summarizeContext: makeContextSummarizer((input) =>
       runJson({
         ...input,

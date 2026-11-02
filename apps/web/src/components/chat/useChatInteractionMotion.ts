@@ -22,8 +22,9 @@ function interactionSurface(target: EventTarget | null, viewport: HTMLElement) {
 export function useChatInteractionMotion(
   viewport: HTMLElement | null,
   enabled: boolean,
-  identity: string,
+  _identity: string,
 ) {
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own pointer listeners and their canvas for the mounted viewport.
   useEffect(() => {
     if (!viewport || !enabled) return;
     const preference = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -119,5 +120,5 @@ export function useChatInteractionMotion(
       renderer?.dispose();
       canvas?.remove();
     };
-  }, [viewport, enabled, identity]);
+  }, [viewport, enabled]);
 }

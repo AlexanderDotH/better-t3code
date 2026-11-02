@@ -1,9 +1,10 @@
-import { IsoDateTime, MessageId, OrchestrationMessageRole, ThreadId } from "@t3tools/contracts";
+import { OrchestratorMcpFailure } from "@t3tools/contracts";
+import { IsoDateTime, MessageId, ThreadId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/unstable/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
 
 const BoundedQuery = Schema.String.check(Schema.isMaxLength(1_000));
 const BoundedCursor = Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(4_096));
@@ -19,7 +20,7 @@ export type ThreadContextInput = typeof ThreadContextInput.Type;
 export const ThreadContextMessage = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
-  role: OrchestrationMessageRole,
+  role: Schema.Literals(["user", "assistant", "system"]),
   text: Schema.String,
   createdAt: IsoDateTime,
 });
@@ -62,16 +63,14 @@ export const ThreadContextTool = Tool.make("thread_context", {
     "Retrieve exact completed messages or a paginated tool-result/subagent reference from this authenticated thread. Message results include same-project frozen fork ancestry, are newest-first, and support a case-insensitive lexical query. References never carry caller-selected project or thread scope.",
   parameters: ThreadContextInput,
   success: ThreadContextResult,
-  failure: ThreadContextError,
-  dependencies: [
-    McpInvocationContext.McpInvocationContext,
-    ProjectionSnapshotQuery.ProjectionSnapshotQuery,
-  ],
+  failure: Schema.Union([OrchestratorMcpFailure, ThreadContextError]),
+  dependencies: [McpInvocationContext.McpInvocationContext, OrchestratorV2],
 })
   .annotate(Tool.Title, "Retrieve exact thread context")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hasThreadCapability("workspace"));
 
 export const ThreadContextToolkit = Toolkit.make(ThreadContextTool);

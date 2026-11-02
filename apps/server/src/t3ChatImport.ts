@@ -11,7 +11,6 @@ import {
   IsoDateTime,
   MessageId,
   ModelSelection,
-  OrchestrationMessageRole,
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
@@ -29,9 +28,12 @@ import * as Schema from "effect/Schema";
 
 import { attachmentRelativePath } from "./attachmentStore.ts";
 import { ServerConfig } from "./config.ts";
-import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
+import { makeHistoryWriter } from "./harnessChatSync/HistoryWriter.ts";
 
 type SqliteRow = Record<string, unknown>;
+
+const ImportedChatMessageRole = Schema.Literals(["user", "assistant"]);
+type ImportedChatMessageRole = typeof ImportedChatMessageRole.Type;
 
 const SourceProjectRow = Schema.Struct({
   sourceId: Schema.String,
@@ -73,13 +75,13 @@ const decodeSourceMessageRows = Schema.decodeUnknownEffect(Schema.Array(SourceMe
 const decodeModelSelection = Schema.decodeUnknownEffect(ModelSelection);
 const decodeRuntimeMode = Schema.decodeUnknownEffect(RuntimeMode);
 const decodeInteractionMode = Schema.decodeUnknownEffect(ProviderInteractionMode);
-const decodeMessageRole = Schema.decodeUnknownEffect(OrchestrationMessageRole);
+const decodeMessageRole = Schema.decodeUnknownEffect(ImportedChatMessageRole);
 const decodeAttachments = Schema.decodeUnknownEffect(Schema.Array(ChatAttachment));
 const isIsoDateTime = Schema.is(IsoDateTime);
 
 export interface T3ChatImportMessage {
   readonly sourceId: string;
-  readonly role: OrchestrationMessageRole;
+  readonly role: ImportedChatMessageRole;
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly createdAt: string;
@@ -250,7 +252,7 @@ export const readT3ChatImportSnapshot = Effect.fn("readT3ChatImportSnapshot")(fu
         ORDER BY created_at ASC, project_id ASC
       `)
       .all();
-    const threads = database
+    let threads = database
       .prepare(`
         SELECT
           thread_id AS sourceId,
@@ -275,7 +277,7 @@ export const readT3ChatImportSnapshot = Effect.fn("readT3ChatImportSnapshot")(fu
         ORDER BY created_at ASC, thread_id ASC
       `)
       .all();
-    const messages = database
+    let messages = database
       .prepare(`
         SELECT
           message_id AS sourceId,
@@ -290,6 +292,44 @@ export const readT3ChatImportSnapshot = Effect.fn("readT3ChatImportSnapshot")(fu
         ORDER BY created_at ASC, message_id ASC
       `)
       .all();
+    if (tableColumns(database, "orchestration_v2_projection_threads").size > 0) {
+      const currentThreads = database
+        .prepare(`
+        SELECT thread_id AS sourceId, project_id AS projectSourceId, title,
+          json_extract(payload_json, '$.modelSelection') AS modelSelectionJson, NULL AS legacyModel,
+          json_extract(payload_json, '$.runtimeMode') AS runtimeMode,
+          json_extract(payload_json, '$.interactionMode') AS interactionMode,
+          json_extract(payload_json, '$.branch') AS branch,
+          json_extract(payload_json, '$.worktreePath') AS worktreePath,
+          created_at AS createdAt, updated_at AS updatedAt,
+          json_extract(payload_json, '$.archivedAt') AS archivedAt
+        FROM orchestration_v2_projection_threads WHERE deleted_at IS NULL
+      `)
+        .all();
+      threads = [
+        ...new Map([...threads, ...currentThreads].map((row) => [row.sourceId, row])).values(),
+      ].toSorted(
+        (a, b) =>
+          String(a.createdAt).localeCompare(String(b.createdAt)) ||
+          String(a.sourceId).localeCompare(String(b.sourceId)),
+      );
+      const currentMessages = database
+        .prepare(`
+        SELECT message_id AS sourceId, thread_id AS threadSourceId, role,
+          json_extract(payload_json, '$.text') AS text,
+          json_extract(payload_json, '$.attachments') AS attachmentsJson,
+          created_at AS createdAt, updated_at AS updatedAt
+        FROM orchestration_v2_projection_messages WHERE streaming = 0 AND role IN ('user', 'assistant')
+      `)
+        .all();
+      messages = [
+        ...new Map([...messages, ...currentMessages].map((row) => [row.sourceId, row])).values(),
+      ].toSorted(
+        (a, b) =>
+          String(a.createdAt).localeCompare(String(b.createdAt)) ||
+          String(a.sourceId).localeCompare(String(b.sourceId)),
+      );
+    }
     return { projects, threads, messages };
   });
 
@@ -397,10 +437,14 @@ function readSourceSummary(
     requireImportTables(database);
     const threadColumns = tableColumns(database, "projection_threads");
     const filter = threadColumns.has("deleted_at") ? "WHERE deleted_at IS NULL" : "";
+    const threadTable =
+      tableColumns(database, "orchestration_v2_projection_threads").size > 0
+        ? "orchestration_v2_projection_threads"
+        : "projection_threads";
     const row = database
       .prepare(`
         SELECT COUNT(*) AS threadCount, MAX(updated_at) AS latestUpdatedAt
-        FROM projection_threads
+        FROM ${threadTable}
         ${filter}
       `)
       .get() as SqliteRow;
@@ -437,10 +481,19 @@ export const discoverT3ChatImportSources = Effect.fn("discoverT3ChatImportSource
         .filter((entry) => entry === ".t3" || entry.startsWith(".t3-"))
         .map((entry) => path.join(input.homeDir, entry)),
     ]);
-    const candidates = Array.from(baseDirs).flatMap((baseDir) => [
-      path.join(baseDir, "userdata", "state.sqlite"),
-      path.join(baseDir, "dev", "state.sqlite"),
-    ]);
+    const candidates = yield* Effect.forEach(
+      Array.from(baseDirs).flatMap((baseDir) => [
+        path.join(baseDir, "userdata"),
+        path.join(baseDir, "dev"),
+      ]),
+      (directory) =>
+        Effect.gen(function* () {
+          const current = path.join(directory, "statev2.sqlite");
+          return (yield* fileSystem.exists(current).pipe(Effect.orElseSucceed(() => false)))
+            ? current
+            : path.join(directory, "state.sqlite");
+        }),
+    );
     const sources = yield* Effect.forEach(candidates, (candidate) =>
       Effect.gen(function* () {
         const resolved = path.resolve(candidate);
@@ -478,7 +531,7 @@ export const makeT3ChatImport = Effect.fn("makeT3ChatImport")(function* (options
   const config = yield* ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const orchestration = yield* OrchestrationEngineService;
+  const writer = yield* makeHistoryWriter();
   const discover = discoverT3ChatImportSources({
     homeDir: options?.homeDir ?? NodeOS.homedir(),
     currentDbPath: config.dbPath,
@@ -487,10 +540,7 @@ export const makeT3ChatImport = Effect.fn("makeT3ChatImport")(function* (options
     Effect.provideService(Path.Path, path),
   );
 
-  const dispatch = (command: Parameters<typeof orchestration.dispatch>[0]) =>
-    orchestration
-      .dispatch(command)
-      .pipe(Effect.mapError((cause) => importError("Could not save the imported chat.", cause)));
+  const saveError = (cause: unknown) => importError("Could not save the imported chat.", cause);
 
   const copyAttachments = Effect.fn("T3ChatImport.copyAttachments")(function* (
     databasePath: string,
@@ -540,21 +590,24 @@ export const makeT3ChatImport = Effect.fn("makeT3ChatImport")(function* (options
       snapshot.projects.map((project) => [project.sourceId, project]),
     );
 
+    const projectTargets = new Map<string, ProjectId>();
     for (const project of snapshot.projects) {
       const projectId = ProjectId.make(
         targetId("import-project", source.databasePath, project.sourceId),
       );
-      yield* dispatch({
-        type: "project.create",
-        commandId: CommandId.make(
-          targetId("server:t3-import-project", source.databasePath, project.sourceId),
-        ),
-        projectId,
-        title: project.title,
-        workspaceRoot: project.workspaceRoot,
-        defaultModelSelection: project.defaultModelSelection,
-        createdAt: project.createdAt,
-      });
+      const actualProjectId = yield* writer
+        .createProject({
+          commandId: CommandId.make(
+            targetId("server:t3-import-project", source.databasePath, project.sourceId),
+          ),
+          projectId,
+          title: project.title,
+          workspaceRoot: project.workspaceRoot,
+          defaultModelSelection: project.defaultModelSelection,
+          createdAt: project.createdAt,
+        })
+        .pipe(Effect.mapError(saveError));
+      projectTargets.set(project.sourceId, actualProjectId);
     }
 
     let messagesImported = 0;
@@ -563,27 +616,27 @@ export const makeT3ChatImport = Effect.fn("makeT3ChatImport")(function* (options
     for (const thread of snapshot.threads) {
       const project = projectsBySourceId.get(thread.projectSourceId);
       if (!project) continue;
-      const projectId = ProjectId.make(
-        targetId("import-project", source.databasePath, project.sourceId),
-      );
+      const projectId = projectTargets.get(project.sourceId);
+      if (projectId === undefined) continue;
       const threadId = ThreadId.make(
         targetId("import-thread", source.databasePath, thread.sourceId),
       );
-      yield* dispatch({
-        type: "thread.create",
-        commandId: CommandId.make(
-          targetId("server:t3-import-thread", source.databasePath, thread.sourceId),
-        ),
-        threadId,
-        projectId,
-        title: thread.title,
-        modelSelection: thread.modelSelection,
-        runtimeMode: thread.runtimeMode,
-        interactionMode: thread.interactionMode,
-        branch: thread.branch,
-        worktreePath: thread.worktreePath,
-        createdAt: thread.createdAt,
-      });
+      yield* writer
+        .createThread({
+          commandId: CommandId.make(
+            targetId("server:t3-import-thread", source.databasePath, thread.sourceId),
+          ),
+          threadId,
+          projectId,
+          title: thread.title,
+          modelSelection: thread.modelSelection,
+          runtimeMode: thread.runtimeMode,
+          interactionMode: thread.interactionMode,
+          branch: thread.branch,
+          worktreePath: thread.worktreePath,
+          createdAt: thread.createdAt,
+        })
+        .pipe(Effect.mapError(saveError));
 
       for (const message of thread.messages) {
         const copied = yield* copyAttachments(source.databasePath, message.attachments);
@@ -592,34 +645,34 @@ export const makeT3ChatImport = Effect.fn("makeT3ChatImport")(function* (options
         const messageId = MessageId.make(
           targetId("import-message", source.databasePath, message.sourceId),
         );
-        yield* dispatch({
-          type: "thread.message.import",
-          commandId: CommandId.make(
-            targetId("server:t3-import-message", source.databasePath, message.sourceId),
-          ),
-          threadId,
-          message: {
-            id: messageId,
-            role: message.role,
-            text: message.text,
-            ...(copied.available.length > 0 ? { attachments: copied.available } : {}),
-            turnId: null,
-            streaming: false,
-            createdAt: message.createdAt,
-            updatedAt: message.updatedAt,
-          },
-        });
+        yield* writer
+          .importMessage({
+            commandId: CommandId.make(
+              targetId("server:t3-import-message", source.databasePath, message.sourceId),
+            ),
+            threadId,
+            message: {
+              id: messageId,
+              role: message.role,
+              text: message.text,
+              ...(copied.available.length > 0 ? { attachments: copied.available } : {}),
+              createdAt: message.createdAt,
+              updatedAt: message.updatedAt,
+            },
+          })
+          .pipe(Effect.mapError(saveError));
         messagesImported += 1;
       }
 
       if (thread.archivedAt !== null) {
-        yield* dispatch({
-          type: "thread.archive",
-          commandId: CommandId.make(
-            targetId("server:t3-import-archive", source.databasePath, thread.sourceId),
-          ),
-          threadId,
-        });
+        yield* writer
+          .archiveThread({
+            commandId: CommandId.make(
+              targetId("server:t3-import-archive", source.databasePath, thread.sourceId),
+            ),
+            threadId,
+          })
+          .pipe(Effect.mapError(saveError));
       }
     }
 

@@ -1,16 +1,43 @@
-import { ThreadId, type OrchestrationThreadTranscriptExport } from "@t3tools/contracts";
+import { v2Now } from "./state/orchestrationV2TestFixtures.ts";
+import { MessageId, TurnItemId } from "@t3tools/contracts";
+import { ThreadId, type OrchestrationV2ThreadTranscript } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { copyThreadTranscript } from "./threadTranscript.ts";
 
 const threadId = ThreadId.make("thread-transcript-copy");
-const transcript: OrchestrationThreadTranscriptExport = {
-  formatVersion: 1,
-  fileName: "complete-thread.md",
-  mediaType: "text/markdown",
-  generatedAt: "2026-07-12T10:00:00.000Z",
-  content:
-    "# Complete transcript\n\n## User\nÜbersicht **bitte**\n\n## Assistant\n```ts\nconst count = 2;\n```\n",
+const transcript: OrchestrationV2ThreadTranscript = {
+  threadId,
+  title: "Complete transcript",
+  updatedAt: v2Now,
+  items: [
+    {
+      position: 0,
+      visibility: "local",
+      sourceThreadId: threadId,
+      sourceItemId: TurnItemId.make("message"),
+      item: {
+        id: TurnItemId.make("message"),
+        threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "completed",
+        title: null,
+        startedAt: v2Now,
+        completedAt: v2Now,
+        updatedAt: v2Now,
+        type: "assistant_message",
+        messageId: MessageId.make("assistant"),
+        text: "Übersicht **bitte**\n\n```ts\nconst count = 2;\n```",
+        streaming: false,
+      },
+    },
+  ],
 };
 
 describe("copyThreadTranscript", () => {
@@ -21,12 +48,14 @@ describe("copyThreadTranscript", () => {
     const result = await copyThreadTranscript({ threadId, exportThreadTranscript, writeText });
 
     expect(exportThreadTranscript).toHaveBeenCalledExactlyOnceWith({ threadId });
-    expect(writeText).toHaveBeenCalledExactlyOnceWith(transcript.content);
-    expect(result).toBe(transcript);
+    expect(writeText).toHaveBeenCalledExactlyOnceWith(
+      expect.stringContaining("Übersicht **bitte**"),
+    );
+    expect(result.fileName).toBe("Complete transcript.md");
   });
 
   it("waits for the requested server export before writing to the clipboard", async () => {
-    const pending = Promise.withResolvers<OrchestrationThreadTranscriptExport>();
+    const pending = Promise.withResolvers<OrchestrationV2ThreadTranscript>();
     const writeText = vi.fn(async () => undefined);
     const copy = copyThreadTranscript({
       threadId,
@@ -36,8 +65,10 @@ describe("copyThreadTranscript", () => {
 
     expect(writeText).not.toHaveBeenCalled();
     pending.resolve(transcript);
-    await expect(copy).resolves.toBe(transcript);
-    expect(writeText).toHaveBeenCalledExactlyOnceWith(transcript.content);
+    await expect(copy).resolves.toMatchObject({ fileName: "Complete transcript.md" });
+    expect(writeText).toHaveBeenCalledExactlyOnceWith(
+      expect.stringContaining("Übersicht **bitte**"),
+    );
   });
 
   it("leaves the clipboard untouched when exporting fails", async () => {

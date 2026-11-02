@@ -7,17 +7,16 @@ import {
   ProjectIndexOperationError,
   ProviderInstanceId,
   ThreadId,
-  type OrchestrationThreadShell,
+  type OrchestrationV2ThreadShell,
   type ProjectIndexQueryInput,
   type ProjectIndexQueryResultV1,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
 import * as ProjectContextQuery from "../../../projectIndexing/query/ProjectContextQuery.ts";
 import { invokeProjectContext } from "./handlers.ts";
 
@@ -53,26 +52,30 @@ function testLayer(options?: {
   const layer = Layer.mergeAll(
     Layer.succeed(McpInvocationContext.McpInvocationContext, {
       environmentId: EnvironmentId.make("context-environment"),
-      threadId,
-      providerSessionId: "session",
-      providerInstanceId: ProviderInstanceId.make("codex"),
+      thread: {
+        threadId,
+        providerSessionId: "session",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+      },
+      client: undefined,
+      requestNamespace: "session",
       issuedAt: 0,
       capabilities: new Set<McpInvocationContext.McpCapability>(
         options?.authorized === false ? [] : ["workspace"],
       ),
     }),
-    Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
-      getThreadShellById: (requested) => {
+    Layer.mock(OrchestratorV2)({
+      getThreadShell: (requested) => {
         projected += 1;
         expect(requested).toBe(threadId);
         return Effect.succeed(
           options?.missing
-            ? Option.none()
-            : Option.some({
+            ? null
+            : ({
                 id: threadId,
                 projectId,
                 worktreePath: "/trusted/worktree",
-              } as OrchestrationThreadShell),
+              } as OrchestrationV2ThreadShell),
         );
       },
     }),

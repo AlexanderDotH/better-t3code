@@ -107,57 +107,52 @@ describe("in-process work admission", () => {
     }),
   );
 
-  it.effect(
-    "shares one bounded wait queue across process and in-process admissions",
-    () =>
-      Effect.gen(function* () {
-        expect(RESOURCE_GOVERNOR_MAX_WAITING_ADMISSIONS).toBe(256);
-        const governor = yield* makeSubagentResourceGovernor();
-        const perKind = RESOURCE_GOVERNOR_MAX_WAITING_ADMISSIONS / 2;
-        const processWaiters = [];
-        const inProcessWaiters = [];
+  it.effect("shares one bounded wait queue across process and in-process admissions", () =>
+    Effect.gen(function* () {
+      expect(RESOURCE_GOVERNOR_MAX_WAITING_ADMISSIONS).toBe(256);
+      const governor = yield* makeSubagentResourceGovernor();
+      const perKind = RESOURCE_GOVERNOR_MAX_WAITING_ADMISSIONS / 2;
+      const processWaiters = [];
+      const inProcessWaiters = [];
 
-        for (let index = 0; index < perKind; index += 1) {
-          const processWaiter = yield* governor
-            .awaitAdmission({
-              threadId: ThreadId.make(`thread-shared-process-${index}`),
-              provider: chatgpt,
-              providerInstanceId: primaryInstance,
-              configurationKey: "shared-capacity",
-            })
-            .pipe(Effect.forkChild);
-          processWaiters.push(processWaiter);
-          const inProcessWaiter = yield* governor
-            .acquireInProcessLease(request(`shared-in-process-${index}`))
-            .pipe(Effect.forkChild);
-          inProcessWaiters.push(inProcessWaiter);
-          yield* Effect.yieldNow;
-        }
-
-        expect((yield* governor.latest).waitingStarts).toBe(
-          RESOURCE_GOVERNOR_MAX_WAITING_ADMISSIONS,
-        );
-        expect(
-          yield* governor.awaitAdmission({
-            threadId: ThreadId.make("thread-shared-process-overflow"),
+      for (let index = 0; index < perKind; index += 1) {
+        const processWaiter = yield* governor
+          .awaitAdmission({
+            threadId: ThreadId.make(`thread-shared-process-${index}`),
             provider: chatgpt,
             providerInstanceId: primaryInstance,
             configurationKey: "shared-capacity",
-          }),
-        ).toBe(false);
-        expect(
-          yield* governor.acquireInProcessLease(request("shared-in-process-overflow")),
-        ).toBeUndefined();
+          })
+          .pipe(Effect.forkChild);
+        processWaiters.push(processWaiter);
+        const inProcessWaiter = yield* governor
+          .acquireInProcessLease(request(`shared-in-process-${index}`))
+          .pipe(Effect.forkChild);
+        inProcessWaiters.push(inProcessWaiter);
+        yield* Effect.yieldNow;
+      }
 
-        yield* governor.shutdown;
-        expect(yield* Effect.forEach(processWaiters, Fiber.join)).toEqual(
-          Array.from({ length: perKind }, () => false),
-        );
-        expect(yield* Effect.forEach(inProcessWaiters, Fiber.join)).toEqual(
-          Array.from({ length: perKind }, () => undefined),
-        );
-      }),
-    30_000,
+      expect((yield* governor.latest).waitingStarts).toBe(RESOURCE_GOVERNOR_MAX_WAITING_ADMISSIONS);
+      expect(
+        yield* governor.awaitAdmission({
+          threadId: ThreadId.make("thread-shared-process-overflow"),
+          provider: chatgpt,
+          providerInstanceId: primaryInstance,
+          configurationKey: "shared-capacity",
+        }),
+      ).toBe(false);
+      expect(
+        yield* governor.acquireInProcessLease(request("shared-in-process-overflow")),
+      ).toBeUndefined();
+
+      yield* governor.shutdown;
+      expect(yield* Effect.forEach(processWaiters, Fiber.join)).toEqual(
+        Array.from({ length: perKind }, () => false),
+      );
+      expect(yield* Effect.forEach(inProcessWaiters, Fiber.join)).toEqual(
+        Array.from({ length: perKind }, () => undefined),
+      );
+    }),
   );
 
   it.effect(
@@ -409,6 +404,5 @@ describe("in-process work admission", () => {
         });
         expect((yield* governor.latest).reservedMemoryBytes).toBe(0);
       }),
-    30_000,
   );
 });

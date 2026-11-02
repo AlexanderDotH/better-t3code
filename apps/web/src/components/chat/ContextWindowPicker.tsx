@@ -1,3 +1,4 @@
+import { useStableCallback } from "../../hooks/useStableCallback";
 import {
   defaultInstanceIdForDriver,
   type ModelSelection,
@@ -16,7 +17,7 @@ import {
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
 import { GaugeIcon } from "lucide-react";
-import { memo, type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, type CSSProperties, useRef, useState } from "react";
 
 import { type DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
@@ -139,67 +140,68 @@ function useContextWindowSelection(props: ContextWindowPickerProps): ContextWind
   const selected = contextWindowDescriptor(props);
   const setProviderModelOptions = useComposerDraftStore((store) => store.setProviderModelOptions);
   const externalValue = selected ? getProviderOptionCurrentValue(selected.descriptor) : undefined;
-  const [optimisticValue, setOptimisticValue] = useState<string | null>(null);
-  const lastNotifiedValueRef = useRef<string | null>(null);
-  useEffect(() => setOptimisticValue(null), [externalValue, props.model, props.provider]);
-  useEffect(() => {
-    lastNotifiedValueRef.current = null;
-  }, [props.draftId, props.model, props.provider, props.threadRef]);
-  const visibleDescriptor = useMemo(
-    () =>
-      selected && optimisticValue
-        ? { ...selected.descriptor, currentValue: optimisticValue }
-        : selected?.descriptor,
-    [optimisticValue, selected],
-  );
-  const slider = useMemo(
-    () =>
-      visibleDescriptor
-        ? buildContextWindowSliderState(
-            visibleDescriptor,
-            translate("chat.contextWindow.modelDefault"),
-          )
-        : null,
-    [translate, visibleDescriptor],
-  );
-  const selectIndex = useCallback(
-    (index: number, notifyThread: boolean) => {
-      if (!selected) {
-        return;
-      }
-      const option = selected.descriptor.options[index];
-      const threadTarget = props.threadRef ?? props.draftId;
-      if (!option || !threadTarget) {
-        return;
-      }
-      const nextDescriptors = withContextWindowValue(selected.descriptors, option.id);
-      const nextOptions = buildProviderOptionSelectionsFromDescriptors(
-        nextDescriptors,
-        props.modelOptions,
-      );
-      const instanceId = props.instanceId ?? defaultInstanceIdForDriver(props.provider);
-      const model = props.model?.trim();
-      if (!model) {
-        return;
-      }
+  const scope = JSON.stringify([props.draftId, props.model, props.provider, props.threadRef]);
+  const [optimistic, setOptimistic] = useState<{
+    scope: string;
+    externalValue: unknown;
+    value: string | null;
+  }>({ scope, externalValue, value: null });
+  const optimisticValue =
+    optimistic.scope === scope && optimistic.externalValue === externalValue
+      ? optimistic.value
+      : null;
+  if (optimistic.scope !== scope || optimistic.externalValue !== externalValue)
+    setOptimistic({ scope, externalValue, value: null });
+  const setOptimisticValue = (value: string | null) =>
+    setOptimistic({ scope, externalValue, value });
+  const lastNotifiedValueRef = useRef<{ scope: string; value: string } | null>(null);
+  const visibleDescriptor =
+    selected && optimisticValue
+      ? { ...selected.descriptor, currentValue: optimisticValue }
+      : selected?.descriptor;
+  const slider = visibleDescriptor
+    ? buildContextWindowSliderState(visibleDescriptor, translate("chat.contextWindow.modelDefault"))
+    : null;
+  const selectIndex = useStableCallback((index: number, notifyThread: boolean) => {
+    if (!selected) {
+      return;
+    }
+    const option = selected.descriptor.options[index];
+    const threadTarget = props.threadRef ?? props.draftId;
+    if (!option || !threadTarget) {
+      return;
+    }
+    const nextDescriptors = withContextWindowValue(selected.descriptors, option.id);
+    const nextOptions = buildProviderOptionSelectionsFromDescriptors(
+      nextDescriptors,
+      props.modelOptions,
+    );
+    const instanceId = props.instanceId ?? defaultInstanceIdForDriver(props.provider);
+    const model = props.model?.trim();
+    if (!model) {
+      return;
+    }
 
-      setOptimisticValue(option.id);
-      setProviderModelOptions(threadTarget, props.provider, nextOptions, {
-        instanceId,
-        model,
-        persistSticky: false,
-      });
-      props.onManualModelSelectionChange?.(createModelSelection(instanceId, model, nextOptions));
-      if (notifyThread && props.threadRef && lastNotifiedValueRef.current !== option.id) {
-        lastNotifiedValueRef.current = option.id;
-        props.onThreadModelSelectionChange?.(
-          props.threadRef,
-          createModelSelection(instanceId, model, nextOptions),
-        );
-      }
-    },
-    [props, selected, setProviderModelOptions],
-  );
+    setOptimisticValue(option.id);
+    setProviderModelOptions(threadTarget, props.provider, nextOptions, {
+      instanceId,
+      model,
+      persistSticky: false,
+    });
+    props.onManualModelSelectionChange?.(createModelSelection(instanceId, model, nextOptions));
+    if (
+      notifyThread &&
+      props.threadRef &&
+      (lastNotifiedValueRef.current?.scope !== scope ||
+        lastNotifiedValueRef.current.value !== option.id)
+    ) {
+      lastNotifiedValueRef.current = { scope, value: option.id };
+      props.onThreadModelSelectionChange?.(
+        props.threadRef,
+        createModelSelection(instanceId, model, nextOptions),
+      );
+    }
+  });
 
   if (!selected || !visibleDescriptor || !slider) {
     return null;

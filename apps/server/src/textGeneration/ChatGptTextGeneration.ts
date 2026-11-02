@@ -21,13 +21,13 @@ import {
   buildThreadMetadataPrompt,
   buildThreadTitlePrompt,
   buildTranscriptTranslationPrompt,
-} from "./TextGenerationPrompts.ts";
+} from "@t3tools/provider-core/server/textGenerationPrompts";
 import * as TextGeneration from "./TextGeneration.ts";
 import {
   sanitizeCommitSubject,
   sanitizePrTitle,
   sanitizeThreadTitle,
-} from "./TextGenerationUtils.ts";
+} from "@t3tools/provider-core/server/textGenerationUtils";
 
 const CHATGPT_TEXT_GENERATION_TIMEOUT_MS = 180_000;
 const isTextGenerationError = Schema.is(TextGenerationError);
@@ -58,25 +58,25 @@ function outputTextFromItems(items: ReadonlyArray<unknown>): string {
 export const makeChatGptTextGeneration = (
   transport: ChatGptSubscriptionTransport,
 ): TextGeneration.TextGeneration["Service"] => {
-  const runJson = <S extends Schema.Top>(input: {
-    readonly operation:
-      | "decisionGeneration"
-      | "decideAutoReasoning"
-      | "generateCommitMessage"
-      | "generatePrContent"
-      | "generateBranchName"
-      | "generateThreadMetadata"
-      | "generateThreadTitle"
-      | "translateTranscriptToEnglish"
-      | "improvePrompt"
-      | "reviewPlanParallelism"
-      | "summarizeContext"
-      | "planFetchExploration";
-    readonly prompt: string;
-    readonly outputSchema: S;
-    readonly modelSelection: ModelSelection;
-  }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
-    Effect.gen(function* () {
+  const runJson = Effect.fn("ChatGptTextGeneration.runJson")(
+    function* <S extends Schema.Top>(input: {
+      readonly operation:
+        | "decisionGeneration"
+        | "decideAutoReasoning"
+        | "generateCommitMessage"
+        | "generatePrContent"
+        | "generateBranchName"
+        | "generateThreadMetadata"
+        | "generateThreadTitle"
+        | "translateTranscriptToEnglish"
+        | "improvePrompt"
+        | "reviewPlanParallelism"
+        | "summarizeContext"
+        | "planFetchExploration";
+      readonly prompt: string;
+      readonly outputSchema: S;
+      readonly modelSelection: ModelSelection;
+    }): Effect.fn.Return<S["Type"], TextGenerationError, S["DecodingServices"]> {
       const reasoningEffort = getModelSelectionStringOptionValue(
         input.modelSelection,
         "reasoningEffort",
@@ -170,19 +170,29 @@ export const makeChatGptTextGeneration = (
             }),
         ),
       );
-    }).pipe(
-      Effect.mapError((cause) =>
-        isTextGenerationError(cause)
-          ? cause
-          : new TextGenerationError({
-              operation: input.operation,
-              detail: "ChatGPT text generation failed.",
-              cause,
-            }),
+    },
+    (effect, input) =>
+      effect.pipe(
+        Effect.mapError((cause) =>
+          isTextGenerationError(cause)
+            ? cause
+            : new TextGenerationError({
+                operation: input.operation,
+                detail: "ChatGPT text generation failed.",
+                cause,
+              }),
+        ),
       ),
-    );
+  );
 
   return {
+    generateReviewGuide: () =>
+      Effect.fail(
+        new TextGenerationError({
+          operation: "generateReviewGuide",
+          detail: "This provider does not support repository review guides.",
+        }),
+      ),
     summarizeContext: makeContextSummarizer((input) =>
       runJson({
         ...input,

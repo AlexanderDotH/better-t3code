@@ -8,9 +8,16 @@ protocol. A missing or failed collector leaves the server running.
 
 ## Collection cost
 
-The native child owns sampling and bounded in-memory history. The server requests
-continuous snapshots only while diagnostics has live subscribers and fetches
-history on demand. Consuming host power for background scheduling must not retain
+The native child owns sampling and bounded in-memory history. It samples on a timer
+only while diagnostics has live subscribers. With none, the server sends a sample
+interval of 0 and the child samples only on request, so an idle server never walks
+the process table. The exception is OTLP metrics export: a server exporting metrics
+requests one sample a minute and exports process totals by group
+([`ProcessGroupMetrics`](../../apps/server/src/resourceTelemetry/ProcessGroupMetrics.ts)),
+because the user asked for continuous telemetry. Groups are a fixed set named after
+the server's direct children, never process IDs or threads, so the series count
+stays bounded as agents come and go. History therefore covers only time with a live
+subscriber, plus on-demand and export samples. Consuming host power for background scheduling must not retain
 live diagnostics. There is no telemetry database or recurring shell-probe fallback.
 
 History has independent bounds for age, snapshot count, process rows, and retained
@@ -44,7 +51,7 @@ unconstrained states. Headless servers leave unavailable power data unknown.
 - Historical replay uses native samples without current Electron CPU or memory
   metrics. Merging the latest Electron values would overwrite the past.
 
-A WSL backend needs a Linux monitor even though Electron runs on Windows. Windows
-desktop packages currently supply only the Windows executable, so native process
-telemetry for the WSL backend is unavailable. The inherited Electron power feed
-still works.
+A WSL backend needs a Linux monitor even though Electron runs on Windows. Packaged x64 WSL
+runtimes can supply an x64/glibc monitor; startup checks its compatibility and executable bit.
+Without a compatible Linux monitor, native WSL process telemetry is unavailable while the
+environment and inherited Electron power feed remain usable.

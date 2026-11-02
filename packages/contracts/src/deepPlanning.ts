@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
+  CommandId,
   EnvironmentId,
   IsoDateTime,
   NonNegativeInt,
@@ -12,6 +13,7 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderOptionSelections } from "./model.ts";
+import { ModelSelection } from "./modelSelection.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 const DEEP_PLAN_VERSION = 1;
@@ -468,3 +470,41 @@ export class DeepPlanError extends Schema.TaggedError<DeepPlanError>()("DeepPlan
   ]),
   message: TrimmedNonEmptyString,
 }) {}
+
+export const ThreadDeepPlanStartCommand = Schema.Struct({
+  type: Schema.Literal("thread.deep-plan.start"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  runId: DeepPlanRunId,
+  sources: Schema.optional(Schema.Array(DeepPlanSourceSnapshot)),
+  createdAt: IsoDateTime,
+});
+export type ThreadDeepPlanStartCommand = typeof ThreadDeepPlanStartCommand.Type;
+
+export const ThreadDeepPlanUpdateCommand = Schema.Struct({
+  type: Schema.Literal("thread.deep-plan.update"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  runId: DeepPlanRunId,
+  expectedRevision: NonNegativeInt,
+  operationId: TrimmedNonEmptyString,
+  mutation: DeepPlanMutation,
+  createdAt: IsoDateTime,
+});
+export type ThreadDeepPlanUpdateCommand = typeof ThreadDeepPlanUpdateCommand.Type;
+
+export const DeepPlanExecutionContext = Schema.Struct({
+  runId: DeepPlanRunId,
+  runThreadId: ThreadId,
+  approvedPlanVersion: Schema.NullOr(NonNegativeInt),
+  phase: Schema.Literals(["planning", "execution", "validation"]),
+  readOnly: Schema.optional(Schema.Boolean),
+  sourceAnalysis: Schema.optional(
+    Schema.Struct({
+      workerThreadId: ThreadId,
+      sourceIds: Schema.Array(DeepPlanSourceId),
+    }),
+  ),
+  modelSelection: ModelSelection,
+});
+export type DeepPlanExecutionContext = typeof DeepPlanExecutionContext.Type;

@@ -1,142 +1,25 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-
 import { deriveProviderSettingsFields } from "./ProviderSettingsForm";
-import { DRIVER_OPTION_BY_VALUE, DRIVER_OPTIONS } from "./providerDriverMeta";
-import { PROVIDER_ICON_BY_PROVIDER } from "../chat/providerIconUtils";
-import { OpenAI, OpenRouterIcon } from "../Icons";
-import { ServerIcon } from "lucide-react";
-
-const NATIVE_PROVIDER_DRIVERS = [
-  {
-    kind: "codex",
-    label: "Codex",
-    fields: ["binaryPath", "homePath", "shadowHomePath", "launchArgs"],
-  },
-  {
-    kind: "claudeAgent",
-    label: "Claude",
-    fields: ["binaryPath", "homePath", "autoCompactWindow", "launchArgs"],
-  },
-  {
-    kind: "cursor",
-    label: "Cursor",
-    badgeMessageKey: "settings.providers.badge.earlyAccess",
-    fields: ["binaryPath", "apiEndpoint"],
-  },
-  {
-    kind: "grok",
-    label: "Grok",
-    badgeMessageKey: "settings.providers.badge.earlyAccess",
-    fields: ["binaryPath"],
-  },
-  {
-    kind: "opencode",
-    label: "OpenCode",
-    fields: ["binaryPath", "serverUrl", "serverPassword"],
-  },
-  {
-    kind: "antigravity",
-    label: "Antigravity",
-    fields: ["authMethod", "apiKey", "gcpProject", "gcpLocation", "binaryPath"],
-  },
-  {
-    kind: "gemini",
-    label: "Gemini",
-    badgeMessageKey: "settings.providers.badge.earlyAccess",
-    fields: [],
-  },
-  {
-    kind: "chatgpt",
-    label: "ChatGPT Subscription",
-    badgeMessageKey: "settings.providers.badge.earlyAccess",
-    fields: ["binaryPath"],
-  },
-  {
-    kind: "openrouter",
-    label: "OpenRouter",
-    badgeMessageKey: "settings.providers.badge.earlyAccess",
-    fields: [
-      "protocol",
-      "defaultModel",
-      "customModels",
-      "contextCompression",
-      "routingMode",
-      "allowFallbacks",
-      "dataCollection",
-      "requireZdr",
-      "preferredMinThroughput",
-      "preferredMaxLatency",
-      "maxPromptPriceUsdPerMillion",
-      "maxCompletionPriceUsdPerMillion",
-      "maxRequestPriceUsd",
-    ],
-  },
-  {
-    kind: "openai",
-    label: "OpenAI Responses",
-    badgeMessageKey: "settings.providers.badge.earlyAccess",
-    fields: [],
-  },
-  {
-    kind: "openaiCompatible",
-    label: "OpenAI Compatible",
-    fields: ["baseUrl", "defaultModel", "customModels"],
-  },
-  { kind: "lmstudio", label: "LM Studio", fields: ["baseUrl", "defaultModel", "customModels"] },
-] as const;
-
-describe("providerDriverMeta", () => {
-  it("exposes all built-in provider definitions and Early Access labels", () => {
-    expect(
-      DRIVER_OPTIONS.map(({ value, label, badgeMessageKey }) => ({
-        value,
-        label,
-        ...(badgeMessageKey ? { badgeMessageKey } : {}),
-      })),
-    ).toEqual(
-      NATIVE_PROVIDER_DRIVERS.map(({ kind, label, ...driver }) => ({
-        value: ProviderDriverKind.make(kind),
-        label,
-        ...("badgeMessageKey" in driver && driver.badgeMessageKey
-          ? { badgeMessageKey: driver.badgeMessageKey }
-          : {}),
-      })),
-    );
+import { providerClients } from "./providerDriverMeta";
+describe("provider settings schemas", () => {
+  it("shows the routing fields selected by the OpenRouter routing mode", () => {
+    const definition = providerClients.get(ProviderDriverKind.make("openrouter"));
+    expect(definition).toBeDefined();
+    const keys = (routingMode: string) =>
+      deriveProviderSettingsFields(definition!, { routingMode }).map((field) => field.key);
+    expect(keys("openrouter-default")).not.toContain("providerOrder");
+    expect(keys("openrouter-default")).not.toContain("routingSort");
+    expect(keys("provider-order")).toContain("providerOrder");
+    expect(keys("provider-order")).not.toContain("routingSort");
+    expect(keys("sort")).toContain("routingSort");
+    expect(keys("sort")).not.toContain("providerOrder");
   });
-
-  it("uses OpenRouter branding in settings and model surfaces", () => {
-    const openRouter = ProviderDriverKind.make("openrouter");
-    expect(DRIVER_OPTION_BY_VALUE[openRouter]?.icon).toBe(OpenRouterIcon);
-    expect(PROVIDER_ICON_BY_PROVIDER[openRouter]).toBe(OpenRouterIcon);
-  });
-
-  it("uses OpenAI branding for the Responses provider", () => {
-    const openAi = ProviderDriverKind.make("openai");
-    expect(DRIVER_OPTION_BY_VALUE[openAi]?.icon).toBe(OpenAI);
-    expect(PROVIDER_ICON_BY_PROVIDER[openAi]).toBe(OpenAI);
-  });
-
-  it.each(["openaiCompatible", "lmstudio"])(
-    "uses endpoint icons for %s in settings and model surfaces",
-    (driver) => {
-      const kind = ProviderDriverKind.make(driver);
-      expect(DRIVER_OPTION_BY_VALUE[kind]?.icon).toBe(ServerIcon);
-      expect(PROVIDER_ICON_BY_PROVIDER[kind]).toBe(ServerIcon);
-    },
-  );
-
-  it("derives settings fields for every native provider driver", () => {
-    for (const driver of NATIVE_PROVIDER_DRIVERS) {
-      const definition = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make(driver.kind)];
-
-      expect(definition).toMatchObject({
-        value: ProviderDriverKind.make(driver.kind),
-        label: driver.label,
-      });
-      expect(deriveProviderSettingsFields(definition!).map((field) => field.key)).toEqual(
-        driver.fields,
-      );
-    }
+  it("exposes only the local executable configuration for a local ACP entry", () => {
+    const definition = providerClients.get(ProviderDriverKind.make("acpRegistry"));
+    expect(definition).toBeDefined();
+    const fields = deriveProviderSettingsFields(definition!, { source: "local" });
+    expect(fields.map((field) => field.key)).toEqual(["source", "commandPath"]);
+    expect(fields.find((field) => field.key === "commandPath")?.label).toBe("Executable");
   });
 });

@@ -16,6 +16,7 @@ export function useProjectIndexModelCheck(input: {
     readonly key: string;
     readonly result: ProjectIndexModelCheckResult;
   } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the remote model-availability check for the current selection.
   useEffect(() => {
     const selection = getSelection();
     if (!selection) return;

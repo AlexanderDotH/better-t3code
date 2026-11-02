@@ -1,79 +1,70 @@
-import { EventId, TurnId, type OrchestrationThreadActivity } from "@t3tools/contracts";
-import { foldSubagentActivities } from "@t3tools/client-runtime/state/subagentRuntime";
+import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
+import { NodeId, type ThreadTokenUsageSnapshot } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
-
 import { deriveLatestContextWindowSnapshot } from "./contextWindow";
 import { summarizeThreadTokenUsage } from "./threadTokenUsage";
 
-function activity(
-  id: string,
-  kind: string,
-  payload: Record<string, unknown>,
-): OrchestrationThreadActivity {
+const timestamp = DateTime.makeUnsafe("2026-09-13T10:00:00.000Z");
+type ProjectedAgent = Parameters<typeof projectedSubagentsToRuntime>[0][number];
+function agent(id: string, overrides: Partial<ProjectedAgent> & { parentNodeId?: NodeId } = {}) {
   return {
-    id: EventId.make(id),
-    turnId: TurnId.make("turn-1"),
-    createdAt: "2026-09-13T10:00:00.000Z",
-    tone: "info",
-    summary: kind,
-    kind,
-    payload,
+    id: NodeId.make(id),
+    title: id,
+    prompt: id,
+    model: null,
+    status: "completed" as const,
+    result: null,
+    startedAt: timestamp,
+    completedAt: timestamp,
+    updatedAt: timestamp,
+    ...overrides,
   };
 }
-
 const cumulativeUsage = {
   inputTokens: 1_000,
   cachedInputTokens: 600,
   outputTokens: 200,
   reasoningOutputTokens: 50,
 };
-const mainUsage = activity("main", "context-window.updated", {
+const mainUsage: ThreadTokenUsageSnapshot = {
   usedTokens: 110,
   inputTokens: 100,
   outputTokens: 10,
   cumulativeUsage,
-});
-
-function summarize(activities: OrchestrationThreadActivity[]) {
+};
+function summarize(
+  agents: ReadonlyArray<ProjectedAgent>,
+  usage: ThreadTokenUsageSnapshot | null = mainUsage,
+) {
   return summarizeThreadTokenUsage(
-    deriveLatestContextWindowSnapshot(activities),
-    foldSubagentActivities(activities, { limit: null }),
+    deriveLatestContextWindowSnapshot([], null, { contextUsage: usage, updatedAt: timestamp }),
+    projectedSubagentsToRuntime(agents),
   );
 }
 
 describe("thread token usage", () => {
-  it("adds all reported main and nested agent usage without counting snapshots or workflow totals twice", () => {
-    const worker = activity("worker", "task.progress", {
-      agentKind: "agent",
-      taskId: "worker",
-      parentAgentId: "workflow",
-      typedUsage: {
-        totalTokens: 500,
-        inputTokens: 400,
-        cachedInputTokens: 300,
-        outputTokens: 100,
-        reasoningOutputTokens: 80,
-      },
-    });
+  it("uses cumulative main usage and avoids counting workflow totals again with nested workers", () => {
     const result = summarize([
-      mainUsage,
-      { ...mainUsage, id: EventId.make("main-duplicate") },
-      activity("workflow", "task.progress", {
-        agentKind: "agent",
-        taskId: "workflow",
-        taskType: "local_workflow",
-        typedUsage: { totalTokens: 500, inputTokens: 400, outputTokens: 100 },
+      agent("workflow", {
+        usage: { totalTokens: 500, inputTokens: 400, outputTokens: 100 },
+        workflow: { phases: [], agents: [], totalTokens: 500 },
       }),
-      worker,
-      { ...worker, id: EventId.make("worker-duplicate") },
-      activity("nested", "task.progress", {
-        agentKind: "agent",
-        taskId: "nested",
-        parentAgentId: "worker",
-        typedUsage: { totalTokens: 50, inputTokens: 40, outputTokens: 10 },
+      agent("worker", {
+        parentNodeId: NodeId.make("workflow"),
+        usage: {
+          totalTokens: 500,
+          inputTokens: 400,
+          cachedInputTokens: 300,
+          outputTokens: 100,
+          reasoningOutputTokens: 80,
+        },
+      }),
+      agent("nested", {
+        parentNodeId: NodeId.make("worker"),
+        usage: { totalTokens: 50, inputTokens: 40, outputTokens: 10 },
       }),
     ]);
-
     expect(result).toMatchObject({
       inputTokens: 1_440,
       outputTokens: 310,
@@ -91,35 +82,23 @@ describe("thread token usage", () => {
       },
     });
   });
-
-  it("includes settled agents beyond the display roster's 100-agent limit", () => {
+  it("includes all settled agents beyond the display roster's 100-agent limit", () => {
     const agents = Array.from({ length: 105 }, (_, index) =>
-      activity(`agent-${index}`, "task.progress", {
-        agentKind: "agent",
-        taskId: `agent-${index}`,
-        status: "completed",
-        typedUsage: { totalTokens: 10, inputTokens: 8, outputTokens: 2 },
-      }),
+      agent(`agent-${index}`, { usage: { totalTokens: 10, inputTokens: 8, outputTokens: 2 } }),
     );
-    expect(foldSubagentActivities(agents)).toHaveLength(100);
-    expect(summarize([mainUsage, ...agents])).toMatchObject({
+    expect(summarize(agents)).toMatchObject({
       agentCount: 105,
       inputTokens: 1_840,
       outputTokens: 410,
     });
   });
-
   it("keeps unknown input/output splits visible without inventing tokens", () => {
-    const result = summarize([
-      mainUsage,
-      activity("total-only", "task.progress", {
-        agentKind: "agent",
-        taskId: "total-only",
-        typedUsage: { totalTokens: 800 },
-      }),
-      activity("pending", "task.started", { agentKind: "agent", taskId: "pending" }),
-    ]);
-    expect(result).toMatchObject({
+    expect(
+      summarize([
+        agent("total-only", { usage: { totalTokens: 800 } }),
+        agent("pending", { status: "pending" }),
+      ]),
+    ).toMatchObject({
       inputTokens: 1_000,
       outputTokens: 200,
       inputIsPartial: true,
@@ -130,22 +109,13 @@ describe("thread token usage", () => {
       subagents: { inputTokens: null, outputTokens: null },
     });
   });
-
-  it("marks legacy snapshots as partial and rejects malformed cumulative counters", () => {
-    const result = summarize([
-      activity("legacy", "context-window.updated", {
-        usedTokens: 110,
-        inputTokens: 100,
-        outputTokens: 10,
-        cumulativeUsage: { ...cumulativeUsage, inputTokens: -1 },
-      }),
-    ]);
-    expect(result).toMatchObject({
+  it("marks snapshots without cumulative counters as partial and stays empty before usage arrives", () => {
+    expect(summarize([], { usedTokens: 110, inputTokens: 100, outputTokens: 10 })).toMatchObject({
       inputTokens: 100,
       outputTokens: 10,
       inputIsPartial: true,
       outputIsPartial: true,
     });
-    expect(summarize([])).toMatchObject({ inputTokens: 0, outputTokens: 0, agentCount: 0 });
+    expect(summarize([], null)).toMatchObject({ inputTokens: 0, outputTokens: 0, agentCount: 0 });
   });
 });

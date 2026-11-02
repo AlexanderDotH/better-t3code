@@ -1,6 +1,7 @@
 import {
   AssemblyAiVoiceSettings,
   type ModelSelection,
+  type EnvironmentId,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
 import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
@@ -26,6 +27,7 @@ type ModelOption = { readonly id: string; readonly name: string };
 const isValidVoiceSettings = Schema.is(AssemblyAiVoiceSettings);
 
 export function AssemblyAiVoiceSettingsForm({
+  environmentId = null,
   value,
   models,
   t3Models,
@@ -34,6 +36,7 @@ export function AssemblyAiVoiceSettingsForm({
   grouped = true,
   modelsState = "ready",
 }: {
+  readonly environmentId?: EnvironmentId | null;
   readonly value: AssemblyAiVoiceSettings;
   readonly models: readonly ModelOption[];
   readonly t3Models: {
@@ -237,13 +240,11 @@ export function AssemblyAiVoiceSettingsForm({
       return;
     }
     setBusy(true);
-    try {
-      setMessage((await onSave(next)) ? "saved" : "saveFailed");
-    } catch {
-      setMessage("saveFailed");
-    } finally {
-      setBusy(false);
-    }
+    await Promise.resolve()
+      .then(() => onSave(next))
+      .then((saved) => setMessage(saved ? "saved" : "saveFailed"))
+      .catch(() => setMessage("saveFailed"))
+      .finally(() => setBusy(false));
   }
 
   return (
@@ -420,6 +421,7 @@ export function AssemblyAiVoiceSettingsForm({
             title={translate("settings.voice.options.cleanupModel")}
             control={
               <ProviderModelPicker
+                environmentId={environmentId}
                 activeInstanceId={
                   draft.cleanupModelSelection?.instanceId ?? t3Models.fallbackSelection.instanceId
                 }

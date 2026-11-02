@@ -1,3 +1,4 @@
+import { useStableCallback } from "./useStableCallback";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
@@ -10,12 +11,11 @@ import type {
   RuntimeMode,
   ServerSettings,
   ThreadForkBoundary,
-  ThreadForkCommand,
 } from "@t3tools/contracts";
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { waitForStartedServerThread } from "../components/ChatView.logic";
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { newThreadId } from "../lib/utils";
@@ -41,92 +41,83 @@ export function useThreadFork(input: {
   const readStatus = useAtomCommand(vcsEnvironment.refreshStatus, {
     reportFailure: false,
   });
-  const inputRef = useRef(input);
-  useLayoutEffect(() => {
-    inputRef.current = input;
-  });
   const pendingRef = useRef(false);
   const [pendingBoundary, setPendingBoundary] = useState<ThreadForkBoundary | null>(null);
-  const onFork = useCallback(
-    async (boundary: ThreadForkBoundary, messageEdit?: ThreadForkCommand["messageEdit"]) => {
-      const input = inputRef.current;
-      const { thread, project } = input;
-      if (!input.available || !thread || !project || pendingRef.current) {
-        if (messageEdit) throw new Error("Chat branching is not available right now.");
+  const onFork = useStableCallback(async (boundary: ThreadForkBoundary) => {
+    const { thread, project } = input;
+    if (!input.available || !thread || !project || pendingRef.current) {
+      return;
+    }
+    const modelSelection = input.getModelSelection() ?? thread.modelSelection;
+    pendingRef.current = true;
+    setPendingBoundary(boundary);
+    input.onError(thread.id, null);
+    return (async () => {
+      const environmentSettings = { ...DEFAULT_SERVER_SETTINGS, ...input.settings };
+      const settingsTier = resolveProjectSettings(
+        environmentSettings,
+        project.id,
+        project,
+      ).settings;
+      const projectFile =
+        settingsTier.defaultThreadEnvMode === null
+          ? await readT3ProjectFile(project.environmentId, project.workspaceRoot)
+          : null;
+      const settings = resolveProjectSettings(
+        environmentSettings,
+        project.id,
+        project,
+        projectFile,
+      ).settings;
+      const defaultMode = settings.defaultThreadEnvMode;
+      const status = await readStatus({
+        environmentId: project.environmentId,
+        input: { cwd: project.workspaceRoot },
+      });
+      if (status._tag === "Failure") throw squashAtomCommandFailure(status);
+      const workspace = resolveForkWorkspaceSpec({
+        defaultMode,
+        isGitRepository: status.value.isRepo,
+        projectRootBranch: status.value.refName,
+        newWorktreesStartFromOrigin: settings.newWorktreesStartFromOrigin,
+      });
+      if (workspace.mode === "worktree" && workspace.baseBranch === null)
+        throw new Error("Wait for the project's base branch before forking into a new worktree.");
+      const threadId = newThreadId();
+      const result = await fork({
+        environmentId: thread.environmentId,
+        input: {
+          threadId,
+          sourceThreadId: thread.id,
+          boundary,
+          modelSelection,
+          runtimeMode: input.runtimeMode,
+          interactionMode: input.interactionMode,
+          workspace,
+          createdAt: new Date().toISOString(),
+        },
+      });
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) throw squashAtomCommandFailure(result);
         return;
       }
-      pendingRef.current = true;
-      setPendingBoundary(boundary);
-      input.onError(thread.id, null);
-      try {
-        const environmentSettings = { ...DEFAULT_SERVER_SETTINGS, ...input.settings };
-        const settingsTier = resolveProjectSettings(
-          environmentSettings,
-          project.id,
-          project,
-        ).settings;
-        const projectFile =
-          settingsTier.defaultThreadEnvMode === null
-            ? await readT3ProjectFile(project.environmentId, project.workspaceRoot)
-            : null;
-        const settings = resolveProjectSettings(
-          environmentSettings,
-          project.id,
-          project,
-          projectFile,
-        ).settings;
-        const defaultMode = settings.defaultThreadEnvMode;
-        const status = await readStatus({
-          environmentId: project.environmentId,
-          input: { cwd: project.workspaceRoot },
-        });
-        if (status._tag === "Failure") throw squashAtomCommandFailure(status);
-        const workspace = resolveForkWorkspaceSpec({
-          defaultMode,
-          isGitRepository: status.value.isRepo,
-          projectRootBranch: status.value.refName,
-          newWorktreesStartFromOrigin: settings.newWorktreesStartFromOrigin,
-        });
-        if (workspace.mode === "worktree" && workspace.baseBranch === null)
-          throw new Error("Wait for the project's base branch before forking into a new worktree.");
-        const threadId = newThreadId();
-        const result = await fork({
-          environmentId: thread.environmentId,
-          input: {
-            threadId,
-            sourceThreadId: thread.id,
-            boundary,
-            ...(messageEdit ? { messageEdit } : {}),
-            modelSelection: input.getModelSelection() ?? thread.modelSelection,
-            runtimeMode: input.runtimeMode,
-            interactionMode: input.interactionMode,
-            workspace,
-            createdAt: new Date().toISOString(),
-          },
-        });
-        if (result._tag === "Failure") {
-          if (messageEdit) throw squashAtomCommandFailure(result);
-          if (!isAtomCommandInterrupted(result)) throw squashAtomCommandFailure(result);
-          return;
-        }
-        await waitForStartedServerThread(scopeThreadRef(thread.environmentId, threadId));
-        await navigate({
-          to: "/$environmentId/$threadId",
-          params: { environmentId: thread.environmentId, threadId },
-        });
-        input.onReady();
-      } catch (error) {
+      await waitForStartedServerThread(scopeThreadRef(thread.environmentId, threadId));
+      await navigate({
+        to: "/$environmentId/$threadId",
+        params: { environmentId: thread.environmentId, threadId },
+      });
+      input.onReady();
+    })()
+      .catch((error) => {
         input.onError(
           thread.id,
           error instanceof Error ? error.message : "Could not fork this chat.",
         );
-        if (messageEdit) throw error;
-      } finally {
+      })
+      .finally(() => {
         pendingRef.current = false;
         setPendingBoundary(null);
-      }
-    },
-    [fork, navigate, readStatus],
-  );
+      });
+  });
   return { pendingBoundary, onFork };
 }

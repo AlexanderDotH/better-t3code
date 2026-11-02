@@ -1,7 +1,7 @@
 import type { ProjectIndexQueryResultV1 } from "@t3tools/contracts";
 import { View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function ProjectIndexVerification(props: {

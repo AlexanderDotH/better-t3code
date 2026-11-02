@@ -1,6 +1,5 @@
-import { act, createElement, Fragment } from "react";
+import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { setInterfaceLocaleRuntime } from "../../interfaceLanguageRuntime";
 
@@ -14,11 +13,11 @@ vi.mock("~/hooks/useSettings", () => ({
 }));
 vi.mock("../SidebarStageBackdrop", () => ({
   StageBackdropButtonArt: ({ variant }: { variant: string }) => `stage-${variant}`,
-  useSidebarStageBackdropVariant: (enabled = true) => (enabled ? stageArtworkState.variant : null),
+  useSidebarStageBackdropVariant: (mode: string) =>
+    mode === "artwork" ? stageArtworkState.variant : null,
 }));
 
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
-import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 
 function renderPendingActions(isRunning: boolean) {
   return renderToStaticMarkup(
@@ -31,6 +30,8 @@ function renderPendingActions(isRunning: boolean) {
         isResponding: false,
         isComplete: true,
       },
+      canOperateThread: true,
+      canInterrupt: isRunning,
       isRunning,
       showPlanFollowUpPrompt: false,
       promptHasText: false,
@@ -52,6 +53,9 @@ function renderRunningActions(hasSendableContent: boolean) {
     createElement(ComposerPrimaryActions, {
       compact: true,
       pendingAction: null,
+      canOperateThread: true,
+      canInterrupt: true,
+      followUpBehavior: "queue",
       isRunning: true,
       showPlanFollowUpPrompt: false,
       promptHasText: hasSendableContent,
@@ -73,6 +77,8 @@ function renderSendButton(sendDisabledReason: string | null = null) {
     createElement(ComposerPrimaryActions, {
       compact: true,
       pendingAction: null,
+      canOperateThread: true,
+      canInterrupt: false,
       isRunning: false,
       showPlanFollowUpPrompt: false,
       promptHasText: true,
@@ -96,101 +102,6 @@ afterEach(() => {
 });
 
 describe("ComposerPrimaryActions", () => {
-  it.each([false, true])(
-    "updates pending actions and the plan banner when the interface language changes (Deep Plan: %s)",
-    async (deepPlan) => {
-      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-      let renderer: ReactTestRenderer | undefined;
-      try {
-        await act(async () => {
-          renderer = create(
-            createElement(
-              Fragment,
-              null,
-              createElement(ComposerPlanFollowUpBanner, {
-                planTitle: "Keep this title",
-                deepPlan,
-                estimate: {
-                  model: "Test model",
-                  reasoning: "High",
-                  speed: null,
-                  fast: false,
-                  hasSpeedOption: false,
-                  workUnits: 1,
-                  minMinutes: deepPlan ? 94 : 2,
-                  maxMinutes: deepPlan ? 282 : 5,
-                },
-              }),
-              createElement(ComposerPrimaryActions, {
-                compact: false,
-                pendingAction: {
-                  questionIndex: 1,
-                  isLastQuestion: true,
-                  canAdvance: true,
-                  isResponding: false,
-                  isComplete: true,
-                },
-                isRunning: true,
-                showPlanFollowUpPrompt: false,
-                promptHasText: false,
-                isSendBusy: false,
-                sendDisabledReason: null,
-                isConnecting: false,
-                isEnvironmentUnavailable: false,
-                isPreparingWorktree: false,
-                hasSendableContent: false,
-                onPreviousPendingQuestion: () => {},
-                onInterrupt: () => {},
-                onImplementPlanInNewThread: () => {},
-              }),
-            ),
-          );
-        });
-
-        const submitButton = renderer!.root.find(
-          (node) => node.type === "button" && node.props.type === "submit",
-        );
-        expect(submitButton.children).toEqual(["Submit answers"]);
-        expect(JSON.stringify(renderer!.toJSON())).toContain(
-          deepPlan ? "Deep Plan ready" : "Plan ready",
-        );
-        expect(JSON.stringify(renderer!.toJSON())).toContain(
-          deepPlan ? "Approx. 1.6–4.7 h after starting" : "Approx. 2–5 min after starting",
-        );
-
-        await act(async () => {
-          setInterfaceLocaleRuntime({ language: "de", locale: "de-DE" });
-        });
-        expect(JSON.stringify(renderer!.toJSON())).toContain(
-          deepPlan ? "Ca. 1,6–4,7 Std. ab Start" : "Ca. 2–5 Min. ab Start",
-        );
-        expect(JSON.stringify(renderer!.toJSON())).toContain("1 geschätztes Arbeitspaket");
-        expect(
-          renderer!.root.find((node) => node.type === "button" && node.props.type === "submit"),
-        ).toBe(submitButton);
-        expect(submitButton.children).toEqual(["Antworten senden"]);
-        expect(JSON.stringify(renderer!.toJSON())).toContain(
-          deepPlan ? "Deep Plan bereit" : "Plan bereit",
-        );
-        expect(renderer!.root.findAllByProps({ "aria-label": "Generierung stoppen" })).toHaveLength(
-          1,
-        );
-
-        await act(async () => {
-          setInterfaceLocaleRuntime({ language: "fr", locale: "fr-FR" });
-        });
-        expect(submitButton.children).toEqual(["Envoyer les réponses"]);
-        expect(JSON.stringify(renderer!.toJSON())).toContain(
-          deepPlan ? "Deep Plan prêt" : "Plan prêt",
-        );
-        expect(JSON.stringify(renderer!.toJSON())).toContain("Keep this title");
-      } finally {
-        await act(async () => renderer?.unmount());
-        vi.unstubAllGlobals();
-      }
-    },
-  );
-
   it("disables and labels the send button while feedback is uploading", () => {
     const markup = renderSendButton("Sending feedback");
 

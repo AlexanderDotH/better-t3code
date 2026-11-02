@@ -7,7 +7,7 @@ export function deepPlanMarkdown(plan: DeepPlanDocument): string {
   ];
   if (plan.decisions.length > 0) {
     sections.push(
-      `## Decisions\n${plan.decisions.map((decision) => `- ${decision.text}${decision.rationale ? ` — ${decision.rationale}` : ""}`).join("\n")}`,
+      `## Decisions\n${plan.decisions.map((decision) => `- ${decision.text}${decision.rationale ? `: ${decision.rationale}` : ""}`).join("\n")}`,
     );
   }
   for (const [index, step] of plan.steps.entries()) {

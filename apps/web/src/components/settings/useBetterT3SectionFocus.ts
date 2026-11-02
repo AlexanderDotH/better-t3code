@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { useStableCallback } from "../../hooks/useStableCallback";
+import { useEffect, useRef, useState, type RefObject } from "react";
+import { observeResize } from "../../lib/observeResize";
 
 const FOCUS_FADE_DISTANCE_PX = 600;
 const FOCUS_ITEM_SELECTOR =
@@ -52,16 +54,14 @@ export function useBetterT3SectionFocus(
 ) {
   const [activeGroup, setActiveGroupState] = useState(initialGroupId);
   const activeGroupRef = useRef(initialGroupId);
-  const setActiveGroup = useCallback(
-    (id: string) => {
-      if (activeGroupRef.current === id) return;
-      activeGroupRef.current = id;
-      if (contentRef.current) applySectionFocus(contentRef.current, id);
-      setActiveGroupState(id);
-    },
-    [contentRef],
-  );
+  const setActiveGroup = useStableCallback((id: string) => {
+    if (activeGroupRef.current === id) return;
+    activeGroupRef.current = id;
+    if (contentRef.current) applySectionFocus(contentRef.current, id);
+    setActiveGroupState(id);
+  });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps navigation selection and DOM opacity aligned with section visibility during scrolling, resizing and focus
   useEffect(() => {
     const content = contentRef.current;
     const scrollArea = content?.closest<HTMLElement>("[data-settings-page-scroll]");
@@ -114,17 +114,14 @@ export function useBetterT3SectionFocus(
     scrollArea.addEventListener("scroll", scheduleUpdate, { passive: true });
     content.addEventListener("focusin", onFocus);
     window.addEventListener("resize", onResize);
-    const resizeObserver = new ResizeObserver(onResize);
-    resizeObserver.observe(scrollArea);
-    resizeObserver.observe(navigation);
-    for (const group of groups) resizeObserver.observe(group);
+    const stopObserving = observeResize([scrollArea, navigation, ...groups], onResize);
     scheduleUpdate();
 
     return () => {
       scrollArea.removeEventListener("scroll", scheduleUpdate);
       content.removeEventListener("focusin", onFocus);
       window.removeEventListener("resize", onResize);
-      resizeObserver.disconnect();
+      stopObserving();
       if (frame !== null) window.cancelAnimationFrame(frame);
     };
   }, [contentRef, setActiveGroup]);

@@ -1,4 +1,4 @@
-import { useId, useState, type RefObject } from "react";
+import { useId, useLayoutEffect, useState, type RefObject } from "react";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
@@ -16,23 +16,28 @@ export function InlineMessageEditor({
 }) {
   const { message: translate } = useInterfaceTranslator();
   const labelId = useId();
-  // oxlint-disable-next-line react/refs -- Restore unsaved text when the virtualized row remounts.
-  const [draft, setDraft] = useState(() => draftRef.current);
+  const [draft, setDraft] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const disabled = pending || !available || draft.trim().length === 0;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the external draft cache before a virtualized editor paints, retaining unsaved text across row remounts.
+  useLayoutEffect(() => {
+    setDraft(draftRef.current);
+  }, [draftRef]);
+  const disabled = pending || !available || draft === null || draft.trim().length === 0;
   async function save() {
-    if (disabled) return;
+    if (disabled || draft === null) return;
     setPending(true);
     setError(null);
-    try {
+    await (async () => {
       await onSave(draft.trim());
       onClose();
-    } catch (error) {
-      setError(error instanceof Error ? error.message : translate("chat.edit.failed"));
-    } finally {
-      setPending(false);
-    }
+    })()
+      .catch((error: unknown) => {
+        setError(error instanceof Error ? error.message : translate("chat.edit.failed"));
+      })
+      .finally(() => {
+        setPending(false);
+      });
   }
   return (
     <form
@@ -62,7 +67,7 @@ export function InlineMessageEditor({
       <Textarea
         autoFocus
         aria-label={translate("chat.edit.title")}
-        value={draft}
+        value={draft ?? ""}
         onChange={(event) => {
           draftRef.current = event.target.value;
           setDraft(event.target.value);

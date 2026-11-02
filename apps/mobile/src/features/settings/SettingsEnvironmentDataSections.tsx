@@ -13,8 +13,8 @@ import type {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { agentSettingsEnvironment } from "../../state/agent-settings";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -68,7 +68,9 @@ export function EnvironmentChatImportSettings(props: { readonly environmentId: E
     setSources(result.value.sources);
   }, [discoverSources, props.environmentId]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Discover import sources in this environment and invalidate pending requests on unmount.
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- The import-source discovery request owns its loading/error state.
     void reload();
     return () => {
       requestSequence.current += 1;
@@ -246,7 +248,9 @@ export function EnvironmentSpeechProfileSettings(props: {
     setProfiles(new Map(result.value.profiles.map((profile) => [profile.projectId, profile])));
   }, [listProfiles, props.environmentId]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Load project speech profiles from this environment and discard replaced requests.
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- The project speech-profile request owns its loading/error state.
     void reload();
     return () => {
       requestSequence.current += 1;

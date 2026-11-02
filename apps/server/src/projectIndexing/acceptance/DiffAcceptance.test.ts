@@ -1,3 +1,4 @@
+import { KnownWorkspaces } from "../../workspace/KnownWorkspaces.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -23,10 +24,15 @@ function readDiff(root: string, selection: "workingtree" | "staged") {
   return Effect.scoped(
     Effect.gen(function* () {
       const driver = yield* GitVcsDriver.make;
-      const workspacePaths = yield* WorkspacePaths.make;
+      const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
       const workspaceFiles = yield* WorkspaceFileSystem.make.pipe(
         Effect.provideService(WorkspacePaths.WorkspacePaths, workspacePaths),
+        Effect.provideService(KnownWorkspaces, {
+          assertContains: () => Effect.void,
+          contains: () => Effect.succeed(true),
+        }),
         Effect.provideService(WorkspaceEntries.WorkspaceEntries, {
+          listIgnoredFiles: unused,
           browse: unused,
           list: unused,
           search: unused,
@@ -53,9 +59,10 @@ function readDiff(root: string, selection: "workingtree" | "staged") {
     }),
   ).pipe(
     Effect.provide(
-      ServerConfig.ServerConfig.layerTest(root, { prefix: "t3-index-diff-config-" }).pipe(
-        Layer.provideMerge(NodeServices.layer),
-      ),
+      Layer.merge(
+        WorkspacePaths.layer,
+        ServerConfig.ServerConfig.layerTest(root, { prefix: "t3-index-diff-config-" }),
+      ).pipe(Layer.provideMerge(NodeServices.layer)),
     ),
   );
 }

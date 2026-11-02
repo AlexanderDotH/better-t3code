@@ -2,7 +2,6 @@ import { composerModeToProviderInteractionMode } from "@t3tools/contracts";
 import type {
   ComposerMode,
   ExecutionEnvironmentCapabilities,
-  ProviderInteractionMode,
   ServerProvider,
 } from "@t3tools/contracts";
 
@@ -31,7 +30,7 @@ export const getProviderInteractionMode = composerModeToProviderInteractionMode;
 
 export function resolveComposerMode(
   mode: ComposerMode | null | undefined,
-  legacyMode?: ProviderInteractionMode | null,
+  legacyMode?: ComposerMode | null,
 ): ComposerMode {
   return mode ?? legacyMode ?? "default";
 }

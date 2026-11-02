@@ -8,12 +8,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import {
-  FetchHttpClient,
-  HttpClient,
-  HttpClientError,
-  HttpClientResponse,
-} from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 
 import { makeOpenAiCompatibleTransport } from "./OpenAiCompatibleTransport.ts";
 
@@ -27,7 +22,7 @@ const completedFrames = `${textFrame}data: {"choices":[{"index":0,"delta":{},"fi
 const makeTransport = (client: HttpClient.HttpClient) =>
   makeOpenAiCompatibleTransport({
     baseUrl: BASE_URL,
-    resolveApiKey: Effect.succeed(Option.none()),
+    resolveApiKey: Effect.succeedNone,
   }).pipe(Effect.provideService(HttpClient.HttpClient, client));
 
 describe("OpenAI-compatible transport", () => {
@@ -216,6 +211,7 @@ describe("OpenAI-compatible transport", () => {
         }),
       );
       for (const abortBeforeConstruction of [true, false]) {
+        // @effect-diagnostics-next-line abortControllerInEffect:off -- This test drives cancellation of an external request signal.
         const controller = new AbortController();
         if (abortBeforeConstruction) controller.abort();
         const stream = transport.streamRound({ ...round, signal: controller.signal });
@@ -248,6 +244,7 @@ describe("OpenAI-compatible transport", () => {
           ),
         ),
       );
+      // @effect-diagnostics-next-line abortControllerInEffect:off -- This test drives cancellation of an external request signal.
       const controller = new AbortController();
       const events = yield* transport.streamRound({ ...round, signal: controller.signal }).pipe(
         Stream.tap(() => Effect.sync(() => controller.abort())),
@@ -272,6 +269,7 @@ describe("OpenAI-compatible transport", () => {
             }),
           ),
         );
+        // @effect-diagnostics-next-line abortControllerInEffect:off -- This test drives cancellation of an external request signal.
         const controller = new AbortController();
         const result = yield* transport
           .streamRound({ ...round, signal: controller.signal })

@@ -87,6 +87,7 @@ export function useNativeAssemblyAiDictation(input: {
   const lifecycleKeyRef = useRef(input.lifecycleKey);
   const onChangeDraftTextRef = useRef(input.onChangeDraftText);
   const onNoticeRef = useRef(input.onNotice);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep the active speech session callbacks bound to the committed composer.
   useLayoutEffect(() => {
     onChangeDraftTextRef.current = input.onChangeDraftText;
     onNoticeRef.current = input.onNotice;
@@ -136,11 +137,13 @@ export function useNativeAssemblyAiDictation(input: {
     deactivate();
   }, [deactivate]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Release the native recorder when speech configuration is removed.
   useEffect(() => {
     if (!shouldDeactivateNativeAssemblyAiDictation(input.configured, stateRef.current)) return;
     deactivate();
   }, [deactivate, input.configured]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Invalidate the speech session when another editor or thread takes ownership of its draft.
   useLayoutEffect(() => {
     draftTextRef.current = input.draftText;
     lifecycleKeyRef.current = input.lifecycleKey;
@@ -150,6 +153,7 @@ export function useNativeAssemblyAiDictation(input: {
     }
   }, [deactivate, input.draftText, input.lifecycleKey]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Stop the native stream, release its audio session, and cancel pending speech work on unmount.
   useEffect(() => {
     return () => {
       attemptRef.current += 1;
@@ -193,7 +197,7 @@ export function useNativeAssemblyAiDictation(input: {
     setAudioWaveform(EMPTY_WAVEFORM);
     transition("starting");
 
-    try {
+    return (async () => {
       const permission = await requestRecordingPermissionsAsync();
       if (!permission.granted) throw new Error("Microphone permission was denied.");
       if (abortController.signal.aborted) return;
@@ -273,7 +277,7 @@ export function useNativeAssemblyAiDictation(input: {
         return;
       }
       transition("recording");
-    } catch (error) {
+    })().catch((error) => {
       if (attemptRef.current !== attempt || abortController.signal.aborted) return;
       releaseAudio();
       sessionRef.current?.cancel();
@@ -283,7 +287,7 @@ export function useNativeAssemblyAiDictation(input: {
         "Could not start voice input",
         error instanceof Error ? error : new Error("Voice input setup failed."),
       );
-    }
+    });
   }, [
     audioStream.stream,
     cancelStreamingSession,
@@ -312,15 +316,15 @@ export function useNativeAssemblyAiDictation(input: {
     const abortController = abortRef.current;
     transition("stopping");
     releaseAudio();
-    try {
+    await (async () => {
       await session?.stop();
-    } catch (error) {
+    })().catch((error) => {
       if (attemptRef.current === attempt)
         onNoticeRef.current(
           "Could not stop voice input cleanly",
           error instanceof Error ? error : new Error("Voice input stop failed."),
         );
-    }
+    });
 
     if (attemptRef.current !== attempt || !draftSession?.isCurrent() || !abortController) return;
     const transcript = draftSession.transcript.trim();

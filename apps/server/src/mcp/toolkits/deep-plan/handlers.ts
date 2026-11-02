@@ -1,3 +1,4 @@
+import * as McpToolAccess from "../../McpToolAccess.ts";
 import {
   DeepPlanError,
   type DeepPlanMutation,
@@ -18,7 +19,7 @@ import {
 import { DeepPlanSources } from "../../../deepPlanning/DeepPlanSources.ts";
 import { DeepPlanWorkflow } from "../../../deepPlanning/DeepPlanWorkflow.ts";
 import { finalValidationRequestId } from "../../../deepPlanning/DeepPlanValidationReactor.ts";
-import { McpInvocationContext } from "../../McpInvocationContext.ts";
+import { McpInvocationContext, workspaceThreadScope } from "../../McpInvocationContext.ts";
 import {
   DeepPlanToolkit,
   DeepPlanToolScopeError,
@@ -34,7 +35,13 @@ import {
 const loadBoundRun = Effect.fn("DeepPlanToolkit.loadBoundRun")(function* (
   expectedRunId?: DeepPlanRunId,
 ) {
-  const invocation = yield* McpInvocationContext;
+  const scope = yield* McpInvocationContext;
+  if (scope.thread === undefined)
+    return yield* new DeepPlanToolScopeError({
+      reason: "credential-not-authorized",
+      detail: "Deep Plan requires an authenticated thread.",
+    });
+  const invocation = workspaceThreadScope({ ...scope, thread: scope.thread });
   const binding = invocation.deepPlan;
   if (!invocation.capabilities.has("deep-plan") || !binding) {
     return yield* new DeepPlanToolScopeError({
@@ -447,14 +454,14 @@ const invokeDeepPlanAdjustProcedure = (input: DeepPlanAdjustProcedureInput) =>
 export const invokeDeepPlanValidation = (input: DeepPlanValidationInput) =>
   withBoundRunLock(input.expectedRunId, validation(input)).pipe(Effect.map(updateReceipt));
 
-export const DeepPlanToolkitHandlersLive = DeepPlanToolkit.toLayer({
-  deep_plan_state: invokeDeepPlanState,
-  deep_plan_sources: invokeDeepPlanSources,
-  deep_plan_analyze_sources: invokeDeepPlanAnalyzeSources,
-  deep_plan_read_source: invokeDeepPlanReadSource,
-  deep_plan_summarize_source: invokeDeepPlanSummarizeSource,
-  deep_plan_publish: invokeDeepPlanPublish,
-  deep_plan_step_update: invokeDeepPlanStepUpdate,
-  deep_plan_adjust_procedure: invokeDeepPlanAdjustProcedure,
-  deep_plan_validation: invokeDeepPlanValidation,
+export const DeepPlanToolkitHandlersLive = McpToolAccess.toLayer(DeepPlanToolkit, {
+  deep_plan_state: McpToolAccess.readsAsCaller(invokeDeepPlanState),
+  deep_plan_sources: McpToolAccess.readsAsCaller(invokeDeepPlanSources),
+  deep_plan_analyze_sources: McpToolAccess.actsAsCaller(invokeDeepPlanAnalyzeSources),
+  deep_plan_read_source: McpToolAccess.readsAsCaller(invokeDeepPlanReadSource),
+  deep_plan_summarize_source: McpToolAccess.actsAsCaller(invokeDeepPlanSummarizeSource),
+  deep_plan_publish: McpToolAccess.actsAsCaller(invokeDeepPlanPublish),
+  deep_plan_step_update: McpToolAccess.actsAsCaller(invokeDeepPlanStepUpdate),
+  deep_plan_adjust_procedure: McpToolAccess.actsAsCaller(invokeDeepPlanAdjustProcedure),
+  deep_plan_validation: McpToolAccess.actsAsCaller(invokeDeepPlanValidation),
 });

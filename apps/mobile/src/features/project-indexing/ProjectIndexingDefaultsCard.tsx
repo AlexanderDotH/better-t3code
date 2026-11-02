@@ -1,9 +1,9 @@
 import { projectIndexingDefaultsSupported } from "@t3tools/client-runtime/project-indexing";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ServerSettingsPatch } from "@t3tools/contracts";
 import { useState } from "react";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { useEnvironmentServerConfig } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
@@ -51,17 +51,15 @@ export function ProjectIndexingDefaultsCard(props: {
     if (disabled) return;
     setBusy(true);
     setError(null);
-    try {
-      const result = await updateSettings({ environmentId: props.environmentId, input: { patch } });
-      if (result._tag === "Failure") {
-        const cause = squashAtomCommandFailure(result);
-        setError(
-          cause instanceof Error ? cause.message : translator.message("knowledgeGraph.error"),
-        );
-      }
-    } finally {
-      setBusy(false);
+    const response = await settlePromise(() =>
+      updateSettings({ environmentId: props.environmentId, input: { patch } }),
+    );
+    const result = response._tag === "Failure" ? response : response.value;
+    if (result._tag === "Failure") {
+      const cause = squashAtomCommandFailure(result);
+      setError(cause instanceof Error ? cause.message : translator.message("knowledgeGraph.error"));
     }
+    setBusy(false);
   };
 
   return (

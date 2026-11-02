@@ -1,19 +1,10 @@
-import { type TurnId } from "@t3tools/contracts";
-import { type MouseEvent, memo, useCallback, useMemo, useState } from "react";
+import { useSyncLayout } from "@legendapp/list/react";
+import { type OrchestrationV2CheckpointFileTotals, type RunId } from "@t3tools/contracts";
+import { type MouseEvent, type ReactNode, memo, useLayoutEffect, useRef, useState } from "react";
 import { type TurnDiffFileChange } from "../../types";
-import {
-  buildTurnDiffTree,
-  summarizeTurnDiffStats,
-  type TurnDiffTreeNode,
-} from "../../lib/turnDiffTree";
-import {
-  ChevronsDownUpIcon,
-  ChevronsUpDownIcon,
-  ChevronRightIcon,
-  FileDiffIcon,
-  FolderIcon,
-  FolderClosedIcon,
-} from "lucide-react";
+import { buildTurnDiffTree, type TurnDiffTreeNode } from "../../lib/turnDiffTree";
+import { ChevronRightIcon, FileDiffIcon } from "lucide-react";
+import { ChevronsDownUp, ChevronsUpDown, Folder, FolderClosed } from "lucide";
 import { cn } from "~/lib/utils";
 import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
@@ -26,139 +17,16 @@ import {
   summarizeChangedFileScopes,
 } from "./changedFilesPresentation";
 import { MiddleTruncate } from "../ui/middle-truncate";
+import { MorphIcon } from "~/components/MorphIcon";
+import { observeResize } from "~/lib/observeResize";
+
 import { ChatDetailPanel } from "./ChatDetailPanel";
-
-const EMPTY_DIRECTORY_OVERRIDES: Record<string, boolean> = {};
-
-/** Opens the OS-level context menu for a changed file (reveal in file manager, open in editor). */
-export type ChangedFileContextMenuHandler = (filePath: string, event: MouseEvent) => void;
-
-export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
-  turnId: TurnId;
-  files: ReadonlyArray<TurnDiffFileChange>;
-  allDirectoriesExpanded: boolean;
-  resolvedTheme: "light" | "dark";
-  onToggleAllDirectories: () => void;
-  onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
-  classicPresentation?: {
-    expanded: boolean;
-    showCompactPreview: boolean;
-    onExpandedChange: (expanded: boolean) => void;
-  };
-  compactPresentation?: {
-    expanded: boolean;
-    motionEnabled?: boolean;
-    onExpandedChange: (expanded: boolean) => void;
-  };
-  onFileContextMenu?: ChangedFileContextMenuHandler | undefined;
-}) {
-  const {
-    turnId,
-    files,
-    allDirectoriesExpanded,
-    resolvedTheme,
-    onToggleAllDirectories,
-    onOpenTurnDiff,
-    onFileContextMenu,
-  } = props;
-  const summaryStat = useMemo(() => summarizeTurnDiffStats(files), [files]);
-  const hasDirectories = files.some((file) => /[/\\]/.test(file.path));
-
-  if (props.classicPresentation) {
-    return <ClassicChangedFilesCard {...props} {...props.classicPresentation} />;
-  }
-
-  if (props.compactPresentation) {
-    return <CompactChangedFilesCard {...props} {...props.compactPresentation} />;
-  }
-
-  return (
-    <div
-      className="@container/changed-files mt-4 rounded-lg bg-secondary dark:bg-input/20"
-      data-changed-files-state="tree"
-    >
-      <div
-        data-changed-files-header=""
-        className="sticky top-2 z-10 flex items-center justify-between gap-2 rounded-t-lg bg-secondary px-3 py-2 dark:bg-background dark:bg-linear-to-b dark:from-input/20 dark:to-input/20"
-      >
-        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs font-medium text-foreground">
-          <span>
-            {files.length} changed file{files.length === 1 ? "" : "s"}
-          </span>
-          {hasNonZeroStat(summaryStat) && (
-            <DiffStatLabel
-              additions={summaryStat.additions}
-              deletions={summaryStat.deletions}
-              layout="inline"
-              className="text-xs leading-4"
-            />
-          )}
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          {hasDirectories && (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    size="icon-xs"
-                    variant="ghost-muted"
-                    aria-label={
-                      allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"
-                    }
-                    data-scroll-anchor-ignore
-                    aria-expanded={allDirectoriesExpanded}
-                    onClick={onToggleAllDirectories}
-                  />
-                }
-              >
-                {allDirectoriesExpanded ? (
-                  <ChevronsDownUpIcon className="size-3" />
-                ) : (
-                  <ChevronsUpDownIcon className="size-3" />
-                )}
-              </TooltipTrigger>
-              <TooltipPopup side="top">
-                {allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"}
-              </TooltipPopup>
-            </Tooltip>
-          )}
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  size="xs"
-                  variant="ghost-muted"
-                  aria-label="Open diff"
-                  onClick={() => onOpenTurnDiff(turnId, files[0]?.path)}
-                />
-              }
-            >
-              <FileDiffIcon className="size-3" />
-              <span className="hidden @[24rem]/changed-files:inline">Open diff</span>
-            </TooltipTrigger>
-            <TooltipPopup side="top">Open the full diff</TooltipPopup>
-          </Tooltip>
-        </div>
-      </div>
-      <ChangedFilesTree
-        key={`${turnId}:${allDirectoriesExpanded}`}
-        turnId={turnId}
-        files={files}
-        allDirectoriesExpanded={allDirectoriesExpanded}
-        resolvedTheme={resolvedTheme}
-        onOpenTurnDiff={onOpenTurnDiff}
-        onFileContextMenu={onFileContextMenu}
-      />
-    </div>
-  );
-});
+import { summarizeTurnDiffStats } from "./changedFilesPresentation";
 
 const COMPACT_FILE_LIMIT = 3;
 
 function CompactChangedFilesCard({
-  turnId,
+  runId,
   files,
   expanded,
   onExpandedChange,
@@ -167,12 +35,12 @@ function CompactChangedFilesCard({
   onFileContextMenu,
   motionEnabled = false,
 }: {
-  turnId: TurnId;
+  runId: RunId;
   files: ReadonlyArray<TurnDiffFileChange>;
   expanded: boolean;
   onExpandedChange: (expanded: boolean) => void;
   resolvedTheme: "light" | "dark";
-  onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
   onFileContextMenu?: ChangedFileContextMenuHandler | undefined;
   motionEnabled?: boolean;
 }) {
@@ -185,10 +53,10 @@ function CompactChangedFilesCard({
             render={
               <button
                 type="button"
-                className="group inline-flex max-w-full cursor-pointer items-center gap-1.5 py-1 text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                className="group inline-flex max-w-full cursor-pointer items-center gap-1.5 py-1 text-left focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
                 data-presentation-file={file.path}
                 aria-label={file.path}
-                onClick={() => onOpenTurnDiff(turnId, file.path)}
+                onClick={() => onOpenTurnDiff(runId, file.path)}
                 onContextMenu={
                   onFileContextMenu
                     ? (event) => {
@@ -222,7 +90,7 @@ function CompactChangedFilesCard({
           type="button"
           aria-expanded={expanded}
           data-scroll-anchor-ignore
-          className="mt-1 w-full rounded-md py-1.5 text-center text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="mt-1 w-full rounded-md py-1.5 text-center text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           onClick={() => onExpandedChange(!expanded)}
         >
           {expanded
@@ -235,7 +103,7 @@ function CompactChangedFilesCard({
 }
 
 const ClassicChangedFilesCard = memo(function ClassicChangedFilesCard(props: {
-  turnId: TurnId;
+  runId: RunId;
   files: ReadonlyArray<TurnDiffFileChange>;
   expanded: boolean;
   showCompactPreview: boolean;
@@ -243,12 +111,22 @@ const ClassicChangedFilesCard = memo(function ClassicChangedFilesCard(props: {
   resolvedTheme: "light" | "dark";
   onExpandedChange: (expanded: boolean) => void;
   onToggleAllDirectories: () => void;
-  onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
+  classicPresentation?: {
+    expanded: boolean;
+    showCompactPreview: boolean;
+    onExpandedChange: (expanded: boolean) => void;
+  };
+  compactPresentation?: {
+    expanded: boolean;
+    motionEnabled?: boolean;
+    onExpandedChange: (expanded: boolean) => void;
+  };
   onFileContextMenu?: ChangedFileContextMenuHandler | undefined;
 }) {
   const translate = useInterfaceTranslator().message;
   const {
-    turnId,
+    runId,
     files,
     expanded,
     showCompactPreview,
@@ -259,9 +137,9 @@ const ClassicChangedFilesCard = memo(function ClassicChangedFilesCard(props: {
     onOpenTurnDiff,
     onFileContextMenu,
   } = props;
-  const summaryStat = useMemo(() => summarizeTurnDiffStats(files), [files]);
-  const scopeSummary = useMemo(() => summarizeChangedFileScopes(files), [files]);
-  const previewFiles = useMemo(() => selectChangedFilePreview(files), [files]);
+  const summaryStat = summarizeTurnDiffStats(files);
+  const scopeSummary = summarizeChangedFileScopes(files);
+  const previewFiles = selectChangedFilePreview(files);
   const compactPreviewVisible = showCompactPreview && !expanded;
 
   return (
@@ -282,7 +160,7 @@ const ClassicChangedFilesCard = memo(function ClassicChangedFilesCard(props: {
           type="button"
           aria-expanded={expanded}
           data-scroll-anchor-ignore
-          className="group flex min-w-0 flex-1 items-center rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="group flex min-w-0 flex-1 items-center rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           onClick={() => onExpandedChange(!expanded)}
         >
           <span className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
@@ -331,9 +209,9 @@ const ClassicChangedFilesCard = memo(function ClassicChangedFilesCard(props: {
                 }
               >
                 {allDirectoriesExpanded ? (
-                  <ChevronsDownUpIcon className="size-3" />
+                  <MorphIcon icon={ChevronsDownUp} className="size-3" />
                 ) : (
-                  <ChevronsUpDownIcon className="size-3" />
+                  <MorphIcon icon={ChevronsUpDown} className="size-3" />
                 )}
               </TooltipTrigger>
               <TooltipPopup side="top">
@@ -351,7 +229,7 @@ const ClassicChangedFilesCard = memo(function ClassicChangedFilesCard(props: {
                   size="xs"
                   variant="outline"
                   aria-label={translate("chat.changedFiles.openDiff")}
-                  onClick={() => onOpenTurnDiff(turnId, files[0]?.path)}
+                  onClick={() => onOpenTurnDiff(runId, files[0]?.path)}
                 />
               }
             >
@@ -366,8 +244,8 @@ const ClassicChangedFilesCard = memo(function ClassicChangedFilesCard(props: {
       </div>
       {expanded ? (
         <ChangedFilesTree
-          key={`changed-files-tree:${turnId}`}
-          turnId={turnId}
+          key={`changed-files-tree:${runId}`}
+          runId={runId}
           files={files}
           allDirectoriesExpanded={allDirectoriesExpanded}
           resolvedTheme={resolvedTheme}
@@ -392,8 +270,8 @@ const ClassicChangedFilesCard = memo(function ClassicChangedFilesCard(props: {
                   render={
                     <button
                       type="button"
-                      className="inline-flex max-w-48 items-center gap-1 rounded-md border border-border/70 bg-background/45 px-1.5 py-1 font-mono text-3xs text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      onClick={() => onOpenTurnDiff(turnId, file.path)}
+                      className="inline-flex max-w-48 items-center gap-1 rounded-md border border-border/70 bg-background/45 px-1.5 py-1 font-mono text-3xs text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                      onClick={() => onOpenTurnDiff(runId, file.path)}
                       onContextMenu={
                         onFileContextMenu
                           ? (event) => {
@@ -420,7 +298,7 @@ const ClassicChangedFilesCard = memo(function ClassicChangedFilesCard(props: {
               type="button"
               aria-expanded={false}
               data-scroll-anchor-ignore
-              className="rounded-md px-1.5 py-1 text-2xs font-medium text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="rounded-md px-1.5 py-1 text-2xs font-medium text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
               onClick={() => onExpandedChange(true)}
             >
               {translate("chat.changedFiles.showAll", { count: files.length })}
@@ -432,96 +310,234 @@ const ClassicChangedFilesCard = memo(function ClassicChangedFilesCard(props: {
   );
 });
 
-export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
-  turnId: TurnId;
+const EMPTY_DIRECTORY_OVERRIDES: Record<string, boolean> = {};
+const VIRTUALIZE_AFTER_ROWS = 250;
+const ROW_OVERSCAN = 8;
+
+interface ChangedFileRow {
+  node: TurnDiffTreeNode;
+  depth: number;
+}
+
+export type ChangedFileContextMenuHandler = (filePath: string, event: MouseEvent) => void;
+
+export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
+  runId: RunId;
+  /** May be a prefix of the changed files; `totals` covers all of them. */
   files: ReadonlyArray<TurnDiffFileChange>;
+  totals: OrchestrationV2CheckpointFileTotals;
   allDirectoriesExpanded: boolean;
   resolvedTheme: "light" | "dark";
-  onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onToggleAllDirectories: () => void;
+  onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
+  classicPresentation?: {
+    expanded: boolean;
+    showCompactPreview: boolean;
+    onExpandedChange: (expanded: boolean) => void;
+  };
+  compactPresentation?: {
+    expanded: boolean;
+    motionEnabled?: boolean;
+    onExpandedChange: (expanded: boolean) => void;
+  };
   onFileContextMenu?: ChangedFileContextMenuHandler | undefined;
 }) {
   const {
+    runId,
     files,
+    totals,
     allDirectoriesExpanded,
-    onOpenTurnDiff,
     resolvedTheme,
-    turnId,
+    onToggleAllDirectories,
+    onOpenTurnDiff,
     onFileContextMenu,
   } = props;
-  const treeNodes = useMemo(() => buildTurnDiffTree(files), [files]);
-  const directoryPathsKey = useMemo(
-    () => collectDirectoryPaths(treeNodes).join("\u0000"),
-    [treeNodes],
+  const syncTimelineLayout = useSyncLayout();
+  const hiddenFileCount = totals.count - files.length;
+  const hasDirectories = files.some((file) => /[/\\]/.test(file.path));
+
+  if (props.classicPresentation) {
+    return <ClassicChangedFilesCard {...props} {...props.classicPresentation} />;
+  }
+
+  if (props.compactPresentation) {
+    return <CompactChangedFilesCard {...props} {...props.compactPresentation} />;
+  }
+
+  return (
+    <div
+      className="@container/changed-files mt-4 rounded-lg bg-secondary dark:bg-input/20"
+      data-changed-files-state="tree"
+    >
+      <div
+        data-changed-files-header=""
+        className="sticky top-2 z-10 flex items-center justify-between gap-2 rounded-t-lg bg-secondary px-3 py-2 dark:bg-background dark:bg-linear-to-b dark:from-input/20 dark:to-input/20"
+      >
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs font-medium text-foreground">
+          <span>
+            {totals.count.toLocaleString()} changed file{totals.count === 1 ? "" : "s"}
+          </span>
+          {hasNonZeroStat(totals) && (
+            <DiffStatLabel
+              additions={totals.additions}
+              deletions={totals.deletions}
+              layout="inline"
+              className="text-xs leading-4"
+            />
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {hasDirectories && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost-muted"
+                    aria-label={
+                      allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"
+                    }
+                    data-scroll-anchor-ignore
+                    onClick={() => {
+                      onToggleAllDirectories();
+                      syncTimelineLayout();
+                    }}
+                  />
+                }
+              >
+                <MorphIcon
+                  className="size-3"
+                  icon={allDirectoriesExpanded ? ChevronsDownUp : ChevronsUpDown}
+                />
+              </TooltipTrigger>
+              <TooltipPopup side="top">
+                {allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"}
+              </TooltipPopup>
+            </Tooltip>
+          )}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="ghost-muted"
+                  aria-label="Open diff"
+                  onClick={() => onOpenTurnDiff(runId, files[0]?.path)}
+                />
+              }
+            >
+              <FileDiffIcon className="size-3" />
+              <span className="hidden @[24rem]/changed-files:inline">Open diff</span>
+            </TooltipTrigger>
+            <TooltipPopup side="top">Open the full diff</TooltipPopup>
+          </Tooltip>
+        </div>
+      </div>
+      <ChangedFilesTree
+        key={`${runId}:${allDirectoriesExpanded}`}
+        runId={runId}
+        files={files}
+        allDirectoriesExpanded={allDirectoriesExpanded}
+        resolvedTheme={resolvedTheme}
+        onOpenTurnDiff={onOpenTurnDiff}
+        onFileContextMenu={onFileContextMenu}
+      />
+      {hiddenFileCount > 0 && (
+        <div className="px-3 pb-2">
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost-muted"
+            onClick={() => onOpenTurnDiff(runId, files[0]?.path)}
+          >
+            {hiddenFileCount.toLocaleString()} more file{hiddenFileCount === 1 ? "" : "s"} in the
+            full diff
+          </Button>
+        </div>
+      )}
+    </div>
   );
+});
+
+const ChangedFilesTree = memo(function ChangedFilesTree(props: {
+  runId: RunId;
+  files: ReadonlyArray<TurnDiffFileChange>;
+  allDirectoriesExpanded: boolean;
+  resolvedTheme: "light" | "dark";
+  onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
+  onFileContextMenu?: ChangedFileContextMenuHandler | undefined;
+}) {
+  const { files, allDirectoriesExpanded, onOpenTurnDiff, resolvedTheme, runId, onFileContextMenu } =
+    props;
+  // Place state before tree derivation to preserve its compiler cache.
+  const [directoryExpansionState, setDirectoryExpansionState] = useState<{
+    key: string | null;
+    overrides: Record<string, boolean>;
+  }>({ key: null, overrides: {} });
+  const syncTimelineLayout = useSyncLayout();
+  const treeNodes = buildTurnDiffTree(files);
+  const directoryPathsKey = collectDirectoryPaths(treeNodes).join("\u0000");
   const hasDirectoryNodes = directoryPathsKey.length > 0;
   const expansionStateKey = `${allDirectoriesExpanded ? "expanded" : "collapsed"}\u0000${directoryPathsKey}`;
-  const [directoryExpansionState, setDirectoryExpansionState] = useState<{
-    key: string;
-    overrides: Record<string, boolean>;
-  }>(() => ({
-    key: expansionStateKey,
-    overrides: {},
-  }));
   const expandedDirectories =
     directoryExpansionState.key === expansionStateKey
       ? directoryExpansionState.overrides
       : EMPTY_DIRECTORY_OVERRIDES;
 
-  const toggleDirectory = useCallback(
-    (pathValue: string) => {
-      setDirectoryExpansionState((current) => {
-        const nextOverrides = current.key === expansionStateKey ? current.overrides : {};
-        return {
-          key: expansionStateKey,
-          overrides: {
-            ...nextOverrides,
-            [pathValue]: !(nextOverrides[pathValue] ?? allDirectoriesExpanded),
-          },
-        };
-      });
-    },
-    [allDirectoriesExpanded, expansionStateKey],
-  );
+  const toggleDirectory = (pathValue: string) => {
+    setDirectoryExpansionState((current) => {
+      const nextOverrides = current.key === expansionStateKey ? current.overrides : {};
+      return {
+        key: expansionStateKey,
+        overrides: {
+          ...nextOverrides,
+          [pathValue]: !(nextOverrides[pathValue] ?? allDirectoriesExpanded),
+        },
+      };
+    });
+    // Measure before paint instead of waiting for LegendList's deferred shrink measurement.
+    syncTimelineLayout();
+  };
 
-  const renderTreeNode = (node: TurnDiffTreeNode, depth: number) => {
+  const rows = collectExpandedRows(treeNodes, expandedDirectories, allDirectoriesExpanded);
+  const virtualized = rows.length > VIRTUALIZE_AFTER_ROWS;
+
+  const renderRow = ({ node, depth }: ChangedFileRow) => {
     const leftPadding = 8 + depth * 14;
     if (node.kind === "directory") {
       const isExpanded = expandedDirectories[node.path] ?? allDirectoriesExpanded;
       return (
-        <div key={`dir:${node.path}`}>
-          <button
-            type="button"
-            data-scroll-anchor-ignore
-            aria-expanded={isExpanded}
-            className="group flex w-full items-center gap-2 rounded-md py-1.5 pr-2 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
-            style={{ paddingLeft: `${leftPadding}px` }}
-            onClick={() => toggleDirectory(node.path)}
-          >
-            <ChevronRightIcon
-              aria-hidden="true"
-              className={cn(
-                "size-3.5 shrink-0 text-muted-foreground/70 transition-transform group-hover:text-foreground/80",
-                isExpanded && "rotate-90",
-              )}
-            />
-            {isExpanded ? (
-              <FolderIcon className="size-3.5 shrink-0 text-muted-foreground/75" />
-            ) : (
-              <FolderClosedIcon className="size-3.5 shrink-0 text-muted-foreground/75" />
+        <button
+          key={`dir:${node.path}`}
+          type="button"
+          data-scroll-anchor-ignore
+          aria-expanded={isExpanded}
+          className="group flex h-7 w-full cursor-pointer items-center gap-2 rounded-md py-1.5 pr-2 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+          style={{ paddingLeft: `${leftPadding}px` }}
+          onClick={() => toggleDirectory(node.path)}
+        >
+          <ChevronRightIcon
+            aria-hidden="true"
+            className={cn(
+              "size-3.5 shrink-0 text-muted-foreground/70 transition-transform group-hover:text-foreground/80",
+              isExpanded && "rotate-90",
             )}
-            <span className="truncate font-mono text-2xs text-muted-foreground/90 group-hover:text-foreground/90">
-              {node.name}
+          />
+          <MorphIcon
+            className="size-3.5 shrink-0 text-muted-foreground/75"
+            icon={isExpanded ? Folder : FolderClosed}
+          />
+          <span className="truncate font-mono text-2xs text-muted-foreground/90 group-hover:text-foreground/90">
+            {node.name}
+          </span>
+          {hasNonZeroStat(node.stat) && (
+            <span className="ml-auto shrink-0 font-mono text-3xs tabular-nums">
+              <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />
             </span>
-            {hasNonZeroStat(node.stat) && (
-              <span className="ml-auto shrink-0 font-mono text-3xs tabular-nums">
-                <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />
-              </span>
-            )}
-          </button>
-          {isExpanded && (
-            <div>{node.children.map((childNode) => renderTreeNode(childNode, depth + 1))}</div>
           )}
-        </div>
+        </button>
       );
     }
 
@@ -529,9 +545,9 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
       <button
         key={`file:${node.path}`}
         type="button"
-        className="group flex w-full items-center gap-2 rounded-md py-1.5 pr-2 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+        className="group flex h-7 w-full cursor-pointer items-center gap-2 rounded-md py-1.5 pr-2 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
         style={{ paddingLeft: `${leftPadding}px` }}
-        onClick={() => onOpenTurnDiff(turnId, node.path)}
+        onClick={() => onOpenTurnDiff(runId, node.path)}
         onContextMenu={
           onFileContextMenu
             ? (event) => {
@@ -562,8 +578,149 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
     );
   };
 
-  return <div className="p-2">{treeNodes.map((node) => renderTreeNode(node, 0))}</div>;
+  return <ChangedFilesRows rows={rows} renderRow={renderRow} virtualized={virtualized} />;
 });
+
+function ChangedFilesRows({
+  rows,
+  renderRow,
+  virtualized,
+}: {
+  rows: ReadonlyArray<ChangedFileRow>;
+  renderRow: (row: ChangedFileRow) => ReactNode;
+  virtualized: boolean;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const rowSizeRef = useRef<HTMLDivElement>(null);
+  const [range, setRange] = useState({ start: 0, end: 40, rowHeight: 28 });
+  const [focusedPath, setFocusedPath] = useState<string | null>(null);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes scroll, window resize and ancestor resizes to compute the virtualized row range
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    const rowSize = rowSizeRef.current;
+    if (!virtualized || !container || !rowSize) return;
+
+    // The card is inside a virtualized timeline item, so its own scrollTop is always zero.
+    // Observe its ancestors too: streaming text and timeline layout can move the card.
+    const ancestors: HTMLElement[] = [container, rowSize];
+    let scrollElement: HTMLElement | null = null;
+    for (let parent = container.parentElement; parent; parent = parent.parentElement) {
+      ancestors.push(parent);
+      if (/auto|scroll/.test(getComputedStyle(parent).overflowY)) {
+        scrollElement = parent;
+        break;
+      }
+    }
+
+    const measure = () => {
+      const rowHeight = rowSize.getBoundingClientRect().height;
+      if (rowHeight <= 0) return;
+      const listTop = container.getBoundingClientRect().top;
+      const viewportTop = scrollElement
+        ? scrollElement.getBoundingClientRect().top + scrollElement.clientTop
+        : 0;
+      const viewportHeight = scrollElement?.clientHeight ?? document.documentElement.clientHeight;
+      const start = Math.max(
+        0,
+        Math.min(rows.length, Math.floor((viewportTop - listTop) / rowHeight) - ROW_OVERSCAN),
+      );
+      const end = Math.max(
+        start,
+        Math.min(
+          rows.length,
+          Math.ceil((viewportTop + viewportHeight - listTop) / rowHeight) + ROW_OVERSCAN,
+        ),
+      );
+      setRange((current) =>
+        current.start === start && current.end === end && current.rowHeight === rowHeight
+          ? current
+          : { start, end, rowHeight },
+      );
+    };
+    measure();
+    const scrollTarget = scrollElement ?? globalThis.window;
+    let frame = 0;
+    const onScroll = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        measure();
+      });
+    };
+    scrollTarget.addEventListener("scroll", onScroll, { passive: true });
+    globalThis.window.addEventListener("resize", onScroll);
+    const stopObserving = observeResize(ancestors, measure);
+    return () => {
+      scrollTarget.removeEventListener("scroll", onScroll);
+      globalThis.window.removeEventListener("resize", onScroll);
+      if (frame) cancelAnimationFrame(frame);
+      stopObserving();
+    };
+  }, [virtualized, rows.length]);
+
+  const focusedIndex =
+    focusedPath === null ? -1 : rows.findIndex((row) => row.node.path === focusedPath);
+  const start = virtualized ? range.start : 0;
+  const end = virtualized ? Math.min(rows.length, range.end) : rows.length;
+  const indices = Array.from({ length: Math.max(0, end - start) }, (_, index) => start + index);
+  // Keep keyboard focus on its row when mouse scrolling moves it outside the render window.
+  if (focusedIndex >= 0 && focusedIndex < start) indices.unshift(focusedIndex);
+  if (focusedIndex >= end) indices.push(focusedIndex);
+  return (
+    <div className="p-2">
+      <div
+        ref={containerRef}
+        className="relative"
+        style={virtualized ? { height: rows.length * range.rowHeight } : undefined}
+        onFocusCapture={(event) => {
+          const row = event.target.closest<HTMLElement>("[data-changed-file-row]");
+          setFocusedPath(row?.dataset.changedFileRow ?? null);
+        }}
+        onBlurCapture={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) setFocusedPath(null);
+        }}
+      >
+        {virtualized && (
+          <div
+            ref={rowSizeRef}
+            aria-hidden="true"
+            className="pointer-events-none invisible absolute h-7"
+          />
+        )}
+        {indices.map((index) => {
+          const row = rows[index]!;
+          return (
+            <div
+              key={`${row.node.kind}:${row.node.path}`}
+              data-changed-file-row={row.node.path}
+              className={virtualized ? "absolute inset-x-0" : undefined}
+              style={virtualized ? { top: index * range.rowHeight } : undefined}
+            >
+              {renderRow(row)}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function collectExpandedRows(
+  nodes: ReadonlyArray<TurnDiffTreeNode>,
+  overrides: Readonly<Record<string, boolean>>,
+  allDirectoriesExpanded: boolean,
+  depth = 0,
+  rows: ChangedFileRow[] = [],
+): ChangedFileRow[] {
+  for (const node of nodes) {
+    rows.push({ node, depth });
+    if (node.kind === "directory" && (overrides[node.path] ?? allDirectoriesExpanded)) {
+      collectExpandedRows(node.children, overrides, allDirectoriesExpanded, depth + 1, rows);
+    }
+  }
+  return rows;
+}
 
 function collectDirectoryPaths(nodes: ReadonlyArray<TurnDiffTreeNode>): string[] {
   const paths: string[] = [];

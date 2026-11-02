@@ -1,3 +1,4 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { CodexSettings, ProviderSetupError } from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as DateTime from "effect/DateTime";
@@ -7,18 +8,18 @@ import * as Option from "effect/Option";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as CodexClient from "effect-codex-app-server/client";
 import type * as CodexErrors from "effect-codex-app-server/errors";
 import type * as CodexRpc from "effect-codex-app-server/rpc";
 import type * as CodexSchema from "effect-codex-app-server/schema";
 
-import { expandHomePath } from "../../pathExpansion.ts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import type { CodexEffectiveRuntime } from "../CodexManagedRuntime.ts";
-import { readCodexThreadTurns } from "../Layers/CodexSessionRuntime.ts";
-import { buildCodexInitializeParams } from "../Layers/CodexProvider.ts";
-import { codexSessionAppServerArgs } from "../Layers/codexLaunchArgs.ts";
-import { resolveCodexLaunchArgs } from "../Layers/codexLaunchArgs.ts";
+import { readCodexThreadTurns } from "./CodexHistoryTurns.ts";
+import { buildCodexInitializeParams } from "../CodexProvider.ts";
+import { codexAppServerArgs } from "../codexLaunchArgs.ts";
+import { resolveCodexLaunchArgs } from "../codexLaunchArgs.ts";
 import { codexManagedFeatureArgs } from "../CodexProcessArgs.ts";
 import {
   ProviderHistorySyncError,
@@ -267,8 +268,8 @@ function transcriptFromThread(
 export function makeCodexHistorySyncAdapter<E>(
   input: { readonly sourceId: string } & CodexHistoryDataSource<E>,
 ): ProviderHistorySyncAdapter {
-  const list: ProviderHistorySyncAdapter["list"] = (request) =>
-    Effect.gen(function* () {
+  const list: ProviderHistorySyncAdapter["list"] = Effect.fn("CodexHistorySync.list")(
+    function* (request) {
       const items: ProviderHistoryListResult["items"][number][] = [];
       const visited = new Set<string>();
       let state = decodeCursor(request.cursor);
@@ -319,7 +320,8 @@ export function makeCodexHistorySyncAdapter<E>(
         ...(exhausted ? {} : { nextCursor: encodeCursor(state) }),
         ...(latestUpdatedAt ? { latestUpdatedAt } : {}),
       };
-    });
+    },
+  );
 
   const read: ProviderHistorySyncAdapter["read"] = ({ sessionId }) =>
     input.readThread({ threadId: sessionId, includeTurns: true }).pipe(
@@ -368,16 +370,16 @@ export const makeLiveCodexHistorySyncAdapter = Effect.fn("makeLiveCodexHistorySy
           const resolved = input.resolveRuntime ? yield* input.resolveRuntime : undefined;
           const config = resolved?.config ?? input.config;
           const resolvedHomePath = config.homePath.trim()
-            ? expandHomePath(config.homePath)
+            ? expandHomePath(config.homePath, yield* HostProcess.HomeDirectory)
             : undefined;
           const environment = {
             ...(resolved?.environment ?? input.environment),
             ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
           };
-          const appServerArgs = codexSessionAppServerArgs(
-            codexManagedFeatureArgs(),
-            resolveCodexLaunchArgs(config.launchArgs, environment),
-          );
+          const appServerArgs = [
+            ...codexAppServerArgs(resolveCodexLaunchArgs(config.launchArgs, environment)),
+            ...codexManagedFeatureArgs(),
+          ];
           const spawnCommand = yield* resolveSpawnCommand(config.binaryPath, appServerArgs, {
             env: environment,
             extendEnv: false,
@@ -405,8 +407,8 @@ export const makeLiveCodexHistorySyncAdapter = Effect.fn("makeLiveCodexHistorySy
       sourceId: input.sourceId,
       listThreads: (request) => withClient((client) => client.request("thread/list", request)),
       readThread: (request) =>
-        withClient((client) =>
-          Effect.gen(function* () {
+        withClient(
+          Effect.fn("CodexHistorySync.operation")(function* (client) {
             const response = yield* client.request("thread/read", {
               ...request,
               includeTurns: false,

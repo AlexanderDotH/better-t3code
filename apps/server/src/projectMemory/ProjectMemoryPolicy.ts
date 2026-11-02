@@ -24,12 +24,13 @@ export class ProjectMemoryPolicy extends Context.Service<
 export const layer = Layer.succeed(
   ProjectMemoryPolicy,
   ProjectMemoryPolicy.of({
-    resolve: (input) =>
-      Effect.succeed({
+    resolve: Effect.fn("resolve")(function (input) {
+      return Effect.succeed({
         actor:
           input.ownerThreadId !== undefined && input.ownerThreadId === input.threadId
             ? "root"
             : "child",
-      }),
+      });
+    }),
   }),
 );

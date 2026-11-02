@@ -45,6 +45,7 @@ export function useChatWidthMotion<T extends HTMLElement>(key: unknown, enabled:
   const ref = useRef<T>(null);
   const previous = useRef<number | null>(null);
   const animation = useRef<Animation | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the mounted width animation and cancel it when the page becomes hidden.
   useLayoutEffect(() => {
     const element = ref.current;
     if (!element) return;
@@ -73,8 +74,10 @@ export function useChatWidthMotion<T extends HTMLElement>(key: unknown, enabled:
     next.onfinish = () => {
       if (animation.current === next) animation.current = null;
     };
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- the content key triggers DOM width measurement after its text changes
   }, [key, enabled]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the mounted width animation and cancel it when the page becomes hidden.
   useEffect(() => {
     const reset = () => {
       animation.current?.cancel();

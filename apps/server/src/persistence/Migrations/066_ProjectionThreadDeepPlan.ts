@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -15,7 +15,10 @@ export default Effect.gen(function* () {
   const planColumns = yield* sql<{
     readonly name: string;
   }>`PRAGMA table_info(projection_thread_proposed_plans)`;
-  if (!planColumns.some((column) => column.name === "deep_plan_reference_json")) {
+  if (
+    planColumns.length > 0 &&
+    !planColumns.some((column) => column.name === "deep_plan_reference_json")
+  ) {
     yield* sql`ALTER TABLE projection_thread_proposed_plans ADD COLUMN deep_plan_reference_json TEXT`;
   }
 });

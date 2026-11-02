@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Git state tokens require synchronous SHA-256 fingerprints.
 import * as NodeCrypto from "node:crypto";
 
 import * as Clock from "effect/Clock";
@@ -80,7 +81,7 @@ function storageError(
   });
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const driver = yield* GitWorkbenchUndoDriver;
   const storage = yield* GitWorkbenchUndoStorage;
@@ -140,8 +141,8 @@ export const make = Effect.gen(function* () {
   });
 
   return GitWorkbenchUndoService.of({
-    capture: (input) => captureInternal(input, true),
-    list: (cwd) =>
+    capture: Effect.fn("GitWorkbenchUndoService.capture")((input) => captureInternal(input, true)),
+    list: Effect.fn("GitWorkbenchUndoService.list")((cwd) =>
       Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis;
         yield* enforceRetention(cwd, now);
@@ -149,7 +150,8 @@ export const make = Effect.gen(function* () {
           .list(cwd)
           .pipe(Effect.mapError((cause) => storageError("list", cwd, cause)));
       }),
-    restore: (input) =>
+    ),
+    restore: Effect.fn("GitWorkbenchUndoService.restore")((input) =>
       Effect.gen(function* () {
         const actualStateToken = yield* stateReader.readStateToken(input.cwd);
         if (actualStateToken !== input.expectedStateToken) {
@@ -188,6 +190,7 @@ export const make = Effect.gen(function* () {
         yield* driver.restore(target);
         yield* enforceRetention(input.cwd, now);
       }),
+    ),
   });
 });
 

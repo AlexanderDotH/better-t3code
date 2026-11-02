@@ -1,4 +1,4 @@
-import { GitQueuedWorkflowPlan } from "@t3tools/contracts";
+import { GitQueuedWorkflowPlan, RunId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 export const GitWorkbenchQueueScope = Schema.Struct({
@@ -20,6 +20,7 @@ export const GitWorkbenchQueueWorkflow = GitQueuedWorkflowPlan;
 export type GitWorkbenchQueueWorkflow = typeof GitWorkbenchQueueWorkflow.Type;
 
 export const GitWorkbenchQueuePreconditions = Schema.Struct({
+  capturedRunId: Schema.optional(RunId),
   stateToken: Schema.NonEmptyString,
   headOid: Schema.NullOr(Schema.NonEmptyString),
   refName: Schema.NullOr(Schema.NonEmptyString),

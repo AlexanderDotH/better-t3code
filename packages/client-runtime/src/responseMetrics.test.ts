@@ -1,13 +1,22 @@
 import {
-  EventId,
-  SubagentId,
-  TurnId,
-  type OrchestrationThreadActivity,
-  type ResponseMetricsSnapshot,
+  MessageId,
+  RunId,
+  RunAttemptId,
+  ProviderTurnId,
+  ProviderThreadId,
+  NodeId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import { v2Projection, v2Now } from "./state/orchestrationV2TestFixtures.ts";
+import type { UsageActivity } from "./responseMetrics.ts";
+import { EventId, SubagentId, TurnId, type ResponseMetricsSnapshot } from "@t3tools/contracts";
 import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { describe, expect, it } from "vite-plus/test";
-import { formatResponseMetrics, selectResponseMetrics } from "./responseMetrics.ts";
+import {
+  formatResponseMetrics,
+  selectResponseMetrics,
+  selectV2ResponseMetrics,
+} from "./responseMetrics.ts";
 
 const translator = createInterfaceTranslator({ language: "en", locale: "en-US" });
 const snapshot: ResponseMetricsSnapshot = {
@@ -24,7 +33,7 @@ const snapshot: ResponseMetricsSnapshot = {
   contextUsedTokens: 1300,
   contextLimitTokens: 2000,
 };
-function activity(turn: string, payload: unknown): OrchestrationThreadActivity {
+function activity(turn: string, payload: unknown): UsageActivity {
   return {
     id: EventId.make(turn),
     kind: "response.metrics",
@@ -161,4 +170,66 @@ describe("response metrics", () => {
     expect(french?.output.text).toBe("300 jetons");
     expect(french?.context.text).toBe("Contexte 1\u202f300 / 2\u202f000 (65\u00a0%)");
   });
+});
+
+it("uses the run's provider attempt and retains reported latency without borrowing runless usage", () => {
+  const attemptId = RunAttemptId.make("attempt");
+  const run = {
+    id: RunId.make("run"),
+    threadId: v2Projection.thread.id,
+    ordinal: 1,
+    providerInstanceId: v2Projection.thread.providerInstanceId,
+    modelSelection: v2Projection.thread.modelSelection,
+    providerThreadId: null,
+    userMessageId: MessageId.make("user"),
+    rootNodeId: null,
+    activeAttemptId: attemptId,
+    status: "completed" as const,
+    requestedAt: v2Now,
+    startedAt: v2Now,
+    completedAt: v2Now,
+    checkpointId: null,
+    contextHandoffId: null,
+  };
+  const providerTurn = {
+    id: ProviderTurnId.make("provider-turn"),
+    providerThreadId: ProviderThreadId.make("provider-thread"),
+    nodeId: NodeId.make("root"),
+    runAttemptId: attemptId,
+    nativeTurnRef: null,
+    ordinal: 1,
+    status: "completed" as const,
+    startedAt: v2Now,
+    completedAt: DateTime.add(v2Now, { seconds: 2 }),
+    responseMetrics: { timeToFirstTokenMs: 125 },
+    turnTokenUsage: {
+      usageScope: "main_agent" as const,
+      usageStatus: "complete" as const,
+      hasSubagents: false,
+      inputTokens: 10,
+      outputTokens: 20,
+    },
+  };
+  const result = selectV2ResponseMetrics({
+    runs: [run, { ...run, id: RunId.make("never-started"), activeAttemptId: null }],
+    providerTurns: [
+      providerTurn,
+      {
+        ...providerTurn,
+        id: ProviderTurnId.make("runless"),
+        runAttemptId: null,
+        responseMetrics: { timeToFirstTokenMs: 999 },
+      },
+    ],
+  });
+  expect([...result]).toEqual([
+    [
+      run.id,
+      {
+        responseDurationMs: 2000,
+        timeToFirstTokenMs: 125,
+        tokenUsage: providerTurn.turnTokenUsage,
+      },
+    ],
+  ]);
 });

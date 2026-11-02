@@ -1,6 +1,6 @@
 import type { ProjectEntityV1 } from "@t3tools/contracts";
-import { act, cloneElement, type ComponentProps, type ReactElement, type ReactNode } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { cloneElement, type ComponentProps, type ReactElement, type ReactNode } from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 vi.mock("../../hooks/useInterfaceTranslator", async () => {
@@ -60,7 +60,7 @@ const svg = {
 beforeEach(() => {
   captured = false;
   windowListeners.clear();
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+
   vi.stubGlobal("window", {
     matchMedia: () => ({ matches: true }),
     addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => {
@@ -86,7 +86,9 @@ beforeEach(() => {
   );
 });
 afterEach(async () => {
-  await act(() => renderer?.unmount());
+  await act(async () => {
+    await renderer?.unmount();
+  });
   vi.unstubAllGlobals();
 });
 
@@ -130,6 +132,7 @@ async function renderGraph() {
         selectedEntityId={null}
         onSelectEntity={select}
       />,
+
       {
         createNodeMock: (element) => (element.type === "svg" ? svg : null),
       },
@@ -140,44 +143,58 @@ async function renderGraph() {
 
 it("moves on the first window pointer movement after press and resets positions", async () => {
   const select = await renderGraph();
-  await act(() => renderer!.root.findByProps({ "aria-label": "Zoom in" }).props.onClick());
+  await act(async () => {
+    await renderer!.root.findByProps({ "aria-label": "Zoom in" }).props.onClick();
+  });
   const start = position();
-  await act(() => nodeButton().props.onPointerDown(pointer(100, 100)));
+  await act(async () => {
+    await nodeButton().props.onPointerDown(pointer(100, 100));
+  });
   const move = await dispatchWindowPointer("pointermove", 200, 160);
   expect(position().x - start.x).toBeCloseTo((100 * 0.5) / 1.25);
   expect(position().y - start.y).toBeCloseTo((60 * 0.5) / 1.25);
   expect(move.preventDefault).toHaveBeenCalledOnce();
   await dispatchWindowPointer("pointerup", 200, 160);
   expect(captured).toBe(false);
-  await act(() => nodeButton().props.onClick({ detail: 1 }));
+  await act(async () => {
+    await nodeButton().props.onClick({ detail: 1 });
+  });
   expect(select).not.toHaveBeenCalled();
-  await act(() => renderer!.root.findByProps({ "aria-label": "Reset layout" }).props.onClick());
+  await act(async () => {
+    await renderer!.root.findByProps({ "aria-label": "Reset layout" }).props.onClick();
+  });
   expect(position()).toEqual(start);
 });
 
 it("treats small pointer jitter as a click and supports keyboard positioning", async () => {
   const select = await renderGraph();
   const start = position();
-  await act(() => nodeButton().props.onPointerDown(pointer(100, 100)));
+  await act(async () => {
+    await nodeButton().props.onPointerDown(pointer(100, 100));
+  });
   await dispatchWindowPointer("pointermove", 102, 101);
   await dispatchWindowPointer("pointerup", 102, 101);
-  await act(() => nodeButton().props.onClick({ detail: 1 }));
+  await act(async () => {
+    await nodeButton().props.onClick({ detail: 1 });
+  });
   expect(select).toHaveBeenCalledWith("widget");
   expect(position()).toEqual(start);
-  await act(() =>
-    nodeButton().props.onKeyDown({
+  await act(async () => {
+    await nodeButton().props.onKeyDown({
       key: "ArrowRight",
       shiftKey: true,
       preventDefault: vi.fn(),
       stopPropagation: vi.fn(),
-    }),
-  );
+    });
+  });
   expect(position().x).toBe(start.x + 40);
 });
 
 it("ends a cancelled drag without leaving pointer capture or selecting the node", async () => {
   const select = await renderGraph();
-  await act(() => nodeButton().props.onPointerDown(pointer(100, 100)));
+  await act(async () => {
+    await nodeButton().props.onPointerDown(pointer(100, 100));
+  });
   await dispatchWindowPointer("pointermove", 150, 150);
   await dispatchWindowPointer("pointercancel", 150, 150);
   expect(captured).toBe(false);

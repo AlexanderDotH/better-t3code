@@ -17,7 +17,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 
-import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
+import { makeHistoryWriter } from "./harnessChatSync/HistoryWriter.ts";
 import { ProjectionHarnessChatSyncRepository } from "./persistence/Services/ProjectionHarnessChatSync.ts";
 import { harnessSyncError } from "./harnessChatSync/Errors.ts";
 import { makeHarnessHistoryDiscovery } from "./harnessChatSync/HistoryDiscovery.ts";
@@ -50,7 +50,7 @@ export interface HarnessChatSyncShape {
 }
 
 export const makeHarnessChatSync = Effect.fn("makeHarnessChatSync")(function* () {
-  const orchestration = yield* OrchestrationEngineService;
+  const writer = yield* makeHistoryWriter();
   const syncRepository = yield* ProjectionHarnessChatSyncRepository;
   const now = Effect.map(DateTime.now, DateTime.formatIso);
   const discovery = yield* makeHarnessHistoryDiscovery({ now });
@@ -121,8 +121,7 @@ export const makeHarnessChatSync = Effect.fn("makeHarnessChatSync")(function* ()
           let publicLink = existingLink ? toPublicHarnessChatLink(existingLink) : null;
           if (existingLink && existingLink.activity !== activity) {
             const dispatched = yield* Effect.result(
-              orchestration.dispatch({
-                type: "thread.harness-sync.link",
+              writer.linkHarness({
                 commandId: CommandId.make(
                   makeHarnessChatSyncId(
                     "status",

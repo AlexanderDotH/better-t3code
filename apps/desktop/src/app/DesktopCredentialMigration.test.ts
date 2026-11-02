@@ -12,7 +12,7 @@ import * as Schema from "effect/Schema";
 import { ConnectionCatalogDocument } from "@t3tools/client-runtime/platform";
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeCatalog = Schema.decodeSync(Schema.fromJsonString(ConnectionCatalogDocument));
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DesktopConfig from "./DesktopConfig.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLocalSecrets from "./DesktopLocalSecrets.ts";
@@ -90,7 +90,7 @@ function makeLayer(decrypt: (bytes: Uint8Array) => Promise<string>) {
     Layer.provideMerge(DesktopLocalSecrets.layer),
     Layer.provideMerge(environment),
     Layer.provideMerge(NodeServices.layer),
-    Layer.provide(Layer.succeed(HostProcessPlatform, "darwin")),
+    Layer.provide(Layer.succeed(HostProcess.Platform, "darwin")),
     Layer.provide(Layer.succeed(Migration.LegacySecretDecrypt, decrypt)),
   );
 }

@@ -88,11 +88,11 @@ function TokenUsageSource(props: {
       <div className="flex items-center gap-2">
         <span className={`size-1.5 shrink-0 rounded-full ${props.className}`} aria-hidden />
         <span className="flex-1 font-medium">{props.label}</span>
-        <span className="font-mono tabular-nums">{value === null ? "—" : number(value)}</span>
+        <span className="font-mono tabular-nums">{value === null ? "–" : number(value)}</span>
         <span className="w-9 text-right text-3xs text-muted-foreground tabular-nums">
           {value !== null && props.total > 0
             ? number(value / props.total, { style: "percent", maximumFractionDigits: 0 })
-            : "—"}
+            : "–"}
         </span>
       </div>
       {props.showBar ? (
@@ -107,12 +107,12 @@ function TokenUsageSource(props: {
         <span>
           {message(props.direction === "input" ? "chat.tokens.uncached" : "chat.tokens.response")}{" "}
           <span className="font-mono tabular-nums">
-            {value === null || subset === null ? "—" : number(value - subset)}
+            {value === null || subset === null ? "–" : number(value - subset)}
           </span>
         </span>
         <span>
           {message(props.direction === "input" ? "chat.tokens.cached" : "chat.tokens.reasoning")}{" "}
-          <span className="font-mono tabular-nums">{subset === null ? "—" : number(subset)}</span>
+          <span className="font-mono tabular-nums">{subset === null ? "–" : number(subset)}</span>
         </span>
       </div>
     </div>

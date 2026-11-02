@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { DeepPlanRun, EnvironmentId, ThreadId, TurnId } from "@t3tools/contracts";
+import { useStableCallback } from "../../hooks/useStableCallback";
+import { useEffect, useRef, useState } from "react";
+import type { DeepPlanRun, EnvironmentId, ThreadId, RunId } from "@t3tools/contracts";
 import {
   selectDeepPlanProgress,
   shouldAutoContinueDeepPlan,
@@ -15,8 +16,8 @@ export function DeepPlanRunControls({
   disabled,
   canContinue = false,
   connected = true,
-  threadId = run.threadId,
-  latestTurnId,
+  threadId: requestedThreadId,
+  latestRunId,
   onResume,
   onFinalValidation,
 }: {
@@ -26,10 +27,11 @@ export function DeepPlanRunControls({
   canContinue?: boolean;
   connected?: boolean;
   threadId?: ThreadId;
-  latestTurnId?: TurnId | null;
+  latestRunId?: RunId | null;
   onResume: (automatic?: boolean) => Promise<void>;
   onFinalValidation: () => Promise<void>;
 }) {
+  const threadId = requestedThreadId ?? run.threadId;
   const translate = useInterfaceTranslator().message;
   const [busy, setBusy] = useState(false);
   const [failure, setError] = useState<{
@@ -41,7 +43,7 @@ export function DeepPlanRunControls({
   const attemptedContinuation = useRef<string | null>(null);
   const progress = selectDeepPlanProgress(run);
   const autoContinue = shouldAutoContinueDeepPlan(run, threadId);
-  const continuationKey = JSON.stringify([threadId, latestTurnId]);
+  const continuationKey = JSON.stringify([threadId, latestRunId]);
   const resumable =
     ["paused", "failed", "blocked"].includes(run.phase) ||
     (canContinue && ["collecting", "planning", "implementing", "validating"].includes(run.phase));
@@ -50,26 +52,25 @@ export function DeepPlanRunControls({
     run.approval !== null &&
     run.finalValidation.status !== "passed" &&
     run.finalValidation.status !== "inProgress";
-  const perform = useCallback(
-    async (operation: () => Promise<void>) => {
-      if (disabled || inFlight.current) return;
-      inFlight.current = true;
-      setBusy(true);
-      setError(null);
-      try {
-        await operation();
-      } catch (cause) {
+  const perform = useStableCallback(async (operation: () => Promise<void>) => {
+    if (disabled || inFlight.current) return;
+    inFlight.current = true;
+    setBusy(true);
+    setError(null);
+    await Promise.resolve()
+      .then(operation)
+      .catch((cause: unknown) => {
         setError({
           revision: run.revision,
           message: cause instanceof Error ? cause.message : translate("chat.deepPlan.resumeFailed"),
         });
-      } finally {
+      })
+      .finally(() => {
         inFlight.current = false;
         setBusy(false);
-      }
-    },
-    [disabled, run.revision, translate],
-  );
+      });
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Resume persisted work when the connected thread becomes idle.
   useEffect(() => {
     if (!connected) {
       attemptedContinuation.current = null;

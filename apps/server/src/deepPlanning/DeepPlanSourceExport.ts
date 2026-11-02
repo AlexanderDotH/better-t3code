@@ -1,3 +1,4 @@
+import { deepPlanSourceProjectionCtes } from "./DeepPlanSourceProjection.ts";
 import {
   DeepPlanExportId,
   DeepPlanExportSourcesInput,
@@ -8,13 +9,13 @@ import {
   EnvironmentId,
   IsoDateTime,
   ProjectId,
-  ThreadForkState,
   ThreadId,
 } from "@t3tools/contracts";
+import { ThreadForkState } from "@t3tools/contracts/legacy";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { captureSourceRecords } from "./DeepPlanSourceCapture.ts";
 import {
@@ -59,6 +60,8 @@ const decodeThreads = Schema.decodeUnknownEffect(
       title: Schema.String,
       archivedAt: Schema.NullOr(IsoDateTime),
       fork: Schema.NullOr(Schema.fromJsonString(ThreadForkState)),
+      forkThreadId: Schema.NullOr(ThreadId),
+      legacyChild: Schema.BooleanFromBit,
       forkProjectId: Schema.NullOr(ProjectId),
     }),
   ),
@@ -97,13 +100,14 @@ export const writeSourceExport = Effect.fn("DeepPlanSources.writeSourceExport")(
     });
   const selection = new Set(job.input.threadIds);
   const found = new Set<string>();
+  let selectedLegacyChild = false;
   let afterThreadId = "";
   while (true) {
-    const rows = yield* sql`
-      SELECT t.thread_id AS "threadId", t.title, t.archived_at AS "archivedAt", t.fork_json AS fork,
-        (SELECT project_id FROM projection_threads WHERE thread_id = json_extract(t.fork_json, '$.provenance.sourceThreadId')) AS "forkProjectId"
-      FROM projection_threads t WHERE t.project_id = ${job.input.projectId} AND t.deleted_at IS NULL
-        AND t.thread_id > ${afterThreadId} AND (${job.input.includeArchived !== false ? 1 : 0} = 1 OR t.archived_at IS NULL)
+    const rows = yield* sql`WITH ${sql.literal(deepPlanSourceProjectionCtes)}
+      SELECT t.thread_id AS "threadId", t.title, t.archived_at AS "archivedAt", t.fork_json AS fork, t.fork_source_thread_id AS "forkThreadId", EXISTS (SELECT 1 FROM orchestration_v2_legacy_subagent_threads child WHERE child.thread_id = t.thread_id) AS "legacyChild",
+        (SELECT project_id FROM source_threads WHERE thread_id = t.fork_source_thread_id) AS "forkProjectId"
+      FROM source_threads t WHERE t.project_id = ${job.input.projectId} AND t.deleted_at IS NULL
+        AND t.thread_id > ${afterThreadId} AND ${job.input.threadIds === undefined ? sql`NOT EXISTS (SELECT 1 FROM orchestration_v2_legacy_subagent_threads child WHERE child.thread_id = t.thread_id)` : sql`1 = 1`} AND (${job.input.includeArchived !== false ? 1 : 0} = 1 OR t.archived_at IS NULL)
       ORDER BY t.thread_id LIMIT ${THREAD_PAGE_SIZE}
     `;
     const threads = yield* decodeThreads(rows);
@@ -112,6 +116,7 @@ export const writeSourceExport = Effect.fn("DeepPlanSources.writeSourceExport")(
       afterThreadId = thread.threadId;
       if (job.input.threadIds !== undefined && !selection.has(thread.threadId)) continue;
       found.add(thread.threadId);
+      selectedLegacyChild ||= thread.legacyChild;
       const origin = {
         environmentId: job.environmentId,
         projectId: job.input.projectId,
@@ -142,12 +147,12 @@ export const writeSourceExport = Effect.fn("DeepPlanSources.writeSourceExport")(
           contentHash,
           ...counts,
           forkOrigin:
-            thread.fork === null
+            thread.fork === null && thread.forkThreadId === null
               ? null
               : {
                   ...origin,
                   projectId: thread.forkProjectId ?? job.input.projectId,
-                  threadId: thread.fork.provenance.sourceThreadId,
+                  threadId: thread.forkThreadId ?? thread.fork!.provenance.sourceThreadId,
                 },
         },
       });
@@ -158,9 +163,11 @@ export const writeSourceExport = Effect.fn("DeepPlanSources.writeSourceExport")(
       code: "source-not-found",
       message: "A selected chat is deleted, unavailable, or outside the source project.",
     });
-  const counts = yield* sql<{ readonly count: number }>`
-    SELECT COUNT(*) AS count FROM projection_threads WHERE project_id = ${job.input.projectId} AND deleted_at IS NULL
+  const counts = yield* sql<{
+    readonly count: number;
+  }>`WITH ${sql.literal(deepPlanSourceProjectionCtes)}
+    SELECT COUNT(*) AS count FROM source_threads thread WHERE project_id = ${job.input.projectId} AND deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM orchestration_v2_legacy_subagent_threads child WHERE child.thread_id = thread.thread_id)
   `;
   yield* flush();
-  return { completeProject: found.size === counts[0]?.count };
+  return { completeProject: !selectedLegacyChild && found.size === counts[0]?.count };
 });

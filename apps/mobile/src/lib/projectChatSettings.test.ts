@@ -204,9 +204,9 @@ describe("mobile project chat settings", () => {
       modelSelection: { ...modelSelection, options: [{ id: "serviceTier", value: "invalid" }] },
     };
     const result = resolve({ remembered });
-    expect(result.modelSelection?.options).not.toContainEqual({
-      id: "serviceTier",
-      value: "invalid",
+    expect(result.modelSelection).toEqual({
+      instanceId: modelSelection.instanceId,
+      model: modelSelection.model,
     });
     expect(result.preferredSettings.modelSelection).toEqual(remembered.modelSelection);
     expect(

@@ -3,8 +3,6 @@ import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/envir
 import { SquarePenIcon, XIcon } from "lucide-react";
 import {
   memo,
-  useCallback,
-  useMemo,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -45,7 +43,7 @@ function sessionBelongsToProject(
 }
 
 export function useProjectHasDraftContent(projectRefs: readonly ScopedProjectRef[]): boolean {
-  const projectRefKeys = useMemo(() => projectRefKeySet(projectRefs), [projectRefs]);
+  const projectRefKeys = projectRefKeySet(projectRefs);
   return useComposerDraftStore((store) => {
     for (const [draftKey, session] of Object.entries(store.draftThreadsByThreadKey)) {
       if (
@@ -69,31 +67,25 @@ const LegacySidebarDraftRow = memo(function LegacySidebarDraftRow(props: {
   const { onNavigate, onDiscard } = props;
   const { draftId } = props.row;
   const preview = resolveLegacySidebarDraftPreview(props.row.composer);
-  const handleActivate = useCallback(() => onNavigate(draftId), [draftId, onNavigate]);
-  const handleKeyDown = useCallback(
-    (event: ReactKeyboardEvent) => {
-      if ((event.target as HTMLElement).closest("button")) {
-        return;
-      }
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        onNavigate(draftId);
-      }
-    },
-    [draftId, onNavigate],
-  );
-  const handleDiscard = useCallback(
-    (event: ReactMouseEvent<HTMLButtonElement>) => {
+  const handleActivate = () => onNavigate(draftId);
+  const handleKeyDown = (event: ReactKeyboardEvent) => {
+    if ((event.target as HTMLElement).closest("button")) {
+      return;
+    }
+    if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      event.stopPropagation();
-      onDiscard(draftId);
-    },
-    [draftId, onDiscard],
-  );
-  const stopPointerDownPropagation = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+      onNavigate(draftId);
+    }
+  };
+  const handleDiscard = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
     event.stopPropagation();
-  }, []);
-  const rowButtonRender = useMemo(() => <div role="button" tabIndex={0} />, []);
+    onDiscard(draftId);
+  };
+  const stopPointerDownPropagation = (event: React.PointerEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+  };
+  const rowButtonRender = <div role="button" tabIndex={0} />;
 
   return (
     <SidebarMenuSubItem className="group/classic-draft w-full" data-thread-selection-safe>
@@ -133,7 +125,7 @@ const LegacySidebarDraftRow = memo(function LegacySidebarDraftRow(props: {
                   type="button"
                   aria-label={translator.message("sidebar.thread.discardDraft")}
                   data-thread-selection-safe
-                  className="pointer-events-none absolute top-1/2 right-0.5 inline-flex h-6 min-w-6 -translate-y-1/2 cursor-pointer items-center justify-center rounded-md px-1 text-icon-muted opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring max-sm:pointer-events-auto max-sm:opacity-100 group-hover/classic-draft:pointer-events-auto group-hover/classic-draft:opacity-100 group-focus-within/classic-draft:pointer-events-auto group-focus-within/classic-draft:opacity-100"
+                  className="pointer-events-none absolute top-1/2 right-0.5 inline-flex h-6 min-w-6 -translate-y-1/2 cursor-pointer items-center justify-center rounded-md px-1 text-icon-muted opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring max-sm:pointer-events-auto max-sm:opacity-100 group-hover/classic-draft:pointer-events-auto group-hover/classic-draft:opacity-100 group-focus-within/classic-draft:pointer-events-auto group-focus-within/classic-draft:opacity-100"
                   onPointerDown={stopPointerDownPropagation}
                   onClick={handleDiscard}
                 >
@@ -157,7 +149,7 @@ export const LegacySidebarDraftRows = memo(function LegacySidebarDraftRows(props
   visible: boolean;
   onNavigate: (draftId: DraftId) => void;
 }) {
-  const projectRefKeys = useMemo(() => projectRefKeySet(props.projectRefs), [props.projectRefs]);
+  const projectRefKeys = projectRefKeySet(props.projectRefs);
   const sessionsByDraftId = useComposerDraftStore(
     useShallow((store) => {
       const sessions: Record<string, DraftSessionState> = {};
@@ -200,22 +192,15 @@ export const LegacySidebarDraftRows = memo(function LegacySidebarDraftRows(props
         : null;
     setFrozenActive({ draftId: props.activeDraftId, row });
   }
-  const rows = useMemo(
-    () =>
-      resolveLegacySidebarDraftRows({
-        sessionsByDraftId,
-        composersByDraftId,
-        activeDraftId: props.activeDraftId,
-        frozenActiveRow: frozenActive.row,
-      }),
-    [composersByDraftId, frozenActive.row, props.activeDraftId, sessionsByDraftId],
-  );
-  const handleDiscard = useCallback(
-    (draftId: DraftId) => {
-      clearDraftThread(draftId);
-    },
-    [clearDraftThread],
-  );
+  const rows = resolveLegacySidebarDraftRows({
+    sessionsByDraftId,
+    composersByDraftId,
+    activeDraftId: props.activeDraftId,
+    frozenActiveRow: frozenActive.row,
+  });
+  const handleDiscard = (draftId: DraftId) => {
+    clearDraftThread(draftId);
+  };
 
   if (!props.visible || rows.length === 0) {
     return null;

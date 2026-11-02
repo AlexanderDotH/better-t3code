@@ -91,54 +91,52 @@ describe("OpenAiCompatibleTextGeneration", () => {
     }),
   );
 
-  for (const driverKind of ["openaiCompatible", "lmstudio"] as const) {
-    it.effect(
-      `${driverKind} uses selected manual models and configured defaults without model discovery`,
-      () =>
-        Effect.gen(function* () {
-          const requests: Array<OpenAiCompatibleRoundRequest> = [];
-          const service = makeOpenAiCompatibleTextGeneration(SETTINGS, {
-            driverKind,
-            instanceId: INSTANCE,
-            transport: makeTransport(
-              [
-                '{"title":"  First title  ","needsRefinement":true}',
-                '{"title":"Second title"}',
-                '{"title":"Own default"}',
-              ],
-              requests,
-            ),
-          });
-          expect(yield* service.generateThreadTitle(INPUT)).toEqual({
-            title: "First title",
-            needsRefinement: true,
-          });
-          expect(
-            yield* service.generateThreadTitle({
-              ...INPUT,
-              modelSelection: { instanceId: INSTANCE, model: "" },
-            }),
-          ).toEqual({ title: "Second title" });
-          expect(
-            yield* service.generateThreadTitle({
-              ...INPUT,
-              modelSelection: {
-                instanceId: ProviderInstanceId.make("other-instance"),
-                model: "other-instance-model",
-              },
-            }),
-          ).toEqual({ title: "Own default" });
-          expect(requests.map((request) => request.model)).toEqual([
-            "selected-coder",
-            "configured-coder",
-            "configured-coder",
-          ]);
-          expect(requests[0]?.instructions).toContain("exactly one JSON object");
-          expect(requests[0]?.tools).toEqual([]);
-          expect(requests[0]).not.toHaveProperty("responseFormat");
-        }),
-    );
-  }
+  it.effect.each(["openaiCompatible", "lmstudio"] as const)(
+    "%s uses selected manual models and configured defaults without model discovery",
+    (driverKind) =>
+      Effect.gen(function* () {
+        const requests: Array<OpenAiCompatibleRoundRequest> = [];
+        const service = makeOpenAiCompatibleTextGeneration(SETTINGS, {
+          driverKind,
+          instanceId: INSTANCE,
+          transport: makeTransport(
+            [
+              '{"title":"  First title  ","needsRefinement":true}',
+              '{"title":"Second title"}',
+              '{"title":"Own default"}',
+            ],
+            requests,
+          ),
+        });
+        expect(yield* service.generateThreadTitle(INPUT)).toEqual({
+          title: "First title",
+          needsRefinement: true,
+        });
+        expect(
+          yield* service.generateThreadTitle({
+            ...INPUT,
+            modelSelection: { instanceId: INSTANCE, model: "" },
+          }),
+        ).toEqual({ title: "Second title" });
+        expect(
+          yield* service.generateThreadTitle({
+            ...INPUT,
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("other-instance"),
+              model: "other-instance-model",
+            },
+          }),
+        ).toEqual({ title: "Own default" });
+        expect(requests.map((request) => request.model)).toEqual([
+          "selected-coder",
+          "configured-coder",
+          "configured-coder",
+        ]);
+        expect(requests[0]?.instructions).toContain("exactly one JSON object");
+        expect(requests[0]?.tools).toEqual([]);
+        expect(requests[0]).not.toHaveProperty("responseFormat");
+      }),
+  );
 
   it.effect(
     "accepts a selected model without a default and blocks disabled or missing models",

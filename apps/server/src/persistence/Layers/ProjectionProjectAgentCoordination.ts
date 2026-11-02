@@ -11,8 +11,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import * as SqlSchema from "effect/unstable/sql/SqlSchema";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlSchema from "effect/sql/SqlSchema";
 
 import { toPersistenceDecodeError, toPersistenceSqlError } from "../Errors.ts";
 import {
@@ -258,11 +258,10 @@ const makeRepository = Effect.gen(function* () {
       ),
     );
 
-  const recordMessage: ProjectionProjectAgentCoordinationRepositoryShape["recordMessage"] = (
-    message: ProjectionProjectAgentRecordedMessage,
-  ) =>
-    Effect.gen(function* () {
-      yield* sql`
+  const recordMessage: ProjectionProjectAgentCoordinationRepositoryShape["recordMessage"] =
+    Effect.fn("ProjectionProjectAgentCoordinationRepository.recordMessage")(
+      function* (message: ProjectionProjectAgentRecordedMessage) {
+        yield* sql`
         INSERT INTO projection_project_agent_messages (
           sequence,
           message_id,
@@ -290,13 +289,13 @@ const makeRepository = Effect.gen(function* () {
           body = excluded.body,
           created_at = excluded.created_at
       `;
-      yield* sql`
+        yield* sql`
         DELETE FROM projection_project_agent_message_recipients
         WHERE message_sequence = ${message.sequence}
       `;
-      yield* Effect.forEach(
-        message.recipientThreadIds,
-        (recipientThreadId) => sql`
+        yield* Effect.forEach(
+          message.recipientThreadIds,
+          (recipientThreadId) => sql`
           INSERT INTO projection_project_agent_message_recipients (
             message_sequence,
             project_id,
@@ -305,9 +304,9 @@ const makeRepository = Effect.gen(function* () {
           VALUES (${message.sequence}, ${message.projectId}, ${recipientThreadId})
           ON CONFLICT (message_sequence, recipient_thread_id) DO NOTHING
         `,
-        { concurrency: 1, discard: true },
-      );
-      yield* sql`
+          { concurrency: 1, discard: true },
+        );
+        yield* sql`
         DELETE FROM projection_project_agent_messages
         WHERE project_id = ${message.projectId}
           AND sequence NOT IN (
@@ -318,7 +317,7 @@ const makeRepository = Effect.gen(function* () {
             LIMIT ${PROJECT_AGENT_MESSAGE_HISTORY_LIMIT}
           )
       `;
-    }).pipe(
+      },
       Effect.mapError(
         toPersistenceSqlError("ProjectionProjectAgentCoordinationRepository.recordMessage:query"),
       ),

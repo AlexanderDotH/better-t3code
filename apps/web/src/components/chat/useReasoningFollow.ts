@@ -1,5 +1,6 @@
+import { observeResize } from "~/lib/observeResize";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import {
-  useCallback,
   useLayoutEffect,
   useRef,
   type KeyboardEvent,
@@ -23,24 +24,24 @@ export function useReasoningFollow(
   const previousTopRef = useRef(0);
   const frameRef = useRef<number | null>(null);
 
-  const stopSmoothScroll = useCallback(() => {
+  const stopSmoothScroll = useStableCallback(() => {
     const viewport = viewportRef.current;
     if (scrollingRef.current && viewport) {
       viewport.scrollTo({ top: viewport.scrollTop, behavior: "instant" });
     }
     scrollingRef.current = false;
-  }, []);
+  });
 
-  const cancelFollow = useCallback(() => {
+  const cancelFollow = useStableCallback(() => {
     followingRef.current = false;
     stopSmoothScroll();
     if (frameRef.current !== null) {
       cancelAnimationFrame(frameRef.current);
       frameRef.current = null;
     }
-  }, [stopSmoothScroll]);
+  });
 
-  const scheduleFollow = useCallback(() => {
+  const scheduleFollow = useStableCallback(() => {
     if (!enabled || !followingRef.current || frameRef.current !== null) return;
     frameRef.current = requestAnimationFrame(() => {
       frameRef.current = null;
@@ -52,15 +53,15 @@ export function useReasoningFollow(
       if (Math.abs(viewport.scrollTop - top) <= BOTTOM_TOLERANCE_PX) return;
       viewport.scrollTo({ top, behavior: scrollingRef.current ? "smooth" : "instant" });
     });
-  }, [enabled, reducedMotion]);
+  });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep the reasoning viewport at its live edge when its content grows.
   useLayoutEffect(() => {
     const content = contentRef.current;
     if (!enabled || !content) return;
-    const observer = new ResizeObserver(scheduleFollow);
-    observer.observe(content);
+    const stopObserving = observeResize(content, scheduleFollow);
     return () => {
-      observer.disconnect();
+      stopObserving();
       if (frameRef.current !== null) {
         cancelAnimationFrame(frameRef.current);
         frameRef.current = null;
@@ -68,9 +69,10 @@ export function useReasoningFollow(
     };
   }, [enabled, scheduleFollow]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep the reasoning viewport at its live edge when its content grows.
   useLayoutEffect(scheduleFollow, [contentVersion, scheduleFollow]);
 
-  const onScroll = useCallback(() => {
+  const onScroll = useStableCallback(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
     const atBottom =
@@ -82,7 +84,7 @@ export function useReasoningFollow(
       cancelFollow();
     }
     previousTopRef.current = viewport.scrollTop;
-  }, [cancelFollow]);
+  });
 
   return {
     viewportRef,

@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Synchronous worker claim callbacks require UUIDs before entering the store transaction.
 import * as NodeCrypto from "node:crypto";
 
 import {
@@ -160,7 +161,7 @@ export const makeProjectIndexingRuntime = Effect.fn("makeProjectIndexingRuntime"
   }>();
   const owner = `project-index:${NodeCrypto.randomUUID()}`;
   const { bridge } = dependencies;
-  const getDefaults = dependencies.defaults?.get ?? Effect.succeed(undefined);
+  const getDefaults = dependencies.defaults?.get ?? Effect.undefined;
   const assertGloballyEnabled = Effect.gen(function* () {
     if ((yield* getDefaults)?.enabled === false)
       return yield* new ProjectIndexOperationError({
@@ -222,31 +223,30 @@ export const makeProjectIndexingRuntime = Effect.fn("makeProjectIndexingRuntime"
     workspaces.set(resolved.scope.scopeId, entry);
     return entry;
   });
-  const status = (entry: RuntimeWorkspace) =>
-    Effect.gen(function* () {
-      const current = withProjectIndexDefaults(
-        yield* readProjectIndexStatus(entry.store, entry.resolved.scope, entry.liveState),
-        yield* getDefaults,
-      );
-      return (
-        entry.watcherError === null
-          ? current
-          : {
-              ...current,
-              state: current.state === "disabled" ? "disabled" : "failed",
-              lastError: entry.watcherError,
-              gaps: [
-                {
-                  id: "runtime:watcher",
-                  kind: "incomplete-analysis" as const,
-                  message: entry.watcherError,
-                  retryable: true,
-                },
-                ...current.gaps,
-              ].slice(0, 200),
-            }
-      ) satisfies ProjectIndexStatusV1;
-    });
+  const status = Effect.fn("status")(function* (entry: RuntimeWorkspace) {
+    const current = withProjectIndexDefaults(
+      yield* readProjectIndexStatus(entry.store, entry.resolved.scope, entry.liveState),
+      yield* getDefaults,
+    );
+    return (
+      entry.watcherError === null
+        ? current
+        : {
+            ...current,
+            state: current.state === "disabled" ? "disabled" : "failed",
+            lastError: entry.watcherError,
+            gaps: [
+              {
+                id: "runtime:watcher",
+                kind: "incomplete-analysis" as const,
+                message: entry.watcherError,
+                retryable: true,
+              },
+              ...current.gaps,
+            ].slice(0, 200),
+          }
+    ) satisfies ProjectIndexStatusV1;
+  });
   const publish = Effect.fn("ProjectIndexRuntime.publish")(function* (entry: RuntimeWorkspace) {
     const current = yield* status(entry);
     yield* PubSub.publish(events, { type: "status", status: current });
@@ -360,13 +360,12 @@ export const makeProjectIndexingRuntime = Effect.fn("makeProjectIndexingRuntime"
             metadata,
             extraction,
             assertCurrent,
-            progress: (liveState, nextMetadata) =>
-              Effect.gen(function* () {
-                yield* assertCurrent;
-                entry.liveState = liveState;
-                entry.metadata = nextMetadata;
-                yield* publish(entry);
-              }),
+            progress: Effect.fn("progress")(function* (liveState, nextMetadata) {
+              yield* assertCurrent;
+              entry.liveState = liveState;
+              entry.metadata = nextMetadata;
+              yield* publish(entry);
+            }),
           }),
         );
         if (completed.sourceChangesPending) entry.pendingInvalidation ??= { invalidateAll: false };
@@ -918,35 +917,34 @@ export const makeProjectIndexingRuntime = Effect.fn("makeProjectIndexingRuntime"
     Effect.mapError(operationError),
     Effect.provideService(References.TracerEnabled, false),
   );
-  const review: ProjectIndexingRuntimeShape["review"] = (input) =>
-    Effect.gen(function* () {
-      const active = {
-        cancel: yield* Deferred.make<void>(),
-        done: yield* Deferred.make<void>(),
-      };
-      activeReviews.add(active);
-      return yield* Effect.raceFirst(
-        runReview(input),
-        Deferred.await(active.cancel).pipe(
-          Effect.andThen(
-            Effect.fail(
-              new ProjectIndexOperationError({
-                code: "cancelled",
-                message: "Project Indexing was disabled while code review was running.",
-                retryable: true,
-              }),
-            ),
+  const review: ProjectIndexingRuntimeShape["review"] = Effect.fn("review")(function* (input) {
+    const active = {
+      cancel: yield* Deferred.make<void>(),
+      done: yield* Deferred.make<void>(),
+    };
+    activeReviews.add(active);
+    return yield* Effect.raceFirst(
+      runReview(input),
+      Deferred.await(active.cancel).pipe(
+        Effect.andThen(
+          Effect.fail(
+            new ProjectIndexOperationError({
+              code: "cancelled",
+              message: "Project Indexing was disabled while code review was running.",
+              retryable: true,
+            }),
           ),
         ),
-      ).pipe(
-        Effect.ensuring(
-          Effect.gen(function* () {
-            activeReviews.delete(active);
-            yield* Deferred.succeed(active.done, undefined);
-          }),
-        ),
-      );
-    });
+      ),
+    ).pipe(
+      Effect.ensuring(
+        Effect.gen(function* () {
+          activeReviews.delete(active);
+          yield* Deferred.succeed(active.done, undefined);
+        }),
+      ),
+    );
+  });
   const subscribe: ProjectIndexingRuntimeShape["subscribe"] = Effect.fn(
     "ProjectIndexRuntime.subscribe",
   )(function* (input) {

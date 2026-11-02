@@ -1,21 +1,24 @@
-import { act, useRef } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { useRef } from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, expect, it, vi } from "vite-plus/test";
-
 import { useBetterT3SectionFocus } from "./useBetterT3SectionFocus";
-
 afterEach(() => vi.unstubAllGlobals());
-
 function SectionFocusProbe() {
   const contentRef = useRef<HTMLDivElement>(null);
   const { activeGroup } = useBetterT3SectionFocus(contentRef, "general");
   return <div ref={contentRef} data-active-group={activeGroup} />;
 }
-
 it("focuses the section occupying the most visible space and only updates row styles when focus or layout changes", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  const groupTops = { general: 180, appearance: 420, chat: 900 };
-  const groupHeights = { general: 200, appearance: 200, chat: 200 };
+  const groupTops = {
+    general: 180,
+    appearance: 420,
+    chat: 900,
+  };
+  const groupHeights = {
+    general: 200,
+    appearance: 200,
+    chat: 200,
+  };
   let navigationBottom = 160;
   let onScroll = () => {};
   let onResize = () => {};
@@ -27,24 +30,39 @@ it("focuses the section occupying the most visible space and only updates row st
     for (const frame of frames) frame(0);
   };
   const scrollArea = {
-    getBoundingClientRect: () => ({ top: 0, bottom: 800 }),
+    getBoundingClientRect: () => ({
+      top: 0,
+      bottom: 800,
+    }),
     addEventListener: (_event: string, listener: () => void) => {
       onScroll = listener;
     },
     removeEventListener: vi.fn(),
   };
-  const navigation = { getBoundingClientRect: () => ({ bottom: navigationBottom }) };
+  const navigation = {
+    getBoundingClientRect: () => ({
+      bottom: navigationBottom,
+    }),
+  };
   const groups = Object.keys(groupTops).map((id) => {
     const top = () => groupTops[id as keyof typeof groupTops];
     const values = new Map<string, string>();
     const item = {
       dataset: {},
       parentElement: null,
-      style: { setProperty: (key: string, value: string) => values.set(key, value) },
-      getBoundingClientRect: vi.fn(() => ({ top: top() + 40, bottom: top() + 100 })),
+      style: {
+        setProperty: (key: string, value: string) => values.set(key, value),
+      },
+      getBoundingClientRect: vi.fn(() => ({
+        top: top() + 40,
+        bottom: top() + 100,
+      })),
     };
     return {
-      dataset: { betterT3Group: id, focusActive: "" },
+      dataset: {
+        betterT3Group: id,
+        focusActive: "",
+      },
       getBoundingClientRect: () => ({
         top: top(),
         bottom: top() + groupHeights[id as keyof typeof groupHeights],
@@ -74,14 +92,35 @@ it("focuses the section occupying the most visible space and only updates row st
   vi.stubGlobal(
     "ResizeObserver",
     class {
-      constructor(callback: () => void) {
-        onResize = callback;
+      private readonly targets = new Set<Element>();
+      constructor(callback: ResizeObserverCallback) {
+        onResize = () =>
+          callback(
+            Array.from(
+              this.targets,
+              (target) =>
+                ({
+                  target,
+                  contentRect: {
+                    width: 1,
+                    height: 1,
+                  },
+                }) as ResizeObserverEntry,
+            ),
+            this as unknown as ResizeObserver,
+          );
       }
-      observe = vi.fn();
-      disconnect = vi.fn();
+      observe(target: Element) {
+        this.targets.add(target);
+      }
+      unobserve(target: Element) {
+        this.targets.delete(target);
+      }
+      disconnect() {
+        this.targets.clear();
+      }
     },
   );
-
   let renderer: ReactTestRenderer | undefined;
   try {
     await act(() => {
@@ -93,7 +132,11 @@ it("focuses the section occupying the most visible space and only updates row st
       });
     });
     await act(flushFrames);
-    expect(renderer!.root.findByProps({ "data-active-group": "general" })).toBeDefined();
+    expect(
+      renderer!.root.findByProps({
+        "data-active-group": "general",
+      }),
+    ).toBeDefined();
     expect(groups[0]!.dataset.focusActive).toBe("true");
     expect(groups[0]!.values.get("--settings-focus-opacity")).toBe("1");
     expect(Number(groups[2]!.values.get("--settings-focus-opacity"))).toBeLessThan(
@@ -107,14 +150,17 @@ it("focuses the section occupying the most visible space and only updates row st
     expect(groups.map((group) => group.item.getBoundingClientRect.mock.calls.length)).toEqual(
       measurements,
     );
-
     groupTops.general = -200;
     groupTops.appearance = 150;
     await act(() => {
       onScroll();
       flushFrames();
     });
-    expect(renderer!.root.findByProps({ "data-active-group": "appearance" })).toBeDefined();
+    expect(
+      renderer!.root.findByProps({
+        "data-active-group": "appearance",
+      }),
+    ).toBeDefined();
     expect(groups[0]!.dataset.focusActive).toBe("false");
     expect(groups[1]!.values.get("--settings-focus-opacity")).toBe("1");
 
@@ -125,7 +171,11 @@ it("focuses the section occupying the most visible space and only updates row st
       onScroll();
       flushFrames();
     });
-    expect(renderer!.root.findByProps({ "data-active-group": "chat" })).toBeDefined();
+    expect(
+      renderer!.root.findByProps({
+        "data-active-group": "chat",
+      }),
+    ).toBeDefined();
     expect(groups[1]!.dataset.focusActive).toBe("false");
     expect(groups[2]!.values.get("--settings-focus-opacity")).toBe("1");
 
@@ -137,9 +187,12 @@ it("focuses the section occupying the most visible space and only updates row st
       onScroll();
       flushFrames();
     });
-    expect(renderer!.root.findByProps({ "data-active-group": "appearance" })).toBeDefined();
+    expect(
+      renderer!.root.findByProps({
+        "data-active-group": "appearance",
+      }),
+    ).toBeDefined();
     expect(groups[1]!.values.get("--settings-focus-opacity")).toBe("1");
-
     groupTops.general = -200;
     groupTops.appearance = 100;
     groupHeights.appearance = 600;
@@ -148,7 +201,11 @@ it("focuses the section occupying the most visible space and only updates row st
       onScroll();
       flushFrames();
     });
-    expect(renderer!.root.findByProps({ "data-active-group": "appearance" })).toBeDefined();
+    expect(
+      renderer!.root.findByProps({
+        "data-active-group": "appearance",
+      }),
+    ).toBeDefined();
 
     // Content covered by the sticky navigation does not count toward visible space.
     navigationBottom = 640;
@@ -156,7 +213,11 @@ it("focuses the section occupying the most visible space and only updates row st
       onResize();
       flushFrames();
     });
-    expect(renderer!.root.findByProps({ "data-active-group": "chat" })).toBeDefined();
+    expect(
+      renderer!.root.findByProps({
+        "data-active-group": "chat",
+      }),
+    ).toBeDefined();
 
     // Equal visible areas keep the current selection stable.
     navigationBottom = 340;
@@ -167,9 +228,15 @@ it("focuses the section occupying the most visible space and only updates row st
       onResize();
       flushFrames();
     });
-    expect(renderer!.root.findByProps({ "data-active-group": "chat" })).toBeDefined();
+    expect(
+      renderer!.root.findByProps({
+        "data-active-group": "chat",
+      }),
+    ).toBeDefined();
     expect(groups[2]!.values.get("--settings-focus-opacity")).toBe("1");
   } finally {
-    await act(() => renderer?.unmount());
+    await act(async () => {
+      await renderer?.unmount();
+    });
   }
 });

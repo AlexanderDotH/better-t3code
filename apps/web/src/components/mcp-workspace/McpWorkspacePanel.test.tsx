@@ -1,5 +1,5 @@
-import { act, useState } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { useState } from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { expect, it, vi } from "vite-plus/test";
 import { McpWorkspacePanel, type McpWorkspaceSection } from "./McpWorkspacePanel";
 
@@ -22,7 +22,6 @@ function Workspace() {
 }
 
 it("keeps browsing separate from installed items and remembers the installed category", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   let renderer!: ReactTestRenderer;
   await act(async () => {
     renderer = create(<Workspace />);
@@ -33,7 +32,9 @@ it("keeps browsing separate from installed items and remembers the installed cat
       .findAllByType("button")
       .find((button) => button.props.children === label);
     expect(button).toBeDefined();
-    await act(async () => button!.props.onClick());
+    await act(async () => {
+      await button!.props.onClick();
+    });
   };
   try {
     expect(text()).toContain("My servers");
@@ -49,7 +50,9 @@ it("keeps browsing separate from installed items and remembers the installed cat
     expect(text()).toContain("Diagnostics");
     expect(text()).not.toContain("My skills");
   } finally {
-    await act(async () => renderer.unmount());
+    await act(async () => {
+      await renderer.unmount();
+    });
     vi.unstubAllGlobals();
   }
 });

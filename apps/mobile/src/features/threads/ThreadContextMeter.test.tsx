@@ -43,7 +43,7 @@ vi.mock("react-native-safe-area-context", () => ({
 }));
 vi.mock("react-native-svg", () => ({ default: "svg", Circle: "circle", Text: "svg-text" }));
 vi.mock("uniwind", () => ({ withUniwind: (component: unknown) => component }));
-vi.mock("../../components/AppText", () => ({ AppText: "text" }));
+vi.mock("../../components/ui/AppText", () => ({ AppText: "text" }));
 vi.mock("../../components/ContextSheetSize", () => ({ ContextSheetSize: () => null }));
 vi.mock("../../localization/useMobileInterfaceTranslator", () => ({
   useMobileInterfaceTranslator: () =>

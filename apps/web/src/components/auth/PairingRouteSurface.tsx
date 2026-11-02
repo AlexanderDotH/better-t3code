@@ -1,8 +1,9 @@
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { StandalonePage, StandalonePageHeader } from "../ui/standalone-page";
 import type { AuthSessionState } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
-import React, { startTransition, useEffect, useRef, useState, useCallback } from "react";
+import React, { startTransition, useEffect, useRef, useState } from "react";
 
 import { APP_DISPLAY_NAME } from "../../branding";
 import { connectPairing } from "../../connection/onboarding";
@@ -20,9 +21,9 @@ import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 export function PairingPendingSurface() {
   const translator = useInterfaceTranslator();
   return (
-    <StandalonePage tone="pairing">
+    <StandalonePage>
       <StandalonePageHeader
-        eyebrow={APP_DISPLAY_NAME}
+        context={APP_DISPLAY_NAME}
         title={<>{translator.message("pairing.pending.title")}</>}
         description={<>{translator.message("pairing.pending.description")}</>}
       />
@@ -40,46 +41,41 @@ export function PairingRouteSurface({
   onAuthenticated: () => void;
 }) {
   const translator = useInterfaceTranslator();
-  const autoPairTokenRef = useRef<string | null>(peekPairingTokenFromUrl());
-  const [credential, setCredential] = useState(() => autoPairTokenRef.current ?? "");
+  const [autoPairToken] = useState(peekPairingTokenFromUrl);
+  const [credential, setCredential] = useState(autoPairToken ?? "");
   const [errorMessage, setErrorMessage] = useState(initialErrorMessage ?? "");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const autoSubmitAttemptedRef = useRef(false);
 
-  const submitCredential = useCallback(
-    async (nextCredential: string) => {
-      setIsSubmitting(true);
-      setErrorMessage("");
+  const submitCredential = useStableCallback(async (nextCredential: string) => {
+    setIsSubmitting(true);
+    setErrorMessage("");
 
-      const submitError = await submitServerAuthCredential(nextCredential).then(
-        () => null,
-        (error) => pairingErrorMessage(error, translator.message("pairing.authenticationFailed")),
-      );
+    const submitError = await submitServerAuthCredential(nextCredential).then(
+      () => null,
+      (error) => pairingErrorMessage(error, translator.message("pairing.authenticationFailed")),
+    );
 
-      setIsSubmitting(false);
+    setIsSubmitting(false);
 
-      if (submitError) {
-        setErrorMessage(submitError);
-        return;
-      }
+    if (submitError) {
+      setErrorMessage(submitError);
+      return;
+    }
 
-      startTransition(() => {
-        onAuthenticated();
-      });
-    },
-    [onAuthenticated, translator],
-  );
+    startTransition(() => {
+      onAuthenticated();
+    });
+  });
 
-  const handleSubmit = useCallback(
-    async (event?: React.SubmitEvent<HTMLFormElement>) => {
-      event?.preventDefault();
-      await submitCredential(credential);
-    },
-    [submitCredential, credential],
-  );
+  const handleSubmit = useStableCallback(async (event?: React.SubmitEvent<HTMLFormElement>) => {
+    event?.preventDefault();
+    await submitCredential(credential);
+  });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- exchanges the one-use pairing token from the URL with the environment on mount
   useEffect(() => {
-    const token = autoPairTokenRef.current;
+    const token = autoPairToken;
     if (!token || autoSubmitAttemptedRef.current) {
       return;
     }
@@ -87,12 +83,12 @@ export function PairingRouteSurface({
     autoSubmitAttemptedRef.current = true;
     stripPairingTokenFromUrl();
     void submitCredential(token);
-  }, [submitCredential]);
+  }, [autoPairToken, submitCredential]);
 
   return (
-    <StandalonePage tone="pairing">
+    <StandalonePage>
       <StandalonePageHeader
-        eyebrow={APP_DISPLAY_NAME}
+        context={APP_DISPLAY_NAME}
         title={<>{translator.message("pairing.title")}</>}
         description={<>{translator.message(authGateMessageId(auth.bootstrapMethods))}</>}
       />
@@ -151,12 +147,12 @@ export function HostedPairingRouteSurface() {
   const connectPairingEnvironment = useAtomCommand(connectPairing, {
     reportFailure: false,
   });
-  const hostedPairingRequestRef = useRef(readHostedPairingRequest());
+  const [hostedPairingRequest] = useState(readHostedPairingRequest);
   const [status, setStatus] = useState<"pairing" | "paired" | "error">(() =>
-    hostedPairingRequestRef.current ? "pairing" : "error",
+    hostedPairingRequest ? "pairing" : "error",
   );
   const [message, setMessage] = useState<HostedPairingMessage>(() =>
-    hostedPairingRequestRef.current
+    hostedPairingRequest
       ? { key: "pairing.hosted.connecting" }
       : { key: "pairing.hosted.missingRequest" },
   );
@@ -164,8 +160,8 @@ export function HostedPairingRouteSurface() {
   const submitAttemptedRef = useRef(false);
   const tokenSubmittedRef = useRef(false);
 
-  const submitHostedPairingRequest = useCallback(async () => {
-    const request = hostedPairingRequestRef.current;
+  const submitHostedPairingRequest = useStableCallback(async () => {
+    const request = hostedPairingRequest;
 
     if (!request) {
       setStatus("error");
@@ -213,8 +209,9 @@ export function HostedPairingRouteSurface() {
         ),
       },
     });
-  }, [connectPairingEnvironment, translator]);
+  });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- exchanges the hosted URL pairing request once and strips its secret token from browser history
   useEffect(() => {
     if (submitAttemptedRef.current) {
       return;
@@ -225,12 +222,12 @@ export function HostedPairingRouteSurface() {
     void submitHostedPairingRequest();
   }, [submitHostedPairingRequest]);
 
-  const request = hostedPairingRequestRef.current;
+  const request = hostedPairingRequest;
 
   return (
-    <StandalonePage tone="pairing">
+    <StandalonePage>
       <StandalonePageHeader
-        eyebrow={APP_DISPLAY_NAME}
+        context={APP_DISPLAY_NAME}
         title={
           <>
             {translator.message(

@@ -1,5 +1,5 @@
-import { act, useLayoutEffect } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { useLayoutEffect } from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { useMacRightPanelWindowExpansion } from "./useMacRightPanelWindowExpansion";
@@ -41,12 +41,14 @@ beforeEach(() => {
       removeItem: (key: string) => items.delete(key),
     },
   });
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+
   vi.stubGlobal("window", browserWindow);
 });
 
 afterEach(async () => {
-  await act(() => renderer?.unmount());
+  await act(async () => {
+    await renderer?.unmount();
+  });
   vi.unstubAllGlobals();
 });
 
@@ -67,7 +69,9 @@ describe("macOS right-panel window expansion", () => {
     });
     expect(expansion.expanded).toBe(true);
 
-    await act(async () => renderer.update(<Panel open />));
+    await act(async () => {
+      await renderer.update(<Panel open />);
+    });
     expect(setWindowExpansion).toHaveBeenCalledTimes(1);
     await act(async () => {
       await expansion.toggle();
@@ -80,16 +84,22 @@ describe("macOS right-panel window expansion", () => {
     await act(async () => {
       renderer = create(<Panel open={false} />);
     });
-    await act(async () => renderer.update(<Panel open />));
+    await act(async () => {
+      await renderer.update(<Panel open />);
+    });
     expect(setWindowExpansion).not.toHaveBeenCalled();
 
     await act(async () => {
       await expansion.toggle();
     });
     expect(expansion.expanded).toBe(true);
-    await act(async () => renderer.update(<Panel open={false} />));
+    await act(async () => {
+      await renderer.update(<Panel open={false} />);
+    });
     expect(expansion.expanded).toBe(true);
-    await act(async () => renderer.update(<Panel open />));
+    await act(async () => {
+      await renderer.update(<Panel open />);
+    });
     expect(setWindowExpansion).toHaveBeenCalledTimes(1);
   });
 
@@ -100,7 +110,9 @@ describe("macOS right-panel window expansion", () => {
     await act(async () => {
       await expansion.toggle();
     });
-    await act(async () => renderer.unmount());
+    await act(async () => {
+      await renderer.unmount();
+    });
     await act(async () => {
       renderer = create(<Panel open={false} />);
     });
@@ -121,7 +133,9 @@ describe("macOS right-panel window expansion", () => {
     expect(expansion.expanded).toBe(true);
 
     mockSettings.sidebarPosition = "left";
-    await act(async () => renderer.update(<Panel open />));
+    await act(async () => {
+      await renderer.update(<Panel open />);
+    });
     await act(async () => {
       await expansion.toggle();
     });
@@ -152,7 +166,9 @@ describe("macOS right-panel window expansion", () => {
     await act(async () => {
       await expansion.prepareOpen();
     });
-    await act(async () => expansion.cancelPreparedOpen());
+    await act(async () => {
+      await expansion.cancelPreparedOpen();
+    });
     expect(setWindowExpansion).toHaveBeenLastCalledWith({ panelWidth: null, direction: "right" });
     expect(expansion.expanded).toBe(false);
   });

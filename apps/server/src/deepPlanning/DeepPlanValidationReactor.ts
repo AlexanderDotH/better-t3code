@@ -1,17 +1,22 @@
-import type { DeepPlanRun, OrchestrationEvent, ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  type DeepPlanRun,
+  type OrchestrationV2StoredEvent,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Context from "effect/Context";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionThreadRepository } from "../persistence/Services/ProjectionThreads.ts";
+import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
+import { canContinueDeepPlan, deepPlanContinuationCommand } from "./DeepPlanContinuation.ts";
+import { DeepPlanWorkflow } from "./DeepPlanWorkflow.ts";
 import { forkParked, ServerActivation } from "../serverActivation.ts";
 
 export class DeepPlanValidationDispatchError extends Schema.TaggedError<DeepPlanValidationDispatchError>()(
@@ -63,8 +68,8 @@ function awaitsFinalValidation(run: DeepPlanRun): boolean {
 }
 
 const make = Effect.gen(function* () {
-  const engine = yield* OrchestrationEngineService;
-  const threads = yield* ProjectionThreadRepository;
+  const engine = yield* OrchestratorV2;
+  const workflow = yield* DeepPlanWorkflow;
   const dispatcher = yield* DeepPlanValidationDispatcher;
   const activation = yield* ServerActivation;
   const receipts = yield* SubscriptionRef.make<DeepPlanValidationReceipt | null>(null);
@@ -75,26 +80,43 @@ const make = Effect.gen(function* () {
 
   const process = Effect.fn("DeepPlanValidationReactor.process")(function* (threadId: ThreadId) {
     if (activation !== undefined) yield* activation;
-    const thread = yield* threads.getById({ threadId });
-    const run =
-      Option.isSome(thread) && thread.value.deletedAt === null && thread.value.archivedAt === null
-        ? thread.value.deepPlan
-        : null;
-    if (run == null || !awaitsFinalValidation(run)) {
+    const run = yield* workflow.getRun({ threadId });
+    if (run == null || (!awaitsFinalValidation(run) && !canContinueDeepPlan(run, "plan"))) {
       pendingRuns.delete(threadId);
+      return;
+    }
+    if (!awaitsFinalValidation(run)) {
+      pendingRuns.set(threadId, run);
+      const target = yield* engine.getThreadShell(run.approval?.implementationThreadId ?? threadId);
+      if (
+        target === null ||
+        target.deletedAt !== null ||
+        target.archivedAt !== null ||
+        target.activeRunId !== null ||
+        target.pendingRuntimeRequest !== null ||
+        !canContinueDeepPlan(run, target.interactionMode)
+      )
+        return;
+      const commandId = CommandId.make(
+        `deep-plan:${run.id}:continue:${target.latestRunId ?? "initial"}:${run.revision}`,
+      );
+      yield* engine.dispatch(
+        deepPlanContinuationCommand({ run, target, commandId, createdAt: run.updatedAt }),
+      );
       return;
     }
     pendingRuns.set(threadId, run);
     const requestId = finalValidationRequestId(run);
     if (dispatched.has(requestId)) return;
     const result = yield* dispatcher.dispatch(run, requestId).pipe(
-      Effect.catchTag("DeepPlanValidationDispatchError", (error) =>
-        Effect.logWarning("Deep Plan final validation dispatch failed", {
-          threadId,
-          runId: run.id,
-          message: error.message,
-        }).pipe(Effect.as("failed" as const)),
-      ),
+      Effect.catchTags({
+        DeepPlanValidationDispatchError: (error) =>
+          Effect.logWarning("Deep Plan final validation dispatch failed", {
+            threadId,
+            runId: run.id,
+            message: error.message,
+          }).pipe(Effect.as("failed" as const)),
+      }),
     );
     if (result === "dispatched") dispatched.add(requestId);
     const receipt: DeepPlanValidationReceipt = {
@@ -124,50 +146,64 @@ const make = Effect.gen(function* () {
     SubscriptionRef.update(seenSequence, (seen) => Math.max(seen, sequence));
 
   const consume = Effect.fn("DeepPlanValidationReactor.consume")(function* (
-    event: OrchestrationEvent,
+    stored: OrchestrationV2StoredEvent,
   ) {
+    const event = stored.event;
     if (event.type === "thread.deep-plan-updated") {
-      if (awaitsFinalValidation(event.payload.run)) {
-        pendingRuns.set(event.payload.threadId, event.payload.run);
-      } else {
-        pendingRuns.delete(event.payload.threadId);
-      }
-      yield* worker.enqueue(event.payload.threadId);
-    } else if (
-      event.type === "thread.session-set" ||
-      event.type === "thread.turn-diff-completed" ||
-      event.type === "thread.turn-abort-settled"
-    ) {
+      const run = event.payload.deepPlan;
+      if (run && (awaitsFinalValidation(run) || canContinueDeepPlan(run, "plan")))
+        pendingRuns.set(event.threadId, run);
+      else pendingRuns.delete(event.threadId);
+      yield* worker.enqueue(event.threadId);
+    } else if (event.type === "run.updated") {
       for (const [threadId, run] of pendingRuns) {
-        if (run.approval?.implementationThreadId === event.payload.threadId) {
-          yield* worker.enqueue(threadId);
+        if ((run.approval?.implementationThreadId ?? threadId) !== event.threadId) continue;
+        if (event.payload.status === "completed") yield* worker.enqueue(threadId);
+        else if (["failed", "cancelled", "interrupted"].includes(event.payload.status)) {
+          yield* workflow.withRunLock(
+            run.id,
+            Effect.gen(function* () {
+              const current = yield* workflow.getRun({ threadId, runId: run.id });
+              if (!current || !canContinueDeepPlan(current, "plan")) return;
+              yield* workflow.update({
+                threadId,
+                runId: current.id,
+                expectedRevision: current.revision,
+                operationId: `terminal:${event.payload.id}`,
+                mutation: {
+                  type: "pause",
+                  reason: `The provider run ${event.payload.status}. Resume the Deep Plan when ready.`,
+                },
+              });
+            }),
+          );
         }
       }
+    } else if (
+      event.type === "thread.interaction-mode-updated" ||
+      event.type === "thread.deleted" ||
+      event.type === "thread.archived"
+    ) {
+      for (const [threadId, run] of pendingRuns)
+        if ((run.approval?.implementationThreadId ?? threadId) === event.threadId)
+          yield* worker.enqueue(threadId);
     }
-    yield* noteSeen(event.sequence);
+    yield* noteSeen(stored.sequence);
   });
 
   return DeepPlanValidationReactor.of({
     start: Effect.fn("DeepPlanValidationReactor.start")(function* () {
       if (started) return;
       started = true;
-      const events = yield* engine.subscribeDomainEvents;
-      yield* forkParked(Stream.runForEach(events, consume));
-      const runs = yield* threads
-        .listDeepPlans()
-        .pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("Deep Plan validation startup recovery failed", { error }).pipe(
-              Effect.as([]),
-            ),
-          ),
-        );
+      yield* forkParked(Stream.runForEach(engine.streamStoredEvents, consume));
+      const snapshot = yield* engine.getShellSnapshot().pipe(Effect.orDie);
+      const runs = snapshot.threads.flatMap((thread) => (thread.deepPlan ? [thread.deepPlan] : []));
       for (const run of runs) {
-        if (!awaitsFinalValidation(run)) continue;
+        if (!awaitsFinalValidation(run) && !canContinueDeepPlan(run, "plan")) continue;
         pendingRuns.set(run.threadId, run);
         yield* worker.enqueue(run.threadId);
       }
-      yield* engine.latestSequence.pipe(Effect.flatMap(noteSeen));
+      yield* noteSeen(snapshot.snapshotSequence);
     }),
     drainThrough: Effect.fn("DeepPlanValidationReactor.drainThrough")(function* (sequence) {
       yield* SubscriptionRef.changes(seenSequence).pipe(

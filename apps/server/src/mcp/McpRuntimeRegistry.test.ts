@@ -1,3 +1,6 @@
+import * as Scope from "effect/Scope";
+import * as Exit from "effect/Exit";
+import { ServerSettingsService } from "../serverSettings.ts";
 import {
   EventId,
   McpRuntimeServerKey,
@@ -21,9 +24,8 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import { ProviderAdapterRequestError, type ProviderAdapterError } from "../provider/Errors.ts";
-import type { ProviderAdapterShape } from "../provider/Services/ProviderAdapter.ts";
-import * as ProviderAdapterRegistry from "../provider/Services/ProviderAdapterRegistry.ts";
-import { makeAdapterRegistryMock } from "../provider/testUtils/providerAdapterRegistryMock.ts";
+import type { ProviderAdapterShape } from "./McpRuntimeAdapters.ts";
+import { McpRuntimeAdapters } from "./McpRuntimeAdapters.ts";
 import {
   makeMcpRuntimeRegistry,
   McpRuntimeRegistry,
@@ -113,10 +115,8 @@ function makeAdapter(
     >["applyConfiguration"];
   } = {},
 ): ProviderAdapterShape<ProviderAdapterError> {
-  const unsupported = () => Effect.die("not used by MCP registry tests");
   return {
-    provider: driver,
-    capabilities: { sessionModelSwitch: "unsupported", mcp: "sessionConfig" },
+    capabilities: { mcp: "sessionConfig" },
     mcpRuntime: {
       getSnapshot,
       ...(options.getServerDetails === undefined
@@ -127,41 +127,20 @@ function makeAdapter(
         ? {}
         : { applyConfiguration: options.applyConfiguration }),
     },
-    startSession: unsupported,
-    sendTurn: unsupported,
-    interruptTurn: unsupported,
-    forceStopSession: unsupported,
-    respondToRequest: unsupported,
-    respondToUserInput: unsupported,
-    stopSession: unsupported,
-    listSessions: () => Effect.succeed([]),
-    hasSession: () => Effect.succeed(false),
-    readThread: unsupported,
-    rollbackThread: unsupported,
-    stopAll: () => Effect.void,
-    streamEvents: Stream.empty,
   };
 }
 
 function registryLayer(adapter: ProviderAdapterShape<ProviderAdapterError>) {
   return McpRuntimeRegistryLive.pipe(
     Layer.provide(
-      Layer.succeed(
-        ProviderAdapterRegistry.ProviderAdapterRegistry,
-        makeAdapterRegistryMock({ [driver]: adapter }),
-      ),
+      Layer.succeed(McpRuntimeAdapters, { getByInstance: () => Effect.succeed(adapter) }),
     ),
   );
 }
 
 function makeRegistry(adapter: ProviderAdapterShape<ProviderAdapterError>) {
   return makeMcpRuntimeRegistry().pipe(
-    Effect.provide(
-      Layer.succeed(
-        ProviderAdapterRegistry.ProviderAdapterRegistry,
-        makeAdapterRegistryMock({ [driver]: adapter }),
-      ),
-    ),
+    Effect.provideService(McpRuntimeAdapters, { getByInstance: () => Effect.succeed(adapter) }),
   );
 }
 
@@ -967,8 +946,84 @@ describe("McpRuntimeRegistry", () => {
       const capability = yield* registry.providerCapability(providerInstanceId);
 
       expect(capability).toBe("nativeConfig");
+      const configured = yield* makeMcpRuntimeRegistry().pipe(
+        Effect.provide(
+          ServerSettingsService.layerTest({
+            providerInstances: { [providerInstanceId]: { driver, enabled: true, config: {} } },
+          }),
+        ),
+      );
+      expect(yield* configured.providerCapability(providerInstanceId)).toBe("sessionConfig");
     }).pipe(Effect.provide(registryLayer(adapter)));
   });
+
+  it.effect(
+    "resolves late MCP runtime adapters for refresh, inventory, and actions without losing replacements",
+    () =>
+      Effect.gen(function* () {
+        const registry = yield* makeMcpRuntimeRegistry();
+        const target = { providerInstanceId, threadId, runtimeSessionId: firstRuntimeSessionId };
+        yield* registry.registerSession(session(firstRuntimeSessionId));
+        expect((yield* registry.refresh(target)).servers).toEqual([]);
+        const firstOwner = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+          Scope.close(scope, Exit.void),
+        );
+        const replacementOwner = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+          Scope.close(scope, Exit.void),
+        );
+        let connected = false;
+        let reconnects = 0;
+        const nativeServer = () =>
+          runtimeServer(firstRuntimeSessionId, {
+            state: connected ? "connected" : "auth-required",
+            authState: connected ? "authenticated" : "required",
+          });
+        const adapter = makeAdapter(() => Effect.succeed([nativeServer()]), {
+          getServerDetails: () =>
+            Effect.succeed({
+              server: nativeServer(),
+              tools: [{ name: "search", readOnly: true }],
+              resources: [],
+              templates: [],
+            }),
+          runAction: (input) =>
+            Effect.sync(() => {
+              reconnects += 1;
+              connected = true;
+              return { accepted: true, action: input.action, providerKey: input.providerKey };
+            }),
+        });
+        yield* registry
+          .registerAdapter(providerInstanceId, adapter)
+          .pipe(Effect.provideService(Scope.Scope, firstOwner));
+        expect((yield* registry.refresh(target)).servers[0]?.state).toBe("auth-required");
+        const details = yield* registry.getServerDetails({ ...target, providerKey });
+        expect(details.tools).toEqual([{ name: "search", readOnly: true }]);
+        expect(
+          yield* registry.runAction({ ...target, providerKey, action: "reconnect" }),
+        ).toMatchObject({ accepted: true });
+        expect(reconnects).toBe(1);
+        expect((yield* registry.snapshot(target)).servers[0]?.state).toBe("connected");
+        const replacement = makeAdapter(() =>
+          Effect.succeed([runtimeServer(firstRuntimeSessionId, { name: "Replacement" })]),
+        );
+        yield* registry
+          .registerAdapter(providerInstanceId, replacement)
+          .pipe(Effect.provideService(Scope.Scope, replacementOwner));
+        yield* Scope.close(firstOwner, Exit.void);
+        expect((yield* registry.refresh(target)).servers[0]?.name).toBe("Replacement");
+        const renewedOwner = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+          Scope.close(scope, Exit.void),
+        );
+        yield* registry
+          .registerAdapter(providerInstanceId, replacement)
+          .pipe(Effect.provideService(Scope.Scope, renewedOwner));
+        yield* Scope.close(replacementOwner, Exit.void);
+        expect((yield* registry.refresh(target)).servers[0]?.name).toBe("Replacement");
+        yield* Scope.close(renewedOwner, Exit.void);
+        expect((yield* registry.refresh(target)).servers).toEqual([]);
+      }),
+  );
 
   it.effect(
     "reconciles and verifies the complete desired managed server set once per runtime",

@@ -6,7 +6,7 @@ import {
 import { useCallback, useMemo, useState } from "react";
 import { Alert, Pressable, View } from "react-native";
 
-import { AppText as Text } from "../../../components/AppText";
+import { AppText as Text } from "../../../components/ui/AppText";
 import { gitWorkbenchEnvironment } from "../../../state/git-workbench";
 import { useAtomCommand } from "../../../state/use-atom-command";
 import { useEnvironmentQuery } from "../../../state/query";
@@ -58,6 +58,7 @@ function WorkbenchButton(props: {
 
 export function GitWorkbenchSection(props: {
   readonly enabled: boolean;
+  readonly canWrite: boolean;
   readonly environmentId: EnvironmentId;
   readonly cwd: string | null;
 }) {
@@ -102,7 +103,7 @@ export function GitWorkbenchSection(props: {
 
   const apply = useCallback(
     async (action: "stage" | "unstage" | "discard") => {
-      if (!props.cwd || !selected || !snapshot || !diff.data || applying) return;
+      if (!props.canWrite || !props.cwd || !selected || !snapshot || !diff.data || applying) return;
       if (
         diff.data.path !== selected.file.path ||
         diff.data.source !== selected.source ||
@@ -147,6 +148,7 @@ export function GitWorkbenchSection(props: {
       applySelection,
       applying,
       diff,
+      props.canWrite,
       props.cwd,
       props.environmentId,
       refreshWorkbench,
@@ -299,20 +301,24 @@ export function GitWorkbenchSection(props: {
                     <View className="flex-row flex-wrap gap-2">
                       {row.source === "staged" ? (
                         <WorkbenchButton
-                          disabled={!diffReady || applying}
+                          disabled={!props.canWrite || !diffReady || applying}
                           label={translator.message("mobile.git.unstage")}
                           onPress={() => void apply("unstage")}
                         />
                       ) : (
                         <>
                           <WorkbenchButton
-                            disabled={!diffReady || applying || row.file.conflicted}
+                            disabled={
+                              !props.canWrite || !diffReady || applying || row.file.conflicted
+                            }
                             label={translator.message("mobile.git.stage")}
                             onPress={() => void apply("stage")}
                           />
                           <WorkbenchButton
                             destructive
-                            disabled={!diffReady || applying || row.file.conflicted}
+                            disabled={
+                              !props.canWrite || !diffReady || applying || row.file.conflicted
+                            }
                             label={translator.message("mobile.git.discard")}
                             onPress={() =>
                               Alert.alert(

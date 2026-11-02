@@ -1,6 +1,6 @@
 import type { McpRuntimeAction, ProviderDriverKind } from "@t3tools/contracts";
 import type { CSSProperties } from "react";
-import { useEffect, useRef, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ChevronDownIcon,
   BracesIcon,
@@ -281,6 +281,7 @@ function RuntimeServerRow(props: {
     if (props.initiallyOpen) setOpen(true);
   }
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- requests provider-native MCP details when a deep link initially opens this runtime server
   useEffect(() => {
     if (
       !props.initiallyOpen ||
@@ -434,7 +435,7 @@ function ProviderTabs(props: {
                     aria-selected={selected}
                     style={accentStyle}
                     className={cn(
-                      "relative flex h-9 max-w-64 items-center gap-2 rounded-lg border px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      "relative flex h-9 max-w-64 items-center gap-2 rounded-lg border px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                       selected
                         ? "mcp-provider-active-tab text-foreground"
                         : "border-transparent text-muted-foreground hover:border-border/60 hover:bg-muted/50 hover:text-foreground",
@@ -537,6 +538,7 @@ function ConfiguredServerRow(props: {
     if (props.focused) setOpen(true);
   }
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- requests provider-native MCP details when a deep link focuses this configured server
   useEffect(() => {
     if (
       !props.focused ||
@@ -674,19 +676,12 @@ export function McpProviderWorkspace(props: McpProviderWorkspaceProps) {
     (provider) => provider.instanceId === props.selectedProviderId,
   );
   const selectedContext = props.contexts.find((context) => context.id === props.selectedContextId);
-  const managedRuntimeById = useMemo(
-    () =>
-      new Map(
-        props.runtimeServers
-          .filter((server) => server.source === "t3-managed")
-          .map((server) => [server.definitionId ?? server.serverKey, server]),
-      ),
-    [props.runtimeServers],
+  const managedRuntimeById = new Map(
+    props.runtimeServers
+      .filter((server) => server.source === "t3-managed")
+      .map((server) => [server.definitionId ?? server.serverKey, server]),
   );
-  const configuredServerIds = useMemo(
-    () => new Set(props.configuredServers.map((server) => server.id)),
-    [props.configuredServers],
-  );
+  const configuredServerIds = new Set(props.configuredServers.map((server) => server.id));
   const unmatchedManagedServers = props.runtimeServers.filter(
     (server) =>
       server.source === "t3-managed" &&

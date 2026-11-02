@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import config, { IOS_APP_TRANSPORT_SECURITY, MOBILE_IOS_DEPLOYMENT_TARGET } from "./app.config";
 
 const ANDROID_CONFIG_PLUGINS = [
-  "./plugins/withAndroidCleartextTraffic.cjs",
+  "./plugins/withAndroidNetworkSecurityConfig.cjs",
   "./plugins/withAndroidGradleHeap.cjs",
   "./plugins/withAndroidInputBackground.cjs",
   "./plugins/withAndroidModernPopupMenu.cjs",

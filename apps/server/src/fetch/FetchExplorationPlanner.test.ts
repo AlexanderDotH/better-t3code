@@ -27,7 +27,9 @@ const makeTextGeneration = (
 ): TextGeneration.TextGeneration["Service"] =>
   TextGeneration.TextGeneration.of({
     decideAutoReasoning: () => Effect.die("unused"),
+    summarizeContext: () => Effect.die("unused"),
     generateThreadMetadata: () => Effect.die("unused"),
+    generateReviewGuide: () => Effect.die("unused"),
     generateCommitMessage: () => Effect.die("unused"),
     generatePrContent: () => Effect.die("unused"),
     generateBranchName: () => Effect.die("unused"),

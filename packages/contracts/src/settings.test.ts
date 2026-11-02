@@ -1,8 +1,26 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
-
-import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
-import { ProjectId } from "./baseSchemas.ts";
+import { CommandId, ProjectId } from "./baseSchemas.ts";
+import {
+  ProviderDriverKind,
+  ProviderInstanceEnvironment,
+  ProviderInstanceId,
+} from "./providerInstance.ts";
+import {
+  ClientSettingsSchema,
+  ClientSettingsPatch,
+  ClaudeSettings,
+  DEFAULT_SERVER_SETTINGS,
+  globalIdleCompaction,
+  idleCompactionPatch,
+  requiredScopesForProjectMutation,
+  resolveIdleCompaction,
+  resolveProjectProviderInstanceEnabled,
+  resolveProviderInstanceEnabled,
+  ServerSettings,
+  ServerSettingsPatch,
+  withIdleCompaction,
+} from "./settings.ts";
 import { ExecutionEnvironmentCapabilities } from "./environment.ts";
 import {
   CHAT_VISUAL_MODES,
@@ -12,8 +30,6 @@ import {
   chatVisualModeToLegacyRecord,
   resolveChatVisualModeRecord,
   ChatGptSettings,
-  ClientSettingsSchema,
-  ClientSettingsPatch,
   DEFAULT_AGENT_ENHANCEMENT_SETTINGS,
   DEFAULT_CHAT_WIDTH_ADJUSTMENT_PERCENT,
   DEFAULT_CHAT_WIDTH_CUSTOMIZATION_ENABLED,
@@ -22,8 +38,6 @@ import {
   DEFAULT_INTERFACE_LANGUAGE_PREFERENCE,
   DEFAULT_PARALLEL_PLAN_REVIEW_MODEL_SELECTION,
   DEFAULT_PROJECT_THREAD_PREVIEW_COUNT,
-  ClaudeSettings,
-  DEFAULT_SERVER_SETTINGS,
   InterfaceLanguagePreference,
   InterfaceLanguageSyncRecord,
   InterfaceLocalePreferenceV1,
@@ -37,92 +51,720 @@ import {
   ProjectThreadPreviewCount,
   ProjectThreadPreviewSyncRecord,
   defaultEnabledForDriver,
-  resolveProviderInstanceEnabled,
-  ServerSettings,
-  ServerSettingsPatch,
   SidebarThreadPreviewCount,
 } from "./settings.ts";
-
-const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
-const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
-const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
-const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
-const decodeProjectChatSettings = Schema.decodeSync(ProjectChatSettings);
-const decodeEnvironmentCapabilities = Schema.decodeUnknownSync(ExecutionEnvironmentCapabilities);
-const decodeProjectThreadPreviewCount = Schema.decodeUnknownSync(ProjectThreadPreviewCount);
-const decodeSidebarThreadPreviewCount = Schema.decodeUnknownSync(SidebarThreadPreviewCount);
+const encodeInterfaceLanguageSyncRecord = Schema.encodeSync(InterfaceLanguageSyncRecord);
+const encodeChatVisualModeSyncRecord = Schema.encodeSync(ChatVisualModeSyncRecord);
+const encodeProjectThreadPreviewSyncRecord = Schema.encodeSync(ProjectThreadPreviewSyncRecord);
+const decodeOpenRouterSettings = Schema.decodeUnknownSync(OpenRouterSettings);
+const decodeChatGptSettings = Schema.decodeUnknownSync(ChatGptSettings);
+const decodeInterfaceLocaleSyncRecordV1 = Schema.decodeUnknownSync(InterfaceLocaleSyncRecordV1);
+const decodeInterfaceLocalePreferenceV1 = Schema.decodeUnknownSync(InterfaceLocalePreferenceV1);
+const decodeInterfaceLanguageSyncRecord = Schema.decodeUnknownSync(InterfaceLanguageSyncRecord);
+const decodeInterfaceLanguagePreference = Schema.decodeUnknownSync(InterfaceLanguagePreference);
+const decodeChatVisualModeSyncRecordV2 = Schema.decodeUnknownSync(ChatVisualModeSyncRecordV2);
+const decodeChatVisualModeSyncRecord = Schema.decodeUnknownSync(ChatVisualModeSyncRecord);
+const decodeChatVisualMode = Schema.decodeUnknownSync(ChatVisualMode);
 const decodeProjectThreadPreviewSyncRecord = Schema.decodeUnknownSync(
   ProjectThreadPreviewSyncRecord,
 );
-const decodeChatVisualMode = Schema.decodeUnknownSync(ChatVisualMode);
-const decodeChatVisualModeSyncRecord = Schema.decodeUnknownSync(ChatVisualModeSyncRecord);
-const decodeChatVisualModeSyncRecordV2 = Schema.decodeUnknownSync(ChatVisualModeSyncRecordV2);
-const decodeInterfaceLanguagePreference = Schema.decodeUnknownSync(InterfaceLanguagePreference);
-const decodeInterfaceLanguageSyncRecord = Schema.decodeUnknownSync(InterfaceLanguageSyncRecord);
-const decodeInterfaceLocalePreferenceV1 = Schema.decodeUnknownSync(InterfaceLocalePreferenceV1);
-const decodeInterfaceLocaleSyncRecordV1 = Schema.decodeUnknownSync(InterfaceLocaleSyncRecordV1);
-const decodeChatGptSettings = Schema.decodeUnknownSync(ChatGptSettings);
-const decodeOpenRouterSettings = Schema.decodeUnknownSync(OpenRouterSettings);
+const decodeSidebarThreadPreviewCount = Schema.decodeUnknownSync(SidebarThreadPreviewCount);
+const decodeProjectThreadPreviewCount = Schema.decodeUnknownSync(ProjectThreadPreviewCount);
+const decodeEnvironmentCapabilities = Schema.decodeUnknownSync(ExecutionEnvironmentCapabilities);
+const decodeProjectChatSettings = Schema.decodeSync(ProjectChatSettings);
+
+const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
+const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
 const encodeClientSettings = Schema.encodeSync(ClientSettingsSchema);
+const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
+const encodeProviderInstanceEnvironment = Schema.encodeSync(ProviderInstanceEnvironment);
+const decodeProviderInstanceEnvironment = Schema.decodeSync(ProviderInstanceEnvironment);
+// The environment variable shape builds released before secret references decode.
+const decodeStringOnlyEnvironment = Schema.decodeUnknownSync(
+  Schema.Array(
+    Schema.Struct({ name: Schema.String, value: Schema.String, sensitive: Schema.Boolean }),
+  ),
+);
+const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
+const encodeServerSettingsPatch = Schema.encodeSync(ServerSettingsPatch);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
-it("persists the pacing switch and accepts only eight- or twenty-four-hour workdays", () => {
-  expect(decodeClientSettings({})).toMatchObject({
-    usagePacingEnabled: true,
-    usagePacingWorkdayHours: 8,
-  });
-  const patch = decodeClientSettingsPatch({
-    usagePacingEnabled: false,
-    usagePacingWorkdayHours: 24,
-  });
-  expect(encodeClientSettings(decodeClientSettings(patch))).toMatchObject(patch);
-  expect(() => decodeClientSettingsPatch({ usagePacingWorkdayHours: 12 })).toThrow();
-});
-
-it("keeps the hard daily budget opt-in and supports turning it off", () => {
-  expect(decodeServerSettings({}).usageHardBudgetEnabled).toBe(false);
-  for (const enabled of [true, false]) {
-    const patch = decodeServerSettingsPatch({ usageHardBudgetEnabled: enabled });
-    expect(encodeServerSettings(decodeServerSettings(patch)).usageHardBudgetEnabled).toBe(enabled);
-  }
-  expect(() => decodeServerSettingsPatch({ usageHardBudgetEnabled: "true" })).toThrow();
-});
-
-it("keeps environment project indexing opt-in with an explicit nullable default model", () => {
-  expect(decodeServerSettings({})).toMatchObject({
-    projectIndexingEnabled: false,
-    projectIndexingDefaultModelSelection: null,
-    projectIndexingDecisionModelSelection: null,
-  });
-  const selection = { instanceId: "analysis", model: "synthetic-model" };
-  for (const enabled of [true, false]) {
-    const patch = decodeServerSettingsPatch({
-      projectIndexingEnabled: enabled,
-      projectIndexingDefaultModelSelection: selection,
+describe("storage cleanup settings", () => {
+  it("keeps cleanup disabled for existing installations", () => {
+    expect(decodeServerSettings({}).worktreeCleanup).toBeNull();
+    expect(decodeServerSettings({}).storageCleanup).toEqual({
+      worktreeAfterDays: null,
+      worktreeSettledAfterDays: null,
+      worktreeOnMerge: false,
+      worktreeOnDelete: false,
+      worktreeUnchanged: false,
+      worktreeKeepWhen: "uncommitted-changes",
+      browserArtifactsAfterDays: null,
+      logsAfterDays: null,
     });
-    expect(encodeServerSettings(decodeServerSettings(patch))).toMatchObject(patch);
-  }
-  expect(decodeServerSettingsPatch({ projectIndexingDefaultModelSelection: null })).toEqual({
-    projectIndexingDefaultModelSelection: null,
   });
-  expect(decodeServerSettingsPatch({ projectIndexingDecisionModelSelection: selection })).toEqual({
-    projectIndexingDecisionModelSelection: selection,
+
+  it("accepts partial custom patches but requires complete stored project rules", () => {
+    expect(
+      decodeServerSettingsPatch({
+        worktreeCleanup: { mode: "custom", rules: { worktreeAfterDays: 8 } },
+      }),
+    ).toEqual({ worktreeCleanup: { mode: "custom", rules: { worktreeAfterDays: 8 } } });
+    expect(() =>
+      decodeServerSettings({
+        projectSettingsOverrides: {
+          project: { worktreeCleanup: { mode: "custom", rules: { worktreeAfterDays: 8 } } },
+        },
+      }),
+    ).toThrow();
+    expect(
+      decodeServerSettings({
+        projectSettingsOverrides: {
+          project: {
+            worktreeCleanup: {
+              mode: "custom",
+              rules: {
+                worktreeAfterDays: null,
+                worktreeOnMerge: false,
+                worktreeOnDelete: false,
+                worktreeUnchanged: false,
+              },
+            },
+          },
+        },
+      }).projectSettingsOverrides[ProjectId.make("project")]?.worktreeCleanup,
+    ).toMatchObject({
+      mode: "custom",
+      rules: { worktreeSettledAfterDays: null, worktreeKeepWhen: "uncommitted-changes" },
+    });
   });
-  expect(decodeServerSettingsPatch({ projectIndexingDecisionModelSelection: null })).toEqual({
-    projectIndexingDecisionModelSelection: null,
+
+  it("decodes older custom rules with the default local-file policy", () => {
+    const settings = decodeServerSettings({
+      worktreeCleanup: {
+        mode: "custom",
+        rules: {
+          worktreeAfterDays: 8,
+          worktreeOnMerge: false,
+          worktreeOnDelete: false,
+          worktreeUnchanged: false,
+        },
+      },
+    });
+    expect(settings.worktreeCleanup).toMatchObject({
+      rules: { worktreeKeepWhen: "uncommitted-changes" },
+    });
+    expect(
+      decodeServerSettingsPatch({ storageCleanup: { worktreeKeepWhen: "tracked-changes" } }),
+    ).toEqual({ storageCleanup: { worktreeKeepWhen: "tracked-changes" } });
+    expect(() =>
+      decodeServerSettingsPatch({ storageCleanup: { worktreeKeepWhen: "unknown" } }),
+    ).toThrow();
   });
-  expect(() => decodeServerSettingsPatch({ projectIndexingEnabled: "true" })).toThrow();
+
+  it("accepts eight-day retention and disabling one rule without resetting others", () => {
+    expect(decodeServerSettingsPatch({ storageCleanup: { worktreeAfterDays: 8 } })).toEqual({
+      storageCleanup: { worktreeAfterDays: 8 },
+    });
+    expect(decodeServerSettingsPatch({ storageCleanup: { worktreeAfterDays: null } })).toEqual({
+      storageCleanup: { worktreeAfterDays: null },
+    });
+  });
+  it.each([0, -1, 1.5, 3651])("rejects invalid retention %s", (days) => {
+    expect(() =>
+      decodeServerSettingsPatch({ storageCleanup: { browserArtifactsAfterDays: days } }),
+    ).toThrow();
+  });
+});
+
+describe("ServerSettings usage price overrides", () => {
+  const prices = { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 };
+
+  it("rejects empty model IDs and incomplete input/output pricing", () => {
+    for (const usagePriceOverrides of [
+      { " ": prices },
+      { "example-model": { inputCostPerMillionTokens: 2 } },
+      { "example-model": { outputCostPerMillionTokens: 8 } },
+    ]) {
+      expect(() => decodeServerSettingsPatch({ usagePriceOverrides })).toThrow();
+    }
+  });
+
+  it("ignores an invalid model filter without dropping the other settings", () => {
+    const valid = { include: [{ provider: "newer-provider", model: "orbit-1" }] };
+    expect(decodeServerSettings({ usageModelFilter: valid }).usageModelFilter).toEqual(valid);
+    const settings = decodeServerSettings({
+      usageModelFilter: { exclude: [{ model: "" }] },
+      usageModelAliases: { "drift-9": "orbit-1" },
+    });
+    expect(settings.usageModelFilter).toBeUndefined();
+    expect(settings.usageModelAliases).toEqual({ "drift-9": "orbit-1" });
+  });
+
+  it("defaults to automatic pricing and round-trips arbitrary model IDs", () => {
+    expect(decodeServerSettings({}).usagePriceOverrides).toEqual({});
+    const settings = decodeServerSettings({
+      usagePriceOverrides: { "  vendor/example-model  ": prices },
+    });
+    expect(encodeServerSettings(settings).usagePriceOverrides).toEqual({
+      "vendor/example-model": prices,
+    });
+  });
+  it("accepts zero rates, optional cache rates, and per-model deletion", () => {
+    const overrides = {
+      "example-model": {
+        inputCostPerMillionTokens: 0,
+        outputCostPerMillionTokens: 0,
+        cacheReadCostPerMillionTokens: 0.5,
+        cacheWriteCostPerMillionTokens: 3,
+      },
+      "removed-model": null,
+    };
+    expect(
+      decodeServerSettingsPatch({ usagePriceOverrides: overrides }).usagePriceOverrides,
+    ).toEqual(overrides);
+  });
+  it.each([
+    "inputCostPerMillionTokens",
+    "outputCostPerMillionTokens",
+    "cacheReadCostPerMillionTokens",
+    "cacheWriteCostPerMillionTokens",
+  ])("rejects invalid %s rates at the settings boundary", (field) => {
+    for (const value of [-1, Number.NaN, Number.POSITIVE_INFINITY, "2"]) {
+      const usagePriceOverrides = { "example-model": { ...prices, [field]: value } };
+      expect(() => decodeServerSettings({ usagePriceOverrides })).toThrow();
+      expect(() => decodeServerSettingsPatch({ usagePriceOverrides })).toThrow();
+    }
+  });
+});
+
+it("drops a hand-edited non-string hidden tag and keeps the rest of the settings", () => {
+  const settings = decodeServerSettings({
+    hiddenThreadTags: ["private", 123],
+    hideTaggedThreads: true,
+  });
+  expect(settings.hiddenThreadTags).toEqual(["private"]);
+  expect(settings.hideTaggedThreads).toBe(true);
+});
+
+describe("ServerSettings secret providers", () => {
+  const onePassword = (account: string) => ({
+    kind: "one_password",
+    label: "Personal",
+    config: { account },
+  });
+
+  it("keeps an unknown kind or a longer label from invalidating the rest of the settings", () => {
+    const openbao = { kind: "openbao", label: "V".repeat(65), config: { address: "https://x" } };
+    const decoded = decodeServerSettings({
+      worktreesDirectory: "/work",
+      secretProviders: { vault: openbao, personal: onePassword("my.1password.com") },
+    });
+    expect(decoded.worktreesDirectory).toBe("/work");
+    expect(encodeServerSettings(decoded).secretProviders).toEqual({
+      vault: openbao,
+      personal: onePassword("my.1password.com"),
+    });
+  });
+
+  it("accepts slug ids and null removals but no id that is not a slug", () => {
+    expect(
+      decodeServerSettingsPatch({
+        secretProviders: { "1password": onePassword("my.1password.com"), work: null },
+      }).secretProviders,
+    ).toEqual({ "1password": onePassword("my.1password.com"), work: null });
+    for (const id of ["", "My Vault", "a/b", "-vault"]) {
+      expect(() =>
+        decodeServerSettingsPatch({ secretProviders: { [id]: onePassword("my.1password.com") } }),
+      ).toThrow();
+    }
+    expect(() =>
+      decodeServerSettingsPatch({
+        secretProviders: { work: { ...onePassword("my.1password.com"), label: "V".repeat(65) } },
+      }),
+    ).toThrow();
+  });
+
+  it("stores a provider environment secret reference in a layout older builds still decode", () => {
+    const providerInstances = (secret: unknown) => ({
+      codex: {
+        driver: "codex",
+        environment: [
+          { name: "OPENAI_API_KEY", sensitive: true, value: "", secret },
+          { name: "BASE_URL", value: "https://example.test" },
+        ],
+      },
+    });
+    const secret = { provider: "personal", reference: "op://Private/OpenAI/credential" };
+    const environment = decodeServerSettings({ providerInstances: providerInstances(secret) })
+      .providerInstances[ProviderInstanceId.make("codex")]?.environment;
+    expect(environment).toEqual([
+      { name: "OPENAI_API_KEY", value: secret, sensitive: true },
+      { name: "BASE_URL", value: "https://example.test", sensitive: false },
+    ]);
+
+    const encoded = encodeProviderInstanceEnvironment(environment ?? []);
+    expect(encoded).toEqual([
+      { name: "OPENAI_API_KEY", value: "", sensitive: true, secret },
+      { name: "BASE_URL", value: "https://example.test", sensitive: false },
+    ]);
+    expect(decodeProviderInstanceEnvironment(encoded)).toEqual(environment);
+    expect(decodeStringOnlyEnvironment(encoded)).toEqual([
+      { name: "OPENAI_API_KEY", value: "", sensitive: true },
+      { name: "BASE_URL", value: "https://example.test", sensitive: false },
+    ]);
+
+    for (const invalid of [
+      { provider: "My Vault", reference: "op://a/b/c" },
+      { provider: "personal", reference: " " },
+      { provider: "personal", reference: "op://Private/OpenAI\n/credential" },
+      { provider: "personal", reference: "x".repeat(1025) },
+    ]) {
+      expect(() =>
+        decodeServerSettings({ providerInstances: providerInstances(invalid) }),
+      ).toThrow();
+    }
+  });
+});
+
+describe("custom model settings", () => {
+  const capabilities = {
+    optionDescriptors: [
+      {
+        id: "effort",
+        label: "Reasoning",
+        type: "select",
+        options: [{ id: "high", label: "High", isDefault: true }],
+      },
+    ],
+  };
+
+  it("accepts legacy bare slugs alongside full entries", () => {
+    const decoded = decodeClaudeSettings({
+      customModels: ["bare-slug", { slug: "named", name: "Named", capabilities }],
+    });
+    expect(decoded.customModels).toEqual([
+      "bare-slug",
+      { slug: "named", name: "Named", capabilities },
+    ]);
+  });
+
+  it("accepts entries at the settings patch boundary", () => {
+    expect(
+      decodeServerSettingsPatch({
+        providers: { codex: { customModels: [{ slug: "x", capabilities }] } },
+      }).providers?.codex?.customModels,
+    ).toEqual([{ slug: "x", capabilities }]);
+    expect(() =>
+      decodeServerSettingsPatch({ providers: { codex: { customModels: [{ name: "no slug" }] } } }),
+    ).toThrow();
+  });
+});
+
+describe("resolveIdleCompaction", () => {
+  it("lets a Claude instance override the global default", () => {
+    const settings = decodeServerSettings({
+      idleCompaction: "off",
+      providerInstances: {
+        claude_work: { driver: "claudeAgent", config: { idleCompaction: "onReturn" } },
+        claude_personal: { driver: "claudeAgent" },
+      },
+    });
+    expect(resolveIdleCompaction(settings, ProviderInstanceId.make("claude_work"))).toBe(
+      "onReturn",
+    );
+    expect(resolveIdleCompaction(settings, ProviderInstanceId.make("claude_personal"))).toBe("off");
+    expect(resolveIdleCompaction(settings, ProviderInstanceId.make("claudeAgent"))).toBe("off");
+  });
+
+  it("reads the mode from the legacy switch, in either form servers saved it", () => {
+    expect(globalIdleCompaction(decodeServerSettings({ compactIdleThreads: true }))).toBe(
+      "beforeCacheExpires",
+    );
+    expect(globalIdleCompaction(decodeServerSettings({ compactIdleThreads: "off" }))).toBe("off");
+    expect(globalIdleCompaction(decodeServerSettings({}))).toBe("onReturn");
+  });
+
+  it("keeps the legacy switch a boolean, as shipped clients decode it", () => {
+    const encode = Schema.encodeSync(Schema.toCodecJson(ServerSettings));
+    for (const mode of ["onReturn", "beforeCacheExpires", "off"] as const) {
+      const encoded = encode(withIdleCompaction(DEFAULT_SERVER_SETTINGS, mode)) as {
+        readonly compactIdleThreads: unknown;
+        readonly idleCompaction: unknown;
+      };
+      expect(encoded.compactIdleThreads).toBe(mode === "beforeCacheExpires");
+      expect(encoded.idleCompaction).toBe(mode);
+    }
+  });
+
+  it("patches the field the server reads", () => {
+    expect(
+      idleCompactionPatch({ compactIdleThreads: false, idleCompaction: "onReturn" }, "off"),
+    ).toEqual({
+      idleCompaction: "off",
+    });
+    expect(idleCompactionPatch({ compactIdleThreads: "onReturn" }, "off")).toEqual({
+      compactIdleThreads: "off",
+    });
+    expect(idleCompactionPatch({ compactIdleThreads: false }, "beforeCacheExpires")).toEqual({
+      compactIdleThreads: true,
+    });
+  });
+});
+
+describe("ClientSettings notifications", () => {
+  it("requires opt-in when existing settings omit notification preferences", () => {
+    expect(decodeClientSettings({}).notificationMode).toBe("off");
+    expect(decodeClientSettings({}).inAppNotificationsEnabled).toBe(false);
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("inAppNotificationsEnabled");
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("notificationMode");
+  });
+
+  it.each([true, false])(
+    "round-trips in-app notifications set to %s",
+    (inAppNotificationsEnabled) => {
+      const settings = decodeClientSettings({ inAppNotificationsEnabled });
+      expect(encodeClientSettings(settings).inAppNotificationsEnabled).toBe(
+        inAppNotificationsEnabled,
+      );
+      expect(
+        decodeClientSettingsPatch({ inAppNotificationsEnabled }).inAppNotificationsEnabled,
+      ).toBe(inAppNotificationsEnabled);
+    },
+  );
+  it.each(["true", 1, null])(
+    "rejects an invalid in-app notification preference %s",
+    (inAppNotificationsEnabled) => {
+      expect(() => decodeClientSettings({ inAppNotificationsEnabled })).toThrow();
+      expect(() => decodeClientSettingsPatch({ inAppNotificationsEnabled })).toThrow();
+    },
+  );
+  it.each(["off", "notifications", "sound", "notifications-and-sound"])(
+    "round-trips the %s mode",
+    (notificationMode) => {
+      const settings = decodeClientSettings({ notificationMode });
+      expect(encodeClientSettings(settings).notificationMode).toBe(notificationMode);
+      expect(decodeClientSettingsPatch({ notificationMode }).notificationMode).toBe(
+        notificationMode,
+      );
+    },
+  );
+  it.each(["always", true, null])(
+    "rejects unsupported notification mode %s",
+    (notificationMode) => {
+      expect(() => decodeClientSettings({ notificationMode })).toThrow();
+      expect(() => decodeClientSettingsPatch({ notificationMode })).toThrow();
+    },
+  );
+});
+
+describe("ClientSettings quit confirmation", () => {
+  it.each([
+    [true, "hold"],
+    [false, "direct"],
+  ] as const)("migrates the legacy %s value to %s", (legacyValue, mode) => {
+    const settings = decodeClientSettings({ confirmQuit: legacyValue });
+
+    expect(settings.confirmQuit).toBe(mode);
+    expect(encodeClientSettings(settings).confirmQuit).toBe(mode);
+  });
+
+  it("defaults to hold", () => {
+    expect(decodeClientSettings({}).confirmQuit).toBe("hold");
+  });
+  it.each(["direct", "hold", "double-click"] as const)("accepts the %s mode", (mode) => {
+    expect(decodeClientSettings({ confirmQuit: mode }).confirmQuit).toBe(mode);
+    expect(decodeClientSettingsPatch({ confirmQuit: mode }).confirmQuit).toBe(mode);
+  });
+  it("rejects legacy booleans at the patch boundary", () => {
+    expect(() => decodeClientSettingsPatch({ confirmQuit: true })).toThrow();
+  });
+});
+
+describe("provider enabled defaults", () => {
+  it("resolves instance enabled state with explicit false winning", () => {
+    const grok = ProviderDriverKind.make("grok");
+    const codex = ProviderDriverKind.make("codex");
+    expect(resolveProviderInstanceEnabled({ driver: grok, config: {} })).toBe(false);
+    expect(resolveProviderInstanceEnabled({ driver: codex, config: {} })).toBe(true);
+    expect(
+      resolveProviderInstanceEnabled({ driver: ProviderDriverKind.make("ollama"), config: {} }),
+    ).toBe(true);
+    expect(resolveProviderInstanceEnabled({ driver: grok, enabled: true, config: {} })).toBe(true);
+    expect(resolveProviderInstanceEnabled({ driver: codex, enabled: false, config: {} })).toBe(
+      false,
+    );
+    expect(resolveProviderInstanceEnabled({ driver: grok, config: { enabled: true } })).toBe(true);
+    expect(
+      resolveProviderInstanceEnabled({ driver: grok, enabled: true, config: { enabled: false } }),
+    ).toBe(false);
+    expect(
+      resolveProviderInstanceEnabled({ driver: codex, enabled: false, config: { enabled: true } }),
+    ).toBe(false);
+  });
+
+  it("keeps optional providers off on clean installs", () => {
+    const decoded = decodeServerSettings({});
+    expect(decoded.providers.codex.enabled).toBe(true);
+    expect(decoded.providers.claudeAgent.enabled).toBe(true);
+    expect(decoded.providers.cursor.enabled).toBe(false);
+    expect(decoded.providers.grok.enabled).toBe(false);
+    expect(decoded.providers.opencode.enabled).toBe(false);
+    expect(decoded.providers.gemini.enabled).toBe(false);
+    expect(decoded.providers.openrouter.enabled).toBe(false);
+  });
+  it("keeps Cursor enabled when an existing user explicitly opted in", () => {
+    const cursor = ProviderDriverKind.make("cursor");
+    const cursorId = ProviderInstanceId.make("cursor");
+    const decoded = decodeServerSettings({
+      providers: { cursor: { enabled: true } },
+      providerInstances: {
+        [cursorId]: { driver: cursor, enabled: true, config: {} },
+      },
+    });
+
+    expect(decoded.providers.cursor.enabled).toBe(true);
+    expect(resolveProviderInstanceEnabled(decoded.providerInstances[cursorId]!)).toBe(true);
+  });
+  it("derives per-driver defaults from the settings schemas", () => {
+    expect(defaultEnabledForDriver(ProviderDriverKind.make("codex"))).toBe(true);
+    expect(defaultEnabledForDriver(ProviderDriverKind.make("cursor"))).toBe(false);
+    expect(defaultEnabledForDriver(ProviderDriverKind.make("grok"))).toBe(false);
+    expect(defaultEnabledForDriver(ProviderDriverKind.make("opencode"))).toBe(false);
+    expect(defaultEnabledForDriver(ProviderDriverKind.make("gemini"))).toBe(false);
+    expect(defaultEnabledForDriver(ProviderDriverKind.make("openrouter"))).toBe(false);
+    // Unknown fork drivers stay enabled; their own build decides otherwise.
+    expect(defaultEnabledForDriver(ProviderDriverKind.make("ollama"))).toBe(true);
+  });
+  it("keeps Cursor enabled when an existing user explicitly opted in", () => {
+    const cursor = ProviderDriverKind.make("cursor");
+    const cursorId = ProviderInstanceId.make("cursor");
+    const decoded = decodeServerSettings({
+      providers: { cursor: { enabled: true } },
+      providerInstances: {
+        [cursorId]: { driver: cursor, enabled: true, config: {} },
+      },
+    });
+
+    expect(decoded.providers.cursor.enabled).toBe(true);
+    expect(resolveProviderInstanceEnabled(decoded.providerInstances[cursorId]!)).toBe(true);
+  });
+});
+
+describe("ServerSettings worktree defaults", () => {
+  it("defaults the thread env mode to inherit and keeps stored values", () => {
+    expect(decodeServerSettings({}).defaultThreadEnvMode).toBeNull();
+    expect(decodeServerSettings({ defaultThreadEnvMode: "worktree" }).defaultThreadEnvMode).toBe(
+      "worktree",
+    );
+    expect(
+      decodeServerSettings({ defaultThreadEnvMode: "remote" }).defaultThreadEnvMode,
+    ).toBeNull();
+    expect(
+      decodeServerSettingsPatch({ defaultThreadEnvMode: null }).defaultThreadEnvMode,
+    ).toBeNull();
+  });
+
+  it("keeps an inherited thread env mode off the wire for older clients", () => {
+    const encode = Schema.encodeSync(ServerSettings);
+    expect("defaultThreadEnvMode" in encode(decodeServerSettings({}))).toBe(false);
+    expect(
+      encode(decodeServerSettings({ defaultThreadEnvMode: "worktree" })).defaultThreadEnvMode,
+    ).toBe("worktree");
+  });
+
+  it("defaults start-from-origin on for legacy configs", () => {
+    expect(decodeServerSettings({}).newWorktreesStartFromOrigin).toBe(true);
+  });
+  it("accepts start-from-origin updates", () => {
+    expect(
+      decodeServerSettingsPatch({ newWorktreesStartFromOrigin: false }).newWorktreesStartFromOrigin,
+    ).toBe(false);
+  });
+  it("defaults worktree submodules to inherit and tolerates unknown modes", () => {
+    expect(decodeServerSettings({}).worktreeSubmodules).toBeNull();
+    expect(decodeServerSettings({ worktreeSubmodules: "top-level" }).worktreeSubmodules).toBe(
+      "top-level",
+    );
+    expect(decodeServerSettings({ worktreeSubmodules: "shallow" }).worktreeSubmodules).toBeNull();
+    expect(decodeServerSettingsPatch({ worktreeSubmodules: null }).worktreeSubmodules).toBeNull();
+  });
+});
+
+describe("ServerSettings.sourceControlWritingStyle", () => {
+  it.each([
+    { legacy: "", mode: "repo_conventions", customInstructions: "" },
+    { legacy: " \t\n ", mode: "repo_conventions", customInstructions: "" },
+    {
+      legacy: "  Prefer concise wording.\nKeep issue references.  ",
+      mode: "custom",
+      customInstructions: "Prefer concise wording.\nKeep issue references.",
+    },
+  ])("normalizes legacy writing style $legacy in snapshots only", ({ legacy, ...expected }) => {
+    const style = { ...expected, followChangeRequestTemplates: true };
+    for (const [input, normalized] of [
+      [{ sourceControlWritingStyle: legacy }, { sourceControlWritingStyle: style }],
+      [
+        { projectSettingsOverrides: { project: { sourceControlWritingStyle: legacy } } },
+        { projectSettingsOverrides: { project: { sourceControlWritingStyle: style } } },
+      ],
+    ] as const) {
+      const settings = decodeServerSettings(input);
+      expect(settings).toMatchObject(normalized);
+      expect(encodeServerSettings(settings)).toMatchObject(normalized);
+      expect(() => decodeServerSettingsPatch(input)).toThrow();
+    }
+  });
+
+  it("defaults all style settings for legacy configs", () => {
+    const settings = decodeServerSettings({});
+
+    expect(settings.sourceControlWritingStyle).toEqual({
+      mode: "repo_conventions",
+      customInstructions: "",
+      followChangeRequestTemplates: true,
+    });
+    expect(settings.sourceControlWriterModelSelection).toBeNull();
+  });
+  it("trims partial style updates", () => {
+    const patch = decodeServerSettingsPatch({
+      sourceControlWritingStyle: {
+        mode: "custom",
+        customInstructions: "  Prefer concise wording.  ",
+      },
+    });
+
+    expect(patch.sourceControlWritingStyle).toEqual({
+      mode: "custom",
+      customInstructions: "Prefer concise wording.",
+    });
+  });
+});
+
+describe("ServerSettings environment icon", () => {
+  it("decodes a kind from a newer server as null instead of failing the snapshot", () => {
+    expect(decodeServerSettings({ environmentIcon: "toaster" }).environmentIcon).toBeNull();
+  });
+
+  it("defaults to null", () => {
+    expect(decodeServerSettings({}).environmentIcon).toBeNull();
+  });
+  it("keeps a kind this build knows", () => {
+    expect(decodeServerSettings({ environmentIcon: "mac-mini" }).environmentIcon).toBe("mac-mini");
+    expect(decodeServerSettings({ environmentIcon: "linux" }).environmentIcon).toBe("linux");
+  });
+  it("round-trips through encode", () => {
+    const settings = decodeServerSettings({ environmentIcon: "laptop" });
+    expect(encodeServerSettings(settings).environmentIcon).toBe("laptop");
+
+    const linuxSettings = decodeServerSettings({ environmentIcon: "linux" });
+    expect(encodeServerSettings(linuxSettings).environmentIcon).toBe("linux");
+  });
+});
+
+const decodeDeviceHostSettings = Schema.decodeSync(ServerSettings);
+
+// `deviceHosts` as it was decoded before EAS hosts existed: an SSH host needs a target.
+const decodeOlderDeviceHostSettings = Schema.decodeUnknownSync(
+  Schema.Struct({
+    deviceHosts: Schema.Array(Schema.Struct({ id: Schema.String, target: Schema.String })),
+  }),
+);
+
+it("keeps EAS hosts out of the SSH host list servers and clients before EAS hosts decode", () => {
+  const settings = decodeDeviceHostSettings({
+    deviceHosts: [{ id: "mini", label: "Mac mini", target: "user@mini" }],
+    easDeviceHosts: [{ kind: "eas", id: "eas", label: "EAS Simulator" }],
+  });
+  const wire = encodeServerSettings(settings);
+  expect(decodeOlderDeviceHostSettings(wire).deviceHosts).toEqual([
+    { id: "mini", target: "user@mini" },
+  ]);
+  expect(settings.easDeviceHosts.map((host) => host.id)).toEqual(["eas"]);
+});
+
+it("validates remote device hosts and rejects ambiguous host ids", () => {
+  const host = { id: "mini", label: "Mac mini", target: "user@mini", port: 2222 };
+  // Hosts saved before EAS hosts existed have no `kind`; they are SSH hosts.
+  expect(decodeDeviceHostSettings({ deviceHosts: [host] }).deviceHosts).toEqual([
+    { kind: "ssh", ...host },
+  ]);
+  expect(() => decodeDeviceHostSettings({ deviceHosts: [host, host] })).toThrow();
+  expect(() => decodeDeviceHostSettings({ deviceHosts: [{ ...host, id: "local" }] })).toThrow();
   expect(() =>
-    decodeServerSettingsPatch({
-      projectIndexingDefaultModelSelection: { model: "incomplete-selection" },
-    }),
+    decodeDeviceHostSettings({ deviceHosts: [{ ...host, target: "-oProxyCommand=bad" }] }),
   ).toThrow();
-  expect(() =>
-    decodeServerSettingsPatch({
-      projectIndexingDefaultModelSelection: { provider: "codex", model: "legacy-routing" },
-    }),
-  ).toThrow();
+  expect(() => decodeDeviceHostSettings({ deviceHosts: [{ ...host, port: 0 }] })).toThrow();
+});
+
+describe("ServerSettings project overrides across versions", () => {
+  it("sends back an override key from a newer server when an older client edits the entry", () => {
+    const projectId = ProjectId.make("project-a");
+    // As an older client reads a newer server's settings, with one key it does not know.
+    const entry = decodeServerSettings({
+      projectSettingsOverrides: {
+        [projectId]: { defaultAutoPull: true, addedByNewerServer: { mode: "kept" } },
+      },
+    }).projectSettingsOverrides[projectId];
+
+    const sent = encodeServerSettingsPatch({
+      projectSettingsOverrides: { [projectId]: { ...entry, defaultAutoPull: false } },
+    });
+
+    expect(decodeServerSettingsPatch(sent).projectSettingsOverrides?.[projectId]).toEqual({
+      defaultAutoPull: false,
+      addedByNewerServer: { mode: "kept" },
+    });
+  });
+});
+
+describe("resolveProjectProviderInstanceEnabled", () => {
+  const projectId = "project-a" as ProjectId;
+  const instanceId = ProviderInstanceId.make("codex_work");
+
+  it("lets a project disable an instance the machine enabled", () => {
+    const settings: ServerSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: {
+        [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
+      },
+      projectSettingsOverrides: {
+        [projectId]: { providerInstances: { [instanceId]: { enabled: false } } },
+      },
+    };
+    expect(resolveProjectProviderInstanceEnabled(settings, projectId, instanceId)).toBe(false);
+  });
+});
+
+describe("requiredScopesForProjectMutation", () => {
+  it("adds the settings scope only when a mutation carries scripts", () => {
+    const projectId = "project-1" as ProjectId;
+    const commandId = "command-1" as CommandId;
+    expect(
+      requiredScopesForProjectMutation({ type: "project.update", commandId, projectId }),
+    ).toEqual(["orchestration:operate"]);
+    expect(
+      requiredScopesForProjectMutation({
+        type: "project.update",
+        commandId,
+        projectId,
+        scripts: [],
+      }),
+    ).toEqual(["orchestration:operate", "settings:write"]);
+  });
+});
+
+describe("server model preferences", () => {
+  it("distinguishes unmigrated lists from deliberately cleared lists", () => {
+    expect(decodeServerSettings({})).toMatchObject({
+      favorites: null,
+      providerModelPreferences: null,
+    });
+    const input = { favorites: [], providerModelPreferences: {} };
+    expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
+    expect(decodeServerSettingsPatch(input)).toEqual(input);
+  });
 });
 
 describe("project chat settings", () => {
@@ -173,50 +815,6 @@ describe("project chat settings", () => {
   });
 });
 
-describe("storage cleanup settings", () => {
-  it("keeps cleanup disabled for existing installations", () => {
-    expect(decodeServerSettings({}).worktreeCleanup).toBeNull();
-    expect(decodeServerSettings({}).storageCleanup).toEqual({
-      worktreeAfterDays: null,
-      worktreeOnMerge: false,
-      worktreeOnDelete: false,
-      worktreeUnchanged: false,
-      browserArtifactsAfterDays: null,
-      logsAfterDays: null,
-    });
-  });
-
-  it("accepts eight-day retention and disabling one rule without resetting others", () => {
-    expect(decodeServerSettingsPatch({ storageCleanup: { worktreeAfterDays: 8 } })).toEqual({
-      storageCleanup: { worktreeAfterDays: 8 },
-    });
-    expect(decodeServerSettingsPatch({ storageCleanup: { worktreeAfterDays: null } })).toEqual({
-      storageCleanup: { worktreeAfterDays: null },
-    });
-  });
-
-  it("accepts partial custom patches but requires complete stored project rules", () => {
-    expect(
-      decodeServerSettingsPatch({
-        worktreeCleanup: { mode: "custom", rules: { worktreeAfterDays: 8 } },
-      }),
-    ).toEqual({ worktreeCleanup: { mode: "custom", rules: { worktreeAfterDays: 8 } } });
-    expect(() =>
-      decodeServerSettings({
-        projectSettingsOverrides: {
-          project: { worktreeCleanup: { mode: "custom", rules: { worktreeAfterDays: 8 } } },
-        },
-      }),
-    ).toThrow();
-  });
-
-  it.each([0, -1, 1.5, 3651])("rejects invalid retention %s", (days) => {
-    expect(() =>
-      decodeServerSettingsPatch({ storageCleanup: { browserArtifactsAfterDays: days } }),
-    ).toThrow();
-  });
-});
-
 describe("ClientSettings rich text composer", () => {
   it("enables rich text for new and existing settings without a saved preference", () => {
     expect(decodeClientSettings({}).composerRichTextEnabled).toBe(true);
@@ -259,96 +857,6 @@ describe("ServerSettings default permissions", () => {
   });
 });
 
-describe("ServerSettings usage price overrides", () => {
-  const prices = { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 };
-
-  it("defaults to automatic pricing and round-trips arbitrary model IDs", () => {
-    expect(decodeServerSettings({}).usagePriceOverrides).toEqual({});
-    const settings = decodeServerSettings({
-      usagePriceOverrides: { "  vendor/example-model  ": prices },
-    });
-    expect(encodeServerSettings(settings).usagePriceOverrides).toEqual({
-      "vendor/example-model": prices,
-    });
-  });
-
-  it("accepts zero rates, optional cache rates, and per-model deletion", () => {
-    const overrides = {
-      "example-model": {
-        inputCostPerMillionTokens: 0,
-        outputCostPerMillionTokens: 0,
-        cacheReadCostPerMillionTokens: 0.5,
-        cacheWriteCostPerMillionTokens: 3,
-      },
-      "removed-model": null,
-    };
-    expect(
-      decodeServerSettingsPatch({ usagePriceOverrides: overrides }).usagePriceOverrides,
-    ).toEqual(overrides);
-  });
-
-  it.each([
-    "inputCostPerMillionTokens",
-    "outputCostPerMillionTokens",
-    "cacheReadCostPerMillionTokens",
-    "cacheWriteCostPerMillionTokens",
-  ])("rejects invalid %s rates at the settings boundary", (field) => {
-    for (const value of [-1, Number.NaN, Number.POSITIVE_INFINITY, "2"]) {
-      const usagePriceOverrides = { "example-model": { ...prices, [field]: value } };
-      expect(() => decodeServerSettings({ usagePriceOverrides })).toThrow();
-      expect(() => decodeServerSettingsPatch({ usagePriceOverrides })).toThrow();
-    }
-  });
-
-  it("rejects empty model IDs and incomplete input/output pricing", () => {
-    for (const usagePriceOverrides of [
-      { " ": prices },
-      { "example-model": { inputCostPerMillionTokens: 2 } },
-      { "example-model": { outputCostPerMillionTokens: 8 } },
-    ]) {
-      expect(() => decodeServerSettingsPatch({ usagePriceOverrides })).toThrow();
-    }
-  });
-});
-
-describe("custom model settings", () => {
-  const capabilities = {
-    optionDescriptors: [
-      {
-        id: "effort",
-        label: "Reasoning",
-        type: "select",
-        options: [{ id: "high", label: "High", isDefault: true }],
-      },
-    ],
-  };
-
-  it("accepts legacy bare slugs alongside full entries", () => {
-    const decoded = decodeClaudeSettings({
-      customModels: ["bare-slug", { slug: "named", name: "Named", capabilities }],
-    });
-    expect(decoded.customModels).toEqual([
-      "bare-slug",
-      { slug: "named", name: "Named", capabilities },
-    ]);
-  });
-
-  it("accepts entries at the settings patch boundary", () => {
-    expect(
-      decodeServerSettingsPatch({
-        providers: { codex: { customModels: [{ slug: "x", capabilities }] } },
-      }).providers?.codex?.customModels,
-    ).toEqual([{ slug: "x", capabilities }]);
-    expect(() =>
-      decodeServerSettingsPatch({ providers: { codex: { customModels: [{ name: "no slug" }] } } }),
-    ).toThrow();
-  });
-});
-
-const encodeProjectThreadPreviewSyncRecord = Schema.encodeSync(ProjectThreadPreviewSyncRecord);
-const encodeChatVisualModeSyncRecord = Schema.encodeSync(ChatVisualModeSyncRecord);
-const encodeInterfaceLanguageSyncRecord = Schema.encodeSync(InterfaceLanguageSyncRecord);
-
 describe("ClaudeSettings auto-compaction", () => {
   it("uses Claude's default threshold when no override is configured", () => {
     expect(decodeClaudeSettings({}).autoCompactWindow).toBe("");
@@ -376,55 +884,6 @@ describe("ClaudeSettings auto-compaction", () => {
       decodeServerSettingsPatch({ providers: { claudeAgent: { autoCompactWindow: "300000" } } }),
     ).toBeDefined();
   });
-});
-
-describe("ClientSettings notifications", () => {
-  it("requires opt-in when existing settings omit notification preferences", () => {
-    expect(decodeClientSettings({}).notificationMode).toBe("off");
-    expect(decodeClientSettings({}).inAppNotificationsEnabled).toBe(false);
-    expect(decodeClientSettingsPatch({})).not.toHaveProperty("inAppNotificationsEnabled");
-    expect(decodeClientSettingsPatch({})).not.toHaveProperty("notificationMode");
-  });
-
-  it.each([true, false])(
-    "round-trips in-app notifications set to %s",
-    (inAppNotificationsEnabled) => {
-      const settings = decodeClientSettings({ inAppNotificationsEnabled });
-      expect(encodeClientSettings(settings).inAppNotificationsEnabled).toBe(
-        inAppNotificationsEnabled,
-      );
-      expect(
-        decodeClientSettingsPatch({ inAppNotificationsEnabled }).inAppNotificationsEnabled,
-      ).toBe(inAppNotificationsEnabled);
-    },
-  );
-
-  it.each(["true", 1, null])(
-    "rejects an invalid in-app notification preference %s",
-    (inAppNotificationsEnabled) => {
-      expect(() => decodeClientSettings({ inAppNotificationsEnabled })).toThrow();
-      expect(() => decodeClientSettingsPatch({ inAppNotificationsEnabled })).toThrow();
-    },
-  );
-
-  it.each(["off", "notifications", "sound", "notifications-and-sound"])(
-    "round-trips the %s mode",
-    (notificationMode) => {
-      const settings = decodeClientSettings({ notificationMode });
-      expect(encodeClientSettings(settings).notificationMode).toBe(notificationMode);
-      expect(decodeClientSettingsPatch({ notificationMode }).notificationMode).toBe(
-        notificationMode,
-      );
-    },
-  );
-
-  it.each(["always", true, null])(
-    "rejects unsupported notification mode %s",
-    (notificationMode) => {
-      expect(() => decodeClientSettings({ notificationMode })).toThrow();
-      expect(() => decodeClientSettingsPatch({ notificationMode })).toThrow();
-    },
-  );
 });
 
 describe("ClientSettings default diff file state", () => {
@@ -627,31 +1086,6 @@ describe("ClientSettings proactive panels", () => {
     expect(decodeClientSettingsPatch({ proactivePanelsEnabled: true }).proactivePanelsEnabled).toBe(
       true,
     );
-  });
-});
-
-describe("ClientSettings quit confirmation", () => {
-  it("defaults to hold", () => {
-    expect(decodeClientSettings({}).confirmQuit).toBe("hold");
-  });
-
-  it.each(["direct", "hold", "double-click"] as const)("accepts the %s mode", (mode) => {
-    expect(decodeClientSettings({ confirmQuit: mode }).confirmQuit).toBe(mode);
-    expect(decodeClientSettingsPatch({ confirmQuit: mode }).confirmQuit).toBe(mode);
-  });
-
-  it.each([
-    [true, "hold"],
-    [false, "direct"],
-  ] as const)("migrates the legacy %s value to %s", (legacyValue, mode) => {
-    const settings = decodeClientSettings({ confirmQuit: legacyValue });
-
-    expect(settings.confirmQuit).toBe(mode);
-    expect(encodeClientSettings(settings).confirmQuit).toBe(mode);
-  });
-
-  it("rejects legacy booleans at the patch boundary", () => {
-    expect(() => decodeClientSettingsPatch({ confirmQuit: true })).toThrow();
   });
 });
 
@@ -1680,86 +2114,6 @@ describe("AgentEnhancementSettings", () => {
   });
 });
 
-describe("provider enabled defaults", () => {
-  it("keeps optional providers off on clean installs", () => {
-    const decoded = decodeServerSettings({});
-    expect(decoded.providers.codex.enabled).toBe(true);
-    expect(decoded.providers.claudeAgent.enabled).toBe(true);
-    expect(decoded.providers.cursor.enabled).toBe(false);
-    expect(decoded.providers.grok.enabled).toBe(false);
-    expect(decoded.providers.opencode.enabled).toBe(false);
-    expect(decoded.providers.gemini.enabled).toBe(false);
-    expect(decoded.providers.openrouter.enabled).toBe(false);
-  });
-
-  it("keeps Cursor enabled when an existing user explicitly opted in", () => {
-    const cursor = ProviderDriverKind.make("cursor");
-    const cursorId = ProviderInstanceId.make("cursor");
-    const decoded = decodeServerSettings({
-      providers: { cursor: { enabled: true } },
-      providerInstances: {
-        [cursorId]: { driver: cursor, enabled: true, config: {} },
-      },
-    });
-
-    expect(decoded.providers.cursor.enabled).toBe(true);
-    expect(resolveProviderInstanceEnabled(decoded.providerInstances[cursorId]!)).toBe(true);
-  });
-
-  it("derives per-driver defaults from the settings schemas", () => {
-    expect(defaultEnabledForDriver(ProviderDriverKind.make("codex"))).toBe(true);
-    expect(defaultEnabledForDriver(ProviderDriverKind.make("cursor"))).toBe(false);
-    expect(defaultEnabledForDriver(ProviderDriverKind.make("grok"))).toBe(false);
-    expect(defaultEnabledForDriver(ProviderDriverKind.make("opencode"))).toBe(false);
-    expect(defaultEnabledForDriver(ProviderDriverKind.make("gemini"))).toBe(false);
-    expect(defaultEnabledForDriver(ProviderDriverKind.make("openrouter"))).toBe(false);
-    // Unknown fork drivers stay enabled; their own build decides otherwise.
-    expect(defaultEnabledForDriver(ProviderDriverKind.make("ollama"))).toBe(true);
-  });
-
-  it("keeps Cursor enabled when an existing user explicitly opted in", () => {
-    const cursor = ProviderDriverKind.make("cursor");
-    const cursorId = ProviderInstanceId.make("cursor");
-    const decoded = decodeServerSettings({
-      providers: { cursor: { enabled: true } },
-      providerInstances: {
-        [cursorId]: { driver: cursor, enabled: true, config: {} },
-      },
-    });
-
-    expect(decoded.providers.cursor.enabled).toBe(true);
-    expect(resolveProviderInstanceEnabled(decoded.providerInstances[cursorId]!)).toBe(true);
-  });
-
-  it("resolves instance enabled state with explicit false winning", () => {
-    const grok = ProviderDriverKind.make("grok");
-    const codex = ProviderDriverKind.make("codex");
-    // No flags anywhere: each driver's clean-install default applies.
-    expect(resolveProviderInstanceEnabled({ driver: grok, config: {} })).toBe(false);
-    expect(resolveProviderInstanceEnabled({ driver: codex, config: {} })).toBe(true);
-    // Unknown fork drivers stay enabled.
-    expect(
-      resolveProviderInstanceEnabled({ driver: ProviderDriverKind.make("ollama"), config: {} }),
-    ).toBe(true);
-    // Envelope flag wins over the driver default.
-    expect(resolveProviderInstanceEnabled({ driver: grok, enabled: true, config: {} })).toBe(true);
-    expect(resolveProviderInstanceEnabled({ driver: codex, enabled: false, config: {} })).toBe(
-      false,
-    );
-    // Legacy in-config flag fills in when the envelope is silent.
-    expect(resolveProviderInstanceEnabled({ driver: grok, config: { enabled: false } })).toBe(
-      false,
-    );
-    // Conflicting flags: the explicit false wins, whichever side it is on.
-    expect(
-      resolveProviderInstanceEnabled({ driver: grok, enabled: false, config: { enabled: true } }),
-    ).toBe(false);
-    expect(
-      resolveProviderInstanceEnabled({ driver: codex, enabled: false, config: { enabled: true } }),
-    ).toBe(false);
-  });
-});
-
 describe("ServerSettings agent browser access", () => {
   it("defaults preview automation access on for legacy settings", () => {
     expect(decodeServerSettings({}).enableAgentBrowserAccess).toBe(true);
@@ -1772,48 +2126,6 @@ describe("ServerSettings agent browser access", () => {
     expect(
       decodeServerSettingsPatch({ enableAgentBrowserAccess: false }).enableAgentBrowserAccess,
     ).toBe(false);
-  });
-});
-
-describe("ServerSettings worktree defaults", () => {
-  it("defaults the thread env mode to inherit and keeps stored values", () => {
-    expect(decodeServerSettings({}).defaultThreadEnvMode).toBeNull();
-    expect(decodeServerSettings({ defaultThreadEnvMode: "worktree" }).defaultThreadEnvMode).toBe(
-      "worktree",
-    );
-    expect(
-      decodeServerSettings({ defaultThreadEnvMode: "remote" }).defaultThreadEnvMode,
-    ).toBeNull();
-    expect(
-      decodeServerSettingsPatch({ defaultThreadEnvMode: null }).defaultThreadEnvMode,
-    ).toBeNull();
-  });
-
-  it("keeps an inherited thread env mode off the wire for older clients", () => {
-    const encode = Schema.encodeSync(ServerSettings);
-    expect("defaultThreadEnvMode" in encode(decodeServerSettings({}))).toBe(false);
-    expect(
-      encode(decodeServerSettings({ defaultThreadEnvMode: "worktree" })).defaultThreadEnvMode,
-    ).toBe("worktree");
-  });
-
-  it("defaults start-from-origin on for legacy configs", () => {
-    expect(decodeServerSettings({}).newWorktreesStartFromOrigin).toBe(true);
-  });
-
-  it("accepts start-from-origin updates", () => {
-    expect(
-      decodeServerSettingsPatch({ newWorktreesStartFromOrigin: false }).newWorktreesStartFromOrigin,
-    ).toBe(false);
-  });
-
-  it("defaults worktree submodules to inherit and tolerates unknown modes", () => {
-    expect(decodeServerSettings({}).worktreeSubmodules).toBeNull();
-    expect(decodeServerSettings({ worktreeSubmodules: "top-level" }).worktreeSubmodules).toBe(
-      "top-level",
-    );
-    expect(decodeServerSettings({ worktreeSubmodules: "shallow" }).worktreeSubmodules).toBeNull();
-    expect(decodeServerSettingsPatch({ worktreeSubmodules: null }).worktreeSubmodules).toBeNull();
   });
 });
 
@@ -1943,33 +2255,6 @@ describe("ServerSettings voice translation model", () => {
   });
 });
 
-describe("ServerSettings.sourceControlWritingStyle", () => {
-  it("defaults all style settings for legacy configs", () => {
-    const settings = decodeServerSettings({});
-
-    expect(settings.sourceControlWritingStyle).toEqual({
-      mode: "repo_conventions",
-      customInstructions: "",
-      followChangeRequestTemplates: true,
-    });
-    expect(settings.sourceControlWriterModelSelection).toBeNull();
-  });
-
-  it("trims partial style updates", () => {
-    const patch = decodeServerSettingsPatch({
-      sourceControlWritingStyle: {
-        mode: "custom",
-        customInstructions: "  Prefer concise wording.  ",
-      },
-    });
-
-    expect(patch.sourceControlWritingStyle).toEqual({
-      mode: "custom",
-      customInstructions: "Prefer concise wording.",
-    });
-  });
-});
-
 describe("ServerSettingsPatch.providerInstances", () => {
   it("treats providerInstances as an optional whole-map replacement", () => {
     const patch = decodeServerSettingsPatch({});
@@ -2060,42 +2345,6 @@ describe("ServerSettingsPatch string normalization", () => {
     expect(encoded.providers?.codex?.binaryPath).toBe("/opt/homebrew/bin/codex");
     expect(encoded.providers?.codex?.launchArgs).toBe("--strict-config");
   });
-});
-
-describe("ServerSettings environment icon", () => {
-  it("defaults to null", () => {
-    expect(decodeServerSettings({}).environmentIcon).toBeNull();
-  });
-
-  it("keeps a kind this build knows", () => {
-    expect(decodeServerSettings({ environmentIcon: "mac-mini" }).environmentIcon).toBe("mac-mini");
-    expect(decodeServerSettings({ environmentIcon: "linux" }).environmentIcon).toBe("linux");
-  });
-
-  it("decodes a kind from a newer server as null instead of failing the snapshot", () => {
-    expect(decodeServerSettings({ environmentIcon: "toaster" }).environmentIcon).toBeNull();
-  });
-
-  it("round-trips through encode", () => {
-    const settings = decodeServerSettings({ environmentIcon: "laptop" });
-    expect(encodeServerSettings(settings).environmentIcon).toBe("laptop");
-
-    const linuxSettings = decodeServerSettings({ environmentIcon: "linux" });
-    expect(encodeServerSettings(linuxSettings).environmentIcon).toBe("linux");
-  });
-});
-
-const decodeDeviceHostSettings = Schema.decodeSync(ServerSettings);
-
-it("validates remote device hosts and rejects ambiguous host ids", () => {
-  const host = { id: "mini", label: "Mac mini", target: "user@mini", port: 2222 };
-  expect(decodeDeviceHostSettings({ deviceHosts: [host] }).deviceHosts).toEqual([host]);
-  expect(() => decodeDeviceHostSettings({ deviceHosts: [host, host] })).toThrow();
-  expect(() => decodeDeviceHostSettings({ deviceHosts: [{ ...host, id: "local" }] })).toThrow();
-  expect(() =>
-    decodeDeviceHostSettings({ deviceHosts: [{ ...host, target: "-oProxyCommand=bad" }] }),
-  ).toThrow();
-  expect(() => decodeDeviceHostSettings({ deviceHosts: [{ ...host, port: 0 }] })).toThrow();
 });
 
 describe("ClientSettings composer usage limits visibility", () => {

@@ -41,9 +41,15 @@ it.effect("binds subagent creation to the authenticated parent thread and provid
   });
   const invocation: McpInvocationContext.McpInvocationScope = {
     environmentId: EnvironmentId.make("environment-test"),
-    threadId: ThreadId.make("parent-thread"),
-    providerSessionId: "provider-session-test",
-    providerInstanceId: ProviderInstanceId.make("codex-work"),
+    thread: {
+      threadId: ThreadId.make("parent-thread"),
+      providerSessionId: "provider-session-test",
+      providerInstanceId: ProviderInstanceId.make("codex-work"),
+    },
+
+    requestNamespace: "provider-session-test",
+
+    client: undefined,
     capabilities: new Set(["workspace", "coordination"]),
     issuedAt: 1,
   };
@@ -60,8 +66,8 @@ it.effect("binds subagent creation to the authenticated parent thread and provid
       Effect.sync(() => {
         expect(result.providerInstanceId).toBe("claude-review");
         expect(spawn).toHaveBeenCalledWith({
-          parentThreadId: invocation.threadId,
-          callerProviderInstanceId: invocation.providerInstanceId,
+          parentThreadId: invocation.thread!.threadId,
+          callerProviderInstanceId: invocation.thread!.providerInstanceId,
           task: "Implement the isolated parser change and its focused tests.",
           providerInstanceId: ProviderInstanceId.make("claude-review"),
           model: "claude-opus-4-6",
@@ -106,9 +112,15 @@ it.effect(
     });
     const invocation: McpInvocationContext.McpInvocationScope = {
       environmentId: EnvironmentId.make("environment-test"),
-      threadId: ThreadId.make("parent-thread"),
-      providerSessionId: "provider-session-test",
-      providerInstanceId: ProviderInstanceId.make("codex-work"),
+      thread: {
+        threadId: ThreadId.make("parent-thread"),
+        providerSessionId: "provider-session-test",
+        providerInstanceId: ProviderInstanceId.make("codex-work"),
+      },
+
+      requestNamespace: "provider-session-test",
+
+      client: undefined,
       capabilities: new Set(["workspace", "coordination"]),
       issuedAt: 1,
     };
@@ -123,8 +135,8 @@ it.effect(
       Effect.tap(() =>
         Effect.sync(() => {
           expect(followUp).toHaveBeenCalledWith({
-            parentThreadId: invocation.threadId,
-            callerProviderInstanceId: invocation.providerInstanceId,
+            parentThreadId: invocation.thread!.threadId,
+            callerProviderInstanceId: invocation.thread!.providerInstanceId,
             agentId,
             task: "Now run the focused regression test.",
           });

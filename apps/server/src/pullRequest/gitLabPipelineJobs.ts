@@ -16,14 +16,6 @@ const PipelineJob = Schema.Struct({
 export type GitLabPipelineJob = typeof PipelineJob.Type;
 export const decodePipelineJobsJson = decodeJsonResult(Schema.Array(PipelineJob));
 
-export const decodePipelineJobDetailJson = decodeJsonResult(
-  Schema.Struct({
-    ...PipelineJob.fields,
-    pipeline: Schema.Struct({ id: Schema.Int }),
-    erased_at: Schema.optional(Schema.NullOr(Schema.String)),
-  }),
-);
-
 function jobState(
   job: GitLabPipelineJob,
 ): Pick<PullRequestCheck, "status" | "statusLabel" | "pendingState"> {

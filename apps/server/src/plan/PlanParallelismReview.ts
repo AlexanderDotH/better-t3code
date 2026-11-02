@@ -13,15 +13,17 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { ProviderInstanceRegistry } from "../provider/Services/ProviderInstanceRegistry.ts";
+import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
+import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
+import * as DateTime from "effect/DateTime";
+import { ProviderInstanceRegistry } from "../provider/ProviderInstanceRegistry.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import {
   PLAN_PARALLELISM_REVIEW_PLAN_MAX_CHARS,
   PLAN_PARALLELISM_REVIEW_REQUEST_MAX_CHARS,
   truncatePlanParallelismReviewContext,
-} from "../textGeneration/TextGenerationPrompts.ts";
+} from "@t3tools/provider-core/server/textGenerationPrompts";
 
 const REVIEW_TIMEOUT = Duration.seconds(20);
 
@@ -41,9 +43,10 @@ export class PlanParallelismReview extends Context.Service<
   }
 >()("t3/plan/PlanParallelismReview") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
-  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+  const orchestration = yield* OrchestratorV2;
+  const projects = yield* ProjectStoreV2;
   const providerInstanceRegistry = yield* ProviderInstanceRegistry;
   const serverSettings = yield* ServerSettingsService;
   const textGeneration = yield* TextGeneration;
@@ -51,30 +54,32 @@ export const make = Effect.gen(function* () {
   const review: PlanParallelismReview["Service"]["review"] = Effect.fn(
     "PlanParallelismReview.review",
   )(function* (input) {
-    const threadOption = yield* projectionSnapshotQuery
-      .getThreadDetailById(input.threadId)
+    const projection = yield* orchestration
+      .getThreadRecords(input.threadId, ["plans", "messages", "turnItems"])
       .pipe(
         Effect.mapError(() =>
           reviewError("plan-not-found", "The proposed plan could not be loaded."),
         ),
       );
-    if (Option.isNone(threadOption)) {
+    const thread = projection.thread;
+    const plan = projection.plans.find(
+      (candidate) => candidate.id === input.planId && candidate.kind === "proposed_plan",
+    );
+    const planItem = projection.turnItems.find(
+      (item) => item.type === "proposed_plan" && item.planId === input.planId,
+    );
+    if (!plan || plan.kind !== "proposed_plan" || !planItem) {
       return yield* reviewError("plan-not-found", "The proposed plan was not found.");
     }
-    const thread = threadOption.value;
-    const plan = thread.proposedPlans.find((candidate) => candidate.id === input.planId);
-    if (!plan) {
-      return yield* reviewError("plan-not-found", "The proposed plan was not found.");
-    }
-    if (plan.updatedAt !== input.expectedPlanUpdatedAt) {
+    if (DateTime.formatIso(planItem.updatedAt) !== input.expectedPlanUpdatedAt) {
       return yield* reviewError(
         "plan-stale",
         "The proposed plan changed before its parallelism review completed.",
       );
     }
 
-    const projectOption = yield* projectionSnapshotQuery
-      .getProjectShellById(thread.projectId)
+    const projectOption = yield* projects
+      .getShell(thread.projectId)
       .pipe(
         Effect.mapError(() =>
           reviewError("plan-not-found", "The project for the proposed plan could not be loaded."),
@@ -120,17 +125,17 @@ export const make = Effect.gen(function* () {
     }
 
     const userRequest =
-      plan.turnId === null
+      plan.runId === null
         ? undefined
-        : thread.messages.find(
-            (message) => message.role === "user" && message.turnId === plan.turnId,
+        : projection.messages.find(
+            (message) => message.role === "user" && message.runId === plan.runId,
           )?.text;
     const cwd = thread.worktreePath ?? projectOption.value.workspaceRoot;
     const generation = textGeneration
       .reviewPlanParallelism({
         cwd,
         planMarkdown: truncatePlanParallelismReviewContext(
-          plan.planMarkdown,
+          plan.markdown,
           PLAN_PARALLELISM_REVIEW_PLAN_MAX_CHARS,
         ),
         ...(userRequest === undefined
@@ -176,7 +181,7 @@ export const make = Effect.gen(function* () {
     }
 
     const countSchema = Schema.Int.check(Schema.isBetween({ minimum: 2, maximum: maxSubagents }));
-    const recommendedSubagents = yield* Schema.decodeUnknownEffect(countSchema)(
+    const recommendedSubagents = yield* Schema.decodeEffect(countSchema)(
       generationExit.value.value.recommendedSubagents,
     ).pipe(
       Effect.mapError(() =>
@@ -195,7 +200,7 @@ export const make = Effect.gen(function* () {
     });
     return {
       planId: plan.id,
-      planUpdatedAt: plan.updatedAt,
+      planUpdatedAt: DateTime.formatIso(planItem.updatedAt),
       implementationProviderInstanceId: input.implementationProviderInstanceId,
       recommendedSubagents,
     } satisfies PlanParallelismReviewResult;

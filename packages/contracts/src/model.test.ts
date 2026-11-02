@@ -25,11 +25,15 @@ describe("multi-provider model contracts", () => {
   it("defines defaults for exactly the native provider drivers", () => {
     expect(DEFAULT_MODEL_BY_PROVIDER).toEqual({
       antigravity: "antigravity-default",
+      fx: "default",
+      muse: "default",
+      pi: "default",
+      acpRegistry: "default",
       [CODEX_DRIVER_KIND]: "gpt-6-astra",
-      [CLAUDE_DRIVER_KIND]: "claude-fable-5-1",
+      [CLAUDE_DRIVER_KIND]: "claude-opus-5-5",
       [CURSOR_DRIVER_KIND]: "auto",
       [GROK_DRIVER_KIND]: "grok-build",
-      [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+      [OPENCODE_DRIVER_KIND]: "opencode/big-pickle",
       [GEMINI_DRIVER_KIND]: "gemini-3.6-flash",
     });
   });
@@ -37,6 +41,10 @@ describe("multi-provider model contracts", () => {
   it("defines display names for supported provider drivers", () => {
     expect(PROVIDER_DISPLAY_NAMES).toEqual({
       antigravity: "Antigravity",
+      fx: "fx",
+      muse: "Muse Code",
+      pi: "Pi",
+      acpRegistry: "ACP Registry",
       lmstudio: "LM Studio",
       openaiCompatible: "OpenAI Compatible",
       [CODEX_DRIVER_KIND]: "Codex",

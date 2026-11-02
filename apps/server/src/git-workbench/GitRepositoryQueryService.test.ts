@@ -1,4 +1,4 @@
-import { HostProcessWorkingDirectory } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
@@ -15,7 +15,7 @@ import * as GitRepositoryQueryService from "./GitRepositoryQueryService.ts";
 
 const GitLayer = GitVcsDriver.layer.pipe(
   Layer.provide(
-    ServerConfig.ServerConfig.layerTest(HostProcessWorkingDirectory.defaultValue(), {
+    ServerConfig.ServerConfig.layerTest(HostProcess.WorkingDirectory.defaultValue(), {
       prefix: "t3-git-repository-query-test-",
     }),
   ),
@@ -397,7 +397,6 @@ it.effect("aggregates mailmap-aware contributors, daily activity, and tracked Co
       ],
     );
     assert.ok(insights.contributors.every(({ identityKey }) => /^[0-9a-f]{64}$/.test(identityKey)));
-    // @effect-diagnostics-next-line preferSchemaOverJson:off - Check the complete serialized result for accidental email disclosure, including unexpected fields.
     assert.strictEqual(/@example\.test/.test(JSON.stringify(insights)), false);
     assert.strictEqual(
       insights.activity.find(({ date }) => date === recent.slice(0, 10))?.commitCount,

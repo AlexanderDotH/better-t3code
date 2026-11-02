@@ -15,14 +15,6 @@ function objectConfig(value: unknown): Readonly<Record<string, unknown>> {
     : {};
 }
 
-/**
- * Persist the first valid OpenRouter model chosen from its setup catalog.
- *
- * The provider remains turn-blocked while its configured default is missing,
- * removed, or incompatible. Model pickers are the recovery surface, so a
- * valid selection promotes the default instance when needed and only rewrites
- * the selected instance's opaque driver config.
- */
 export function resolveOpenRouterBootstrapModelPatch(input: {
   readonly settings: Pick<ServerSettings, "providerInstances" | "providers">;
   readonly provider: ServerProvider;

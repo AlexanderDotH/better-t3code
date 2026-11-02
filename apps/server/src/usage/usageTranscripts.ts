@@ -1,3 +1,14 @@
+import {
+  type ClaudeUsageContext,
+  type CodexUsageContext,
+  initialClaudeUsageContext,
+  initialCodexUsageContext,
+  observeClaudeUsageContext,
+  takeClaudeUsageContext,
+  observeCodexSessionContext,
+  observeCodexResponseContext,
+  takeCodexUsageContext,
+} from "./usageContextAttribution.ts";
 /**
  * Pure parsers for the provider CLIs' on-disk session transcripts.
  *
@@ -39,49 +50,6 @@ export interface UsageRecord {
   readonly dedupeKey: string | null;
 }
 
-const EMPTY_TOTALS: UsageTokenTotals = {
-  uncachedInputTokens: 0,
-  cachedInputTokens: 0,
-  cacheCreationTokens: 0,
-  outputTokens: 0,
-  reasoningTokens: 0,
-};
-
-const EMPTY_DIAGNOSTICS: MutableUsageContextDiagnostics = {
-  nativeForks: 0,
-  compactHandoffs: 0,
-  totalHandoffChars: 0,
-  compactionEvents: 0,
-  maxContextTokens: 0,
-  instructionChars: 0,
-  memoryInjectionChars: 0,
-  toolSchemaChars: 0,
-  subagentResultChars: 0,
-  toolDigestChars: 0,
-  autoRoutingChars: 0,
-};
-
-interface MutableUsageContextDiagnostics {
-  nativeForks: number;
-  compactHandoffs: number;
-  totalHandoffChars: number;
-  compactionEvents: number;
-  maxContextTokens: number;
-  instructionChars: number;
-  memoryInjectionChars: number;
-  toolSchemaChars: number;
-  subagentResultChars: number;
-  toolDigestChars: number;
-  autoRoutingChars: number;
-}
-
-const T3_METADATA_CALL_MARKER = "<t3code_metadata_call>";
-const T3_AUTO_REASONING_CALL_MARKER = "<t3code_auto_reasoning_call>";
-const T3_CONTEXT_HANDOFF_OPEN = "<t3code_context_handoff>";
-const T3_CONTEXT_HANDOFF_CLOSE = "</t3code_context_handoff>";
-const T3_PROJECT_MEMORY_OPEN = "<t3code_project_memory>";
-const T3_PROJECT_MEMORY_CLOSE = "</t3code_project_memory>";
-
 function int(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0;
 }
@@ -92,16 +60,6 @@ function parseTimestampMs(value: unknown): number | null {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
-export function addTotals(a: UsageTokenTotals, b: UsageTokenTotals): UsageTokenTotals {
-  return {
-    uncachedInputTokens: a.uncachedInputTokens + b.uncachedInputTokens,
-    cachedInputTokens: a.cachedInputTokens + b.cachedInputTokens,
-    cacheCreationTokens: a.cacheCreationTokens + b.cacheCreationTokens,
-    outputTokens: a.outputTokens + b.outputTokens,
-    reasoningTokens: a.reasoningTokens + b.reasoningTokens,
-  };
-}
-
 export function totalTokens(totals: UsageTokenTotals): number {
   // reasoningTokens is a subset of outputTokens and must not be added again.
   return (
@@ -110,64 +68,6 @@ export function totalTokens(totals: UsageTokenTotals): number {
     totals.cacheCreationTokens +
     totals.outputTokens
   );
-}
-
-function measureTaggedText(text: string, open: string, close: string): number {
-  let total = 0;
-  let offset = 0;
-  while (offset < text.length) {
-    const start = text.indexOf(open, offset);
-    if (start < 0) break;
-    const closeIndex = text.indexOf(close, start + open.length);
-    if (closeIndex < 0) break;
-    const end = closeIndex + close.length;
-    total += end - start;
-    offset = end;
-  }
-  return total;
-}
-
-function measureContextHandoff(text: string): number {
-  return measureTaggedText(text, T3_CONTEXT_HANDOFF_OPEN, T3_CONTEXT_HANDOFF_CLOSE);
-}
-
-function measureProjectMemory(text: string): number {
-  return measureTaggedText(text, T3_PROJECT_MEMORY_OPEN, T3_PROJECT_MEMORY_CLOSE);
-}
-
-function contentFreeDiagnostics(
-  diagnostics: MutableUsageContextDiagnostics,
-): UsageContextDiagnostics {
-  return {
-    nativeForks: diagnostics.nativeForks,
-    compactHandoffs: diagnostics.compactHandoffs,
-    totalHandoffChars: diagnostics.totalHandoffChars,
-    compactionEvents: diagnostics.compactionEvents,
-    maxContextTokens: diagnostics.maxContextTokens,
-    ...(diagnostics.instructionChars > 0 ? { instructionChars: diagnostics.instructionChars } : {}),
-    ...(diagnostics.memoryInjectionChars > 0
-      ? { memoryInjectionChars: diagnostics.memoryInjectionChars }
-      : {}),
-    ...(diagnostics.toolSchemaChars > 0 ? { toolSchemaChars: diagnostics.toolSchemaChars } : {}),
-    ...(diagnostics.subagentResultChars > 0
-      ? { subagentResultChars: diagnostics.subagentResultChars }
-      : {}),
-    ...(diagnostics.toolDigestChars > 0 ? { toolDigestChars: diagnostics.toolDigestChars } : {}),
-    ...(diagnostics.autoRoutingChars > 0 ? { autoRoutingChars: diagnostics.autoRoutingChars } : {}),
-  };
-}
-
-/**
- * Cheap substring gate applied before `JSON.parse`.
- *
- * Transcripts are mostly tool output; only a minority of lines carry usage. On
- * a 30-day window this skips roughly half the lines outright and is worth about
- * an order of magnitude.
- */
-export function mightCarryUsage(line: string, provider: UsageProviderKind): boolean {
-  if (provider === "claude") return line.includes('"usage"');
-  if (provider === "grok") return line.includes('"turn_completed"');
-  return line.includes('"token_count"');
 }
 
 /**
@@ -181,53 +81,13 @@ function grokCostTicksToUsd(ticks: unknown): number | null {
   return ticks / GROK_COST_USD_TICKS_PER_DOLLAR;
 }
 
-/* -------------------------------------------------------------------------- */
-/* Claude Code                                                                */
-/* -------------------------------------------------------------------------- */
-
-export interface ClaudeScanState {
-  callKind: UsageCallKind;
-  pendingDiagnostics: MutableUsageContextDiagnostics;
-}
+export interface ClaudeScanState extends ClaudeUsageContext {}
 
 export function initialClaudeScanState(): ClaudeScanState {
-  return {
-    callKind: "unknown",
-    pendingDiagnostics: { ...EMPTY_DIAGNOSTICS },
-  };
+  return initialClaudeUsageContext();
 }
 
-function readClaudeMessageText(record: Record<string, unknown>): string {
-  if (record["type"] !== "user") return "";
-  const message = record["message"];
-  if (typeof message !== "object" || message === null) return "";
-  const content = (message as Record<string, unknown>)["content"];
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .flatMap((item) => {
-      if (typeof item === "string") return [item];
-      if (typeof item !== "object" || item === null) return [];
-      const text = (item as Record<string, unknown>)["text"];
-      return typeof text === "string" ? [text] : [];
-    })
-    .join("\n");
-}
-
-function takeClaudeDiagnostics(state: ClaudeScanState): UsageContextDiagnostics | undefined {
-  const diagnostics = contentFreeDiagnostics(state.pendingDiagnostics);
-  state.pendingDiagnostics = { ...EMPTY_DIAGNOSTICS };
-  return Object.values(diagnostics).some((value) => (value ?? 0) > 0) ? diagnostics : undefined;
-}
-
-/**
- * Parses one line of a Claude Code transcript.
- *
- * T3 Code writes one record per assistant *content block*, and every one of
- * those records repeats the same complete `usage` object for the parent
- * message. Summing them overcounts by roughly 2.4x on a real workload, so the
- * caller must drop repeats by `dedupeKey` and keep the first.
- */
+/** Claude repeats usage for each content block; callers keep the first record per dedupeKey. */
 export function parseClaudeLine(
   line: string,
   state: ClaudeScanState = initialClaudeScanState(),
@@ -241,7 +101,7 @@ export function parseClaudeLine(
   return parseClaudeRecord(parsed, state);
 }
 
-export function parseClaudeRecord(
+function parseClaudeRecord(
   parsed: unknown,
   state: ClaudeScanState = initialClaudeScanState(),
 ): UsageRecord | null {
@@ -249,21 +109,7 @@ export function parseClaudeRecord(
 
   const record = parsed as Record<string, unknown>;
   if (record["type"] === "user") {
-    const text = readClaudeMessageText(record);
-    state.callKind = text.includes(T3_AUTO_REASONING_CALL_MARKER)
-      ? "auto-reasoning"
-      : text.includes(T3_METADATA_CALL_MARKER)
-        ? "metadata"
-        : "unknown";
-    if (state.callKind === "auto-reasoning") {
-      state.pendingDiagnostics.autoRoutingChars += text.length;
-    }
-    const handoffChars = measureContextHandoff(text);
-    if (handoffChars > 0) {
-      state.pendingDiagnostics.compactHandoffs = 1;
-      state.pendingDiagnostics.totalHandoffChars = handoffChars;
-    }
-    state.pendingDiagnostics.memoryInjectionChars += measureProjectMemory(text);
+    observeClaudeUsageContext(record, state);
     return null;
   }
   if (record["type"] !== "assistant") return null;
@@ -290,18 +136,7 @@ export function parseClaudeRecord(
     messageId === null && requestId === null ? null : `${messageId ?? ""}:${requestId ?? ""}`;
 
   const cost = record["costUSD"];
-  const observedCallKind =
-    record["isSidechain"] === true
-      ? "subagent"
-      : record["isSidechain"] === false
-        ? "root"
-        : "unknown";
-  const callKind =
-    state.callKind === "metadata" || state.callKind === "auto-reasoning"
-      ? state.callKind
-      : observedCallKind;
-  state.callKind = "unknown";
-  const diagnostics = takeClaudeDiagnostics(state);
+  const attribution = takeClaudeUsageContext(record, state);
 
   return {
     provider: "claude",
@@ -316,17 +151,12 @@ export function parseClaudeRecord(
       // Anthropic folds thinking tokens into output and does not break them out.
       reasoningTokens: 0,
     },
-    callKind,
-    ...(diagnostics === undefined ? {} : { diagnostics }),
+    ...attribution,
     reportedCostUsd: typeof cost === "number" && Number.isFinite(cost) ? cost : null,
     fast: usageRecord["speed"] === "fast",
     dedupeKey,
   };
 }
-
-/* -------------------------------------------------------------------------- */
-/* Codex                                                                      */
-/* -------------------------------------------------------------------------- */
 
 /**
  * Rolling state for a single Codex rollout file.
@@ -335,7 +165,7 @@ export function parseClaudeRecord(
  * from the most recent `turn_context`. Sessions that switch models mid-run
  * attribute correctly from the switch onward.
  */
-export interface CodexScanState {
+export interface CodexScanState extends CodexUsageContext {
   model: string;
   sessionId: string;
   lastUsageSignature: string | null;
@@ -343,10 +173,6 @@ export interface CodexScanState {
   /** While true, leading usage events are re-stamped copies of parent history. */
   suppressingForkCopies: boolean;
   forkCopyAnchorMs: number;
-  callKind: UsageCallKind;
-  baseCallKind: UsageCallKind;
-  pendingDiagnostics: MutableUsageContextDiagnostics;
-  subagentToolCallIds: Set<string>;
 }
 
 export function initialCodexScanState(): CodexScanState {
@@ -357,20 +183,11 @@ export function initialCodexScanState(): CodexScanState {
     sawSessionMeta: false,
     suppressingForkCopies: false,
     forkCopyAnchorMs: 0,
-    callKind: "unknown",
-    baseCallKind: "unknown",
-    pendingDiagnostics: { ...EMPTY_DIAGNOSTICS },
-    subagentToolCallIds: new Set(),
+    ...initialCodexUsageContext(),
   };
 }
 
-/**
- * A forked or subagent rollout opens with the parent's full history copied in,
- * every line re-stamped to the fork instant. Those copies are written in one
- * synchronous burst (observed gaps 0-40ms), while the child's first genuine
- * usage event only lands after a real model turn (observed 5s+). One second of
- * separation splits the two cleanly; `ccusage` uses the same threshold.
- */
+/** Parent history is copied in a short burst; a one-second gap marks genuine child usage. */
 const FORK_COPY_MAX_GAP_MS = 1000;
 
 /** Whether a `session_meta` payload marks the rollout as a fork or subagent. */
@@ -385,86 +202,7 @@ function isForkedSessionMeta(payload: Record<string, unknown>): boolean {
   return typeof (spawn as Record<string, unknown>)["parent_thread_id"] === "string";
 }
 
-function isSubagentSessionMeta(payload: Record<string, unknown>): boolean {
-  const source = payload["source"];
-  if (typeof source !== "object" || source === null) return false;
-  const subagent = (source as Record<string, unknown>)["subagent"];
-  return typeof subagent === "object" && subagent !== null;
-}
-
-function readInputText(payload: Record<string, unknown>): string {
-  if (payload["type"] !== "message" || payload["role"] !== "user") return "";
-  const content = payload["content"];
-  if (!Array.isArray(content)) return "";
-  return content
-    .flatMap((item) => {
-      if (typeof item !== "object" || item === null) return [];
-      const text = (item as Record<string, unknown>)["text"];
-      return typeof text === "string" ? [text] : [];
-    })
-    .join("\n");
-}
-
-function takeCodexDiagnostics(
-  state: CodexScanState,
-  maxContextTokens: number,
-): UsageContextDiagnostics | undefined {
-  const diagnostics = contentFreeDiagnostics({
-    ...state.pendingDiagnostics,
-    maxContextTokens: Math.max(state.pendingDiagnostics.maxContextTokens, maxContextTokens),
-  });
-  state.pendingDiagnostics = { ...EMPTY_DIAGNOSTICS };
-  return Object.values(diagnostics).some((value) => (value ?? 0) > 0) ? diagnostics : undefined;
-}
-
-const SUBAGENT_TOOL_NAMES = new Set([
-  "spawn_agent",
-  "send_message",
-  "followup_task",
-  "wait_agent",
-  "interrupt_agent",
-  "list_agents",
-]);
-
-function responseOutputTexts(value: unknown): ReadonlyArray<string> {
-  if (typeof value === "string") return [value];
-  if (Array.isArray(value)) return value.flatMap(responseOutputTexts);
-  if (value === null || typeof value !== "object") return [];
-  const record = value as Record<string, unknown>;
-  return [record["text"], record["content"], record["output"]].flatMap(responseOutputTexts);
-}
-
-function recordSubagentResultSize(payload: Record<string, unknown>, state: CodexScanState): void {
-  const type = payload["type"];
-  if (type === "custom_tool_call" || type === "function_call") {
-    const name = payload["name"];
-    const callId = payload["call_id"] ?? payload["id"];
-    if (typeof name === "string" && SUBAGENT_TOOL_NAMES.has(name) && typeof callId === "string") {
-      state.subagentToolCallIds.add(callId);
-    }
-    return;
-  }
-  if (type !== "custom_tool_call_output" && type !== "function_call_output") return;
-  const outputTexts = responseOutputTexts(payload["output"]);
-  state.pendingDiagnostics.toolDigestChars += outputTexts
-    .filter((text) => text.includes('"detailRef"') && text.includes("tool-result:"))
-    .reduce((total, text) => total + text.length, 0);
-  const callId = payload["call_id"] ?? payload["id"];
-  if (typeof callId !== "string" || !state.subagentToolCallIds.delete(callId)) return;
-  state.pendingDiagnostics.subagentResultChars += outputTexts.reduce(
-    (total, text) => total + text.length,
-    0,
-  );
-}
-
-/**
- * Feeds one line of a Codex rollout into `state`, returning a record when the
- * line was a usage event.
- *
- * Deltas come from `last_token_usage`. Summing those across a session
- * reconciles with the session's final `total_token_usage`, provided
- * consecutive duplicate events are dropped, which this does.
- */
+/** Sum last_token_usage deltas and drop consecutive duplicate events to match session totals. */
 export function parseCodexLine(line: string, state: CodexScanState): UsageRecord | null {
   let parsed: unknown;
   try {
@@ -475,7 +213,7 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
   return parseCodexRecord(parsed, state);
 }
 
-export function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord | null {
+function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord | null {
   if (typeof parsed !== "object" || parsed === null) return null;
 
   const record = parsed as Record<string, unknown>;
@@ -492,18 +230,16 @@ export function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageR
     state.sawSessionMeta = true;
     const id = payloadRecord["id"] ?? payloadRecord["session_id"];
     if (typeof id === "string") state.sessionId = id;
-    state.baseCallKind = isSubagentSessionMeta(payloadRecord) ? "subagent" : "root";
-    state.callKind = state.baseCallKind;
-    const instructions = payloadRecord["base_instructions"];
-    if (typeof instructions === "string") {
-      state.pendingDiagnostics.instructionChars += instructions.length;
-    }
     const metaTimestampMs = parseTimestampMs(record["timestamp"]);
     if (metaTimestampMs !== null && isForkedSessionMeta(payloadRecord)) {
-      state.pendingDiagnostics.nativeForks += 1;
       state.suppressingForkCopies = true;
       state.forkCopyAnchorMs = metaTimestampMs;
     }
+    observeCodexSessionContext(
+      payloadRecord,
+      state,
+      metaTimestampMs !== null && isForkedSessionMeta(payloadRecord),
+    );
     return null;
   }
 
@@ -513,22 +249,7 @@ export function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageR
   }
 
   if (record["type"] === "response_item") {
-    recordSubagentResultSize(payloadRecord, state);
-    const text = readInputText(payloadRecord);
-    if (text.includes(T3_AUTO_REASONING_CALL_MARKER)) {
-      state.callKind = "auto-reasoning";
-      state.pendingDiagnostics.autoRoutingChars += text.length;
-    } else if (text.includes(T3_METADATA_CALL_MARKER)) {
-      state.callKind = "metadata";
-    }
-    const handoffChars = measureContextHandoff(text);
-    if (handoffChars > 0) {
-      // A fork copy can repeat older handoffs. The last handoff before the next
-      // usage event is the one that supplied that call's context.
-      state.pendingDiagnostics.compactHandoffs = 1;
-      state.pendingDiagnostics.totalHandoffChars = handoffChars;
-    }
-    state.pendingDiagnostics.memoryInjectionChars += measureProjectMemory(text);
+    observeCodexResponseContext(payloadRecord, state);
     return null;
   }
 
@@ -587,9 +308,7 @@ export function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageR
   };
 
   if (totalTokens(totals) === 0) return null;
-  const diagnostics = takeCodexDiagnostics(state, maxContextTokens);
-  const callKind = state.callKind;
-  state.callKind = state.baseCallKind;
+  const attribution = takeCodexUsageContext(state, maxContextTokens);
 
   return {
     provider: "codex",
@@ -597,8 +316,7 @@ export function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageR
     model: state.model,
     sessionId: state.sessionId,
     totals,
-    callKind,
-    ...(diagnostics === undefined ? {} : { diagnostics }),
+    ...attribution,
     // Codex does not report cost in the rollout.
     reportedCostUsd: null,
     fast: false,
@@ -607,10 +325,6 @@ export function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageR
     dedupeKey: null,
   };
 }
-
-/* -------------------------------------------------------------------------- */
-/* Grok Build                                                                 */
-/* -------------------------------------------------------------------------- */
 
 interface GrokUsageTotals {
   readonly inputTokens: number;
@@ -655,15 +369,7 @@ function grokTotalsToUsage(totals: GrokUsageTotals): UsageTokenTotals {
   };
 }
 
-/**
- * Parses one line of a Grok Build `updates.jsonl` session log.
- *
- * Usage lands on `turn_completed` session updates. Per-model breakdowns live
- * under `usage.modelUsage`; when present each model becomes its own record.
- *
- * Returns every record for the line (0 or more). Callers stream line-by-line
- * and flatten.
- */
+/** Return one usage record per model from turn_completed updates, or the aggregate fallback. */
 export function parseGrokLine(line: string): readonly UsageRecord[] {
   let parsed: unknown;
   try {
@@ -674,7 +380,7 @@ export function parseGrokLine(line: string): readonly UsageRecord[] {
   return parseGrokRecord(parsed);
 }
 
-export function parseGrokRecord(parsed: unknown): readonly UsageRecord[] {
+function parseGrokRecord(parsed: unknown): readonly UsageRecord[] {
   if (typeof parsed !== "object" || parsed === null) return [];
 
   const record = parsed as Record<string, unknown>;
@@ -743,14 +449,8 @@ export function parseGrokRecord(parsed: unknown): readonly UsageRecord[] {
     ];
   }
 
-  // Cost allocation:
-  // 1. Emitted models with their own costUsdTicks keep those values.
-  // 2. Remaining aggregate cost (top-level minus those per-model ticks,
-  //    clamped at 0) is pro-rated across emitted models that lack ticks,
-  //    by token share among the unticked models only.
-  // 3. When no model has per-model ticks, remaining equals the full
-  //    aggregate and every emitted model gets a token-share slice.
-  // Zero-token rows are never emitted and never count toward used ticks.
+  // Preserve reported per-model costs, then divide the remaining aggregate among
+  // unticked models by token share. Zero-token rows take no share.
   const topLevelCostUsd = grokCostTicksToUsd(topLevel.costUsdTicks);
   let usedTickedCostUsd = 0;
   let untickedTokenDenominator = 0;
@@ -790,5 +490,3 @@ export function parseGrokRecord(parsed: unknown): readonly UsageRecord[] {
   }
   return results;
 }
-
-export { EMPTY_TOTALS };

@@ -2,7 +2,6 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type ThreadForkBoundary,
-  type ThreadForkHandoffState,
   type ThreadForkWorkspace,
 } from "@t3tools/contracts";
 
@@ -17,11 +16,8 @@ export function forkBoundaryKey(boundary: ThreadForkBoundary): string {
     : `proposed-plan:${boundary.planId}`;
 }
 
-export function resolveFirstTurnForkBudget(
-  handoff:
-    | (Pick<ThreadForkHandoffState, "status"> & Partial<ThreadForkHandoffState>)
-    | null
-    | undefined,
+export function resolveFirstTurnForkBudget<Handoff extends { readonly status: string }>(
+  handoff: Handoff | null | undefined,
 ): FirstTurnForkBudget | null {
   if (handoff?.status !== "pending") return null;
   return {

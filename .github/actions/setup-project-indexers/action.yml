@@ -10,8 +10,12 @@ runs:
       with:
         distribution: temurin
         java-version: "21"
-        cache: maven
-        cache-dependency-path: native/project-indexer-java/pom.xml
+    # setup-java also scans the whole checkout for optional Maven wrappers.
+    - name: Cache project indexer Maven dependencies
+      uses: actions/cache@v6
+      with:
+        path: ~/.m2/repository
+        key: project-indexer-maven-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/project-indexer-java/pom.xml') }}
     - name: Install verified Maven distribution
       shell: bash
       run: |

@@ -30,8 +30,8 @@ import {
   AndroidScreenScaffold,
   ScreenScaffoldScrollView,
 } from "../../components/AndroidScreenScaffold";
-import { AppText as Text } from "../../components/AppText";
-import { EmptyState } from "../../components/EmptyState";
+import { AppText as Text } from "../../components/ui/AppText";
+import { EmptyState } from "../../components/ui/EmptyState";
 import { serverEnvironment } from "../../state/server";
 import { knowledgeGraphEnvironment } from "../../state/knowledge-graph";
 import { projectIndexEnvironment } from "../../state/project-index";

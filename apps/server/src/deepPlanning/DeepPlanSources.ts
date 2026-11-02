@@ -1,3 +1,4 @@
+import { deepPlanSourceProjectionCtes } from "./DeepPlanSourceProjection.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeCrypto from "node:crypto";
 
@@ -16,7 +17,6 @@ import {
   DeepPlanSourceSummary,
   IsoDateTime,
   ProjectId,
-  ThreadForkState,
   ThreadId,
   type DeepPlanExportSourcesInput,
   type DeepPlanCatalogSourcesInput,
@@ -35,6 +35,7 @@ import {
   type DeepPlanSummarizeSourceInput,
   type DeepPlanDocument,
 } from "@t3tools/contracts";
+import { ThreadForkState } from "@t3tools/contracts/legacy";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -45,7 +46,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { ServerConfig } from "../config.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
@@ -123,6 +124,7 @@ const ThreadRow = Schema.Struct({
   title: Schema.String,
   archivedAt: Schema.NullOr(IsoDateTime),
   fork: Schema.NullOr(Schema.fromJsonString(ThreadForkState)),
+  forkThreadId: Schema.NullOr(ThreadId),
   forkProjectId: Schema.optional(Schema.NullOr(ProjectId)),
 });
 const RunSourceRow = Schema.Struct({
@@ -559,18 +561,18 @@ export const makeDeepPlanSources = Effect.gen(function* () {
       afterThreadId = cursor.anchor;
     }
     const limit = pageLimit(input.limit, DEEP_PLAN_MAX_PAGE_SIZE, DEFAULT_CATALOG_PAGE_SIZE);
-    const rows = yield* sql`
-      SELECT t.thread_id AS "threadId", t.title, t.archived_at AS "archivedAt", t.fork_json AS fork,
-        (SELECT project_id FROM projection_threads WHERE thread_id = json_extract(t.fork_json, '$.provenance.sourceThreadId')) AS "forkProjectId",
+    const rows = yield* sql`WITH ${sql.literal(deepPlanSourceProjectionCtes)}
+      SELECT t.thread_id AS "threadId", t.title, t.archived_at AS "archivedAt", t.fork_json AS fork, t.fork_source_thread_id AS "forkThreadId",
+        (SELECT project_id FROM source_threads WHERE thread_id = t.fork_source_thread_id) AS "forkProjectId",
         t.updated_at AS "updatedAt",
-        ((SELECT COUNT(*) FROM projection_thread_messages m WHERE m.thread_id = t.thread_id AND m.is_streaming = 0)
+        ((SELECT COUNT(*) FROM source_messages m WHERE m.thread_id = t.thread_id AND m.is_streaming = 0)
           + (SELECT COUNT(*) FROM projection_thread_subagent_messages m WHERE m.thread_id = t.thread_id AND m.is_streaming = 0)) AS "messageCount",
-        ((SELECT COUNT(*) FROM projection_thread_activities a WHERE a.thread_id = t.thread_id)
+        ((SELECT COUNT(*) FROM source_activities a WHERE a.thread_id = t.thread_id)
           + (SELECT COUNT(*) FROM projection_thread_subagent_activities a WHERE a.thread_id = t.thread_id)) AS "activityCount"
-      FROM projection_threads t
+      FROM source_threads t
       WHERE t.project_id = ${input.projectId} AND t.deleted_at IS NULL AND t.thread_id > ${afterThreadId}
         AND (${input.includeArchived !== false ? 1 : 0} = 1 OR t.archived_at IS NULL)
-        AND ${input.threadIds === undefined ? sql`1 = 1` : sql.in("thread_id", input.threadIds)}
+        AND ${input.threadIds === undefined ? sql`NOT EXISTS (SELECT 1 FROM orchestration_v2_legacy_subagent_threads child WHERE child.thread_id = t.thread_id)` : sql.in("thread_id", input.threadIds)}
       ORDER BY t.thread_id LIMIT ${limit + 1}
     `;
     const decoded = yield* decodeCatalogRows(rows);
@@ -588,12 +590,12 @@ export const makeDeepPlanSources = Effect.gen(function* () {
       activityCount: row.activityCount,
       updatedAt: row.updatedAt,
       forkOrigin:
-        row.fork === null
+        row.fork === null && row.forkThreadId === null
           ? null
           : {
               environmentId: descriptor.environmentId,
               projectId: row.forkProjectId ?? input.projectId,
-              threadId: row.fork.provenance.sourceThreadId,
+              threadId: row.forkThreadId ?? row.fork!.provenance.sourceThreadId,
             },
     }));
     return {
@@ -849,8 +851,10 @@ export const makeDeepPlanSources = Effect.gen(function* () {
           "A source may only be selected once for a run.",
         );
       }
-      const owner = yield* sql<{ readonly projectId: ProjectId }>`
-        SELECT project_id AS "projectId" FROM projection_threads WHERE thread_id = ${input.threadId} AND deleted_at IS NULL
+      const owner = yield* sql<{
+        readonly projectId: ProjectId;
+      }>`WITH ${sql.literal(deepPlanSourceProjectionCtes)}
+        SELECT project_id AS "projectId" FROM source_threads WHERE thread_id = ${input.threadId} AND deleted_at IS NULL
       `;
       if (owner[0] === undefined)
         return yield* sourceError(

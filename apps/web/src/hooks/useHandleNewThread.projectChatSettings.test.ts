@@ -17,6 +17,7 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type { ProjectChatSettingsThread } from "@t3tools/client-runtime/project-chat-settings";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -88,11 +89,25 @@ vi.mock("../state/server", () => ({
 }));
 vi.mock("../rpc/atomRegistry", () => ({
   appAtomRegistry: {
-    get: (atom: unknown) => (typeof atom === "function" ? atom() : testState.configs),
+    get: (atom: unknown) =>
+      typeof atom === "function"
+        ? atom()
+        : atom === "connected-environment-ids"
+          ? [...testState.configs.keys()]
+          : testState.configs,
   },
 }));
+vi.mock("../components/Sidebar.logic", () => ({ orderItemsByPreferredIds: () => [] }));
+vi.mock("../state/presentation", () => ({
+  environmentSummaries: { connectedEnvironmentIdsAtom: "connected-environment-ids" },
+}));
+vi.mock("../state/olderSettledShelf", () => ({ readUnloadedThreadCount: () => 0 }));
 vi.mock("../state/entities", () => ({
   readProjects: () => testState.projects,
+  readProject: (ref: ScopedProjectRef) =>
+    testState.projects.find(
+      (project) => project.environmentId === ref.environmentId && project.id === ref.projectId,
+    ) ?? null,
   readThreadShell: (ref: { environmentId: EnvironmentId; threadId: ThreadId }) =>
     testState.shells.find(
       (shell) => shell.environmentId === ref.environmentId && shell.id === ref.threadId,
@@ -101,13 +116,15 @@ vi.mock("../state/entities", () => ({
   useProjects: () => [],
   useThread: () => null,
 }));
-vi.mock("../logicalProject", () => ({
+vi.mock("@t3tools/client-runtime/state/project-grouping", () => ({
   deriveLogicalProjectKeyFromSettings: (project: { id: ProjectId; environmentId: EnvironmentId }) =>
     testState.logicalProjectKey ?? `${project.environmentId}:${project.id}`,
   getProjectOrderKey: () => "project",
   selectProjectGroupingSettings: () => ({}),
 }));
 vi.mock("../lib/utils", () => ({
+  randomUUID: () => `test-uuid-${testState.nextId}`,
+  cn: (...classes: readonly string[]) => classes.join(" "),
   newDraftId: () => `draft-${++testState.nextId}`,
   newThreadId: () => `thread-${testState.nextId}`,
 }));
@@ -115,6 +132,7 @@ vi.mock("../lib/t3ProjectFileDefaults", () => ({
   readT3ProjectFile: () => testState.projectFileRead,
 }));
 vi.mock("./useSettings", () => ({
+  getClientSettings: () => DEFAULT_CLIENT_SETTINGS,
   useClientSettings: (selector?: (settings: { planModeEnabled: boolean }) => unknown) =>
     selector?.({ planModeEnabled: true }) ?? {},
 }));

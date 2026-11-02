@@ -1,5 +1,5 @@
 import { isClosedVisualizationFence } from "@t3tools/client-runtime/visualizations/model";
-import type { MarkdownCodeBlockRequest } from "@t3tools/mobile-markdown-text/types";
+import type { MarkdownCodeBlockRequest } from "./SelectableMarkdownText.types";
 
 export function isClosedNativeVisualization(
   markdown: Uint8Array,

@@ -1,3 +1,5 @@
+import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import { useEnvironmentScope } from "~/state/session";
 import type { EnvironmentId, ExtensionCatalogEntry, ProviderInstanceId } from "@t3tools/contracts";
 import { CheckIcon, SearchIcon, ShoppingBagIcon, SparklesIcon, UnplugIcon } from "lucide-react";
 import { useState } from "react";
@@ -48,10 +50,7 @@ export function ExtensionStore(props: ExtensionStoreProps) {
         })
       : null,
   );
-  const access = useEnvironmentQuery(
-    agentSettingsEnvironment.mcp.sessionAccess({ environmentId: props.environmentId, input: {} }),
-  );
-  const readOnly = !access.data?.scopes?.includes("orchestration:operate");
+  const readOnly = !useEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope);
   const isInstalled = (entry: ExtensionCatalogEntry) =>
     (entry.kind === "mcp"
       ? config?.settings.mcp.servers.some((server) => server.id === entry.id)

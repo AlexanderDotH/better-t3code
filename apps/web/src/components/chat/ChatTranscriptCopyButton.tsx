@@ -1,6 +1,7 @@
+import { useStableCallback } from "../../hooks/useStableCallback";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { CheckIcon, CopyIcon, LoaderCircleIcon } from "lucide-react";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 
 import {
   isAtomCommandInterrupted,
@@ -31,7 +32,7 @@ export const ChatTranscriptCopyButton = memo(function ChatTranscriptCopyButton({
   readonly environmentUnavailable: boolean;
 }) {
   const translate = useInterfaceTranslator().message;
-  const exportTranscript = useAtomCommand(orchestrationEnvironment.exportThreadTranscript, {
+  const exportTranscript = useAtomCommand(orchestrationEnvironment.threadTranscript, {
     reportFailure: false,
   });
   const [state, setState] = useState<CopyState>("idle");
@@ -39,6 +40,7 @@ export const ChatTranscriptCopyButton = memo(function ChatTranscriptCopyButton({
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Release the pending clipboard indicator timer when the button unmounts.
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -50,14 +52,14 @@ export const ChatTranscriptCopyButton = memo(function ChatTranscriptCopyButton({
     };
   }, []);
 
-  const handleCopy = useCallback(async () => {
+  const handleCopy = useStableCallback(async () => {
     if (requestInFlightRef.current || activeTurnInProgress || environmentUnavailable) return;
 
     requestInFlightRef.current = true;
     setState("loading");
 
     let interrupted = false;
-    try {
+    await (async () => {
       const transcript = await copyThreadTranscript({
         threadId,
         exportThreadTranscript: async (input) => {
@@ -91,31 +93,26 @@ export const ChatTranscriptCopyButton = memo(function ChatTranscriptCopyButton({
           data: { threadRef: { environmentId, threadId } },
         }),
       );
-    } catch (error) {
-      if (mountedRef.current) {
-        setState("idle");
-      }
-      if (interrupted) return;
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: translate("chat.transcript.copyFailed"),
-          description:
-            error instanceof Error ? error.message : translate("chat.transcript.unexpectedError"),
-          data: { threadRef: { environmentId, threadId } },
-        }),
-      );
-    } finally {
-      requestInFlightRef.current = false;
-    }
-  }, [
-    activeTurnInProgress,
-    environmentId,
-    environmentUnavailable,
-    exportTranscript,
-    threadId,
-    translate,
-  ]);
+    })()
+      .catch((error: unknown) => {
+        if (mountedRef.current) {
+          setState("idle");
+        }
+        if (interrupted) return;
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: translate("chat.transcript.copyFailed"),
+            description:
+              error instanceof Error ? error.message : translate("chat.transcript.unexpectedError"),
+            data: { threadRef: { environmentId, threadId } },
+          }),
+        );
+      })
+      .finally(() => {
+        requestInFlightRef.current = false;
+      });
+  });
 
   const disabled = environmentUnavailable || activeTurnInProgress || state !== "idle";
   const tooltip = environmentUnavailable

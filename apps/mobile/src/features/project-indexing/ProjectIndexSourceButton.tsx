@@ -7,8 +7,8 @@ import { useState } from "react";
 import { ActivityIndicator, Modal, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { AppText as Text } from "../../components/AppText";
-import { EmptyState } from "../../components/EmptyState";
+import { AppText as Text } from "../../components/ui/AppText";
+import { EmptyState } from "../../components/ui/EmptyState";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { useProject, useThreadShell } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";

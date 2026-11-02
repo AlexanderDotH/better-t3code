@@ -8,9 +8,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { SettingsTarget } from "./settings-environment-filter";
 import {
+  managedSettingReason,
   planMobileScopedSettingsClear,
   planMobileScopedSettingsPatch,
   resolveMobileSettingsTargets,
+  uniformMobileSetting,
 } from "./settings-scoped-server";
 
 const firstId = "first" as EnvironmentId;
@@ -18,21 +20,48 @@ const secondId = "second" as EnvironmentId;
 const firstProject = "first-project" as ProjectId;
 const secondProject = "second-project" as ProjectId;
 
-function environment(
-  environmentId: EnvironmentId,
-  settings: ServerSettings,
-  responseStreamingModes = true,
-): SettingsTarget {
+describe("mobile usage-limit settings across environments", () => {
+  it.each(["autoResumeLimitedThreads", "snoozeLimitedThreads"] as const)(
+    "shows %s as mixed and can enable it everywhere without changing other settings",
+    (key) => {
+      const targets = resolveMobileSettingsTargets(
+        [
+          environment(firstId, { ...DEFAULT_SERVER_SETTINGS, [key]: true }),
+          environment(secondId, { ...DEFAULT_SERVER_SETTINGS, [key]: false }),
+        ],
+        null,
+      );
+
+      expect(uniformMobileSetting(targets, key)).toBeNull();
+      const writes = planMobileScopedSettingsPatch(targets, false, { [key]: true });
+      expect(writes).toEqual([
+        { environmentId: firstId, patch: { [key]: true } },
+        { environmentId: secondId, patch: { [key]: true } },
+      ]);
+      const updatedTargets = targets.map((target) => ({
+        ...target,
+        settings: {
+          ...target.settings,
+          [key]:
+            writes.find((write) => write.environmentId === target.environment.environmentId)?.patch[
+              key
+            ] ?? target.settings[key],
+        },
+      }));
+      expect(uniformMobileSetting(updatedTargets, key)).toBe(true);
+      expect(uniformMobileSetting(targets.slice(0, 1), key)).toBe(true);
+      expect(uniformMobileSetting(targets.slice(1), key)).toBe(false);
+      expect(uniformMobileSetting([], key)).toBeNull();
+    },
+  );
+});
+
+function environment(environmentId: EnvironmentId, settings: ServerSettings): SettingsTarget {
   return {
     environmentId,
     serverConfig: {
       settings,
-      environment: {
-        capabilities: {
-          projectSettingsOverrides: true,
-          responseStreamingModes,
-        },
-      },
+      environment: { capabilities: { projectSettingsOverrides: true } },
     },
   } as SettingsTarget;
 }
@@ -46,7 +75,7 @@ describe("mobile project settings scope", () => {
     };
     const secondSettings: ServerSettings = {
       ...DEFAULT_SERVER_SETTINGS,
-      responseStreamingMode: "token",
+      responseStreamingMode: "turn",
       projectSettingsOverrides: {},
     };
     const targets = resolveMobileSettingsTargets(
@@ -75,7 +104,7 @@ describe("mobile project settings scope", () => {
       },
     ]);
     expect(firstSettings.responseStreamingMode).toBe("paragraph");
-    expect(secondSettings.responseStreamingMode).toBe("token");
+    expect(secondSettings.responseStreamingMode).toBe("turn");
   });
 
   it("removes a project override when a picker sends null for a key that cannot store it", () => {
@@ -133,86 +162,29 @@ describe("mobile project settings scope", () => {
       planMobileScopedSettingsPatch(targets, true, { enableProviderUpdateChecks: false }),
     ).toEqual([]);
   });
+});
 
-  it.each(["turn", "token"] as const)(
-    "writes %s using each selected environment's streaming contract",
-    (responseStreamingMode) => {
-      const targets = resolveMobileSettingsTargets(
-        [
-          environment(firstId, DEFAULT_SERVER_SETTINGS, false),
-          environment(secondId, DEFAULT_SERVER_SETTINGS),
-        ],
-        null,
-      );
-      expect(
-        planMobileScopedSettingsPatch(targets, false, {
-          responseStreamingMode,
-          enableAgentBrowserAccess: true,
-        }),
-      ).toEqual([
-        {
-          environmentId: firstId,
-          patch: {
-            enableAgentBrowserAccess: true,
-            enableLegacyTokenStreaming: responseStreamingMode === "token",
-          },
-        },
-        {
-          environmentId: secondId,
-          patch: { responseStreamingMode, enableAgentBrowserAccess: true },
-        },
-      ]);
-    },
-  );
-
-  it("does not send paragraph streaming to an older environment", () => {
+describe("managed settings across environments", () => {
+  it("names the manager when any selected environment locks the setting", () => {
+    const managed = {
+      ...environment(secondId, DEFAULT_SERVER_SETTINGS),
+      serverConfig: {
+        ...environment(secondId, DEFAULT_SERVER_SETTINGS).serverConfig,
+        managedPolicy: { organization: "Example Corp", lockedSettings: ["storageCleanup"] },
+      },
+    } as SettingsTarget;
     const targets = resolveMobileSettingsTargets(
-      [environment(firstId, DEFAULT_SERVER_SETTINGS, false)],
+      [environment(firstId, DEFAULT_SERVER_SETTINGS), managed],
       null,
     );
-    expect(
-      planMobileScopedSettingsPatch(targets, false, {
-        responseStreamingMode: "paragraph",
-      }),
-    ).toEqual([]);
-    expect(
-      planMobileScopedSettingsPatch(targets, false, {
-        responseStreamingMode: "paragraph",
-        enableAgentBrowserAccess: true,
-      }),
-    ).toEqual([{ environmentId: firstId, patch: { enableAgentBrowserAccess: true } }]);
-  });
 
-  it("leaves older environment streaming unchanged when editing a project's other settings", () => {
-    const settings = {
-      ...DEFAULT_SERVER_SETTINGS,
-      enableLegacyTokenStreaming: true,
-      projectSettingsOverrides: { [firstProject]: { defaultAutoPull: true } },
-    };
-    const targets = resolveMobileSettingsTargets(
-      [environment(firstId, settings, false)],
-      [{ environmentId: firstId, id: firstProject }],
+    expect(managedSettingReason(targets, "storageCleanup.logsAfterDays")).toBe(
+      "Managed by Example Corp.",
     );
-    expect(
-      planMobileScopedSettingsPatch(targets, true, {
-        responseStreamingMode: "turn",
-      }),
-    ).toEqual([]);
-    expect(
-      planMobileScopedSettingsPatch(targets, true, {
-        responseStreamingMode: "turn",
-        enableAgentBrowserAccess: true,
-      }),
-    ).toEqual([
-      {
-        environmentId: firstId,
-        patch: {
-          projectSettingsOverrides: {
-            [firstProject]: { defaultAutoPull: true, enableAgentBrowserAccess: true },
-          },
-        },
-      },
-    ]);
-    expect(settings.enableLegacyTokenStreaming).toBe(true);
+    expect(managedSettingReason(targets, "defaultAutoPull", "storageCleanup")).toBe(
+      "Managed by Example Corp.",
+    );
+    expect(managedSettingReason(targets, "defaultAutoPull")).toBeUndefined();
+    expect(managedSettingReason(targets.slice(0, 1), "storageCleanup")).toBeUndefined();
   });
 });

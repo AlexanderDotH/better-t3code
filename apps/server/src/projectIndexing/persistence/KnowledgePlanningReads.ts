@@ -1,7 +1,7 @@
 import { ProjectIndexCoverageV1 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import type * as SqlClient from "effect/unstable/sql/SqlClient";
+import type * as SqlClient from "effect/sql/SqlClient";
 
 import { isWorkspaceRelativePath } from "../privacy/WorkspacePrivacy.ts";
 import { boundedPageSize, readKnowledgeRevision } from "./KnowledgeReads.ts";

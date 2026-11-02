@@ -25,14 +25,10 @@ import {
   DeepPlanSourceContentRecord,
 } from "./deepPlanningSources.ts";
 import { ExecutionEnvironmentCapabilities } from "./environment.ts";
-import {
-  ClientOrchestrationCommand,
-  OrchestrationProposedPlan,
-  OrchestrationThread,
-  ProviderInteractionMode,
-  ThreadDeepPlanUpdateCommand,
-  ThreadTurnStartCommand,
-} from "./orchestration.ts";
+import { OrchestrationProposedPlan, OrchestrationThread } from "./legacyOrchestration.ts";
+import { ProviderInteractionMode } from "./providerPolicy.ts";
+import { ThreadDeepPlanUpdateCommand } from "./deepPlanning.ts";
+import { OrchestrationV2Command, OrchestrationV2DomainEventJson } from "./orchestrationV2.ts";
 
 const now = "2026-10-16T10:00:00.000Z";
 const decodePlan = Schema.decodeUnknownSync(DeepPlanDocument);
@@ -43,11 +39,13 @@ const decodeMode = Schema.decodeUnknownSync(ComposerMode);
 const decodeProviderMode = Schema.decodeUnknownSync(ProviderInteractionMode);
 const decodeThread = Schema.decodeSync(OrchestrationThread);
 const decodeProposedPlan = Schema.decodeSync(OrchestrationProposedPlan);
-const decodeTurnStart = Schema.decodeSync(ThreadTurnStartCommand);
+const decodeTurnStart = Schema.decodeUnknownSync(OrchestrationV2Command);
 const decodeStep = Schema.decodeUnknownSync(DeepPlanStepState);
 const decodeApproval = Schema.decodeUnknownSync(DeepPlanApproveMutation);
 const decodeInternalUpdate = Schema.decodeUnknownSync(ThreadDeepPlanUpdateCommand);
-const decodeClientCommand = Schema.decodeUnknownSync(ClientOrchestrationCommand);
+const decodeThreadEventJson = Schema.decodeUnknownSync(OrchestrationV2DomainEventJson);
+const encodeThreadEventJson = Schema.encodeSync(OrchestrationV2DomainEventJson);
+const decodeClientCommand = Schema.decodeUnknownSync(OrchestrationV2Command);
 const decodeCatalog = Schema.decodeSync(DeepPlanCatalogSourcesInput);
 const decodeExport = Schema.decodeSync(DeepPlanExportSourcesInput);
 const decodeImport = Schema.decodeUnknownSync(DeepPlanImportSourceChunkInput);
@@ -160,6 +158,60 @@ describe("Deep Planning compatibility", () => {
     ).toEqual({ version: 1, sourceExport: true, sourceImport: true });
   });
 
+  it("round-trips Deep Plan state and worker authority through persisted V2 thread events", () => {
+    const deepPlan = makeRun();
+    const deepPlanExecution = {
+      runId: "run-1",
+      runThreadId: "thread-1",
+      approvedPlanVersion: 1,
+      phase: "execution",
+      readOnly: true,
+      sourceAnalysis: { workerThreadId: "worker-1", sourceIds: ["source-1"] },
+      modelSelection: implementation,
+    };
+    const event = {
+      id: "event-1",
+      type: "thread.deep-plan-updated",
+      threadId: "thread-1",
+      occurredAt: now,
+      payload: {
+        id: "thread-1",
+        projectId: "project-1",
+        title: "Deep Planning",
+        providerInstanceId: "codex",
+        modelSelection: implementation,
+        runtimeMode: "full-access",
+        interactionMode: "plan",
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: "thread-1" },
+        forkedFrom: null,
+        createdBy: "user",
+        creationSource: "web",
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        deletedAt: null,
+        deepPlan,
+        deepPlanExecution,
+        harnessSync: {
+          providerInstanceId: "codex",
+          providerLabel: "Codex",
+          activity: "idle",
+          sourceUpdatedAt: null,
+          lastSyncedAt: now,
+        },
+      },
+    };
+    const decoded = decodeThreadEventJson(event);
+    const encoded = encodeThreadEventJson(decoded);
+    expect(encoded).toMatchObject({
+      type: "thread.deep-plan-updated",
+      payload: { deepPlan, deepPlanExecution, harnessSync: event.payload.harnessSync },
+    });
+  });
+
   it("decodes older thread snapshots without a Deep Planning run", () => {
     const thread = decodeThread({
       id: "thread-1",
@@ -192,18 +244,26 @@ describe("Deep Planning compatibility", () => {
       updatedAt: now,
     });
     const turn = decodeTurnStart({
-      type: "thread.turn.start",
+      type: "message.dispatch",
+      createdBy: "user",
+      creationSource: "web",
       commandId: "command-1",
       threadId: "thread-2",
-      message: { messageId: "message-1", role: "user", text: "Implement", attachments: [] },
-      sourceProposedPlan: {
+      messageId: "message-1",
+      text: "Implement",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      sourcePlanRef: {
         threadId: "thread-1",
         planId: plan.id,
         deepPlan: plan.deepPlan,
       },
       createdAt: now,
     });
-    expect(turn.sourceProposedPlan?.deepPlan).toEqual({ runId: "run-1", planVersion: 2 });
+    expect(turn.type === "message.dispatch" ? turn.sourcePlanRef?.deepPlan : undefined).toEqual({
+      runId: "run-1",
+      planVersion: 2,
+    });
   });
 });
 

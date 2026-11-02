@@ -1,3 +1,4 @@
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
   ProjectIndexReviewResultV1,
   ProjectIndexReviewSelection,
@@ -33,6 +34,7 @@ export function ProjectIndexReview({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const requestGeneration = useRef(0);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Invalidate a pending review request when its scoped review panel unmounts.
   useEffect(
     () => () => {
       requestGeneration.current += 1;
@@ -41,20 +43,19 @@ export function ProjectIndexReview({
   );
 
   async function review() {
-    if (disabled || busy || !api.review) return;
+    const reviewIndex = api.review;
+    if (disabled || busy || !reviewIndex) return;
     const generation = ++requestGeneration.current;
     setBusy(true);
     setError(null);
     setResult(null);
-    try {
-      const next = await api.review({ ...scope, selection });
-      if (generation === requestGeneration.current) setResult(next);
-    } catch (failure) {
-      if (generation === requestGeneration.current)
-        setError(failure instanceof Error ? failure.message : String(failure));
-    } finally {
-      if (generation === requestGeneration.current) setBusy(false);
-    }
+    const next = await settlePromise(() => reviewIndex({ ...scope, selection }));
+    if (generation !== requestGeneration.current) return;
+    if (next._tag === "Failure") {
+      const failure = squashAtomCommandFailure(next);
+      setError(failure instanceof Error ? failure.message : String(failure));
+    } else setResult(next.value);
+    setBusy(false);
   }
 
   return (

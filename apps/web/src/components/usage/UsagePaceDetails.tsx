@@ -10,6 +10,7 @@ import { type ReactNode, useEffect, useRef } from "react";
 import { useClientSettings } from "../../hooks/useSettings";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { observeVisibleAnimation } from "../../lib/visibleAnimation";
+import { observeResize } from "../../lib/observeResize";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 type DailyPace = NonNullable<ReturnType<typeof dailyUsagePace>>;
@@ -61,6 +62,7 @@ function ScrollingPaceLabel({
   className?: string;
 }) {
   const ref = useRef<HTMLSpanElement>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the visible pace label and releases its resize and visibility observers on cleanup
   useEffect(() => {
     const element = ref.current;
     const content = element?.firstElementChild;
@@ -71,13 +73,11 @@ function ScrollingPaceLabel({
       element.style.setProperty("--pace-scroll-distance", `${-overflow}px`);
       element.style.setProperty("--pace-scroll-duration", `${Math.max(8, overflow / 20 + 4)}s`);
     };
-    const resize = new ResizeObserver(measure);
-    resize.observe(element);
-    resize.observe(content);
+    const stopResizing = observeResize([element, content], measure);
     measure();
     const stopObserving = observeVisibleAnimation(element);
     return () => {
-      resize.disconnect();
+      stopResizing();
       stopObserving?.();
     };
   }, []);
@@ -214,7 +214,7 @@ export function UsagePaceDetails({
     <Tooltip>
       <TooltipTrigger
         render={<span tabIndex={0} />}
-        className={`flex w-full min-w-0 cursor-help flex-col items-center gap-0.5 rounded-sm text-center text-2xs leading-4 outline-none focus-visible:ring-2 focus-visible:ring-ring ${className}`}
+        className={`flex w-full min-w-0 cursor-help flex-col items-center gap-0.5 rounded-sm text-center text-2xs leading-4 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${className}`}
       >
         {accountLabel ? <span className="text-muted-foreground">{accountLabel}</span> : null}
         {balance !== null ? (

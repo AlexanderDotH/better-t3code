@@ -1,3 +1,4 @@
+import type { SubagentId } from "@t3tools/contracts";
 import type {
   OrchestrationMessage,
   OrchestrationProposedPlan,
@@ -5,8 +6,7 @@ import type {
   OrchestrationSubagentStatus,
   OrchestrationSubagentSummary,
   OrchestrationThreadActivity,
-  SubagentId,
-} from "@t3tools/contracts";
+} from "@t3tools/contracts/legacy";
 
 const ACTIVE_STATUSES = new Set<OrchestrationSubagentStatus>(["starting", "running", "waiting"]);
 

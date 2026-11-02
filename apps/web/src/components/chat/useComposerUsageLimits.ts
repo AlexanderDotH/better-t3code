@@ -1,10 +1,11 @@
+import { useStableCallback } from "../../hooks/useStableCallback";
 import type {
   ProviderInstanceId,
   ServerProvider,
   UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
 import { collectProviderUsageLimits, hasProviderUsageLimits } from "@t3tools/shared/usageLimits";
-import { useCallback, useId, useMemo, useState } from "react";
+import { useId, useState } from "react";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
@@ -32,20 +33,17 @@ export function useComposerUsageLimits({
     available &&
     selectedProvider !== undefined &&
     hasProviderUsageLimits(selectedProvider.driver, providers, sources);
-  const report = useMemo(
-    () =>
-      visible && offered && instanceId !== null
-        ? collectProviderUsageLimits(
-            instanceId,
-            providers,
-            sources,
-            Date.parse(`${nowMinute}:00.000Z`),
-          )
-        : null,
-    [instanceId, nowMinute, offered, providers, sources, visible],
-  );
+  const report =
+    visible && offered && instanceId !== null
+      ? collectProviderUsageLimits(
+          instanceId,
+          providers,
+          sources,
+          Date.parse(`${nowMinute}:00.000Z`),
+        )
+      : null;
 
-  const dismiss = useCallback(async () => {
+  const dismiss = useStableCallback(async () => {
     try {
       await persistClientSettingsUpdate((current) => ({
         ...current,
@@ -59,8 +57,8 @@ export function useComposerUsageLimits({
         title: translate("chat.composer.usageLimits.visibilitySaveFailed"),
       });
     }
-  }, [translate]);
-  const toggle = useCallback(async () => {
+  });
+  const toggle = useStableCallback(async () => {
     if (
       !offered ||
       instanceId === null ||
@@ -87,7 +85,7 @@ export function useComposerUsageLimits({
       });
       return false;
     }
-  }, [instanceId, offered, providers, sources, translate]);
+  });
 
   return { report, offered, bannerId: `usage-limits:${id}:${opening}`, toggle, dismiss };
 }

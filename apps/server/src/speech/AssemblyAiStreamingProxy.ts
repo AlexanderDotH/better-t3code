@@ -1,10 +1,7 @@
+// @effect-diagnostics cryptoRandomUUID:off - The browser-compatible WebSocket factory accepts synchronous session identifiers.
 // @effect-diagnostics globalTimers:off - WebSocket handshakes and termination acknowledgements are callback boundaries outside an Effect service.
 import type { AssemblyAiStreamingTokenResult } from "@t3tools/contracts";
 import { buildAssemblyAiStreamingUrl } from "@t3tools/shared/assemblyAiStreamingUrl";
-import * as NodeCrypto from "node:crypto";
-import * as NodeTimers from "node:timers";
-
-/* oxlint-disable unicorn/prefer-add-event-listener -- The injected React-style socket contract uses assignable handlers so cleanup can detach every callback deterministically. */
 
 const SOCKET_CONNECTING = 0;
 const SOCKET_OPEN = 1;
@@ -86,7 +83,7 @@ export function createAssemblyAiStreamingProxy(options: {
   const sessions = new Map<string, ProxySession>();
   const createSocket =
     options.createSocket ?? ((url: string) => new WebSocket(url) as AssemblyAiProxySocket);
-  const createSessionId = options.createSessionId ?? NodeCrypto.randomUUID;
+  const createSessionId = options.createSessionId ?? (() => globalThis.crypto.randomUUID());
 
   const start = async (config: AssemblyAiStreamingTokenResult) => {
     const sessionId = createSessionId();
@@ -109,16 +106,16 @@ export function createAssemblyAiStreamingProxy(options: {
       }
     };
     await new Promise<void>((resolve, reject) => {
-      const timeout = NodeTimers.setTimeout(
+      const timeout = globalThis.setTimeout(
         () => reject(new Error("AssemblyAI connection timed out.")),
         CONNECT_TIMEOUT_MS,
       );
       socket.onopen = () => {
-        NodeTimers.clearTimeout(timeout);
+        globalThis.clearTimeout(timeout);
         resolve();
       };
       socket.onerror = () => {
-        NodeTimers.clearTimeout(timeout);
+        globalThis.clearTimeout(timeout);
         reject(new Error("AssemblyAI streaming connection failed."));
       };
     }).catch((error) => {
@@ -150,9 +147,9 @@ export function createAssemblyAiStreamingProxy(options: {
   const finish = async (sessionId: string) => {
     const session = getSession(sessionId);
     const termination = new Promise<void>((resolve) => {
-      const timeout = NodeTimers.setTimeout(resolve, TERMINATION_TIMEOUT_MS);
+      const timeout = globalThis.setTimeout(resolve, TERMINATION_TIMEOUT_MS);
       session.resolveTermination = () => {
-        NodeTimers.clearTimeout(timeout);
+        globalThis.clearTimeout(timeout);
         resolve();
       };
     });

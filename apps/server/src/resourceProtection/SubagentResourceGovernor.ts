@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Resource configuration keys are synchronous stable hashes used before provider admission.
 import * as NodeCrypto from "node:crypto";
 
 import type {
@@ -5,7 +6,7 @@ import type {
   ResourceProtectionSnapshot,
   ThreadId,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { Platform } from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -182,7 +183,7 @@ export class SubagentResourceGovernor extends Context.Service<
 export const makeSubagentResourceGovernor = Effect.fnUntraced(function* (
   options: SubagentResourceGovernorOptions = {},
 ) {
-  const hostPlatform = yield* HostProcessPlatform;
+  const hostPlatform = yield* Platform;
   const signalProcess = options.signalProcess ?? makeExactProcessSignaler({ hostPlatform });
   const processTreeController =
     options.processTreeController ?? makePosixProviderProcessTreeController(signalProcess);
@@ -276,146 +277,145 @@ export const makeSubagentResourceGovernor = Effect.fnUntraced(function* (
     releaseRootTurn,
   } = makeResourceGovernorAdmissionCoordinator({ stateRef, mutex, commitAdmissions });
 
-  const observe = (sample: ResourceGovernorSample) =>
-    Effect.gen(function* () {
-      const cancellation = yield* mutex.withPermits(1)(
-        Effect.gen(function* () {
-          let current = yield* Ref.get(stateRef);
-          if (current.suspendedProcessTree?.resumeRequired) {
-            const pendingResume = yield* resumeSuspendedProcessTree(current);
-            if (!pendingResume.resumed) {
-              yield* commitAdmissions({ ...pendingResume.state, sample: undefined });
-              return undefined;
-            }
-            current = pendingResume.state;
+  const observe = Effect.fn("observe")(function* (sample: ResourceGovernorSample) {
+    const cancellation = yield* mutex.withPermits(1)(
+      Effect.gen(function* () {
+        let current = yield* Ref.get(stateRef);
+        if (current.suspendedProcessTree?.resumeRequired) {
+          const pendingResume = yield* resumeSuspendedProcessTree(current);
+          if (!pendingResume.resumed) {
+            yield* commitAdmissions({ ...pendingResume.state, sample: undefined });
+            return undefined;
           }
-          const registrations = refreshRegisteredProviderProcesses(current.registrations, sample);
+          current = pendingResume.state;
+        }
+        const registrations = refreshRegisteredProviderProcesses(current.registrations, sample);
 
-          let next: GovernorState = completeMeasurements({ ...current, sample, registrations });
-          const { fastest, critical, inProcessEmergency } = resourcePressureProjection(
-            sample.memory,
-            registrations.values(),
-          );
+        let next: GovernorState = completeMeasurements({ ...current, sample, registrations });
+        const { fastest, critical, inProcessEmergency } = resourcePressureProjection(
+          sample.memory,
+          registrations.values(),
+        );
 
-          if (next.suspendedProcessTree) {
-            const paused = registrations.get(next.suspendedProcessTree.registrationKey);
-            if (!paused?.exact || paused.startTimeMs === undefined) {
+        if (next.suspendedProcessTree) {
+          const paused = registrations.get(next.suspendedProcessTree.registrationKey);
+          if (!paused?.exact || paused.startTimeMs === undefined) {
+            const resumed = yield* resumeSuspendedProcessTree({
+              ...next,
+              suspendedProcessTree: { ...next.suspendedProcessTree, resumeRequired: true },
+            });
+            next = resumed.state;
+          } else if (critical) {
+            next = { ...next, criticalSamples: 0, healthySamples: 0 };
+          } else {
+            const healthySamples = next.healthySamples + 1;
+            if (healthySamples >= HEALTHY_SAMPLE_COUNT) {
               const resumed = yield* resumeSuspendedProcessTree({
                 ...next,
                 suspendedProcessTree: { ...next.suspendedProcessTree, resumeRequired: true },
               });
               next = resumed.state;
-            } else if (critical) {
-              next = { ...next, criticalSamples: 0, healthySamples: 0 };
             } else {
-              const healthySamples = next.healthySamples + 1;
-              if (healthySamples >= HEALTHY_SAMPLE_COUNT) {
-                const resumed = yield* resumeSuspendedProcessTree({
-                  ...next,
-                  suspendedProcessTree: { ...next.suspendedProcessTree, resumeRequired: true },
-                });
-                next = resumed.state;
-              } else {
-                next = { ...next, healthySamples };
-              }
+              next = { ...next, healthySamples };
             }
-          } else if (critical) {
-            const criticalSamples = next.criticalSamples + 1;
-            next = { ...next, criticalSamples, healthySamples: 0 };
-            let pressureCancellation:
-              | {
-                  readonly work: ActiveInProcessWork;
-                  readonly notice: InProcessCriticalPressureNotice;
-                }
-              | undefined;
-            if (
-              next.policy.processSuspension &&
-              criticalSamples >= CRITICAL_SAMPLE_COUNT &&
-              fastest &&
-              fastest.startTimeMs !== undefined &&
-              fastest.growthBytesPerSecond > 0 &&
-              fastest.processIdentities[0] !== undefined
-            ) {
-              const [rootIdentity, ...descendantIdentities] = fastest.processIdentities;
-              const lease: ProviderProcessTreeLease = {
-                leaseId: createProcessTreeLeaseId(),
-                processIdentities: [rootIdentity, ...descendantIdentities],
+          }
+        } else if (critical) {
+          const criticalSamples = next.criticalSamples + 1;
+          next = { ...next, criticalSamples, healthySamples: 0 };
+          let pressureCancellation:
+            | {
+                readonly work: ActiveInProcessWork;
+                readonly notice: InProcessCriticalPressureNotice;
+              }
+            | undefined;
+          if (
+            next.policy.processSuspension &&
+            criticalSamples >= CRITICAL_SAMPLE_COUNT &&
+            fastest &&
+            fastest.startTimeMs !== undefined &&
+            fastest.growthBytesPerSecond > 0 &&
+            fastest.processIdentities[0] !== undefined
+          ) {
+            const [rootIdentity, ...descendantIdentities] = fastest.processIdentities;
+            const lease: ProviderProcessTreeLease = {
+              leaseId: createProcessTreeLeaseId(),
+              processIdentities: [rootIdentity, ...descendantIdentities],
+            };
+            const suspension = yield* processTreeController.suspend(lease).pipe(Effect.result);
+            if (Result.isSuccess(suspension)) {
+              next = {
+                ...next,
+                suspendedProcessTree: {
+                  ...lease,
+                  registrationKey: fastest.key,
+                  threadId: fastest.threadId,
+                  suspendConfirmed: true,
+                  resumeRequired: false,
+                },
+                criticalSamples: 0,
+                healthySamples: 0,
               };
-              const suspension = yield* processTreeController.suspend(lease).pipe(Effect.result);
-              if (Result.isSuccess(suspension)) {
+            } else if (suspension.failure.resumeRequired) {
+              const compensated = yield* processTreeController
+                .resume(lease)
+                .pipe(Effect.match({ onFailure: () => false, onSuccess: () => true }));
+              if (!compensated) {
                 next = {
                   ...next,
                   suspendedProcessTree: {
                     ...lease,
                     registrationKey: fastest.key,
                     threadId: fastest.threadId,
-                    suspendConfirmed: true,
-                    resumeRequired: false,
+                    suspendConfirmed: false,
+                    resumeRequired: true,
                   },
                   criticalSamples: 0,
                   healthySamples: 0,
                 };
-              } else if (suspension.failure.resumeRequired) {
-                const compensated = yield* processTreeController
-                  .resume(lease)
-                  .pipe(Effect.match({ onFailure: () => false, onSuccess: () => true }));
-                if (!compensated) {
-                  next = {
-                    ...next,
-                    suspendedProcessTree: {
-                      ...lease,
-                      registrationKey: fastest.key,
-                      threadId: fastest.threadId,
-                      suspendConfirmed: false,
-                      resumeRequired: true,
-                    },
-                    criticalSamples: 0,
-                    healthySamples: 0,
-                  };
-                }
-              }
-            } else {
-              const victim =
-                next.policy.adaptiveAdmission &&
-                criticalSamples >= CRITICAL_SAMPLE_COUNT &&
-                inProcessEmergency
-                  ? criticalPressureVictim(next.activeInProcess)
-                  : undefined;
-              if (victim) {
-                next = removeInProcessAdmission(next, victim.id);
-                pressureCancellation = {
-                  work: victim,
-                  notice: {
-                    reason: "critical-memory-pressure",
-                    workId: victim.workId,
-                    reservedBytes: victim.reservedBytes,
-                    sampledAtMs: sample.sampledAtMs,
-                    availableMemoryBytes: sample.memory.availableBytes,
-                    coreReserveBytes: coreReserveBytes(sample.memory.totalBytes),
-                  },
-                };
               }
             }
-            yield* commitAdmissions(next);
-            return pressureCancellation;
           } else {
-            next = { ...next, criticalSamples: 0, healthySamples: 0 };
+            const victim =
+              next.policy.adaptiveAdmission &&
+              criticalSamples >= CRITICAL_SAMPLE_COUNT &&
+              inProcessEmergency
+                ? criticalPressureVictim(next.activeInProcess)
+                : undefined;
+            if (victim) {
+              next = removeInProcessAdmission(next, victim.id);
+              pressureCancellation = {
+                work: victim,
+                notice: {
+                  reason: "critical-memory-pressure",
+                  workId: victim.workId,
+                  reservedBytes: victim.reservedBytes,
+                  sampledAtMs: sample.sampledAtMs,
+                  availableMemoryBytes: sample.memory.availableBytes,
+                  coreReserveBytes: coreReserveBytes(sample.memory.totalBytes),
+                },
+              };
+            }
           }
-
           yield* commitAdmissions(next);
-          return undefined;
+          return pressureCancellation;
+        } else {
+          next = { ...next, criticalSamples: 0, healthySamples: 0 };
+        }
+
+        yield* commitAdmissions(next);
+        return undefined;
+      }),
+    );
+    if (!cancellation) return;
+    yield* Effect.suspend(() => cancellation.work.onCriticalPressure(cancellation.notice)).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logError("in-process work cancellation callback failed", {
+          workId: cancellation.work.workId,
+          cause,
         }),
-      );
-      if (!cancellation) return;
-      yield* Effect.suspend(() => cancellation.work.onCriticalPressure(cancellation.notice)).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logError("in-process work cancellation callback failed", {
-            workId: cancellation.work.workId,
-            cause,
-          }),
-        ),
-      );
-    });
+      ),
+    );
+  });
 
   const telemetryUnavailable = mutex.withPermits(1)(
     Effect.gen(function* () {
@@ -651,13 +651,11 @@ export const makeSubagentResourceGovernor = Effect.fnUntraced(function* (
 const makeScopedSubagentResourceGovernor = (options: SubagentResourceGovernorOptions = {}) =>
   Effect.acquireRelease(makeSubagentResourceGovernor(options), (governor) => governor.shutdown);
 
-export const layer = Layer.effect(SubagentResourceGovernor, makeScopedSubagentResourceGovernor());
-
 export const layerLive = Layer.effect(
   SubagentResourceGovernor,
   Effect.gen(function* () {
     const nativeTelemetry = yield* NativeTelemetryClient.NativeTelemetryClient;
-    const hostPlatform = yield* HostProcessPlatform;
+    const hostPlatform = yield* Platform;
     const serverSettings = yield* ServerSettingsService;
     const settingsChanges = yield* serverSettings.subscribeChanges;
     const initialSettings = yield* serverSettings.getSettings;

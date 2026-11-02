@@ -1,6 +1,6 @@
 import { useAuth, useClerk } from "@clerk/react";
 import { readConnectAuthorizeRequest } from "@t3tools/shared/connectAuth";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   buildConnectCliClerkAuthorizeUrl,
@@ -52,7 +52,7 @@ export function ConnectCliAuthorizeSurface() {
   const signInOpened = useRef(false);
   const redirecting = useRef(false);
 
-  const openSignIn = useCallback(() => {
+  const openSignIn = () => {
     if (!request) {
       return;
     }
@@ -62,8 +62,9 @@ export function ConnectCliAuthorizeSurface() {
         isElectron,
       ),
     );
-  }, [clerk, request]);
+  };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens Clerk sign-in or redirects the CLI authorization request once its session is ready
   useEffect(() => {
     if (!request || !isLoaded || redirecting.current) {
       return;

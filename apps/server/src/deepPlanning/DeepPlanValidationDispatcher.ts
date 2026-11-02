@@ -1,12 +1,9 @@
 import { CommandId, MessageId } from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
 import {
   DeepPlanValidationDispatcher,
   DeepPlanValidationDispatchError,
@@ -14,12 +11,13 @@ import {
 import { DeepPlanWorkflow } from "./DeepPlanWorkflow.ts";
 import { deepPlanMarkdown } from "./deepPlanMarkdown.ts";
 
+const isValidationDispatchError = Schema.is(DeepPlanValidationDispatchError);
+
 const make = Effect.gen(function* () {
-  const engine = yield* OrchestrationEngineService;
-  const query = yield* ProjectionSnapshotQuery;
+  const engine = yield* OrchestratorV2;
   const workflow = yield* DeepPlanWorkflow;
   return DeepPlanValidationDispatcher.of({
-    dispatch: (requestedRun, requestId) =>
+    dispatch: Effect.fn("DeepPlanValidationDispatcher.dispatch")((requestedRun, requestId) =>
       workflow
         .withRunLock(
           requestedRun.id,
@@ -31,18 +29,13 @@ const make = Effect.gen(function* () {
             if (!run?.plan || !run.approval || run.phase !== "validating")
               return "deferred" as const;
             const targetId = run.approval.implementationThreadId;
-            const target = yield* query.getThreadShellById(targetId);
-            if (Option.isNone(target) || target.value.archivedAt !== null) {
+            const target = yield* engine.getThreadShell(targetId);
+            if (target === null || target.archivedAt !== null || target.deletedAt !== null) {
               return yield* new DeepPlanValidationDispatchError({
                 message: "The implementing thread is unavailable for final validation.",
               });
             }
-            if (
-              target.value.session?.status === "running" ||
-              target.value.session?.status === "starting" ||
-              target.value.latestTurn?.state === "running"
-            )
-              return "deferred" as const;
+            if (target.activeRunId !== null) return "deferred" as const;
             const actor = {
               implementerId: run.approval.implementerId,
               model: run.approval.implementation,
@@ -68,17 +61,16 @@ const make = Effect.gen(function* () {
               deepPlanMarkdown(run.plan),
             ].join("\n\n");
             yield* engine.dispatch({
-              type: "thread.turn.start",
+              type: "message.dispatch",
               commandId: CommandId.make(requestId),
               threadId: targetId,
-              message: {
-                messageId: MessageId.make(requestId + ":message"),
-                role: "user",
-                text: prompt,
-                attachments: [],
-              },
-              background: { runId: run.id },
-              idleGuard: {},
+              messageId: MessageId.make(requestId + ":message"),
+              text: prompt,
+              attachments: [],
+              createdBy: "agent",
+              creationSource: "server",
+              deepPlanRunId: run.id,
+              idleGuard: { latestRunId: target.latestRunId },
               modelSelection: {
                 instanceId: run.approval.implementation.instanceId,
                 model: run.approval.implementation.model,
@@ -86,16 +78,14 @@ const make = Effect.gen(function* () {
                   ? {}
                   : { options: run.approval.implementation.options }),
               },
-              runtimeMode: target.value.runtimeMode,
-              interactionMode: "default",
-              createdAt: DateTime.formatIso(yield* DateTime.now),
+              dispatchMode: { type: "start_immediately" },
             });
             return "dispatched" as const;
           }),
         )
         .pipe(
           Effect.mapError((cause) =>
-            Schema.is(DeepPlanValidationDispatchError)(cause)
+            isValidationDispatchError(cause)
               ? cause
               : new DeepPlanValidationDispatchError({
                   message: "Could not start Deep Plan final validation.",
@@ -103,6 +93,7 @@ const make = Effect.gen(function* () {
                 }),
           ),
         ),
+    ),
   });
 });
 

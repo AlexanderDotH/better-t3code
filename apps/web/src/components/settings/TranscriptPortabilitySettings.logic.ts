@@ -1,6 +1,7 @@
-import type { EnvironmentId, OrchestrationThreadShell, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
-import { isLatestTurnSettled } from "../../session-logic";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { isLatestRunSettled } from "../../session-logic";
 
 export interface TranscriptPortabilityThread {
   readonly environmentId: EnvironmentId;
@@ -8,19 +9,14 @@ export interface TranscriptPortabilityThread {
   readonly title: string;
   readonly updatedAt: string;
   readonly archivedAt: string | null;
-  readonly latestTurn: OrchestrationThreadShell["latestTurn"];
-  readonly session: Pick<
-    NonNullable<OrchestrationThreadShell["session"]>,
-    "status" | "activeTurnId"
-  > | null;
+  readonly latestRun: EnvironmentThreadShell["latestRun"];
+  readonly runtime: EnvironmentThreadShell["runtime"];
 }
 
 export function isTranscriptExportPending(
-  thread: Pick<TranscriptPortabilityThread, "latestTurn" | "session">,
+  thread: Pick<TranscriptPortabilityThread, "latestRun" | "runtime">,
 ): boolean {
-  return (
-    thread.session?.status === "starting" || !isLatestTurnSettled(thread.latestTurn, thread.session)
-  );
+  return !isLatestRunSettled(thread.latestRun, thread.runtime);
 }
 
 export function buildTranscriptPortabilityOptions(

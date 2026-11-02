@@ -1,4 +1,5 @@
-import { SubagentId, type OrchestrationSubagentSummary } from "@t3tools/contracts";
+import { SubagentId } from "@t3tools/contracts";
+import { type OrchestrationSubagentSummary } from "@t3tools/contracts/legacy";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { SubagentLifecycleEntry } from "./subagentLifecycle";

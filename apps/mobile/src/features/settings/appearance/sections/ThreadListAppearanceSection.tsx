@@ -1,9 +1,9 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { Pressable, View } from "react-native";
 
-import { AppText as Text } from "../../../../components/AppText";
-import { SymbolView } from "../../../../components/AppSymbol";
+import { AppText as Text } from "../../../../components/ui/AppText";
+import { SymbolView } from "../../../../components/ui/AppSymbol";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../../state/preferences";
 import { SettingsSection } from "../../components/SettingsSection";
 import {

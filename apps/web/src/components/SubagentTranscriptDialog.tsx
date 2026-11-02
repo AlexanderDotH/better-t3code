@@ -1,4 +1,5 @@
-import type { OrchestrationSubagentDetail, ScopedThreadRef } from "@t3tools/contracts";
+import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { OrchestrationSubagentDetail } from "@t3tools/contracts/legacy";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { memo } from "react";
 

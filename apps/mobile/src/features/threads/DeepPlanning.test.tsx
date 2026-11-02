@@ -11,7 +11,7 @@ import {
   type DeepPlanSourceRef,
 } from "@t3tools/contracts";
 import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import type { Preferences } from "../../persistence/mobile-preferences";
 import {
   cloneElement,
@@ -92,8 +92,8 @@ vi.mock("react-native", () => ({
 vi.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 44, bottom: 34 }),
 }));
-vi.mock("../../components/AppText", () => ({ AppText: "text" }));
-vi.mock("../../components/AppSymbol", () => ({ SymbolView: "symbol" }));
+vi.mock("../../components/ui/AppText", () => ({ AppText: "text" }));
+vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: "symbol" }));
 vi.mock("../../components/ComposerToolbar", () => ({
   ComposerInlineControl: (props: { label: string; onPress: () => void; disabled: boolean }) =>
     createElement("pressable", { onPress: props.onPress, disabled: props.disabled }, props.label),

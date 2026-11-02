@@ -64,6 +64,9 @@ export function toContractQueuedWorkflow(workflow: GitWorkbenchQueuedWorkflow): 
     revision: workflow.revision,
     threadId: ThreadId.make(workflow.threadId),
     ...(workflow.turnId === null ? {} : { turnId: TurnId.make(workflow.turnId) }),
+    ...(workflow.preconditions.capturedRunId === undefined
+      ? {}
+      : { runId: workflow.preconditions.capturedRunId }),
     status: workflow.status,
     expectedStateToken: workflow.preconditions.stateToken,
     plan: workflow.workflow,

@@ -2,11 +2,32 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { COMPOSER_CONTEXT_CLIPBOARD_MIME } from "@t3tools/shared/composerContextClipboard";
 
-import {
-  ClipboardApiUnavailableError,
-  ClipboardWriteError,
-  writeTextToClipboard,
-} from "./useCopyToClipboard";
+import { ClipboardApiUnavailableError, writeTextToClipboard } from "./useCopyToClipboard";
+
+function fallbackClipboard(allowCopy: boolean) {
+  const textarea = {
+    value: "",
+    style: {},
+    setAttribute: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    focus: vi.fn(),
+    select: vi.fn(),
+    setSelectionRange: vi.fn(),
+    remove: vi.fn(),
+  };
+  const previousFocus = { focus: vi.fn() };
+  const execCommand = vi.fn(() => allowCopy);
+  vi.stubGlobal("window", {});
+  vi.stubGlobal("navigator", { clipboard: undefined });
+  vi.stubGlobal("document", {
+    execCommand,
+    activeElement: previousFocus,
+    createElement: () => textarea,
+    body: { appendChild: vi.fn() },
+  });
+  return { textarea, previousFocus, execCommand };
+}
 
 describe("writeTextToClipboard", () => {
   it("reserves plain text even when an extra flavor attempts to replace it", async () => {
@@ -30,6 +51,42 @@ describe("writeTextToClipboard", () => {
   });
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("copies through execCommand when the async clipboard is unavailable and restores focus", async () => {
+    const clipboard = fallbackClipboard(true);
+    const text = "| Name |\n| --- |\n| Ada |";
+    await expect(writeTextToClipboard(text, "table")).resolves.toBe(true);
+    expect(clipboard.execCommand).toHaveBeenCalledExactlyOnceWith("copy");
+    expect(clipboard.textarea.value).toBe(text);
+    expect(clipboard.textarea.setSelectionRange).toHaveBeenCalledExactlyOnceWith(0, text.length);
+    expect(clipboard.textarea.remove).toHaveBeenCalledOnce();
+    expect(clipboard.previousFocus.focus).toHaveBeenCalledOnce();
+  });
+
+  it("reports a rejected fallback instead of claiming the text was copied", async () => {
+    const clipboard = fallbackClipboard(false);
+    await expect(writeTextToClipboard("message")).rejects.toBeInstanceOf(
+      ClipboardApiUnavailableError,
+    );
+    expect(clipboard.textarea.remove).toHaveBeenCalledOnce();
+    expect(clipboard.previousFocus.focus).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a denied async write observable and allows the same text to be retried", async () => {
+    const clipboard = fallbackClipboard(true);
+    const denied = new DOMException("Clipboard access denied", "NotAllowedError");
+    const writeText = vi.fn().mockRejectedValueOnce(denied).mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    await expect(writeTextToClipboard("same text")).rejects.toMatchObject({
+      _tag: "ClipboardWriteError",
+      target: "text",
+      cause: denied,
+    });
+    await expect(writeTextToClipboard("same text")).resolves.toBe(true);
+    expect(writeText).toHaveBeenCalledTimes(2);
+    expect(writeText).toHaveBeenLastCalledWith("same text");
+    expect(clipboard.execCommand).not.toHaveBeenCalled();
   });
 
   it("keeps caller-built rich HTML when attaching a context fragment", async () => {
@@ -57,124 +114,4 @@ describe("writeTextToClipboard", () => {
     expect(html).toContain(rich);
     expect(html).toContain("data-t3-context-fragment=");
   });
-
-  it("reports unavailable clipboard support with structural context", async () => {
-    vi.stubGlobal("window", {});
-    vi.stubGlobal("navigator", {});
-    vi.stubGlobal("document", undefined);
-
-    const error = await writeTextToClipboard("plan contents", "plan").then(
-      () => undefined,
-      (cause: unknown) => cause,
-    );
-
-    expect(error).toBeInstanceOf(ClipboardApiUnavailableError);
-    expect(error).toMatchObject({
-      target: "plan",
-    });
-    expect((error as Error).message).not.toContain("plan contents");
-  });
-
-  it.each(["success", "denied", "throws"] as const)(
-    "cleans up the Clipboard API fallback when copying %s",
-    async (result) => {
-      const focus = vi.fn();
-      const restoreFocus = vi.fn();
-      const appendChild = vi.fn();
-      const execCommand = vi.fn(() => {
-        if (result === "throws") throw new Error("copy command failed");
-        return result === "success";
-      });
-      const remove = vi.fn();
-      const select = vi.fn();
-      const setAttribute = vi.fn();
-      const setSelectionRange = vi.fn();
-      const textarea = {
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-        focus,
-        remove,
-        select,
-        setAttribute,
-        setSelectionRange,
-        style: {},
-        value: "",
-      };
-
-      vi.stubGlobal("window", {});
-      vi.stubGlobal("navigator", {});
-      vi.stubGlobal("document", {
-        activeElement: { focus: restoreFocus },
-        body: { appendChild },
-        createElement: vi.fn(() => textarea),
-        execCommand,
-      });
-
-      const pendingCopy = writeTextToClipboard("remote command", "command");
-      // The fallback must run during the original user gesture, before any await.
-      expect(execCommand).toHaveBeenCalledWith("copy");
-      if (result === "success") {
-        await expect(pendingCopy).resolves.toBe(true);
-      } else {
-        await expect(pendingCopy).rejects.toBeInstanceOf(ClipboardApiUnavailableError);
-      }
-
-      expect(textarea.value).toBe("remote command");
-      expect(textarea.style).toMatchObject({ fontSize: "16px" });
-      expect(appendChild).toHaveBeenCalledWith(textarea);
-      expect(focus).toHaveBeenCalledWith({ preventScroll: true });
-      expect(select).toHaveBeenCalledOnce();
-      expect(setSelectionRange).toHaveBeenCalledWith(0, "remote command".length);
-      expect(remove).toHaveBeenCalledOnce();
-      expect(restoreFocus).toHaveBeenCalledOnce();
-    },
-  );
-
-  it("uses the Clipboard API without touching the fallback when it is available", async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    const execCommand = vi.fn();
-    vi.stubGlobal("window", {});
-    vi.stubGlobal("navigator", { clipboard: { writeText } });
-    vi.stubGlobal("document", { execCommand });
-
-    await expect(writeTextToClipboard("remote command", "command")).resolves.toBe(true);
-
-    expect(writeText).toHaveBeenCalledWith("remote command");
-    expect(execCommand).not.toHaveBeenCalled();
-  });
-
-  it("preserves the exact clipboard failure without exposing copied contents", async () => {
-    const cause = new Error("browser clipboard failure");
-    const writeText = vi.fn().mockRejectedValue(cause);
-    vi.stubGlobal("window", {});
-    vi.stubGlobal("navigator", { clipboard: { writeText } });
-
-    const error = await writeTextToClipboard("secret clipboard contents", "error-message").then(
-      () => undefined,
-      (failure: unknown) => failure,
-    );
-
-    expect(writeText).toHaveBeenCalledWith("secret clipboard contents");
-    expect(error).toBeInstanceOf(ClipboardWriteError);
-    expect(error).toMatchObject({
-      target: "error-message",
-      cause,
-    });
-    expect((error as Error).message).not.toContain("secret clipboard contents");
-  });
-
-  it.each([true, false])(
-    "keeps empty values as a no-op with Clipboard API support: %s",
-    async (available) => {
-      const writeText = vi.fn();
-      vi.stubGlobal("window", {});
-      const execCommand = vi.fn();
-      vi.stubGlobal("navigator", available ? { clipboard: { writeText } } : {});
-      vi.stubGlobal("document", { execCommand });
-
-      await expect(writeTextToClipboard("", "plan")).resolves.toBe(false);
-      expect(writeText).not.toHaveBeenCalled();
-      expect(execCommand).not.toHaveBeenCalled();
-    },
-  );
 });

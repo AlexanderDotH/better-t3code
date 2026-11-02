@@ -1,10 +1,10 @@
 import {
-  OrchestrationSubagentStatus,
   ProviderDriverKind,
   ProviderInstanceId,
   SubagentId,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
+import { OrchestrationSubagentStatus } from "@t3tools/contracts/legacy";
 import * as Schema from "effect/Schema";
 
 const BoundedTask = TrimmedNonEmptyString.check(Schema.isMaxLength(40_000));

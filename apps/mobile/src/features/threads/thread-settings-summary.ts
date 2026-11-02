@@ -1,4 +1,8 @@
+import { CODEX_REASONING_EFFORT_OPTION_ID } from "@t3tools/contracts";
+import { getModelSelectionStringOptionValue, isAutoReasoningEnabled } from "@t3tools/shared/model";
 import type {
+  ModelSelection,
+  OrchestrationV2Run,
   ProviderInteractionMode,
   ProviderOptionDescriptor,
   RuntimeMode,
@@ -6,6 +10,33 @@ import type {
 
 import { providerOptionValueLabels } from "../../lib/providerOptions";
 import { RUNTIME_MODE_CHOICES } from "./thread-settings-options";
+
+export function threadAutoReasoningEffort(
+  selection: ModelSelection | null,
+  run:
+    | Pick<OrchestrationV2Run, "modelSelection" | "resolvedModelSelection" | "autoReasoning">
+    | null
+    | undefined,
+): string | null {
+  if (
+    !selection ||
+    !run ||
+    !isAutoReasoningEnabled(selection) ||
+    !isAutoReasoningEnabled(run.modelSelection) ||
+    run.modelSelection.instanceId !== selection.instanceId ||
+    run.modelSelection.model !== selection.model
+  )
+    return null;
+  const effort =
+    run.autoReasoning?.effort.trim() ||
+    (run.resolvedModelSelection
+      ? getModelSelectionStringOptionValue(
+          run.resolvedModelSelection,
+          CODEX_REASONING_EFFORT_OPTION_ID,
+        )
+      : undefined);
+  return effort?.trim() || null;
+}
 
 export function threadReasoningValueLabel(input: {
   readonly autoReasoningEnabled: boolean;

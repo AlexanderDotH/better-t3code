@@ -8,7 +8,7 @@ import {
   GROK_DRIVER_KIND,
   OPENCODE_DRIVER_KIND,
 } from "./model.ts";
-import { OrchestrationProposedPlanId } from "./orchestration.ts";
+import { PlanId } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 export const PLAN_PARALLELISM_REVIEW_DRIVER_KINDS = [
@@ -35,14 +35,14 @@ export type PlanParallelismReviewCount = typeof PlanParallelismReviewCount.Type;
 
 export const PlanParallelismReviewInput = Schema.Struct({
   threadId: ThreadId,
-  planId: OrchestrationProposedPlanId,
+  planId: PlanId,
   expectedPlanUpdatedAt: IsoDateTime,
   implementationProviderInstanceId: ProviderInstanceId,
 });
 export type PlanParallelismReviewInput = typeof PlanParallelismReviewInput.Type;
 
 export const PlanParallelismReviewResult = Schema.Struct({
-  planId: OrchestrationProposedPlanId,
+  planId: PlanId,
   planUpdatedAt: IsoDateTime,
   implementationProviderInstanceId: ProviderInstanceId,
   recommendedSubagents: PlanParallelismReviewCount,

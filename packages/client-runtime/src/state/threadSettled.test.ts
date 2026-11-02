@@ -1,10 +1,4 @@
-import {
-  ProjectId,
-  ProviderInstanceId,
-  ThreadId,
-  TurnId,
-  type OrchestrationThreadShell,
-} from "@t3tools/contracts";
+import { ProjectId, ProviderInstanceId, ThreadId, TurnId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -15,6 +9,7 @@ import {
   resolveThreadSidebarLifecycle,
   threadLastActivityAt,
   type ChangeRequestStateLike,
+  type SettlementThreadShell,
 } from "./threadSettled.ts";
 
 const NOW = "2026-04-10T00:00:00.000Z";
@@ -128,9 +123,9 @@ function makeShell(input: {
   readonly activityAt: string | null;
   readonly sessionStatus?: "starting" | "running";
   readonly pending?: "approval" | "user-input";
-}): OrchestrationThreadShell {
+}): SettlementThreadShell {
   const threadId = ThreadId.make("thread-1");
-  return {
+  const shell = {
     id: threadId,
     projectId: ProjectId.make("project-1"),
     title: "Thread",
@@ -175,12 +170,13 @@ function makeShell(input: {
     hasPendingUserInput: input.pending === "user-input",
     hasActionableProposedPlan: false,
   };
+  return shell;
 }
 
 describe("threadLastActivityAt", () => {
   it("returns the latest real user or turn activity and ignores thread/session updates", () => {
     const shell = makeShell({ activityAt: null, sessionStatus: "running" });
-    const withActivity: OrchestrationThreadShell = {
+    const withActivity: ReturnType<typeof makeShell> = {
       ...shell,
       latestUserMessageAt: "2026-04-04T00:00:00.000Z",
       latestTurn: {
@@ -219,11 +215,6 @@ describe("effectiveSettled", () => {
             activityAt,
             running,
             pending,
-            // Settled iff nothing blocks (pending work / live session) AND
-            // the override says settled, or (with no override) a merged PR
-            // or staleness auto-settles. The "active" pin suppresses both
-            // auto signals, and an open PR suppresses the inactivity path:
-            // a thread with a PR out for review is never done, however quiet.
             expected:
               pending === undefined &&
               !running &&
@@ -386,27 +377,25 @@ describe("effectiveSettled", () => {
       settledOverride: null,
       activityAt: STALE,
     });
-    const queued: OrchestrationThreadShell = {
+    const queued: ReturnType<typeof makeShell> = {
       ...base,
       latestUserMessageAt: requestedAt,
       latestTurn: null,
       session: null,
     };
-    const starting: OrchestrationThreadShell = {
+    const starting: ReturnType<typeof makeShell> = {
       ...queued,
       session: {
-        threadId: queued.id,
+        threadId: ThreadId.make("thread-1"),
         status: "starting",
         providerName: "Codex",
-        runtimeSessionId: null,
         runtimeMode: "full-access",
         activeTurnId: null,
-        abortState: null,
         lastError: null,
         updatedAt: requestedAt,
       },
     };
-    const running: OrchestrationThreadShell = {
+    const running: ReturnType<typeof makeShell> = {
       ...starting,
       session: {
         ...starting.session!,
@@ -532,7 +521,7 @@ describe("hasQueuedTurnStart", () => {
       ...failed,
       latestUserMessageAt: QUEUED_AT,
       session: {
-        threadId: failed.id,
+        threadId: ThreadId.make("thread-1"),
         status: "error" as const,
         providerName: "Codex",
         runtimeSessionId: null,
@@ -607,11 +596,6 @@ describe("canSettle", () => {
   });
 
   it("lets a server-accepted settle overrule the clock-derived queued blocker", () => {
-    // The settle action ran with wall-clock `now` (past the grace window);
-    // the list partition re-evaluates with a minute-floored `now` that is
-    // still INSIDE the window. settledAt >= message time proves the server
-    // already adjudicated this exact message, so the row must not snap back
-    // to active until the coarser clock catches up.
     const messageAt = "2026-04-09T12:00:00.000Z";
     const flooredNow = "2026-04-09T12:01:00.000Z";
     const base = makeShell({ settledOverride: "settled", activityAt: null });

@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 // Composite index for bounded thread-detail reads. The turn ID is the stable
 // tiebreaker when multiple turns share a requested_at timestamp.

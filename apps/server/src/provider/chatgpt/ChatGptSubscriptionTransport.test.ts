@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 
 import type { ChatGptAuthBroker } from "./ChatGptAuthBroker.ts";
 import type { ChatGptCredential, ChatGptCredentialStore } from "./ChatGptCredentialStore.ts";
@@ -135,9 +135,7 @@ describe("ChatGptSubscriptionTransport", () => {
       expect(error._tag).toBe("ChatGptAuthenticationError");
       expect(harness.refreshes()).toBe(1);
       expect(harness.invalidations()).toBe(1);
-      // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
       expect(JSON.stringify(error)).not.toContain("old-token");
-      // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
       expect(JSON.stringify(error)).not.toContain("new-token");
     }),
   );

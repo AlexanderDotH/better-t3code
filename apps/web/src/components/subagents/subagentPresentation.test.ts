@@ -4,10 +4,12 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   SubagentId,
+} from "@t3tools/contracts";
+import {
   type OrchestrationSubagentDetail,
   type OrchestrationSubagentStatus,
   type OrchestrationSubagentSummary,
-} from "@t3tools/contracts";
+} from "@t3tools/contracts/legacy";
 import { describe, expect, it } from "vite-plus/test";
 
 import {

@@ -43,7 +43,8 @@ import {
 } from "@t3tools/contracts";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import {
@@ -281,7 +282,7 @@ export class GitWorkbenchService extends Context.Service<
   }
 >()("t3/git-workbench/GitWorkbenchService") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const driver = yield* GitWorkbenchDriver;
   const query = yield* GitRepositoryQueryService;
@@ -291,7 +292,8 @@ export const make = Effect.gen(function* () {
   const scheduler = yield* GitWorkbenchMutationScheduler;
   const vcsStatus = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
-  const projection = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const projection = yield* ProjectionStore.ProjectionStoreV2;
+  const projects = yield* ProjectStore.ProjectStoreV2;
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
   const repositoryEvents = yield* Effect.acquireRelease(
     PubSub.unbounded<GitWorkbenchRepositoryEvent>(),
@@ -313,7 +315,11 @@ export const make = Effect.gen(function* () {
       .getShellSnapshot()
       .pipe(Effect.mapError((error) => toGitWorkbenchServiceError(cwd, operation, error)));
     const registeredRoots = [
-      ...shell.projects.map((project) => project.workspaceRoot),
+      ...(yield* projects
+        .list()
+        .pipe(Effect.mapError((error) => toGitWorkbenchServiceError(cwd, operation, error)))).map(
+        (project) => project.workspaceRoot,
+      ),
       ...shell.threads.flatMap((thread) =>
         thread.worktreePath === null ? [] : [thread.worktreePath],
       ),
@@ -356,13 +362,16 @@ export const make = Effect.gen(function* () {
       .refreshStatus(cwd)
       .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
-  const snapshot: GitWorkbenchService["Service"]["snapshot"] = (input) =>
+  const snapshot: GitWorkbenchService["Service"]["snapshot"] = Effect.fn(
+    "GitWorkbenchService.snapshot",
+  )((input) =>
     Effect.gen(function* () {
       const workspace = yield* resolveWorkspace(input.cwd, "refresh-workbench");
       const next = yield* loadSnapshot(workspace, "refresh-workbench");
       yield* publishSnapshot(workspace.cwd, next);
       return next;
-    });
+    }),
+  );
 
   const subscribe: GitWorkbenchService["Service"]["subscribe"] = (input) =>
     Stream.unwrap(
@@ -428,19 +437,23 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  const withValidatedQuery = <A, E>(
-    cwd: string,
-    operation: string,
-    run: (normalizedCwd: string) => Effect.Effect<A, E>,
-  ): Effect.Effect<A, GitWorkbenchServiceError> =>
-    Effect.gen(function* () {
-      const workspace = yield* resolveWorkspace(cwd, operation);
-      return yield* run(workspace.cwd).pipe(
-        Effect.mapError((error) => toGitWorkbenchServiceError(workspace.cwd, operation, error)),
-      );
-    });
+  const withValidatedQuery = Effect.fn("GitWorkbenchService.withValidatedQuery")(
+    <A, E>(
+      cwd: string,
+      operation: string,
+      run: (normalizedCwd: string) => Effect.Effect<A, E>,
+    ): Effect.Effect<A, GitWorkbenchServiceError> =>
+      Effect.gen(function* () {
+        const workspace = yield* resolveWorkspace(cwd, operation);
+        return yield* run(workspace.cwd).pipe(
+          Effect.mapError((error) => toGitWorkbenchServiceError(workspace.cwd, operation, error)),
+        );
+      }),
+  );
 
-  const changesDiff: GitWorkbenchService["Service"]["changesDiff"] = (input) =>
+  const changesDiff: GitWorkbenchService["Service"]["changesDiff"] = Effect.fn(
+    "GitWorkbenchService.changesDiff",
+  )((input) =>
     Effect.gen(function* () {
       const workspace = yield* resolveWorkspace(input.cwd, "get-changes-diff");
       return yield* driver
@@ -457,9 +470,12 @@ export const make = Effect.gen(function* () {
             toGitWorkbenchServiceError(workspace.cwd, "get-changes-diff", error),
           ),
         );
-    });
+    }),
+  );
 
-  const applySelection: GitWorkbenchService["Service"]["applySelection"] = (input) =>
+  const applySelection: GitWorkbenchService["Service"]["applySelection"] = Effect.fn(
+    "GitWorkbenchService.applySelection",
+  )((input) =>
     Effect.gen(function* () {
       const workspace = yield* resolveWorkspace(input.cwd, "apply-change-selection");
       return yield* scheduler.withLock(
@@ -500,9 +516,12 @@ export const make = Effect.gen(function* () {
       Effect.mapError((error) =>
         toGitWorkbenchServiceError(input.cwd, "apply-change-selection", error),
       ),
-    );
+    ),
+  );
 
-  const runOperation: GitWorkbenchService["Service"]["runOperation"] = (input) =>
+  const runOperation: GitWorkbenchService["Service"]["runOperation"] = Effect.fn(
+    "GitWorkbenchService.runOperation",
+  )((input) =>
     Effect.gen(function* () {
       const workspace = yield* resolveWorkspace(input.cwd, "run-workbench-operation");
       const result = yield* scheduler.withLock(
@@ -518,15 +537,21 @@ export const make = Effect.gen(function* () {
       Effect.mapError((error) =>
         toGitWorkbenchServiceError(input.cwd, "run-workbench-operation", error),
       ),
-    );
+    ),
+  );
 
-  const listUndo: GitWorkbenchService["Service"]["listUndo"] = (input) =>
+  const listUndo: GitWorkbenchService["Service"]["listUndo"] = Effect.fn(
+    "GitWorkbenchService.listUndo",
+  )((input) =>
     Effect.gen(function* () {
       const workspace = yield* resolveWorkspace(input.cwd, "list-undo-snapshots");
       return { snapshots: yield* loadUndo(workspace.cwd, "list-undo-snapshots") };
-    });
+    }),
+  );
 
-  const createUndo: GitWorkbenchService["Service"]["createUndo"] = (input) =>
+  const createUndo: GitWorkbenchService["Service"]["createUndo"] = Effect.fn(
+    "GitWorkbenchService.createUndo",
+  )((input) =>
     Effect.gen(function* () {
       const workspace = yield* resolveWorkspace(input.cwd, "create-undo-snapshot");
       return yield* scheduler.withLock(
@@ -555,9 +580,12 @@ export const make = Effect.gen(function* () {
       Effect.mapError((error) =>
         toGitWorkbenchServiceError(input.cwd, "create-undo-snapshot", error),
       ),
-    );
+    ),
+  );
 
-  const restoreUndo: GitWorkbenchService["Service"]["restoreUndo"] = (input) =>
+  const restoreUndo: GitWorkbenchService["Service"]["restoreUndo"] = Effect.fn(
+    "GitWorkbenchService.restoreUndo",
+  )((input) =>
     Effect.gen(function* () {
       const workspace = yield* resolveWorkspace(input.cwd, "restore-undo-snapshot");
       yield* scheduler.withLock(
@@ -577,9 +605,12 @@ export const make = Effect.gen(function* () {
       Effect.mapError((error) =>
         toGitWorkbenchServiceError(input.cwd, "restore-undo-snapshot", error),
       ),
-    );
+    ),
+  );
 
-  const upsertQueue: GitWorkbenchService["Service"]["upsertQueue"] = (input) =>
+  const upsertQueue: GitWorkbenchService["Service"]["upsertQueue"] = Effect.fn(
+    "GitWorkbenchService.upsertQueue",
+  )((input) =>
     Effect.gen(function* () {
       const workspace = yield* resolveWorkspace(input.cwd, "upsert-queued-workflow");
       if (
@@ -615,6 +646,30 @@ export const make = Effect.gen(function* () {
       }
       const worktreeRoot = currentSnapshot.worktreeRoot ?? workspace.cwd;
       const scope = { environmentId, worktreeRoot };
+      const source = yield* projection.getThreadRecords(input.threadId, ["runs"]);
+      if (
+        source.thread.deletedAt !== null ||
+        source.thread.archivedAt !== null ||
+        (input.runId !== undefined && !source.runs.some((run) => run.id === input.runId))
+      )
+        return yield* new ContractGitWorkbenchError({
+          cwd: workspace.cwd,
+          operation: "upsert-queued-workflow",
+          reason: "unsupported",
+          detail: "The conversation for this queued workflow is unavailable.",
+        });
+      const capturedRunId =
+        input.runId ??
+        source.runs.findLast(
+          (run) =>
+            !["completed", "interrupted", "failed", "cancelled", "rolled_back"].includes(
+              run.status,
+            ),
+        )?.id;
+      const preconditions = {
+        ...observedStateFromSnapshot(environmentId, currentSnapshot, input.plan),
+        ...(capturedRunId === undefined ? {} : { capturedRunId }),
+      };
       const queued =
         input.expectedRevision !== undefined && input.workflowId !== undefined
           ? yield* queue.edit({
@@ -622,14 +677,14 @@ export const make = Effect.gen(function* () {
               workflowId: input.workflowId,
               expectedRevision: input.expectedRevision,
               workflow: input.plan,
-              preconditions: observedStateFromSnapshot(environmentId, currentSnapshot, input.plan),
+              preconditions,
             })
           : yield* queue.createOrReplace({
               scope,
               threadId: input.threadId,
               turnId: input.turnId ?? null,
               workflow: input.plan,
-              preconditions: observedStateFromSnapshot(environmentId, currentSnapshot, input.plan),
+              preconditions,
               ...(input.workflowId === undefined ? {} : { workflowId: input.workflowId }),
               ...(input.replaceExisting === undefined
                 ? {}
@@ -643,9 +698,12 @@ export const make = Effect.gen(function* () {
       Effect.mapError((error) =>
         toGitWorkbenchServiceError(input.cwd, "upsert-queued-workflow", error),
       ),
-    );
+    ),
+  );
 
-  const cancelQueue: GitWorkbenchService["Service"]["cancelQueue"] = (input) =>
+  const cancelQueue: GitWorkbenchService["Service"]["cancelQueue"] = Effect.fn(
+    "GitWorkbenchService.cancelQueue",
+  )((input) =>
     Effect.gen(function* () {
       const workspace = yield* resolveWorkspace(input.cwd, "cancel-queued-workflow");
       const environmentId = yield* serverEnvironment.getEnvironmentId;
@@ -664,29 +722,35 @@ export const make = Effect.gen(function* () {
       Effect.mapError((error) =>
         toGitWorkbenchServiceError(input.cwd, "cancel-queued-workflow", error),
       ),
-    );
+    ),
+  );
 
   return GitWorkbenchService.of({
     snapshot,
     subscribe,
-    insights: (input) =>
+    insights: Effect.fn("GitWorkbenchService.insights")((input) =>
       withValidatedQuery(input.cwd, "get-repository-insights", (cwd) =>
         query.getRepositoryInsights({ ...input, cwd }),
       ),
-    history: (input) =>
+    ),
+    history: Effect.fn("GitWorkbenchService.history")((input) =>
       withValidatedQuery(input.cwd, "list-history", (cwd) => query.listHistory({ ...input, cwd })),
-    commitDetail: (input) =>
+    ),
+    commitDetail: Effect.fn("GitWorkbenchService.commitDetail")((input) =>
       withValidatedQuery(input.cwd, "get-commit-detail", (cwd) =>
         query.getCommitDetail({ ...input, cwd }),
       ),
-    commitFileDiff: (input) =>
+    ),
+    commitFileDiff: Effect.fn("GitWorkbenchService.commitFileDiff")((input) =>
       withValidatedQuery(input.cwd, "get-commit-file-diff", (cwd) =>
         query.getCommitFileDiff({ ...input, cwd }),
       ),
-    interactiveRebasePlan: (input) =>
+    ),
+    interactiveRebasePlan: Effect.fn("GitWorkbenchService.interactiveRebasePlan")((input) =>
       withValidatedQuery(input.cwd, "get-interactive-rebase-plan", (cwd) =>
         query.getInteractiveRebasePlan({ ...input, cwd }),
       ),
+    ),
     changesDiff,
     applySelection,
     runOperation,

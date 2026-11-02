@@ -1,10 +1,18 @@
+import {
+  makeAlreadyLocalProviderHistorySync,
+  makeInstanceHistorySyncSource,
+  NO_PROVIDER_HISTORY_SYNC_CAPABILITIES,
+} from "@t3tools/provider-core/server/ProviderHistorySync";
+import { IdAllocatorV2 } from "@t3tools/provider-core/server/IdAllocator";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
 import { GeminiSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
@@ -14,28 +22,23 @@ import { makeGeminiTextGeneration } from "../../textGeneration/GeminiTextGenerat
 import * as WorkspaceContext from "../../workspace/WorkspaceContext.ts";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { makeGeminiAdapter } from "../Layers/GeminiAdapter.ts";
-import { makeGeminiHarnessToolExecutor } from "../Layers/GeminiHarness.ts";
-import { checkGeminiProviderStatus, makePendingGeminiProvider } from "../Layers/GeminiProvider.ts";
-import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
+import { makeGeminiAdapter } from "../GeminiAdapter.ts";
+import { makeGeminiHarnessToolExecutor } from "../GeminiHarness.ts";
+import { checkGeminiProviderStatus, makePendingGeminiProvider } from "../GeminiProvider.ts";
+import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
   type ProviderInstance,
-} from "../ProviderDriver.ts";
-import {
-  makeAlreadyLocalProviderHistorySync,
-  makeInstanceHistorySyncSource,
-  NO_PROVIDER_HISTORY_SYNC_CAPABILITIES,
-} from "../Services/ProviderHistorySync.ts";
-import type { ServerProviderDraft } from "../providerSnapshot.ts";
-import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
+} from "@t3tools/provider-core/server/driver";
+import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import {
   haveProviderSnapshotSettingsChanged,
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
-} from "../providerUpdateSettings.ts";
+} from "@t3tools/provider-core/server/snapshotSettings";
 
 const DRIVER_KIND = ProviderDriverKind.make("gemini");
 const decodeGeminiSettings = Schema.decodeSync(GeminiSettings);
@@ -51,6 +54,8 @@ export type GeminiDriverEnv =
   | FileSystem.FileSystem
   | Path.Path
   | ServerConfig
+  | IdAllocatorV2
+  | ProviderHost
   | ServerSettingsService
   | WorkspaceContext.WorkspaceContext
   | WorkspaceFileSystem.WorkspaceFileSystem;
@@ -79,22 +84,71 @@ export const GeminiDriver: ProviderDriver<GeminiSettings, GeminiDriverEnv> = {
   },
   configSchema: GeminiSettings,
   defaultConfig: (): GeminiSettings => decodeGeminiSettings({}),
-  create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
-    Effect.gen(function* () {
-      const serverSettings = yield* ServerSettingsService;
-      const processEnv = mergeProviderInstanceEnvironment(environment);
-      const continuationIdentity = defaultProviderContinuationIdentity({
-        driverKind: DRIVER_KIND,
-        instanceId,
-      });
-      const stampIdentity = withInstanceIdentity({
-        instanceId,
-        displayName,
-        accentColor,
-        continuationGroupKey: continuationIdentity.continuationKey,
-      });
-      const effectiveConfig = { ...config, enabled } satisfies GeminiSettings;
-      const historySync = makeAlreadyLocalProviderHistorySync({
+  create: Effect.fn("GeminiDriver.create")(function* ({
+    instanceId,
+    displayName,
+    accentColor,
+    environment,
+    enabled,
+    config,
+  }) {
+    const processEnv = yield* mergeProviderInstanceEnvironment(
+      environment,
+      yield* HostProcess.Environment,
+    );
+    const continuationIdentity = defaultProviderContinuationIdentity({
+      driverKind: DRIVER_KIND,
+      instanceId,
+    });
+    const stampIdentity = withInstanceIdentity({
+      instanceId,
+      displayName,
+      accentColor,
+      continuationGroupKey: continuationIdentity.continuationKey,
+    });
+    const effectiveConfig = { ...config, enabled } satisfies GeminiSettings;
+    const processRunner = yield* makeProcessRunner();
+    const toolExecutor = yield* makeGeminiHarnessToolExecutor(processRunner);
+    const adapter = yield* makeGeminiAdapter(effectiveConfig, {
+      environment: processEnv,
+      instanceId,
+      toolExecutor,
+    });
+    const textGeneration = yield* makeGeminiTextGeneration(effectiveConfig, processEnv);
+    const checkProvider = checkGeminiProviderStatus(effectiveConfig, processEnv).pipe(
+      Effect.map(stampIdentity),
+    );
+    const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
+    const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<GeminiSettings>>({
+      resolveMaintenance: () => Effect.succeed(MAINTENANCE),
+      getSettings: snapshotSettings.getSettings,
+      streamSettings: snapshotSettings.streamSettings,
+      haveSettingsChanged: haveProviderSnapshotSettingsChanged,
+      initialSnapshot: (settings) =>
+        makePendingGeminiProvider(settings.provider).pipe(Effect.map(stampIdentity)),
+      checkProvider,
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProviderDriverError({
+            driver: DRIVER_KIND,
+            instanceId,
+            detail: `Failed to build Gemini snapshot: ${cause.message ?? String(cause)}`,
+            cause,
+          }),
+      ),
+    );
+
+    return {
+      instanceId,
+      driverKind: DRIVER_KIND,
+      continuationIdentity,
+      displayName,
+      accentColor,
+      enabled,
+      snapshot,
+      orchestrationAdapter: adapter,
+      historySync: makeAlreadyLocalProviderHistorySync({
         source: makeInstanceHistorySyncSource({
           driverKind: DRIVER_KIND,
           instanceId,
@@ -102,51 +156,9 @@ export const GeminiDriver: ProviderDriver<GeminiSettings, GeminiDriverEnv> = {
           displayName: displayName ?? "Gemini",
           capabilities: NO_PROVIDER_HISTORY_SYNC_CAPABILITIES,
         }),
-        reason: "Gemini history is already stored by T3 Code.",
-      });
-      const processRunner = yield* makeProcessRunner();
-      const toolExecutor = yield* makeGeminiHarnessToolExecutor(processRunner);
-      const adapter = yield* makeGeminiAdapter(effectiveConfig, {
-        environment: processEnv,
-        instanceId,
-        toolExecutor,
-      });
-      const textGeneration = yield* makeGeminiTextGeneration(effectiveConfig, processEnv);
-      const checkProvider = checkGeminiProviderStatus(effectiveConfig, processEnv).pipe(
-        Effect.map(stampIdentity),
-      );
-      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
-      const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<GeminiSettings>>({
-        resolveMaintenance: () => Effect.succeed(MAINTENANCE),
-        getSettings: snapshotSettings.getSettings,
-        streamSettings: snapshotSettings.streamSettings,
-        haveSettingsChanged: haveProviderSnapshotSettingsChanged,
-        initialSnapshot: (settings) =>
-          makePendingGeminiProvider(settings.provider).pipe(Effect.map(stampIdentity)),
-        checkProvider,
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderDriverError({
-              driver: DRIVER_KIND,
-              instanceId,
-              detail: `Failed to build Gemini snapshot: ${cause.message ?? String(cause)}`,
-              cause,
-            }),
-        ),
-      );
-
-      return {
-        instanceId,
-        driverKind: DRIVER_KIND,
-        continuationIdentity,
-        displayName,
-        accentColor,
-        enabled,
-        snapshot,
-        adapter,
-        historySync,
-        textGeneration,
-      } satisfies ProviderInstance;
-    }),
+        reason: "Conversation history is already stored by T3 Code.",
+      }),
+      textGeneration,
+    } satisfies ProviderInstance;
+  }),
 };

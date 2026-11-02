@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Provider context cache keys are computed synchronously from exact retrieved source text.
 import * as NodeCrypto from "node:crypto";
 
 import { type ProjectIndexQueryResultV1, type ProjectIndexScopeInput } from "@t3tools/contracts";

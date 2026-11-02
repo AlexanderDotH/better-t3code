@@ -6,7 +6,7 @@ import type {
 } from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as DateTime from "effect/DateTime";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -16,8 +16,8 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as CodexClient from "effect-codex-app-server/client";
 import type * as CodexSchema from "effect-codex-app-server/schema";
 
@@ -189,7 +189,7 @@ const authenticated = (input: {
 
 const authenticatedFromCredential = (credential: ChatGptCredential): ServerProviderAuth => {
   const payload = Redacted.value(credential.idToken).split(".")[1];
-  const decoded = payload ? Encoding.decodeBase64UrlString(payload) : undefined;
+  const decoded = payload ? Base64Url.decodeString(payload) : undefined;
   const claims =
     decoded?._tag === "Success"
       ? Option.getOrUndefined(decodeChatGptIdentityClaims(decoded.success))

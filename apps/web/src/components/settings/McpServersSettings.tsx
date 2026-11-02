@@ -1,3 +1,5 @@
+import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import { useEnvironmentScope } from "~/state/session";
 import type {
   AgentImportSource,
   McpProviderRouting,
@@ -22,11 +24,15 @@ import {
   Trash2Icon,
   UploadIcon,
 } from "lucide-react";
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 
 import { ensureLocalApi } from "../../localApi";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
-import { useEnvironment, usePrimaryEnvironmentId } from "../../state/environments";
+import {
+  useEnvironment,
+  useEnvironmentProviders,
+  usePrimaryEnvironmentId,
+} from "../../state/environments";
 import { useProjects, useServerConfigs } from "../../state/entities";
 import { agentSettingsEnvironment } from "../../state/agentSettings";
 import { useEnvironmentQuery } from "../../state/query";
@@ -825,7 +831,7 @@ function ImportSourceRows(props: {
   readonly onSelectedSourceIdsChange: (sourceIds: ReadonlyArray<string>) => void;
 }) {
   const translate = useInterfaceTranslator().message;
-  const selected = useMemo(() => new Set(props.selectedSourceIds), [props.selectedSourceIds]);
+  const selected = new Set(props.selectedSourceIds);
 
   if (props.isLoading) {
     return (
@@ -1166,19 +1172,17 @@ export function McpServersSettingsPanel(props: {
   );
   const projects = useProjects();
   const serverConfigs = useServerConfigs();
+  const providersByEnvironment = useEnvironmentProviders();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const projectEntries = useMemo(() => projectOptions(projects), [projects]);
+  const projectEntries = projectOptions(projects);
   const [scopeFilter, setScopeFilter] = useState<ScopeFilter>("global");
   const [projectFilterKey, setProjectFilterKey] = useState(() => projectEntries[0]?.key ?? "");
   const selectedFilterProject =
     projectEntries.find((project) => project.key === projectFilterKey) ?? projectEntries[0] ?? null;
-  const deepLinkedEnvironmentId = useMemo(
-    () =>
-      [...serverConfigs.keys()].find(
-        (environmentId) => String(environmentId) === props.search?.environment,
-      ) ?? null,
-    [props.search?.environment, serverConfigs],
-  );
+  const deepLinkedEnvironmentId =
+    [...serverConfigs.keys()].find(
+      (environmentId) => String(environmentId) === props.search?.environment,
+    ) ?? null;
   const filterEnvironmentSelection = {
     primaryEnvironmentId:
       deepLinkedEnvironmentId === null && scopeFilter === "global" ? primaryEnvironmentId : null,
@@ -1191,7 +1195,8 @@ export function McpServersSettingsPanel(props: {
   const authorizationAvailable = filterEnvironment?.entry.target._tag === "PrimaryConnectionTarget";
   const selectedServerConfig =
     filterEnvironmentId === null ? undefined : serverConfigs.get(filterEnvironmentId);
-  const providers = selectedServerConfig?.providers ?? [];
+  const providers =
+    filterEnvironmentId === null ? [] : (providersByEnvironment.get(filterEnvironmentId) ?? []);
   const providerStatusQuery = useEnvironmentQuery(
     filterEnvironmentId === null
       ? null
@@ -1206,29 +1211,21 @@ export function McpServersSettingsPanel(props: {
           },
         }),
   );
-  const providerCapabilities = useMemo(
-    () =>
-      new Map(
-        (providerStatusQuery.data?.providers ?? []).map((status) => [
-          String(status.instanceId),
-          status.capability,
-        ]),
-      ),
-    [providerStatusQuery.data?.providers],
+  const providerCapabilities = new Map(
+    (providerStatusQuery.data?.providers ?? []).map((status) => [
+      String(status.instanceId),
+      status.capability,
+    ]),
   );
-  const providerTabs = useMemo(
-    () =>
-      deriveMcpProviderTabs(
-        providers.map((provider) => {
-          const mcpCapability = providerCapabilities.get(String(provider.instanceId));
-          return {
-            ...provider,
-            ...(mcpCapability ? { mcpCapability } : {}),
-          };
-        }),
-        selectedServerConfig?.settings,
-      ),
-    [providerCapabilities, providers, selectedServerConfig?.settings],
+  const providerTabs = deriveMcpProviderTabs(
+    providers.map((provider) => {
+      const mcpCapability = providerCapabilities.get(String(provider.instanceId));
+      return {
+        ...provider,
+        ...(mcpCapability ? { mcpCapability } : {}),
+      };
+    }),
+    selectedServerConfig?.settings,
   );
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(
     props.search?.provider ?? null,
@@ -1240,7 +1237,7 @@ export function McpServersSettingsPanel(props: {
     null;
   const selectedProviderInstanceId = selectedProvider?.instanceId as ProviderInstanceId | undefined;
   const servers = selectedServerConfig?.settings.mcp.servers ?? [];
-  const existingIds = useMemo(() => new Set(servers.map((server) => server.id)), [servers]);
+  const existingIds = new Set(servers.map((server) => server.id));
   const [appliedServerDeepLink, setAppliedServerDeepLink] = useState<string | null>(null);
 
   const [editorOpen, setEditorOpen] = useState(false);
@@ -1319,20 +1316,11 @@ export function McpServersSettingsPanel(props: {
           runtimeSessionId: selectedRuntimeContext.runtimeSessionId,
         })
       : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed runtime selector to asynchronous MCP detail requests so stale responses are discarded
   useLayoutEffect(() => {
     currentRuntimeSelectorKeyRef.current = currentRuntimeSelectorKey;
-  }, [currentRuntimeSelectorKey]);
-  const sessionAccessQuery = useEnvironmentQuery(
-    filterEnvironmentId === null
-      ? null
-      : agentSettingsEnvironment.mcp.sessionAccess({
-          environmentId: filterEnvironmentId,
-          input: {},
-        }),
-  );
-  const readOnly =
-    sessionAccessQuery.data?.scopes !== undefined &&
-    !sessionAccessQuery.data.scopes.includes("orchestration:operate");
+  }, [currentRuntimeSelectorKey, currentRuntimeSelectorKeyRef]);
+  const readOnly = !useEnvironmentScope(filterEnvironmentId, AuthOrchestrationOperateScope);
 
   const importSourcesQuery = useEnvironmentQuery(
     importOpen && importEnvironmentId !== null
@@ -1384,19 +1372,15 @@ export function McpServersSettingsPanel(props: {
     setSelectedRuntimeContextId(mcpRuntimeContextId(selectedRuntimeContext));
   }
 
-  const visibleServers = useMemo(
-    () =>
-      servers.filter((server) => {
-        if (server.scope !== scopeFilter) return false;
-        if (scopeFilter === "global") return true;
-        if (!selectedFilterProject) return true;
-        return (
-          server.projectCwd === selectedFilterProject.cwd ||
-          server.projectId === selectedFilterProject.id
-        );
-      }),
-    [scopeFilter, selectedFilterProject, servers],
-  );
+  const visibleServers = servers.filter((server) => {
+    if (server.scope !== scopeFilter) return false;
+    if (scopeFilter === "global") return true;
+    if (!selectedFilterProject) return true;
+    return (
+      server.projectCwd === selectedFilterProject.cwd ||
+      server.projectId === selectedFilterProject.id
+    );
+  });
 
   const createServer = useSettingsCommand(agentSettingsEnvironment.mcp.create);
   const updateServer = useSettingsCommand(agentSettingsEnvironment.mcp.update);
@@ -1639,40 +1623,43 @@ export function McpServersSettingsPanel(props: {
   ) => {
     setIsExporting(true);
     setExportError(null);
-    try {
-      const project =
-        projectEntries.find((option) => option.key === input.projectKey) ??
-        projectEntries[0] ??
-        null;
-      if (input.scope === "project" && !project) {
-        throw new Error("Select a project before exporting.");
-      }
-      const target = requireSettingsEnvironment({
-        primaryEnvironmentId:
-          deepLinkedEnvironmentId === null && input.scope !== "project"
-            ? primaryEnvironmentId
-            : null,
-        selectedEnvironmentId:
-          deepLinkedEnvironmentId ??
-          (input.scope === "project" ? (project?.environmentId ?? null) : null),
-      });
-      const result = await exportServers({
-        environmentId: target.environmentId,
-        input: {
-          ...buildExportInput({
-            scope: input.scope,
-            project,
-            includeDisabled: input.includeDisabled,
-          }),
-          ...(selectedProviderInstanceId ? { providerInstanceId: selectedProviderInstanceId } : {}),
-        },
-      });
-      setExportJson(result.json);
-    } catch (error) {
-      setExportError(errorMessage(error, "Failed to export MCP servers."));
-    } finally {
-      setIsExporting(false);
-    }
+    await Promise.resolve()
+      .then(() => {
+        const project =
+          projectEntries.find((option) => option.key === input.projectKey) ??
+          projectEntries[0] ??
+          null;
+        if (input.scope === "project" && !project) {
+          throw new Error("Select a project before exporting.");
+        }
+        const target = requireSettingsEnvironment({
+          primaryEnvironmentId:
+            deepLinkedEnvironmentId === null && input.scope !== "project"
+              ? primaryEnvironmentId
+              : null,
+          selectedEnvironmentId:
+            deepLinkedEnvironmentId ??
+            (input.scope === "project" ? (project?.environmentId ?? null) : null),
+        });
+        return exportServers({
+          environmentId: target.environmentId,
+          input: {
+            ...buildExportInput({
+              scope: input.scope,
+              project,
+              includeDisabled: input.includeDisabled,
+            }),
+            ...(selectedProviderInstanceId
+              ? { providerInstanceId: selectedProviderInstanceId }
+              : {}),
+          },
+        });
+      })
+      .then((result) => setExportJson(result.json))
+      .catch((error: unknown) =>
+        setExportError(errorMessage(error, "Failed to export MCP servers.")),
+      )
+      .finally(() => setIsExporting(false));
   };
 
   const openExportDialog = () => {
@@ -1761,33 +1748,38 @@ export function McpServersSettingsPanel(props: {
     const detailsKey = mcpRuntimeServerDetailsKey(target);
     if (loadingRuntimeDetails.has(detailsKey)) return;
     setLoadingRuntimeDetails((current) => new Set(current).add(detailsKey));
-    try {
-      const result = await runRuntimeDetailsQuery({
-        environmentId: target.environmentId,
-        input: {
-          providerInstanceId: target.providerInstanceId,
-          threadId: target.threadId,
-          runtimeSessionId: target.runtimeSessionId,
-          providerKey: target.providerKey,
-        },
+    await Promise.resolve()
+      .then(() =>
+        runRuntimeDetailsQuery({
+          environmentId: target.environmentId,
+          input: {
+            providerInstanceId: target.providerInstanceId,
+            threadId: target.threadId,
+            runtimeSessionId: target.runtimeSessionId,
+            providerKey: target.providerKey,
+          },
+        }),
+      )
+      .then((result) => {
+        if (result._tag === "Failure") throw Cause.squash(result.cause);
+        if (currentRuntimeSelectorKeyRef.current !== selectorKey) return;
+        setRuntimeDetails((current) => new Map(current).set(detailsKey, result.value));
+      })
+      .catch((error: unknown) => {
+        if (currentRuntimeSelectorKeyRef.current !== selectorKey) return;
+        toastManager.add({
+          type: "error",
+          title: translate("settings.mcp.toast.inventoryFailed"),
+          description: errorMessage(error, "The provider did not return server details."),
+        });
+      })
+      .finally(() => {
+        setLoadingRuntimeDetails((current) => {
+          const next = new Set(current);
+          next.delete(detailsKey);
+          return next;
+        });
       });
-      if (result._tag === "Failure") throw Cause.squash(result.cause);
-      if (currentRuntimeSelectorKeyRef.current !== selectorKey) return;
-      setRuntimeDetails((current) => new Map(current).set(detailsKey, result.value));
-    } catch (error) {
-      if (currentRuntimeSelectorKeyRef.current !== selectorKey) return;
-      toastManager.add({
-        type: "error",
-        title: translate("settings.mcp.toast.inventoryFailed"),
-        description: errorMessage(error, "The provider did not return server details."),
-      });
-    } finally {
-      setLoadingRuntimeDetails((current) => {
-        const next = new Set(current);
-        next.delete(detailsKey);
-        return next;
-      });
-    }
   };
 
   const configuredServerViews: ReadonlyArray<McpConfiguredServerView> = visibleServers.map(

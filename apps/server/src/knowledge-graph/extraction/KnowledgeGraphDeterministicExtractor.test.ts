@@ -1,12 +1,28 @@
+// @effect-diagnostics nodeBuiltinImport:off -- The extraction fixture controls the Node scheduler boundary explicitly.
 import * as NodeTimersPromises from "node:timers/promises";
 
 import { expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import { EnvironmentId, KnowledgeGraphScopeId, ProjectId } from "@t3tools/contracts";
 
 import {
   buildDeterministicKnowledgeGraph,
   type KnowledgeGraphDeterministicExtractionInput,
 } from "./KnowledgeGraphDeterministicExtractor.ts";
+
+vi.mock("node:timers/promises", () => ({ setImmediate: vi.fn() }));
+
+function holdIoBoundary() {
+  const scheduled = Promise.withResolvers<void>();
+  const released = Promise.withResolvers<void>();
+  vi.mocked(NodeTimersPromises.setImmediate).mockImplementation(async (value, options) => {
+    scheduled.resolve();
+    await released.promise;
+    options?.signal?.throwIfAborted();
+    return value;
+  });
+  return { scheduled: scheduled.promise, release: released.resolve };
+}
 
 const input = {
   scope: {
@@ -30,6 +46,7 @@ const input = {
 } satisfies KnowledgeGraphDeterministicExtractionInput;
 
 it("keeps ready I/O responsive while extracting a graph", async () => {
+  const boundary = holdIoBoundary();
   let completed = false;
   const extraction = buildDeterministicKnowledgeGraph(input, new AbortController().signal).then(
     (result) => {
@@ -38,8 +55,9 @@ it("keeps ready I/O responsive while extracting a graph", async () => {
     },
   );
 
-  await NodeTimersPromises.setImmediate();
+  await boundary.scheduled;
   expect(completed).toBe(false);
+  boundary.release();
 
   const result = await extraction;
   expect(result.fileFingerprints.map((file) => file.path)).toEqual(["a.ts", "b.ts", "c.ts"]);
@@ -47,12 +65,14 @@ it("keeps ready I/O responsive while extracting a graph", async () => {
 });
 
 it("cancels extraction at an I/O boundary", async () => {
+  const boundary = holdIoBoundary();
   const controller = new AbortController();
   const extraction = buildDeterministicKnowledgeGraph(input, controller.signal);
   const rejected = expect(extraction).rejects.toMatchObject({ name: "AbortError" });
 
-  await NodeTimersPromises.setImmediate();
+  await boundary.scheduled;
   controller.abort();
+  boundary.release();
 
   await rejected;
 });

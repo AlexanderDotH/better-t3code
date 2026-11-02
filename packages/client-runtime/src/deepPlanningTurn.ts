@@ -2,7 +2,7 @@ import {
   CommandId,
   DeepPlanRunId,
   MessageId,
-  type ClientOrchestrationCommand,
+  type OrchestrationV2Command,
   type DeepPlanGetRunInput,
   type DeepPlanRun,
   type DeepPlanSourceRef,
@@ -32,7 +32,7 @@ import {
 
 export interface DeepPlanningApi extends DeepPlanningSourceApi {
   readonly getRun: (input: DeepPlanGetRunInput) => Promise<DeepPlanRun | null>;
-  readonly dispatchCommand: (command: ClientOrchestrationCommand) => Promise<unknown>;
+  readonly dispatchCommand: (command: OrchestrationV2Command) => Promise<unknown>;
 }
 
 function importsComplete(run: DeepPlanRun): boolean {
@@ -251,10 +251,7 @@ async function continueDeepPlan(input: {
   readonly run: DeepPlanRun;
   readonly automatic?: boolean;
   readonly threadId?: ThreadId;
-  readonly idleGuard?: Extract<
-    ClientOrchestrationCommand,
-    { type: "thread.turn.start" }
-  >["idleGuard"];
+  readonly idleGuard?: Extract<OrchestrationV2Command, { type: "message.dispatch" }>["idleGuard"];
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
   readonly fallbackModelSelection: ModelSelection;
@@ -314,13 +311,12 @@ async function continueDeepPlan(input: {
   )
     return run;
   if (run.phase === "awaitingApproval") return run;
-  if (!run.approval && !input.automatic) {
+  if (!input.automatic) {
     await api.dispatchCommand({
       type: "thread.interaction-mode.set",
       commandId: CommandId.make(input.createId()),
       threadId: run.threadId,
-      interactionMode: "plan",
-      createdAt: now(),
+      interactionMode: run.approval ? "default" : "plan",
     });
   }
   const selection = run.approval?.implementation ?? input.fallbackModelSelection;
@@ -337,21 +333,24 @@ async function continueDeepPlan(input: {
         : `Resume Deep Plan run ${run.id} owned by thread ${run.threadId}. Read its durable state with deep_plan_state, continue reading and summarizing every frozen source, and publish the complete structured plan with deep_plan_publish. Do not omit unavailable sources or begin implementation before approval.`;
   const commandId = CommandId.make(input.createId());
   await api.dispatchCommand({
-    type: "thread.turn.start",
+    type: "thread.runtime-mode.set",
+    commandId: CommandId.make(input.createId()),
+    threadId: run.approval?.implementationThreadId ?? run.threadId,
+    runtimeMode: input.runtimeMode,
+  });
+  await api.dispatchCommand({
+    type: "message.dispatch",
+    createdBy: "agent",
+    creationSource: "web",
     commandId,
     threadId: run.approval?.implementationThreadId ?? run.threadId,
-    message: {
-      messageId: MessageId.make(commandId + ":message"),
-      role: "user",
-      text,
-      attachments: [],
-    },
-    background: { runId: run.id },
+    messageId: MessageId.make(commandId + ":message"),
+    text,
+    attachments: [],
+    deepPlanRunId: run.id,
     modelSelection,
-    runtimeMode: input.runtimeMode,
-    interactionMode: run.approval ? "default" : "plan",
     idleGuard: input.automatic ? (input.idleGuard ?? {}) : {},
-    createdAt: now(),
+    dispatchMode: { type: "start_immediately" },
   });
   return run;
 }

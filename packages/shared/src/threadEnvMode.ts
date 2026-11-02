@@ -1,14 +1,6 @@
 import { PROJECT_FILE_BACKED_SETTINGS, type ThreadEnvMode } from "@t3tools/contracts";
 
-/**
- * Canonical priority order for a project's default thread env mode:
- * per-project setting > explicit environment value > checked-in t3.json > built-in default.
- *
- * An explicit composer pick outranks all of these; callers apply it before
- * consulting the defaults. Web resolves the sources imperatively at draft
- * creation, mobile reactively — both must route through this function so the
- * platforms cannot disagree on the order.
- */
+// Explicit composer picks win; web and mobile use this fallback order for their defaults.
 export function resolveDefaultThreadEnvMode(sources: {
   readonly projectSetting: ThreadEnvMode | null | undefined;
   readonly projectFile: ThreadEnvMode | null | undefined;

@@ -3,7 +3,10 @@ import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { Button } from "../ui/button";
 import type { ContextWindowSnapshot } from "~/lib/contextWindow";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { formatContextWindowCompactionMessage } from "./ContextWindowMeter.logic";
+import {
+  formatContextWindowCompactionMessage,
+  formatContextWindowCost,
+} from "./ContextWindowMeter.logic";
 import { Minimize2Icon } from "lucide-react";
 import { composerFloatingLayerProps } from "./composerEventScope";
 import { ContextWindowMeterRing, contextWindowUsageColor } from "./ContextWindowMeterRing";
@@ -73,7 +76,7 @@ function ContextWindowMeterButton(props: ContextWindowMeterProps) {
         render={
           <button
             type="button"
-            className="relative inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background pointer-coarse:size-11"
+            className="relative inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background pointer-coarse:size-11"
             aria-label={accessibleUsage}
             onPointerDown={() => {
               suppressFocusOpen.current = true;
@@ -145,6 +148,14 @@ function ContextWindowMeterButton(props: ContextWindowMeterProps) {
               </>
             ) : null}
           </dl>
+          {usage.cost != null ? (
+            <div className="flex items-center justify-between gap-3 text-2xs leading-4">
+              <span className="text-secondary-label">Cost</span>
+              <span className="font-medium tabular-nums text-secondary-label">
+                {formatContextWindowCost(usage.cost)}
+              </span>
+            </div>
+          ) : null}
           {usage.compactsAutomatically ? (
             <div className="mt-1 text-pretty text-secondary-label text-2xs font-medium">
               {formatContextWindowCompactionMessage(
@@ -173,7 +184,6 @@ function ContextWindowMeterButton(props: ContextWindowMeterProps) {
   );
 }
 
-/** Holds the meter's footprint while a thread's activities are still loading. */
-function ContextWindowMeterPlaceholder() {
-  return <span aria-hidden="true" className="size-7 shrink-0 pointer-coarse:size-11" />;
+export function ContextWindowMeterPlaceholder() {
+  return <span aria-hidden="true" className="size-7 shrink-0" />;
 }

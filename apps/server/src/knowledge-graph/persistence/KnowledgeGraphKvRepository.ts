@@ -481,20 +481,19 @@ function countAfterPatch<Id extends string>(
 }
 
 function makeRepository(database: RocksDatabase): KnowledgeGraphRepositoryShape {
-  const ensureScope = (scope: KnowledgeGraphScopeV1) =>
-    Effect.gen(function* () {
-      const now = DateTime.formatIso(yield* DateTime.now);
-      return yield* run("ensure-scope", async () => {
-        await database.transaction(async (transaction) => {
-          const previous = await readGraphScope(transaction, scope.scopeId);
-          await writeGraphScope(
-            transaction,
-            previous ? { ...previous, scope, updatedAt: now } : graphScopeState(scope, now),
-          );
-        });
-        return scope;
+  const ensureScope = Effect.fn("ensureScope")(function* (scope: KnowledgeGraphScopeV1) {
+    const now = DateTime.formatIso(yield* DateTime.now);
+    return yield* run("ensure-scope", async () => {
+      await database.transaction(async (transaction) => {
+        const previous = await readGraphScope(transaction, scope.scopeId);
+        await writeGraphScope(
+          transaction,
+          previous ? { ...previous, scope, updatedAt: now } : graphScopeState(scope, now),
+        );
       });
+      return scope;
     });
+  });
 
   const getStatus = (scopeId: KnowledgeGraphScopeId) =>
     run("get-status", async () => {
@@ -528,25 +527,24 @@ function makeRepository(database: RocksDatabase): KnowledgeGraphRepositoryShape 
   const listScopes = (environmentId: KnowledgeGraphScopeV1["environmentId"]) =>
     run("list-scopes", () => readEnvironmentScopes(database, environmentId));
 
-  const updateStatus = (status: KnowledgeGraphStatusV1) =>
-    Effect.gen(function* () {
-      const now = DateTime.formatIso(yield* DateTime.now);
-      yield* run("update-status", async () => {
-        await database.transaction(async (transaction) => {
-          const state = await readGraphScope(transaction, status.scopeId);
-          if (!state)
-            throw new KnowledgeGraphRepositoryError({
-              operation: "update-status",
-              reason: "scope-not-found",
-            });
-          await writeGraphScope(transaction, {
-            ...state,
-            status: { ...staticStatus(status), revision: state.status.revision },
-            updatedAt: now,
+  const updateStatus = Effect.fn("updateStatus")(function* (status: KnowledgeGraphStatusV1) {
+    const now = DateTime.formatIso(yield* DateTime.now);
+    yield* run("update-status", async () => {
+      await database.transaction(async (transaction) => {
+        const state = await readGraphScope(transaction, status.scopeId);
+        if (!state)
+          throw new KnowledgeGraphRepositoryError({
+            operation: "update-status",
+            reason: "scope-not-found",
           });
+        await writeGraphScope(transaction, {
+          ...state,
+          status: { ...staticStatus(status), revision: state.status.revision },
+          updatedAt: now,
         });
       });
     });
+  });
 
   const getNodeBundle = (input: {
     readonly scopeId: KnowledgeGraphScopeId;

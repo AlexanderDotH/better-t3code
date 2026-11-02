@@ -1,8 +1,8 @@
+import { SubagentId } from "@t3tools/contracts";
 import {
-  SubagentId,
   type OrchestrationSubagentStatus,
   type OrchestrationSubagentSummary,
-} from "@t3tools/contracts";
+} from "@t3tools/contracts/legacy";
 import { describe, expect, it } from "vite-plus/test";
 
 import { SUBAGENT_TERMINAL_COLOR_MS, partitionSubagentsByLifecycle } from "./subagentLifecycle";

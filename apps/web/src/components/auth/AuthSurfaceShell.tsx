@@ -14,7 +14,7 @@ export function AuthSurfaceShell({ children }: { readonly children: ReactNode })
     <StandalonePage
       tone="brand"
       masthead={
-        <header className="relative h-24 overflow-hidden bg-[linear-gradient(135deg,#1e61de,#17348e)] text-white">
+        <header className="relative h-24 overflow-hidden bg-primary text-primary-foreground">
           {stageVariant ? (
             <div className="absolute inset-0" aria-hidden>
               <StageBackdropArt variant={stageVariant} />
@@ -22,12 +22,12 @@ export function AuthSurfaceShell({ children }: { readonly children: ReactNode })
           ) : (
             <div
               aria-hidden
-              className="absolute inset-0 bg-[radial-gradient(circle_at_75%_25%,rgba(136,204,255,0.5),transparent_38%),linear-gradient(135deg,#2468df,#172f82)]"
+              className="absolute inset-0 bg-radial from-primary-foreground/25 to-transparent"
             />
           )}
-          <div className="absolute inset-0 bg-[linear-gradient(to_bottom,transparent_20%,rgba(7,18,55,0.46)_100%)]" />
+          <div className="absolute inset-0 bg-linear-to-b from-transparent to-primary/60" />
           <div className="relative h-full p-5 sm:p-6">
-            <p className="text-3xs font-semibold tracking-widest text-white/80 uppercase">
+            <p className="text-3xs font-semibold tracking-widest text-primary-foreground/80 uppercase">
               {APP_DISPLAY_NAME}
             </p>
           </div>

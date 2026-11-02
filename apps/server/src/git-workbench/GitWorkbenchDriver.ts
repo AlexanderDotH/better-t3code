@@ -1,4 +1,5 @@
-import { HostProcessWorkingDirectory } from "@t3tools/shared/hostProcess";
+// @effect-diagnostics nodeBuiltinImport:off -- Git state tokens require synchronous SHA-256 fingerprints.
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as NodeCrypto from "node:crypto";
 
@@ -488,10 +489,10 @@ export class GitWorkbenchDriver extends Context.Service<
   GitWorkbenchDriverService
 >()("t3/git-workbench/GitWorkbenchDriver") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
-  const spawnCwd = yield* HostProcessWorkingDirectory;
+  const spawnCwd = yield* HostProcess.WorkingDirectory;
   const fileSystem = yield* FileSystem.FileSystem;
   const pathService = yield* Path.Path;
   const worktreeLocks = new Map<string, Semaphore.Semaphore>();

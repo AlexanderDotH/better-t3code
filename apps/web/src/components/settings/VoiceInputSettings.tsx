@@ -1,4 +1,5 @@
-import { useAtomValue } from "@effect/atom-react";
+import { useStableCallback } from "../../hooks/useStableCallback";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   resolveAssemblyAiVoiceSettings,
@@ -10,10 +11,12 @@ import {
 import { createModelSelection } from "@t3tools/shared/model";
 import { resolveVoiceTranslationModelSelection } from "@t3tools/shared/serverSettings";
 import { ChevronDownIcon, MicIcon, RefreshCwIcon, TriangleAlertIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useContext, useState, type ReactNode } from "react";
 
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { serverEnvironment } from "../../state/server";
+import { useEnvironmentQuery } from "../../state/query";
+import { toastManager } from "../ui/toast";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
@@ -47,7 +50,6 @@ import { BetterT3SettingsSearchItems } from "./BetterT3SettingsSearch";
 import { AssemblyAiVoiceSettingsForm } from "./AssemblyAiVoiceSettingsForm";
 
 const EMPTY_SECRET_VALUE = { value: "", valueRedacted: false };
-const EMPTY_PROFILES: ReadonlyMap<ProjectId, ProjectSpeechProfile> = new Map();
 
 type EnvironmentProfileState = {
   readonly status: "loading" | "ready" | "error";
@@ -200,7 +202,7 @@ function ProjectSpeechProfileRow({
   const profile =
     environmentState?.status === "error" ? undefined : environmentState?.profiles.get(project.id);
   const status = profileStatus(environmentState, profile);
-  const isBusy = busyAction !== undefined;
+  const isBusy = busyAction !== undefined || environmentState?.status === "loading";
   const reindex = profile?.source === "indexed";
   const indexLabel = translate(
     reindex ? "settings.voice.profile.reindex" : "settings.voice.profile.index",
@@ -316,16 +318,10 @@ export function VoiceInputSettings({
   const translate = translator.message;
   const settings = useEnvironmentSettings(environmentId);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
-  const listProfiles = useAtomCommand(serverEnvironment.listProjectSpeechProfiles, {
-    reportFailure: false,
-  });
   const indexProfile = useAtomCommand(serverEnvironment.indexProjectSpeechProfile, {
     reportFailure: false,
   });
   const createBasicProfile = useAtomCommand(serverEnvironment.createBasicProjectSpeechProfile, {
-    reportFailure: false,
-  });
-  const listModels = useAtomCommand(serverEnvironment.listAssemblyAiModels, {
     reportFailure: false,
   });
   const saveSettings = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
@@ -333,45 +329,27 @@ export function VoiceInputSettings({
   const supportsOptions =
     config?.environment.capabilities.supportsSpeechDictationProcessing === true;
   const assemblyAi = settings.speechTranscription.assemblyAi;
-  const [modelsRefresh, setModelsRefresh] = useState(0);
-  const [modelCatalog, setModelCatalog] = useState<{
-    readonly environmentId: EnvironmentId;
-    readonly request: number;
-    readonly models: readonly { readonly id: string; readonly name: string }[];
-    readonly status: "ready" | "error";
-  } | null>(null);
-  const currentCatalog =
-    modelCatalog?.environmentId === environmentId && modelCatalog.request === modelsRefresh
-      ? modelCatalog
-      : null;
-  const models = currentCatalog?.models ?? [];
-  const modelsState = currentCatalog?.status ?? "loading";
+  const registry = useContext(RegistryContext);
+  const modelsQuery = useEnvironmentQuery(
+    supportsOptions && !disabled
+      ? serverEnvironment.assemblyAiModelsQuery({ environmentId, input: {} })
+      : null,
+  );
+  const models = modelsQuery.data?.models ?? [];
+  const modelsState = modelsQuery.error ? "error" : modelsQuery.isPending ? "loading" : "ready";
   const [projectSettingsBusy, setProjectSettingsBusy] = useState<ProjectId | null>(null);
   const [projectSettingsError, setProjectSettingsError] = useState<ProjectId | null>(null);
 
-  useEffect(() => {
-    if (!supportsOptions || disabled) return;
-    let cancelled = false;
-    void listModels({ environmentId, input: {} })
-      .then((result) => {
-        if (cancelled) return;
-        setModelCatalog({
-          environmentId,
-          request: modelsRefresh,
-          models: result._tag === "Success" ? result.value.models : [],
-          status: result._tag === "Success" ? "ready" : "error",
-        });
-      })
-      .catch(() => {
-        if (!cancelled)
-          setModelCatalog({ environmentId, request: modelsRefresh, models: [], status: "error" });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [disabled, environmentId, listModels, modelsRefresh, supportsOptions]);
+  const persistAssemblyAiKey = async (apiKey: { value: string; valueRedacted: boolean }) => {
+    const result = await saveSettings({
+      environmentId,
+      input: { patch: { speechTranscription: { assemblyAi: { apiKey } } } },
+    });
+    if (result._tag === "Success") modelsQuery.refresh();
+    else toastManager.add({ type: "error", title: "Could not save AssemblyAI credentials" });
+  };
 
-  const persistVoiceOptions = useCallback(
+  const persistVoiceOptions = useStableCallback(
     async (voice: AssemblyAiVoiceSettings | null, projectId?: ProjectId): Promise<boolean> => {
       if (disabled || !supportsOptions) return false;
       const result = await saveSettings({
@@ -388,7 +366,6 @@ export function VoiceInputSettings({
       });
       return result._tag === "Success";
     },
-    [assemblyAi.voice, disabled, environmentId, saveSettings, supportsOptions],
   );
 
   const changeProjectOverride = async (
@@ -397,19 +374,16 @@ export function VoiceInputSettings({
   ) => {
     setProjectSettingsBusy(projectId);
     setProjectSettingsError(null);
-    try {
-      if (!(await persistVoiceOptions(voice, projectId))) setProjectSettingsError(projectId);
-    } catch {
-      setProjectSettingsError(projectId);
-    } finally {
-      setProjectSettingsBusy(null);
-    }
+    await Promise.resolve()
+      .then(() => persistVoiceOptions(voice, projectId))
+      .then((saved) => {
+        if (!saved) setProjectSettingsError(projectId);
+      })
+      .catch(() => setProjectSettingsError(projectId))
+      .finally(() => setProjectSettingsBusy(null));
   };
   const allProjects = useProjects();
-  const projects = useMemo(
-    () => allProjects.filter((project) => project.environmentId === environmentId),
-    [allProjects, environmentId],
-  );
+  const projects = allProjects.filter((project) => project.environmentId === environmentId);
   const { environments } = useEnvironments();
   const serverProviders = useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? [];
   const assemblyAiApiKey = settings.speechTranscription.assemblyAi.apiKey;
@@ -425,7 +399,7 @@ export function VoiceInputSettings({
       ? defaultModelSelection
       : resolvedVoiceTranslationModelSelection;
   const modelInstanceEntries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings),
+    applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings, null),
   );
   const modelOptionsByInstance = getCustomModelOptionsByInstance(
     settings,
@@ -473,9 +447,21 @@ export function VoiceInputSettings({
       "text-generation",
     ),
   };
-  const [profileStateByEnvironment, setProfileStateByEnvironment] = useState<
-    ReadonlyMap<EnvironmentId, EnvironmentProfileState>
-  >(() => new Map());
+  const profilesQuery = useEnvironmentQuery(
+    !disabled ? serverEnvironment.projectSpeechProfilesQuery({ environmentId, input: {} }) : null,
+  );
+  const profileStateByEnvironment = new Map<EnvironmentId, EnvironmentProfileState>([
+    [
+      environmentId,
+      {
+        status:
+          disabled || profilesQuery.error ? "error" : profilesQuery.isPending ? "loading" : "ready",
+        profiles: new Map(
+          (profilesQuery.data?.profiles ?? []).map((profile) => [profile.projectId, profile]),
+        ),
+      },
+    ],
+  ]);
   const [expandedProjectKeys, setExpandedProjectKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -485,14 +471,12 @@ export function VoiceInputSettings({
   const [actionErrorByProject, setActionErrorByProject] = useState<
     Readonly<Record<string, string | undefined>>
   >({});
-  const profileRequestSequenceByEnvironment = useRef(new Map<EnvironmentId, number>());
 
-  const projectEnvironmentIds = useMemo(
-    () => [...new Set(projects.map((project) => project.environmentId))].toSorted(),
-    [projects],
-  );
+  const projectEnvironmentIds = [
+    ...new Set(projects.map((project) => project.environmentId)),
+  ].toSorted();
 
-  const projectGroups = useMemo(() => {
+  const projectGroups = (() => {
     const environmentLabels = new Map(
       environments.map((environment) => [environment.environmentId, environment.label] as const),
     );
@@ -517,92 +501,60 @@ export function VoiceInputSettings({
           left.label.localeCompare(right.label) ||
           String(left.environmentId).localeCompare(String(right.environmentId)),
       );
-  }, [environments, projects]);
+  })();
 
-  const refreshEnvironmentProfiles = useCallback(
-    async (environmentId: EnvironmentId) => {
-      const requestSequence =
-        (profileRequestSequenceByEnvironment.current.get(environmentId) ?? 0) + 1;
-      profileRequestSequenceByEnvironment.current.set(environmentId, requestSequence);
-      setProfileStateByEnvironment((current) => {
-        const next = new Map(current);
-        next.set(environmentId, {
-          status: "loading",
-          profiles: current.get(environmentId)?.profiles ?? EMPTY_PROFILES,
-        });
-        return next;
-      });
-
-      try {
-        const response = await listProfiles({ environmentId, input: {} });
-        if (response._tag === "Failure") throw squashAtomCommandFailure(response);
-        const result = response.value;
-        if (profileRequestSequenceByEnvironment.current.get(environmentId) !== requestSequence)
-          return;
-        const profiles = new Map(result.profiles.map((profile) => [profile.projectId, profile]));
-        setProfileStateByEnvironment((current) => {
-          const next = new Map(current);
-          next.set(environmentId, { status: "ready", profiles });
-          return next;
-        });
-      } catch {
-        if (profileRequestSequenceByEnvironment.current.get(environmentId) !== requestSequence)
-          return;
-        setProfileStateByEnvironment((current) => {
-          const next = new Map(current);
-          next.set(environmentId, { status: "error", profiles: EMPTY_PROFILES });
-          return next;
-        });
-      }
-    },
-    [listProfiles],
-  );
-
-  const refreshProfiles = useCallback(async () => {
-    await Promise.all(
-      projectEnvironmentIds.map((environmentId) => refreshEnvironmentProfiles(environmentId)),
+  const refreshEnvironmentProfiles = (targetEnvironmentId: EnvironmentId) => {
+    registry.refresh(
+      serverEnvironment.projectSpeechProfilesQuery({
+        environmentId: targetEnvironmentId,
+        input: {},
+      }),
     );
-  }, [projectEnvironmentIds, refreshEnvironmentProfiles]);
+  };
+  const refreshProfiles = () => {
+    for (const targetEnvironmentId of projectEnvironmentIds)
+      refreshEnvironmentProfiles(targetEnvironmentId);
+  };
 
-  useEffect(() => {
-    if (!disabled) void refreshProfiles();
-  }, [disabled, refreshProfiles]);
-
-  const setProjectExpanded = useCallback((key: string, open: boolean) => {
+  const setProjectExpanded = useStableCallback((key: string, open: boolean) => {
     setExpandedProjectKeys((current) => {
       const next = new Set(current);
       if (open) next.add(key);
       else next.delete(key);
       return next;
     });
-  }, []);
+  });
 
-  const runProjectAction = useCallback(
+  const runProjectAction = useStableCallback(
     async (project: EnvironmentProject, action: ProjectAction) => {
       const key = projectKey(project.environmentId, project.id);
       setBusyActionByProject((current) => ({ ...current, [key]: action }));
       setActionErrorByProject((current) => ({ ...current, [key]: undefined }));
 
-      try {
-        const response = await (action === "index" ? indexProfile : createBasicProfile)({
-          environmentId: project.environmentId,
-          input: { projectId: project.id },
+      await Promise.resolve()
+        .then(() =>
+          (action === "index" ? indexProfile : createBasicProfile)({
+            environmentId: project.environmentId,
+            input: { projectId: project.id },
+          }),
+        )
+        .then((response) => {
+          if (response._tag === "Failure") throw squashAtomCommandFailure(response);
+          refreshEnvironmentProfiles(project.environmentId);
+        })
+        .catch(() => {
+          setActionErrorByProject((current) => ({
+            ...current,
+            [key]:
+              action === "index"
+                ? translate("settings.voice.profile.indexFailed")
+                : translate("settings.voice.profile.basicFailed"),
+          }));
+        })
+        .finally(() => {
+          setBusyActionByProject((current) => ({ ...current, [key]: undefined }));
         });
-        if (response._tag === "Failure") throw squashAtomCommandFailure(response);
-        await refreshEnvironmentProfiles(project.environmentId);
-      } catch {
-        setActionErrorByProject((current) => ({
-          ...current,
-          [key]:
-            action === "index"
-              ? translate("settings.voice.profile.indexFailed")
-              : translate("settings.voice.profile.basicFailed"),
-        }));
-      } finally {
-        setBusyActionByProject((current) => ({ ...current, [key]: undefined }));
-      }
     },
-    [createBasicProfile, indexProfile, refreshEnvironmentProfiles, translate],
   );
 
   const isRefreshing = projectEnvironmentIds.some(
@@ -645,15 +597,7 @@ export function VoiceInputSettings({
                 <SettingResetButton
                   label={translate("settings.voice.apiKey.title")}
                   disabled={disabled}
-                  onClick={() =>
-                    updateSettings({
-                      speechTranscription: {
-                        assemblyAi: {
-                          apiKey: EMPTY_SECRET_VALUE,
-                        },
-                      },
-                    })
-                  }
+                  onClick={() => void persistAssemblyAiKey(EMPTY_SECRET_VALUE)}
                 />
               ) : null
             }
@@ -672,15 +616,7 @@ export function VoiceInputSettings({
                 autoComplete="off"
                 spellCheck={false}
                 aria-label={translate("settings.voice.apiKey.title")}
-                onCommit={(value) =>
-                  updateSettings({
-                    speechTranscription: {
-                      assemblyAi: {
-                        apiKey: { value, valueRedacted: false },
-                      },
-                    },
-                  })
-                }
+                onCommit={(value) => void persistAssemblyAiKey({ value, valueRedacted: false })}
               />
             }
           />
@@ -702,6 +638,7 @@ export function VoiceInputSettings({
             }
             control={
               <ProviderModelPicker
+                environmentId={environmentId}
                 disabled={disabled}
                 activeInstanceId={voiceTranslationModelSelection.instanceId}
                 model={voiceTranslationModelSelection.model}
@@ -725,6 +662,7 @@ export function VoiceInputSettings({
           {supportsOptions ? (
             <>
               <AssemblyAiVoiceSettingsForm
+                environmentId={environmentId}
                 key={`${environmentId}:${JSON.stringify(assemblyAi.voice)}`}
                 value={assemblyAi.voice}
                 models={models}
@@ -747,7 +685,7 @@ export function VoiceInputSettings({
                       size="sm"
                       variant="outline"
                       disabled={disabled}
-                      onClick={() => setModelsRefresh((current) => current + 1)}
+                      onClick={modelsQuery.refresh}
                     >
                       {translate("settings.voice.options.modelsRetry")}
                     </Button>
@@ -837,6 +775,7 @@ export function VoiceInputSettings({
                                         {translate("settings.voice.options.inherit")}
                                       </Button>
                                       <AssemblyAiVoiceSettingsForm
+                                        environmentId={environmentId}
                                         key={JSON.stringify(
                                           assemblyAi.projectOverrides[project.id],
                                         )}

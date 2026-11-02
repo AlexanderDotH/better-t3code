@@ -6,7 +6,7 @@ import type {
   VisualizationAppearance,
   VisualizationRenderRequest,
 } from "@t3tools/client-runtime/visualizations/model";
-import { useMemo, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 
 export const VISUALIZATION_SURFACE_CLASS_NAME =
   "chat-markdown-codeblock border border-border/70 bg-secondary dark:border-transparent dark:bg-input/32";
@@ -147,7 +147,7 @@ export function useVisualizationAppearance(
   presentation?: "better-t3",
 ) {
   const appearance = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
-  return useMemo(() => {
+  return (() => {
     const palette = presentation === "better-t3" ? appearance?.bubble : appearance?.standard;
     return (
       palette ?? {
@@ -155,5 +155,5 @@ export function useVisualizationAppearance(
         ...(presentation ? { presentation } : {}),
       }
     );
-  }, [appearance, theme, presentation]);
+  })();
 }

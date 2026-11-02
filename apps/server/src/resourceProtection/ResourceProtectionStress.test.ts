@@ -197,6 +197,5 @@ describe("resource protection reproduction", () => {
         yield* Effect.forEach(queues, (queue) => queue.shutdown, { discard: true });
         yield* governor.shutdown;
       }),
-    30_000,
   );
 });

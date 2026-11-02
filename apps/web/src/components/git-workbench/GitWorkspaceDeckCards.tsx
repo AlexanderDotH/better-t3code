@@ -1,5 +1,5 @@
 import { MessageSquareIcon } from "lucide-react";
-import { type ReactNode, useMemo } from "react";
+import { type ReactNode } from "react";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 import {
@@ -48,7 +48,7 @@ export function useGitWorkspaceDeckCards(
 ): readonly WorkspaceDeckCardDefinition<ChatWorkspaceCardId>[] {
   const { controller } = input;
   const translate = useInterfaceTranslator().message;
-  return useMemo(() => {
+  return (() => {
     const chatCard: WorkspaceDeckCardDefinition<ChatWorkspaceCardId> = {
       id: "chat",
       label: translate("git.cards.chatWorkspace"),
@@ -147,16 +147,5 @@ export function useGitWorkspaceDeckCards(
       ),
     };
     return [chatCard, gitCard, mcpCard];
-  }, [
-    controller,
-    input.gitAvailable,
-    input.gitCard,
-    input.mcpExpanded,
-    input.onExpandedCardChange,
-    input.onOpenChanges,
-    input.selectCard,
-    input.selectionBlocked,
-    input.status,
-    translate,
-  ]);
+  })();
 }

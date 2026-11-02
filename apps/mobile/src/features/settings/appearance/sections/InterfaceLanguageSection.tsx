@@ -2,8 +2,8 @@ import type { InterfaceLocalePreferenceV1 } from "@t3tools/contracts";
 import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { Pressable, View } from "react-native";
 
-import { AppText as Text } from "../../../../components/AppText";
-import { SymbolView } from "../../../../components/AppSymbol";
+import { AppText as Text } from "../../../../components/ui/AppText";
+import { SymbolView } from "../../../../components/ui/AppSymbol";
 import { SettingsSection } from "../../components/SettingsSection";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
 

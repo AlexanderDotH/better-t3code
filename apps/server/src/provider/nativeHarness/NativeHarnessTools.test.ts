@@ -52,6 +52,7 @@ describe("NativeHarnessTools", () => {
     Effect.gen(function* () {
       const extension = {
         declarations: [extensionTool("external_action")],
+        // @effect-diagnostics-next-line effectSucceedWithVoid:off - Optional protocol results distinguish undefined from void.
         execute: () => Effect.succeed(undefined),
       };
       const catalog = yield* buildNativeHarnessToolCatalog({
@@ -200,6 +201,7 @@ describe("NativeHarnessTools", () => {
             execute: () => Effect.die("Invalid arguments must not reach workspace reads"),
           },
           {
+            getMetadata: () => Effect.succeed({ entries: [] }),
             readFile: () => Effect.die("Invalid arguments must not reach filesystem reads"),
             writeFile: () => Effect.die("Invalid arguments must not reach filesystem writes"),
             editFiles: () => Effect.die("Invalid arguments must not reach workspace edits"),
@@ -279,6 +281,7 @@ describe("NativeHarnessTools", () => {
           execute: () => Effect.die("workspace_context should not run"),
         } as WorkspaceContext.WorkspaceContext["Service"],
         {
+          getMetadata: () => Effect.succeed({ entries: [] }),
           readFile: () => Effect.die("legacy read should not run"),
           writeFile: () => Effect.die("legacy write should not run"),
           editFiles: (request) =>
@@ -321,9 +324,7 @@ describe("NativeHarnessTools", () => {
           ],
         },
       });
-      // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
       expect(JSON.stringify(result)).not.toContain("old");
-      // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
       expect(JSON.stringify(result)).not.toContain("new");
     }),
   );
@@ -335,6 +336,7 @@ describe("NativeHarnessTools", () => {
           execute: () => Effect.die("workspace_context should not run"),
         } as WorkspaceContext.WorkspaceContext["Service"],
         {
+          getMetadata: () => Effect.succeed({ entries: [] }),
           readFile: () => Effect.die("legacy read should not run"),
           writeFile: () => Effect.die("legacy write should not run"),
           editFiles: () =>
@@ -373,7 +375,6 @@ describe("NativeHarnessTools", () => {
           change_index: 0,
         },
       });
-      // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
       expect(JSON.stringify(result)).not.toContain("secret contents");
     }),
   );
@@ -387,6 +388,7 @@ describe("NativeHarnessTools", () => {
           extensions: [
             {
               declarations: [extensionTool(NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL)],
+              // @effect-diagnostics-next-line effectSucceedWithVoid:off - Optional protocol results distinguish undefined from void.
               execute: () => Effect.succeed(undefined),
             },
           ],
@@ -407,6 +409,7 @@ describe("NativeHarnessTools", () => {
                 { length: NATIVE_HARNESS_MAX_TOOL_DEFINITIONS },
                 (_, index) => extensionTool(`external_${index}`),
               ),
+              // @effect-diagnostics-next-line effectSucceedWithVoid:off - Optional protocol results distinguish undefined from void.
               execute: () => Effect.succeed(undefined),
             },
           ],

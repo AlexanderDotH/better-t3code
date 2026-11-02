@@ -1,0 +1,34 @@
+import { requireNativeView } from "expo";
+import type { PropsWithChildren } from "react";
+import type { NativeSyntheticEvent, ViewProps } from "react-native";
+
+import type { HardwareKeyboardCommand } from "../features/keyboard/hardwareKeyboardCommands";
+
+interface NativeKeyboardCommandsProps extends ViewProps {
+  readonly enabledCommands: ReadonlyArray<HardwareKeyboardCommand>;
+  readonly cycleComposerModeTitle?: string;
+  readonly onCommand: (
+    event: NativeSyntheticEvent<{ readonly command: HardwareKeyboardCommand }>,
+  ) => void;
+}
+
+const NativeKeyboardCommands = requireNativeView<NativeKeyboardCommandsProps>("T3KeyboardCommands");
+
+export function T3KeyboardCommands(
+  props: PropsWithChildren<{
+    readonly enabledCommands: ReadonlyArray<HardwareKeyboardCommand>;
+    readonly cycleComposerModeTitle?: string;
+    readonly onCommand: (command: HardwareKeyboardCommand) => void;
+  }>,
+) {
+  return (
+    <NativeKeyboardCommands
+      onCommand={(event) => props.onCommand(event.nativeEvent.command)}
+      enabledCommands={props.enabledCommands}
+      cycleComposerModeTitle={props.cycleComposerModeTitle}
+      style={{ flex: 1 }}
+    >
+      {props.children}
+    </NativeKeyboardCommands>
+  );
+}

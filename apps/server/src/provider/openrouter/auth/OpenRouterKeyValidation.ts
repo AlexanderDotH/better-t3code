@@ -2,12 +2,7 @@ import * as Generated from "@effect/ai-openrouter/Generated";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import {
-  FetchHttpClient,
-  HttpClient,
-  HttpClientRequest,
-  HttpClientResponse,
-} from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import { OPENROUTER_API_ORIGIN } from "../OpenRouterTransport.ts";
 

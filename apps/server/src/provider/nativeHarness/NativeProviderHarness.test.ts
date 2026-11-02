@@ -36,6 +36,7 @@ const unusedWorkspaceContext = WorkspaceContext.WorkspaceContext.of({
 });
 
 const unusedWorkspaceFileSystem = WorkspaceFileSystem.WorkspaceFileSystem.of({
+  getMetadata: () => Effect.succeed({ entries: [] }),
   readFile: () => Effect.die("workspace files are not read while listing tools"),
   writeFile: () => Effect.die("workspace files are not written while listing tools"),
   editFiles: () => Effect.die("workspace files are not edited while listing tools"),
@@ -145,6 +146,7 @@ describe("NativeProviderHarness", () => {
                     availability: "read-only" as const,
                   },
                 ],
+                // @effect-diagnostics-next-line effectSucceedWithVoid:off - Optional protocol results distinguish undefined from void.
                 execute: () => Effect.succeed(undefined),
               };
             }),

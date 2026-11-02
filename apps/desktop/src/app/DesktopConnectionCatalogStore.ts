@@ -18,7 +18,7 @@ import * as Duration from "effect/Duration";
 import * as Exit from "effect/Exit";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Base64 from "effect/encoding/Base64";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -162,6 +162,7 @@ export class DesktopConnectionCatalogStore extends Context.Service<
       | DesktopConnectionCatalogStoreMigrationError
       | DesktopConnectionCatalogStoreProtectionError
     >;
+    readonly clear: Effect.Effect<void>;
     readonly set: (
       catalog: string,
       expected?: Option.Option<string>,
@@ -169,7 +170,6 @@ export class DesktopConnectionCatalogStore extends Context.Service<
       boolean,
       DesktopConnectionCatalogStoreWriteError | DesktopConnectionCatalogStoreProtectionError
     >;
-    readonly clear: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/app/DesktopConnectionCatalogStore") {}
 
@@ -177,7 +177,7 @@ function decodeSecretBytes(
   catalogPath: string,
   encoded: string,
 ): Effect.Effect<Uint8Array, DesktopConnectionCatalogStoreDecodeError> {
-  return Effect.fromResult(Encoding.decodeBase64(encoded)).pipe(
+  return Effect.fromResult(Base64.decode(encoded)).pipe(
     Effect.mapError(
       (cause) =>
         new DesktopConnectionCatalogStoreDecodeError({
@@ -291,9 +291,14 @@ function connectionId(prefix: "bearer" | "ssh", environmentId: string): string {
   return `${prefix}:${environmentId}`;
 }
 
-export const migrateSavedEnvironmentRecords = Effect.fn(
-  "desktop.connectionCatalogStore.migrateSavedEnvironmentRecords",
-)(function* (
+export const migrateSavedEnvironmentRecords: (
+  records: readonly PersistedSavedEnvironmentRecord[],
+  savedEnvironments: DesktopSavedEnvironments.DesktopSavedEnvironments["Service"],
+  catalogPath: string,
+) => Effect.Effect<
+  RuntimeConnectionCatalogDocumentType,
+  DesktopConnectionCatalogStoreMigrationError
+> = Effect.fn("desktop.connectionCatalogStore.migrateSavedEnvironmentRecords")(function* (
   records: readonly PersistedSavedEnvironmentRecord[],
   savedEnvironments: DesktopSavedEnvironments.DesktopSavedEnvironments["Service"],
   catalogPath: string,
@@ -382,7 +387,7 @@ export const migrateSavedEnvironmentRecords = Effect.fn(
   };
 });
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -408,7 +413,7 @@ export const make = Effect.gen(function* () {
   const writeCatalog = Effect.fn("desktop.connectionCatalogStore.writeCatalog")(function* (
     catalog: string,
   ) {
-    const encryptedCatalog = Encoding.encodeBase64(
+    const encryptedCatalog = Base64.encode(
       yield* safeStorage.encryptString(catalog).pipe(
         Effect.mapError(
           (cause) =>
@@ -420,7 +425,7 @@ export const make = Effect.gen(function* () {
         ),
       ),
     );
-    const suffix = (yield* crypto.randomUUIDv4.pipe(
+    const suffix = (yield* crypto.randomUUIDv4().pipe(
       Effect.mapError(
         (cause) =>
           new DesktopConnectionCatalogStoreWriteError({

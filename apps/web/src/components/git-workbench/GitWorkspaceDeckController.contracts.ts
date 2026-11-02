@@ -7,6 +7,7 @@ import type {
   ServerProvider,
   ThreadId,
   TurnId,
+  RunId,
   VcsStatusResult,
 } from "@t3tools/contracts";
 import type { ReactNode, RefObject } from "react";
@@ -20,6 +21,7 @@ export interface GitWorkspaceDeckControllerProps {
   readonly cwd: string | null;
   readonly threadId: ThreadId | null;
   readonly turnId: TurnId | null;
+  readonly runId?: RunId | null;
   readonly workbenchSupported: boolean;
   readonly legacyStatus: VcsStatusResult | null;
   readonly legacyStatusPending: boolean;

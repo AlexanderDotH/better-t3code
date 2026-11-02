@@ -45,6 +45,7 @@ export function ProjectSpeechSetup({
   const [dismissed, setDismissed] = useState(false);
   const [state, setState] = useState<ProjectSpeechPreindexDialogState>("idle");
   const [errorMessage, setErrorMessage] = useState<string>();
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Load the speech profile for the mounted project and cancel stale responses.
   useEffect(() => {
     if (!configured || dismissed) return;
     let cancelled = false;

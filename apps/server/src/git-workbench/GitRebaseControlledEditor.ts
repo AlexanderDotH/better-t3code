@@ -68,13 +68,13 @@ function messageEditorSource(messages: Readonly<Record<string, string>>): string
   ].join("\n");
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
   return GitRebaseControlledEditor.of({
-    runWithPlan: (plan, run) =>
+    runWithPlan: Effect.fn("GitRebaseControlledEditor.runWithPlan")((plan, run) =>
       Effect.scoped(
         Effect.gen(function* () {
           const directory = yield* fileSystem.makeTempDirectoryScoped({
@@ -106,6 +106,7 @@ export const make = Effect.gen(function* () {
           Effect.flatMap(run),
         ),
       ),
+    ),
   });
 });
 

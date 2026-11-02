@@ -1,4 +1,6 @@
-import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
+import { Platform } from "react-native";
+import { AndroidNavigationAppearanceSection } from "./appearance/sections/AndroidNavigationAppearanceSection";
+import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { CodeAppearanceSection } from "./appearance/sections/CodeAppearanceSection";
@@ -24,6 +26,7 @@ export function SettingsAppearanceRouteScreen() {
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
         <ThemeAppearanceSection />
+        {Platform.OS === "android" ? <AndroidNavigationAppearanceSection /> : null}
         <InterfaceLanguageSection />
         <ThreadListAppearanceSection />
         <ProjectThreadPreviewCountSection />

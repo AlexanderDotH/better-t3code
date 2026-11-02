@@ -2,8 +2,8 @@ import { MenuView } from "@react-native-menu/menu";
 import { Platform, View } from "react-native";
 import type { visualizationLabels } from "@t3tools/client-runtime/visualizations/labels";
 
-import { SymbolView } from "../../components/AppSymbol";
-import { ControlPillMenu } from "../../components/ControlPillMenu";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { Menu as ControlPillMenu } from "../../components/ui/Menu";
 
 export function VisualizationActionsMenu({
   labels,

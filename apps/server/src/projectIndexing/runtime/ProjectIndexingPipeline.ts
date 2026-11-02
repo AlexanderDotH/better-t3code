@@ -198,8 +198,9 @@ export const runProjectIndexingPipeline = Effect.fn("runProjectIndexingPipeline"
         })
         .pipe(
           Effect.as(true),
-          Effect.catch((error) =>
-            error.code === "stale-source" ? Effect.succeed(false) : Effect.fail(error),
+          Effect.catchIf(
+            (error) => error.code === "stale-source",
+            () => Effect.succeed(false),
           ),
         );
       if (!completed) {

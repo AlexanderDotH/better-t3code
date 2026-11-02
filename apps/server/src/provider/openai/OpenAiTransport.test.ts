@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 
 import {
   completeOpenAiText,
@@ -79,7 +79,6 @@ describe("OpenAI transport", () => {
       const error = yield* Effect.flip(transport.listModels);
       expect(error._tag).toBe("OpenAiTransportSecurityError");
       expect(requests).toBe(1);
-      // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
       expect(JSON.stringify(error)).not.toContain("secret-key");
     }),
   );
@@ -138,9 +137,7 @@ describe("OpenAI transport", () => {
         if (status === 429) {
           expect(error).toMatchObject({ category: "rate-limit", retryAfterSeconds: 17 });
         }
-        // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
         expect(JSON.stringify(error)).not.toContain("secret upstream body");
-        // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
         expect(JSON.stringify(error)).not.toContain("secret-key");
       }
     }),
@@ -156,6 +153,7 @@ describe("OpenAI transport", () => {
       const transport = yield* makeOpenAiTransport({
         resolveApiKey: Effect.succeed(Redacted.make("secret-key")),
       }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+      // @effect-diagnostics-next-line abortControllerInEffect:off -- This test drives cancellation of an external request signal.
       const controller = new AbortController();
       controller.abort();
 
@@ -211,6 +209,7 @@ describe("OpenAI transport", () => {
       const transport = yield* makeOpenAiTransport({
         resolveApiKey: Effect.succeed(Redacted.make("secret-key")),
       }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+      // @effect-diagnostics-next-line abortControllerInEffect:off -- This test drives cancellation of an external request signal.
       const controller = new AbortController();
 
       const events = yield* transport

@@ -8,7 +8,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
-import { ModelSelection } from "./orchestration.ts";
+import { ModelSelection } from "./modelSelection.ts";
 
 const ASSEMBLY_AI_CONTEXT_PROMPT_MAX_CHARS = 1_750;
 const ASSEMBLY_AI_KEYTERM_MAX_CHARS = 50;

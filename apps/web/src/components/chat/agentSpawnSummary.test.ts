@@ -10,7 +10,7 @@ it("switches native launch summaries without losing work history or errors", () 
       createdAt: "2026-09-08T00:00:00.000Z",
       label: "Launched a subagent",
       tone: "info",
-      agentSpawn: { workflowId: null, agentTaskIds: ["agent-1"] },
+      itemType: "subagent",
     },
     {
       id: "work",

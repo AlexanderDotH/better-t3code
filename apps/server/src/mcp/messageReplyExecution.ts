@@ -1,48 +1,30 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import { TurnId } from "@t3tools/contracts";
 
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { ProviderService } from "../provider/Services/ProviderService.ts";
+import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 
 export const resolveMessageReplyExecution = Effect.fn("mcp.resolveMessageReplyExecution")(
   function* (invocation: McpInvocationScope) {
     const context = invocation.messageReply;
-    if (!context || !invocation.ownerThreadId || invocation.ownerThreadId === invocation.threadId) {
-      return Option.none();
-    }
-    const provider = yield* ProviderService;
-    const current = yield* provider.isAbortTargetCurrent({
-      threadId: invocation.ownerThreadId,
-      runtimeSessionId: context.runtimeSessionId,
-      providerInstanceId: invocation.providerInstanceId,
-      turnId: null,
-    });
-    if (!current) return Option.none();
-
-    const projections = yield* ProjectionSnapshotQuery;
-    const summary = yield* projections.getSubagentSummaryById(
-      invocation.threadId,
-      context.replyTopicId,
-    );
-    if (Option.isNone(summary)) return Option.none();
-    const topic = summary.value;
-    const inherited = topic.messageReply;
+    if (context === undefined || invocation.thread === undefined) return Option.none();
+    const threads = yield* OrchestratorV2;
+    const child = yield* threads.getThreadShell(invocation.thread.threadId);
     if (
-      !inherited ||
-      (topic.status !== "starting" && topic.status !== "running" && topic.status !== "waiting") ||
-      topic.latestTurn?.state !== "running" ||
-      inherited.modelSelection.instanceId !== invocation.providerInstanceId ||
-      inherited.runtimeMode !== context.runtimeMode ||
-      inherited.interactionMode !== context.interactionMode ||
-      inherited.workspacePath !== context.workspacePath
-    ) {
+      child === null ||
+      child.activeRunId === null ||
+      child.providerInstanceId !== invocation.thread.providerInstanceId ||
+      child.lineage.relationshipToParent !== "subagent" ||
+      child.lineage.parentThreadId !== invocation.workspaceContextThreadId ||
+      child.runtimeMode !== context.runtimeMode ||
+      child.interactionMode !== context.interactionMode
+    )
       return Option.none();
-    }
     return Option.some({
       ...context,
-      turnId: topic.latestTurn.turnId,
-      providerInstanceId: invocation.providerInstanceId,
+      turnId: TurnId.make(child.activeRunId),
+      providerInstanceId: invocation.thread.providerInstanceId,
     });
   },
 );

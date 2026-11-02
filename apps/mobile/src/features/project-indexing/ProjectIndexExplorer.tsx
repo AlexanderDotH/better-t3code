@@ -11,7 +11,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
 
-import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { useDebouncedValue } from "../../state/queries";
 import { KnowledgeGraphCanvas } from "../knowledge-graph/KnowledgeGraphCanvas";
@@ -251,6 +251,7 @@ export function ProjectIndexExplorer(props: {
   const loading = normalizedText !== debouncedText || settledQuery?.key !== queryKey;
   const queryError = settledQuery?.key === queryKey ? settledQuery.error : null;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the remote index query and discard its response after the requested view changes.
   useEffect(() => {
     if (normalizedText !== debouncedText) return;
     let active = true;

@@ -2,7 +2,7 @@
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { Architecture, Platform } from "@t3tools/shared/HostProcess";
 import * as Schema from "effect/Schema";
 
 import { resolveFilesystemAsset, resolveIndexerPackage } from "./assets.ts";
@@ -75,8 +75,8 @@ export async function openTypeScriptLanguageService(
 }
 
 export function typescriptNativeExecutable(
-  platform = HostProcessPlatform.defaultValue(),
-  architecture = HostProcessArchitecture.defaultValue(),
+  platform = Platform.defaultValue(),
+  architecture = Architecture.defaultValue(),
   moduleUrl = import.meta.url,
 ): string {
   const compilerPackage = resolveIndexerPackage(moduleUrl, "typescript");

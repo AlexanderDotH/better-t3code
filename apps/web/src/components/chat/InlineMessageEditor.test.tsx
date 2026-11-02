@@ -1,5 +1,4 @@
-import { act } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { expect, it, vi } from "vite-plus/test";
 
 vi.mock("../../hooks/useInterfaceTranslator", () => ({

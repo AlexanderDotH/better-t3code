@@ -1,8 +1,8 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import * as SqlSchema from "effect/unstable/sql/SqlSchema";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlSchema from "effect/sql/SqlSchema";
 
 import {
   GitWorkbenchUndoStorage,
@@ -144,14 +144,24 @@ const make = Effect.gen(function* () {
   });
 
   return GitWorkbenchUndoStorage.of({
-    insert: (snapshot) => insertRow(snapshot).pipe(Effect.mapError(storageError("insert"))),
-    get: (cwd, id) =>
+    insert: Effect.fn("GitWorkbenchUndoStorage.insert")(
+      insertRow,
+      Effect.mapError(storageError("insert")),
+    ),
+    get: Effect.fn("GitWorkbenchUndoStorage.get")((cwd: string, id: string) =>
       getRow({ cwd, id }).pipe(
         Effect.map((result) => (result._tag === "Some" ? result.value : null)),
         Effect.mapError(storageError("get")),
       ),
-    list: (cwd) => listRows({ cwd }).pipe(Effect.mapError(storageError("list"))),
-    remove: (cwd, id) => removeRow({ cwd, id }).pipe(Effect.mapError(storageError("remove"))),
+    ),
+    list: Effect.fn("GitWorkbenchUndoStorage.list")(
+      (cwd: string) => listRows({ cwd }),
+      Effect.mapError(storageError("list")),
+    ),
+    remove: Effect.fn("GitWorkbenchUndoStorage.remove")(
+      (cwd: string, id: string) => removeRow({ cwd, id }),
+      Effect.mapError(storageError("remove")),
+    ),
   });
 });
 

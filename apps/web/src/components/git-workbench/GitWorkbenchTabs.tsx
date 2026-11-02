@@ -61,7 +61,7 @@ export function GitWorkbenchTabs({
             aria-controls={`git-workbench-panel-${id}`}
             aria-selected={selected}
             className={cn(
-              "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
+              "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
               selected
                 ? "bg-accent font-medium text-foreground"
                 : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",

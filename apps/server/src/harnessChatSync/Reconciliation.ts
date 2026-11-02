@@ -7,7 +7,7 @@ import {
   HarnessChatSessionId,
   IsoDateTime,
   MessageId,
-  OrchestrationProposedPlanId,
+  PlanId,
   ProjectId,
   ThreadId,
   type ChatAttachment,
@@ -18,7 +18,7 @@ import {
   type HarnessChatSyncRunItem,
   type HarnessChatSyncRunResult,
   type ModelSelection,
-  type OrchestrationMessage,
+  type OrchestrationV2ConversationMessage,
   type OrchestrationProjectShell,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
@@ -29,16 +29,17 @@ import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { makeHistoryWriter } from "./HistoryWriter.ts";
+import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
+import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
 import {
   HarnessChatNativeMessageId,
   ProjectionHarnessChatSyncRepository,
   type ProjectionHarnessChatSyncLink,
 } from "../persistence/Services/ProjectionHarnessChatSync.ts";
-import type { ProviderInstance } from "../provider/ProviderDriver.ts";
-import { ProviderSessionDirectory } from "../provider/Services/ProviderSessionDirectory.ts";
-import type { ProviderHistoryTranscript } from "../provider/Services/ProviderHistorySync.ts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import * as DateTime from "effect/DateTime";
+import type { ProviderHistoryTranscript } from "@t3tools/provider-core/server/ProviderHistorySync";
 import {
   describeFailure,
   harnessSyncError,
@@ -56,6 +57,17 @@ import {
   normalizeOptionalText,
   type NormalizedHistorySummary,
 } from "./TranscriptNormalization.ts";
+
+const decodeNativeCursor = Schema.decodeUnknownOption(
+  Schema.Struct({
+    sessionId: Schema.optional(Schema.String),
+    threadId: Schema.optional(Schema.String),
+  }),
+);
+function nativeCursorId(cursor: unknown, fallback: string) {
+  const parsed = Option.getOrUndefined(decodeNativeCursor(cursor));
+  return parsed?.sessionId?.trim() || parsed?.threadId?.trim() || fallback;
+}
 
 interface ResolvedRunTarget {
   readonly projectId?: ProjectId | undefined;
@@ -82,10 +94,10 @@ export const makeHarnessChatReconciliation = Effect.fn("makeHarnessChatReconcili
   }) {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const orchestration = yield* OrchestrationEngineService;
-    const projections = yield* ProjectionSnapshotQuery;
+    const writer = yield* makeHistoryWriter();
+    const projectsStore = yield* ProjectStoreV2;
+    const projections = yield* ProjectionStoreV2;
     const syncRepository = yield* ProjectionHarnessChatSyncRepository;
-    const sessionDirectory = yield* ProviderSessionDirectory;
     const persistAttachment = yield* makeHarnessAttachmentPersistence();
     const discovery = input.discovery;
     const now = input.now;
@@ -160,13 +172,12 @@ export const makeHarnessChatReconciliation = Effect.fn("makeHarnessChatReconcili
         ...new Set(selectedSessionIds.map((sessionId) => HarnessChatSessionId.make(sessionId))),
       ];
       const links = yield* discovery.readLinks(group);
-      const snapshot = yield* projections
-        .getShellSnapshot()
-        .pipe(
-          Effect.mapError((cause) =>
-            harnessSyncError("operation-failed", "Could not resolve target projects.", cause),
-          ),
-        );
+      const snapshot = yield* projectsStore.listShells().pipe(
+        Effect.map((projects) => ({ projects })),
+        Effect.mapError((cause) =>
+          harnessSyncError("operation-failed", "Could not resolve target projects.", cause),
+        ),
+      );
       const projects: Array<Pick<OrchestrationProjectShell, "id" | "title" | "workspaceRoot">> =
         snapshot.projects.map((project) => ({
           id: project.id,
@@ -233,8 +244,7 @@ export const makeHarnessChatReconciliation = Effect.fn("makeHarnessChatReconcili
           if (existing) return existing.id;
           const projectId = ProjectId.make(makeHarnessChatSyncId("project", normalizedRoot));
           const dispatched = yield* Effect.result(
-            orchestration.dispatch({
-              type: "project.create",
+            writer.createProject({
               commandId: CommandId.make(makeHarnessChatSyncId("project-command", normalizedRoot)),
               projectId,
               title: input.create.suggestedName,
@@ -246,7 +256,15 @@ export const makeHarnessChatReconciliation = Effect.fn("makeHarnessChatReconcili
           );
           if (Result.isFailure(dispatched)) {
             const concurrent = yield* Effect.result(
-              projections.getActiveProjectByWorkspaceRoot(normalizedRoot),
+              projectsStore.findActiveByWorkspaceRoot(normalizedRoot).pipe(
+                Effect.map((result) =>
+                  Option.map(result, (project) => ({
+                    id: project.projectId,
+                    title: project.title,
+                    workspaceRoot: project.workspaceRoot,
+                  })),
+                ),
+              ),
             );
             if (Result.isSuccess(concurrent) && Option.isSome(concurrent.success)) {
               const project = concurrent.success.value;
@@ -307,16 +325,51 @@ export const makeHarnessChatReconciliation = Effect.fn("makeHarnessChatReconcili
           selectedInstance,
           normalizeOptionalText(transcript.model) ?? input.summary.model,
         );
-        const projectId = target.projectId
-          ? target.projectId
-          : yield* createTargetProject({
-              sessionId: input.summary.sessionId,
-              create: target.create!,
-              modelSelection,
-            });
-        const created = input.link === undefined;
+        const resumed = yield* Effect.result(
+          selectedHistory.adapter.resumeCursor({ sessionId: input.summary.sessionId }),
+        );
+        if (Result.isFailure(resumed)) {
+          return yield* sessionSyncFailure({
+            sessionId: input.summary.sessionId,
+            code: "resume-bind-failed",
+            message: describeFailure(
+              resumed.failure,
+              "Could not prepare the native resume cursor.",
+            ),
+            retryable: true,
+          });
+        }
+        const nativeOwnerResult = yield* Effect.result(
+          writer.getNativeThread({
+            driver: selectedInstance.driverKind,
+            providerInstanceId: input.link?.providerInstanceId ?? selectedInstance.instanceId,
+            nativeId: nativeCursorId(resumed.success.resumeCursor, input.summary.sessionId),
+          }),
+        );
+        if (Result.isFailure(nativeOwnerResult))
+          return yield* sessionSyncFailure({
+            sessionId: input.summary.sessionId,
+            code: "resume-bind-failed",
+            message: describeFailure(
+              nativeOwnerResult.failure,
+              "Could not resolve the native session owner.",
+            ),
+            retryable: true,
+          });
+        const nativeOwner = nativeOwnerResult.success;
+        const projectId =
+          nativeOwner?.projectId ??
+          (target.projectId
+            ? target.projectId
+            : yield* createTargetProject({
+                sessionId: input.summary.sessionId,
+                create: target.create!,
+                modelSelection,
+              }));
+        const created = input.link === undefined && nativeOwner === null;
         const threadId =
           input.link?.threadId ??
+          nativeOwner?.id ??
           ThreadId.make(
             makeHarnessChatSyncId("thread", group.continuationKey, input.summary.sessionId),
           );
@@ -331,8 +384,7 @@ export const makeHarnessChatReconciliation = Effect.fn("makeHarnessChatReconcili
           sourceUpdatedAt;
         if (created) {
           const threadCreated = yield* Effect.result(
-            orchestration.dispatch({
-              type: "thread.create",
+            writer.createThread({
               commandId: CommandId.make(
                 makeHarnessChatSyncId(
                   "thread-command",
@@ -384,9 +436,9 @@ export const makeHarnessChatReconciliation = Effect.fn("makeHarnessChatReconcili
             item.nativeMessageId.trim().length > 0 &&
             !importedNativeIds.has(item.nativeMessageId.trim()),
         );
-        let existingMessages: ReadonlyArray<OrchestrationMessage> = [];
-        if (input.link && hasUnmappedMessages) {
-          const detail = yield* Effect.result(projections.getThreadDetailById(threadId));
+        let existingMessages: ReadonlyArray<OrchestrationV2ConversationMessage> = [];
+        if (!created && hasUnmappedMessages) {
+          const detail = yield* Effect.result(projections.getThreadProjection(threadId));
           if (Result.isFailure(detail)) {
             return yield* sessionSyncFailure({
               sessionId: input.summary.sessionId,
@@ -395,7 +447,7 @@ export const makeHarnessChatReconciliation = Effect.fn("makeHarnessChatReconcili
               retryable: true,
             });
           }
-          existingMessages = Option.isSome(detail.success) ? detail.success.value.messages : [];
+          existingMessages = detail.success.messages;
         }
         const claimedMessageIds = new Set<MessageId>();
         let messagesImported = 0;
@@ -409,8 +461,7 @@ export const makeHarnessChatReconciliation = Effect.fn("makeHarnessChatReconcili
             const planCreatedAt = normalizeIsoDateTime(item.createdAt, sourceUpdatedAt);
             const planUpdatedAt = normalizeIsoDateTime(item.updatedAt, planCreatedAt);
             const planned = yield* Effect.result(
-              orchestration.dispatch({
-                type: "thread.proposed-plan.upsert",
+              writer.importPlan({
                 commandId: CommandId.make(
                   makeHarnessChatSyncId(
                     "plan-command",
@@ -421,7 +472,7 @@ export const makeHarnessChatReconciliation = Effect.fn("makeHarnessChatReconcili
                 ),
                 threadId,
                 proposedPlan: {
-                  id: OrchestrationProposedPlanId.make(
+                  id: PlanId.make(
                     makeHarnessChatSyncId(
                       "plan",
                       group.continuationKey,
@@ -429,14 +480,10 @@ export const makeHarnessChatReconciliation = Effect.fn("makeHarnessChatReconcili
                       nativePlanId,
                     ),
                   ),
-                  turnId: null,
                   planMarkdown,
-                  implementedAt: null,
-                  implementationThreadId: null,
                   createdAt: planCreatedAt,
                   updatedAt: planUpdatedAt,
                 },
-                createdAt: planCreatedAt,
               }),
             );
             if (Result.isFailure(planned)) {
@@ -465,8 +512,7 @@ export const makeHarnessChatReconciliation = Effect.fn("makeHarnessChatReconcili
           });
           if (existingMessage) {
             const linked = yield* Effect.result(
-              orchestration.dispatch({
-                type: "thread.harness-sync.message.import",
+              writer.importMessage({
                 commandId: CommandId.make(
                   makeHarnessChatSyncId(
                     "message-link-command",
@@ -477,7 +523,14 @@ export const makeHarnessChatReconciliation = Effect.fn("makeHarnessChatReconcili
                 ),
                 threadId,
                 nativeMessageId,
-                message: existingMessage,
+                message: {
+                  id: existingMessage.id,
+                  role: item.role,
+                  text: existingMessage.text,
+                  attachments: existingMessage.attachments,
+                  createdAt: DateTime.formatIso(existingMessage.createdAt),
+                  updatedAt: DateTime.formatIso(existingMessage.updatedAt),
+                },
                 linkedAt: fallbackTimestamp,
               }),
             );
@@ -518,8 +571,7 @@ export const makeHarnessChatReconciliation = Effect.fn("makeHarnessChatReconcili
           const messageCreatedAt = normalizeIsoDateTime(item.createdAt, sourceUpdatedAt);
           const messageUpdatedAt = normalizeIsoDateTime(item.updatedAt, messageCreatedAt);
           const imported = yield* Effect.result(
-            orchestration.dispatch({
-              type: "thread.harness-sync.message.import",
+            writer.importMessage({
               commandId: CommandId.make(
                 makeHarnessChatSyncId(
                   "message-command",
@@ -531,22 +583,17 @@ export const makeHarnessChatReconciliation = Effect.fn("makeHarnessChatReconcili
               threadId,
               nativeMessageId,
               message: {
-                id:
-                  item.role === "assistant"
-                    ? MessageId.make(`assistant:${nativeMessageId}`)
-                    : MessageId.make(
-                        makeHarnessChatSyncId(
-                          "message",
-                          group.continuationKey,
-                          input.summary.sessionId,
-                          nativeMessageId,
-                        ),
-                      ),
+                id: MessageId.make(
+                  makeHarnessChatSyncId(
+                    "message",
+                    group.continuationKey,
+                    input.summary.sessionId,
+                    nativeMessageId,
+                  ),
+                ),
                 role: item.role,
                 text: item.text,
                 ...(availableAttachments.length > 0 ? { attachments: availableAttachments } : {}),
-                turnId: null,
-                streaming: false,
                 createdAt: messageCreatedAt,
                 updatedAt: messageUpdatedAt,
               },
@@ -568,23 +615,6 @@ export const makeHarnessChatReconciliation = Effect.fn("makeHarnessChatReconcili
           messagesImported += 1;
         }
 
-        const resumed = yield* Effect.result(
-          selectedHistory.adapter.resumeCursor({ sessionId: input.summary.sessionId }),
-        );
-        if (Result.isFailure(resumed)) {
-          return yield* sessionSyncFailure({
-            sessionId: input.summary.sessionId,
-            code: "resume-bind-failed",
-            message: describeFailure(
-              resumed.failure,
-              "Could not prepare the native resume cursor.",
-            ),
-            retryable: true,
-            messagesImported,
-            attachmentsImported,
-            attachmentsSkipped,
-          });
-        }
         let activity: HarnessChatActivity = "unknown";
         const checkActivity = selectedHistory.adapter.checkActivity;
         if (checkActivity) {
@@ -603,19 +633,11 @@ export const makeHarnessChatReconciliation = Effect.fn("makeHarnessChatReconcili
         const providerLabel =
           input.link?.providerLabel ?? selectedInstance.displayName?.trim() ?? group.label;
         const bound = yield* Effect.result(
-          sessionDirectory.upsert({
+          writer.bindNativeThread({
             threadId,
-            provider: owningInstance?.driverKind ?? selectedInstance.driverKind,
+            driver: owningInstance?.driverKind ?? selectedInstance.driverKind,
             providerInstanceId: owningInstanceId,
-            ...(resumed.success.adapterKey === undefined
-              ? {}
-              : { adapterKey: resumed.success.adapterKey }),
-            status: "stopped",
-            resumeCursor: resumed.success.resumeCursor,
-            ...(resumed.success.runtimePayload === undefined
-              ? {}
-              : { runtimePayload: resumed.success.runtimePayload }),
-            runtimeMode: DEFAULT_RUNTIME_MODE,
+            nativeId: nativeCursorId(resumed.success.resumeCursor, input.summary.sessionId),
           }),
         );
         if (Result.isFailure(bound)) {
@@ -632,8 +654,7 @@ export const makeHarnessChatReconciliation = Effect.fn("makeHarnessChatReconcili
 
         const lastSyncedAt = yield* now;
         const linked = yield* Effect.result(
-          orchestration.dispatch({
-            type: "thread.harness-sync.link",
+          writer.linkHarness({
             commandId: CommandId.make(
               makeHarnessChatSyncId(
                 "link-command",

@@ -22,7 +22,7 @@ export function mcpMutationToastPresentation(
   if (result.liveApplyResults.length === 0) {
     return {
       type: "info",
-      title: `${successTitle} — applies to the next session`,
+      title: `${successTitle}, applies to the next session`,
       description: "No matching live runtime required an update.",
     };
   }
@@ -51,12 +51,12 @@ export function mcpMutationToastPresentation(
   return {
     type: hasFailed || hasPending || hasUnsupported ? "info" : "success",
     title: hasFailed
-      ? `${successTitle} — some live updates failed`
+      ? `${successTitle}, some live updates failed`
       : hasPending
-        ? `${successTitle} — some changes apply next session`
+        ? `${successTitle}, some changes apply next session`
         : hasUnsupported
-          ? `${successTitle} — live update unsupported`
-          : `${successTitle} — updated live`,
+          ? `${successTitle}, live update unsupported`
+          : `${successTitle}, updated live`,
     description: `${descriptions.join(" · ")}.`,
   };
 }

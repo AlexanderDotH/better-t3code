@@ -30,8 +30,7 @@ import {
   resolveContextCompactionModel,
 } from "@t3tools/shared/model";
 import { Link } from "@tanstack/react-router";
-import { useMemo, type ReactNode } from "react";
-
+import { type ReactNode } from "react";
 import { ChatVisualModeSyncNotice } from "./ChatVisualModeSyncNotice";
 import { useChatVisualMode, useSetChatVisualMode } from "../../chatVisualModeSync";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
@@ -46,10 +45,8 @@ import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
-
 type BetterT3SettingsPatch = ClientSettingsPatch & ServerSettingsPatch;
 type Translate = InterfaceTranslator["message"];
-
 const WEB_BETTER_T3_PREPARED_CONTROL_IDS = [
   "agent.contextCompactionModel",
   "agent.fetchModel",
@@ -64,21 +61,38 @@ const WEB_BETTER_T3_PREPARED_CONTROL_IDS = [
   "chat.settling",
   "voice.outputLanguage",
 ] as const satisfies ReadonlyArray<BetterT3FeatureId>;
-
 type WebBetterT3PreparedControlId = (typeof WEB_BETTER_T3_PREPARED_CONTROL_IDS)[number];
-
 type BetterT3ScalarControlUpdate =
-  | { readonly id: "agent.cavemanMode"; readonly value: CavemanMode }
-  | { readonly id: "chat.contextWindowSelector"; readonly value: ContextWindowSelector }
-  | { readonly id: "chat.sorting.projects"; readonly value: SidebarProjectSortOrder }
-  | { readonly id: "chat.sorting.threads"; readonly value: SidebarThreadSortOrder }
-  | { readonly id: "chat.settling.days"; readonly value: number | null }
-  | { readonly id: "chat.settling.onMerge"; readonly value: boolean }
-  | { readonly id: "voice.outputLanguage"; readonly value: VoiceInputOutputLanguage };
-
+  | {
+      readonly id: "agent.cavemanMode";
+      readonly value: CavemanMode;
+    }
+  | {
+      readonly id: "chat.contextWindowSelector";
+      readonly value: ContextWindowSelector;
+    }
+  | {
+      readonly id: "chat.sorting.projects";
+      readonly value: SidebarProjectSortOrder;
+    }
+  | {
+      readonly id: "chat.sorting.threads";
+      readonly value: SidebarThreadSortOrder;
+    }
+  | {
+      readonly id: "chat.settling.days";
+      readonly value: number | null;
+    }
+  | {
+      readonly id: "chat.settling.onMerge";
+      readonly value: boolean;
+    }
+  | {
+      readonly id: "voice.outputLanguage";
+      readonly value: VoiceInputOutputLanguage;
+    };
 const SETTLE_DAY_OPTIONS = [1, 3, 7, 14, 30, 90] as const;
 const acceptsAnyProvider = () => true;
-
 export function buildBetterT3ScalarControlPatch(
   update: BetterT3ScalarControlUpdate,
 ): BetterT3SettingsPatch {
@@ -99,7 +113,6 @@ export function buildBetterT3ScalarControlPatch(
       return { voiceInputOutputLanguage: update.value };
   }
 }
-
 function availableFeature(
   features: ReadonlyArray<BetterT3FeatureControlStateV1>,
   featureId: BetterT3FeatureId,
@@ -109,7 +122,6 @@ function availableFeature(
     "available"
   );
 }
-
 function selectableProviderEntries(
   settings: UnifiedSettings,
   providers: ReadonlyArray<ServerProvider>,
@@ -120,13 +132,12 @@ function selectableProviderEntries(
     (provider) => provider.enabled && provider.models.length > 0 && predicate(provider),
   );
   return sortProviderInstanceEntries(
-    applyProviderInstanceSettings(deriveProviderInstanceEntries(filteredProviders), settings),
+    applyProviderInstanceSettings(deriveProviderInstanceEntries(filteredProviders), settings, null),
   ).filter(
     (entry) =>
       entry.enabled && entry.models.some((model) => supportsModelSelectionPurpose(model, purpose)),
   );
 }
-
 const AUTO_REASONING_EVALUATION_DRIVER_KINDS: ReadonlySet<string> = new Set([
   "codex",
   "claudeAgent",
@@ -138,13 +149,11 @@ const AUTO_REASONING_EVALUATION_DRIVER_KINDS: ReadonlySet<string> = new Set([
   "openrouter",
   "openai",
 ]);
-
 export function supportsAutoReasoningEvaluationProvider(
   provider: Pick<ServerProvider, "driver">,
 ): boolean {
   return AUTO_REASONING_EVALUATION_DRIVER_KINDS.has(provider.driver);
 }
-
 export function buildAutoReasoningModelSelectionPatch(
   selection: ModelSelection | null,
 ): ServerSettingsPatch {
@@ -152,7 +161,6 @@ export function buildAutoReasoningModelSelectionPatch(
     autoReasoningModelSelection: selection === null ? null : stripAutoReasoning(selection),
   };
 }
-
 export function buildProjectIndexingDecisionModelSelectionPatch(
   selection: ModelSelection | null,
 ): ServerSettingsPatch {
@@ -161,7 +169,6 @@ export function buildProjectIndexingDecisionModelSelectionPatch(
       selection === null ? null : stripAutoReasoning(selection),
   };
 }
-
 function firstSelectableModel(
   entry: ProviderInstanceEntry,
   purpose: ModelSelectionPurpose,
@@ -173,7 +180,6 @@ function firstSelectableModel(
     null
   );
 }
-
 export function resolveBetterT3ModelSelection(
   entries: ReadonlyArray<ProviderInstanceEntry>,
   preferred: ModelSelection | null,
@@ -198,8 +204,8 @@ export function resolveBetterT3ModelSelection(
   const fallbackModel = firstSelectableModel(fallbackEntry, purpose);
   return fallbackModel ? createModelSelection(fallbackEntry.instanceId, fallbackModel) : null;
 }
-
 function BetterT3ModelSelectionControl(props: {
+  readonly environmentId: EnvironmentId;
   readonly featureId: BetterT3FeatureId;
   readonly settings: UnifiedSettings;
   readonly providers: ReadonlyArray<ServerProvider>;
@@ -213,10 +219,11 @@ function BetterT3ModelSelectionControl(props: {
   readonly translate: Translate;
   readonly onChange: (selection: ModelSelection | null) => void;
 }) {
-  const entries = useMemo(
-    () =>
-      selectableProviderEntries(props.settings, props.providers, props.predicate, props.purpose),
-    [props.predicate, props.providers, props.purpose, props.settings],
+  const entries = selectableProviderEntries(
+    props.settings,
+    props.providers,
+    props.predicate,
+    props.purpose,
   );
   const resolvedSelection = resolveBetterT3ModelSelection(
     entries,
@@ -247,6 +254,7 @@ function BetterT3ModelSelectionControl(props: {
       ) : null}
       {resolvedSelection ? (
         <ProviderModelPicker
+          environmentId={props.environmentId}
           activeInstanceId={resolvedSelection.instanceId}
           model={resolvedSelection.model}
           lockedProvider={null}
@@ -278,10 +286,12 @@ function BetterT3ModelSelectionControl(props: {
     </fieldset>
   );
 }
-
 function BetterT3SelectControl<Value extends string>(props: {
   readonly value: Value;
-  readonly options: ReadonlyArray<{ readonly value: Value; readonly label: string }>;
+  readonly options: ReadonlyArray<{
+    readonly value: Value;
+    readonly label: string;
+  }>;
   readonly ariaLabel: string;
   readonly disabled: boolean;
   readonly onChange: (value: Value) => void;
@@ -310,7 +320,6 @@ function BetterT3SelectControl<Value extends string>(props: {
     </Select>
   );
 }
-
 function ChatSortingControl(props: {
   readonly projectOrder: SidebarProjectSortOrder;
   readonly threadOrder: SidebarThreadSortOrder;
@@ -330,8 +339,12 @@ function ChatSortingControl(props: {
     readonly value: SidebarThreadSortOrder;
     readonly label: string;
   }> = projectOptions.filter(
-    (option): option is { readonly value: SidebarThreadSortOrder; readonly label: string } =>
-      option.value !== "manual",
+    (
+      option,
+    ): option is {
+      readonly value: SidebarThreadSortOrder;
+      readonly label: string;
+    } => option.value !== "manual",
   );
   return (
     <div className="flex flex-wrap justify-end gap-1.5">
@@ -360,7 +373,6 @@ function ChatSortingControl(props: {
     </div>
   );
 }
-
 function ChatSettlingControl(props: {
   readonly days: number | null;
   readonly settleOnMerge: boolean;
@@ -424,7 +436,6 @@ function ChatSettlingControl(props: {
     </div>
   );
 }
-
 export function buildBetterT3SubgroupSummaries(input: {
   readonly settings: UnifiedSettings;
   readonly providers: ReadonlyArray<ServerProvider>;
@@ -496,7 +507,6 @@ export function buildBetterT3SubgroupSummaries(input: {
     ),
   };
 }
-
 export function useBetterT3PreparedControls(input: {
   readonly environmentId: EnvironmentId;
   readonly settings: UnifiedSettings;
@@ -510,10 +520,10 @@ export function useBetterT3PreparedControls(input: {
   const { count: previewCount, setCount: setPreviewCount } = useProjectThreadPreviewCount();
   const scalarControlDisabled = (featureId: BetterT3FeatureId) =>
     !availableFeature(input.features, featureId);
-
   return {
     "agent.fetchModel": (
       <BetterT3ModelSelectionControl
+        environmentId={input.environmentId}
         featureId="agent.fetchModel"
         settings={input.settings}
         providers={input.providers}
@@ -529,6 +539,7 @@ export function useBetterT3PreparedControls(input: {
     ),
     "agent.contextCompactionModel": (
       <BetterT3ModelSelectionControl
+        environmentId={input.environmentId}
         featureId="agent.contextCompactionModel"
         settings={input.settings}
         providers={input.providers}
@@ -555,6 +566,7 @@ export function useBetterT3PreparedControls(input: {
     ),
     "agent.autoReasoningModel": (
       <BetterT3ModelSelectionControl
+        environmentId={input.environmentId}
         featureId="agent.autoReasoningModel"
         settings={input.settings}
         providers={input.providers}
@@ -572,6 +584,7 @@ export function useBetterT3PreparedControls(input: {
     ),
     "knowledge.projectIndexingDecisionModel": (
       <BetterT3ModelSelectionControl
+        environmentId={input.environmentId}
         featureId="knowledge.projectIndexingDecisionModel"
         settings={input.settings}
         providers={input.providers}
@@ -592,6 +605,7 @@ export function useBetterT3PreparedControls(input: {
     ),
     "agent.parallelPlanReviewer": (
       <BetterT3ModelSelectionControl
+        environmentId={input.environmentId}
         featureId="agent.parallelPlanReviewer"
         settings={input.settings}
         providers={input.providers}

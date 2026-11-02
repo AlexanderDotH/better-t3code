@@ -1,7 +1,7 @@
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import type * as EffectAcpSchema from "effect-acp/schema";
+import type * as EffectAcpSchema from "effect-acp/compat";
 import { describe, expect, it } from "vite-plus/test";
 
 import { makeInstanceHistorySyncSource } from "../Services/ProviderHistorySync.ts";

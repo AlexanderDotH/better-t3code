@@ -1,6 +1,6 @@
 import type { ResponseMetricsSnapshot } from "@t3tools/contracts";
 import { formatResponseMetrics } from "@t3tools/client-runtime/response-metrics";
-import { AppText } from "../../components/AppText";
+import { AppText } from "../../components/ui/AppText";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function ResponseMetricsDetails(props: { snapshot: ResponseMetricsSnapshot | null }) {

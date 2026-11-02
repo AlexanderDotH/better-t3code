@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useStableCallback } from "./useStableCallback";
+import { useEffect, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 import {
   deepPlanSourceRefKey,
   loadDeepPlanSourceCatalog,
@@ -45,64 +46,48 @@ export function useDeepPlanSources(input: {
     projectSourceCount: null,
     error: null,
   });
-  const environmentsById = useMemo(
-    () =>
-      new Map(input.environments.map((environment) => [environment.environmentId, environment])),
-    [input.environments],
+  const environmentsById = new Map(
+    input.environments.map((environment) => [environment.environmentId, environment]),
   );
-  const projectsByRef = useMemo(
-    () =>
-      new Map(
-        input.projects.map((project) => [
-          JSON.stringify([project.environmentId, project.id]),
-          project,
-        ]),
-      ),
-    [input.projects],
+  const projectsByRef = new Map(
+    input.projects.map((project) => [JSON.stringify([project.environmentId, project.id]), project]),
   );
-  const targets = useMemo(
-    () =>
-      input.projects.map((project) => {
-        const environment = environmentsById.get(project.environmentId);
-        return {
-          environmentId: project.environmentId,
-          projectId: project.id,
-          label: environment?.label ?? String(project.environmentId),
-          connected: environment?.connection.phase === "connected",
-          supported:
-            environment?.serverConfig?.environment.capabilities.deepPlanning?.version === 1 &&
-            environment.serverConfig.environment.capabilities.deepPlanning.sourceExport,
-        };
-      }),
-    [input.projects, environmentsById],
-  );
-  const fallbackOptions = useMemo(
-    () =>
-      threadShells.map((thread) => {
-        const environment = environmentsById.get(thread.environmentId);
-        const project = projectsByRef.get(JSON.stringify([thread.environmentId, thread.projectId]));
-        return {
-          ref: {
-            environmentId: thread.environmentId,
-            projectId: thread.projectId,
-            threadId: thread.id,
-          },
-          title: thread.title,
-          projectTitle: project?.title ?? String(thread.projectId),
-          environmentLabel: environment?.label ?? String(thread.environmentId),
-          archived: thread.archivedAt !== null,
-          available:
-            environment?.connection.phase === "connected" &&
-            environment.serverConfig?.environment.capabilities.deepPlanning?.version === 1 &&
-            environment.serverConfig.environment.capabilities.deepPlanning.sourceExport,
-        };
-      }),
-    [threadShells, environmentsById, projectsByRef],
-  );
+  const targets = input.projects.map((project) => {
+    const environment = environmentsById.get(project.environmentId);
+    return {
+      environmentId: project.environmentId,
+      projectId: project.id,
+      label: environment?.label ?? String(project.environmentId),
+      connected: environment?.connection.phase === "connected",
+      supported:
+        environment?.serverConfig?.environment.capabilities.deepPlanning?.version === 1 &&
+        environment.serverConfig.environment.capabilities.deepPlanning.sourceExport,
+    };
+  });
+  const fallbackOptions = threadShells.map((thread) => {
+    const environment = environmentsById.get(thread.environmentId);
+    const project = projectsByRef.get(JSON.stringify([thread.environmentId, thread.projectId]));
+    return {
+      ref: {
+        environmentId: thread.environmentId,
+        projectId: thread.projectId,
+        threadId: thread.id,
+      },
+      title: thread.title,
+      projectTitle: project?.title ?? String(thread.projectId),
+      environmentLabel: environment?.label ?? String(thread.environmentId),
+      archived: thread.archivedAt !== null,
+      available:
+        environment?.connection.phase === "connected" &&
+        environment.serverConfig?.environment.capabilities.deepPlanning?.version === 1 &&
+        environment.serverConfig.environment.capabilities.deepPlanning.sourceExport,
+    };
+  });
   const currentEnvironmentId = input.currentProject?.environmentId;
   const currentProjectId = input.currentProject?.projectId;
   const requestKey = JSON.stringify([scopeKey, requestAll, targets]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Load the source catalogs and cancel requests when their project scope changes.
   useEffect(() => {
     if (!input.enabled || !currentEnvironmentId || !currentProjectId) return;
     const controller = new AbortController();
@@ -171,29 +156,24 @@ export function useDeepPlanSources(input: {
     requestKey,
   ]);
 
-  const onOpen = useCallback(() => setRequestAll((value) => value + 1), []);
-  const options = useMemo(
-    () => [
-      ...new Map(
-        [...fallbackOptions, ...(state.scopeKey === scopeKey ? state.options : [])].map(
-          (option) => {
-            const environment = environmentsById.get(option.ref.environmentId);
-            return [
-              deepPlanSourceRefKey(option.ref),
-              {
-                ...option,
-                available:
-                  environment?.connection.phase === "connected" &&
-                  environment.serverConfig?.environment.capabilities.deepPlanning?.version === 1 &&
-                  environment.serverConfig.environment.capabilities.deepPlanning.sourceExport,
-              },
-            ] as const;
+  const onOpen = useStableCallback(() => setRequestAll((value) => value + 1));
+  const options = [
+    ...new Map(
+      [...fallbackOptions, ...(state.scopeKey === scopeKey ? state.options : [])].map((option) => {
+        const environment = environmentsById.get(option.ref.environmentId);
+        return [
+          deepPlanSourceRefKey(option.ref),
+          {
+            ...option,
+            available:
+              environment?.connection.phase === "connected" &&
+              environment.serverConfig?.environment.capabilities.deepPlanning?.version === 1 &&
+              environment.serverConfig.environment.capabilities.deepPlanning.sourceExport,
           },
-        ),
-      ).values(),
-    ],
-    [fallbackOptions, state.scopeKey, state.options, scopeKey, environmentsById],
-  );
+        ] as const;
+      }),
+    ).values(),
+  ];
   return {
     options,
     projectSourceCount: state.scopeKey === scopeKey ? state.projectSourceCount : null,

@@ -1,3 +1,7 @@
+import { OrchestrationV2TurnItemJson } from "@t3tools/contracts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as DateTime from "effect/DateTime";
+import { deepPlanSourceProjectionCtes } from "./DeepPlanSourceProjection.ts";
 import {
   ChatAttachment,
   DeepPlanSourceError,
@@ -6,23 +10,25 @@ import {
   MessageId,
   ProjectId,
   MessageReplyReference,
-  OrchestrationHistoryOrigin,
   OrchestrationMessageContext,
-  OrchestrationMessageRole,
-  OrchestrationThreadActivityTone,
   SubagentId,
   ThreadId,
   TurnId,
   type DeepPlanSourceRecord,
   type DeepPlanSourceRef,
+} from "@t3tools/contracts";
+import {
+  OrchestrationHistoryOrigin,
+  OrchestrationMessageRole,
+  OrchestrationThreadActivityTone,
   type OrchestrationMessage,
   type OrchestrationThreadActivity,
-} from "@t3tools/contracts";
+} from "@t3tools/contracts/legacy";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import { ActivityPayloadFromJsonString } from "../persistence/activityPayload.ts";
@@ -67,6 +73,7 @@ const ActivityRow = Schema.Struct({
   historyOrigin: Schema.NullOr(Schema.fromJsonString(OrchestrationHistoryOrigin)),
   createdAt: IsoDateTime,
 });
+const encodeInheritedItem = Schema.encodeEffect(OrchestrationV2TurnItemJson);
 const decodeMessageRows = Schema.decodeUnknownEffect(Schema.Array(MessageRow));
 const decodeActivityRows = Schema.decodeUnknownEffect(Schema.Array(ActivityRow));
 
@@ -142,7 +149,7 @@ export const captureSourceRecords = Effect.fn("DeepPlanSources.captureSourceReco
     if (projectId === undefined) {
       const projects = yield* sql<{
         readonly projectId: ProjectId;
-      }>`SELECT project_id AS "projectId" FROM projection_threads WHERE thread_id = ${threadId}`;
+      }>`WITH ${sql.literal(deepPlanSourceProjectionCtes)} SELECT project_id AS "projectId" FROM source_threads WHERE thread_id = ${threadId}`;
       projectId = projects[0]?.projectId ?? input.origin.projectId;
       originProjects.set(threadId, projectId);
     }
@@ -241,14 +248,207 @@ export const captureSourceRecords = Effect.fn("DeepPlanSources.captureSourceReco
     attachmentCount += 1;
   });
 
+  const appendMessageRow = Effect.fnUntraced(function* (row: typeof MessageRow.Type) {
+    const origin = yield* recordOrigin(
+      row.historyOrigin,
+      row.subagentId === null ? row.id : row.rowKey,
+    );
+    const message = messageFromRow(row);
+    const messageJson = canonicalSourceJson(message);
+    const detailsContentId =
+      Buffer.byteLength(messageJson) > INLINE_CONTENT_BYTES &&
+      Buffer.byteLength(canonicalSourceJson({ ...message, text: "" })) > INLINE_CONTENT_BYTES
+        ? yield* appendContent(origin, messageJson, "application/json", true)
+        : undefined;
+    const textContentId =
+      Buffer.byteLength(canonicalSourceJson(message.text)) > INLINE_CONTENT_BYTES &&
+      detailsContentId === undefined
+        ? yield* appendContent(origin, message.text, "text/plain", true)
+        : undefined;
+    yield* append({
+      kind: "message",
+      recordId: "",
+      origin,
+      contentHash: "",
+      message:
+        detailsContentId !== undefined
+          ? {
+              id: message.id,
+              role: message.role,
+              text: "",
+              turnId: message.turnId,
+              streaming: false,
+              createdAt: message.createdAt,
+              updatedAt: message.updatedAt,
+            }
+          : textContentId === undefined
+            ? message
+            : { ...message, text: "" },
+      ...(textContentId === undefined ? {} : { textContentId }),
+      ...(detailsContentId === undefined ? {} : { detailsContentId }),
+    });
+    messageCount += 1;
+    for (const attachment of row.attachments ?? []) yield* appendAttachment(attachment, origin);
+  });
+  const appendActivityRow = Effect.fnUntraced(function* (row: typeof ActivityRow.Type) {
+    const origin = yield* recordOrigin(
+      row.historyOrigin,
+      row.subagentId === null ? row.id : row.rowKey,
+    );
+    const activity = activityFromRow(row);
+    const payloadJson = canonicalSourceJson(activity.payload);
+    const detailsContentId =
+      Buffer.byteLength(canonicalSourceJson({ ...activity, payload: null })) > INLINE_CONTENT_BYTES
+        ? yield* appendContent(origin, canonicalSourceJson(activity), "application/json", true)
+        : undefined;
+    const contentId =
+      Buffer.byteLength(payloadJson) > INLINE_CONTENT_BYTES && detailsContentId === undefined
+        ? yield* appendContent(origin, payloadJson, "application/json", false)
+        : undefined;
+    yield* append({
+      kind: "activity",
+      recordId: "",
+      origin,
+      contentHash: "",
+      activity:
+        detailsContentId !== undefined
+          ? {
+              id: activity.id,
+              tone: activity.tone,
+              kind: activity.kind,
+              summary: "Activity content is available through its frozen reference.",
+              payload: { deepPlanContentRef: detailsContentId },
+              turnId: activity.turnId,
+              createdAt: activity.createdAt,
+            }
+          : contentId === undefined
+            ? activity
+            : { ...activity, payload: { deepPlanContentRef: contentId } },
+      ...(detailsContentId === undefined ? {} : { detailsContentId }),
+    });
+    activityCount += 1;
+  });
+
+  const nativeFork = yield* sql<{
+    thread_id: ThreadId;
+  }>`SELECT thread_id FROM orchestration_v2_projection_threads thread
+    WHERE thread_id = ${input.origin.threadId} AND (json_extract(payload_json, '$.forkedFrom.type') = 'run' OR EXISTS (
+      SELECT 1 FROM orchestration_v2_projection_context_transfers transfer
+      WHERE transfer.target_thread_id = thread.thread_id AND transfer.type = 'fork'
+    ))`;
+  if (nativeFork.length > 0) {
+    const projections = yield* ProjectionStore.ProjectionStoreV2.pipe(
+      Effect.provide(ProjectionStore.layer),
+    );
+    const { thread, contextTransfers } = yield* projections.getThreadRecords(
+      input.origin.threadId,
+      ["contextTransfers"],
+    );
+    const transfer = contextTransfers.find(
+      (transfer) => transfer.type === "fork" && transfer.targetThreadId === thread.id,
+    );
+    const direct =
+      thread.forkedFrom === null &&
+      transfer !== undefined &&
+      (transfer.sourcePoint.messageId !== undefined || transfer.sourcePoint.planId !== undefined);
+    const timelineThreadId = direct ? transfer.sourceThreadId : thread.id;
+    if (thread.forkedFrom?.type === "run") {
+      const source = yield* projections.getThreadRecords(thread.forkedFrom.threadId, ["runs"], {
+        runIds: [thread.forkedFrom.runId],
+      });
+      if (source.runs.length === 0)
+        return yield* new DeepPlanSourceError({
+          code: "source-unavailable",
+          message: "The fork's frozen source run is no longer available.",
+        });
+    }
+    let boundaryFound =
+      transfer?.sourcePoint.messageId === undefined && transfer?.sourcePoint.planId === undefined;
+    let afterPosition: number | undefined;
+    let finished = false;
+    while (!finished) {
+      const page = yield* projections.getTimelinePage(timelineThreadId, {
+        limit: 16,
+        view: "activity",
+        ...(afterPosition === undefined ? {} : { afterPosition }),
+      });
+      for (const entry of page.items) {
+        afterPosition = entry.position;
+        if (!direct && entry.visibility !== "inherited") {
+          finished = true;
+          break;
+        }
+        const item = entry.item;
+        const historyOrigin = {
+          sourceThreadId: entry.sourceThreadId,
+          sourceId:
+            item.type === "user_message" || item.type === "assistant_message"
+              ? item.messageId
+              : item.id,
+          ordinal: entry.position,
+        };
+        const createdAt = DateTime.formatIso(item.startedAt ?? item.updatedAt);
+        if (
+          (item.type === "user_message" || item.type === "assistant_message") &&
+          !(item.type === "assistant_message" && item.streaming)
+        ) {
+          yield* appendMessageRow({
+            rowKey: `inherited:${entry.sourceThreadId}:${entry.sourceItemId}`,
+            id: item.messageId,
+            subagentId: null,
+            role: item.type === "user_message" ? "user" : "assistant",
+            text: item.text,
+            turnId: null,
+            attachments: item.attachments ?? null,
+            context: item.type === "user_message" ? (item.context ?? null) : null,
+            historyOrigin,
+            replyTo: item.replyTo ?? null,
+            replyTopicId: item.replyTopicId ?? null,
+            createdAt,
+            updatedAt: DateTime.formatIso(item.updatedAt),
+          });
+        } else if (item.type !== "assistant_message") {
+          yield* appendActivityRow({
+            rowKey: `inherited:${entry.sourceThreadId}:${entry.sourceItemId}`,
+            id: EventId.make(item.id),
+            subagentId: null,
+            tone: "info",
+            kind: item.type,
+            summary: item.title ?? item.type,
+            payload: yield* encodeInheritedItem(item),
+            turnId: null,
+            sequence: null,
+            historyOrigin,
+            createdAt,
+          });
+        }
+        if (
+          ((item.type === "user_message" || item.type === "assistant_message") &&
+            item.messageId === transfer?.sourcePoint.messageId) ||
+          (item.type === "proposed_plan" && item.planId === transfer?.sourcePoint.planId)
+        ) {
+          boundaryFound = true;
+          finished = true;
+          break;
+        }
+      }
+      if (!page.hasMore || page.items.length === 0) finished = true;
+    }
+    if (!boundaryFound)
+      return yield* new DeepPlanSourceError({
+        code: "source-unavailable",
+        message: "The fork's selected message or plan is no longer available.",
+      });
+  }
+
   let afterCreatedAt = "";
   let afterRowKey = "";
   // Keep key pages outside payload joins so SQLite cannot scan all subagent bodies.
   while (true) {
     const rows = yield* sql`
-        WITH root_page AS (
+        WITH ${sql.literal(deepPlanSourceProjectionCtes)}, root_page AS (
           SELECT message_id AS id, created_at AS "createdAt", 'message:' || message_id AS "rowKey"
-          FROM projection_thread_messages
+          FROM source_messages
           WHERE thread_id = ${input.origin.threadId} AND is_streaming = 0
             AND created_at >= ${afterCreatedAt}
             AND (created_at > ${afterCreatedAt} OR 'message:' || message_id > ${afterRowKey})
@@ -269,7 +469,7 @@ export const captureSourceRecords = Effect.fn("DeepPlanSources.captureSourceReco
         ), sizes AS (
           SELECT p.*, octet_length(m.text) + COALESCE(octet_length(m.attachments_json), 0)
             + COALESCE(octet_length(m.context_json), 0) AS bytes
-          FROM page p CROSS JOIN projection_thread_messages m ON m.message_id = p.id
+          FROM page p CROSS JOIN source_messages m ON m.message_id = p.id AND m.thread_id = ${input.origin.threadId}
           WHERE p."subagentId" IS NULL
           UNION ALL
           SELECT p.*, octet_length(m.text) + COALESCE(octet_length(m.attachments_json), 0)
@@ -284,9 +484,9 @@ export const captureSourceRecords = Effect.fn("DeepPlanSources.captureSourceReco
         )
         SELECT p."rowKey", m.message_id AS id, p."subagentId", m.role, m.text,
           m.turn_id AS "turnId", m.attachments_json AS attachments, m.context_json AS context,
-          m.history_origin_json AS "historyOrigin", NULL AS "replyTo", NULL AS "replyTopicId",
+          m.history_origin_json AS "historyOrigin", m.reply_to_json AS "replyTo", m.reply_topic_id AS "replyTopicId",
           m.created_at AS "createdAt", m.updated_at AS "updatedAt"
-        FROM bounded_page p CROSS JOIN projection_thread_messages m ON m.message_id = p.id
+        FROM bounded_page p CROSS JOIN source_messages m ON m.message_id = p.id AND m.thread_id = ${input.origin.threadId}
         WHERE p."subagentId" IS NULL
         UNION ALL
         SELECT p."rowKey", m.message_id, p."subagentId", m.role, m.text,
@@ -299,46 +499,7 @@ export const captureSourceRecords = Effect.fn("DeepPlanSources.captureSourceReco
     const decoded = (yield* decodeMessageRows(rows)).toSorted(compareCaptureRows);
     if (decoded.length === 0) break;
     for (const row of decoded) {
-      const origin = yield* recordOrigin(
-        row.historyOrigin,
-        row.subagentId === null ? row.id : row.rowKey,
-      );
-      const message = messageFromRow(row);
-      const messageJson = canonicalSourceJson(message);
-      const detailsContentId =
-        Buffer.byteLength(messageJson) > INLINE_CONTENT_BYTES &&
-        Buffer.byteLength(canonicalSourceJson({ ...message, text: "" })) > INLINE_CONTENT_BYTES
-          ? yield* appendContent(origin, messageJson, "application/json", true)
-          : undefined;
-      const textContentId =
-        Buffer.byteLength(canonicalSourceJson(message.text)) > INLINE_CONTENT_BYTES &&
-        detailsContentId === undefined
-          ? yield* appendContent(origin, message.text, "text/plain", true)
-          : undefined;
-      yield* append({
-        kind: "message",
-        recordId: "",
-        origin,
-        contentHash: "",
-        message:
-          detailsContentId !== undefined
-            ? {
-                id: message.id,
-                role: message.role,
-                text: "",
-                turnId: message.turnId,
-                streaming: false,
-                createdAt: message.createdAt,
-                updatedAt: message.updatedAt,
-              }
-            : textContentId === undefined
-              ? message
-              : { ...message, text: "" },
-        ...(textContentId === undefined ? {} : { textContentId }),
-        ...(detailsContentId === undefined ? {} : { detailsContentId }),
-      });
-      messageCount += 1;
-      for (const attachment of row.attachments ?? []) yield* appendAttachment(attachment, origin);
+      yield* appendMessageRow(row);
       afterCreatedAt = row.createdAt;
       afterRowKey = row.rowKey;
     }
@@ -348,9 +509,9 @@ export const captureSourceRecords = Effect.fn("DeepPlanSources.captureSourceReco
   afterRowKey = "";
   while (true) {
     const rows = yield* sql`
-        WITH root_page AS (
+        WITH ${sql.literal(deepPlanSourceProjectionCtes)}, root_page AS (
           SELECT activity_id AS id, created_at AS "createdAt", 'activity:' || activity_id AS "rowKey"
-          FROM projection_thread_activities
+          FROM source_activities
           WHERE thread_id = ${input.origin.threadId} AND created_at >= ${afterCreatedAt}
             AND (created_at > ${afterCreatedAt} OR 'activity:' || activity_id > ${afterRowKey})
           ORDER BY created_at, activity_id LIMIT ${CAPTURE_PAGE_SIZE}
@@ -368,7 +529,7 @@ export const captureSourceRecords = Effect.fn("DeepPlanSources.captureSourceReco
           ORDER BY "createdAt", "rowKey" LIMIT ${CAPTURE_PAGE_SIZE}
         ), sizes AS (
           SELECT p.*, octet_length(a.payload_json) + octet_length(a.summary) AS bytes
-          FROM page p CROSS JOIN projection_thread_activities a ON a.activity_id = p.id
+          FROM page p CROSS JOIN source_activities a ON a.activity_id = p.id AND a.thread_id = ${input.origin.threadId}
           WHERE p."subagentId" IS NULL
           UNION ALL
           SELECT p.*, octet_length(a.payload_json) + octet_length(a.summary)
@@ -383,7 +544,7 @@ export const captureSourceRecords = Effect.fn("DeepPlanSources.captureSourceReco
         SELECT p."rowKey", a.activity_id AS id, p."subagentId", a.tone, a.kind, a.summary,
           a.payload_json AS payload, a.turn_id AS "turnId", a.sequence,
           a.history_origin_json AS "historyOrigin", a.created_at AS "createdAt"
-        FROM bounded_page p CROSS JOIN projection_thread_activities a ON a.activity_id = p.id
+        FROM bounded_page p CROSS JOIN source_activities a ON a.activity_id = p.id AND a.thread_id = ${input.origin.threadId}
         WHERE p."subagentId" IS NULL
         UNION ALL
         SELECT p."rowKey", a.activity_id, p."subagentId", a.tone, a.kind, a.summary,
@@ -394,43 +555,7 @@ export const captureSourceRecords = Effect.fn("DeepPlanSources.captureSourceReco
     const decoded = (yield* decodeActivityRows(rows)).toSorted(compareCaptureRows);
     if (decoded.length === 0) break;
     for (const row of decoded) {
-      const origin = yield* recordOrigin(
-        row.historyOrigin,
-        row.subagentId === null ? row.id : row.rowKey,
-      );
-      const activity = activityFromRow(row);
-      const payloadJson = canonicalSourceJson(activity.payload);
-      const detailsContentId =
-        Buffer.byteLength(canonicalSourceJson({ ...activity, payload: null })) >
-        INLINE_CONTENT_BYTES
-          ? yield* appendContent(origin, canonicalSourceJson(activity), "application/json", true)
-          : undefined;
-      const contentId =
-        Buffer.byteLength(payloadJson) > INLINE_CONTENT_BYTES && detailsContentId === undefined
-          ? yield* appendContent(origin, payloadJson, "application/json", false)
-          : undefined;
-      yield* append({
-        kind: "activity",
-        recordId: "",
-        origin,
-        contentHash: "",
-        activity:
-          detailsContentId !== undefined
-            ? {
-                id: activity.id,
-                tone: activity.tone,
-                kind: activity.kind,
-                summary: "Activity content is available through its frozen reference.",
-                payload: { deepPlanContentRef: detailsContentId },
-                turnId: activity.turnId,
-                createdAt: activity.createdAt,
-              }
-            : contentId === undefined
-              ? activity
-              : { ...activity, payload: { deepPlanContentRef: contentId } },
-        ...(detailsContentId === undefined ? {} : { detailsContentId }),
-      });
-      activityCount += 1;
+      yield* appendActivityRow(row);
       afterCreatedAt = row.createdAt;
       afterRowKey = row.rowKey;
     }

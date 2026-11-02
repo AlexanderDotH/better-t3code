@@ -1,6 +1,9 @@
-import type { OrchestrationMessage } from "@t3tools/contracts";
+import type { createMessageReplyReference } from "@t3tools/client-runtime/messageReplies";
+type MessageReplySource = Parameters<typeof createMessageReplyReference>[0] & {
+  readonly role: "user" | "assistant";
+};
 import * as Haptics from "expo-haptics";
-import { memo, useCallback, useMemo, type ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   ReduceMotion,
@@ -16,9 +19,9 @@ import {
 } from "./message-reply-gesture";
 
 type MessageReplyGestureProps = {
-  readonly message: OrchestrationMessage;
+  readonly message: MessageReplySource;
   readonly enabled: boolean;
-  readonly onReply: (message: OrchestrationMessage) => void;
+  readonly onReply: (message: MessageReplySource) => void;
   readonly children: ReactNode;
 };
 
@@ -29,60 +32,60 @@ const ReplyGesture = memo(function ReplyGesture(props: MessageReplyGestureProps)
   const startedAt = useSharedValue(0);
   const activated = useSharedValue(false);
   const role = props.message.role;
-  const reply = useCallback(() => {
+  const reply = () => {
     void Haptics.selectionAsync().catch(() => undefined);
     props.onReply(props.message);
-  }, [props.message, props.onReply]);
-  const gesture = useMemo(
-    () =>
-      Gesture.Pan()
-        .manualActivation(true)
-        .maxPointers(1)
-        .onTouchesDown((event, manager) => {
-          const touch = event.allTouches[0];
-          if (!touch || event.numberOfTouches !== 1) {
-            manager.fail();
-            return;
-          }
-          originX.value = touch.absoluteX;
-          originY.value = touch.absoluteY;
-          startedAt.value = Date.now();
-          activated.value = false;
-        })
-        .onTouchesMove((event, manager) => {
-          if (activated.value) return;
-          const touch = event.allTouches[0];
-          if (!touch) {
-            manager.fail();
-            return;
-          }
-          const intent = classifyMessageReplyMovement({
-            role,
-            translationX: touch.absoluteX - originX.value,
-            translationY: touch.absoluteY - originY.value,
-            elapsedMs: Date.now() - startedAt.value,
-            touchCount: event.numberOfTouches,
-          });
-          if (intent === "activate") manager.activate();
-          else if (intent === "fail") manager.fail();
-        })
-        .onStart(() => {
-          activated.value = true;
-        })
-        .onUpdate((event) => {
-          translation.value = messageReplyTranslation(event.translationX, role);
-        })
-        .onEnd((event, completed) => {
-          if (acceptsMessageReplyGesture(event.translationX, event.translationY, completed, role))
-            runOnJS(reply)();
-        })
-        .onFinalize(() => {
-          activated.value = false;
-          translation.value = withTiming(0, { duration: 140, reduceMotion: ReduceMotion.System });
-        }),
-    [activated, originX, originY, reply, role, startedAt, translation],
-  );
-  const style = useAnimatedStyle(() => ({ transform: [{ translateX: translation.value }] }));
+  };
+  // oxlint-disable-next-line react/capitalized-calls -- Gesture.Pan creates a native gesture handler.
+  const gesture = Gesture.Pan()
+    .manualActivation(true)
+    .maxPointers(1)
+    .onTouchesDown((event, manager) => {
+      const touch = event.allTouches[0];
+      if (!touch || event.numberOfTouches !== 1) {
+        manager.fail();
+        return;
+      }
+      originX.set(touch.absoluteX);
+      originY.set(touch.absoluteY);
+      // oxlint-disable-next-line react/purity -- Touch handlers sample their event time on the UI thread.
+      startedAt.set(Date.now());
+      activated.set(false);
+    })
+    .onTouchesMove((event, manager) => {
+      if (activated.get()) return;
+      const touch = event.allTouches[0];
+      if (!touch) {
+        manager.fail();
+        return;
+      }
+      const intent = classifyMessageReplyMovement({
+        role,
+        translationX: touch.absoluteX - originX.get(),
+        translationY: touch.absoluteY - originY.get(),
+        // oxlint-disable-next-line react/purity -- This native touch callback runs after render.
+        elapsedMs: Date.now() - startedAt.get(),
+        touchCount: event.numberOfTouches,
+      });
+      if (intent === "activate") manager.activate();
+      else if (intent === "fail") manager.fail();
+    })
+    .onStart(() => {
+      activated.set(true);
+    })
+    .onUpdate((event) => {
+      translation.set(messageReplyTranslation(event.translationX, role));
+    })
+    .onEnd((event, completed) => {
+      if (acceptsMessageReplyGesture(event.translationX, event.translationY, completed, role))
+        runOnJS(reply)();
+    })
+    .onFinalize(() => {
+      activated.set(false);
+      translation.set(withTiming(0, { duration: 140, reduceMotion: ReduceMotion.System }));
+    });
+
+  const style = useAnimatedStyle(() => ({ transform: [{ translateX: translation.get() }] }));
   return (
     <GestureDetector gesture={gesture}>
       <Animated.View collapsable={false} style={style}>

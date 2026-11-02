@@ -61,13 +61,13 @@ describe("resolveNativeSampleIntervalMs", () => {
     expect(resolveNativeSampleIntervalMs({ ...basePower, onBattery: "true" }, 0, 1)).toBe(1_000);
   });
 
-  it("slows background telemetry and serves live diagnostics at 1Hz", () => {
+  it("stops idle sampling and serves live diagnostics at 1Hz", () => {
     const unknown: HostPowerSnapshot = {
       ...basePower,
       source: "unknown",
       stale: true,
     };
-    expect(resolveNativeSampleIntervalMs(unknown, 0, 0)).toBe(5_000);
+    expect(resolveNativeSampleIntervalMs(unknown, 0, 0)).toBe(0);
     expect(resolveNativeSampleIntervalMs(unknown, 1, 0)).toBe(1_000);
     expect(
       resolveNativeSampleIntervalMs(
@@ -75,10 +75,10 @@ describe("resolveNativeSampleIntervalMs", () => {
         0,
         0,
       ),
-    ).toBe(5_000);
-    expect(resolveNativeSampleIntervalMs(basePower, 0, 0)).toBe(5_000);
+    ).toBe(0);
+    expect(resolveNativeSampleIntervalMs(basePower, 0, 0)).toBe(0);
     expect(resolveNativeSampleIntervalMs(basePower, 1, 0)).toBe(1_000);
-    expect(resolveNativeSampleIntervalMs(basePower, 0, 0)).toBe(5_000);
+    expect(resolveNativeSampleIntervalMs(basePower, 0, 0)).toBe(0);
   });
 });
 

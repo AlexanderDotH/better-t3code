@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { buildCodexAdditionalContext } from "./CodexDeveloperInstructions.ts";
 import { buildDeepPlanInstructions } from "./DeepPlanInstructions.ts";
 import { DEEP_PLAN_PROVIDER_SUPPORT, providerDeepPlanSupport } from "./DeepPlanSupport.ts";
-import { buildRuntimeInstructions } from "./RuntimeInstructions.ts";
+import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import { buildOpenAiSystemInstructions } from "./openai/OpenAiAdapterSystemPrompt.ts";
 import { buildOpenRouterSystemInstructions } from "./openrouter/OpenRouterAdapter.ts";
 
@@ -116,7 +116,12 @@ describe("Deep Plan provider instructions", () => {
       },
       "plan",
     );
-    expect(context.t3_code_deep_plan?.value).toContain("deep_plan_publish");
+    expect(
+      Object.entries(context)
+        .filter(([key]) => key.startsWith("t3_code_deep_plan"))
+        .map(([, entry]) => entry.value)
+        .join(""),
+    ).toContain("deep_plan_publish");
     expect(context.t3_code_deep_plan?.kind).toBe("application");
     expect(
       buildRuntimeInstructions({ harness: "Claude", deepPlan: { phase: "execution" } }),

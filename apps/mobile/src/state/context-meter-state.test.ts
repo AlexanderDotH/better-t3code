@@ -1,4 +1,4 @@
-import { EventId, ThreadId, type OrchestrationThreadActivity } from "@t3tools/contracts";
+import { EventId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   selectedThreadContextWindowSnapshot,
@@ -7,7 +7,7 @@ import {
 
 const firstThread = ThreadId.make("thread-one");
 const secondThread = ThreadId.make("thread-two");
-const usage = (usedTokens: number): OrchestrationThreadActivity[] => [
+const usage = (usedTokens: number) => [
   {
     id: EventId.make("context-usage"),
     kind: "context-window.updated",

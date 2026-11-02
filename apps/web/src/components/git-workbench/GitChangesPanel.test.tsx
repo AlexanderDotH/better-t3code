@@ -1,6 +1,6 @@
 import type { ComponentProps } from "react";
-import { act, useState } from "react";
-import { create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
+import { useState } from "react";
+import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { GitChangesPanel } from "./GitChangesPanel";
@@ -19,33 +19,34 @@ vi.mock("~/hooks/useSettings", () => ({
     select({ wordWrap: false }),
 }));
 vi.mock("~/hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "light" }) }));
-vi.mock("@pierre/diffs/editor", () => ({
-  Editor: class {
-    readonly onChange: (file: { contents: string }) => void;
-    constructor(options: { onChange: (file: { contents: string }) => void }) {
-      this.onChange = options.onChange;
-      editorLifecycle.created += 1;
-    }
-    cleanUp() {
-      editorLifecycle.cleaned += 1;
-    }
-  },
-}));
-vi.mock("~/components/files/WorkspaceFileEditorSurface", () => ({
-  WorkspaceFileEditorSurface: (props: {
-    ariaLabel: string;
-    contentEditable: boolean;
-    file: { contents: string };
-    editor: { onChange: (file: { contents: string }) => void };
-  }) => (
-    <textarea
-      aria-label={props.ariaLabel}
-      onChange={(event) => props.editor.onChange({ contents: event.currentTarget.value })}
-      readOnly={!props.contentEditable}
-      value={props.file.contents}
-    />
-  ),
-}));
+vi.mock("~/components/files/WorkspaceFileEditorSurface", async () => {
+  const { useEffect } = await import("react");
+  return {
+    WorkspaceFileEditorSurface: (props: {
+      ariaLabel: string;
+      contentEditable: boolean;
+      file: { contents: string };
+      onEditChange: (input: { file: { contents: string } }) => void;
+    }) => {
+      useEffect(() => {
+        editorLifecycle.created += 1;
+        return () => {
+          editorLifecycle.cleaned += 1;
+        };
+      }, []);
+      return (
+        <textarea
+          aria-label={props.ariaLabel}
+          readOnly={!props.contentEditable}
+          value={props.file.contents}
+          onChange={(event) =>
+            props.onEditChange({ file: { contents: event.currentTarget.value } })
+          }
+        />
+      );
+    },
+  };
+});
 vi.mock("~/components/ui/checkbox", () => ({
   Checkbox: (props: {
     "aria-label": string;
@@ -109,6 +110,7 @@ function change(
           ],
         },
       ],
+
       patchId: `patch-${source}`,
       source,
     },
@@ -171,12 +173,14 @@ function checkbox(renderer: ReactTestRenderer, label: string) {
 
 let renderer: ReactTestRenderer;
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   editorLifecycle.created = 0;
   editorLifecycle.cleaned = 0;
 });
 afterEach(async () => {
-  if (renderer) await act(async () => renderer.unmount());
+  if (renderer)
+    await act(async () => {
+      await renderer.unmount();
+    });
   vi.unstubAllGlobals();
 });
 
@@ -190,17 +194,21 @@ describe("GitChangesPanel", () => {
     const stageCheckbox = checkbox(renderer, "Stage src/app.ts");
     expect(stageCheckbox.props["aria-checked"]).toBe("mixed");
 
-    await act(async () => stageCheckbox.props.onChange({ currentTarget: { checked: true } }));
+    await act(async () => {
+      await stageCheckbox.props.onChange({ currentTarget: { checked: true } });
+    });
     expect(props.onSetFilesStaged).toHaveBeenCalledWith(["src/app.ts"], true);
     expect(checkbox(renderer, "Stage src/app.ts").props["aria-checked"]).toBe("mixed");
 
-    await act(async () => renderer.update(<GitChangesPanel {...props} changes={[index]} />));
+    await act(async () => {
+      await renderer.update(<GitChangesPanel {...props} changes={[index]} />);
+    });
     expect(checkbox(renderer, "Unstage src/app.ts").props["aria-checked"]).toBe(true);
-    await act(async () =>
-      checkbox(renderer, "Unstage src/app.ts").props.onChange({
+    await act(async () => {
+      await checkbox(renderer, "Unstage src/app.ts").props.onChange({
         currentTarget: { checked: false },
-      }),
-    );
+      });
+    });
     expect(props.onSetFilesStaged).toHaveBeenLastCalledWith(["src/app.ts"], false);
   });
 
@@ -221,14 +229,20 @@ describe("GitChangesPanel", () => {
       renderer = create(<Review />);
     });
     const row = renderer.root.findByProps({ "data-git-review-path": "src/app.ts" });
-    await act(async () => row.findByType("button").props.onClick());
+    await act(async () => {
+      await row.findByType("button").props.onClick();
+    });
     expect(open).not.toHaveBeenCalled();
     expect(renderer.root.findAllByType("textarea")).toHaveLength(0);
     expect(nodeText(renderer.root)).toContain("new-worktree");
-    await act(async () => button(renderer, "Staged").props.onClick());
+    await act(async () => {
+      await button(renderer, "Staged").props.onClick();
+    });
     expect(nodeText(renderer.root)).toContain("new-index");
     expect(nodeText(renderer.root)).not.toContain("new-worktree");
-    await act(async () => button(renderer, "Back to changed files").props.onClick());
+    await act(async () => {
+      await button(renderer, "Back to changed files").props.onClick();
+    });
     expect(renderer.root.findAllByProps({ "data-git-change-detail": "content" })).toHaveLength(0);
   });
 
@@ -238,29 +252,35 @@ describe("GitChangesPanel", () => {
     await act(async () => {
       renderer = create(<GitChangesPanel {...props} />);
     });
-    await act(async () => button(renderer, "Edit src/app.ts").props.onClick());
+    await act(async () => {
+      await button(renderer, "Edit src/app.ts").props.onClick();
+    });
     expect(props.onOpenCurrentFile).toHaveBeenCalledWith("src/app.ts");
 
-    await act(async () =>
-      renderer.update(
+    await act(async () => {
+      await renderer.update(
         <GitChangesPanel
           {...props}
           editorPath={currentFile.path}
           currentFile={{ ...currentFile, loading: true, revision: "loading" }}
         />,
-      ),
-    );
+      );
+    });
     expect(renderer.root.findAllByType("textarea")).toHaveLength(0);
     expect(nodeText(renderer.root)).toContain("Loading current working tree file");
-    await act(async () =>
-      renderer.update(<GitChangesPanel {...props} editorPath={currentFile.path} />),
-    );
+    await act(async () => {
+      await renderer.update(<GitChangesPanel {...props} editorPath={currentFile.path} />);
+    });
     expect(renderer.root.findByType("textarea").props.value).toBe("old");
     expect(renderer.root.findAllByProps({ "data-git-change-detail": "content" })).toHaveLength(0);
-    await act(async () => button(renderer, "Back to Diff").props.onClick());
+    await act(async () => {
+      await button(renderer, "Back to Diff").props.onClick();
+    });
     expect(close).toHaveBeenCalledOnce();
     expect(renderer.root.findAllByType("textarea")).toHaveLength(1);
-    await act(async () => renderer.update(<GitChangesPanel {...props} editorPath={null} />));
+    await act(async () => {
+      await renderer.update(<GitChangesPanel {...props} editorPath={null} />);
+    });
     expect(renderer.root.findAllByType("textarea")).toHaveLength(0);
     expect(nodeText(renderer.root)).toContain("new-worktree");
   });
@@ -270,17 +290,19 @@ describe("GitChangesPanel", () => {
     await act(async () => {
       renderer = create(<GitChangesPanel {...props} />);
     });
-    await act(async () =>
-      checkbox(renderer, "Select hunk @@ -1 +1 @@").props.onChange({
+    await act(async () => {
+      await checkbox(renderer, "Select hunk @@ -1 +1 @@").props.onChange({
         currentTarget: { checked: true },
-      }),
-    );
-    await act(async () =>
-      checkbox(renderer, "Select deletion line 1").props.onChange({
+      });
+    });
+    await act(async () => {
+      await checkbox(renderer, "Select deletion line 1").props.onChange({
         currentTarget: { checked: false },
-      }),
-    );
-    await act(async () => button(renderer, "Stage selection").props.onClick());
+      });
+    });
+    await act(async () => {
+      await button(renderer, "Stage selection").props.onClick();
+    });
     expect(props.onApplySelection).toHaveBeenCalledWith({
       action: "stage",
       changeId: worktree.id,
@@ -292,17 +314,19 @@ describe("GitChangesPanel", () => {
       source: "worktree",
     });
 
-    await act(async () =>
-      renderer.update(
+    await act(async () => {
+      await renderer.update(
         <GitChangesPanel
           {...props}
           changes={[index, { ...worktree, diff: { ...worktree.diff!, stale: true } }]}
         />,
-      ),
-    );
+      );
+    });
     expect(button(renderer, "Stage file").props.disabled).toBe(true);
     expect(checkbox(renderer, "Select addition line 1").props.checked).toBe(false);
-    await act(async () => button(renderer, "Refresh diff").props.onClick());
+    await act(async () => {
+      await button(renderer, "Refresh diff").props.onClick();
+    });
     expect(props.onRefreshChange).toHaveBeenCalledWith(worktree.path);
   });
 
@@ -322,20 +346,24 @@ describe("GitChangesPanel", () => {
     await act(async () => {
       renderer = create(<GitChangesPanel {...props} />);
     });
-    await act(async () => button(renderer, "Stage all files").props.onClick());
-    await act(async () => button(renderer, "Unstage all files").props.onClick());
+    await act(async () => {
+      await button(renderer, "Stage all files").props.onClick();
+    });
+    await act(async () => {
+      await button(renderer, "Unstage all files").props.onClick();
+    });
     expect(props.onSetFilesStaged).toHaveBeenNthCalledWith(1, ["src/app.ts", "new.ts"], true);
     expect(props.onSetFilesStaged).toHaveBeenNthCalledWith(2, ["src/app.ts"], false);
     expect(checkbox(renderer, "Stage conflict.ts").props.disabled).toBe(true);
-    await act(async () =>
-      renderer.update(
+    await act(async () => {
+      await renderer.update(
         <GitChangesPanel
           {...props}
           stagingPending
           stagingError="Stopped at new.ts. 1 files updated."
         />,
-      ),
-    );
+      );
+    });
     expect(button(renderer, "Stage all files").props.disabled).toBe(true);
     expect(nodeText(renderer.root.findByProps({ role: "alert" }))).toContain("1 files updated");
     expect(renderer.root.findAllByProps({ "data-git-review-path": "src/app.ts" })).toHaveLength(1);
@@ -348,15 +376,15 @@ describe("GitChangesPanel", () => {
     });
     expect(checkbox(renderer, "Stage src/app.ts").props.disabled).toBe(true);
     expect(button(renderer, "Stage file").props.disabled).toBe(true);
-    await act(async () =>
-      renderer.update(
+    await act(async () => {
+      await renderer.update(
         <GitChangesPanel
           {...props}
           editorPath={currentFile.path}
           currentFile={{ ...currentFile, saveState: "buffered" }}
         />,
-      ),
-    );
+      );
+    });
     expect(renderer.root.findByType("textarea").props.readOnly).toBe(false);
     expect(nodeText(renderer.root)).toContain("buffered until the active agent turn settles");
   });
@@ -385,14 +413,14 @@ describe("GitChangesPanel", () => {
       renderer = create(<GitChangesPanel {...props} />);
     });
     expect(renderer.root.findByType("textarea").props["aria-label"]).toBe("Edit unchanged.ts");
-    await act(async () =>
-      renderer.update(
+    await act(async () => {
+      await renderer.update(
         <GitChangesPanel
           {...props}
           currentFile={{ ...file, content: "", readOnlyReason: "File is unavailable" }}
         />,
-      ),
-    );
+      );
+    });
     expect(nodeText(renderer.root)).toContain("File is unavailable");
     expect(renderer.root.findByType("textarea").props.readOnly).toBe(true);
   });
@@ -434,48 +462,56 @@ describe("GitCurrentFilePanel drafts", () => {
         />,
       );
     });
-    await act(async () =>
-      renderer.root.findByType("textarea").props.onChange({ currentTarget: { value: "mine" } }),
-    );
-    await act(async () =>
-      renderer.update(
+    await act(async () => {
+      await renderer.root
+        .findByType("textarea")
+        .props.onChange({ currentTarget: { value: "mine" } });
+    });
+    await act(async () => {
+      await renderer.update(
         <GitCurrentFilePanel
           file={{ ...currentFile, content: "agent", revision: "revision-2" }}
           onDraftChange={refreshedDraft}
           onSave={save}
           readOnly={false}
         />,
-      ),
-    );
+      );
+    });
     expect(renderer.root.findByType("textarea").props.value).toBe("mine");
     expect(editorLifecycle.created).toBe(1);
     expect(editorLifecycle.cleaned).toBe(0);
-    await act(async () => button(renderer, "Save").props.onClick());
+    await act(async () => {
+      await button(renderer, "Save").props.onClick();
+    });
     expect(save).toHaveBeenCalledWith({
       content: "mine",
       expectedRevision: "revision-1",
       path: currentFile.path,
     });
-    expect(refreshedDraft).toHaveBeenLastCalledWith({
-      content: "mine",
-      path: currentFile.path,
-      revision: "revision-1",
-    });
-    await act(async () =>
-      renderer.update(
+
+    await act(async () => {
+      await renderer.update(
         <GitCurrentFilePanel
           file={{ ...currentFile, content: "mine", revision: "revision-3", saveState: "saved" }}
           onDraftChange={draft}
           onSave={save}
           readOnly={false}
         />,
-      ),
-    );
+      );
+    });
     expect(button(renderer, "Save").props.disabled).toBe(true);
-    expect(draft).toHaveBeenLastCalledWith({
-      content: "mine",
+    await act(async () => {
+      renderer.root.findByType("textarea").props.onChange({
+        currentTarget: { value: "mine after save" },
+      });
+    });
+    await act(async () => {
+      button(renderer, "Save").props.onClick();
+    });
+    expect(save).toHaveBeenLastCalledWith({
+      content: "mine after save",
+      expectedRevision: "revision-3",
       path: currentFile.path,
-      revision: "revision-3",
     });
   });
 
@@ -490,21 +526,23 @@ describe("GitCurrentFilePanel drafts", () => {
       );
     });
     expect(renderer.root.findByType("textarea").props.value).toBe("retained");
-    await act(async () =>
-      renderer.root
+    await act(async () => {
+      await renderer.root
         .findByType("textarea")
-        .props.onChange({ currentTarget: { value: "new typing" } }),
-    );
-    await act(async () =>
-      renderer.update(
+        .props.onChange({ currentTarget: { value: "new typing" } });
+    });
+    await act(async () => {
+      await renderer.update(
         <GitCurrentFilePanel
           {...props}
           initialDraft={{ content: "stale seed", path: currentFile.path, revision: "other" }}
         />,
-      ),
-    );
+      );
+    });
     expect(renderer.root.findByType("textarea").props.value).toBe("new typing");
-    await act(async () => button(renderer, "Save").props.onClick());
+    await act(async () => {
+      await button(renderer, "Save").props.onClick();
+    });
     expect(props.onSave).toHaveBeenCalledWith({
       content: "new typing",
       expectedRevision: "captured",

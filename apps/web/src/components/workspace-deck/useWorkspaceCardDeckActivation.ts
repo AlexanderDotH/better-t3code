@@ -1,4 +1,5 @@
-import { useCallback, type RefObject } from "react";
+import { useStableCallback } from "~/hooks/useStableCallback";
+import { type RefObject } from "react";
 
 import type { PreparedWorkspaceDeckPeek } from "./workspaceCardDeck.model";
 import type {
@@ -28,34 +29,22 @@ export function useWorkspaceCardDeckActivation<CardId extends string>(input: {
     pendingMorphCaptureRef,
     pendingMorphIntentRef,
   } = input;
-  return useCallback(
-    (peek: PreparedWorkspaceDeckPeek<CardId>) => {
-      if (interactionLocked) return;
-      const intent = {
-        direction: peek.direction,
-        fromId: activeCardRef.current,
-        toId: peek.card.id,
-      } satisfies WorkspaceDeckMorphIntent<CardId>;
-      pendingMorphIntentRef.current = intent;
-      pendingMorphCaptureRef.current =
-        expandedCardRef.current === activeCardRef.current ? null : captureMorphRequest(intent);
-      const accepted = onRequestCard(peek.card.id, peek.direction);
-      if (accepted === false) {
-        pendingMorphIntentRef.current = null;
-        pendingMorphCaptureRef.current = null;
-        return;
-      }
-      cleanupActiveMorph();
-    },
-    [
-      activeCardRef,
-      captureMorphRequest,
-      cleanupActiveMorph,
-      expandedCardRef,
-      interactionLocked,
-      onRequestCard,
-      pendingMorphCaptureRef,
-      pendingMorphIntentRef,
-    ],
-  );
+  return useStableCallback((peek: PreparedWorkspaceDeckPeek<CardId>) => {
+    if (interactionLocked) return;
+    const intent = {
+      direction: peek.direction,
+      fromId: activeCardRef.current,
+      toId: peek.card.id,
+    } satisfies WorkspaceDeckMorphIntent<CardId>;
+    pendingMorphIntentRef.current = intent;
+    pendingMorphCaptureRef.current =
+      expandedCardRef.current === activeCardRef.current ? null : captureMorphRequest(intent);
+    const accepted = onRequestCard(peek.card.id, peek.direction);
+    if (accepted === false) {
+      pendingMorphIntentRef.current = null;
+      pendingMorphCaptureRef.current = null;
+      return;
+    }
+    cleanupActiveMorph();
+  });
 }

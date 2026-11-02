@@ -1,8 +1,10 @@
-import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { act, useLayoutEffect } from "react";
+import { createRoot } from "react-dom/client";
+import { beforeEach, describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 import {
   EnvironmentId,
   MessageId,
+  ProviderInstanceId,
   SubagentId,
   ThreadId,
   type ServerConfig,
@@ -32,9 +34,16 @@ vi.mock("../lib/composerContext", () => ({
   serializeComposerMessageForServer: (text: string) => ({ text }),
   uploadedComposerContext: () => undefined,
 }));
-vi.mock("@t3tools/client-runtime/state/runtime", () => ({
-  squashAtomCommandFailure: () => new Error("Connection lost"),
-}));
+vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@t3tools/client-runtime/state/runtime")>();
+  return {
+    ...actual,
+    squashAtomCommandFailure: (result: Parameters<typeof actual.squashAtomCommandFailure>[0]) =>
+      result.cause === undefined
+        ? new Error("Connection lost")
+        : actual.squashAtomCommandFailure(result),
+  };
+});
 vi.mock("./threads", () => ({ threadEnvironment: { startReply: "startReply" } }));
 vi.mock("./use-atom-command", () => ({ useAtomCommand: () => fixture.dispatch }));
 vi.mock("./use-composer-drafts", () => ({
@@ -56,17 +65,32 @@ const config = {
   environment: { capabilities: { messageReplies: true, inlineMessageContext: true } },
 } as unknown as ServerConfig;
 
-function replies() {
+async function replies() {
   let result: ReturnType<typeof useThreadMessageReplies> | undefined;
   function Probe() {
-    result = useThreadMessageReplies({
-      thread: { environmentId, id: threadId },
+    const actions = useThreadMessageReplies({
+      thread: {
+        environmentId,
+        id: threadId,
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      },
       connected: true,
       serverConfig: config,
     });
+    useLayoutEffect(() => {
+      result = actions;
+    }, [actions]);
     return null;
   }
-  renderToStaticMarkup(<Probe />);
+  const renderer = createRoot(document.createElement("div"));
+  await act(() => {
+    renderer.render(<Probe />);
+  });
+  onTestFinished(async () => {
+    await act(() => renderer.unmount());
+  });
   return result!;
 }
 
@@ -92,16 +116,12 @@ beforeEach(() => {
 });
 
 describe("mobile reply submission", () => {
-  it("reuses the source topic and keeps typed text while selecting or cancelling", () => {
-    const actions = replies();
+  it("reuses the source topic and keeps typed text while selecting or cancelling", async () => {
+    const actions = await replies();
     actions.selectReply({
       id: MessageId.make("reply-source"),
       role: "assistant",
       text: "Topic answer",
-      turnId: null,
-      streaming: false,
-      createdAt: "2026-10-13T10:00:00.000Z",
-      updatedAt: "2026-10-13T10:00:00.000Z",
       replyTopicId: SubagentId.make("existing-topic"),
     });
     expect(fixture.draft.messageReply?.replyTopicId).toBe("existing-topic");
@@ -114,13 +134,46 @@ describe("mobile reply submission", () => {
   it("keeps the draft and source after a rejected send", async () => {
     fixture.dispatch.mockResolvedValueOnce({ _tag: "Failure" });
     const before = fixture.draft;
-    expect(await replies().sendReply(before)).toBeNull();
+    const actions = await replies();
+    expect(await actions.sendReply(before)).toBeNull();
     expect(fixture.draft).toEqual(before);
     expect(fixture.alert).toHaveBeenCalled();
+    expect(await actions.sendReply(before)).toBe(MessageId.make("sent"));
+    expect(fixture.dispatch).toHaveBeenCalledTimes(2);
+  });
+  it("releases an abandoned upload and sends the replacement reply without losing its draft", async () => {
+    const before = fixture.draft;
+    fixture.prepare.mockImplementationOnce(async () => {
+      fixture.draft = {
+        ...before,
+        text: "Replacement",
+        messageReply: {
+          ...before.messageReply!,
+          replyTopicId: SubagentId.make("replacement-topic"),
+        },
+      };
+      return { status: "ready", attachments: [], draftAttachments: [], pendingAttachmentIds: [] };
+    });
+    const actions = await replies();
+    expect(await actions.sendReply(before)).toBeNull();
+    expect(fixture.dispatch).not.toHaveBeenCalled();
+    expect(fixture.draft.text).toBe("Replacement");
+    expect(fixture.draft.messageReply?.replyTopicId).toBe("replacement-topic");
+    expect(await actions.sendReply(fixture.draft)).toBe(MessageId.make("sent"));
+    expect(fixture.dispatch).toHaveBeenCalledTimes(1);
+  });
+  it("preserves upload error details and releases the reply for retry", async () => {
+    fixture.prepare.mockRejectedValueOnce(new Error("Upload failed"));
+    const actions = await replies();
+    const before = fixture.draft;
+    expect(await actions.sendReply(before)).toBeNull();
+    expect(fixture.alert).toHaveBeenCalledWith("chat.reply.sendFailed", "Upload failed");
+    expect(fixture.draft).toEqual(before);
+    expect(await actions.sendReply(before)).toBe(MessageId.make("sent"));
   });
   it("dispatches to the selected topic and clears only after acceptance", async () => {
     const before = fixture.draft;
-    expect(await replies().sendReply(before)).toBe(MessageId.make("sent"));
+    expect(await (await replies()).sendReply(before)).toBe(MessageId.make("sent"));
     expect(fixture.dispatch).toHaveBeenCalledWith({
       environmentId,
       input: {
@@ -128,8 +181,13 @@ describe("mobile reply submission", () => {
         replyTopicId: before.messageReply!.replyTopicId,
         replyTo: before.messageReply!.replyTo,
         commandId: "command",
-        createdAt: "2026-10-13T10:00:00.000Z",
-        message: { messageId: "sent", role: "user", text: "Explain this", attachments: [] },
+        targetThreadId: "reply:topic",
+        messageId: "sent",
+        text: "Explain this",
+        attachments: [],
+        modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
       },
     });
     expect(fixture.draft).toEqual({ text: "", attachments: [] });
@@ -148,7 +206,7 @@ describe("mobile reply submission", () => {
       await pending;
       return { _tag: "Success" };
     });
-    const actions = replies();
+    const actions = await replies();
     const sending = actions.sendReply(fixture.draft);
     await dispatched;
     expect(await actions.sendReply(fixture.draft)).toBeNull();

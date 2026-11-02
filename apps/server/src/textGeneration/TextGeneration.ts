@@ -1,385 +1,273 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type {
-  ChatAttachment,
-  ModelSelection,
-  ProviderInstanceId,
-  ProviderInteractionMode,
+import type { ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  isProviderAvailable,
+  isProviderTextGenerationCapable,
+  resolveProjectProviderInstanceEnabled,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import { exhaustedUsageWindow } from "@t3tools/shared/usageLimits";
+import {
+  defaultTextGenerationModel,
+  fallbackTextGenerationModelSelection,
+} from "@t3tools/shared/serverSettings";
+import * as ServerSettings from "../serverSettings.ts";
+import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { TextGenerationError } from "@t3tools/contracts";
 
-import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
-import type { ProviderInstance } from "../provider/ProviderDriver.ts";
-import type { DecisionGenerationProvider } from "../decisionGeneration/DecisionGenerationProvider.ts";
-import { modelSelectionPurposeViolation } from "../provider/ModelSelectionPurposePolicy.ts";
-import { makeUsageHardBudgetCheck } from "../provider/usageHardBudget.ts";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ThreadTitleLinks from "./ThreadTitleLinks.ts";
-import type { TextGenerationPolicy } from "./TextGenerationPolicy.ts";
-import type { AutoReasoningMessage } from "./AutoReasoning.ts";
 
-import type { ContextSummaryInput, ContextSummaryResult } from "./ContextSummaryGeneration.ts";
+export type {
+  BranchNameGenerationInput,
+  BranchNameGenerationResult,
+  CommitMessageGenerationInput,
+  CommitMessageGenerationResult,
+  PrContentGenerationInput,
+  PrContentGenerationResult,
+  ReviewGuideGenerationInput,
+  ReviewGuideGenerationResult,
+  ThreadTitleGenerationInput,
+  ThreadTitleGenerationResult,
+} from "@t3tools/provider-core/server/textGeneration";
 
-export type TextGenerationProvider =
-  | "codex"
-  | "claudeAgent"
-  | "cursor"
-  | "grok"
-  | "opencode"
-  | "gemini";
+export type * from "@t3tools/provider-core/server/textGeneration";
 
-export interface CommitMessageGenerationInput {
-  cwd: string;
-  branch: string | null;
-  stagedSummary: string;
-  stagedPatch: string;
-  /** When true, the model also returns a semantic branch name for the change. */
-  includeBranch?: boolean;
-  policy?: TextGenerationPolicy | undefined;
-  /** What model and provider to use for generation. */
-  modelSelection: ModelSelection;
-}
-
-export interface CommitMessageGenerationResult {
-  subject: string;
-  body: string;
-  /** Only present when `includeBranch` was set on the input. */
-  branch?: string | undefined;
-}
-
-export interface PrContentGenerationInput {
-  cwd: string;
-  baseBranch: string;
-  headBranch: string;
-  commitSummary: string;
-  diffSummary: string;
-  diffPatch: string;
-  changeRequestTemplate?: string | undefined;
-  policy?: TextGenerationPolicy | undefined;
-  /** What model and provider to use for generation. */
-  modelSelection: ModelSelection;
-}
-
-export interface PrContentGenerationResult {
-  title: string;
-  body: string;
-}
-
-export interface BranchNameGenerationInput {
-  cwd: string;
-  message: string;
-  /** Metadata-only context. Naming providers must not load or attach the binary payload. */
-  attachments?: ReadonlyArray<ChatAttachment> | undefined;
-  /** What model and provider to use for generation. */
-  modelSelection: ModelSelection;
-}
-
-export interface BranchNameGenerationResult {
-  branch: string;
-}
-
-export interface ThreadMetadataGenerationInput {
-  cwd: string;
-  message: string;
-  /** Metadata-only context. Naming providers must not load or attach the binary payload. */
-  attachments?: ReadonlyArray<ChatAttachment> | undefined;
-  /** What model and provider to use for generation. */
-  modelSelection: ModelSelection;
-}
-
-export interface ThreadMetadataGenerationResult {
-  title: string;
-  branch: string;
-}
-
-export interface ThreadTitleGenerationInput {
-  linkedContext?: string | undefined;
-  cwd: string;
-  message: string;
-  /** Present when replacing an existing title from the current thread history. */
-  previousTitle?: string | undefined;
-  /** Metadata-only context. Naming providers must not load or attach the binary payload. */
-  attachments?: ReadonlyArray<ChatAttachment> | undefined;
-  /** What model and provider to use for generation. */
-  modelSelection: ModelSelection;
-}
-
-export interface ThreadTitleGenerationResult {
-  title: string;
-  needsRefinement?: boolean | undefined;
-}
-
-export interface TranscriptTranslationInput {
-  cwd: string;
-  text: string;
-  modelSelection: ModelSelection;
-}
-
-export interface TranscriptTranslationResult {
-  text: string;
-}
-
-export interface PromptImprovementInput {
-  cwd: string;
-  text: string;
-  modelSelection: ModelSelection;
-  voiceCleanup?: {
-    readonly instructions: string;
-    readonly context: string;
-  };
-}
-
-export interface PromptImprovementResult {
-  text: string;
-}
-
-export interface PlanParallelismReviewGenerationInput {
-  cwd: string;
-  planMarkdown: string;
-  userRequest?: string | undefined;
-  maxSubagents: number;
-  modelSelection: ModelSelection;
-}
-
-export interface PlanParallelismReviewGenerationResult {
-  recommendedSubagents: number;
-}
-
-export interface FetchExplorationWorkerPlan {
-  readonly scope: string;
-  readonly questions: ReadonlyArray<string>;
-}
-
-export interface FetchExplorationPlan {
-  readonly decision: "skip" | "run";
-  readonly workers: ReadonlyArray<FetchExplorationWorkerPlan>;
-}
-
-export interface FetchExplorationGenerationInput {
-  readonly cwd: string;
-  readonly userRequest: string;
-  readonly repositoryOrientation: string;
-  readonly maxRecommendedWorkers: number;
-  readonly modelSelection: ModelSelection;
-}
-
-export type FetchExplorationGenerationResult = FetchExplorationPlan;
-
-export interface AutoReasoningGenerationInput {
-  readonly cwd: string;
-  readonly userPrompt: string;
-  readonly interactionMode: ProviderInteractionMode;
-  readonly attachments: ReadonlyArray<ChatAttachment>;
-  readonly allowedEfforts: ReadonlyArray<string>;
-  readonly conversation: ReadonlyArray<AutoReasoningMessage>;
-  readonly modelSelection: ModelSelection;
-}
-
-export interface AutoReasoningGenerationResult {
-  readonly effort: string;
-  readonly usage?: {
-    readonly inputTokens?: number;
-    readonly outputTokens?: number;
-    readonly totalTokens?: number;
-  };
-}
-
-/**
- * TextGeneration - Service tag for commit and change request text generation.
- */
-export class TextGeneration extends Context.Service<
-  TextGeneration,
-  {
-    readonly decisionGeneration?: DecisionGenerationProvider;
-    readonly summarizeContext?: (
-      input: ContextSummaryInput,
-    ) => Effect.Effect<ContextSummaryResult, TextGenerationError>;
-    readonly decideAutoReasoning: (
-      input: AutoReasoningGenerationInput,
-    ) => Effect.Effect<AutoReasoningGenerationResult, TextGenerationError>;
-
-    /**
-     * Generate a commit message from staged change context.
-     */
-    readonly generateCommitMessage: (
-      input: CommitMessageGenerationInput,
-    ) => Effect.Effect<CommitMessageGenerationResult, TextGenerationError>;
-
-    /**
-     * Generate change request title/body from branch and diff context.
-     */
-    readonly generatePrContent: (
-      input: PrContentGenerationInput,
-    ) => Effect.Effect<PrContentGenerationResult, TextGenerationError>;
-
-    /**
-     * Generate a concise branch name from a user message.
-     */
-    readonly generateBranchName: (
-      input: BranchNameGenerationInput,
-    ) => Effect.Effect<BranchNameGenerationResult, TextGenerationError>;
-
-    /** Generate the first-turn title and branch in one structured model call. */
-    readonly generateThreadMetadata: (
-      input: ThreadMetadataGenerationInput,
-    ) => Effect.Effect<ThreadMetadataGenerationResult, TextGenerationError>;
-
-    /** Generate a concise thread title from a first message or thread history. */
-    readonly generateThreadTitle: (
-      input: ThreadTitleGenerationInput,
-    ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
-
-    readonly translateTranscriptToEnglish: (
-      input: TranscriptTranslationInput,
-    ) => Effect.Effect<TranscriptTranslationResult, TextGenerationError>;
-
-    readonly improvePrompt: (
-      input: PromptImprovementInput,
-    ) => Effect.Effect<PromptImprovementResult, TextGenerationError>;
-
-    readonly reviewPlanParallelism: (
-      input: PlanParallelismReviewGenerationInput,
-    ) => Effect.Effect<PlanParallelismReviewGenerationResult, TextGenerationError>;
-
-    readonly planFetchExploration: (
-      input: FetchExplorationGenerationInput,
-    ) => Effect.Effect<FetchExplorationGenerationResult, TextGenerationError>;
-  }
->()("t3/textGeneration/TextGeneration") {}
-
-type TextGenerationOp =
+type ExtraOperation =
   | "summarizeContext"
   | "decideAutoReasoning"
-  | "generateCommitMessage"
-  | "generatePrContent"
-  | "generateBranchName"
   | "generateThreadMetadata"
-  | "generateThreadTitle"
   | "translateTranscriptToEnglish"
   | "improvePrompt"
   | "reviewPlanParallelism"
   | "planFetchExploration";
 
+export class TextGeneration extends Context.Service<
+  TextGeneration,
+  ProviderTextGeneration & Required<Pick<ProviderTextGeneration, ExtraOperation>>
+>()("t3/textGeneration/TextGeneration") {}
+
+type TextGenerationOp =
+  | ExtraOperation
+  | "generateCommitMessage"
+  | "generatePrContent"
+  | "generateBranchName"
+  | "generateThreadTitle"
+  | "generateReviewGuide";
+
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
   operation: TextGenerationOp,
-  modelSelection: ModelSelection,
+  instanceId: ProviderInstanceId,
 ): Effect.Effect<ProviderInstance["textGeneration"], TextGenerationError> =>
-  registry.getInstance(modelSelection.instanceId).pipe(
+  registry.getInstance(instanceId).pipe(
     Effect.flatMap((instance) =>
       instance
-        ? instance.snapshot.getSnapshot.pipe(
-            Effect.flatMap((provider) => {
-              const violation = modelSelectionPurposeViolation({
-                providers: [provider],
-                selection: modelSelection,
-                purpose: "text-generation",
-              });
-              return violation
-                ? Effect.fail(new TextGenerationError({ operation, detail: violation }))
-                : Effect.succeed(instance.textGeneration);
-            }),
-          )
+        ? Effect.succeed(instance.textGeneration)
         : Effect.fail(
             new TextGenerationError({
               operation,
-              detail: `No provider instance registered for id '${modelSelection.instanceId}'.`,
+              detail: `No provider instance registered for id '${instanceId}'.`,
             }),
           ),
     ),
   );
 
-export const makeTextGenerationFromRegistry = (
-  registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
-  checkBudget: (instanceId: ProviderInstanceId) => Effect.Effect<string | null>,
-  resolveTitleLinks: (
-    input: ThreadTitleGenerationInput,
-  ) => Effect.Effect<string | undefined> = () => Effect.succeed(undefined),
-): TextGeneration["Service"] => {
-  const resolve = (operation: TextGenerationOp, modelSelection: ModelSelection) =>
-    checkBudget(modelSelection.instanceId).pipe(
-      Effect.flatMap((reason) =>
-        reason
-          ? Effect.fail(new TextGenerationError({ operation, detail: reason }))
-          : resolveInstance(registry, operation, modelSelection),
+// Review guides investigate the checkout read-only; the other drivers reject that request.
+const INVESTIGATING_DRIVERS = new Set(["codex", "claudeAgent"]);
+
+/** @public */
+export const make = Effect.gen(function* () {
+  const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+  const sourceControl = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const generate = Effect.fn("TextGeneration.generate")(function* <A>(
+    operation: TextGenerationOp,
+    selection: ModelSelection,
+    invoke: (
+      service: ProviderTextGeneration,
+      modelSelection: ModelSelection,
+    ) => Effect.Effect<A, TextGenerationError>,
+  ) {
+    const snapshots = yield* registry.listInstances.pipe(
+      Effect.flatMap((instances) =>
+        Effect.forEach(instances, (instance) => instance.snapshot.getSnapshot),
       ),
     );
+    const now = DateTime.toEpochMillis(yield* DateTime.now);
+    const limited = exhaustedUsageWindow(
+      snapshots.find((provider) => provider.instanceId === selection.instanceId),
+      now,
+      selection.model,
+    );
+    if (limited) {
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation,
+              detail: "Could not read fallback model settings.",
+              cause,
+            }),
+        ),
+      );
+      selection =
+        fallbackTextGenerationModelSelection(
+          settings.providerInstances,
+          (instanceId, driver) => {
+            const provider = snapshots.find((candidate) => candidate.instanceId === instanceId);
+            return (
+              instanceId !== selection.instanceId &&
+              provider?.enabled === true &&
+              resolveProjectProviderInstanceEnabled(settings, null, instanceId) &&
+              provider.installed &&
+              provider.auth.status !== "unauthenticated" &&
+              isProviderAvailable(provider) &&
+              isProviderTextGenerationCapable(provider) &&
+              (operation !== "generateReviewGuide" || INVESTIGATING_DRIVERS.has(driver)) &&
+              !exhaustedUsageWindow(provider, now, defaultTextGenerationModel(driver))
+            );
+          },
+          { includeConfiguredInstances: true },
+        ) ?? selection;
+    }
+    return yield* resolveInstance(registry, operation, selection.instanceId).pipe(
+      Effect.flatMap((service) => invoke(service, selection)),
+    );
+  });
   return TextGeneration.of({
-    summarizeContext: (input) =>
-      resolve("summarizeContext", input.modelSelection).pipe(
-        Effect.flatMap((generation) =>
-          generation.summarizeContext
-            ? generation.summarizeContext(input)
+    summarizeContext: Effect.fn("TextGeneration.summarizeContext")((input) =>
+      generate("summarizeContext", input.modelSelection, (service, modelSelection) =>
+        service.summarizeContext
+          ? service.summarizeContext({ ...input, modelSelection })
+          : Effect.fail(
+              new TextGenerationError({
+                operation: "summarizeContext",
+                detail: "This provider does not support summarizeContext.",
+              }),
+            ),
+      ),
+    ),
+    decideAutoReasoning: Effect.fn("TextGeneration.decideAutoReasoning")((input) =>
+      generate("decideAutoReasoning", input.modelSelection, (service, modelSelection) =>
+        service.decideAutoReasoning
+          ? service.decideAutoReasoning({ ...input, modelSelection })
+          : Effect.fail(
+              new TextGenerationError({
+                operation: "decideAutoReasoning",
+                detail: "This provider does not support decideAutoReasoning.",
+              }),
+            ),
+      ),
+    ),
+    generateThreadMetadata: Effect.fn("TextGeneration.generateThreadMetadata")((input) =>
+      generate("generateThreadMetadata", input.modelSelection, (service, modelSelection) =>
+        service.generateThreadMetadata
+          ? service.generateThreadMetadata({ ...input, modelSelection })
+          : Effect.fail(
+              new TextGenerationError({
+                operation: "generateThreadMetadata",
+                detail: "This provider does not support generateThreadMetadata.",
+              }),
+            ),
+      ),
+    ),
+    translateTranscriptToEnglish: Effect.fn("TextGeneration.translateTranscriptToEnglish")(
+      (input) =>
+        generate("translateTranscriptToEnglish", input.modelSelection, (service, modelSelection) =>
+          service.translateTranscriptToEnglish
+            ? service.translateTranscriptToEnglish({ ...input, modelSelection })
             : Effect.fail(
                 new TextGenerationError({
-                  operation: "summarizeContext",
-                  detail: "This provider does not support context summaries.",
+                  operation: "translateTranscriptToEnglish",
+                  detail: "This provider does not support translateTranscriptToEnglish.",
                 }),
               ),
         ),
-      ),
-    decideAutoReasoning: (input) =>
-      resolve("decideAutoReasoning", input.modelSelection).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.decideAutoReasoning(input)),
-      ),
-    generateCommitMessage: (input) =>
-      resolve("generateCommitMessage", input.modelSelection).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.generateCommitMessage(input)),
-      ),
-    generatePrContent: (input) =>
-      resolve("generatePrContent", input.modelSelection).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.generatePrContent(input)),
-      ),
-    generateBranchName: (input) =>
-      resolve("generateBranchName", input.modelSelection).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.generateBranchName(input)),
-      ),
-    generateThreadMetadata: (input) =>
-      resolve("generateThreadMetadata", input.modelSelection).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.generateThreadMetadata(input)),
-      ),
-    generateThreadTitle: (input) =>
-      resolve("generateThreadTitle", input.modelSelection).pipe(
-        Effect.flatMap((textGeneration) =>
-          Effect.gen(function* () {
-            const linkedContext = input.linkedContext ?? (yield* resolveTitleLinks(input));
-            return yield* textGeneration.generateThreadTitle({ ...input, linkedContext });
-          }),
-        ),
-      ),
-    translateTranscriptToEnglish: (input) =>
-      resolve("translateTranscriptToEnglish", input.modelSelection).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.translateTranscriptToEnglish(input)),
-      ),
-    improvePrompt: (input) =>
-      resolve("improvePrompt", input.modelSelection).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.improvePrompt(input)),
-      ),
-    reviewPlanParallelism: (input) =>
-      resolve("reviewPlanParallelism", input.modelSelection).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.reviewPlanParallelism(input)),
-      ),
-    planFetchExploration: (input) =>
-      resolve("planFetchExploration", input.modelSelection).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.planFetchExploration(input)),
-      ),
-  });
-};
-
-/** @public Service construction is part of the canonical Effect module API. */
-export const make = Effect.gen(function* () {
-  const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
-  const checkBudget = yield* makeUsageHardBudgetCheck;
-  const sourceControl = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
-  return makeTextGenerationFromRegistry(registry, checkBudget, (input) =>
-    ThreadTitleLinks.resolveThreadTitleLinks(input).pipe(
-      Effect.provideService(
-        SourceControlProviderRegistry.SourceControlProviderRegistry,
-        sourceControl,
+    ),
+    improvePrompt: Effect.fn("TextGeneration.improvePrompt")((input) =>
+      generate("improvePrompt", input.modelSelection, (service, modelSelection) =>
+        service.improvePrompt
+          ? service.improvePrompt({ ...input, modelSelection })
+          : Effect.fail(
+              new TextGenerationError({
+                operation: "improvePrompt",
+                detail: "This provider does not support improvePrompt.",
+              }),
+            ),
       ),
     ),
-  );
+    reviewPlanParallelism: Effect.fn("TextGeneration.reviewPlanParallelism")((input) =>
+      generate("reviewPlanParallelism", input.modelSelection, (service, modelSelection) =>
+        service.reviewPlanParallelism
+          ? service.reviewPlanParallelism({ ...input, modelSelection })
+          : Effect.fail(
+              new TextGenerationError({
+                operation: "reviewPlanParallelism",
+                detail: "This provider does not support reviewPlanParallelism.",
+              }),
+            ),
+      ),
+    ),
+    planFetchExploration: Effect.fn("TextGeneration.planFetchExploration")((input) =>
+      generate("planFetchExploration", input.modelSelection, (service, modelSelection) =>
+        service.planFetchExploration
+          ? service.planFetchExploration({ ...input, modelSelection })
+          : Effect.fail(
+              new TextGenerationError({
+                operation: "planFetchExploration",
+                detail: "This provider does not support planFetchExploration.",
+              }),
+            ),
+      ),
+    ),
+
+    generateCommitMessage: Effect.fn("TextGeneration.generateCommitMessage")(function (input) {
+      return generate("generateCommitMessage", input.modelSelection, (service, modelSelection) =>
+        service.generateCommitMessage({ ...input, modelSelection }),
+      );
+    }),
+    generatePrContent: Effect.fn("TextGeneration.generatePrContent")(function (input) {
+      return generate("generatePrContent", input.modelSelection, (service, modelSelection) =>
+        service.generatePrContent({ ...input, modelSelection }),
+      );
+    }),
+    generateBranchName: Effect.fn("TextGeneration.generateBranchName")(function (input) {
+      return generate("generateBranchName", input.modelSelection, (service, modelSelection) =>
+        service.generateBranchName({ ...input, modelSelection }),
+      );
+    }),
+    generateReviewGuide: Effect.fn("TextGeneration.generateReviewGuide")(function (input) {
+      return generate("generateReviewGuide", input.modelSelection, (service, modelSelection) =>
+        service.generateReviewGuide({ ...input, modelSelection }),
+      );
+    }),
+    generateThreadTitle: Effect.fn("TextGeneration.generateThreadTitle")(function (input) {
+      return generate(
+        "generateThreadTitle",
+        input.modelSelection,
+        Effect.fn("TextGeneration.operation")(function* (textGeneration, modelSelection) {
+          const linkedContext =
+            input.linkedContext ??
+            (yield* ThreadTitleLinks.resolveThreadTitleLinks(input).pipe(
+              Effect.provideService(
+                SourceControlProviderRegistry.SourceControlProviderRegistry,
+                sourceControl,
+              ),
+            ));
+          return yield* textGeneration.generateThreadTitle({
+            ...input,
+            linkedContext,
+            modelSelection,
+          });
+        }),
+      );
+    }),
+  });
 });
 
 export const layer = Layer.effect(TextGeneration, make);

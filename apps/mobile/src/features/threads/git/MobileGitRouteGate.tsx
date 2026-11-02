@@ -3,7 +3,7 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useEffect, type ComponentProps, type ReactNode } from "react";
 import { View } from "react-native";
 
-import { EmptyState } from "../../../components/EmptyState";
+import { EmptyState } from "../../../components/ui/EmptyState";
 import { LoadingScreen } from "../../../components/LoadingScreen";
 import { useMobileInterfaceTranslator } from "../../../localization/useMobileInterfaceTranslator";
 import { GitBranchesSheet } from "./GitBranchesSheet";
@@ -31,6 +31,7 @@ function MobileGitRouteGate(props: MobileGitRouteGateProps) {
   const availability = useMobileGitWorkbenchAvailability({ environmentId, threadId });
   const available = mobileGitWorkbenchCanActivate(availability);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Replace the native navigation route when its environment can no longer open the workbench.
   useEffect(() => {
     if (available || availability.state === "loading") return;
     const fallback = resolveMobileGitWorkbenchBlockedRoute({ environmentId, threadId });

@@ -1,23 +1,21 @@
-import {
-  CheckpointRef,
-  MessageId,
-  SubagentId,
-  TurnId,
-  type OrchestrationCheckpointSummary,
-} from "@t3tools/contracts";
+import type { ThreadCheckpointSummary as OrchestrationCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
+import { CheckpointRef, MessageId, ThreadId, SubagentId, RunId } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
 import { messageCheckpoints } from "./changed-files-summary";
 import type { ThreadFeedEntry } from "../../lib/threadActivity";
 
-const turnId = TurnId.make("turn");
+const turnId = RunId.make("turn");
 const message = (id: string, reply = false): ThreadFeedEntry => ({
   type: "message",
   id,
   createdAt: "2026-10-26T12:00:00Z",
   message: {
     id: MessageId.make(id),
-    turnId,
+    runId: turnId,
     role: "assistant",
+    attachments: [],
+    visibility: "local",
+    sourceThreadId: ThreadId.make("thread"),
     text: "Answer",
     streaming: false,
     createdAt: "2026-10-26T12:00:00Z",
@@ -26,7 +24,7 @@ const message = (id: string, reply = false): ThreadFeedEntry => ({
   },
 });
 const checkpoint: OrchestrationCheckpointSummary = {
-  turnId,
+  runId: turnId,
   checkpointTurnCount: 1,
   checkpointRef: CheckpointRef.make("checkpoint"),
   status: "ready",

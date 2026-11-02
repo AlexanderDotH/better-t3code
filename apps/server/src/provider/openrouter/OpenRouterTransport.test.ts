@@ -7,7 +7,7 @@ import * as Fiber from "effect/Fiber";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
-import { HttpBody, HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpBody, HttpClient, HttpClientResponse } from "effect/http";
 
 import {
   completeOpenRouterText,
@@ -172,9 +172,7 @@ describe("OpenRouter transport", () => {
         message: "OpenRouter Decisions response schema is invalid",
       });
       // A schema encoder could hide leaked properties by stripping unknown fields.
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.stringify(error)).not.toContain("leak");
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.stringify(error)).not.toContain("secret-key");
     }),
   );
@@ -203,7 +201,6 @@ describe("OpenRouter transport", () => {
         status: 429,
         retryAfterSeconds: 11,
       });
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.stringify(error)).not.toContain("private upstream details");
     }),
   );
@@ -229,7 +226,6 @@ describe("OpenRouter transport", () => {
       expect(error._tag).toBe("OpenRouterTransportSecurityError");
       expect(requests).toBe(1);
       // A schema encoder could hide leaked properties by stripping unknown fields.
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.stringify(error)).not.toContain("secret-key");
     }),
   );
@@ -302,6 +298,7 @@ describe("OpenRouter transport", () => {
       const transport = yield* makeOpenRouterTransport({
         resolveApiKey: Effect.succeed(Redacted.make("secret-key")),
       }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+      // @effect-diagnostics-next-line abortControllerInEffect:off -- This test drives cancellation of an external request signal.
       const controller = new AbortController();
       const fiber = yield* Effect.forkChild(
         transport.decide({ ...decisionRequest, signal: controller.signal }),
@@ -355,7 +352,6 @@ describe("OpenRouter transport", () => {
         if (status === 401) expect(error._tag).toBe("OpenRouterAuthenticationError");
         if (status === 429) expect(error).toMatchObject({ retryAfterSeconds: 17 });
         // A schema encoder could hide leaked properties by stripping unknown fields.
-        // @effect-diagnostics-next-line preferSchemaOverJson:off
         const serializedError = JSON.stringify(error);
         expect(serializedError).not.toContain("secret response body");
         expect(serializedError).not.toContain("secret-key");
@@ -397,7 +393,6 @@ describe("OpenRouter transport", () => {
           "OpenRouter could not route the selected model with the required request capabilities",
       });
       // A schema encoder could hide leaked properties by stripping unknown fields.
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       const serializedError = JSON.stringify(error);
       expect(serializedError).not.toContain("secret route");
       expect(serializedError).not.toContain("secret-key");
@@ -435,7 +430,6 @@ describe("OpenRouter transport", () => {
       expect(error.message).toContain("inference request");
       expect(error.message).toContain("Management API key");
       // A schema encoder could hide leaked properties by stripping unknown fields.
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       const serializedError = JSON.stringify(error);
       expect(serializedError).not.toContain("management-secret");
       expect(serializedError).not.toContain("User not found");
@@ -452,6 +446,7 @@ describe("OpenRouter transport", () => {
       const transport = yield* makeOpenRouterTransport({
         resolveApiKey: Effect.succeed(Redacted.make("secret-key")),
       }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+      // @effect-diagnostics-next-line abortControllerInEffect:off -- This test drives cancellation of an external request signal.
       const controller = new AbortController();
       controller.abort();
 
@@ -513,6 +508,7 @@ describe("OpenRouter transport", () => {
       const transport = yield* makeOpenRouterTransport({
         resolveApiKey: Effect.succeed(Redacted.make("secret-key")),
       }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+      // @effect-diagnostics-next-line abortControllerInEffect:off -- This test drives cancellation of an external request signal.
       const controller = new AbortController();
 
       const events = yield* transport

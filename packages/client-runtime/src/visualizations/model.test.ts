@@ -116,7 +116,13 @@ describe("visualization source model", () => {
         "vega",
         JSON.stringify({
           data: [
-            { name: "map", values: { type: "FeatureCollection", features: Array(5001).fill({}) } },
+            {
+              name: "map",
+              values: {
+                type: "FeatureCollection",
+                features: Array.from({ length: 5001 }, () => ({})),
+              },
+            },
           ],
         }),
       ),

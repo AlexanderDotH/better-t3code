@@ -1,19 +1,17 @@
+import { useStableCallback } from "../../hooks/useStableCallback";
 import type { AtomCommand } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
-import { useCallback, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import { useAtomCommand } from "../../state/use-atom-command";
 
 export function useSettingsCommand<W, A, E>(command: AtomCommand<W, A, E>) {
   const run = useAtomCommand(command, { reportFailure: false });
-  return useCallback(
-    async (input: W): Promise<A> => {
-      const result = await run(input);
-      if (result._tag === "Failure") throw Cause.squash(result.cause);
-      return result.value;
-    },
-    [run],
-  );
+  return useStableCallback(async (input: W): Promise<A> => {
+    const result = await run(input);
+    if (result._tag === "Failure") throw Cause.squash(result.cause);
+    return result.value;
+  });
 }
 
 export function useSettingsMutation<A, W = void>(options: {

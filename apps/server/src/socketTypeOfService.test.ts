@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - exercises Node's HTTP socket boundary.
-// @effect-diagnostics globalFetch:off - regression requires Node's bundled Undici fetch.
+// @effect-diagnostics globalFetch:off - requests the isolated Node HTTP fixture.
 import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 
@@ -27,10 +27,21 @@ describe("socket type of service compatibility", () => {
       throw qosError();
     });
     installSocketTypeOfServiceCompatibility("darwin", prototype);
+    let acceptedSocket: NodeNet.Socket | undefined;
+    let qosResult: NodeNet.Socket | undefined;
+    // Plain fetch does not request QoS on every Node/Undici version and platform.
+    // Invoke the wrapped hint from a real socket callback before serving the response.
+    server.once("connection", (socket) => {
+      acceptedSocket = socket;
+      qosResult = prototype.setTypeOfService.call(socket, 32);
+    });
     try {
       const response = await fetch(`http://127.0.0.1:${address.port}`);
       expect(await response.text()).toBe("ok");
-      expect(setTypeOfService).toHaveBeenCalled();
+      expect(setTypeOfService).toHaveBeenCalledWith(32);
+      expect(acceptedSocket).toBeInstanceOf(NodeNet.Socket);
+      expect(setTypeOfService.mock.contexts).toContain(acceptedSocket);
+      expect(qosResult).toBe(acceptedSocket);
     } finally {
       vi.restoreAllMocks();
       server.closeAllConnections();

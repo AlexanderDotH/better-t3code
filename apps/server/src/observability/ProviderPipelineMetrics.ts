@@ -257,5 +257,3 @@ export const stampProviderIngress = providerPipelineMetrics.stampIngress;
 export const recordProviderPipelineDuration = providerPipelineMetrics.recordDuration;
 export const recordProviderPipelineQueue = providerPipelineMetrics.recordQueue;
 export const releaseProviderPipelineQueue = providerPipelineMetrics.releaseQueue;
-export const readProviderPipelineMetrics = providerPipelineMetrics.snapshot;
-export const resetProviderPipelineMetrics = providerPipelineMetrics.reset;

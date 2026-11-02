@@ -19,23 +19,6 @@ export interface McpProviderSessionConfig {
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
 }
 
-/** Provider env with the device variables applied over `base`, or `base` untouched. */
-export function withAgentDeviceEnvironment(
-  base: NodeJS.ProcessEnv,
-  config: Pick<McpProviderSessionConfig, "agentDeviceEnvironment"> | undefined,
-): NodeJS.ProcessEnv {
-  const extra = config?.agentDeviceEnvironment;
-  if (!extra) return base;
-  const separator = extra.PATH_SEPARATOR ?? ":";
-  const basePath = base.PATH ?? base.Path;
-  const { PATH: shimDir, PATH_SEPARATOR: _separator, ...rest } = extra;
-  return {
-    ...base,
-    ...rest,
-    ...(shimDir ? { PATH: basePath ? `${shimDir}${separator}${basePath}` : shimDir } : {}),
-  };
-}
-
 const sessionsByThread = new Map<ThreadId, McpProviderSessionConfig>();
 
 export function setMcpProviderSession(config: McpProviderSessionConfig): void {
@@ -46,27 +29,6 @@ export function readMcpProviderSession(threadId: ThreadId): McpProviderSessionCo
   return sessionsByThread.get(threadId);
 }
 
-export function bindMcpProviderDeepPlan(
-  threadId: ThreadId,
-  binding: McpDeepPlanContext | undefined,
-): void {
-  const current = sessionsByThread.get(threadId);
-  if (current === undefined) return;
-  const { deepPlan: _previous, ...config } = current;
-  const capabilities = new Set(current.capabilities);
-  if (binding === undefined) capabilities.delete("deep-plan");
-  else capabilities.add("deep-plan");
-  sessionsByThread.set(threadId, {
-    ...config,
-    capabilities,
-    ...(binding === undefined ? {} : { deepPlan: binding }),
-  });
-}
-
 export function clearMcpProviderSession(threadId: ThreadId): void {
   sessionsByThread.delete(threadId);
-}
-
-export function clearAllMcpProviderSessions(): void {
-  sessionsByThread.clear();
 }

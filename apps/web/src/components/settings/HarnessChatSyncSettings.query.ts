@@ -2,8 +2,8 @@ import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, HarnessChatSyncListInput } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useContext, useMemo, useState } from "react";
+import { AsyncResult, Atom } from "effect/reactivity";
+import { useContext, useState } from "react";
 
 import { agentSettingsEnvironment } from "../../state/agentSettings";
 
@@ -27,22 +27,15 @@ export function useHarnessChatPages(
     cursors: ReadonlyArray<string | undefined>;
   }>({ key, cursors: FIRST_PAGE });
   const cursors = pagination.key === key ? pagination.cursors : FIRST_PAGE;
-  const pageAtoms = useMemo(
-    () =>
-      enabled
-        ? cursors.map((cursor) =>
-            agentSettingsEnvironment.harnessChatSync.listQuery({
-              environmentId,
-              input: { ...input, ...(cursor === undefined ? {} : { cursor }) },
-            }),
-          )
-        : [],
-    [cursors, enabled, environmentId, input],
-  );
-  const pagesAtom = useMemo(
-    () => Atom.make((get) => pageAtoms.map((page) => get(page))),
-    [pageAtoms],
-  );
+  const pageAtoms = enabled
+    ? cursors.map((cursor) =>
+        agentSettingsEnvironment.harnessChatSync.listQuery({
+          environmentId,
+          input: { ...input, ...(cursor === undefined ? {} : { cursor }) },
+        }),
+      )
+    : [];
+  const pagesAtom = Atom.make((get) => pageAtoms.map((page) => get(page)));
   const results = useAtomValue(pagesAtom);
   const pages = results.flatMap((result) => {
     const value = Option.getOrNull(AsyncResult.value(result));

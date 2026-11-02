@@ -1,3 +1,5 @@
+import * as PubSub from "effect/PubSub";
+import * as Stream from "effect/Stream";
 import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -206,7 +208,18 @@ describe("McpConfigurationReconciler", () => {
   it.effect("reconciles catalog changes made outside the MCP config engine", () =>
     Effect.gen(function* () {
       const applied = yield* Deferred.make<McpConfigurationReconcileInput>();
-      const settingsLayer = ServerSettingsService.layerTest();
+      const changes = yield* PubSub.unbounded<ServerSettings>();
+      yield* Effect.addFinalizer(() => PubSub.shutdown(changes));
+      const current = yield* Ref.make(settings([]));
+      const settingsLayer = Layer.mock(ServerSettingsService)({
+        getSettings: Ref.get(current),
+        subscribeChanges: PubSub.subscribe(changes).pipe(Effect.map(Stream.fromSubscription)),
+        updateSettings: (patch) =>
+          Ref.updateAndGet(current, (previous) => ({
+            ...previous,
+            mcp: { ...previous.mcp, ...patch.mcp },
+          })).pipe(Effect.tap((updated) => PubSub.publish(changes, updated))),
+      });
       const reconcilerLayer = makeMcpConfigurationReconcilerLayer({
         reconcileConfiguration: (input) => Deferred.succeed(applied, input).pipe(Effect.as([])),
         providerCapability: () => Effect.succeed("nativeConfig"),

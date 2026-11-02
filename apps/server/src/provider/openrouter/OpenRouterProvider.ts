@@ -13,7 +13,7 @@ import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 
-import { buildServerProvider } from "../providerSnapshot.ts";
+import { buildServerProvider } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   openRouterAuthenticatedAuth,
   openRouterUnauthenticatedAuth,

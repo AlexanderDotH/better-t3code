@@ -517,6 +517,65 @@ describe("project index controller lifetime and request ordering", () => {
     controller.dispose();
   });
 
+  it("owns one initial refresh per subscription lifetime and coalesces stream invalidations", async () => {
+    const first = deferred<ProjectIndexStatusV1>();
+    const refresh = deferred<ProjectIndexStatusV1>();
+    const trailing = deferred<ProjectIndexStatusV1>();
+    const reconnected = deferred<ProjectIndexStatusV1>();
+    const secondLoadStarted = deferred<void>();
+    const thirdLoadStarted = deferred<void>();
+    const disconnect = vi.fn();
+    let receive: ((event: ProjectIndexStreamEvent) => void) | undefined;
+    const getStatus = vi
+      .fn()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => {
+        secondLoadStarted.resolve();
+        return refresh.promise;
+      })
+      .mockImplementationOnce(() => {
+        thirdLoadStarted.resolve();
+        return trailing.promise;
+      })
+      .mockImplementationOnce(() => reconnected.promise);
+    const controller = createProjectIndexController({
+      api: makeApi({
+        getStatus,
+        subscribe: (_, listener) => {
+          receive = listener;
+          return disconnect;
+        },
+      }),
+      scope: makeStatus().scope,
+    });
+    const removeFirst = controller.subscribe(() => {});
+    const removeSecond = controller.subscribe(() => {});
+    expect(getStatus).toHaveBeenCalledTimes(1);
+    first.resolve(makeStatus());
+    const invalidate = () =>
+      receive?.({ type: "invalidate", scopeId: "scope-a", revision: 1, reason: "source-changed" });
+    invalidate();
+    await secondLoadStarted.promise;
+    invalidate();
+    invalidate();
+    expect(getStatus).toHaveBeenCalledTimes(2);
+    refresh.resolve(makeStatus());
+    await thirdLoadStarted.promise;
+    expect(getStatus).toHaveBeenCalledTimes(3);
+    removeFirst();
+    expect(disconnect).not.toHaveBeenCalled();
+    removeSecond();
+    expect(disconnect).toHaveBeenCalledTimes(1);
+    trailing.resolve(makeStatus({ revision: 9 }));
+    const removeReconnected = controller.subscribe(() => {});
+    expect(getStatus).toHaveBeenCalledTimes(4);
+    expect(controller.getSnapshot().status?.revision).toBe(1);
+    reconnected.resolve(makeStatus({ revision: 2 }));
+    await reconnected.promise;
+    expect(controller.getSnapshot().status?.revision).toBe(2);
+    removeReconnected();
+  });
+
   it("ignores out-of-order refreshes and disposed requests", async () => {
     const older = deferred<ProjectIndexStatusV1>();
     const newer = deferred<ProjectIndexStatusV1>();

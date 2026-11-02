@@ -1,3 +1,5 @@
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as DateTime from "effect/DateTime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DeepPlanReadSourceChunkResult,
@@ -5,6 +7,11 @@ import {
   DeepPlanSourceId,
   EnvironmentId,
   ExecutionEnvironmentDescriptor,
+  ContextTransferId,
+  EventId,
+  RunId,
+  TurnItemId,
+  ProviderInstanceId,
   MessageId,
   ProjectId,
   ThreadId,
@@ -20,14 +27,14 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { makeSqlStatementCounter } from "../../integration/SqlStatementCounter.integration.ts";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import { ActivityPayloadFromJsonString } from "../persistence/activityPayload.ts";
 import { ServerConfig } from "../config.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
-import { layerConfig as SqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
+import { layerConfig as SqlitePersistenceLive } from "../persistence/Sqlite.ts";
 import {
   canonicalSourceJson,
   sourceChunkHash,
@@ -41,7 +48,7 @@ const at = "2026-10-16T10:00:00.000Z";
 const decodeSourceChunk = Schema.decodeUnknownEffect(DeepPlanReadSourceChunkResult);
 const encodeActivityPayload = Schema.encodeEffect(ActivityPayloadFromJsonString);
 const environmentId = EnvironmentId.make("deep-plan-source-test-environment");
-const descriptor = Schema.decodeUnknownSync(ExecutionEnvironmentDescriptor)({
+const descriptor = Schema.decodeSync(ExecutionEnvironmentDescriptor)({
   environmentId,
   label: "Source test",
   platform: { os: "linux", arch: "x64" },
@@ -213,6 +220,222 @@ const initializeRemoteCollection = Effect.fnUntraced(function* (
 
 it.layer(TestLayer)("DeepPlanSources", (it) => {
   it.effect(
+    "freezes inherited V2 fork history and stops at an exact imported-message boundary",
+    () =>
+      Effect.gen(function* () {
+        const sources = yield* DeepPlanSources;
+        const projectId = yield* seedProject();
+        const parentId = ThreadId.make(`${projectId}:native-parent`);
+        const childId = ThreadId.make(`${projectId}:native-fork`);
+        const exactId = ThreadId.make(`${projectId}:exact-fork`);
+        const runId = RunId.make(`${projectId}:source-run`);
+        const selection = { instanceId: ProviderInstanceId.make("codex"), model: "test" };
+        const now = DateTime.makeUnsafe(at);
+        const firstId = MessageId.make(`${projectId}:first`);
+        yield* Effect.gen(function* () {
+          const projection = yield* ProjectionStore.ProjectionStoreV2;
+          for (const id of [parentId, childId, exactId])
+            yield* projection.apply({
+              id: EventId.make(`create:${id}`),
+              type: "thread.created",
+              threadId: id,
+              occurredAt: now,
+              payload: {
+                createdBy: "user",
+                creationSource: "web",
+                id,
+                projectId,
+                title: id,
+                providerInstanceId: selection.instanceId,
+                modelSelection: selection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: null,
+                activeProviderThreadId: null,
+                lineage: {
+                  parentThreadId: id === parentId ? null : parentId,
+                  relationshipToParent: id === parentId ? null : "fork",
+                  rootThreadId: parentId,
+                },
+                forkedFrom: id === childId ? { type: "run", threadId: parentId, runId } : null,
+                createdAt: now,
+                updatedAt: now,
+                archivedAt: null,
+                settledOverride: null,
+                settledAt: null,
+                lastVisitedAt: null,
+                deletedAt: null,
+              },
+            });
+          yield* projection.apply({
+            id: EventId.make(`run:${parentId}`),
+            type: "run.created",
+            threadId: parentId,
+            occurredAt: now,
+            payload: {
+              id: runId,
+              threadId: parentId,
+              ordinal: 1,
+              providerInstanceId: selection.instanceId,
+              modelSelection: selection,
+              providerThreadId: null,
+              userMessageId: firstId,
+              rootNodeId: null,
+              activeAttemptId: null,
+              status: "completed",
+              requestedAt: now,
+              startedAt: now,
+              completedAt: now,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          });
+          for (const [index, text] of [
+            "Original requirement",
+            "Saved implementation",
+            "Later evidence",
+          ].entries()) {
+            const messageId =
+              index === 0 ? firstId : MessageId.make(`${projectId}:source-${index}`);
+            yield* projection.apply({
+              id: EventId.make(`message:${messageId}`),
+              type: "message.updated",
+              threadId: parentId,
+              occurredAt: now,
+              payload: {
+                createdBy: "user",
+                creationSource: "web",
+                id: messageId,
+                threadId: parentId,
+                runId,
+                nodeId: null,
+                role: "user",
+                text,
+                streaming: false,
+                attachments: [],
+                createdAt: now,
+                updatedAt: now,
+              },
+            });
+            yield* projection.apply({
+              id: EventId.make(`item:${messageId}`),
+              type: "turn-item.updated",
+              threadId: parentId,
+              occurredAt: now,
+              payload: {
+                createdBy: "user",
+                creationSource: "web",
+                id: TurnItemId.make(`item:${messageId}`),
+                threadId: parentId,
+                runId,
+                nodeId: null,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: index + 1,
+                status: "completed",
+                title: null,
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                type: "user_message",
+                inputIntent: "turn_start",
+                messageId,
+                text,
+                attachments: [],
+              },
+            });
+          }
+          yield* projection.apply({
+            id: EventId.make(`transfer:${exactId}`),
+            type: "context-transfer.created",
+            threadId: exactId,
+            occurredAt: now,
+            payload: {
+              id: ContextTransferId.make(`transfer:${exactId}`),
+              type: "fork",
+              sourceThreadId: parentId,
+              targetThreadId: exactId,
+              sourcePoint: { threadId: parentId, messageId: firstId },
+              basePoint: null,
+              sourceProviderInstanceId: selection.instanceId,
+              targetProviderInstanceId: null,
+              targetRunId: null,
+              status: "pending",
+              resolution: null,
+              createdBy: "user",
+              error: null,
+              createdAt: now,
+              updatedAt: now,
+              consumedAt: null,
+            },
+          });
+        }).pipe(Effect.provide(ProjectionStore.layer));
+        const inherited = yield* sources.exportSources({
+          projectId,
+          threadIds: [childId],
+          includeArchived: true,
+        });
+        const inheritedChunk = yield* sources.readExportChunk({
+          exportId: inherited.exportId,
+          sourceId: inherited.sources[0]!.sourceId,
+        });
+        assert.equal(inherited.sources[0]?.messageCount, 3);
+        assert.equal(inherited.sources[0]?.forkOrigin?.threadId, parentId);
+        assert.deepEqual(
+          inheritedChunk.records
+            .filter((record) => record.kind === "message")
+            .map((record) => record.message.text),
+          ["Original requirement", "Saved implementation", "Later evidence"],
+        );
+        assert.isTrue(
+          inheritedChunk.records.every((record) => record.origin.threadId === parentId),
+        );
+        const exact = yield* sources.exportSources({
+          projectId,
+          threadIds: [exactId],
+          includeArchived: true,
+        });
+        const exactChunk = yield* sources.readExportChunk({
+          exportId: exact.exportId,
+          sourceId: exact.sources[0]!.sourceId,
+        });
+        assert.deepEqual(
+          exactChunk.records
+            .filter((record) => record.kind === "message")
+            .map((record) => record.message.text),
+          ["Original requirement"],
+        );
+        yield* Effect.gen(function* () {
+          const projections = yield* ProjectionStore.ProjectionStoreV2;
+          const { contextTransfers } = yield* projections.getThreadRecords(exactId, [
+            "contextTransfers",
+          ]);
+          const transfer = contextTransfers[0]!;
+          yield* projections.apply({
+            id: EventId.make(`missing-boundary:${exactId}`),
+            type: "context-transfer.updated",
+            threadId: exactId,
+            occurredAt: now,
+            payload: {
+              ...transfer,
+              sourcePoint: {
+                threadId: parentId,
+                messageId: MessageId.make("missing-frozen-message"),
+              },
+            },
+          });
+        }).pipe(Effect.provide(ProjectionStore.layer));
+        const missing = yield* sources
+          .exportSources({ projectId, threadIds: [exactId], includeArchived: true })
+          .pipe(Effect.flip);
+        assert.equal(missing.code, "source-unavailable");
+      }),
+  );
+
+  it.effect(
     "lists archived chats without freezing, excludes deleted chats, and freezes a consistent paged catalog",
     () =>
       Effect.gen(function* () {
@@ -276,6 +499,117 @@ it.layer(TestLayer)("DeepPlanSources", (it) => {
           "Frozen requirement",
         );
         assert.equal(chunk.records.length, 1);
+        yield* sql`INSERT INTO orchestration_v2_projection_threads
+          (thread_id, project_id, title, default_provider, provider_instance_id, runtime_mode, interaction_mode, created_at, updated_at, payload_json)
+          VALUES (${first}, ${projectId}, 'Current V2 chat', 'codex', 'codex', 'full-access', 'default', ${at}, ${at}, '{}')`;
+        const currentId = `${first}:v2-message`;
+        yield* sql`INSERT INTO orchestration_v2_projection_messages
+          (message_id, thread_id, role, streaming, created_at, updated_at, payload_json)
+          VALUES (${currentId}, ${first}, 'user', 0, ${at}, ${at}, ${canonicalSourceJson({ text: "Current V2 requirement", attachments: [] })})`;
+        yield* sql`INSERT INTO orchestration_v2_projection_turn_items
+          (turn_item_id, thread_id, ordinal, type, status, updated_at, payload_json)
+          VALUES (${`${first}:v2-tool`}, ${first}, 2, 'command_execution', 'completed', ${at}, ${canonicalSourceJson({ title: "Current V2 tool", input: "read source", output: "Current evidence" })})`;
+        const current = yield* sources.exportSources({
+          projectId,
+          threadIds: [first],
+          includeArchived: true,
+        });
+        assert.equal(current.sources[0]?.messageCount, 1);
+        assert.equal(current.sources[0]?.activityCount, 1);
+        const currentChunk = yield* sources.readExportChunk({
+          exportId: current.exportId,
+          sourceId: current.sources[0]!.sourceId,
+        });
+        assert.equal(
+          currentChunk.records.find((record) => record.kind === "message")?.message.text,
+          "Current V2 requirement",
+        );
+        assert.equal(currentChunk.records.filter((record) => record.kind === "activity").length, 1);
+        yield* sql`INSERT INTO legacy_v1_projection_thread_activities (activity_id, thread_id, tone, kind, summary, payload_json, created_at) VALUES (${`${first}:historical-tool`}, ${first}, 'info', 'tool.completed', 'Historical evidence', '{}', ${at})`;
+        yield* sql`INSERT INTO orchestration_v2_legacy_imports (thread_id, source_updated_at, shell_imported_at, transcript_imported_at) VALUES (${first}, ${at}, ${at}, NULL)`;
+        const lazy = yield* sources.exportSources({
+          projectId,
+          threadIds: [first],
+          includeArchived: true,
+        });
+        const lazyChunk = yield* sources.readExportChunk({
+          exportId: lazy.exportId,
+          sourceId: lazy.sources[0]!.sourceId,
+        });
+        assert.equal(
+          lazyChunk.records.find((record) => record.kind === "message")?.message.text,
+          "Edited later",
+        );
+        yield* sql`UPDATE orchestration_v2_legacy_imports SET transcript_imported_at = ${at} WHERE thread_id = ${first}`;
+        const hydrated = yield* sources.exportSources({
+          projectId,
+          threadIds: [first],
+          includeArchived: true,
+        });
+        const hydratedChunk = yield* sources.readExportChunk({
+          exportId: hydrated.exportId,
+          sourceId: hydrated.sources[0]!.sourceId,
+        });
+        assert.equal(
+          hydratedChunk.records.find((record) => record.kind === "message")?.message.text,
+          "Current V2 requirement",
+        );
+        assert.equal(hydrated.sources[0]?.activityCount, 2);
+        const childId = ThreadId.make(`${first}:child`);
+        yield* sql`INSERT INTO orchestration_v2_projection_threads (thread_id, project_id, title, default_provider, provider_instance_id, runtime_mode, interaction_mode, created_at, updated_at, payload_json) VALUES (${childId}, ${projectId}, 'Imported child', 'codex', 'codex', 'full-access', 'default', ${at}, ${at}, '{}')`;
+        yield* sql`INSERT INTO orchestration_v2_legacy_imports (thread_id, source_updated_at, shell_imported_at) VALUES (${childId}, ${at}, ${at})`;
+        yield* sql`INSERT INTO orchestration_v2_legacy_subagent_threads (thread_id, source_thread_id, subagent_id) VALUES (${childId}, ${first}, 'historical-agent')`;
+        yield* sql`INSERT INTO projection_thread_subagent_messages (thread_id, subagent_id, message_id, role, text, is_streaming, created_at, updated_at) VALUES (${first}, 'historical-agent', 'child-message', 'assistant', 'Saved child evidence', 0, ${at}, ${at})`;
+        yield* sql`INSERT INTO orchestration_v2_projection_messages (message_id, thread_id, role, streaming, created_at, updated_at, payload_json) VALUES ('child-message', ${first}, 'assistant', 0, ${at}, ${at}, ${canonicalSourceJson({ text: "Other thread data", attachments: [] })})`;
+        const quote = {
+          messageId: MessageId.make(currentId),
+          role: "user" as const,
+          text: "Saved quoted requirement",
+        };
+        yield* sql`UPDATE projection_thread_subagent_messages SET reply_to_json = ${canonicalSourceJson(quote)}, reply_topic_id = 'saved-topic' WHERE thread_id = ${first} AND subagent_id = 'historical-agent'`;
+        const child = yield* sources.exportSources({
+          projectId,
+          threadIds: [childId],
+          includeArchived: true,
+        });
+        const childChunk = yield* sources.readExportChunk({
+          exportId: child.exportId,
+          sourceId: child.sources[0]!.sourceId,
+        });
+        assert.equal(
+          childChunk.records.find((record) => record.kind === "message")?.message.text,
+          "Saved child evidence",
+        );
+        assert.equal(childChunk.records.filter((record) => record.kind === "message").length, 1);
+        assert.equal(
+          childChunk.records.find((record) => record.kind === "message")?.message.replyTo?.text,
+          quote.text,
+        );
+        assert.equal(
+          childChunk.records.find((record) => record.kind === "message")?.message.replyTopicId,
+          "saved-topic",
+        );
+        yield* sql`INSERT INTO orchestration_v2_projection_messages (message_id, thread_id, role, streaming, created_at, updated_at, payload_json) VALUES ('hydrated-child-message', ${childId}, 'assistant', 0, ${at}, ${at}, ${canonicalSourceJson({ text: "Saved child evidence", attachments: [], replyTo: quote, replyTopicId: "saved-topic" })})`;
+        yield* sql`UPDATE orchestration_v2_legacy_imports SET transcript_imported_at = ${at} WHERE thread_id = ${childId}`;
+        const hydratedChild = yield* sources.exportSources({
+          projectId,
+          threadIds: [childId],
+          includeArchived: true,
+        });
+        const hydratedChildChunk = yield* sources.readExportChunk({
+          exportId: hydratedChild.exportId,
+          sourceId: hydratedChild.sources[0]!.sourceId,
+        });
+        assert.equal(
+          hydratedChildChunk.records.find((record) => record.kind === "message")?.message.replyTo
+            ?.text,
+          quote.text,
+        );
+        assert.equal(
+          hydratedChildChunk.records.find((record) => record.kind === "message")?.message
+            .replyTopicId,
+          "saved-topic",
+        );
       }),
   );
 
@@ -492,7 +826,7 @@ it.layer(TestLayer)("DeepPlanSources", (it) => {
         const id = `${threadId}-${String(index).padStart(4, "0")}`;
         yield* seedMessage({ threadId, id, text: `Root ${index}` });
         messageOrigins.push(id);
-        yield* sql`INSERT INTO projection_thread_activities
+        yield* sql`INSERT INTO legacy_v1_projection_thread_activities
           (activity_id, thread_id, tone, kind, summary, payload_json, created_at)
           VALUES (${id}, ${threadId}, 'info', 'tool.completed', 'Root', '{}', ${at})`;
         activityOrigins.push(id);
@@ -820,7 +1154,7 @@ it.layer(TestLayer)("DeepPlanSources", (it) => {
         const storedToolPayload = yield* encodeActivityPayload(payload);
         yield* seedMessage({ threadId, id: `${threadId}-message`, text });
         yield* sql`
-      INSERT INTO projection_thread_activities (activity_id, thread_id, tone, kind, summary, payload_json, created_at)
+      INSERT INTO legacy_v1_projection_thread_activities (activity_id, thread_id, tone, kind, summary, payload_json, created_at)
       VALUES (${`${threadId}-tool`}, ${threadId}, 'tool', 'tool.completed', 'Large inspection output',
         ${storedToolPayload}, ${at})
     `;
@@ -979,7 +1313,7 @@ it.layer(TestLayer)("DeepPlanSources", (it) => {
       const threadId = yield* seedThread(projectId, "worklog");
       const worklog = "Meaningful worklog detail. ".repeat(4_000);
       yield* sql`
-        INSERT INTO projection_thread_activities (activity_id, thread_id, tone, kind, summary, payload_json, created_at)
+        INSERT INTO legacy_v1_projection_thread_activities (activity_id, thread_id, tone, kind, summary, payload_json, created_at)
         VALUES (${`${threadId}-activity`}, ${threadId}, 'info', 'agent.worklog', ${worklog}, '{}', ${at})
       `;
       const exported = yield* sources.exportSources({ projectId, includeArchived: true });

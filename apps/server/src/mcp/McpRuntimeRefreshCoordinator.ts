@@ -9,8 +9,8 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 
-import type { ProviderAdapterError } from "../provider/Errors.ts";
-import type { ProviderAdapterShape } from "../provider/Services/ProviderAdapter.ts";
+type ProviderAdapterError = Error;
+import type { ProviderAdapterShape } from "./McpRuntimeAdapters.ts";
 import type { RuntimeEntry } from "./McpRuntimeContextState.ts";
 
 interface RuntimeRefreshFlight {
@@ -47,28 +47,27 @@ export const makeMcpRuntimeRefreshCoordinator = Effect.fn("makeMcpRuntimeRefresh
     const refreshFlights = yield* Ref.make<ReadonlyMap<string, RuntimeRefreshFlight>>(new Map());
     const trailingRefreshes = yield* Ref.make<ReadonlySet<string>>(new Set());
 
-    const refreshOnce = (input: McpRuntimeSnapshotInput) =>
-      Effect.gen(function* () {
-        const current = yield* dependencies.requireEntry(input, false);
-        if (current.context.state === "inactive") {
-          return {
-            context: current.context,
-            revision: current.revision,
-            observedAt: current.observedAt,
-            servers: Array.from(current.servers.values()).sort((left, right) =>
-              left.name.localeCompare(right.name),
-            ),
-          } satisfies McpRuntimeSnapshot;
-        }
-        const adapter = yield* dependencies.adapterFor(input.providerInstanceId);
-        const mcpRuntime = adapter.mcpRuntime;
-        if (mcpRuntime === undefined) return yield* dependencies.replaceServers(input, []);
-        const result = yield* Effect.exit(mcpRuntime.getSnapshot(input));
-        if (result._tag === "Failure") {
-          return yield* dependencies.markStale(input, Cause.squash(result.cause));
-        }
-        return yield* dependencies.replaceServers(input, result.value);
-      });
+    const refreshOnce = Effect.fn("refreshOnce")(function* (input: McpRuntimeSnapshotInput) {
+      const current = yield* dependencies.requireEntry(input, false);
+      if (current.context.state === "inactive") {
+        return {
+          context: current.context,
+          revision: current.revision,
+          observedAt: current.observedAt,
+          servers: Array.from(current.servers.values()).sort((left, right) =>
+            left.name.localeCompare(right.name),
+          ),
+        } satisfies McpRuntimeSnapshot;
+      }
+      const adapter = yield* dependencies.adapterFor(input.providerInstanceId);
+      const mcpRuntime = adapter.mcpRuntime;
+      if (mcpRuntime === undefined) return yield* dependencies.replaceServers(input, []);
+      const result = yield* Effect.exit(mcpRuntime.getSnapshot(input));
+      if (result._tag === "Failure") {
+        return yield* dependencies.markStale(input, Cause.squash(result.cause));
+      }
+      return yield* dependencies.replaceServers(input, result.value);
+    });
 
     const removeRefreshFlight = (key: string, flight: RuntimeRefreshFlight) =>
       Ref.update(refreshFlights, (current) => {

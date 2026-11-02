@@ -1,4 +1,4 @@
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Real Git fixtures use synchronous subprocesses independent of the driver under test.
 import * as NodeChildProcess from "node:child_process";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Synchronous helpers prepare and clean isolated repository fixtures.
@@ -28,7 +28,7 @@ const TestLayer = layer.pipe(
 );
 
 const TEST_GIT_ENV = {
-  ...HostProcessEnvironment.defaultValue(),
+  ...HostProcess.Environment.defaultValue(),
   GIT_CONFIG_COUNT: "1",
   GIT_CONFIG_KEY_0: "commit.gpgsign",
   GIT_CONFIG_VALUE_0: "false",

@@ -1,9 +1,9 @@
-import { HarnessChatNativeMessageId } from "./persistence/Services/ProjectionHarnessChatSync.ts";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Fixtures use synchronous host-path normalization outside Effect services.
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  CommandId,
   HarnessChatContinuationKey,
   HarnessChatSessionId,
   HarnessChatSyncSourceId,
@@ -12,7 +12,6 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
-  type OrchestrationCommand,
   type OrchestrationProjectShell,
   type ServerProvider,
 } from "@t3tools/contracts";
@@ -20,7 +19,6 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import {
@@ -30,23 +28,23 @@ import {
   makeHarnessChatSync,
   resolveHarnessChatTargetProject,
 } from "./harnessChatSync.ts";
+import * as SqlClient from "effect/sql/SqlClient";
+import { historyTestLayer } from "./harnessChatSync/historyTestLayer.ts";
+import { makeHistoryWriter } from "./harnessChatSync/HistoryWriter.ts";
+import { ProjectionStoreV2 } from "./orchestration-v2/ProjectionStore.ts";
 import { resolveAttachmentPath } from "./attachmentStore.ts";
 import * as ServerConfig from "./config.ts";
-import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
   ProjectionHarnessChatSyncRepository,
   type ProjectionHarnessChatSyncLink,
   type ProjectionHarnessChatSyncMessageLink,
 } from "./persistence/Services/ProjectionHarnessChatSync.ts";
-import type { ProviderInstance } from "./provider/ProviderDriver.ts";
-import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRegistry.ts";
-import { ProviderSessionDirectory } from "./provider/Services/ProviderSessionDirectory.ts";
-import type { ProviderRuntimeBinding } from "./provider/Services/ProviderSessionDirectory.ts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import { ProviderInstanceRegistry } from "./provider/ProviderInstanceRegistry.ts";
 import {
   makeSupportedProviderHistorySync,
   type ProviderHistorySyncAdapter,
-} from "./provider/Services/ProviderHistorySync.ts";
+} from "@t3tools/provider-core/server/ProviderHistorySync";
 
 const createdAt = "2026-08-23T10:00:00.000Z";
 
@@ -86,7 +84,7 @@ function makeHistoryInstance(input: {
       streamChanges: Stream.empty,
       applyUsageLimits: () => Effect.void,
     },
-    adapter: {} as ProviderInstance["adapter"],
+    orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
     historySync: makeSupportedProviderHistorySync({
       source: {
         sourceId: input.sourceId,
@@ -103,146 +101,36 @@ function makeHistoryInstance(input: {
 function makeHarnessSyncTestLayer(input: {
   readonly baseDir: string;
   readonly instances: ReadonlyArray<ProviderInstance>;
-  readonly commands?: Array<OrchestrationCommand>;
   readonly links?: Map<string, ProjectionHarnessChatSyncLink>;
   readonly messageLinks?: Map<string, ProjectionHarnessChatSyncMessageLink>;
   readonly projects?: Array<OrchestrationProjectShell>;
-  readonly bindings?: Array<ProviderRuntimeBinding>;
   readonly unavailable?: ReadonlyArray<ServerProvider>;
 }) {
-  const links = input.links ?? new Map<string, ProjectionHarnessChatSyncLink>();
-  const messageLinks =
-    input.messageLinks ?? new Map<string, ProjectionHarnessChatSyncMessageLink>();
-  const commands = input.commands ?? [];
-  const projects = input.projects ?? [];
-  const bindings = input.bindings ?? [];
-  const threadProjects = new Map<ThreadId, ProjectId>(
-    [...links.values()].map((link) => [link.threadId, link.projectId]),
-  );
-  const repositoryLayer = Layer.succeed(ProjectionHarnessChatSyncRepository, {
-    upsertLink: (link) => Effect.sync(() => void links.set(link.nativeSessionId, link)),
-    getLinkByThreadId: ({ threadId }) =>
-      Effect.succeed(
-        Option.fromNullishOr(links.values().find((link) => link.threadId === threadId)),
-      ),
-    getLinkBySourceSession: ({ sourceId, nativeSessionId }) =>
-      Effect.succeed(
-        Option.fromNullishOr(
-          links.get(nativeSessionId)?.sourceId === sourceId
-            ? links.get(nativeSessionId)
-            : undefined,
-        ),
-      ),
-    getLinkByContinuationSession: ({ continuationKey, nativeSessionId }) =>
-      Effect.succeed(
-        Option.fromNullishOr(
-          links.get(nativeSessionId)?.continuationKey === continuationKey
-            ? links.get(nativeSessionId)
-            : undefined,
-        ),
-      ),
-    listLinksByContinuationKey: ({ continuationKey }) =>
-      Effect.succeed(
-        [...links.values()].filter((link) => link.continuationKey === continuationKey),
-      ),
-    listLinksBySourceId: ({ sourceId }) =>
-      Effect.succeed([...links.values()].filter((link) => link.sourceId === sourceId)),
-    upsertMessageLink: (link) =>
-      Effect.sync(() => void messageLinks.set(`${link.threadId}:${link.nativeMessageId}`, link)),
-    getMessageLink: ({ threadId, nativeMessageId }) =>
-      Effect.succeed(Option.fromNullishOr(messageLinks.get(`${threadId}:${nativeMessageId}`))),
-    listMessageLinksByThreadId: ({ threadId }) =>
-      Effect.succeed([...messageLinks.values()].filter((link) => link.threadId === threadId)),
-  });
-  const projectionLayer = Layer.mock(ProjectionSnapshotQuery, {
-    getShellSnapshot: () =>
-      Effect.succeed({ snapshotSequence: 0, projects, threads: [], updatedAt: createdAt }),
-    getActiveProjectByWorkspaceRoot: (workspaceRoot) =>
-      Effect.succeed(
-        Option.fromNullishOr(
-          projects.find((project) => project.workspaceRoot === workspaceRoot),
-        ).pipe(Option.map((project) => ({ ...project, deletedAt: null, coordinationClaims: [] }))),
-      ),
-  });
-  const orchestrationLayer = Layer.mock(OrchestrationEngineService, {
-    readEvents: () => Stream.empty,
-    dispatch: (command) =>
-      Effect.sync(() => {
-        commands.push(command);
-        if (command.type === "project.create") {
-          projects.push({
-            id: command.projectId,
-            title: command.title,
-            workspaceRoot: command.workspaceRoot,
-            defaultModelSelection: command.defaultModelSelection ?? null,
-            checkpointsEnabled: true,
-            scripts: [],
-            createdAt: command.createdAt,
-            updatedAt: command.createdAt,
-          });
-        }
-        if (command.type === "thread.create") {
-          threadProjects.set(command.threadId, command.projectId);
-        }
-        if (command.type === "thread.harness-sync.message.import") {
-          const key = `${command.threadId}:${command.nativeMessageId}`;
-          if (!messageLinks.has(key)) {
-            messageLinks.set(key, {
-              threadId: command.threadId,
-              nativeMessageId: HarnessChatNativeMessageId.make(command.nativeMessageId),
-              messageId: command.message.id,
-              linkedAt: command.linkedAt,
-            });
-          }
-        }
-        if (command.type === "thread.harness-sync.link") {
-          const projectId = threadProjects.get(command.threadId);
-          if (projectId) {
-            links.set(command.nativeSessionId, {
-              threadId: command.threadId,
-              projectId,
-              sourceId: command.sourceId,
-              continuationKey: command.continuationKey,
-              nativeSessionId: command.nativeSessionId,
-              providerInstanceId: command.providerInstanceId,
-              providerLabel: command.providerLabel,
-              activity: command.activity,
-              sourceUpdatedAt: command.sourceUpdatedAt,
-              lastSyncedAt: command.lastSyncedAt,
-            });
-          }
-        }
-        return { sequence: commands.length };
-      }),
-    streamDomainEvents: Stream.empty,
-    latestSequence: Effect.succeed(0),
-  });
-  const instanceRegistryLayer = Layer.mock(ProviderInstanceRegistry, {
+  const registry = Layer.mock(ProviderInstanceRegistry, {
     getInstance: (instanceId) =>
       Effect.succeed(input.instances.find((instance) => instance.instanceId === instanceId)),
     listInstances: Effect.succeed(input.instances),
     listUnavailable: Effect.succeed(input.unavailable ?? []),
     streamChanges: Stream.empty,
   });
-  const sessionDirectoryLayer = Layer.mock(ProviderSessionDirectory, {
-    upsert: (binding) => Effect.sync(() => void bindings.push(binding)),
-    getProvider: () => Effect.die("not used"),
-    getBinding: () => Effect.succeed(Option.none()),
-    listThreadIds: () => Effect.succeed([]),
-    listBindings: () => Effect.succeed([]),
-  });
-  const configLayer = ServerConfig.layerTest(process.cwd(), input.baseDir).pipe(
-    Layer.provide(NodeServices.layer),
-  );
-  return Layer.mergeAll(
-    NodeServices.layer,
-    configLayer,
-    repositoryLayer,
-    projectionLayer,
-    orchestrationLayer,
-    instanceRegistryLayer,
-    sessionDirectoryLayer,
-  );
+  const base = Layer.mergeAll(historyTestLayer(input.baseDir), registry);
+  return Layer.effectDiscard(
+    Effect.gen(function* () {
+      const writer = yield* makeHistoryWriter();
+      const repository = yield* ProjectionHarnessChatSyncRepository;
+      for (const project of input.projects ?? [])
+        yield* writer.createProject({
+          commandId: CommandId.make(`seed:${project.id}`),
+          projectId: project.id,
+          title: project.title,
+          workspaceRoot: project.workspaceRoot,
+          createdAt: project.createdAt,
+        });
+      for (const link of input.links?.values() ?? []) yield* repository.upsertLink(link);
+      for (const link of input.messageLinks?.values() ?? [])
+        yield* repository.upsertMessageLink(link);
+    }),
+  ).pipe(Layer.provideMerge(base));
 }
 
 describe("Harness chat sync", () => {
@@ -686,475 +574,230 @@ describe("Harness chat sync", () => {
       expect(listRequests).toEqual([{ limit: 10 }, { cursor: "10", limit: 10 }]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+});
 
-  it.effect("syncs selected root chats additively and refreshes external activity", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-harness-sync-run-",
-      });
-      const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-harness-sync-workspace-",
-      });
-      const missingRoot = NodePath.join(workspaceRoot, "missing");
-      const sourceId = HarnessChatSyncSourceId.make("custom:history:run");
-      const continuationKey = HarnessChatContinuationKey.make("custom:home:run");
-      const project = makeProjectShell("project-existing", workspaceRoot);
-      const commands: OrchestrationCommand[] = [];
-      const links = new Map<string, ProjectionHarnessChatSyncLink>();
-      const messageLinks = new Map<string, ProjectionHarnessChatSyncMessageLink>();
-      const bindings: ProviderRuntimeBinding[] = [];
-      const readCalls: string[] = [];
-      let externalActivity: "active" | "idle" | "unknown" = "idle";
-      const summaries = {
-        first: {
-          sessionId: "session-1",
-          title: "Release chat",
-          preview: "Ship it",
-          cwd: workspaceRoot,
-          model: "custom-model",
-          createdAt,
-          updatedAt: createdAt,
-          archived: false,
-          isChild: false,
-          messageCount: 2,
-          activity: "idle" as const,
-        },
-        unresolved: {
-          sessionId: "session-missing",
-          title: "Missing workspace",
-          preview: null,
-          cwd: missingRoot,
-          model: null,
-          updatedAt: createdAt,
-          archived: false,
-          isChild: false,
-          messageCount: 1,
-          activity: "unknown" as const,
-        },
-        excluded: {
-          sessionId: "session-excluded",
-          title: "Excluded chat",
-          preview: null,
-          cwd: workspaceRoot,
-          model: null,
-          updatedAt: createdAt,
-          archived: false,
-          isChild: false,
-          messageCount: 1,
-          activity: "idle" as const,
-        },
-      };
-      const adapter: ProviderHistorySyncAdapter = {
-        list: ({ cursor }) =>
-          Effect.succeed(
-            cursor === undefined
-              ? {
-                  items: [
-                    summaries.first,
-                    summaries.unresolved,
-                    { ...summaries.first, sessionId: "child-session", isChild: true },
-                  ],
-                  nextCursor: "page-2",
-                }
-              : { items: cursor === "page-2" ? [summaries.excluded] : [] },
-          ),
-        read: ({ sessionId }) =>
-          Effect.sync(() => {
-            readCalls.push(sessionId);
-            return {
+it.effect("imports native messages, plans and audio into V2 and keeps retries additive", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "native-history-v2-" });
+    const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "native-history-workspace-" });
+    const sourceId = HarnessChatSyncSourceId.make("native-history-test");
+    const sessionId = HarnessChatSessionId.make("native-session");
+    let activity: "idle" | "active" = "idle";
+    let planMarkdown = "# Saved plan";
+    const adapter: ProviderHistorySyncAdapter = {
+      list: () =>
+        Effect.succeed({
+          items: [
+            {
               sessionId,
-              cwd: workspaceRoot,
+              title: "Saved native chat",
+              preview: "Saved answer",
+              cwd: workspace,
               model: "custom-model",
               updatedAt: createdAt,
-              items: [
+              archived: false,
+              isChild: false,
+              activity,
+            },
+          ],
+        }),
+      read: () =>
+        Effect.succeed({
+          sessionId,
+          cwd: workspace,
+          updatedAt: createdAt,
+          items: [
+            {
+              kind: "message",
+              nativeMessageId: "native-user",
+              role: "user",
+              text: "Saved question",
+              attachments: [],
+              createdAt,
+            },
+            {
+              kind: "message",
+              nativeMessageId: "native-answer",
+              role: "assistant",
+              text: "Saved answer",
+              attachments: [
                 {
-                  kind: "message" as const,
-                  nativeMessageId: "native-message-1",
-                  role: "user" as const,
-                  text: "Import me",
-                  attachments: [
-                    {
-                      type: "image" as const,
-                      nativeAttachmentId: "native-image-1",
-                      name: "imported.png",
-                      mimeType: "image/png",
-                      content: {
-                        type: "data-url" as const,
-                        dataUrl: "data:image/png;base64,AA==",
-                      },
-                    },
-                    {
-                      type: "audio" as const,
-                      nativeAttachmentId: "native-audio-1",
-                      name: "voice.ogg",
-                      mimeType: "audio/ogg",
-                      content: { type: "file" as const, path: "/missing/voice.ogg" },
-                    },
-                  ],
-                  createdAt,
-                  updatedAt: createdAt,
-                },
-                {
-                  kind: "plan" as const,
-                  nativePlanId: "native-plan-1",
-                  markdown: "# Plan\n\n- Ship it",
-                  createdAt,
-                  updatedAt: createdAt,
+                  type: "audio",
+                  nativeAttachmentId: "audio",
+                  name: "voice.ogg",
+                  mimeType: "audio/ogg",
+                  content: { type: "data-url", dataUrl: "data:audio/ogg;base64,YXVkaW8=" },
                 },
               ],
-            };
-          }),
-        resumeCursor: ({ sessionId }) =>
-          Effect.succeed({ resumeCursor: { sessionId }, adapterKey: "custom" }),
-        checkActivity: () => Effect.succeed(externalActivity),
-      };
-      const instance = makeHistoryInstance({
-        instanceId: "custom-primary",
-        sourceId,
-        continuationKey,
-        adapter,
-      });
-      const testLayer = makeHarnessSyncTestLayer({
-        baseDir,
-        instances: [instance],
-        commands,
-        links,
-        messageLinks,
-        projects: [project],
-        bindings,
-      });
-
-      const result = yield* Effect.gen(function* () {
-        const service = yield* makeHarnessChatSync();
-        const first = yield* service.run({
-          sourceId,
-          selection: {
-            mode: "allMatching",
-            query: "",
-            includeArchived: false,
-            excludedSessionIds: [HarnessChatSessionId.make("session-excluded")],
-          },
-          targetResolutions: [],
-        });
-        const second = yield* service.run({
-          sourceId,
-          selection: {
-            mode: "only",
-            sessionIds: [HarnessChatSessionId.make("session-1")],
-          },
-          targetResolutions: [],
-        });
-        externalActivity = "active";
-        const status = yield* service.status({
-          sourceId,
-          sessionIds: [HarnessChatSessionId.make("session-1")],
-        });
-        return { first, second, status };
-      }).pipe(Effect.provide(testLayer));
-
-      expect(result.first).toMatchObject({
-        selectedCount: 2,
-        syncedCount: 1,
-        failedCount: 1,
-        threadsCreated: 1,
-        threadsUpdated: 0,
-        messagesImported: 1,
-        attachmentsImported: 1,
-        attachmentsSkipped: 1,
-      });
-      expect(result.first.failures).toEqual([
-        expect.objectContaining({
-          sessionId: HarnessChatSessionId.make("session-missing"),
-          code: "target-unresolved",
+              createdAt,
+            },
+            { kind: "plan", nativePlanId: "native-plan", markdown: planMarkdown, createdAt },
+          ],
         }),
-      ]);
-      expect(result.second).toMatchObject({
-        selectedCount: 1,
+      resumeCursor: () => Effect.succeed({ resumeCursor: { sessionId: "actual-resume-session" } }),
+      checkActivity: () => Effect.succeed(activity),
+    };
+    const instance = makeHistoryInstance({
+      instanceId: "custom-native",
+      sourceId,
+      continuationKey: "native-history-home",
+      adapter,
+    });
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const service = yield* makeHarnessChatSync();
+      const writer = yield* makeHistoryWriter();
+      const ownerId = ThreadId.make("existing-native-owner");
+      const projectId = ProjectId.make("existing-native-project");
+      yield* writer.createProject({
+        commandId: CommandId.make("existing-native-project"),
+        projectId,
+        title: "Existing",
+        workspaceRoot: workspace,
+        createdAt,
+      });
+      yield* writer.createThread({
+        commandId: CommandId.make("existing-native-thread"),
+        threadId: ownerId,
+        projectId,
+        title: "Existing native chat",
+        modelSelection: { instanceId: instance.instanceId, model: "custom-model" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      });
+      yield* writer.bindNativeThread({
+        threadId: ownerId,
+        driver: instance.driverKind,
+        providerInstanceId: instance.instanceId,
+        nativeId: "actual-resume-session",
+      });
+      yield* writer.importMessage({
+        commandId: CommandId.make("existing-native-message"),
+        threadId: ownerId,
+        message: {
+          id: MessageId.make("live-user-message"),
+          role: "user",
+          text: "Saved question",
+          createdAt,
+          updatedAt: createdAt,
+        },
+      });
+      const request = {
+        sourceId,
+        selection: { mode: "only" as const, sessionIds: [sessionId] },
+        targetResolutions: [],
+      };
+      const first = yield* service.run(request);
+      expect(first).toMatchObject({
         syncedCount: 1,
         failedCount: 0,
+        messagesImported: 1,
         threadsCreated: 0,
-        threadsUpdated: 1,
-        messagesImported: 0,
-        attachmentsImported: 0,
-        attachmentsSkipped: 0,
+        attachmentsImported: 1,
       });
-      expect(result.status.statuses).toEqual([
-        expect.objectContaining({
-          sessionId: HarnessChatSessionId.make("session-1"),
-          activity: "active",
-          link: expect.objectContaining({ activity: "active" }),
-        }),
+      const threadId = first.items[0]!.threadId;
+      expect(threadId).toBe(ownerId);
+      const store = yield* ProjectionStoreV2;
+      const projection = yield* store.getThreadProjection(threadId);
+      expect(projection.messages.map((message) => message.text)).toEqual([
+        "Saved question",
+        "Saved answer",
       ]);
-      expect(readCalls).toEqual(["session-1", "session-1"]);
-      expect(bindings).toHaveLength(2);
-      expect(bindings[0]).toMatchObject({
-        status: "stopped",
-        resumeCursor: { sessionId: "session-1" },
-      });
       expect(
-        commands.filter((command) => command.type === "thread.harness-sync.message.import"),
-      ).toHaveLength(1);
-      expect(commands.some((command) => command.type === "thread.turn.start")).toBe(false);
-      expect(links.get("session-1")?.activity).toBe("active");
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("persists provider-history audio as a canonical chat attachment", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-harness-sync-audio-",
-      });
-      const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-harness-sync-audio-workspace-",
-      });
-      const commands: OrchestrationCommand[] = [];
-      const sessionId = HarnessChatSessionId.make("session-with-audio");
-      const sourceId = HarnessChatSyncSourceId.make("custom:history:audio");
-      const adapter: ProviderHistorySyncAdapter = {
-        list: () =>
-          Effect.succeed({
-            items: [
-              {
-                sessionId,
-                title: "Audio history",
-                preview: null,
-                cwd: workspaceRoot,
-                model: null,
-                updatedAt: createdAt,
-                archived: false,
-                isChild: false,
-                messageCount: 1,
-                activity: "idle",
-              },
-            ],
-          }),
-        read: () =>
-          Effect.succeed({
-            sessionId,
-            cwd: workspaceRoot,
-            updatedAt: createdAt,
-            items: [
-              {
-                kind: "message",
-                nativeMessageId: "native-audio-message",
-                role: "user",
-                text: "Listen to this",
-                attachments: [
-                  {
-                    type: "audio",
-                    nativeAttachmentId: "native-audio",
-                    name: "voice-note.ogg",
-                    mimeType: "audio/ogg",
-                    content: {
-                      type: "data-url",
-                      dataUrl: "data:audio/ogg;base64,YXVkaW8=",
-                    },
-                  },
-                ],
-              },
-            ],
-          }),
-        resumeCursor: () => Effect.succeed({ resumeCursor: { sessionId } }),
-      };
-      const instance = makeHistoryInstance({
-        instanceId: "custom-audio",
-        sourceId,
-        continuationKey: "custom:home:audio",
-        adapter,
-      });
-
-      const result = yield* Effect.gen(function* () {
-        const service = yield* makeHarnessChatSync();
-        return yield* service.run({
-          sourceId,
-          selection: { mode: "only", sessionIds: [sessionId] },
-          targetResolutions: [],
-        });
-      }).pipe(
-        Effect.provide(makeHarnessSyncTestLayer({ baseDir, instances: [instance], commands })),
-      );
-
-      expect(result.attachmentsImported).toBe(1);
-      expect(result.attachmentsSkipped).toBe(0);
-      const imported = commands.find(
-        (command) => command.type === "thread.harness-sync.message.import",
-      );
-      expect(imported?.type).toBe("thread.harness-sync.message.import");
-      if (imported?.type !== "thread.harness-sync.message.import") return;
-      const attachment = imported.message.attachments?.[0];
-      expect(attachment).toMatchObject({
-        type: "audio",
-        name: "voice-note.ogg",
-        mimeType: "audio/ogg",
-      });
-      if (!attachment) return;
-      const config = yield* ServerConfig.ServerConfig.pipe(
-        Effect.provide(
-          ServerConfig.layerTest(process.cwd(), baseDir).pipe(Layer.provide(NodeServices.layer)),
+        projection.turnItems.some(
+          (item) => item.type === "proposed_plan" && item.markdown === "# Saved plan",
         ),
+      ).toBe(true);
+      expect(projection.providerThreads[0]?.nativeThreadRef?.nativeId).toBe(
+        "actual-resume-session",
       );
-      const persistedPath = resolveAttachmentPath({
+      expect(projection.thread.activeProviderThreadId).toBe(projection.providerThreads[0]?.id);
+      expect(projection.runs).toEqual([]);
+      expect(yield* sql`SELECT effect_id FROM orchestration_v2_effect_outbox`).toEqual([]);
+      const config = yield* ServerConfig.ServerConfig;
+      const attachment = projection.messages[1]!.attachments[0]!;
+      expect(attachment.type).toBe("audio");
+      const attachmentPath = resolveAttachmentPath({
         attachmentsDir: config.attachmentsDir,
         attachment,
       });
-      expect(persistedPath).not.toBeNull();
-      if (persistedPath) expect(yield* fileSystem.exists(persistedPath)).toBe(true);
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("rejects a transcript whose native session differs without creating local state", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-harness-sync-mismatched-session-",
-      });
-      const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-harness-sync-mismatched-workspace-",
-      });
-      const sessionId = HarnessChatSessionId.make("session-expected");
-      const sourceId = HarnessChatSyncSourceId.make("custom:history:mismatched-session");
-      const commands: OrchestrationCommand[] = [];
-      const adapter: ProviderHistorySyncAdapter = {
-        list: () =>
-          Effect.succeed({
-            items: [
-              {
-                sessionId,
-                title: "Mismatched transcript",
-                preview: null,
-                cwd: workspaceRoot,
-                model: null,
-                updatedAt: createdAt,
-                archived: false,
-                isChild: false,
-                messageCount: 1,
-                activity: "idle",
-              },
-            ],
-          }),
-        read: () =>
-          Effect.succeed({
-            sessionId: "session-from-another-request",
-            items: [],
-            updatedAt: createdAt,
-          }),
-        resumeCursor: () => Effect.die("resume must not run for a mismatched transcript"),
-      };
-      const instance = makeHistoryInstance({
-        instanceId: "custom-mismatched-session",
-        sourceId,
-        continuationKey: "custom:home:mismatched-session",
-        adapter,
-      });
-
-      const result = yield* Effect.gen(function* () {
-        const service = yield* makeHarnessChatSync();
-        return yield* service.run({
-          sourceId,
-          selection: { mode: "only", sessionIds: [sessionId] },
-          targetResolutions: [],
-        });
-      }).pipe(
-        Effect.provide(
-          makeHarnessSyncTestLayer({
-            baseDir,
-            instances: [instance],
-            projects: [makeProjectShell("project-mismatched-session", workspaceRoot)],
-            commands,
-          }),
-        ),
+      expect(attachmentPath).not.toBeNull();
+      expect(yield* fs.readFileString(attachmentPath!)).toBe("audio");
+      const second = yield* service.run(request);
+      expect(second.failures).toEqual([]);
+      expect(second).toMatchObject({ threadsCreated: 0, threadsUpdated: 1, messagesImported: 0 });
+      expect((yield* store.getThreadProjection(threadId)).messages).toHaveLength(2);
+      planMarkdown = "# Updated native plan";
+      const updated = yield* service.run(request);
+      expect(updated.failures).toEqual([]);
+      const plans = (yield* store.getThreadProjection(threadId)).turnItems.filter(
+        (item) => item.type === "proposed_plan",
       );
+      expect(plans).toHaveLength(1);
+      expect(plans[0]?.markdown).toBe(planMarkdown);
+      activity = "active";
+      const status = yield* service.status({ threadId });
+      expect(status.statuses[0]?.activity).toBe("active");
+      expect((yield* store.getThreadProjection(threadId)).thread.harnessSync?.activity).toBe(
+        "active",
+      );
+      expect((yield* store.getThreadProjection(threadId)).thread.harnessSync?.sourceUpdatedAt).toBe(
+        createdAt,
+      );
+    }).pipe(Effect.provide(makeHarnessSyncTestLayer({ baseDir, instances: [instance] })));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 
-      expect(result).toMatchObject({
-        selectedCount: 1,
-        syncedCount: 0,
-        failedCount: 1,
-        threadsCreated: 0,
-        messagesImported: 0,
-      });
-      expect(result.failures).toEqual([
-        {
-          sessionId,
-          code: "history-read-failed",
-          message: "The provider returned a transcript for a different session.",
-          retryable: false,
-        },
-      ]);
-      expect(commands).toEqual([]);
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("refreshes a linked chat by local thread id", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-harness-sync-thread-status-",
-      });
-      const threadId = ThreadId.make("thread-linked-status");
-      const projectId = ProjectId.make("project-linked-status");
-      const sessionId = HarnessChatSessionId.make("session-linked-status");
-      const sourceId = HarnessChatSyncSourceId.make("custom:history:status");
-      const continuationKey = HarnessChatContinuationKey.make("custom:home:status");
-      const providerInstanceId = ProviderInstanceId.make("custom-status");
-      const links = new Map<string, ProjectionHarnessChatSyncLink>([
-        [
-          sessionId,
-          {
-            threadId,
-            projectId,
-            sourceId,
-            continuationKey,
-            nativeSessionId: sessionId,
-            providerInstanceId,
-            providerLabel: "Custom status",
-            activity: "active",
-            sourceUpdatedAt: createdAt,
-            lastSyncedAt: createdAt,
-          },
-        ],
-      ]);
-      const adapter: ProviderHistorySyncAdapter = {
-        list: () =>
-          Effect.succeed({
-            items: [
-              {
-                sessionId,
-                title: "Linked status",
-                preview: null,
-                cwd: null,
-                model: null,
-                updatedAt: createdAt,
-                archived: false,
-                isChild: false,
-                activity: "active",
-              },
-            ],
-          }),
-        read: () => Effect.succeed({ sessionId, items: [], updatedAt: createdAt }),
-        resumeCursor: () => Effect.succeed({ resumeCursor: { sessionId } }),
-        checkActivity: () => Effect.succeed("idle"),
-      };
-      const instance = makeHistoryInstance({
-        instanceId: providerInstanceId,
-        sourceId,
-        continuationKey,
-        adapter,
-      });
-
-      const result = yield* Effect.gen(function* () {
-        const service = yield* makeHarnessChatSync();
-        return yield* service.status({ threadId });
-      }).pipe(Effect.provide(makeHarnessSyncTestLayer({ baseDir, instances: [instance], links })));
-
-      expect(result.statuses).toEqual([
-        expect.objectContaining({
-          sessionId,
-          activity: "idle",
-          link: expect.objectContaining({ threadId, activity: "idle" }),
+it.effect("rejects mismatched native transcripts before creating V2 history", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "native-history-mismatch-" });
+    const workspace = yield* fs.makeTempDirectoryScoped({
+      prefix: "native-history-mismatch-workspace-",
+    });
+    const sourceId = HarnessChatSyncSourceId.make("mismatched-native-history");
+    const sessionId = HarnessChatSessionId.make("expected-session");
+    const adapter: ProviderHistorySyncAdapter = {
+      list: () =>
+        Effect.succeed({
+          items: [
+            {
+              sessionId,
+              title: "Expected chat",
+              preview: null,
+              cwd: workspace,
+              model: null,
+              updatedAt: createdAt,
+              archived: false,
+              isChild: false,
+              activity: "idle",
+            },
+          ],
         }),
-      ]);
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-});
+      read: () => Effect.succeed({ sessionId: "wrong-session", items: [], updatedAt: createdAt }),
+      resumeCursor: () => Effect.succeed({ resumeCursor: { sessionId } }),
+    };
+    const instance = makeHistoryInstance({
+      instanceId: "custom-mismatch",
+      sourceId,
+      continuationKey: "mismatch-home",
+      adapter,
+    });
+    yield* Effect.gen(function* () {
+      const service = yield* makeHarnessChatSync();
+      const result = yield* service.run({
+        sourceId,
+        selection: { mode: "only", sessionIds: [sessionId] },
+        targetResolutions: [],
+      });
+      expect(result.failedCount).toBe(1);
+      const sql = yield* SqlClient.SqlClient;
+      expect(yield* sql`SELECT thread_id FROM orchestration_v2_projection_threads`).toEqual([]);
+      expect(yield* sql`SELECT message_id FROM orchestration_v2_projection_messages`).toEqual([]);
+    }).pipe(Effect.provide(makeHarnessSyncTestLayer({ baseDir, instances: [instance] })));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);

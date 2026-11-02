@@ -31,10 +31,7 @@ jobs:
   resolve:
     name: Verify preview eligibility
     if: >-
-      (github.repository == 'pingdotgg/t3code' ||
-      vars.T3_ENABLE_PRODUCTION_AUTOMATION == 'true') && (github.event_name ==
-      'workflow_run' && github.event.workflow_run.event == 'pull_request' &&
-      github.event.workflow_run.conclusion == 'success')
+      (github.repository == 'pingdotgg/t3code' || vars.T3_ENABLE_PRODUCTION_AUTOMATION == 'true') && (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success')
     # The build workflow completes for every PR push (its label gate is on the
     # job), so this runs often and usually finds nothing. Keep it cheap.
     runs-on: ubuntu-24.04
@@ -78,16 +75,19 @@ jobs:
               return;
             }
 
-            // workflow_run.pull_requests is empty for fork PRs, so resolve the
-            // PR from the built commit instead and require exactly one open PR
-            // from the same head repository and branch. The build baked its
+            // workflow_run.pull_requests and the commit-to-PR lookup are both
+            // empty for fork PRs, so list open PRs by head owner and branch
+            // and require exactly one at the built commit. The build baked its
             // PR number into the version, so two candidates would mean the
             // asset name could belong to either.
-            const associated = await github.paginate(
-              github.rest.repos.listPullRequestsAssociatedWithCommit,
-              { owner, repo, commit_sha: run.head_sha, per_page: 100 },
-            );
-            const matching = associated.filter(
+            const open = await github.paginate(github.rest.pulls.list, {
+              owner,
+              repo,
+              state: "open",
+              head: `${run.head_repository?.owner?.login}:${run.head_branch}`,
+              per_page: 100,
+            });
+            const matching = open.filter(
               (candidate) =>
                 candidate.state === "open" &&
                 candidate.head.sha === run.head_sha &&
@@ -281,12 +281,15 @@ jobs:
   build:
     name: Package and sign macOS arm64 preview
     needs: resolve
-    if: (github.repository == 'pingdotgg/t3code' ||
-      vars.T3_ENABLE_PRODUCTION_AUTOMATION == 'true') &&
-      (needs.resolve.outputs.eligible == 'true')
+    if: >-
+      (github.repository == 'pingdotgg/t3code' || vars.T3_ENABLE_PRODUCTION_AUTOMATION == 'true') && (needs.resolve.outputs.eligible == 'true')
     concurrency:
       group: desktop-macos-preview-${{ needs.resolve.outputs.pr_number }}-build
       cancel-in-progress: true
+    # release-desktop.yml asks for actions: read (its Windows builds list artifacts).
+    permissions:
+      actions: read
+      contents: read
     uses: ./.github/workflows/release-desktop.yml
     secrets:
       CSC_LINK: ${{ secrets.CSC_LINK }}
@@ -305,7 +308,7 @@ jobs:
       clerk_cli_oauth_client_id: ${{ needs.resolve.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.resolve.outputs.relay_url }}
       label: macOS arm64 preview
-      runner: blacksmith-12vcpu-macos-26
+      runner: macos-26
       platform: mac
       target: dmg
       arch: arm64
@@ -320,11 +323,9 @@ jobs:
   publish:
     name: Publish anonymous download
     needs: [resolve, build]
-    if: (github.repository == 'pingdotgg/t3code' ||
-      vars.T3_ENABLE_PRODUCTION_AUTOMATION == 'true') &&
-      (needs.resolve.outputs.eligible == 'true' && needs.build.result ==
-      'success')
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    if: >-
+      (github.repository == 'pingdotgg/t3code' || vars.T3_ENABLE_PRODUCTION_AUTOMATION == 'true') && (needs.resolve.outputs.eligible == 'true' && needs.build.result == 'success')
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Its own group, so a publish never cancels a newer commit's signing job
     # (they would share the build group) and is never cancelled mid-upload.
@@ -498,11 +499,7 @@ jobs:
     # the build consumed it withdraws the request and drops any older
     # download too.
     if: >-
-      (github.repository == 'pingdotgg/t3code' ||
-      vars.T3_ENABLE_PRODUCTION_AUTOMATION == 'true') && (github.event_name ==
-      'pull_request_target' && (github.event.action == 'closed' ||
-      (github.event.action == 'unlabeled' && github.event.label.name ==
-      'preview:mac')))
+      (github.repository == 'pingdotgg/t3code' || vars.T3_ENABLE_PRODUCTION_AUTOMATION == 'true') && (github.event_name == 'pull_request_target' && (github.event.action == 'closed' || (github.event.action == 'unlabeled' && github.event.label.name == 'preview:mac')))
     # Runs on every PR close and usually finds nothing. Keep it cheap.
     runs-on: ubuntu-24.04
     timeout-minutes: 10

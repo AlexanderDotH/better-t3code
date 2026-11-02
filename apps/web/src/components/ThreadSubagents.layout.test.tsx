@@ -1,8 +1,7 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { act, type Ref } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { type Ref } from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, expect, it, vi } from "vite-plus/test";
-
 vi.mock("../state/threads", async () => {
   const Option = await import("effect/Option");
   return {
@@ -19,14 +18,12 @@ vi.mock("./ChatAgentStack", () => ({
     <div ref={stackRef} data-agent-stack-probe="" />
   ),
 }));
-vi.mock("./SubagentTranscriptDialog", () => ({ SubagentTranscriptDialog: () => null }));
-
+vi.mock("./SubagentTranscriptDialog", () => ({
+  SubagentTranscriptDialog: () => null,
+}));
 import { ThreadSubagents } from "./ThreadSubagents";
-
 afterEach(() => vi.unstubAllGlobals());
-
 it("expands agents only while the rendered chat width leaves room beside them", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   let chatLeft = 300;
   let renderedChatLeft: number | null = null;
   let onResize = () => {};
@@ -41,14 +38,27 @@ it("expands agents only while the rendered chat width leaves room beside them", 
     querySelector: () =>
       renderedChatLeft === null
         ? null
-        : { getBoundingClientRect: () => ({ left: renderedChatLeft, width: 600 }) },
+        : {
+            getBoundingClientRect: () => ({
+              left: renderedChatLeft,
+              width: 600,
+            }),
+          },
   };
   const stack = {
-    dataset: { agentLayout: "" },
+    dataset: {
+      agentLayout: "",
+    },
     closest: () => chatColumn,
-    getBoundingClientRect: () => ({ right: 240 }),
+    getBoundingClientRect: () => ({
+      right: 240,
+    }),
   };
-  const chatWidthProbe = { getBoundingClientRect: () => ({ left: chatLeft }) };
+  const chatWidthProbe = {
+    getBoundingClientRect: () => ({
+      left: chatLeft,
+    }),
+  };
   vi.stubGlobal("window", {
     requestAnimationFrame: (callback: FrameRequestCallback) => {
       const frame = ++nextFrame;
@@ -62,14 +72,35 @@ it("expands agents only while the rendered chat width leaves room beside them", 
   vi.stubGlobal(
     "ResizeObserver",
     class {
-      constructor(callback: () => void) {
-        onResize = callback;
+      private readonly targets = new Set<Element>();
+      constructor(callback: ResizeObserverCallback) {
+        onResize = () =>
+          callback(
+            Array.from(
+              this.targets,
+              (target) =>
+                ({
+                  target,
+                  contentRect: {
+                    width: chatLeft,
+                    height: 24,
+                  },
+                }) as ResizeObserverEntry,
+            ),
+            this as unknown as ResizeObserver,
+          );
       }
-      observe = vi.fn();
-      disconnect = vi.fn();
+      observe(target: Element) {
+        this.targets.add(target);
+      }
+      unobserve(target: Element) {
+        this.targets.delete(target);
+      }
+      disconnect() {
+        this.targets.clear();
+      }
     },
   );
-
   let renderer: ReactTestRenderer | undefined;
   try {
     await act(() => {
@@ -93,28 +124,24 @@ it("expands agents only while the rendered chat width leaves room beside them", 
       );
     });
     expect(stack.dataset.agentLayout).toBe("expanded");
-
     chatLeft = 251;
     await act(() => {
       onResize();
       flushFrames();
     });
     expect(stack.dataset.agentLayout).toBe("compact");
-
     chatLeft = 400;
     await act(() => {
       onResize();
       flushFrames();
     });
     expect(stack.dataset.agentLayout).toBe("expanded");
-
     renderedChatLeft = 249;
     await act(() => {
       onResize();
       flushFrames();
     });
     expect(stack.dataset.agentLayout).toBe("compact");
-
     renderedChatLeft = 400;
     await act(() => {
       onResize();
@@ -122,6 +149,8 @@ it("expands agents only while the rendered chat width leaves room beside them", 
     });
     expect(stack.dataset.agentLayout).toBe("expanded");
   } finally {
-    await act(() => renderer?.unmount());
+    await act(async () => {
+      await renderer?.unmount();
+    });
   }
 });

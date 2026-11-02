@@ -2,7 +2,9 @@ import {
   PROJECT_INDEX_MAX_QUERY_TOKENS,
   PROJECT_INDEX_MAX_QUERY_RECORDS,
   type EnvironmentId,
-  type ProjectContextInput,
+  ProjectContextInput,
+  type ProjectId,
+  type ThreadId,
   type ProjectEntityV1,
   type ProjectIndexQueryResultV1,
   type ProjectIndexScopeInput,
@@ -11,7 +13,12 @@ import type {
   ProjectIndexClientApi,
   ProjectIndexController,
 } from "@t3tools/client-runtime/project-indexing";
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useId, useState } from "react";
+import { useAtomValue } from "@effect/atom-react";
+import * as Data from "effect/Data";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import { Atom } from "effect/reactivity";
 
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { ProjectIndexGraph } from "../knowledge-graph/ProjectIndexGraph";
@@ -42,6 +49,63 @@ function queryError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+class ProjectIndexQueryKey extends Data.Class<{
+  readonly owner: string;
+  readonly generation: number;
+  readonly api: ProjectIndexClientApi;
+  readonly query: ProjectIndexController["query"] | undefined;
+  readonly projectId: ProjectId;
+  readonly threadId: ThreadId | undefined;
+  readonly requestJson: string;
+  readonly workspaceFingerprint: string;
+  readonly key: string;
+  readonly resourceKey: string;
+}> {}
+const requestJsonCodec = Schema.fromJsonString(ProjectContextInput);
+const decodeRequest = Schema.decodeUnknownSync(requestJsonCodec);
+const encodeRequest = Schema.encodeSync(requestJsonCodec);
+const projectIndexQueries = Atom.family((input: ProjectIndexQueryKey) => {
+  const request = decodeRequest(input.requestJson);
+  const scope = {
+    projectId: input.projectId,
+    ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
+  };
+  const continuation = request.cursor !== undefined;
+  return Atom.make(
+    Effect.tryPromise(() =>
+      input.query ? input.query(request) : input.api.query({ ...scope, ...request }),
+    ).pipe(
+      Effect.match({
+        onSuccess: (result): QueryState | null => {
+          const scopeChanged =
+            result.scope.projectId !== scope.projectId ||
+            (scope.threadId !== undefined && result.scope.threadId !== scope.threadId) ||
+            result.scope.workspaceFingerprint !== input.workspaceFingerprint;
+          return {
+            key: input.key,
+            resourceKey: input.resourceKey,
+            result: scopeChanged ? null : result,
+            error: null,
+            scopeChanged,
+            pending: false,
+            continuation,
+          };
+        },
+        onFailure: (failure): QueryState | null => ({
+          key: input.key,
+          resourceKey: input.resourceKey,
+          result: null,
+          error: queryError(failure.cause),
+          scopeChanged: false,
+          pending: false,
+          continuation,
+        }),
+      }),
+    ),
+  );
+});
+const emptyQuery = Atom.make(Effect.succeed<QueryState | null>(null));
+
 function useProjectIndexQuery({
   api,
   environmentId,
@@ -65,7 +129,6 @@ function useProjectIndexQuery({
   readonly retainPrevious?: boolean;
   readonly enabled?: boolean;
 }) {
-  const continuation = request.cursor !== undefined;
   const resourceKey = JSON.stringify([
     environmentId,
     scope,
@@ -86,57 +149,33 @@ function useProjectIndexQuery({
     revision,
     refreshToken,
   ]);
-  const [state, setState] = useState<QueryState | null>(null);
-
-  useEffect(() => {
-    if (!enabled) return;
-    let active = true;
-    void (query ? query(request) : api.query({ ...scope, ...request })).then(
-      (result) => {
-        if (!active) return;
-        if (
-          result.scope.projectId !== scope.projectId ||
-          (scope.threadId !== undefined && result.scope.threadId !== scope.threadId) ||
-          result.scope.workspaceFingerprint !== workspaceFingerprint
-        ) {
-          setState({
+  const owner = useId();
+  const requestKey = `${enabled}\u0000${key}`;
+  const [requestVersion, setRequestVersion] = useState({ key: requestKey, generation: 0 });
+  const generation = requestVersion.generation + (requestVersion.key === requestKey ? 0 : 1);
+  if (requestVersion.key !== requestKey) setRequestVersion({ key: requestKey, generation });
+  const result = useAtomValue(
+    enabled
+      ? projectIndexQueries(
+          new ProjectIndexQueryKey({
+            owner,
+            generation,
+            api,
+            query,
+            projectId: scope.projectId,
+            threadId: scope.threadId,
+            requestJson: encodeRequest(request),
+            workspaceFingerprint,
             key,
             resourceKey,
-            result: null,
-            error: null,
-            scopeChanged: true,
-            pending: false,
-            continuation,
-          });
-          return;
-        }
-        setState({
-          key,
-          resourceKey,
-          result,
-          error: null,
-          scopeChanged: false,
-          pending: false,
-          continuation,
-        });
-      },
-      (error: unknown) => {
-        if (active)
-          setState({
-            key,
-            resourceKey,
-            result: null,
-            error: queryError(error),
-            scopeChanged: false,
-            pending: false,
-            continuation,
-          });
-      },
-    );
-    return () => {
-      active = false;
-    };
-  }, [api, continuation, enabled, key, query, request, resourceKey, scope, workspaceFingerprint]);
+          }),
+        )
+      : emptyQuery,
+  );
+  const current = result._tag === "Success" ? result.value : null;
+  const [previous, setPrevious] = useState<QueryState | null>(null);
+  if (current !== null && current !== previous) setPrevious(current);
+  const state = current ?? previous;
 
   if (!enabled) return null;
   if (state?.key === key) return state;
@@ -195,42 +234,33 @@ function EntityDetailsLoader({
     readonly key: string;
     readonly entity: ProjectEntityV1;
   } | null>(null);
-  const entityRequest = useMemo(
-    () => ({
-      operation: "entity" as const,
-      entityId,
-      maxTokens: contextRequest.maxTokens,
-      limit: Math.min(
-        PROJECT_INDEX_MAX_QUERY_RECORDS,
-        (ENTITY_PAGE_SIZE * contextRequest.maxTokens) / ENTITY_QUERY_TOKEN_BUDGET,
-      ),
-      ...(currentCursor === null ? {} : { cursor: currentCursor }),
-      includeStale: true,
-    }),
-    [contextRequest.maxTokens, currentCursor, entityId],
-  );
-  const callersRequest = useMemo(
-    () => ({
-      operation: "callers" as const,
-      entityId,
-      maxTokens: ENTITY_QUERY_TOKEN_BUDGET,
-      limit: ENTITY_PAGE_SIZE,
-      includeStale: true,
-      ...(callersCursor === null ? {} : { cursor: callersCursor }),
-    }),
-    [callersCursor, entityId],
-  );
-  const calleesRequest = useMemo(
-    () => ({
-      operation: "callees" as const,
-      entityId,
-      maxTokens: ENTITY_QUERY_TOKEN_BUDGET,
-      limit: ENTITY_PAGE_SIZE,
-      includeStale: true,
-      ...(calleesCursor === null ? {} : { cursor: calleesCursor }),
-    }),
-    [calleesCursor, entityId],
-  );
+  const entityRequest = {
+    operation: "entity" as const,
+    entityId,
+    maxTokens: contextRequest.maxTokens,
+    limit: Math.min(
+      PROJECT_INDEX_MAX_QUERY_RECORDS,
+      (ENTITY_PAGE_SIZE * contextRequest.maxTokens) / ENTITY_QUERY_TOKEN_BUDGET,
+    ),
+    ...(currentCursor === null ? {} : { cursor: currentCursor }),
+    includeStale: true,
+  };
+  const callersRequest = {
+    operation: "callers" as const,
+    entityId,
+    maxTokens: ENTITY_QUERY_TOKEN_BUDGET,
+    limit: ENTITY_PAGE_SIZE,
+    includeStale: true,
+    ...(callersCursor === null ? {} : { cursor: callersCursor }),
+  };
+  const calleesRequest = {
+    operation: "callees" as const,
+    entityId,
+    maxTokens: ENTITY_QUERY_TOKEN_BUDGET,
+    limit: ENTITY_PAGE_SIZE,
+    includeStale: true,
+    ...(calleesCursor === null ? {} : { cursor: calleesCursor }),
+  };
   const detail = useProjectIndexQuery({
     api,
     environmentId,
@@ -415,27 +445,21 @@ export function ProjectIndexEntityBrowser({
   const [page, setPage] = useState<{ readonly key: string; readonly cursor: string } | null>(null);
   const cursor = page?.key === searchKey ? page.cursor : undefined;
   const overviewCursor = text ? undefined : cursor;
-  const overviewRequest = useMemo<ProjectContextInput>(
-    () => ({
-      operation: "overview",
-      maxTokens: GRAPH_QUERY_TOKEN_BUDGET,
-      limit: ENTITY_PAGE_SIZE,
-      includeStale,
-      ...(overviewCursor ? { cursor: overviewCursor } : {}),
-    }),
-    [includeStale, overviewCursor],
-  );
-  const searchRequest = useMemo<ProjectContextInput>(
-    () => ({
-      operation: "search",
-      text,
-      maxTokens: ENTITY_QUERY_TOKEN_BUDGET,
-      limit: ENTITY_PAGE_SIZE,
-      includeStale,
-      ...(cursor ? { cursor } : {}),
-    }),
-    [cursor, includeStale, text],
-  );
+  const overviewRequest: ProjectContextInput = {
+    operation: "overview",
+    maxTokens: GRAPH_QUERY_TOKEN_BUDGET,
+    limit: ENTITY_PAGE_SIZE,
+    includeStale,
+    ...(overviewCursor ? { cursor: overviewCursor } : {}),
+  };
+  const searchRequest: ProjectContextInput = {
+    operation: "search",
+    text,
+    maxTokens: ENTITY_QUERY_TOKEN_BUDGET,
+    limit: ENTITY_PAGE_SIZE,
+    includeStale,
+    ...(cursor ? { cursor } : {}),
+  };
   const context = {
     api,
     environmentId,
@@ -474,18 +498,9 @@ export function ProjectIndexEntityBrowser({
   const entities = result?.entities.filter(isSourceDerivedFact) ?? [];
   const graphResult = entities.length > 0 ? result : overview?.result;
   const graphOverview = !text || entities.length === 0 ? publishedGraph : undefined;
-  const graphEntities = useMemo(
-    () => graphResult?.entities.filter(isSourceDerivedFact) ?? [],
-    [graphResult],
-  );
-  const graphCallsites = useMemo(
-    () => graphResult?.callsites.filter(isSourceDerivedFact) ?? [],
-    [graphResult],
-  );
-  const graphImports = useMemo(
-    () => graphResult?.imports?.filter(isSourceDerivedFact) ?? [],
-    [graphResult],
-  );
+  const graphEntities = graphResult?.entities.filter(isSourceDerivedFact) ?? [];
+  const graphCallsites = graphResult?.callsites.filter(isSourceDerivedFact) ?? [];
+  const graphImports = graphResult?.imports?.filter(isSourceDerivedFact) ?? [];
   const hasFacts =
     result?.modules.some(isSourceDerivedFact) === true ||
     result?.imports?.some(isSourceDerivedFact) === true ||

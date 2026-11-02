@@ -50,9 +50,9 @@ export class ElectronMediaPermissions extends Context.Service<
   }
 >()("@t3tools/desktop/electron/ElectronMediaPermissions") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = ElectronMediaPermissions.of({
-  configure: (input) =>
+  configure: Effect.fn("ElectronMediaPermissions.configure")((input) =>
     Effect.acquireRelease(
       Effect.sync(() => {
         const browserSession = Electron.session.defaultSession;
@@ -105,6 +105,7 @@ export const make = ElectronMediaPermissions.of({
           browserSession.setPermissionRequestHandler(null);
         }),
     ).pipe(Effect.asVoid),
+  ),
 });
 
 export const layer = Layer.succeed(ElectronMediaPermissions, make);

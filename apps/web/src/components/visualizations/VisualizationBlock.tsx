@@ -16,7 +16,7 @@ import { visualizationLabels } from "@t3tools/client-runtime/visualizations/labe
 import { visualizationPreviewCacheKey } from "@t3tools/client-runtime/visualizations/appearance";
 import { readVisualizationSvgDimensions } from "@t3tools/client-runtime/visualizations/sizing";
 import { prepareVisualizationSvgExport } from "@t3tools/client-runtime/visualizations/export";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 import {
   CodeIcon,
   CopyIcon,
@@ -57,6 +57,17 @@ async function saveBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   try {
     await downloadMedia(url, filename);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function saveSvgPreview(svg: string, background: string, type: "svg" | "png") {
+  const prepared = prepareVisualizationSvgExport(svg, background);
+  const url = URL.createObjectURL(new Blob([prepared], { type: "image/svg+xml" }));
+  try {
+    if (type === "svg") await downloadMedia(url, "diagram.svg");
+    else await saveBlob(await readMediaPng(url), "diagram.png");
   } finally {
     URL.revokeObjectURL(url);
   }
@@ -215,7 +226,7 @@ function SourceDataTable({ dataset, labels }: { dataset: VisualizationDataset; l
                       {dataset.columns.map((column) => (
                         <td className="border-t border-border px-3 py-1.5 font-mono" key={column}>
                           {row[column] == null
-                            ? "—"
+                            ? "–"
                             : typeof row[column] === "object"
                               ? JSON.stringify(row[column])
                               : String(row[column])}
@@ -373,11 +384,8 @@ function FullscreenDiagram({
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const lifetime = useRef<AbortController | null>(null);
-  const request = useMemo(
-    () => createRenderRequest(document.format, document.source, theme, true, appearance),
-    [document, theme, appearance],
-  );
-  const renderKey = useMemo(() => visualizationPreviewCacheKey(request), [request]);
+  const request = createRenderRequest(document.format, document.source, theme, true, appearance);
+  const renderKey = visualizationPreviewCacheKey(request);
   const [result, setResult] = useState<{ key: string; error?: string }>();
   const [panning, setPanning] = useState<{ key: string; enabled: boolean }>();
   const [showSource, setShowSource] = useState(false);
@@ -387,7 +395,7 @@ function FullscreenDiagram({
   const ready = Boolean(currentResult && !error);
   const pan = panning?.key === renderKey && panning.enabled;
 
-  useEffect(() => {
+  const renderFullscreen = useEffectEvent((key: string) => {
     const controller = new AbortController();
     lifetime.current = controller;
     const target = frame.current;
@@ -395,17 +403,19 @@ function FullscreenDiagram({
     void loadVisualizationFrame(target, document.format, controller.signal)
       .then(() => renderInFrame(target, request, controller.signal))
       .then(() => {
-        if (!controller.signal.aborted) setResult({ key: renderKey });
+        if (!controller.signal.aborted) setResult({ key });
       })
       .catch((cause: unknown) => {
         if (controller.signal.aborted) return;
         setResult({
-          key: renderKey,
+          key,
           error: cause instanceof Error ? cause.message : labels.renderFailed,
         });
       });
     return () => controller.abort();
-  }, [document.format, request, renderKey, labels.renderFailed]);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own one abortable iframe render per content and appearance key.
+  useEffect(() => renderFullscreen(renderKey), [renderKey]);
 
   const view = (action: "zoom-in" | "zoom-out" | "fit" | "pan" | "select") => {
     frame.current?.contentWindow?.postMessage(
@@ -550,18 +560,15 @@ function VisualizationContent({
     theme,
     chatVisualMode === "better-t3" ? "better-t3" : undefined,
   );
-  const parsed = useMemo(() => {
+  const parsed = (() => {
     try {
       return { document: parseVisualization(format, source) };
     } catch (cause) {
       return { error: cause instanceof Error ? cause.message : "Invalid diagram." };
     }
-  }, [format, source]);
-  const request = useMemo(
-    () => createRenderRequest(format, source, theme, false, appearance),
-    [format, source, theme, appearance],
-  );
-  const renderKey = useMemo(() => visualizationPreviewCacheKey(request), [request]);
+  })();
+  const request = createRenderRequest(format, source, theme, false, appearance);
+  const renderKey = visualizationPreviewCacheKey(request);
   const [render, setRender] = useState<{
     key: string;
     svg?: string;
@@ -572,12 +579,9 @@ function VisualizationContent({
   const [showSource, setShowSource] = useState(false);
   const currentRender = render?.key === renderKey ? render : undefined;
   const svgUrl = currentRender?.url;
-  const dimensions = useMemo(
-    () => (currentRender?.svg ? readVisualizationSvgDimensions(currentRender.svg) : null),
-    [currentRender],
-  );
+  const dimensions = currentRender?.svg ? readVisualizationSvgDimensions(currentRender.svg) : null;
 
-  useEffect(() => {
+  const renderPreview = useEffectEvent((key: string) => {
     if (!parsed.document) return;
     const controller = new AbortController();
     let previewUrl: string | undefined;
@@ -585,13 +589,13 @@ function VisualizationContent({
       .then((svg) => {
         if (!controller.signal.aborted) {
           previewUrl = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
-          setRender({ key: renderKey, svg, url: previewUrl });
+          setRender({ key, svg, url: previewUrl });
         }
       })
       .catch((cause: unknown) => {
         if (controller.signal.aborted) return;
         setRender({
-          key: renderKey,
+          key,
           error: cause instanceof Error ? cause.message : labels.renderFailed,
         });
       });
@@ -599,7 +603,9 @@ function VisualizationContent({
       controller.abort();
       if (previewUrl) URL.revokeObjectURL(previewUrl);
     };
-  }, [parsed, request, renderKey, labels.renderFailed]);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own one abortable preview per content and appearance key, releasing its object URL on cleanup.
+  useEffect(() => renderPreview(renderKey), [renderKey]);
 
   const error = parsed.error || currentRender?.error;
   const sourceVisible = showSource || Boolean(error);
@@ -619,16 +625,10 @@ function VisualizationContent({
     : undefined;
   const exportPreview = async (type: "svg" | "png") => {
     if (!currentRender?.svg) return;
-    let exportUrl: string | undefined;
     try {
-      const svg = prepareVisualizationSvgExport(currentRender.svg, appearance.background);
-      exportUrl = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
-      if (type === "svg") await downloadMedia(exportUrl, "diagram.svg");
-      else await saveBlob(await readMediaPng(exportUrl), "diagram.png");
+      await saveSvgPreview(currentRender.svg, appearance.background, type);
     } catch (cause) {
       reportExportFailure(cause, labels);
-    } finally {
-      if (exportUrl) URL.revokeObjectURL(exportUrl);
     }
   };
 

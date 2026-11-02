@@ -7,7 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import { describe, expect } from "vite-plus/test";
 
 import * as AiEndpointDiscovery from "./AiEndpointDiscovery.ts";

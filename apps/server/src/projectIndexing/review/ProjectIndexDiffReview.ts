@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Review identities synchronously hash canonical source evidence and diff metadata.
 import * as NodeCrypto from "node:crypto";
 
 import {

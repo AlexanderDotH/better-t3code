@@ -13,8 +13,8 @@ import type {
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { ActivityIndicator, Pressable, View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
-import { EmptyState } from "../../components/EmptyState";
+import { AppText as Text } from "../../components/ui/AppText";
+import { EmptyState } from "../../components/ui/EmptyState";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { useEnvironmentServerConfig, useProject } from "../../state/entities";
 import { bindProjectIndexApi } from "../../state/project-index";
@@ -89,11 +89,13 @@ function ScopedProjectIndexingController(props: {
     checkModel: controller.checkModel,
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Mount the remote indexing controller and release its subscription on unmount.
   useEffect(() => {
     void controller.refresh().catch(() => undefined);
     return () => controller.dispose();
   }, [controller]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Refresh the remote index after a server invalidation before updating the query revision.
   useEffect(() => {
     if (state.invalidationEpoch === 0) return;
     let active = true;

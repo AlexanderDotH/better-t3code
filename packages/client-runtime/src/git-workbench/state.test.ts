@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -42,6 +42,7 @@ function rpcSession(client: WsRpcProtocolClient): RpcSession {
     subscribeServerConfig: () => Stream.never,
     ready: Effect.void,
     probe: Effect.void,
+    inboundFrames: Effect.succeed(0),
     closed: Effect.never,
   };
 }
@@ -147,10 +148,7 @@ describe("Git workbench environment atoms", () => {
 
         expect(subscriptions).toEqual([]);
         const unmount = registry.mount(state);
-        for (let attempt = 0; attempt < 100; attempt += 1) {
-          if (AsyncResult.isSuccess(registry.get(state))) break;
-          yield* Effect.yieldNow;
-        }
+        yield* AtomRegistry.getResult(registry, state);
         const first = registry.get(state);
         expect(AsyncResult.isSuccess(first)).toBe(true);
         if (!AsyncResult.isSuccess(first)) return;
@@ -158,9 +156,13 @@ describe("Git workbench environment atoms", () => {
         expect(subscriptions).toEqual(["first"]);
 
         yield* SubscriptionRef.set(sessions, Option.some(rpcSession(client("second", "token-2"))));
-        for (let attempt = 0; attempt < 100 && subscriptions.length < 2; attempt += 1) {
-          yield* Effect.yieldNow;
-        }
+        yield* AtomRegistry.toStream(registry, state).pipe(
+          Stream.filter(
+            (result) =>
+              AsyncResult.isSuccess(result) && result.value.snapshot?.stateToken === "token-2",
+          ),
+          Stream.runHead,
+        );
         expect(subscriptions).toEqual(["first", "second"]);
         expect(cleanups).toContain("first");
 
@@ -191,9 +193,11 @@ describe("Git workbench environment atoms", () => {
             truncated: false,
           },
         } as const;
+        const requested = Promise.withResolvers<void>();
         const client = {
           [WS_METHODS.gitGetRepositoryInsights]: () => {
             calls += 1;
+            requested.resolve();
             return calls === 1
               ? Effect.never.pipe(
                   Effect.onInterrupt(() =>
@@ -228,10 +232,7 @@ describe("Git workbench environment atoms", () => {
         );
         const unmount = registry.mount(state);
 
-        for (let attempt = 0; attempt < 100; attempt += 1) {
-          if (calls > 0) break;
-          yield* Effect.yieldNow;
-        }
+        yield* Effect.promise(() => requested.promise);
         yield* SubscriptionRef.set(connection, { ...CONNECTED, generation: 2 });
         const result = yield* AtomRegistry.getResult(registry, state, { suspendOnWaiting: true });
 

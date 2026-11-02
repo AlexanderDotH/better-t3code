@@ -1,3 +1,6 @@
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import { useEnvironmentScope } from "~/state/session";
 import type {
   EnvironmentId,
   McpRuntimeAction,
@@ -12,17 +15,8 @@ import type {
   ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
 import type { RefObject } from "react";
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 
 import { useSettingsCommand } from "../settings/useSettingsMutation";
 import { ensureLocalApi } from "~/localApi";
@@ -173,38 +167,22 @@ export function McpWorkspaceRuntimeProvider(props: McpWorkspaceRuntimeProviderPr
     requirePreferredExact: selectedChatProvider && selectedContextId === null,
   });
   const visible = props.active || props.expanded;
-  const state = useMemo<McpRuntimeWorkspaceState>(
-    () => ({
-      snapshot: visible ? managementRuntime.snapshot : inactiveRuntime.data,
-      error: visible
-        ? (managementRuntime.runtimeError ?? managementRuntime.contextError)
-        : inactiveRuntime.error,
-      pending: visible ? managementRuntime.isLoading : inactiveRuntime.isPending,
-      contexts: managementRuntime.contexts,
-      selectedContext: managementRuntime.selectedContext,
-      selectedContextId,
-      selectedProvider,
-      selectContext: setSelectedContextId,
-      selectProvider: (nextProviderInstanceId) => {
-        setSelectedProviderId(nextProviderInstanceId);
-        setSelectedContextId(null);
-      },
-    }),
-    [
-      inactiveRuntime.data,
-      inactiveRuntime.error,
-      inactiveRuntime.isPending,
-      managementRuntime.contextError,
-      managementRuntime.contexts,
-      managementRuntime.isLoading,
-      managementRuntime.runtimeError,
-      managementRuntime.selectedContext,
-      managementRuntime.snapshot,
-      selectedContextId,
-      selectedProvider,
-      visible,
-    ],
-  );
+  const state: McpRuntimeWorkspaceState = {
+    snapshot: visible ? managementRuntime.snapshot : inactiveRuntime.data,
+    error: visible
+      ? (managementRuntime.runtimeError ?? managementRuntime.contextError)
+      : inactiveRuntime.error,
+    pending: visible ? managementRuntime.isLoading : inactiveRuntime.isPending,
+    contexts: managementRuntime.contexts,
+    selectedContext: managementRuntime.selectedContext,
+    selectedContextId,
+    selectedProvider,
+    selectContext: setSelectedContextId,
+    selectProvider: (nextProviderInstanceId) => {
+      setSelectedProviderId(nextProviderInstanceId);
+      setSelectedContextId(null);
+    },
+  };
   return (
     <McpWorkspaceRuntimeContext.Provider value={state}>
       {props.children}
@@ -231,19 +209,19 @@ function McpExactRuntimePanel(props: RuntimePanelProps) {
     agentSettingsEnvironment.mcp.runtimeServerDetailsQuery,
     { reportFailure: false },
   );
-  const selector = useMemo(
-    () => ({
-      providerInstanceId: props.providerInstanceId,
-      runtimeSessionId: props.runtimeSessionId,
-      threadId: props.threadId,
-    }),
-    [props.providerInstanceId, props.runtimeSessionId, props.threadId],
+  const selector = {
+    providerInstanceId: props.providerInstanceId,
+    runtimeSessionId: props.runtimeSessionId,
+    threadId: props.threadId,
+  };
+  const requestGeneration = useRef(0);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Invalidate runtime requests when this exact keyed session panel unmounts.
+  useEffect(
+    () => () => {
+      requestGeneration.current += 1;
+    },
+    [],
   );
-  const selectorKey = `${props.environmentId}\u0000${props.projectCwd ?? ""}\u0000${props.providerInstanceId}\u0000${props.threadId}\u0000${props.runtimeSessionId}`;
-  const selectorKeyRef = useRef(selectorKey);
-  useLayoutEffect(() => {
-    selectorKeyRef.current = selectorKey;
-  }, [selectorKey]);
   const [detailsByProviderKey, setDetailsByProviderKey] = useState<
     Readonly<Record<string, McpRuntimeServerDetailsResult | undefined>>
   >({});
@@ -258,130 +236,87 @@ function McpExactRuntimePanel(props: RuntimePanelProps) {
   >({});
   const [pendingAction, setPendingAction] = useState<McpRuntimeActionPending | null>(null);
 
-  const [previousSelectorKey, setPreviousSelectorKey] = useState(selectorKey);
-  if (previousSelectorKey !== selectorKey) {
-    setPreviousSelectorKey(selectorKey);
-    setDetailsByProviderKey({});
-    setDetailsLoadingKeys(new Set());
-    setDetailsErrorByProviderKey({});
-    setActionErrorByProviderKey({});
-    setPendingAction(null);
-  }
-
-  const loadDetails = useCallback(
-    async (server: McpRuntimeServer, expanded: boolean) => {
-      if (!expanded || detailsByProviderKey[server.providerKey]) return;
-      if (detailsLoadingKeys.has(server.providerKey)) return;
-      const requestSelectorKey = selectorKey;
-      setDetailsLoadingKeys((current) => new Set(current).add(server.providerKey));
+  const loadDetails = async (server: McpRuntimeServer, expanded: boolean) => {
+    if (!expanded || detailsByProviderKey[server.providerKey]) return;
+    if (detailsLoadingKeys.has(server.providerKey)) return;
+    const generation = requestGeneration.current;
+    setDetailsLoadingKeys((current) => new Set(current).add(server.providerKey));
+    setDetailsErrorByProviderKey((current) => ({
+      ...current,
+      [server.providerKey]: undefined,
+    }));
+    const response = await settlePromise(() =>
+      runRuntimeDetailsQuery({
+        environmentId: props.environmentId,
+        input: { ...selector, providerKey: server.providerKey },
+      }),
+    );
+    if (requestGeneration.current !== generation) return;
+    const result = response._tag === "Failure" ? response : response.value;
+    if (result._tag === "Failure") {
+      const error = squashAtomCommandFailure(result);
       setDetailsErrorByProviderKey((current) => ({
         ...current,
-        [server.providerKey]: undefined,
+        [server.providerKey]: error instanceof Error ? error.message : "MCP inventory unavailable.",
       }));
-      try {
-        const result = await runRuntimeDetailsQuery({
-          environmentId: props.environmentId,
-          input: { ...selector, providerKey: server.providerKey },
-        });
-        if (result._tag === "Failure") throw Cause.squash(result.cause);
-        if (selectorKeyRef.current !== requestSelectorKey) return;
-        setDetailsByProviderKey((current) => ({
-          ...current,
-          [server.providerKey]: result.value,
-        }));
-      } catch (error) {
-        if (selectorKeyRef.current !== requestSelectorKey) return;
-        setDetailsErrorByProviderKey((current) => ({
-          ...current,
-          [server.providerKey]:
-            error instanceof Error ? error.message : "MCP inventory unavailable.",
-        }));
-      } finally {
-        if (selectorKeyRef.current === requestSelectorKey) {
-          setDetailsLoadingKeys((current) => {
-            const next = new Set(current);
-            next.delete(server.providerKey);
-            return next;
-          });
-        }
-      }
-    },
-    [
-      detailsByProviderKey,
-      detailsLoadingKeys,
-      props.environmentId,
-      runRuntimeDetailsQuery,
-      selector,
-      selectorKey,
-    ],
-  );
+    } else
+      setDetailsByProviderKey((current) => ({ ...current, [server.providerKey]: result.value }));
+    setDetailsLoadingKeys((current) => {
+      const next = new Set(current);
+      next.delete(server.providerKey);
+      return next;
+    });
+  };
 
   const runRuntimeAction = useSettingsCommand(agentSettingsEnvironment.mcp.runtimeAction);
-  const performAction = useCallback(
-    async (server: McpRuntimeServer, action: McpRuntimeAction) => {
-      if (props.readOnly) {
-        setActionErrorByProviderKey((current) => ({
-          ...current,
-          [server.providerKey]: "Runtime actions require operate access.",
-        }));
-        return;
-      }
-      if (action === "authorize" && !props.authorizationAvailable) {
-        setActionErrorByProviderKey((current) => ({
-          ...current,
-          [server.providerKey]: "Complete authorization on the environment host.",
-        }));
-        return;
-      }
-      const requestSelectorKey = selectorKey;
-      const nextPendingAction = { serverKey: server.providerKey, action };
-      setPendingAction(nextPendingAction);
+  const performAction = async (server: McpRuntimeServer, action: McpRuntimeAction) => {
+    if (props.readOnly) {
       setActionErrorByProviderKey((current) => ({
         ...current,
-        [server.providerKey]: undefined,
+        [server.providerKey]: "Runtime actions require operate access.",
       }));
-      try {
-        const result = await runRuntimeAction({
-          environmentId: props.environmentId,
-          input: {
-            ...selector,
-            providerKey: server.providerKey,
-            action,
-          },
-        });
-        if (selectorKeyRef.current !== requestSelectorKey) return;
-        if (!result.accepted) {
-          throw new Error(result.message ?? `The ${action} action was not accepted.`);
-        }
-        if (result.authorizationUrl) {
-          await ensureLocalApi().shell.openExternal(result.authorizationUrl);
-        }
-      } catch (error) {
-        if (selectorKeyRef.current !== requestSelectorKey) return;
-        setActionErrorByProviderKey((current) => ({
-          ...current,
-          [server.providerKey]: error instanceof Error ? error.message : "MCP action failed.",
-        }));
-      } finally {
-        if (selectorKeyRef.current === requestSelectorKey) {
-          setPendingAction((current) =>
-            current?.serverKey === nextPendingAction.serverKey &&
-            current.action === nextPendingAction.action
-              ? null
-              : current,
-          );
-        }
-      }
-    },
-    [
-      props.authorizationAvailable,
-      props.environmentId,
-      props.readOnly,
-      runRuntimeAction,
-      selector,
-      selectorKey,
-    ],
-  );
+      return;
+    }
+    if (action === "authorize" && !props.authorizationAvailable) {
+      setActionErrorByProviderKey((current) => ({
+        ...current,
+        [server.providerKey]: "Complete authorization on the environment host.",
+      }));
+      return;
+    }
+    const generation = requestGeneration.current;
+    const nextPendingAction = { serverKey: server.providerKey, action };
+    setPendingAction(nextPendingAction);
+    setActionErrorByProviderKey((current) => ({
+      ...current,
+      [server.providerKey]: undefined,
+    }));
+    const outcome = await settlePromise(async () => {
+      const result = await runRuntimeAction({
+        environmentId: props.environmentId,
+        input: { ...selector, providerKey: server.providerKey, action },
+      });
+      if (requestGeneration.current !== generation) return;
+      if (!result.accepted)
+        throw new Error(result.message ?? `The ${action} action was not accepted.`);
+      if (result.authorizationUrl)
+        await ensureLocalApi().shell.openExternal(result.authorizationUrl);
+    });
+    if (requestGeneration.current !== generation) return;
+    if (outcome._tag === "Failure") {
+      const error = squashAtomCommandFailure(outcome);
+      setActionErrorByProviderKey((current) => ({
+        ...current,
+        [server.providerKey]: error instanceof Error ? error.message : "MCP action failed.",
+      }));
+    }
+    setPendingAction((current) =>
+      current?.serverKey === nextPendingAction.serverKey &&
+      current.action === nextPendingAction.action
+        ? null
+        : current,
+    );
+  };
 
   return (
     <div data-mcp-runtime-session={props.runtimeSessionId}>
@@ -450,17 +385,7 @@ function McpWorkspaceControllerView(props: McpWorkspaceCardControllerProps) {
   const [activeSection, setActiveSection] = useState<McpWorkspaceSection>("servers");
   const [storeKind, setStoreKind] = useState<"mcp" | "skill">("mcp");
   const expandButtonRef = useRef<HTMLButtonElement | null>(null);
-  const sessionAccessQuery = useEnvironmentQuery(
-    props.expanded
-      ? agentSettingsEnvironment.mcp.sessionAccess({
-          environmentId: props.environmentId,
-          input: {},
-        })
-      : null,
-  );
-  const readOnly =
-    sessionAccessQuery.data?.scopes !== undefined &&
-    !sessionAccessQuery.data.scopes.includes("orchestration:operate");
+  const readOnly = !useEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope);
   const selectedProvider = runtime.selectedProvider;
   const selectedProviderInstanceId = selectedProvider?.instanceId ?? null;
   const selectedProviderDisplayName =
@@ -476,6 +401,7 @@ function McpWorkspaceControllerView(props: McpWorkspaceCardControllerProps) {
     <UpgradeRequired />
   ) : selectedProviderInstanceId && runtime.selectedContext ? (
     <McpExactRuntimePanel
+      key={`${props.environmentId}\u0000${props.projectCwd ?? ""}\u0000${selectedProviderInstanceId}\u0000${runtime.selectedContext.threadId}\u0000${runtime.selectedContext.runtimeSessionId}`}
       authorizationAvailable={props.authorizationAvailable}
       readOnly={readOnly}
       environmentId={props.environmentId}

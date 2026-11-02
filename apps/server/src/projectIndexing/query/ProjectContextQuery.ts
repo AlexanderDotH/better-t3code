@@ -684,7 +684,12 @@ export const layer = Layer.effect(
       return result;
     });
     return ProjectContextQuery.of({
-      query: (input) => query(input).pipe(Effect.provideService(References.TracerEnabled, false)),
+      query: Effect.fn("query")(
+        function (input) {
+          return query(input);
+        },
+        Effect.provideService(References.TracerEnabled, false),
+      ),
     });
   }),
 );

@@ -11,14 +11,7 @@ import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 
 export const MAX_USAGE_PACE_SAMPLES = 512;
 
-/**
- * One rolling quota window a subscription provider reports for the signed-in
- * account, e.g. Claude's five-hour session or Codex's weekly allowance.
- *
- * `id` is stable per provider (`five_hour`, `seven_day_opus`, `primary`) so a
- * sparse turn-driven update lands on the same row a full probe produced.
- * `kind` only orders and labels the bar.
- */
+// Stable per-provider ids let sparse turn updates merge with complete quota probes.
 export const ServerProviderUsageWindow = Schema.Struct({
   id: TrimmedNonEmptyString,
   kind: Schema.Literals(["session", "weekly", "monthly", "other"]),
@@ -73,17 +66,10 @@ export const ServerProviderResetCredits = Schema.Struct({
 });
 export type ServerProviderResetCredits = typeof ServerProviderResetCredits.Type;
 
-/**
- * Subscription usage the provider knows about the signed-in account.
- *
- * `unavailable` distinguishes an account that can never report windows (API
- * key, Bedrock) from a probe that failed this time, so clients can keep the
- * last good bars for the latter and clear them for the former.
- */
+/** Clear bars for unavailable accounts; retain last good bars after a failed probe. */
 export const ServerProviderUsageLimits = Schema.Struct({
   checkedAt: IsoDateTime,
   windows: ForwardCompatibleArray(ServerProviderUsageWindow),
-  /** Opaque credential identity when the provider does not report an account. */
   credentialFingerprint: Schema.optional(TrimmedNonEmptyString),
   resetCredits: Schema.optional(ServerProviderResetCredits),
   accountCredits: Schema.optional(ServerProviderAccountCredits),
@@ -103,39 +89,23 @@ export const ServerProviderUsageLimits = Schema.Struct({
 });
 export type ServerProviderUsageLimits = typeof ServerProviderUsageLimits.Type;
 
-/**
- * What an adapter reports when its runtime pushes a rate-limit update during
- * a turn. Sparse by contract: Claude's `rate_limit_event` names one window at
- * a time and Codex documents its notification as a partial. Windows merge by
- * `id` onto the instance's published snapshot; omitted windows are unchanged.
- */
+/** Partial updates merge windows by id; omitted windows remain unchanged. */
 export const ProviderUsageLimitsUpdate = Schema.Struct({
   windows: Schema.Array(ServerProviderUsageWindow),
   accountCredits: Schema.optional(ServerProviderAccountCredits),
 });
 export type ProviderUsageLimitsUpdate = typeof ProviderUsageLimitsUpdate.Type;
 
-/**
- * One account a usage-limit source reports on. `driver` is the provider the
- * account belongs to, for the icon and colour clients already have; the
- * account itself is not something this environment can run turns on.
- */
 export const UsageLimitSourceAccount = Schema.Struct({
   id: TrimmedNonEmptyString,
   driver: ProviderDriverKind,
-  /** The signed-in address, when the source names one; clients blur it like provider auth. */
   email: Schema.optional(TrimmedNonEmptyString),
-  /** Plan as the matching provider would label it (`ChatGPT Pro 20x Subscription`). */
   plan: Schema.optional(TrimmedNonEmptyString),
+  workspaceId: Schema.optional(TrimmedNonEmptyString),
   usageLimits: ServerProviderUsageLimits,
 });
 export type UsageLimitSourceAccount = typeof UsageLimitSourceAccount.Type;
 
-/**
- * The published state of one configured `usageLimitSources` entry. A source
- * that could not be read keeps `error` beside an empty account list rather
- * than vanishing, so the user can see it is configured but failing.
- */
 export const UsageLimitSourceSnapshot = Schema.Struct({
   id: UsageLimitSourceId,
   kind: Schema.Literal("cliproxy"),
@@ -172,7 +142,6 @@ export class UsageLimitSourceError extends Schema.TaggedError<UsageLimitSourceEr
   }
 }
 
-/** Mirrors Codex's own outcome set; other providers map onto it. */
 export const ProviderConsumeResetCreditOutcome = Schema.Literals([
   "reset",
   "nothingToReset",
@@ -183,12 +152,10 @@ export type ProviderConsumeResetCreditOutcome = typeof ProviderConsumeResetCredi
 
 export const ProviderConsumeResetCreditResult = Schema.Struct({
   outcome: ProviderConsumeResetCreditOutcome,
-  /** Redemption succeeded, but a follow-up such as clearing the hub cooldown failed. */
   warning: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProviderConsumeResetCreditResult = typeof ProviderConsumeResetCreditResult.Type;
 
-/** A point-in-time view of one provider's limits, built for the /usage-limits panel. */
 export const UsageLimitsReport = Schema.Struct({
   createdAt: IsoDateTime,
   accounts: Schema.Array(

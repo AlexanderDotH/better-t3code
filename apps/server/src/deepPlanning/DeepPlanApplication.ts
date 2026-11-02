@@ -13,7 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
+import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
 import { DeepPlanSources, type DeepPlanSourcesShape } from "./DeepPlanSources.ts";
 import { DeepPlanWorkflow } from "./DeepPlanWorkflow.ts";
 
@@ -45,7 +45,7 @@ const sameCoverage = Schema.toEquivalence(Schema.Array(DeepPlanSourceCoverage));
 const make = Effect.gen(function* () {
   const sources = yield* DeepPlanSources;
   const workflow = yield* DeepPlanWorkflow;
-  const engine = yield* OrchestrationEngineService;
+  const engine = yield* OrchestratorV2;
   const crypto = yield* Crypto.Crypto;
 
   const requireRun = Effect.fn("DeepPlanApplication.requireRun")(function* (input: SourceRunInput) {
@@ -76,7 +76,7 @@ const make = Effect.gen(function* () {
         .update({
           ...input,
           expectedRevision: run.revision,
-          operationId: yield* crypto.randomUUIDv4.pipe(Effect.orDie),
+          operationId: yield* crypto.randomUUIDv4().pipe(Effect.orDie),
           mutation: { type: "sources-set", sources: actual.sources },
         })
         .pipe(
@@ -90,7 +90,7 @@ const make = Effect.gen(function* () {
         .update({
           ...input,
           expectedRevision: run.revision,
-          operationId: yield* crypto.randomUUIDv4.pipe(Effect.orDie),
+          operationId: yield* crypto.randomUUIDv4().pipe(Effect.orDie),
           mutation: { type: "source-coverage", coverage: actual.coverage },
         })
         .pipe(
@@ -152,47 +152,63 @@ const make = Effect.gen(function* () {
           }
           yield* workflow.update(command);
         }
-        return { sequence: yield* engine.latestSequence };
+        return {
+          sequence: yield* engine
+            .getThreadEventSequence(command.threadId)
+            .pipe(
+              Effect.mapError(
+                (error) => new DeepPlanError({ code: "storage-failed", message: error.message }),
+              ),
+            ),
+        };
       }),
     );
 
   return DeepPlanApplication.of({
     getRun: workflow.getRun,
-    pauseForInterrupt: (threadId) =>
-      Effect.gen(function* () {
-        const run = yield* workflow.getRun({ threadId });
-        if (run === null || run.phase === "completed" || run.phase === "paused") return;
-        yield* workflow.withRunLock(
-          run.id,
-          Effect.gen(function* () {
-            const current = yield* workflow.getRun({ threadId: run.threadId, runId: run.id });
-            if (current === null || current.phase === "completed" || current.phase === "paused")
-              return;
-            yield* workflow.update({
-              threadId: current.threadId,
-              runId: current.id,
-              expectedRevision: current.revision,
-              operationId: yield* crypto.randomUUIDv4.pipe(Effect.orDie),
-              mutation: { type: "pause", reason: "Stopped by the user." },
-            });
-          }),
-        );
-      }),
+    pauseForInterrupt: Effect.fn("DeepPlanApplication.pauseForInterrupt")(function* (threadId) {
+      const run = yield* workflow.getRun({ threadId });
+      if (run === null || run.phase === "completed" || run.phase === "paused") return;
+      yield* workflow.withRunLock(
+        run.id,
+        Effect.gen(function* () {
+          const current = yield* workflow.getRun({ threadId: run.threadId, runId: run.id });
+          if (current === null || current.phase === "completed" || current.phase === "paused")
+            return;
+          yield* workflow.update({
+            threadId: current.threadId,
+            runId: current.id,
+            expectedRevision: current.revision,
+            operationId: yield* crypto.randomUUIDv4().pipe(Effect.orDie),
+            mutation: { type: "pause", reason: "Stopped by the user." },
+          });
+        }),
+      );
+    }),
     dispatch,
     catalogSources: sources.catalogSources,
     exportSources: sources.exportSources,
     readExportChunk: sources.readExportChunk,
-    listSources: (input) => Effect.andThen(requireRun(input), sources.listSources(input)),
-    initializeSources: (input) => withSources(input, sources.initializeSources(input), true),
-    importSourceChunk: (input) => withSources(input, sources.importSourceChunk(input)),
-    readSourceChunk: (input) => withSources(input, sources.readSourceChunk(input), false, true),
-    summarizeSource: () =>
+    listSources: Effect.fn("DeepPlanApplication.listSources")((input) =>
+      Effect.andThen(requireRun(input), sources.listSources(input)),
+    ),
+    initializeSources: Effect.fn("DeepPlanApplication.initializeSources")((input) =>
+      withSources(input, sources.initializeSources(input), true),
+    ),
+    importSourceChunk: Effect.fn("DeepPlanApplication.importSourceChunk")((input) =>
+      withSources(input, sources.importSourceChunk(input)),
+    ),
+    readSourceChunk: Effect.fn("DeepPlanApplication.readSourceChunk")((input) =>
+      withSources(input, sources.readSourceChunk(input), false, true),
+    ),
+    summarizeSource: Effect.fn("DeepPlanApplication.summarizeSource")(() =>
       Effect.fail(
         new DeepPlanSourceError({
           code: "source-unavailable",
           message: "Source summaries are recorded by the run-bound agent tools.",
         }),
       ),
+    ),
   });
 });
 

@@ -1,3 +1,4 @@
+const decodeThread = Schema.decodeUnknownSync(OrchestrationV2AppThreadJson);
 import * as ByteSize from "effect/ByteSize";
 import { describe, expect, it, vi } from "@effect/vitest";
 import {
@@ -5,6 +6,7 @@ import {
   type AssemblyAiVoiceSettings,
   type OrchestrationProjectShell,
   ProjectId,
+  OrchestrationV2AppThreadJson,
   ProviderInstanceId,
   ThreadId,
   type SpeechVocabularyEntry,
@@ -20,9 +22,10 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, type HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, type HttpClientRequest, HttpClientResponse } from "effect/http";
 
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
+import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as Dictation from "./AssemblyAiDictation.ts";
@@ -82,7 +85,7 @@ const fileInfo: FileSystem.File.Info = {
   mtime: Option.none(),
   atime: Option.none(),
   birthtime: Option.none(),
-  dev: 1,
+  dev: 1n,
   ino: Option.none(),
   mode: 0o644,
   nlink: Option.none(),
@@ -152,18 +155,41 @@ function makeLayer(input: {
             },
           },
         }),
-        Layer.mock(ProjectionSnapshotQuery, {
-          getProjectShellById: () =>
+        Layer.mock(ProjectStoreV2, {
+          getShell: () =>
             Effect.succeed(input.projectFound === false ? Option.none() : Option.some(project)),
-          getThreadCheckpointContext: () =>
-            Effect.succeedSome({
-              threadId,
-              projectId: input.threadProjectId ?? projectId,
-              workspaceRoot: project.workspaceRoot,
-              worktreePath: input.worktreePath ?? null,
-              checkpointsEnabled: true,
-              checkpoints: [],
-            }),
+        }),
+        Layer.mock(ProjectionStoreV2, {
+          getThread: () =>
+            Effect.succeed(
+              decodeThread({
+                id: threadId,
+                title: "Voice tests",
+                providerInstanceId: "codex",
+                modelSelection: { instanceId: "codex", model: "gpt-6-luna" },
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: null,
+                activeProviderThreadId: null,
+                forkedFrom: null,
+                lineage: {
+                  parentThreadId: null,
+                  relationshipToParent: null,
+                  rootThreadId: threadId,
+                },
+                createdBy: "user",
+                creationSource: "web",
+                createdAt: project.createdAt,
+                updatedAt: project.updatedAt,
+                archivedAt: null,
+                deletedAt: null,
+                projectId: input.threadProjectId ?? projectId,
+                workspaceRoot: project.workspaceRoot,
+                worktreePath: input.worktreePath ?? null,
+                checkpointsEnabled: true,
+                checkpoints: [],
+              }),
+            ),
         }),
         Layer.mock(ProjectSpeechVocabulary, {
           snapshot,
@@ -397,37 +423,41 @@ describe("AssemblyAI whole-dictation processing", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  for (const [label, response] of [
-    ["authentication errors", new Response("secret-error-body", { status: 401 })],
-    ["malformed JSON", new Response("not-json")],
-    [
-      "invalid structured output",
-      Response.json({ choices: [{ message: { content: "{}" }, finish_reason: "stop" }] }),
-    ],
-    [
-      "incomplete output",
-      Response.json({ choices: [{ message: { content: "partial" }, finish_reason: "length" }] }),
-    ],
-    ["empty output", gatewayResponse("   ")],
-  ] as const) {
-    it.effect(`keeps original dictation on ${label} without leaking secrets`, () => {
-      const { layer } = makeLayer({
-        respond: (request) =>
-          request.url.endsWith("/models") ? Response.json({ data: [] }) : response.clone(),
-      });
-      return Effect.gen(function* () {
-        const service = yield* Dictation.AssemblyAiDictation;
-        const result = yield* service.process({
-          projectId,
-          transcript: "Keep the requirements and do not delete files.",
-        });
-        expect(result.text).toBe("Keep the requirements and do not delete files.");
-        expect(result.references).toEqual([]);
-        expect(result.warning).toBeTruthy();
-        expect(result.warning).not.toContain("secret");
-      }).pipe(Effect.provide(layer));
+  it.effect.each(
+    (
+      [
+        ["authentication errors", new Response("secret-error-body", { status: 401 })],
+        ["malformed JSON", new Response("not-json")],
+        [
+          "invalid structured output",
+          Response.json({ choices: [{ message: { content: "{}" }, finish_reason: "stop" }] }),
+        ],
+        [
+          "incomplete output",
+          Response.json({
+            choices: [{ message: { content: "partial" }, finish_reason: "length" }],
+          }),
+        ],
+        ["empty output", gatewayResponse("   ")],
+      ] as const
+    ).map(([label, response]) => ({ label, response })),
+  )("keeps original dictation on $label without leaking secrets", ({ response }) => {
+    const { layer } = makeLayer({
+      respond: (request) =>
+        request.url.endsWith("/models") ? Response.json({ data: [] }) : response.clone(),
     });
-  }
+    return Effect.gen(function* () {
+      const service = yield* Dictation.AssemblyAiDictation;
+      const result = yield* service.process({
+        projectId,
+        transcript: "Keep the requirements and do not delete files.",
+      });
+      expect(result.text).toBe("Keep the requirements and do not delete files.");
+      expect(result.references).toEqual([]);
+      expect(result.warning).toBeTruthy();
+      expect(result.warning).not.toContain("secret");
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect(
     "performs no cloud cleanup when disabled while still resolving exact file mentions",

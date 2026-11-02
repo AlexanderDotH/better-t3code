@@ -4,15 +4,10 @@ import type {
 } from "@t3tools/client-runtime/state/shell";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { resolveThreadSidebarLifecycle } from "@t3tools/client-runtime/state/thread-settled";
 
-import {
-  buildHomeProjectScopes,
-  buildHomeThreadGroups,
-  HOME_PROJECT_INACTIVITY_MS,
-  partitionHomeProjectGroupsByActivity,
-  sortHomeProjectScopes,
-} from "./homeThreadList";
+import { buildHomeProjectScopes, findHomeProjectScope } from "./homeThreadList";
+import { makeThreadShellFixture } from "../../test-fixtures";
+import { buildThreadListV2Items } from "../threads/threadListV2";
 
 function makeProject(
   input: Partial<EnvironmentProject> & Pick<EnvironmentProject, "environmentId" | "id" | "title">,
@@ -25,7 +20,6 @@ function makeProject(
     createdAt: "2026-06-01T00:00:00.000Z",
     updatedAt: "2026-06-01T00:00:00.000Z",
     ...input,
-    checkpointsEnabled: input.checkpointsEnabled ?? true,
   };
 }
 
@@ -33,90 +27,95 @@ function makeThread(
   input: Partial<EnvironmentThreadShell> &
     Pick<EnvironmentThreadShell, "environmentId" | "id" | "projectId" | "title">,
 ): EnvironmentThreadShell {
-  return {
+  return makeThreadShellFixture({
     modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
     runtimeMode: "full-access",
     interactionMode: "default",
     branch: null,
     worktreePath: null,
-    pullRequests: [],
-    latestTurn: null,
     createdAt: "2026-06-01T00:00:00.000Z",
     updatedAt: "2026-06-01T00:00:00.000Z",
     archivedAt: null,
-    session: null,
     latestUserMessageAt: null,
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
     ...input,
-    settledOverride: input.settledOverride ?? null,
-    settledAt: input.settledAt ?? null,
-  };
-}
-
-const NOW = Date.parse("2026-06-29T00:00:00.000Z");
-
-function buildGroups(
-  projects: ReadonlyArray<EnvironmentProject>,
-  threads: ReadonlyArray<EnvironmentThreadShell>,
-  overrides: Partial<Parameters<typeof buildHomeThreadGroups>[0]> = {},
-) {
-  return buildHomeThreadGroups({
-    projects,
-    threads,
-    environmentId: null,
-    searchQuery: "",
-    projectSortOrder: "updated_at",
-    threadSortOrder: "updated_at",
-    projectGroupingMode: "repository",
-    now: NOW,
-    ...overrides,
   });
 }
 
 describe("home project scopes", () => {
-  it("builds one v2 scope for the same repository across environments", () => {
-    const localEnvironmentId = EnvironmentId.make("environment-local");
-    const remoteEnvironmentId = EnvironmentId.make("environment-remote");
-    const repositoryIdentity = {
-      canonicalKey: "github.com/pingdotgg/t3code",
-      locator: {
-        source: "git-remote" as const,
-        remoteName: "origin",
-        remoteUrl: "git@github.com:pingdotgg/t3code.git",
-      },
-    };
+  it("filters threads across both scratch hosts while retaining the selected environment boundary", () => {
+    const localEnvironmentId = EnvironmentId.make("local");
+    const remoteEnvironmentId = EnvironmentId.make("remote");
     const projects = [
       makeProject({
         environmentId: localEnvironmentId,
-        id: ProjectId.make("project-local"),
-        title: "t3code",
-        repositoryIdentity,
+        id: ProjectId.make("scratch-local"),
+        title: "No project",
+        workspaceRoot: "/local/scratch",
+        isScratch: true,
       }),
       makeProject({
         environmentId: remoteEnvironmentId,
-        id: ProjectId.make("project-remote"),
-        title: "t3code",
-        repositoryIdentity,
+        id: ProjectId.make("scratch-remote"),
+        title: "No project",
+        workspaceRoot: "/remote/scratch",
+        isScratch: true,
+      }),
+      makeProject({
+        environmentId: remoteEnvironmentId,
+        id: ProjectId.make("ordinary"),
+        title: "No project",
       }),
     ];
-
+    const threads = projects.map((project) =>
+      makeThread({
+        environmentId: project.environmentId,
+        projectId: project.id,
+        id: ThreadId.make(`thread-${project.id}`),
+        title: project.id,
+      }),
+    );
     const scopes = buildHomeProjectScopes({
       projects,
       environmentId: null,
-      projectGroupingMode: "repository",
+      projectGroupingMode: "separate",
     });
-
-    expect(scopes).toHaveLength(1);
-    expect(scopes[0]?.title).toBe("t3code");
-    expect(scopes[0]?.projects).toEqual(projects);
-    expect(scopes[0]?.projectRefs).toEqual(
-      projects.map((project) => ({
-        environmentId: project.environmentId,
-        projectId: project.id,
-      })),
+    expect(scopes).toHaveLength(2);
+    const scratchScope = scopes.find((scope) => scope.representative.isScratch)!;
+    const filtered = buildThreadListV2Items({
+      threads,
+      environmentId: null,
+      projectRefs: scratchScope.projectRefs,
+      searchQuery: "",
+      now: "2026-06-01T00:00:00.000Z",
+    });
+    expect(filtered.items.map((item) => item.thread.id).sort()).toEqual(
+      threads
+        .slice(0, 2)
+        .map((thread) => thread.id)
+        .sort(),
     );
+    const remoteScopes = buildHomeProjectScopes({
+      projects,
+      environmentId: remoteEnvironmentId,
+      projectGroupingMode: "separate",
+    });
+    const remoteScratch = remoteScopes.find((scope) => scope.representative.isScratch)!;
+    expect(remoteScratch.key).toBe(scratchScope.key);
+    expect(remoteScratch.projectRefs).toEqual([
+      { environmentId: remoteEnvironmentId, projectId: projects[1]!.id },
+    ]);
+    expect(
+      buildThreadListV2Items({
+        threads,
+        environmentId: remoteEnvironmentId,
+        projectRefs: remoteScratch.projectRefs,
+        searchQuery: "",
+        now: "2026-06-01T00:00:00.000Z",
+      }).items.map((item) => item.thread.id),
+    ).toEqual([threads[1]!.id]);
   });
 
   it("keeps repository identity from an older duplicate when the freshness winner lacks it", () => {
@@ -168,126 +167,6 @@ describe("home project scopes", () => {
     expect(scopes[0]?.projectRefs).toHaveLength(3);
   });
 
-  it("sorts v2 project scopes by their grouped thread activity", () => {
-    const environmentId = EnvironmentId.make("environment-1");
-    const olderProject = makeProject({
-      environmentId,
-      id: ProjectId.make("project-older"),
-      title: "Older project",
-    });
-    const newerProject = makeProject({
-      environmentId,
-      id: ProjectId.make("project-newer"),
-      title: "Newer project",
-    });
-    const scopes = buildHomeProjectScopes({
-      projects: [newerProject, olderProject],
-      environmentId: null,
-      projectGroupingMode: "separate",
-    });
-
-    expect(
-      sortHomeProjectScopes({
-        scopes,
-        threads: [
-          makeThread({
-            environmentId,
-            id: ThreadId.make("thread-older-project"),
-            projectId: olderProject.id,
-            title: "Most recently active",
-            updatedAt: "2026-06-03T00:00:00.000Z",
-          }),
-          makeThread({
-            environmentId,
-            id: ThreadId.make("thread-newer-project"),
-            projectId: newerProject.id,
-            title: "Less recently active",
-            updatedAt: "2026-06-02T00:00:00.000Z",
-          }),
-        ],
-        pendingTasks: [],
-        projectSortOrder: "updated_at",
-      }).map((scope) => scope.representative.id),
-    ).toEqual([olderProject.id, newerProject.id]);
-  });
-
-  it("sorts invalid project creation timestamps after valid ones", () => {
-    const environmentId = EnvironmentId.make("environment-1");
-    const invalidProject = makeProject({
-      environmentId,
-      id: ProjectId.make("project-invalid"),
-      title: "A invalid timestamp",
-      createdAt: "invalid",
-    });
-    const validProject = makeProject({
-      environmentId,
-      id: ProjectId.make("project-valid"),
-      title: "Z valid timestamp",
-      createdAt: "2026-06-02T00:00:00.000Z",
-    });
-    const scopes = buildHomeProjectScopes({
-      projects: [invalidProject, validProject],
-      environmentId: null,
-      projectGroupingMode: "separate",
-    });
-
-    expect(
-      sortHomeProjectScopes({
-        scopes,
-        threads: [],
-        pendingTasks: [],
-        projectSortOrder: "created_at",
-      }).map((scope) => scope.representative.id),
-    ).toEqual([validProject.id, invalidProject.id]);
-  });
-
-  it("uses the freshest member when a grouped scope has no activity", () => {
-    const localEnvironmentId = EnvironmentId.make("environment-local");
-    const remoteEnvironmentId = EnvironmentId.make("environment-remote");
-    const repositoryIdentity = {
-      canonicalKey: "github.com/pingdotgg/t3code",
-      locator: {
-        source: "git-remote" as const,
-        remoteName: "origin",
-        remoteUrl: "git@github.com:pingdotgg/t3code.git",
-      },
-    };
-    const olderMember = makeProject({
-      environmentId: localEnvironmentId,
-      id: ProjectId.make("project-older-member"),
-      title: "t3code",
-      updatedAt: "2026-06-01T00:00:00.000Z",
-      repositoryIdentity,
-    });
-    const newerMember = makeProject({
-      environmentId: remoteEnvironmentId,
-      id: ProjectId.make("project-newer-member"),
-      title: "t3code",
-      updatedAt: "2026-06-03T00:00:00.000Z",
-      repositoryIdentity,
-    });
-    const otherProject = makeProject({
-      environmentId: localEnvironmentId,
-      id: ProjectId.make("project-other"),
-      title: "other",
-      updatedAt: "2026-06-02T00:00:00.000Z",
-    });
-    const scopes = buildHomeProjectScopes({
-      projects: [olderMember, newerMember, otherProject],
-      environmentId: null,
-      projectGroupingMode: "repository",
-    });
-
-    expect(
-      sortHomeProjectScopes({
-        scopes,
-        threads: [],
-        pendingTasks: [],
-        projectSortOrder: "updated_at",
-      })[0]?.key,
-    ).toBe(scopes.find((scope) => scope.projects.length === 2)?.key);
-  });
-
   it("does not merge unrelated repositories that share a title", () => {
     const environmentId = EnvironmentId.make("environment-1");
     const projects = ["one", "two"].map((name) =>
@@ -314,176 +193,33 @@ describe("home project scopes", () => {
       }),
     ).toHaveLength(2);
   });
-});
 
-describe("partitionHomeProjectGroupsByActivity", () => {
-  it("moves automatically settled chats with old proposed plans to older and restores renewed work", () => {
-    const environmentId = EnvironmentId.make("environment-1");
-    const project = makeProject({ environmentId, id: ProjectId.make("settled"), title: "Settled" });
-    const timestamp = new Date(NOW - 4 * 24 * 60 * 60 * 1_000).toISOString();
-    const thread = makeThread({
+  it("prefers an exact scope key over a project ID that collides with it", () => {
+    const environmentId = EnvironmentId.make("environment-local");
+    const collidingProject = makeProject({
       environmentId,
-      id: ThreadId.make("settled"),
-      projectId: project.id,
-      title: "Settled",
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      latestUserMessageAt: timestamp,
-      hasActionableProposedPlan: true,
+      id: ProjectId.make("/workspaces/target"),
+      title: "Colliding",
+      workspaceRoot: "/workspaces/colliding",
     });
-    const classify = (current: EnvironmentThreadShell) =>
-      partitionHomeProjectGroupsByActivity({
-        groups: buildGroups([project], [current]),
-        nowMs: NOW,
-        isThreadSettled: (candidate) =>
-          resolveThreadSidebarLifecycle(candidate, {
-            now: new Date(NOW).toISOString(),
-            autoSettleAfterDays: 3,
-            supportsSettlement: true,
-            supportsSnooze: true,
-          }) === "settled",
-      });
-    expect(classify(thread).olderGroups).toHaveLength(1);
-    expect(
-      classify({ ...thread, latestUserMessageAt: new Date(NOW).toISOString() }).recentGroups,
-    ).toHaveLength(1);
-    expect(classify({ ...thread, hasPendingApprovals: true }).recentGroups).toHaveLength(1);
-  });
-
-  it("keeps exactly seven days recent and moves one millisecond older", () => {
-    const environmentId = EnvironmentId.make("environment-1");
-    const exactProject = makeProject({
+    const targetProject = makeProject({
       environmentId,
-      id: ProjectId.make("project-exact"),
-      title: "Exact",
+      id: ProjectId.make("project-target"),
+      title: "Target",
+      workspaceRoot: "/workspaces/target",
     });
-    const olderProject = makeProject({
-      environmentId,
-      id: ProjectId.make("project-older"),
-      title: "Older",
+    const scopes = buildHomeProjectScopes({
+      projects: [collidingProject, targetProject],
+      environmentId: null,
+      projectGroupingMode: "separate",
     });
-    const exactTimestamp = new Date(NOW - HOME_PROJECT_INACTIVITY_MS).toISOString();
-    const olderTimestamp = new Date(NOW - HOME_PROJECT_INACTIVITY_MS - 1).toISOString();
-    const groups = buildGroups(
-      [exactProject, olderProject],
-      [
-        makeThread({
-          environmentId,
-          id: ThreadId.make("thread-exact"),
-          projectId: exactProject.id,
-          title: "Exact",
-          createdAt: exactTimestamp,
-          updatedAt: exactTimestamp,
-          latestUserMessageAt: exactTimestamp,
-        }),
-        makeThread({
-          environmentId,
-          id: ThreadId.make("thread-older"),
-          projectId: olderProject.id,
-          title: "Older",
-          createdAt: olderTimestamp,
-          updatedAt: olderTimestamp,
-          latestUserMessageAt: olderTimestamp,
-        }),
-      ],
-      { projectGroupingMode: "separate" },
-    );
+    const targetScope = scopes.find((scope) => scope.title === "Target");
+    expect(scopes.map((scope) => scope.title)).toEqual(["Colliding", "Target"]);
+    expect(targetScope?.key).toBe("environment-local:/workspaces/target");
 
-    const result = partitionHomeProjectGroupsByActivity({ groups, nowMs: NOW });
-
-    expect(result.recentGroups.map((group) => group.representative.id)).toEqual([exactProject.id]);
-    expect(result.olderGroups.map((group) => group.representative.id)).toEqual([olderProject.id]);
-    expect(result.nextTransitionAtMs).toBe(NOW + 1);
-  });
-
-  it("keeps stale work recent when it needs attention", () => {
-    const environmentId = EnvironmentId.make("environment-1");
-    const project = makeProject({
-      environmentId,
-      id: ProjectId.make("project-attention"),
-      title: "Attention",
-    });
-    const oldTimestamp = new Date(NOW - HOME_PROJECT_INACTIVITY_MS - 1).toISOString();
-    const [group] = buildGroups(
-      [project],
-      [
-        makeThread({
-          environmentId,
-          id: ThreadId.make("thread-attention"),
-          projectId: project.id,
-          title: "Attention",
-          createdAt: oldTimestamp,
-          updatedAt: oldTimestamp,
-          latestUserMessageAt: oldTimestamp,
-          hasActionableProposedPlan: true,
-        }),
-      ],
-    );
-
-    const result = partitionHomeProjectGroupsByActivity({ groups: [group!], nowMs: NOW });
-
-    expect(result.recentGroups).toEqual([group]);
-    expect(result.olderGroups).toEqual([]);
-  });
-
-  it("moves an older project back to recent on renewed user activity", () => {
-    const environmentId = EnvironmentId.make("environment-1");
-    const project = makeProject({
-      environmentId,
-      id: ProjectId.make("project-renewed"),
-      title: "Renewed",
-    });
-    const oldTimestamp = new Date(NOW - HOME_PROJECT_INACTIVITY_MS - 1).toISOString();
-    const [group] = buildGroups(
-      [project],
-      [
-        makeThread({
-          environmentId,
-          id: ThreadId.make("thread-renewed"),
-          projectId: project.id,
-          title: "Renewed",
-          createdAt: oldTimestamp,
-          updatedAt: oldTimestamp,
-          latestUserMessageAt: new Date(NOW - 1_000).toISOString(),
-        }),
-      ],
-    );
-
-    const result = partitionHomeProjectGroupsByActivity({ groups: [group!], nowMs: NOW });
-
-    expect(result.recentGroups).toEqual([group]);
-    expect(result.olderGroups).toEqual([]);
-  });
-
-  it("moves a project to older when its final chat is settled", () => {
-    const environmentId = EnvironmentId.make("environment-1");
-    const project = makeProject({
-      environmentId,
-      id: ProjectId.make("project-settled"),
-      title: "Settled",
-    });
-    const oldTimestamp = new Date(NOW - HOME_PROJECT_INACTIVITY_MS - 1).toISOString();
-    const settledAt = new Date(NOW).toISOString();
-    const [group] = buildGroups(
-      [project],
-      [
-        makeThread({
-          environmentId,
-          id: ThreadId.make("thread-settled"),
-          projectId: project.id,
-          title: "Settled",
-          createdAt: oldTimestamp,
-          updatedAt: settledAt,
-          latestUserMessageAt: new Date(NOW - 1_000).toISOString(),
-          settledOverride: "settled",
-          settledAt,
-        }),
-      ],
-    );
-
-    const result = partitionHomeProjectGroupsByActivity({ groups: [group!], nowMs: NOW });
-
-    expect(result.recentGroups).toEqual([]);
-    expect(result.olderGroups).toEqual([group]);
+    expect(findHomeProjectScope(scopes, "environment-local:/workspaces/target")).toBe(targetScope);
+    expect(findHomeProjectScope(scopes, "environment-local:project-target")).toBe(targetScope);
+    expect(findHomeProjectScope(scopes, "environment-local:missing")).toBeNull();
+    expect(findHomeProjectScope(scopes, null)).toBeNull();
   });
 });

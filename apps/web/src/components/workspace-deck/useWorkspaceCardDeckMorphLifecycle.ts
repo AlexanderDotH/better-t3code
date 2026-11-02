@@ -1,7 +1,7 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import {
   type AnimationEvent,
   type TransitionEvent as ReactTransitionEvent,
-  useCallback,
   useEffect,
   useLayoutEffect,
 } from "react";
@@ -97,100 +97,80 @@ export function useWorkspaceCardDeckMorphLifecycle<CardId extends string>(input:
     transitionTokenRef,
   } = retained;
 
-  const cleanupActiveMorph = useCallback(() => {
+  const cleanupActiveMorph = useStableCallback(() => {
     const activeMorph = activeMorphRef.current;
     if (activeMorph === null) return;
     activeMorphRef.current = null;
     disposeWorkspaceDeckMorph(activeMorph);
-  }, [activeMorphRef]);
+  });
 
-  const cleanupExpansionMorph = useCallback(() => {
+  const cleanupExpansionMorph = useStableCallback(() => {
     const activeMorph = activeExpansionMorphRef.current;
     if (activeMorph === null) return;
     activeExpansionMorphRef.current = null;
     disposeWorkspaceDeckMorph(activeMorph);
-  }, [activeExpansionMorphRef]);
+  });
 
-  const findPeek = useCallback(
-    (cardId: CardId) => {
-      const slot = peekSlotRefs.current.get(cardId);
-      return slot?.querySelector<HTMLElement>("[data-workspace-card-peek]") ?? null;
-    },
-    [peekSlotRefs],
-  );
+  const findPeek = (cardId: CardId) => {
+    const slot = peekSlotRefs.current.get(cardId);
+    return slot?.querySelector<HTMLElement>("[data-workspace-card-peek]") ?? null;
+  };
 
-  const capturePeekSurface = useCallback(
-    (cardId: CardId) => {
-      const peek = findPeek(cardId);
-      return peek ? captureWorkspaceDeckSurface(peek) : null;
-    },
-    [findPeek],
-  );
+  const capturePeekSurface = (cardId: CardId) => {
+    const peek = findPeek(cardId);
+    return peek ? captureWorkspaceDeckSurface(peek) : null;
+  };
 
-  const captureMorphRequest = useCallback(
-    (intent: WorkspaceDeckMorphIntent<CardId>) => {
-      const activeIntrinsic = input.intrinsicElementRefs.current.get(intent.fromId);
-      if (!activeIntrinsic) return null;
-      const activeProxy = morphHostRefs.current
-        .get(intent.fromId)
-        ?.querySelector<HTMLElement>('[data-surface-morph-proxy^="deck-"]');
-      const activeSurface =
-        activeProxy ??
-        findWorkspaceDeckCompactSurface(
-          activeIntrinsic,
-          findWorkspaceDeckCompactContent(activeIntrinsic) ?? activeIntrinsic,
-        );
-      const contentStates = new Map<CardId, WorkspaceDeckContentHandoffState>();
-      const activeContent = findWorkspaceDeckCompactContent(activeIntrinsic);
-      if (activeContent) {
-        contentStates.set(intent.fromId, captureWorkspaceDeckContentHandoffState(activeContent));
-      }
-      const peeks = new Map<CardId, WorkspaceDeckSurfaceSnapshot>();
-      for (const cardId of cardIdsRef.current) {
-        const snapshot = capturePeekSurface(cardId);
-        if (snapshot) peeks.set(cardId, snapshot);
-      }
-      if (!peeks.has(intent.toId)) return null;
-      return {
-        ...intent,
-        active: captureWorkspaceDeckSurface(activeSurface),
-        contentStates,
-        peeks,
-      } satisfies WorkspaceDeckMorphCapture<CardId>;
-    },
-    [capturePeekSurface, cardIdsRef, input.intrinsicElementRefs, morphHostRefs],
-  );
+  const captureMorphRequest = (intent: WorkspaceDeckMorphIntent<CardId>) => {
+    const activeIntrinsic = input.intrinsicElementRefs.current.get(intent.fromId);
+    if (!activeIntrinsic) return null;
+    const activeProxy = morphHostRefs.current
+      .get(intent.fromId)
+      ?.querySelector<HTMLElement>('[data-surface-morph-proxy^="deck-"]');
+    const activeSurface =
+      activeProxy ??
+      findWorkspaceDeckCompactSurface(
+        activeIntrinsic,
+        findWorkspaceDeckCompactContent(activeIntrinsic) ?? activeIntrinsic,
+      );
+    const contentStates = new Map<CardId, WorkspaceDeckContentHandoffState>();
+    const activeContent = findWorkspaceDeckCompactContent(activeIntrinsic);
+    if (activeContent) {
+      contentStates.set(intent.fromId, captureWorkspaceDeckContentHandoffState(activeContent));
+    }
+    const peeks = new Map<CardId, WorkspaceDeckSurfaceSnapshot>();
+    for (const cardId of cardIdsRef.current) {
+      const snapshot = capturePeekSurface(cardId);
+      if (snapshot) peeks.set(cardId, snapshot);
+    }
+    if (!peeks.has(intent.toId)) return null;
+    return {
+      ...intent,
+      active: captureWorkspaceDeckSurface(activeSurface),
+      contentStates,
+      peeks,
+    } satisfies WorkspaceDeckMorphCapture<CardId>;
+  };
 
-  const finishTransition = useCallback(
-    (token?: number) => {
-      const currentTransition = transitionRef.current;
-      if (currentTransition === null) return;
-      if (token !== undefined && currentTransition.token !== token) return;
-      cleanupActiveMorph();
-      pendingMorphCaptureRef.current = null;
-      pendingMorphIntentRef.current = null;
-      input.focusDestination(currentTransition.toId);
-      transitionRef.current = null;
-      setTransition(null);
-      setFrozenCompactHeight(null);
-    },
-    [
-      cleanupActiveMorph,
-      input.focusDestination,
-      pendingMorphCaptureRef,
-      pendingMorphIntentRef,
-      setFrozenCompactHeight,
-      setTransition,
-      transitionRef,
-    ],
-  );
+  const finishTransition = useStableCallback((token?: number) => {
+    const currentTransition = transitionRef.current;
+    if (currentTransition === null) return;
+    if (token !== undefined && currentTransition.token !== token) return;
+    cleanupActiveMorph();
+    pendingMorphCaptureRef.current = null;
+    pendingMorphIntentRef.current = null;
+    input.focusDestination(currentTransition.toId);
+    transitionRef.current = null;
+    setTransition(null);
+    setFrozenCompactHeight(null);
+  });
 
-  const cancelCollapse = useCallback(() => {
+  const cancelCollapse = () => {
     collapsingCardRef.current = null;
     setCollapsingCard(null);
-  }, [collapsingCardRef, setCollapsingCard]);
+  };
 
-  const finishCollapse = useCallback(() => {
+  const finishCollapse = useStableCallback(() => {
     const collapsedCard = collapsingCardRef.current;
     if (collapsedCard === null) return;
     cleanupExpansionMorph();
@@ -201,15 +181,7 @@ export function useWorkspaceCardDeckMorphLifecycle<CardId extends string>(input:
     collapsingCardRef.current = null;
     setCollapsingCard(null);
     collapseCompleteCallbackRef.current?.(collapsedCard);
-  }, [
-    captureMorphRequest,
-    cleanupExpansionMorph,
-    collapseCompleteCallbackRef,
-    collapsingCardRef,
-    pendingMorphCaptureRef,
-    pendingMorphIntentRef,
-    setCollapsingCard,
-  ]);
+  });
 
   useIsomorphicLayoutEffect(() => {
     const resetChanged = previousCollapseResetKeyRef.current !== input.resetKey;
@@ -239,6 +211,7 @@ export function useWorkspaceCardDeckMorphLifecycle<CardId extends string>(input:
     setCollapsingCard,
   ]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the collapse completion timer until the CSS viewport transition finishes
   useEffect(() => {
     if (collapsingCard === null) return;
     if (input.prefersReducedMotion || input.selectionMode === "immediate") {
@@ -358,6 +331,7 @@ export function useWorkspaceCardDeckMorphLifecycle<CardId extends string>(input:
     transitionRef,
   ]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the transition fallback timer until the native animation completes
   useEffect(() => {
     if (transition === null) return;
     const fallback = window.setTimeout(
@@ -554,6 +528,7 @@ export function useWorkspaceCardDeckMorphLifecycle<CardId extends string>(input:
     transitionRef,
   ]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- settles running native morph animations when browser geometry or navigation changes
   useEffect(() => {
     if (transition?.motion !== "morph") return;
     const token = transition.token;
@@ -577,6 +552,7 @@ export function useWorkspaceCardDeckMorphLifecycle<CardId extends string>(input:
     };
   }, [finishTransition, transition]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- disposes native animations and their proxy DOM nodes when the deck unmounts
   useEffect(
     () => () => {
       cleanupActiveMorph();
@@ -585,6 +561,7 @@ export function useWorkspaceCardDeckMorphLifecycle<CardId extends string>(input:
     [cleanupActiveMorph, cleanupExpansionMorph],
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes the deck DOM to CSS animation cancellation
   useEffect(() => {
     const deck = deckRef.current;
     if (!deck) return;
@@ -714,46 +691,34 @@ export function useWorkspaceCardDeckMorphLifecycle<CardId extends string>(input:
     surfaceSnapshotByCardRef,
   ]);
 
-  const registerMorphHost = useCallback(
-    (cardId: CardId, element: HTMLDivElement | null) => {
-      if (element === null) {
-        morphHostRefs.current.delete(cardId);
-        return;
-      }
-      morphHostRefs.current.set(cardId, element);
-    },
-    [morphHostRefs],
-  );
+  const registerMorphHost = (cardId: CardId, element: HTMLDivElement | null) => {
+    if (element === null) {
+      morphHostRefs.current.delete(cardId);
+      return;
+    }
+    morphHostRefs.current.set(cardId, element);
+  };
 
-  const registerPeekSlot = useCallback(
-    (cardId: CardId, element: HTMLDivElement | null) => {
-      if (element === null) {
-        peekSlotRefs.current.delete(cardId);
-        return;
-      }
-      peekSlotRefs.current.set(cardId, element);
-    },
-    [peekSlotRefs],
-  );
+  const registerPeekSlot = (cardId: CardId, element: HTMLDivElement | null) => {
+    if (element === null) {
+      peekSlotRefs.current.delete(cardId);
+      return;
+    }
+    peekSlotRefs.current.set(cardId, element);
+  };
 
-  const onMotionEnd = useCallback(
-    (event: AnimationEvent<HTMLDivElement>) => {
-      if (!(event.target instanceof HTMLElement)) return;
-      if (event.target.dataset.transitionRole !== "incoming") return;
-      const currentTransition = transitionRef.current;
-      if (currentTransition?.motion !== "fallback") return;
-      finishTransition(currentTransition.token);
-    },
-    [finishTransition, transitionRef],
-  );
+  const onMotionEnd = (event: AnimationEvent<HTMLDivElement>) => {
+    if (!(event.target instanceof HTMLElement)) return;
+    if (event.target.dataset.transitionRole !== "incoming") return;
+    const currentTransition = transitionRef.current;
+    if (currentTransition?.motion !== "fallback") return;
+    finishTransition(currentTransition.token);
+  };
 
-  const onViewportTransitionEnd = useCallback(
-    (event: ReactTransitionEvent<HTMLDivElement>) => {
-      if (event.target !== event.currentTarget || event.propertyName !== "height") return;
-      finishCollapse();
-    },
-    [finishCollapse],
-  );
+  const onViewportTransitionEnd = (event: ReactTransitionEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget || event.propertyName !== "height") return;
+    finishCollapse();
+  };
 
   return {
     ...retained,

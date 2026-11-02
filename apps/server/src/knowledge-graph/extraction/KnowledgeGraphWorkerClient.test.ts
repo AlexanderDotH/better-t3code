@@ -164,6 +164,7 @@ it.effect(
   () =>
     withWorkspace((input) =>
       Effect.gen(function* () {
+        // @effect-diagnostics-next-line abortControllerInEffect:off -- This fixture explicitly aborts the external worker client mid-stream.
         const controller = new AbortController();
         let cancelled = false;
         const client = new KnowledgeGraphWorkerClient({

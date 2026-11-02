@@ -7,9 +7,11 @@ import {
   RuntimeSessionId,
   type DecisionGenerationResult,
   ThreadId,
+} from "@t3tools/contracts";
+import {
   type OrchestrationMessage,
   type OrchestrationThreadActivity,
-} from "@t3tools/contracts";
+} from "@t3tools/contracts/legacy";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import {

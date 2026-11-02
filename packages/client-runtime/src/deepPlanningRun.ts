@@ -1,9 +1,10 @@
 import type {
-  ClientOrchestrationCommand,
+  OrchestrationV2Command,
   CommandId,
   DeepPlanDocument,
   DeepPlanEvidence,
   DeepPlanRun,
+  DeepPlanExecutionContext,
   DeepPlanRunReference,
   DeepPlanModelSelection,
   DeepPlanSourceSnapshot,
@@ -12,7 +13,6 @@ import type {
   DeepPlanStepStatus,
   EnvironmentId,
   ThreadId,
-  OrchestrationProposedPlan,
 } from "@t3tools/contracts";
 
 import {
@@ -24,6 +24,7 @@ type DeepPlanThread = {
   readonly id: ThreadId;
   readonly environmentId?: EnvironmentId | undefined;
   readonly deepPlan?: DeepPlanRun | null | undefined;
+  readonly deepPlanExecution?: DeepPlanExecutionContext | undefined;
 };
 
 export function selectDurableDeepPlan(
@@ -38,7 +39,12 @@ export function selectDurableDeepPlan(
     return thread.deepPlan ?? null;
   for (const owner of environmentThreads) {
     if (thread.environmentId && owner.environmentId !== thread.environmentId) continue;
-    if (owner.deepPlan?.approval?.implementationThreadId === thread.id) return owner.deepPlan;
+    if (
+      owner.deepPlan?.approval?.implementationThreadId === thread.id ||
+      (owner.id === thread.deepPlanExecution?.runThreadId &&
+        owner.deepPlan?.id === thread.deepPlanExecution.runId)
+    )
+      return owner.deepPlan ?? null;
   }
   return null;
 }
@@ -80,11 +86,15 @@ export function getDeepPlanApprovalBlockReason(run: DeepPlanRun | null | undefin
 }
 
 export function getDeepPlanProposalBlockReason(
-  proposal: Pick<OrchestrationProposedPlan, "deepPlan"> | null | undefined,
+  proposal: { readonly deepPlan?: DeepPlanRunReference } | null | undefined,
   run: DeepPlanRun | null | undefined,
 ): string | null {
   if (!proposal?.deepPlan) return null;
-  if (run?.id !== proposal.deepPlan.runId || run.plan?.version !== proposal.deepPlan.planVersion) {
+  if (
+    run == null ||
+    run.id !== proposal.deepPlan.runId ||
+    run.plan?.version !== proposal.deepPlan.planVersion
+  ) {
     return "Deep Plan changed. Review the latest version before implementing it.";
   }
   return getDeepPlanApprovalBlockReason(run);
@@ -124,7 +134,7 @@ export async function approveDeepPlanImplementation(input: {
     readonly threadId: ThreadId;
     readonly runId: DeepPlanRun["id"];
   }) => Promise<DeepPlanRun | null>;
-  readonly dispatchCommand: (command: ClientOrchestrationCommand) => Promise<unknown>;
+  readonly dispatchCommand: (command: OrchestrationV2Command) => Promise<unknown>;
 }): Promise<DeepPlanRun> {
   const current = await input.getRun({ threadId: input.run.threadId, runId: input.run.id });
   if (
@@ -265,7 +275,7 @@ function formatSourceCitations(sources: ReadonlyArray<DeepPlanSourceCitation> | 
 export function formatDeepPlanMarkdown(plan: DeepPlanDocument): string {
   const decisions = plan.decisions.map(
     (decision) =>
-      `- ${decision.text}${decision.rationale ? ` — ${decision.rationale}` : ""}${formatSourceCitations(decision.sources)}`,
+      `- ${decision.text}${decision.rationale ? `: ${decision.rationale}` : ""}${formatSourceCitations(decision.sources)}`,
   );
   const steps = plan.steps.flatMap((step, index) => [
     `### ${index + 1}. ${step.title} (${step.id})`,
@@ -281,7 +291,7 @@ export function formatDeepPlanMarkdown(plan: DeepPlanDocument): string {
   ]);
   return (
     [
-      `# DeepPlan — revision ${plan.version}`,
+      `# DeepPlan: revision ${plan.version}`,
       "",
       "## Goal",
       "",
@@ -351,9 +361,7 @@ export function buildDeepPlanContinuationPrompt(run: DeepPlanRun): string {
     "Keep required user decisions and external prerequisites visible. Resuming does not verify a blocked criterion or change the approved plan.",
     "",
     "CURRENT CHECKLIST",
-    ...selectDeepPlanSteps(run).map(
-      ({ step, status }) => `- ${step.id}: ${status} — ${step.title}`,
-    ),
+    ...selectDeepPlanSteps(run).map(({ step, status }) => `- ${step.id}: ${status}: ${step.title}`),
     "",
     formatDeepPlanMarkdown(approved.plan),
   ].join("\n");

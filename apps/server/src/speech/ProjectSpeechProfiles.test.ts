@@ -7,7 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
 
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
 import { runMigrations } from "../persistence/Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
@@ -44,8 +44,8 @@ const project: OrchestrationProjectShell = {
 function projectionLayer(
   resolveProject: (projectId: ProjectId) => Option.Option<OrchestrationProjectShell>,
 ) {
-  return Layer.mock(ProjectionSnapshotQuery, {
-    getProjectShellById: (requestedProjectId) => Effect.succeed(resolveProject(requestedProjectId)),
+  return Layer.mock(ProjectStoreV2, {
+    getShell: (requestedProjectId) => Effect.succeed(resolveProject(requestedProjectId)),
   });
 }
 
@@ -64,12 +64,14 @@ function workspaceLayer(options: {
         invalidate: () => Effect.void,
         search: () => Effect.die("unused"),
         searchContents: () => Effect.die("unused"),
+        listIgnoredFiles: () => Effect.die("unused"),
       }),
     ),
     Layer.succeed(
       WorkspaceFileSystem.WorkspaceFileSystem,
       WorkspaceFileSystem.WorkspaceFileSystem.of({
         readFile: options.readFile,
+        getMetadata: () => Effect.die("unused"),
         writeFile: () => Effect.die("unused"),
         editFiles: () => Effect.die("unused"),
       }),

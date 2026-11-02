@@ -28,6 +28,7 @@ const decodeChangesDiff = Schema.decodeUnknownSync(GitChangesDiffResult);
 const decodeChangeSelection = Schema.decodeUnknownSync(GitApplyChangeSelectionInput);
 const decodeOperationInput = Schema.decodeUnknownSync(GitWorkbenchRunOperationInput);
 const decodeUndoSnapshot = Schema.decodeUnknownSync(GitUndoSnapshot);
+const encodeQueuedWorkflow = Schema.encodeSync(GitQueuedWorkflow);
 const decodeQueuedWorkflow = Schema.decodeUnknownSync(GitQueuedWorkflow);
 const decodeQueuedWorkflowUpsert = Schema.decodeUnknownSync(GitQueuedWorkflowUpsertInput);
 const decodeQueuedWorkflowCancel = Schema.decodeUnknownSync(GitQueuedWorkflowCancelInput);
@@ -332,12 +333,24 @@ describe("Git operations, undo, and queue", () => {
     expect(undo.indexTreeOid).toBe(oid);
     expect(workflow.plan.kind).toBe("delivery");
     expect(workflow.needsReviewReasons[0]?.code).toBe("execution_interrupted");
+    const captured = decodeQueuedWorkflow({
+      ...encodeQueuedWorkflow(workflow),
+      threadId: "thread-1",
+      runId: "run-v2",
+      turnId: "native-turn-1",
+    });
+    expect(encodeQueuedWorkflow(captured)).toMatchObject({
+      threadId: "thread-1",
+      runId: "run-v2",
+      turnId: "native-turn-1",
+    });
   });
 
   it("requires optimistic revisions for queue edits and cancellation", () => {
     const upsert = decodeQueuedWorkflowUpsert({
       cwd: "/repo",
       workflowId: "queue:1",
+      runId: "run-v2",
       expectedRevision: 1,
       expectedStateToken: stateToken,
       plan: {
@@ -354,6 +367,8 @@ describe("Git operations, undo, and queue", () => {
     });
 
     expect(upsert.expectedRevision).toBe(1);
+    expect(upsert.runId).toBe("run-v2");
+    expect(upsert.turnId).toBeUndefined();
     expect(cancel.expectedRevision).toBe(2);
   });
 

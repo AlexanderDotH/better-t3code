@@ -19,7 +19,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -116,6 +116,7 @@ function rpcSession(client: WsRpcProtocolClient): RpcSession {
     subscribeServerConfig: () => Stream.never,
     ready: Effect.void,
     probe: Effect.void,
+    inboundFrames: Effect.succeed(0),
     closed: Effect.never,
   };
 }
@@ -178,21 +179,26 @@ function mcpDefinition(id: string) {
   };
 }
 
+function waitForValue<A>(
+  registry: AtomRegistry.AtomRegistry,
+  atom: Atom.Atom<AsyncResult.AsyncResult<A, unknown>>,
+  predicate: (value: A) => boolean,
+) {
+  return AtomRegistry.toStream(registry, atom).pipe(
+    Stream.filter(AsyncResult.isSuccess),
+    Stream.map((result) => result.value),
+    Stream.filter(predicate),
+    Stream.runHead,
+    Effect.map(Option.getOrThrow),
+  );
+}
+
 function waitForRevision<A extends { readonly revision: number }>(
   registry: AtomRegistry.AtomRegistry,
   atom: Atom.Atom<AsyncResult.AsyncResult<A, unknown>>,
   revision: number,
 ) {
-  return Effect.gen(function* () {
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      const result = registry.get(atom);
-      if (AsyncResult.isSuccess(result) && result.value.revision === revision) {
-        return result.value;
-      }
-      yield* Effect.yieldNow;
-    }
-    return yield* Effect.die(`MCP projection did not reach revision ${revision}`);
-  });
+  return waitForValue(registry, atom, (value) => value.revision === revision);
 }
 
 describe("MCP environment atoms", () => {
@@ -331,15 +337,11 @@ describe("MCP environment atoms", () => {
             ),
           ),
         );
-        let current: McpRuntimeSnapshot | undefined;
-        for (let attempt = 0; attempt < 100; attempt += 1) {
-          const result = registry.get(projection);
-          if (AsyncResult.isSuccess(result) && result.value.servers[0]?.providerKey === "github") {
-            current = result.value;
-            break;
-          }
-          yield* Effect.yieldNow;
-        }
+        const current = yield* waitForValue(
+          registry,
+          projection,
+          (value) => value.servers[0]?.providerKey === "github",
+        );
 
         expect(current?.servers.map((server) => server.providerKey)).toEqual(["github"]);
         unmount();
@@ -397,6 +399,7 @@ describe("MCP environment atoms", () => {
     Effect.scoped(
       Effect.gen(function* () {
         let cleanups = 0;
+        const stopped = deferredPromise();
         const client = {
           [WS_METHODS.mcpRuntimeChanges]: () =>
             Stream.make({
@@ -407,6 +410,7 @@ describe("MCP environment atoms", () => {
               Stream.ensuring(
                 Effect.sync(() => {
                   cleanups += 1;
+                  stopped.resolve();
                 }),
               ),
             ),
@@ -427,10 +431,7 @@ describe("MCP environment atoms", () => {
         yield* waitForRevision(registry, projection, 1);
 
         unmount();
-        for (let attempt = 0; attempt < 100; attempt += 1) {
-          if (cleanups > 0) break;
-          yield* Effect.yieldNow;
-        }
+        yield* Effect.promise(() => stopped.promise);
 
         expect(cleanups).toBe(1);
       }),
@@ -441,10 +442,12 @@ describe("MCP environment atoms", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const first = deferredPromise();
+        const started = deferredPromise();
         const starts: string[] = [];
         const client = {
           [WS_METHODS.mcpCreate]: (input: { readonly server: { readonly id: string } }) => {
             starts.push(input.server.id);
+            started.resolve();
             const wait = input.server.id === "first" ? first.promise : Promise.resolve();
             return Effect.promise(() => wait).pipe(Effect.as({ servers: [] }));
           },
@@ -466,9 +469,7 @@ describe("MCP environment atoms", () => {
           environmentId,
           input: { server: mcpDefinition("second") },
         });
-        for (let attempt = 0; attempt < 100 && starts.length === 0; attempt += 1) {
-          yield* Effect.yieldNow;
-        }
+        yield* Effect.promise(() => started.promise);
 
         expect(starts).toEqual(["first"]);
         first.resolve();
@@ -483,6 +484,7 @@ describe("MCP environment atoms", () => {
   it.effect("serializes runtime actions only for the same runtime and server target", () =>
     Effect.scoped(
       Effect.gen(function* () {
+        const bothStarted = deferredPromise();
         const notion = deferredPromise();
         const linear = deferredPromise();
         const starts: string[] = [];
@@ -493,6 +495,7 @@ describe("MCP environment atoms", () => {
             readonly action: "refresh" | "reconnect" | "authorize";
           }) => {
             starts.push(input.providerKey);
+            if (starts.length === 2) bothStarted.resolve();
             const isFirstNotion = input.providerKey === "notion" && notionCalls++ === 0;
             const wait = isFirstNotion
               ? notion.promise
@@ -530,9 +533,7 @@ describe("MCP environment atoms", () => {
         const firstNotion = runAtomCommand(registry, atoms.runtimeAction, action("notion"));
         const secondNotion = runAtomCommand(registry, atoms.runtimeAction, action("notion"));
         const linearRun = runAtomCommand(registry, atoms.runtimeAction, action("linear"));
-        for (let attempt = 0; attempt < 100 && starts.length < 2; attempt += 1) {
-          yield* Effect.yieldNow;
-        }
+        yield* Effect.promise(() => bothStarted.promise);
 
         expect(starts).toEqual(["notion", "linear"]);
         notion.resolve();

@@ -19,12 +19,12 @@ import {
   PromptImprovementOutputSchema,
   truncatePlanParallelismReviewContext,
   TranscriptTranslationOutputSchema,
-} from "./TextGenerationPrompts.ts";
+} from "@t3tools/provider-core/server/textGenerationPrompts";
 import {
   normalizeCliError,
   sanitizeThreadTitle,
   toJsonSchemaObject,
-} from "./TextGenerationUtils.ts";
+} from "@t3tools/provider-core/server/textGenerationUtils";
 import { TextGenerationError } from "@t3tools/contracts";
 
 const decodePromptImprovementOutput = Schema.decodeUnknownSync(PromptImprovementOutputSchema);
@@ -141,6 +141,17 @@ describe("buildPrContentPrompt", () => {
 });
 
 describe("buildBranchNamePrompt", () => {
+  it("uses image content only when the caller supplies image inputs", () => {
+    const result = buildBranchNamePrompt({
+      message: "Fix the layout",
+      imageInputs: true,
+      attachments: [
+        { type: "image", id: "image", name: "layout.png", mimeType: "image/png", sizeBytes: 10 },
+      ],
+    });
+    expect(result.prompt).toContain("Use attached images as primary context");
+    expect(result.prompt).not.toContain("Attachment contents are unavailable");
+  });
   it("includes the user message in the prompt", () => {
     const result = buildBranchNamePrompt({
       message: "Fix the login timeout bug",
@@ -175,6 +186,21 @@ describe("buildBranchNamePrompt", () => {
 });
 
 describe("buildThreadTitlePrompt", () => {
+  it.each([undefined, "Previous title"])(
+    "describes supplied images accurately for previousTitle=%s",
+    (previousTitle) => {
+      const result = buildThreadTitlePrompt({
+        message: "Review the layout",
+        previousTitle,
+        imageInputs: true,
+        attachments: [
+          { type: "image", id: "image", name: "layout.png", mimeType: "image/png", sizeBytes: 10 },
+        ],
+      });
+      expect(result.prompt).toContain("Use attached images as primary context");
+      expect(result.prompt).not.toContain("Attachment contents are unavailable");
+    },
+  );
   it("requires each generated field in the strict response schema", () => {
     const { outputSchema } = buildThreadTitlePrompt({ message: "Fix this" });
     expect(toJsonSchemaObject(outputSchema)).toMatchObject({

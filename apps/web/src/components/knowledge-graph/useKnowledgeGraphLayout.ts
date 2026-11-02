@@ -7,7 +7,7 @@ import type {
   KnowledgeGraphNodeId,
   KnowledgeGraphNodeV1,
 } from "@t3tools/contracts";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import {
   makeKnowledgeGraphLayoutRequest,
@@ -33,7 +33,7 @@ export function useKnowledgeGraphLayout(input: {
   const requestId = useRef(0);
   const workerRef = useRef<Worker | null>(null);
   const positionsRef = useRef<ReadonlyMap<KnowledgeGraphNodeId, KnowledgeGraphPosition>>(new Map());
-  const pinnedRef = useRef(input.pinned);
+  const getPinned = useEffectEvent(() => input.pinned);
   const postedPinnedRef = useRef(input.pinned);
   const restartTokenRef = useRef(input.restartToken);
   const [positions, setPositions] = useState<
@@ -41,20 +41,20 @@ export function useKnowledgeGraphLayout(input: {
   >(() => new Map());
   const [isAnimating, setIsAnimating] = useState(false);
 
-  pinnedRef.current = input.pinned;
-
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the layout worker and its fallback result; terminate the worker when its graph changes.
   useEffect(() => {
     requestId.current += 1;
     const restarted = restartTokenRef.current !== input.restartToken;
     restartTokenRef.current = input.restartToken;
-    postedPinnedRef.current = pinnedRef.current;
+    const pinned = getPinned();
+    postedPinnedRef.current = pinned;
     const request = makeKnowledgeGraphLayoutRequest({
       requestId: requestId.current,
       nodes: input.nodes,
       edges: input.edges,
       width: input.width,
       height: input.height,
-      pinned: pinnedRef.current,
+      pinned,
       initialPositions: restarted ? new Map() : positionsRef.current,
       prefersReducedMotion: input.prefersReducedMotion,
     });
@@ -103,12 +103,12 @@ export function useKnowledgeGraphLayout(input: {
     input.width,
   ]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Forward pinned positions to the active layout worker without rebuilding it.
   useEffect(() => {
     if (postedPinnedRef.current === input.pinned) return;
     postedPinnedRef.current = input.pinned;
     const merged = mergeKnowledgeGraphPinnedPositions(positionsRef.current, input.pinned);
     positionsRef.current = merged;
-    setPositions(merged);
     const worker = workerRef.current;
     if (!worker) return;
     setIsAnimating(!input.prefersReducedMotion);
@@ -119,6 +119,7 @@ export function useKnowledgeGraphLayout(input: {
     } satisfies KnowledgeGraphLayoutWorkerRequest); // oxlint-disable-line unicorn/require-post-message-target-origin -- Worker.postMessage does not accept a target origin.
   }, [input.pinned, input.prefersReducedMotion]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the document visibility listener that suspends and resumes the layout worker.
   useEffect(() => {
     if (typeof document === "undefined") return;
     const updateVisibility = () => {
@@ -134,11 +135,8 @@ export function useKnowledgeGraphLayout(input: {
     return () => document.removeEventListener("visibilitychange", updateVisibility);
   }, []);
 
-  return useMemo(
-    () => ({
-      positions: mergeKnowledgeGraphPinnedPositions(positions, input.pinned),
-      isAnimating,
-    }),
-    [input.pinned, isAnimating, positions],
-  );
+  return {
+    positions: mergeKnowledgeGraphPinnedPositions(positions, input.pinned),
+    isAnimating,
+  };
 }

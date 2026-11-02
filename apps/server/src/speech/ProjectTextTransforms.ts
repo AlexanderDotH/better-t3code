@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
 import { resolveVoiceTranslationModelSelection } from "@t3tools/shared/serverSettings";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
@@ -40,7 +40,7 @@ function transformError(
 }
 
 export const make = Effect.gen(function* () {
-  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+  const projectionSnapshotQuery = yield* ProjectStoreV2;
   const serverSettings = yield* ServerSettingsService;
   const textGeneration = yield* TextGeneration.TextGeneration;
 
@@ -50,7 +50,7 @@ export const make = Effect.gen(function* () {
     generate: GenerateText,
   ) {
     const project = yield* projectionSnapshotQuery
-      .getProjectShellById(input.projectId)
+      .getShell(input.projectId)
       .pipe(
         Effect.mapError(() =>
           transformError(operation, input.projectId, "The project could not be resolved."),

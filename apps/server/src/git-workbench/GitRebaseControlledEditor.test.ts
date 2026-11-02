@@ -1,4 +1,4 @@
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - The fixture invokes the generated editor directly to verify its executable boundary.
@@ -16,7 +16,7 @@ function run(command: string, args: readonly string[], cwd: string) {
   const result = NodeChildProcess.spawnSync(command, [...args], {
     cwd,
     encoding: "utf8",
-    env: HostProcessEnvironment.defaultValue(),
+    env: HostProcess.Environment.defaultValue(),
   });
   if (result.status === 0) return;
   throw new Error(result.stderr || result.error?.message || `${command} failed`);

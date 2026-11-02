@@ -4,12 +4,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import {
-  FetchHttpClient,
-  HttpClient,
-  HttpClientRequest,
-  HttpClientResponse,
-} from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import {
   decodeLmStudioModelCatalog,
@@ -363,7 +358,7 @@ export const probeAiEndpoint = Effect.fn("probeAiEndpoint")(
   > {
     const transport = yield* makeOpenAiCompatibleTransport({
       baseUrl: rawBaseUrl,
-      resolveApiKey: Effect.succeed(Option.none()),
+      resolveApiKey: Effect.succeedNone,
     });
     if (!transport.baseUrl) return undefined;
     const httpClient = yield* HttpClient.HttpClient;
@@ -379,12 +374,12 @@ export const probeAiEndpoint = Effect.fn("probeAiEndpoint")(
           nativeRequiresApiKey = response.status === 401 || response.status === 403;
           return response.status >= 200 && response.status < 300
             ? decodeJson(response).pipe(Effect.flatMap(decodeLmStudioModelCatalog))
-            : Effect.succeed(undefined);
+            : Effect.void;
         }),
         Effect.orElseSucceed(() => undefined),
         Effect.timeoutOrElse({
           duration: NATIVE_PROBE_TIMEOUT,
-          orElse: () => Effect.succeed(undefined),
+          orElse: () => Effect.void,
         }),
       );
     if (native !== undefined)
@@ -410,12 +405,12 @@ export const probeAiEndpoint = Effect.fn("probeAiEndpoint")(
         requiresApiKey: false,
         models,
       })),
-      Effect.catchTag("OpenAiCompatibleAuthenticationError", () =>
-        Effect.succeed(requiresAuthentication),
-      ),
+      Effect.catchTags({
+        OpenAiCompatibleAuthenticationError: () => Effect.succeed(requiresAuthentication),
+      }),
       Effect.orElseSucceed(() => (nativeRequiresApiKey ? requiresAuthentication : undefined)),
     );
   },
   Effect.orElseSucceed(() => undefined),
-  Effect.timeoutOrElse({ duration: PROBE_TIMEOUT, orElse: () => Effect.succeed(undefined) }),
+  Effect.timeoutOrElse({ duration: PROBE_TIMEOUT, orElse: () => Effect.void }),
 );

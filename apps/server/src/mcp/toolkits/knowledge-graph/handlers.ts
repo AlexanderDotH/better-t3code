@@ -1,3 +1,4 @@
+import * as McpToolAccess from "../../McpToolAccess.ts";
 import type {
   KnowledgeGraphOperationError,
   KnowledgeGraphQueryBatchInput,
@@ -25,6 +26,6 @@ export const invokeKnowledgeGraphQuery = Effect.fn("KnowledgeGraphToolkit.query"
   });
 });
 
-export const KnowledgeGraphToolkitHandlersLive = KnowledgeGraphToolkit.toLayer({
-  knowledge_graph_query: invokeKnowledgeGraphQuery,
+export const KnowledgeGraphToolkitHandlersLive = McpToolAccess.toLayer(KnowledgeGraphToolkit, {
+  knowledge_graph_query: McpToolAccess.readsAsCaller(invokeKnowledgeGraphQuery),
 });

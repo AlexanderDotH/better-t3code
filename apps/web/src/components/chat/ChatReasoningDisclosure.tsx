@@ -1,5 +1,7 @@
+import { observeResize } from "~/lib/observeResize";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { BrainIcon, ChevronRightIcon } from "lucide-react";
-import { useCallback, useId, type ComponentProps } from "react";
+import { useId, type ComponentProps } from "react";
 import ChatMarkdown from "../ChatMarkdown";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import type { WorkingReasoningTrace } from "./WorkingReasoningDialog";
@@ -27,17 +29,15 @@ export function ChatReasoningDisclosure({
   const label = translator.message(active ? "chat.timeline.thinking" : "chat.timeline.thought");
   const duration = active ? null : reasoningDurationMs(traces);
   const durationLabel = formatReasoningDuration(duration, translator);
-  const durationLabelRef = useCallback((content: HTMLSpanElement | null) => {
+  const durationLabelRef = useStableCallback((content: HTMLSpanElement | null) => {
     const container = content?.parentElement;
     if (!container || !content) return;
     const measure = () =>
       container.style.setProperty("--chat-reasoning-duration-width", `${content.offsetWidth}px`);
     measure();
     if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(content);
-    return () => observer.disconnect();
-  }, []);
+    return observeResize(content, measure);
+  });
   const panelId = useId();
   const widthRef = useChatWidthMotion<HTMLButtonElement>(`${traces.length}:${active}`, motion);
   if (traces.length === 0) return null;

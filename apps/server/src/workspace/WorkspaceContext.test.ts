@@ -1,3 +1,5 @@
+import { ServerConfig } from "../config.ts";
+import { KnownWorkspaces } from "./KnownWorkspaces.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
 import * as NodePath from "node:path";
@@ -30,6 +32,7 @@ const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 const NoopWorkspaceEntriesLayer = Layer.succeed(
   WorkspaceEntries.WorkspaceEntries,
   WorkspaceEntries.WorkspaceEntries.of({
+    listIgnoredFiles: () => Effect.die("unused"),
     searchContents: () => Effect.die("Workspace content search is not used by this test."),
     browse: () => Effect.die("Workspace entries browse must not be used by workspace context."),
     invalidate: () => Effect.void,
@@ -42,6 +45,8 @@ const NoopWorkspaceEntriesLayer = Layer.succeed(
 );
 
 const WorkspaceFileSystemLayer = WorkspaceFileSystem.layer.pipe(
+  Layer.provide(Layer.mock(KnownWorkspaces)({})),
+  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-workspace-context-config-" })),
   Layer.provide(WorkspacePaths.layer),
   Layer.provide(NoopWorkspaceEntriesLayer),
 );
@@ -103,8 +108,9 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceContextLive", (it) 
     }),
   );
 
-  for (const backend of ["git", "filesystem"] as const) {
-    it.effect(`bounds each ${backend} search to its own literal directory or file scopes`, () =>
+  it.effect.each(["git", "filesystem"] as const)(
+    "bounds each %s search to its own literal directory or file scopes",
+    (backend) =>
       Effect.gen(function* () {
         const context = yield* WorkspaceContext.WorkspaceContext;
         const cwd = yield* makeTempDir;
@@ -129,8 +135,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceContextLive", (it) 
           ["literal[scope]/target.ts"],
         ]);
       }),
-    );
-  }
+  );
 
   it.effect("rejects escaped search scopes before repository discovery", () =>
     Effect.gen(function* () {
@@ -542,7 +547,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceContextLive", (it) 
           WorkspaceContextEngineTesting.discoverFilesystem(
             cwd,
             [{ text: "deadlineNeedle", mode: "content", maxResults: 10 }],
-            performance.now() - 1,
+            -1,
           ),
         );
 

@@ -1,5 +1,5 @@
-import type { ApprovalRequestId, EnvironmentId, ThreadId, SubagentId } from "@t3tools/contracts";
-import { Atom } from "effect/unstable/reactivity";
+import type { EnvironmentId, ThreadId, SubagentId } from "@t3tools/contracts";
+import { Atom } from "effect/reactivity";
 import { appAtomRegistry } from "./atom-registry";
 
 export function questionAttachmentDraftPrefix(
@@ -15,7 +15,7 @@ export function questionAttachmentDraftPrefix(
 export function questionAttachmentDraftKey(
   environmentId: EnvironmentId,
   threadId: ThreadId,
-  requestId: ApprovalRequestId,
+  requestId: string,
   questionId: string,
   replyTopicId?: SubagentId,
 ): string {

@@ -1,228 +1,182 @@
-import { MessageId, ProjectId, SubagentId, ThreadId } from "@t3tools/contracts";
+import { ProjectId, ThreadId, TurnItemId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as McpToolAccess from "../../McpToolAccess.ts";
+import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
 import {
   ThreadContextError,
   ThreadContextToolkit,
   type ThreadContextInput,
   type ThreadContextMessage,
-  type ThreadContextResult,
 } from "./tools.ts";
 
 const PAGE_SIZE = 20;
-const SEARCH_PAGE_SIZE = 100;
+const SCAN_PAGE_SIZE = 100;
 const REFERENCE_PAGE_CHARS = 32 * 1024;
-
-const MessageCursorPayload = Schema.Struct({
-  version: Schema.Literal(1),
+const CursorPayload = Schema.Struct({
+  version: Schema.Literal(2),
   rootThreadId: ThreadId,
   projectId: ProjectId,
   query: Schema.NullOr(Schema.String),
-  before: Schema.Struct({
-    createdAt: Schema.String,
-    threadId: ThreadId,
-    messageId: MessageId,
-  }),
+  beforePosition: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
+  ),
+  ref: Schema.optionalKey(Schema.String),
+  offset: Schema.optionalKey(Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0))),
 });
-const ReferenceCursorPayload = Schema.Struct({
-  version: Schema.Literal(1),
-  rootThreadId: ThreadId,
-  projectId: ProjectId,
-  ref: Schema.String,
-  offset: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
-});
-const CursorPayload = Schema.Union([MessageCursorPayload, ReferenceCursorPayload]);
 type CursorPayload = typeof CursorPayload.Type;
-const decodeCursorPayload = Schema.decodeUnknownOption(CursorPayload);
-const encodeUnknownJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
-
-function decodeCursor(cursor: string): CursorPayload | undefined {
-  try {
-    return Option.getOrUndefined(
-      decodeCursorPayload(JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"))),
-    );
-  } catch {
-    return undefined;
-  }
-}
-
-function encodeCursor(payload: CursorPayload): string {
-  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
-}
-
-function asRecord(value: unknown): Readonly<Record<string, unknown>> {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Readonly<Record<string, unknown>>)
-    : {};
-}
-
-const projectionError = () =>
+const decodeCursorPayload = Schema.decodeUnknownOption(Schema.fromJsonString(CursorPayload));
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const encodeCursor = (payload: CursorPayload) =>
+  Buffer.from(JSON.stringify(payload)).toString("base64url");
+const decodeCursor = (cursor: string) =>
+  Option.getOrUndefined(decodeCursorPayload(Buffer.from(cursor, "base64url").toString("utf8")));
+const unavailable = () =>
   new ThreadContextError({
     reason: "projection_unavailable",
     detail: "Thread context could not read the orchestration projection.",
   });
+const invalidCursor = (detail: string) =>
+  new ThreadContextError({ reason: "invalid_cursor", detail });
 
 export const invokeThreadContext = Effect.fn("ThreadContextToolkit.invoke")(function* (
   input: ThreadContextInput,
-): Effect.fn.Return<
-  ThreadContextResult,
-  ThreadContextError,
-  McpInvocationContext.McpInvocationContext | ProjectionSnapshotQuery.ProjectionSnapshotQuery
-> {
-  const invocation = yield* McpInvocationContext.McpInvocationContext;
-  const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-  const rootOption = yield* projections
-    .getThreadShellById(invocation.threadId)
-    .pipe(Effect.mapError(projectionError));
-  if (Option.isNone(rootOption)) {
+) {
+  const invocation = yield* McpInvocationContext.requireWorkspaceMcpCapability().pipe(
+    Effect.mapError(
+      () =>
+        new ThreadContextError({
+          reason: "thread_not_found",
+          detail: "An authenticated workspace thread is required.",
+        }),
+    ),
+  );
+  const threads = yield* OrchestratorV2;
+  const root = yield* threads
+    .getThreadShell(invocation.threadId)
+    .pipe(Effect.mapError(unavailable));
+  if (root === null)
     return yield* new ThreadContextError({
       reason: "thread_not_found",
       detail: "The authenticated thread is not available.",
     });
-  }
 
-  const root = rootOption.value;
   const ancestry = new Set<ThreadId>([root.id]);
-  let fork = root.fork;
-  while (fork !== undefined) {
-    const sourceThreadId = fork.provenance.sourceThreadId;
-    if (ancestry.has(sourceThreadId)) {
+  let ancestor = root;
+  while (ancestor.forkedFrom?.type === "run" && ancestor.lineage.sideChat !== true) {
+    const sourceThreadId = ancestor.forkedFrom.threadId;
+    if (ancestry.has(sourceThreadId))
       return yield* new ThreadContextError({
         reason: "ancestry_unavailable",
-        detail: "The authenticated thread has a cyclic fork ancestry.",
+        detail: "The authenticated thread has cyclic fork ancestry.",
       });
-    }
-    const sourceOption = yield* projections
-      .getThreadShellById(sourceThreadId)
-      .pipe(Effect.mapError(projectionError));
-    if (Option.isNone(sourceOption)) {
+    const source = yield* threads.getThreadShell(sourceThreadId).pipe(Effect.mapError(unavailable));
+    if (source === null)
       return yield* new ThreadContextError({
         reason: "ancestry_unavailable",
         detail: "A fork ancestor is not available.",
       });
-    }
-    if (sourceOption.value.projectId !== root.projectId) {
+    if (source.projectId !== root.projectId)
       return yield* new ThreadContextError({
         reason: "cross_project_denied",
         detail: "Thread context cannot cross a project boundary.",
       });
-    }
     ancestry.add(sourceThreadId);
-    fork = sourceOption.value.fork;
-  }
-
-  const sourceThreadIds = yield* projections
-    .getThreadMessageSourceThreadIds(root.id)
-    .pipe(Effect.mapError(projectionError));
-  for (const sourceThreadId of sourceThreadIds) {
-    if (!ancestry.has(sourceThreadId)) {
-      return yield* new ThreadContextError({
-        reason: "cross_project_denied",
-        detail: "Inherited message provenance falls outside the authenticated fork ancestry.",
-      });
-    }
+    ancestor = source;
   }
 
   const cursor = input.cursor === undefined ? undefined : decodeCursor(input.cursor);
-  if (input.cursor !== undefined && cursor === undefined) {
-    return yield* new ThreadContextError({
-      reason: "invalid_cursor",
-      detail: "The thread context cursor is malformed.",
-    });
-  }
-  if (cursor && cursor.projectId !== root.projectId) {
+  if (input.cursor !== undefined && cursor === undefined)
+    return yield* invalidCursor("The thread context cursor is malformed.");
+  if (cursor?.projectId !== undefined && cursor.projectId !== root.projectId)
     return yield* new ThreadContextError({
       reason: "cross_project_denied",
-      detail: "The thread context cursor belongs to another project.",
+      detail: "The cursor belongs to another project.",
     });
-  }
-  if (cursor && cursor.rootThreadId !== root.id) {
-    return yield* new ThreadContextError({
-      reason: "invalid_cursor",
-      detail: "The thread context cursor belongs to another thread.",
-    });
-  }
-  const messageCursor = cursor && "before" in cursor ? cursor : undefined;
-  const referenceCursor = cursor && "ref" in cursor ? cursor : undefined;
-  const requestedQuery = input.query?.trim() || null;
+  if (cursor !== undefined && cursor.rootThreadId !== root.id)
+    return yield* invalidCursor("The cursor belongs to another thread.");
   const requestedRef = input.ref?.trim();
-  if (requestedRef && input.query !== undefined) {
-    return yield* new ThreadContextError({
-      reason: "invalid_cursor",
-      detail: "A thread context request cannot combine a lexical query with a reference.",
-    });
-  }
-  if (messageCursor && requestedRef) {
-    return yield* new ThreadContextError({
-      reason: "invalid_cursor",
-      detail: "The thread context cursor is for message retrieval, not a reference.",
-    });
-  }
-  if (referenceCursor && input.query !== undefined) {
-    return yield* new ThreadContextError({
-      reason: "invalid_cursor",
-      detail: "The thread context cursor is for a reference, not a lexical query.",
-    });
-  }
-  if (referenceCursor && requestedRef && referenceCursor.ref !== requestedRef) {
-    return yield* new ThreadContextError({
-      reason: "invalid_cursor",
-      detail: "The thread context cursor does not match the requested reference.",
-    });
-  }
-
-  const ref = referenceCursor?.ref ?? requestedRef;
-  if (ref) {
+  const requestedQuery = input.query?.trim() || null;
+  if ((requestedRef || cursor?.ref) && input.query !== undefined)
+    return yield* invalidCursor("A reference cannot be combined with a lexical query.");
+  if (
+    cursor !== undefined &&
+    ((cursor.ref === undefined && requestedRef !== undefined) ||
+      (requestedRef !== undefined && cursor.ref !== requestedRef))
+  )
+    return yield* invalidCursor("The cursor does not match the requested reference.");
+  if (
+    cursor !== undefined &&
+    input.query !== undefined &&
+    cursor.query?.toLowerCase() !== requestedQuery?.toLowerCase()
+  )
+    return yield* invalidCursor("The cursor does not match the lexical query.");
+  const ref = cursor?.ref ?? requestedRef;
+  if (ref !== undefined) {
     let content: string | undefined;
     if (ref.startsWith("tool-result:")) {
       const itemId = ref.slice("tool-result:".length);
-      const activity = itemId
-        ? Option.getOrUndefined(
-            yield* projections
-              .getThreadToolResultActivity(root.id, itemId)
-              .pipe(Effect.mapError(projectionError)),
-          )
-        : undefined;
-      const payload =
-        activity && (!activity.historyOrigin || ancestry.has(activity.historyOrigin.sourceThreadId))
-          ? asRecord(activity.payload)
-          : undefined;
-      if (payload && Object.hasOwn(payload, "canonicalPayload")) {
-        content = encodeUnknownJson(payload.canonicalPayload);
+      if (itemId.length > 0) {
+        const page = yield* threads
+          .getTimelinePage(root.id, { itemId: TurnItemId.make(itemId), limit: 1, view: "activity" })
+          .pipe(Effect.mapError(unavailable));
+        const row = page.items[0];
+        if (row !== undefined && ancestry.has(row.sourceThreadId)) {
+          const item = yield* threads
+            .getTurnItem({ threadId: row.sourceThreadId, itemId: row.sourceItemId })
+            .pipe(Effect.mapError(unavailable));
+          if (item?.type === "dynamic_tool" && item.output !== undefined)
+            content = encodeJson(item.output);
+        }
       }
     } else if (ref.startsWith("subagent:")) {
       const agentId = ref.slice("subagent:".length);
-      if (agentId) {
-        const detail = yield* projections
-          .getSubagentDetailById(root.id, SubagentId.make(agentId))
-          .pipe(Effect.mapError(projectionError));
-        if (
-          Option.isSome(detail) &&
-          detail.value.origin === "t3-managed" &&
-          (detail.value.historyOrigin === undefined ||
-            ancestry.has(detail.value.historyOrigin.sourceThreadId))
-        ) {
-          content = encodeUnknownJson(detail.value.messages);
+      let afterPosition = -1;
+      let hasMore = true;
+      while (hasMore && content === undefined) {
+        const page = yield* threads
+          .getTimelinePage(root.id, { afterPosition, limit: SCAN_PAGE_SIZE, view: "activity" })
+          .pipe(Effect.mapError(unavailable));
+        for (const row of page.items) {
+          const item = row.item;
+          if (
+            ancestry.has(row.sourceThreadId) &&
+            item.type === "subagent" &&
+            item.origin === "app_owned" &&
+            item.subagentId === agentId &&
+            item.childThreadId !== null
+          ) {
+            const child = yield* threads
+              .getThreadShell(item.childThreadId)
+              .pipe(Effect.mapError(unavailable));
+            if (
+              child?.projectId !== root.projectId ||
+              child.lineage.parentThreadId !== row.sourceThreadId
+            )
+              continue;
+            const transcript = yield* threads
+              .getThreadRecords(child.id, ["messages"])
+              .pipe(Effect.mapError(unavailable));
+            content = encodeJson(transcript.messages);
+            break;
+          }
         }
+        afterPosition = page.items.at(-1)?.position ?? afterPosition;
+        hasMore = page.hasMore && page.items.length > 0;
       }
     }
-    if (content === undefined) {
+    if (content === undefined)
       return yield* new ThreadContextError({
         reason: "reference_not_found",
         detail: "The reference is not available in the authenticated thread.",
       });
-    }
-    const offset = referenceCursor?.offset ?? 0;
-    if (offset > content.length) {
-      return yield* new ThreadContextError({
-        reason: "invalid_cursor",
-        detail: "The thread context reference cursor is outside the available content.",
-      });
-    }
+    const offset = cursor?.offset ?? 0;
+    if (offset > content.length)
+      return yield* invalidCursor("The reference cursor is outside the available content.");
     const end = Math.min(content.length, offset + REFERENCE_PAGE_CHARS);
     const hasMore = end < content.length;
     return {
@@ -231,15 +185,16 @@ export const invokeThreadContext = Effect.fn("ThreadContextToolkit.invoke")(func
       reference: {
         ref,
         content: content.slice(offset, end),
-        contentType: "application/json",
+        contentType: "application/json" as const,
         totalBytes: Buffer.byteLength(content),
         offset,
       },
       cursor: hasMore
         ? encodeCursor({
-            version: 1,
+            version: 2,
             rootThreadId: root.id,
             projectId: root.projectId,
+            query: null,
             ref,
             offset: end,
           })
@@ -248,64 +203,66 @@ export const invokeThreadContext = Effect.fn("ThreadContextToolkit.invoke")(func
     };
   }
 
-  if (
-    messageCursor &&
-    input.query !== undefined &&
-    requestedQuery?.toLowerCase() !== messageCursor.query?.toLowerCase()
-  ) {
-    return yield* new ThreadContextError({
-      reason: "invalid_cursor",
-      detail: "The thread context cursor does not match the lexical query.",
-    });
-  }
-
-  const query = messageCursor?.query ?? requestedQuery;
-  const lexicalQuery = query?.toLowerCase();
-  const messages: ThreadContextMessage[] = [];
-  let before = messageCursor?.before;
-  const limit = lexicalQuery === undefined ? PAGE_SIZE + 1 : SEARCH_PAGE_SIZE;
-  while (messages.length <= PAGE_SIZE) {
-    const candidates = yield* projections
-      .getThreadContextMessagePage({
-        threadId: root.id,
-        limit,
-        ...(before === undefined ? {} : { before }),
+  const query = cursor?.query ?? requestedQuery;
+  const first = yield* threads
+    .getTimelinePage(root.id, { limit: 1, view: "activity" })
+    .pipe(Effect.mapError(unavailable));
+  let beforePosition = Math.min(cursor?.beforePosition ?? first.totalItems, first.totalItems);
+  const matches: Array<{ position: number; message: ThreadContextMessage }> = [];
+  while (beforePosition > 0 && matches.length <= PAGE_SIZE) {
+    const start = Math.max(0, beforePosition - SCAN_PAGE_SIZE);
+    const page = yield* threads
+      .getTimelinePage(root.id, {
+        afterPosition: start - 1,
+        limit: beforePosition - start,
+        view: "activity",
       })
-      .pipe(Effect.mapError(projectionError));
-    for (const message of candidates) {
-      if (lexicalQuery === undefined || message.text.toLowerCase().includes(lexicalQuery)) {
-        messages.push(message);
-        if (messages.length > PAGE_SIZE) break;
-      }
+      .pipe(Effect.mapError(unavailable));
+    for (const row of page.items.toReversed()) {
+      if (!ancestry.has(row.sourceThreadId))
+        return yield* new ThreadContextError({
+          reason: "cross_project_denied",
+          detail: "Message provenance falls outside the authenticated fork ancestry.",
+        });
+      const item = row.item;
+      if (
+        (item.type !== "user_message" && item.type !== "assistant_message") ||
+        (item.type === "assistant_message" && item.streaming) ||
+        (query !== null && !item.text.toLowerCase().includes(query.toLowerCase()))
+      )
+        continue;
+      matches.push({
+        position: row.position,
+        message: {
+          threadId: row.sourceThreadId,
+          messageId: item.messageId,
+          role: item.type === "user_message" ? "user" : "assistant",
+          text: item.text,
+          createdAt: DateTime.formatIso(item.startedAt ?? item.updatedAt),
+        },
+      });
+      if (matches.length > PAGE_SIZE) break;
     }
-    if (messages.length > PAGE_SIZE || candidates.length < limit) break;
-    before = candidates.at(-1);
+    beforePosition = start;
   }
-  const page = messages.slice(0, PAGE_SIZE);
-  const hasMore = messages.length > PAGE_SIZE;
-  const last = page.at(-1);
-
+  const page = matches.slice(0, PAGE_SIZE);
+  const hasMore = matches.length > PAGE_SIZE;
   return {
-    messages: page,
+    messages: page.map((match) => match.message),
     query,
-    cursor:
-      hasMore && last
-        ? encodeCursor({
-            version: 1,
-            rootThreadId: root.id,
-            projectId: root.projectId,
-            query,
-            before: {
-              createdAt: last.createdAt,
-              threadId: last.threadId,
-              messageId: last.messageId,
-            },
-          })
-        : null,
+    cursor: hasMore
+      ? encodeCursor({
+          version: 2,
+          rootThreadId: root.id,
+          projectId: root.projectId,
+          query,
+          beforePosition: page.at(-1)!.position,
+        })
+      : null,
     hasMore,
   };
 });
 
-export const ThreadContextToolkitHandlersLive = ThreadContextToolkit.toLayer({
-  thread_context: invokeThreadContext,
+export const ThreadContextToolkitHandlersLive = McpToolAccess.toLayer(ThreadContextToolkit, {
+  thread_context: McpToolAccess.readsAsCaller(invokeThreadContext),
 });

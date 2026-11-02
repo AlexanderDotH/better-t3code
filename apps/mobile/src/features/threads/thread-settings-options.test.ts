@@ -1,4 +1,8 @@
 import {
+  getTraitSelectChange,
+  getPromptControlledTraits,
+} from "@t3tools/client-runtime/model-traits";
+import {
   ProviderDriverKind,
   ProviderInstanceId,
   T3_AUTO_REASONING_OPTION_ID,
@@ -28,11 +32,13 @@ const effortDescriptor: Extract<ProviderOptionDescriptor, { type: "select" }> = 
 };
 
 describe("selectableChoices", () => {
-  it("hides prompt-injected and workflow-trigger choices, keeping declared order", () => {
+  // regression: #21406 bring model controls in line with web
+  it("leaves out prompt-injected choices and keeps workflow choices in declared order", () => {
     expect(selectableChoices(effortDescriptor).map((choice) => choice.id)).toEqual([
       "low",
       "medium",
       "high",
+      "ultracode",
     ]);
   });
 
@@ -87,5 +93,28 @@ describe("selectableChoices", () => {
         value: "medium",
       })?.options,
     ).toEqual([{ id: "reasoningEffort", value: "medium" }]);
+  });
+});
+
+describe("prompt-controlled reasoning", () => {
+  it("removes the prefix when choosing a regular effort and saves Ultracode as an option", () => {
+    const descriptors = [effortDescriptor];
+    const prompt = "Ultrathink:\nsolve it";
+    expect(
+      getTraitSelectChange(
+        { ...getPromptControlledTraits(descriptors, prompt), descriptors },
+        effortDescriptor,
+        prompt,
+        "ultracode",
+      ),
+    ).toEqual({ prompt: "solve it", modelOptions: [{ id: "effort", value: "ultracode" }] });
+  });
+
+  it("keeps body-controlled Ultrathink locked", () => {
+    const descriptors = [effortDescriptor];
+    const prompt = "please ultrathink about this";
+    const selected = { ...getPromptControlledTraits(descriptors, prompt), descriptors };
+    expect(selected.ultrathinkInBodyText).toBe(true);
+    expect(getTraitSelectChange(selected, effortDescriptor, prompt, "low")).toBeNull();
   });
 });

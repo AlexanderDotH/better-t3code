@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { resolveBetterT3FeatureFlag, type EnvironmentId } from "@t3tools/contracts";
 import { normalizeVisualizationFormat } from "@t3tools/client-runtime/visualizations/model";
-import type { MarkdownCodeBlockRenderer } from "@t3tools/mobile-markdown-text/types";
+import type { MarkdownCodeBlockRenderer } from "../../native/SelectableMarkdownText.types";
 import { useCallback, useMemo } from "react";
 
 import { VisualizationBlock } from "./VisualizationBlock";

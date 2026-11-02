@@ -7,7 +7,7 @@ import {
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import {
   projectChatSettingsSnapshot,
@@ -28,7 +28,9 @@ interface PendingProjectChatSettings {
 }
 
 export function createProjectChatSettingsState<E>(input: {
-  readonly configValueAtom: (environmentId: EnvironmentId) => Atom.Atom<ServerConfig | null>;
+  readonly configValueAtom: (
+    environmentId: EnvironmentId,
+  ) => Atom.Atom<Pick<ServerConfig, "settings" | "environment"> | null>;
   readonly scheduler?: AtomCommandScheduler;
   readonly updateSettings: AtomCommand<
     {
@@ -85,7 +87,9 @@ export function createProjectChatSettingsState<E>(input: {
       };
       let confirmed = false;
       try {
-        let reconcile: ((config: ServerConfig | null) => void) | undefined;
+        let reconcile:
+          | ((config: Pick<ServerConfig, "settings" | "environment"> | null) => void)
+          | undefined;
         let acknowledged = false;
         const result = await scheduler.schedule(registry, concurrency, target, async () => {
           const initialConfig = registry.get(source);

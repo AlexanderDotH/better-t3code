@@ -1,3 +1,4 @@
+import { PlanId } from "@t3tools/contracts";
 import {
   EnvironmentId,
   ProviderDriverKind,
@@ -33,7 +34,7 @@ const reviewerSelection: ModelSelection = {
 const descriptor = {
   environmentId,
   threadId,
-  planId: "plan-a",
+  planId: PlanId.make("plan-a"),
   planUpdatedAt: "2026-07-31T12:00:00.000Z",
   implementationProviderInstanceId,
   maxRecommendedSubagents: 12,
@@ -79,7 +80,7 @@ describe("resolvePlanParallelismReviewDescriptor", () => {
         enabled: true,
         environmentId,
         threadId,
-        plan: { id: "plan-a", updatedAt: "2026-07-31T12:00:00.000Z" },
+        plan: { id: PlanId.make("plan-a"), updatedAt: "2026-07-31T12:00:00.000Z" },
         implementationProvider: implementationProvider(),
         reviewerProvider: reviewerProvider(),
         reviewerSelection,
@@ -91,7 +92,7 @@ describe("resolvePlanParallelismReviewDescriptor", () => {
         enabled: false,
         environmentId,
         threadId,
-        plan: { id: "plan-a", updatedAt: "2026-07-31T12:00:00.000Z" },
+        plan: { id: PlanId.make("plan-a"), updatedAt: "2026-07-31T12:00:00.000Z" },
         implementationProvider: implementationProvider(),
         reviewerProvider: reviewerProvider(),
         reviewerSelection,
@@ -102,7 +103,7 @@ describe("resolvePlanParallelismReviewDescriptor", () => {
         enabled: true,
         environmentId,
         threadId,
-        plan: { id: "plan-a", updatedAt: "2026-07-31T12:00:00.000Z" },
+        plan: { id: PlanId.make("plan-a"), updatedAt: "2026-07-31T12:00:00.000Z" },
         implementationProvider: implementationProvider(false),
         reviewerProvider: reviewerProvider(),
         reviewerSelection,
@@ -113,7 +114,7 @@ describe("resolvePlanParallelismReviewDescriptor", () => {
         enabled: true,
         environmentId,
         threadId,
-        plan: { id: "plan-a", updatedAt: "2026-07-31T12:00:00.000Z" },
+        plan: { id: PlanId.make("plan-a"), updatedAt: "2026-07-31T12:00:00.000Z" },
         implementationProvider: implementationProvider(),
         reviewerProvider: reviewerProvider(false),
         reviewerSelection,
@@ -124,7 +125,7 @@ describe("resolvePlanParallelismReviewDescriptor", () => {
         enabled: true,
         environmentId,
         threadId,
-        plan: { id: "plan-a", updatedAt: "2026-07-31T12:00:00.000Z" },
+        plan: { id: PlanId.make("plan-a"), updatedAt: "2026-07-31T12:00:00.000Z" },
         implementationProvider: implementationProvider(),
         reviewerProvider: reviewerProvider(false),
         reviewerSelection,
@@ -135,7 +136,7 @@ describe("resolvePlanParallelismReviewDescriptor", () => {
         enabled: false,
         environmentId,
         threadId,
-        plan: { id: "plan-a", updatedAt: "2026-07-31T12:00:00.000Z" },
+        plan: { id: PlanId.make("plan-a"), updatedAt: "2026-07-31T12:00:00.000Z" },
         implementationProvider: implementationProvider(),
         reviewerProvider: reviewerProvider(),
         reviewerSelection,
@@ -148,7 +149,7 @@ describe("createPlanParallelismReviewRequest", () => {
   it("sends only canonical plan and implementation-provider identifiers", () => {
     expect(createPlanParallelismReviewRequest(descriptor)).toEqual({
       threadId,
-      planId: "plan-a",
+      planId: PlanId.make("plan-a"),
       expectedPlanUpdatedAt: "2026-07-31T12:00:00.000Z",
       implementationProviderInstanceId,
     });
@@ -208,7 +209,7 @@ describe("validatePlanParallelismReviewResult", () => {
   it("accepts the matching response within the implementation provider capability", () => {
     expect(
       validatePlanParallelismReviewResult(descriptor, {
-        planId: "plan-a",
+        planId: PlanId.make("plan-a"),
         planUpdatedAt: "2026-07-31T12:00:00.000Z",
         implementationProviderInstanceId,
         recommendedSubagents: 10,
@@ -219,7 +220,7 @@ describe("validatePlanParallelismReviewResult", () => {
   it("discards stale, mismatched, and out-of-capability responses", () => {
     expect(
       validatePlanParallelismReviewResult(descriptor, {
-        planId: "plan-a",
+        planId: PlanId.make("plan-a"),
         planUpdatedAt: "stale",
         implementationProviderInstanceId,
         recommendedSubagents: 10,
@@ -227,7 +228,7 @@ describe("validatePlanParallelismReviewResult", () => {
     ).toBeNull();
     expect(
       validatePlanParallelismReviewResult(descriptor, {
-        planId: "plan-a",
+        planId: PlanId.make("plan-a"),
         planUpdatedAt: "2026-07-31T12:00:00.000Z",
         implementationProviderInstanceId: ProviderInstanceId.make("claudeAgent"),
         recommendedSubagents: 10,
@@ -235,7 +236,7 @@ describe("validatePlanParallelismReviewResult", () => {
     ).toBeNull();
     expect(
       validatePlanParallelismReviewResult(descriptor, {
-        planId: "plan-a",
+        planId: PlanId.make("plan-a"),
         planUpdatedAt: "2026-07-31T12:00:00.000Z",
         implementationProviderInstanceId,
         recommendedSubagents: 13,
@@ -247,7 +248,7 @@ describe("validatePlanParallelismReviewResult", () => {
 describe("requestPlanParallelismReview", () => {
   it("returns and caches a valid successful review", async () => {
     const review = vi.fn(async () => ({
-      planId: "plan-a",
+      planId: PlanId.make("plan-a"),
       planUpdatedAt: "2026-07-31T12:00:00.000Z",
       implementationProviderInstanceId,
       recommendedSubagents: 10,
@@ -266,7 +267,7 @@ describe("requestPlanParallelismReview", () => {
 
   it("deduplicates concurrent reviews for the same plan version", async () => {
     let resolveReview!: (result: {
-      planId: string;
+      planId: PlanId;
       planUpdatedAt: string;
       implementationProviderInstanceId: ProviderInstanceId;
       recommendedSubagents: number;
@@ -274,7 +275,7 @@ describe("requestPlanParallelismReview", () => {
     const review = vi.fn(
       () =>
         new Promise<{
-          planId: string;
+          planId: PlanId;
           planUpdatedAt: string;
           implementationProviderInstanceId: ProviderInstanceId;
           recommendedSubagents: number;
@@ -288,7 +289,7 @@ describe("requestPlanParallelismReview", () => {
     expect(review).toHaveBeenCalledTimes(1);
 
     resolveReview({
-      planId: "plan-a",
+      planId: PlanId.make("plan-a"),
       planUpdatedAt: "2026-07-31T12:00:00.000Z",
       implementationProviderInstanceId,
       recommendedSubagents: 10,
@@ -306,7 +307,7 @@ describe("requestPlanParallelismReview", () => {
 
     await expect(
       requestPlanParallelismReview(descriptor, async () => ({
-        planId: "plan-a",
+        planId: PlanId.make("plan-a"),
         planUpdatedAt: "stale",
         implementationProviderInstanceId,
         recommendedSubagents: 10,
@@ -318,7 +319,7 @@ describe("requestPlanParallelismReview", () => {
       async (
         _environmentId: EnvironmentId,
         input: {
-          planId: string;
+          planId: PlanId;
           expectedPlanUpdatedAt: string;
           implementationProviderInstanceId: ProviderInstanceId;
         },

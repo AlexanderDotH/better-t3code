@@ -5,18 +5,21 @@ import * as NodePath from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 
+import { TEST_FORMATS } from "./usageTestFormats.ts";
+import { UsageAggregator } from "./usageAggregation.ts";
 import {
   readTranscriptRecords as readWithDefaultThreshold,
   type TranscriptParsePosition,
 } from "./usageTranscriptReader.ts";
 
-// Exercise the same transition with compact fixtures. UsageService tests and
-// external 65/517 MiB fixtures also exercise the production threshold.
 const readTranscriptRecords = (
   path: string,
-  provider: "claude" | "codex" | "grok",
+  provider: keyof typeof TEST_FORMATS,
   position?: TranscriptParsePosition,
-) => readWithDefaultThreshold(path, provider, position, { streamingThresholdBytes: 256 * 1024 });
+) =>
+  readWithDefaultThreshold(path, TEST_FORMATS[provider], position, {
+    streamingThresholdBytes: 256 * 1024,
+  });
 
 let dir: string;
 beforeEach(async () => {
@@ -48,8 +51,8 @@ const claude = (id = "m1", output = 99) => ({
   },
 });
 const codex = [
-  { type: "session_meta", timestamp, payload: { id: "s1" } },
-  { type: "turn_context", timestamp, payload: { model: "gpt-5.6-sol" } },
+  { type: "session_meta", timestamp, payload: { id: "s1", model_provider: "openai" } },
+  { type: "turn_context", timestamp, payload: { model: "gpt-5.6-sol", turn_id: "initial-turn" } },
   {
     type: "event_msg",
     timestamp,
@@ -95,7 +98,7 @@ const grok = {
 
 async function scan(
   lines: readonly unknown[],
-  provider: "claude" | "codex" | "grok",
+  provider: keyof typeof TEST_FORMATS,
   name = "history",
 ) {
   const path = NodePath.join(dir, `${name}.jsonl`);
@@ -106,6 +109,263 @@ async function scan(
 }
 
 describe("large usage records", () => {
+  it("carries Claude attribution through projected reads, resume and deduplicated aggregation", async () => {
+    const handoff = "<t3code_context_handoff>private handoff</t3code_context_handoff>";
+    const memory = "<t3code_project_memory>private memory</t3code_project_memory>";
+    const prompt = `<t3code_auto_reasoning_call>\n${handoff}\n${memory}`;
+    const first = await scan(
+      [
+        {
+          type: "user",
+          message: {
+            content: [
+              { type: "text", text: prompt },
+              { type: "image", source: { data: content } },
+            ],
+          },
+        },
+      ],
+      "claude",
+      "attributed",
+    );
+    expect(first.records).toEqual([]);
+    expect(JSON.stringify(first.position.state)).not.toContain("private");
+    const sidechain = { ...claude("subagent"), isSidechain: true };
+    await NodeFSP.appendFile(
+      NodePath.join(dir, "attributed.jsonl"),
+      [
+        { ...claude("auto"), isSidechain: false },
+        { ...claude("root"), isSidechain: false },
+        sidechain,
+        sidechain,
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n") + "\n",
+    );
+    const resumed = await readTranscriptRecords(
+      NodePath.join(dir, "attributed.jsonl"),
+      "claude",
+      first.position,
+    );
+    expect(resumed?.resumed).toBe(true);
+    expect(resumed?.records.map((record) => record.callKind)).toEqual([
+      "auto-reasoning",
+      "root",
+      "subagent",
+      "subagent",
+    ]);
+    expect(resumed?.records[0]?.diagnostics).toMatchObject({
+      compactHandoffs: 1,
+      totalHandoffChars: handoff.length,
+      memoryInjectionChars: memory.length,
+      autoRoutingChars: prompt.length,
+    });
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-01",
+      rates: new Map(),
+    });
+    for (const record of resumed?.records ?? []) aggregator.add(record);
+    const result = aggregator.finish();
+    expect(result.duplicatesDropped).toBe(1);
+    expect(result.buckets.map((bucket) => bucket.callKind)).toEqual([
+      "auto-reasoning",
+      "root",
+      "subagent",
+    ]);
+    expect(result.buckets.map((bucket) => bucket.costUsd)).toEqual([0.25, 0.25, 0.25]);
+    expect(result.buckets[0]?.diagnostics).toMatchObject({
+      autoRoutingChars: prompt.length,
+      memoryInjectionChars: memory.length,
+    });
+    expect(result.buckets[1]?.diagnostics).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain("private");
+  });
+
+  it("keeps Codex context diagnostics and native call kinds alongside ultrafast token deltas", async () => {
+    const prompt = "<t3code_auto_reasoning_call>private routing";
+    const subagentResult = "private child result";
+    const count = (input: number, output: number) => ({
+      ...codex[2],
+      timestamp: "2026-08-01T10:00:05Z",
+      payload: {
+        type: "token_count",
+        info: {
+          model_context_window: 128_000,
+          last_token_usage: {
+            input_tokens: input,
+            output_tokens: output,
+            cached_input_tokens: 20,
+            cache_write_input_tokens: 5,
+          },
+        },
+      },
+    });
+    const result = await scan(
+      [
+        {
+          ...codex[0],
+          payload: {
+            id: "child",
+            model_provider: "openai",
+            forked_from_id: "parent",
+            source: { subagent: {} },
+            base_instructions: "private instructions",
+          },
+        },
+        codex[1],
+        {
+          type: "response_item",
+          padding: content,
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: prompt }],
+          },
+        },
+        {
+          type: "response_item",
+          payload: { type: "function_call", name: "spawn_agent", call_id: "child-call" },
+        },
+        {
+          type: "response_item",
+          payload: { type: "function_call_output", call_id: "child-call", output: subagentResult },
+        },
+        { type: "event_msg", payload: { type: "context_compacted" } },
+        {
+          type: "event_msg",
+          payload: {
+            type: "thread_settings_applied",
+            thread_settings: { service_tier: "ultrafast" },
+          },
+        },
+        count(100, 99),
+        count(100, 99),
+        count(200, 101),
+      ],
+      "codex",
+      "attributed-codex",
+    );
+    expect(
+      result.records.map((record) => [record.callKind, record.speed, record.totals.outputTokens]),
+    ).toEqual([
+      ["auto-reasoning", "ultrafast", 99],
+      ["subagent", "ultrafast", 101],
+    ]);
+    expect(result.records[0]?.diagnostics).toMatchObject({
+      nativeForks: 1,
+      compactionEvents: 1,
+      maxContextTokens: 128_000,
+      instructionChars: "private instructions".length,
+      subagentResultChars: subagentResult.length,
+      autoRoutingChars: prompt.length,
+    });
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-01",
+      rates: new Map(),
+    });
+    for (const record of result.records) aggregator.add(record);
+    expect(aggregator.finish().buckets.map((bucket) => bucket.callKind)).toEqual([
+      "auto-reasoning",
+      "subagent",
+    ]);
+    expect(JSON.stringify(result.records)).not.toContain("private");
+    expect(JSON.stringify(result.position.state)).not.toContain("private");
+  });
+
+  it("streams Muse completion envelopes and resumes a partial appended event", async () => {
+    const entry = {
+      schema_version: 1,
+      record_type: "event",
+      payload_type: "runtime.session",
+      payload_schema_version: 3,
+      id: "envelope-1",
+      recorded_at: 1_785_578_400_123_456,
+      stream: { kind: "session", id: "parent" },
+      payload: {
+        source_run_record_id: "inference-1",
+        event: {
+          kind: "automated_review_completed",
+          model: { model_id: "review-model" },
+          usage: {
+            input_tokens: 100,
+            cached_input_tokens: 60,
+            output_tokens: 20,
+            reasoning_tokens: 8,
+          },
+        },
+      },
+    };
+    const small = await scan([entry], "muse", "small-muse");
+    expect(small.records[0]?.totals).toMatchObject({
+      uncachedInputTokens: 40,
+      cachedInputTokens: 60,
+    });
+    const path = NodePath.join(dir, "large-muse.jsonl");
+    await NodeFSP.writeFile(path, JSON.stringify({ ...entry, discarded: { content } }) + "\n");
+    const large = await readTranscriptRecords(path, "muse");
+    expect(large?.records).toEqual(small.records);
+    const appended = JSON.stringify({
+      ...entry,
+      id: "envelope-2",
+      payload: { ...entry.payload, source_run_record_id: "inference-2" },
+    });
+    await NodeFSP.appendFile(path, appended.slice(0, -7));
+    const partial = await readTranscriptRecords(path, "muse", large!.position);
+    expect(partial?.records).toEqual([]);
+    await NodeFSP.appendFile(path, appended.slice(-7) + "\n");
+    const completed = await readTranscriptRecords(path, "muse", partial!.position);
+    expect(completed?.records).toHaveLength(1);
+    expect(completed?.records[0]?.dedupeKey).not.toBe(large?.records[0]?.dedupeKey);
+    expect(completed?.records[0]?.totals).toEqual(small.records[0]?.totals);
+  });
+
+  it("keeps Pi model, cost, and fork identity after large assistant content", async () => {
+    const entry = {
+      type: "message",
+      id: "a123abcd",
+      timestamp,
+      message: {
+        role: "assistant",
+        provider: "anthropic",
+        model: "requested",
+        responseModel: "actual",
+        content: [{ type: "text", text: content }],
+        usage: {
+          input: 100,
+          output: 99,
+          cacheRead: 20,
+          cacheWrite: 5,
+          reasoning: 10,
+          cost: { total: 0.25 },
+        },
+      },
+    };
+    const result = await scan([{ type: "session", id: "pi-session" }, entry], "pi");
+    expect(result.records).toEqual([
+      {
+        provider: "pi",
+        model: "anthropic/actual",
+        rateModel: "actual",
+        sessionId: "pi-session",
+        timestampMs: Date.parse(timestamp),
+        totals: {
+          uncachedInputTokens: 100,
+          outputTokens: 99,
+          cachedInputTokens: 20,
+          cacheCreationTokens: 5,
+          reasoningTokens: 10,
+        },
+        reportedCostUsd: 0.25,
+        speed: "standard",
+        dedupeKey: JSON.stringify(["pi", entry.id, timestamp, "anthropic/actual"]),
+      },
+    ]);
+  });
+
   it("keeps usage after large Claude tool input, including fast-mode cost and dedupe metadata", async () => {
     const result = await scan([claude()], "claude");
     expect(result.records).toEqual([
@@ -123,7 +383,7 @@ describe("large usage records", () => {
           reasoningTokens: 0,
         },
         reportedCostUsd: 0.25,
-        fast: true,
+        speed: "fast",
         dedupeKey: "m1:r-m1",
       },
     ]);
@@ -145,7 +405,7 @@ describe("large usage records", () => {
         );
         const actual = await scan(large, provider);
         expect(actual.records).toEqual(expected.records);
-        expect(actual.position.codexState).toEqual(expected.position.codexState);
+        expect(actual.position.state).toEqual(expected.position.state);
       }
     },
   );
@@ -208,9 +468,14 @@ describe("large usage records", () => {
   it("preserves Codex model switches and duplicate suppression across streaming resumes", async () => {
     const path = NodePath.join(dir, "history.jsonl");
     const first = await scan(
-      codex.map((record) => ({ padding: content, ...record })),
+      codex.map((record) => ({ padding: "x".repeat(9 * 1024 * 1024), ...record })),
       "codex",
     );
+    expect(first.records[0]).toMatchObject({
+      sessionId: "s1",
+      model: "gpt-5.6-sol",
+      unresolvedServiceTierTurnId: "initial-turn",
+    });
     await NodeFSP.appendFile(
       path,
       [
@@ -237,6 +502,7 @@ describe("large usage records", () => {
       sessionId: "s1",
       totals: { outputTokens: 101 },
     });
+    expect(result?.records[0]).not.toHaveProperty("unresolvedServiceTierTurnId");
     const full = await readTranscriptRecords(path, "codex");
     expect([...first.records, ...result!.records]).toEqual(full?.records);
   });

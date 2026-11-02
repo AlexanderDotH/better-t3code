@@ -74,7 +74,6 @@ class DeepPlanSourceTransferError extends Error {
 
 const SOURCE_TRANSFER_ATTEMPTS = 3;
 const SOURCE_TRANSFER_CHUNK_RECORDS = Math.min(32, DEEP_PLAN_MAX_CHUNK_RECORDS);
-export const EMPTY_DEEP_PLAN_SOURCE_REFS: ReadonlyArray<DeepPlanSourceRef> = Object.freeze([]);
 
 export function deepPlanSourceRefKey(ref: DeepPlanSourceRef): string {
   return JSON.stringify([ref.environmentId, ref.projectId, ref.threadId]);

@@ -4,8 +4,8 @@ import {
   MessageId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type ChatAttachment,
-  type OrchestrationMessage,
 } from "@t3tools/contracts";
+import { type OrchestrationMessage } from "@t3tools/contracts/legacy";
 
 import { buildMessageReplyHandoff, formatMessageReplyAnswers } from "./MessageReplyPrompt.ts";
 

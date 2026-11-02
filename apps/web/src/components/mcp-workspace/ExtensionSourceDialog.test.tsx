@@ -1,6 +1,6 @@
 import { EnvironmentId, type DesktopPreviewWebviewConfig } from "@t3tools/contracts";
-import { act, type ComponentProps } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { type ComponentProps } from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
@@ -33,13 +33,14 @@ const config: DesktopPreviewWebviewConfig = {
 };
 
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   mocks.config.mockReset().mockResolvedValue(config);
   mocks.register.mockReset().mockResolvedValue(undefined);
   mocks.release.mockReset();
 });
 afterEach(async () => {
-  await act(() => renderer?.unmount());
+  await act(async () => {
+    await renderer?.unmount();
+  });
   renderer = undefined;
   vi.useRealTimers();
   vi.unstubAllGlobals();
@@ -69,6 +70,7 @@ async function mount(append: ReturnType<typeof vi.fn>) {
         environmentId={EnvironmentId.make("store-env")}
         url="https://github.com/example/tool"
       />,
+
       { createNodeMock: () => ({ append }) },
     );
   });
@@ -78,24 +80,34 @@ it("keeps navigation failures visible, retries with a fresh guest, and cleans up
   const { guests, append } = setupGuest();
   await mount(append);
   const guest = guests[0]!;
-  await act(() => guest.dispatchEvent(new Event("dom-ready")));
+  await act(async () => {
+    await guest.dispatchEvent(new Event("dom-ready"));
+  });
   expect(mocks.register).toHaveBeenCalledWith(expect.any(String), 42);
   expect(renderer!.root.findAllByProps({ role: "status" })).toHaveLength(0);
 
-  await act(() =>
-    guest.dispatchEvent(
+  await act(async () => {
+    await guest.dispatchEvent(
       Object.assign(new Event("did-fail-load"), { isMainFrame: true, errorCode: -105 }),
-    ),
-  );
-  await act(() => guest.dispatchEvent(new Event("dom-ready")));
-  await act(() => guest.dispatchEvent(new Event("did-stop-loading")));
+    );
+  });
+  await act(async () => {
+    await guest.dispatchEvent(new Event("dom-ready"));
+  });
+  await act(async () => {
+    await guest.dispatchEvent(new Event("did-stop-loading"));
+  });
   expect(renderer!.root.findAllByProps({ role: "alert" })).toHaveLength(1);
 
-  await act(() => renderer!.root.findByType("button").props.onClick());
+  await act(async () => {
+    await renderer!.root.findByType("button").props.onClick();
+  });
   expect(guest.remove).toHaveBeenCalledOnce();
   expect(mocks.release).toHaveBeenCalledOnce();
   expect(guests).toHaveLength(2);
-  await act(() => renderer!.unmount());
+  await act(async () => {
+    await renderer!.unmount();
+  });
   renderer = undefined;
   expect(guests[1]!.remove).toHaveBeenCalledOnce();
   expect(mocks.release).toHaveBeenCalledTimes(2);
@@ -110,9 +122,13 @@ it("does not attach a page if its modal closes while configuration is loading", 
   );
   const { guests, append } = setupGuest();
   await mount(append);
-  await act(() => renderer!.unmount());
+  await act(async () => {
+    await renderer!.unmount();
+  });
   renderer = undefined;
-  await act(() => resolveConfig(config));
+  await act(async () => {
+    await resolveConfig(config);
+  });
   expect(guests).toHaveLength(0);
   expect(append).not.toHaveBeenCalled();
   expect(mocks.release).toHaveBeenCalledOnce();
@@ -122,13 +138,17 @@ it("keeps a loaded page visible during history/hash and subframe navigations", a
   const { guests, append } = setupGuest();
   await mount(append);
   const guest = guests[0]!;
-  await act(() => guest.dispatchEvent(new Event("dom-ready")));
+  await act(async () => {
+    await guest.dispatchEvent(new Event("dom-ready"));
+  });
 
   for (const details of [
     { isMainFrame: true, isInPlace: true },
     { isMainFrame: false, isInPlace: false },
   ]) {
-    await act(() => guest.dispatchEvent(Object.assign(new Event("did-start-navigation"), details)));
+    await act(async () => {
+      await guest.dispatchEvent(Object.assign(new Event("did-start-navigation"), details));
+    });
     expect(renderer!.root.findAllByProps({ role: "status" })).toHaveLength(0);
   }
 });
@@ -137,13 +157,15 @@ it("finishes loading when navigation stops without another dom-ready event", asy
   const { guests, append } = setupGuest();
   await mount(append);
   const guest = guests[0]!;
-  await act(() =>
-    guest.dispatchEvent(
+  await act(async () => {
+    await guest.dispatchEvent(
       Object.assign(new Event("did-start-navigation"), { isMainFrame: true, isInPlace: false }),
-    ),
-  );
+    );
+  });
   expect(renderer!.root.findAllByProps({ role: "status" })).toHaveLength(1);
-  await act(() => guest.dispatchEvent(new Event("did-stop-loading")));
+  await act(async () => {
+    await guest.dispatchEvent(new Event("did-stop-loading"));
+  });
   expect(renderer!.root.findAllByProps({ role: "status" })).toHaveLength(0);
   expect(renderer!.root.findAllByProps({ role: "alert" })).toHaveLength(0);
 });
@@ -158,15 +180,21 @@ it("does not let an older registration finish a newer navigation", async () => {
   const { guests, append } = setupGuest();
   await mount(append);
   const guest = guests[0]!;
-  await act(() => guest.dispatchEvent(new Event("dom-ready")));
-  await act(() =>
-    guest.dispatchEvent(
+  await act(async () => {
+    await guest.dispatchEvent(new Event("dom-ready"));
+  });
+  await act(async () => {
+    await guest.dispatchEvent(
       Object.assign(new Event("did-start-navigation"), { isMainFrame: true, isInPlace: false }),
-    ),
-  );
-  await act(() => registered());
+    );
+  });
+  await act(async () => {
+    await registered();
+  });
   expect(renderer!.root.findAllByProps({ role: "status" })).toHaveLength(1);
-  await act(() => guest.dispatchEvent(new Event("did-stop-loading")));
+  await act(async () => {
+    await guest.dispatchEvent(new Event("did-stop-loading"));
+  });
   expect(renderer!.root.findAllByProps({ role: "status" })).toHaveLength(0);
 });
 
@@ -180,14 +208,22 @@ it("offers retry for stalled configuration and ignores its late completion", asy
   );
   const { guests, append } = setupGuest();
   await mount(append);
-  await act(() => vi.advanceTimersByTime(20_000));
+  await act(async () => {
+    await vi.advanceTimersByTime(20_000);
+  });
   expect(renderer!.root.findAllByProps({ role: "alert" })).toHaveLength(1);
-  await act(() => resolveConfig(config));
+  await act(async () => {
+    await resolveConfig(config);
+  });
   expect(append).not.toHaveBeenCalled();
 
-  await act(() => renderer!.root.findByType("button").props.onClick());
+  await act(async () => {
+    await renderer!.root.findByType("button").props.onClick();
+  });
   expect(guests).toHaveLength(1);
-  await act(() => guests[0]!.dispatchEvent(new Event("dom-ready")));
+  await act(async () => {
+    await guests[0]!.dispatchEvent(new Event("dom-ready"));
+  });
   expect(renderer!.root.findAllByProps({ role: "alert" })).toHaveLength(0);
   expect(renderer!.root.findAllByProps({ role: "status" })).toHaveLength(0);
   expect(vi.getTimerCount()).toBe(0);
@@ -196,9 +232,13 @@ it("offers retry for stalled configuration and ignores its late completion", asy
 it("reports a crashed guest instead of covering it with an endless loading state", async () => {
   const { guests, append } = setupGuest();
   await mount(append);
-  await act(() => guests[0]!.dispatchEvent(new Event("render-process-gone")));
+  await act(async () => {
+    await guests[0]!.dispatchEvent(new Event("render-process-gone"));
+  });
   expect(renderer!.root.findAllByProps({ role: "alert" })).toHaveLength(1);
-  await act(() => guests[0]!.dispatchEvent(new Event("did-stop-loading")));
+  await act(async () => {
+    await guests[0]!.dispatchEvent(new Event("did-stop-loading"));
+  });
   expect(renderer!.root.findAllByProps({ role: "alert" })).toHaveLength(1);
 });
 
@@ -207,18 +247,26 @@ it("times out a stalled page navigation and cancels the deadline on close", asyn
   const { guests, append } = setupGuest();
   await mount(append);
   const guest = guests[0]!;
-  await act(() => guest.dispatchEvent(new Event("dom-ready")));
+  await act(async () => {
+    await guest.dispatchEvent(new Event("dom-ready"));
+  });
   expect(vi.getTimerCount()).toBe(0);
-  await act(() =>
-    guest.dispatchEvent(
+  await act(async () => {
+    await guest.dispatchEvent(
       Object.assign(new Event("did-start-navigation"), { isMainFrame: true, isInPlace: false }),
-    ),
-  );
-  await act(() => vi.advanceTimersByTime(20_000));
+    );
+  });
+  await act(async () => {
+    await vi.advanceTimersByTime(20_000);
+  });
   expect(renderer!.root.findAllByProps({ role: "alert" })).toHaveLength(1);
-  await act(() => renderer!.root.findByType("button").props.onClick());
+  await act(async () => {
+    await renderer!.root.findByType("button").props.onClick();
+  });
   expect(vi.getTimerCount()).toBe(1);
-  await act(() => renderer!.unmount());
+  await act(async () => {
+    await renderer!.unmount();
+  });
   renderer = undefined;
   expect(vi.getTimerCount()).toBe(0);
 });

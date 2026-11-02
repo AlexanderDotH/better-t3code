@@ -28,13 +28,13 @@ import {
   buildThreadMetadataPrompt,
   buildThreadTitlePrompt,
   buildTranscriptTranslationPrompt,
-} from "./TextGenerationPrompts.ts";
+} from "@t3tools/provider-core/server/textGenerationPrompts";
 import * as TextGeneration from "./TextGeneration.ts";
 import {
   sanitizeCommitSubject,
   sanitizePrTitle,
   sanitizeThreadTitle,
-} from "./TextGenerationUtils.ts";
+} from "@t3tools/provider-core/server/textGenerationUtils";
 
 const TEXT_GENERATION_TIMEOUT_MS = 180_000;
 
@@ -115,6 +115,13 @@ export function makeOpenAiCompatibleTextGeneration(
   });
 
   return {
+    generateReviewGuide: () =>
+      Effect.fail(
+        new TextGenerationError({
+          operation: "generateReviewGuide",
+          detail: "This provider does not support repository review guides.",
+        }),
+      ),
     summarizeContext: makeContextSummarizer((input) =>
       runJson({
         ...input,

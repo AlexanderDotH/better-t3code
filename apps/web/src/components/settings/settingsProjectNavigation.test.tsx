@@ -5,8 +5,8 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { act } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
 import { SettingsPageContainer, SettingsRow } from "./settingsLayout";
@@ -14,12 +14,13 @@ import { validateSettingsScopeSearch } from "./settingsScope";
 
 let renderer: ReactTestRenderer | undefined;
 afterEach(async () => {
-  await act(() => renderer?.unmount());
+  await act(async () => {
+    await renderer?.unmount();
+  });
   vi.unstubAllGlobals();
 });
 
 it("keeps the project, machine, and checkout selected after scrolling to indexing", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const root = createRootRoute();
   const route = createRoute({
     getParentRoute: () => root,

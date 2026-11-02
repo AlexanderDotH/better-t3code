@@ -8,15 +8,18 @@ import { assert, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Migrator from "effect/unstable/sql/Migrator";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as Migrator from "effect/sql/Migrator";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import {
   forkMigrationTable,
+  forkMigrationManifest,
   makeMigrationLoader,
   runMigrations,
   upstreamMigrationTable,
 } from "../Migrations.ts";
+import DeepPlanMigration from "./066_ProjectionThreadDeepPlan.ts";
+import DeepPlanSourcesMigration from "./067_DeepPlanSources.ts";
 import Migration0036 from "./036_ProjectSpeechProfilesCompatibility.ts";
 import { runMigrations as runLegacyForkMigrations } from "./LegacyForkMigrations.ts";
 
@@ -58,16 +61,12 @@ const assertCurrent = Effect.gen(function* () {
   assert.deepStrictEqual(yield* sql`PRAGMA foreign_key_check`, []);
   assert.deepStrictEqual(
     yield* sql`SELECT MAX(migration_id) AS id FROM ${sql(upstreamMigrationTable)}`,
-    [{ id: 54 }],
+    [{ id: 77 }],
   );
-  assert.deepStrictEqual(yield* sql`SELECT migration_id, name FROM ${sql(forkMigrationTable)}`, [
-    { migration_id: 61, name: "IndependentMigrationLedgers" },
-    { migration_id: 62, name: "MessageEditContextIndex" },
-    { migration_id: 63, name: "KnowledgeGraphSemanticLookupIndexes" },
-    { migration_id: 65, name: "ProjectionMessageReplyTopics" },
-    { migration_id: 66, name: "ProjectionThreadDeepPlan" },
-    { migration_id: 67, name: "DeepPlanSources" },
-  ]);
+  assert.deepStrictEqual(
+    yield* sql`SELECT migration_id, name FROM ${sql(forkMigrationTable)}`,
+    forkMigrationManifest.map(([migration_id, name]) => ({ migration_id, name })),
+  );
   const editPlan = yield* sql<{ detail: string }>`
     EXPLAIN QUERY PLAN SELECT MAX(sequence) FROM orchestration_events
     WHERE aggregate_kind = 'thread' AND stream_id = 'thread'
@@ -75,6 +74,18 @@ const assertCurrent = Effect.gen(function* () {
   `;
   assert.isTrue(
     editPlan.some((row) => row.detail.includes("idx_orch_events_message_edit_context")),
+  );
+  const frozenEditsPlan = yield* sql<{ readonly detail: string }>`
+    EXPLAIN QUERY PLAN SELECT command_id FROM orchestration_command_receipts
+    WHERE aggregate_kind = 'thread' AND aggregate_id = 'thread'
+      AND command_type = 'message.edit' AND status = 'accepted' AND result_sequence > 123
+  `;
+  assert.isTrue(
+    frozenEditsPlan.some(
+      ({ detail }) =>
+        detail.includes("idx_orch_receipts_frozen_message_edits") &&
+        detail.includes("result_sequence>"),
+    ),
   );
   for (const table of ["knowledge_graph_node_evidence", "knowledge_graph_edge_evidence"]) {
     const plan = yield* sql.unsafe<{ readonly detail: string }>(
@@ -101,8 +112,9 @@ const assertCurrent = Effect.gen(function* () {
   assert.deepStrictEqual(yield* readSchema, before);
 });
 
-for (const source of ["fresh", "upstream49", "upstream54", "fork60", "collision33"] as const) {
-  it.effect(`converges ${source} without rewriting its history and is a no-op on restart`, () =>
+it.effect.each(["fresh", "upstream49", "upstream54", "fork60", "collision33"] as const)(
+  "converges %s without rewriting its history and is a no-op on restart",
+  (source) =>
     Effect.gen(function* () {
       const directory = yield* isolatedDatabase;
       const filename = NodePath.join(directory, "state.sqlite");
@@ -141,8 +153,7 @@ for (const source of ["fresh", "upstream49", "upstream54", "fork60", "collision3
       const actual = yield* readSchema.pipe(Effect.provide(database));
       assert.deepStrictEqual(actual, expected);
     }).pipe(Effect.scoped),
-  );
-}
+);
 
 it.effect(
   "preserves fork events, settings, and subagent data in a consistent fork60 snapshot",
@@ -156,6 +167,26 @@ it.effect(
       yield* Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         yield* runLegacyForkMigrations();
+        yield* DeepPlanMigration;
+        yield* DeepPlanSourcesMigration;
+        yield* sql`
+          INSERT INTO projection_threads (thread_id, project_id, title, model_selection_json,
+            runtime_mode, interaction_mode, deep_plan_json, created_at, updated_at)
+          VALUES ('thread-preserved', 'project-preserved', 'Deep Plan', '{"provider":"codex","model":"custom"}',
+            'full-access', 'default', '{"id":"deep-plan-preserved","approvalKey":"keep-approval"}', '2026-09-01', '2026-09-01')
+        `;
+        yield* sql`
+          INSERT INTO projection_thread_proposed_plans (plan_id, thread_id, plan_markdown,
+            created_at, updated_at, deep_plan_reference_json, history_origin_json)
+          VALUES ('plan-preserved', 'thread-preserved', '# Approved plan', '2026-09-01', '2026-09-01',
+            '{"runId":"deep-plan-preserved","planVersion":2}', '{"kind":"fork"}')
+        `;
+        yield* sql`
+          INSERT INTO checkpoint_diff_blobs (thread_id, from_turn_count, to_turn_count, diff, created_at)
+          VALUES ('thread-preserved', 0, 1, 'diff --git saved', '2026-09-01')
+        `;
+        yield* sql`INSERT INTO deep_plan_sources (source_id, snapshot_json, complete) VALUES ('source-preserved', '{"snapshot":"saved"}', 1)`;
+        yield* sql`INSERT INTO deep_plan_source_runs (run_id, thread_id, initialized_at) VALUES ('deep-plan-preserved', 'thread-preserved', '2026-09-01')`;
         yield* sql`
         INSERT INTO orchestration_events (event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at, command_id, causation_event_id, correlation_id, actor_kind, payload_json, metadata_json)
         VALUES ('event-preserved', 'project', 'project-preserved', 1, 'project.created', '2026-09-01T00:00:00Z', 'command-preserved', NULL, NULL, 'user', ${payload}, '{}')
@@ -179,12 +210,31 @@ it.effect(
       });
       yield* Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        const events = yield* sql`SELECT * FROM orchestration_events`;
+        const events =
+          yield* sql`SELECT event_id, payload_json, metadata_json FROM orchestration_events WHERE event_id = 'event-preserved'`;
         const projects =
           yield* sql`SELECT project_id, default_model_selection_json, checkpoints_enabled FROM projection_projects`;
         const subagents = yield* sql`SELECT * FROM projection_thread_subagents`;
+        const plans = yield* sql`SELECT * FROM projection_thread_proposed_plans`;
+        const diffs = yield* sql`SELECT * FROM checkpoint_diff_blobs`;
+        const deepPlan = yield* sql`SELECT deep_plan_json FROM projection_threads`;
+        const sources = yield* sql`SELECT * FROM deep_plan_sources`;
+        const sourceRuns = yield* sql`SELECT * FROM deep_plan_source_runs`;
+        const ledgers = yield* sql`SELECT * FROM effect_sql_migrations`;
         yield* runMigrations();
-        assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_events`, events);
+        assert.deepStrictEqual(
+          yield* sql`SELECT * FROM legacy_v1_projection_thread_proposed_plans`,
+          plans,
+        );
+        assert.deepStrictEqual(yield* sql`SELECT * FROM legacy_v1_checkpoint_diff_blobs`, diffs);
+        assert.deepStrictEqual(yield* sql`SELECT deep_plan_json FROM projection_threads`, deepPlan);
+        assert.deepStrictEqual(yield* sql`SELECT * FROM deep_plan_sources`, sources);
+        assert.deepStrictEqual(yield* sql`SELECT * FROM deep_plan_source_runs`, sourceRuns);
+        assert.deepStrictEqual(yield* sql`SELECT * FROM effect_sql_migrations`, ledgers);
+        assert.deepStrictEqual(
+          yield* sql`SELECT event_id, payload_json, metadata_json FROM orchestration_events WHERE event_id = 'event-preserved'`,
+          events,
+        );
         assert.deepStrictEqual(
           yield* sql`SELECT project_id, default_model_selection_json, checkpoints_enabled FROM projection_projects`,
           projects,
@@ -233,7 +283,7 @@ it.effect(
 );
 
 it.effect(
-  "executes a future upstream55 despite fork61 and rolls back failed future migrations",
+  "executes a future upstream78 despite fork61 and rolls back failed future migrations",
   () =>
     Effect.gen(function* () {
       const directory = yield* isolatedDatabase;
@@ -242,18 +292,18 @@ it.effect(
         yield* runMigrations();
         const migrate = Migrator.make({});
         const future = Migrator.fromRecord({
-          "55_FutureUpstream": sql`CREATE TABLE future_upstream (value TEXT)`,
+          "78_FutureUpstream": sql`CREATE TABLE future_upstream (value TEXT)`,
         });
         const loader = Effect.map(
           Effect.all([makeMigrationLoader(), future]),
           ([current, next]) => [...current, ...next],
         );
         assert.deepStrictEqual(yield* migrate({ table: upstreamMigrationTable, loader }), [
-          [55, "FutureUpstream"],
+          [78, "FutureUpstream"],
         ]);
         assert.deepStrictEqual(yield* migrate({ table: upstreamMigrationTable, loader }), []);
         const broken = Migrator.fromRecord({
-          "56_BrokenUpstream": Effect.gen(function* () {
+          "79_BrokenUpstream": Effect.gen(function* () {
             yield* sql`CREATE TABLE rolled_back (value TEXT)`;
             yield* sql`INSERT INTO nonexistent_table VALUES (1)`;
           }),
@@ -269,11 +319,11 @@ it.effect(
         );
         assert.deepStrictEqual(
           yield* sql`SELECT MAX(migration_id) AS id FROM ${sql(upstreamMigrationTable)}`,
-          [{ id: 55 }],
+          [{ id: 78 }],
         );
         assert.deepStrictEqual(
           yield* sql`SELECT MAX(migration_id) AS id FROM ${sql(forkMigrationTable)}`,
-          [{ id: 67 }],
+          [{ id: 68 }],
         );
       }).pipe(
         Effect.provide(
@@ -283,8 +333,9 @@ it.effect(
     }).pipe(Effect.scoped),
 );
 
-for (const latestForkId of [64, 65, 66, 67]) {
-  it.effect(`preserves retired migration history with fork migration ${latestForkId} applied`, () =>
+it.effect.each([64, 65, 66, 67])(
+  "preserves retired migration history with fork migration %s applied",
+  (latestForkId) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* runMigrations();
@@ -308,6 +359,7 @@ for (const latestForkId of [64, 65, 66, 67]) {
             [65, "ProjectionMessageReplyTopics"],
             [66, "ProjectionThreadDeepPlan"],
             [67, "DeepPlanSources"],
+            [68, "LegacyV1RecoveryArchive"],
           ] as const
         ).filter(([id]) => id > latestForkId),
       );
@@ -321,5 +373,4 @@ for (const latestForkId of [64, 65, 66, 67]) {
       assert.deepStrictEqual(yield* readSchema, schema);
       assert.deepStrictEqual(yield* runMigrations(), []);
     }).pipe(Effect.provide(NodeSqliteClient.layerMemory()), Effect.scoped),
-  );
-}
+);

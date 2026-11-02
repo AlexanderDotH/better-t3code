@@ -12,7 +12,7 @@ import {
   LockKeyholeIcon,
   WrenchIcon,
 } from "lucide-react";
-import { Fragment, useId, useMemo, useState } from "react";
+import { Fragment, useId, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
@@ -100,7 +100,7 @@ export function McpRuntimeServerList({
             connected: aggregate.connectedCount,
             expected: aggregate.expectedCount,
           });
-  const orderedServers = useMemo(() => orderMcpRuntimeServers(servers), [servers]);
+  const orderedServers = orderMcpRuntimeServers(servers);
 
   const toggleServer = (server: McpRuntimeServer) => {
     const nextExpanded = !expandedKeys.has(server.providerKey);
@@ -172,7 +172,7 @@ export function McpRuntimeServerList({
                         type="button"
                         aria-expanded={expanded}
                         aria-controls={expanded ? detailsId : undefined}
-                        className="group flex min-w-0 w-full items-center gap-2 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        className="group flex min-w-0 w-full items-center gap-2 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                         onClick={() => toggleServer(server)}
                       >
                         <span

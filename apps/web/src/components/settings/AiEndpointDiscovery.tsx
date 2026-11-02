@@ -9,7 +9,7 @@ import {
   type ProviderInstanceConfig,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { useContext, useEffect, useState } from "react";
 
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
@@ -41,18 +41,21 @@ export function AiEndpointDiscovery({
   const result = useAtomValue(serverEnvironment.aiEndpointDiscovery(environmentId));
   const currentSnapshot = Option.getOrNull(AsyncResult.value(result));
   const supported = config?.environment.capabilities.aiEndpointDiscovery === true;
+  const scanScope = JSON.stringify([environmentId, active, readOnly, supported]);
   const [cancelledScan, setCancelledScan] = useState<{
+    scope: string;
     environmentId: EnvironmentId;
     snapshot: AiEndpointDiscoveryEvent | null;
   } | null>(null);
-  const cancelled = cancelledScan?.environmentId === environmentId;
+  if (cancelledScan && cancelledScan.scope !== scanScope) setCancelledScan(null);
+  const cancelled = cancelledScan?.scope === scanScope;
   const snapshot = cancelled ? cancelledScan.snapshot : currentSnapshot;
   const scanning = !cancelled && (snapshot?.status === "scanning" || result.waiting);
   const configuredUrls = normalizedConfiguredUrls(instances);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts endpoint discovery while the editable surface is active and cancels it on cleanup
   useEffect(() => {
     if (!active || readOnly || !supported) return;
-    setCancelledScan(null);
     serverEnvironment.startAiEndpointDiscovery(registry, { environmentId, input: {} });
     return () => serverEnvironment.cancelAiEndpointDiscovery(registry, environmentId);
   }, [active, environmentId, readOnly, registry, supported]);
@@ -73,7 +76,7 @@ export function AiEndpointDiscovery({
             onClick={() => {
               if (scanning) {
                 serverEnvironment.cancelAiEndpointDiscovery(registry, environmentId);
-                setCancelledScan({ environmentId, snapshot });
+                setCancelledScan({ scope: scanScope, environmentId, snapshot });
               } else {
                 setCancelledScan(null);
                 serverEnvironment.startAiEndpointDiscovery(registry, {

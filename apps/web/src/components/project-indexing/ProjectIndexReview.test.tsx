@@ -5,9 +5,9 @@ import {
   ProviderInstanceId,
   type ProjectIndexReviewResultV1,
 } from "@t3tools/contracts";
-import { act, type ComponentProps, type ReactNode } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { type ComponentProps, type ReactNode } from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 vi.mock("../../hooks/useInterfaceTranslator", async () => {
   const { createInterfaceTranslator } = await import("@t3tools/shared/interfaceLanguage");
@@ -36,6 +36,7 @@ vi.mock("../ui/select", () => ({
       {children}
     </select>
   ),
+
   SelectTrigger: () => null,
   SelectValue: () => null,
   SelectPopup: ({ children }: { children: ReactNode }) => children,
@@ -90,9 +91,11 @@ const result: ProjectIndexReviewResultV1 = {
 };
 
 let renderer: ReactTestRenderer | undefined;
-beforeEach(() => vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true));
+
 afterEach(async () => {
-  await act(() => renderer?.unmount());
+  await act(async () => {
+    await renderer?.unmount();
+  });
   vi.unstubAllGlobals();
 });
 
@@ -107,13 +110,17 @@ describe("ProjectIndexReview source sides", () => {
       );
     });
     expect(review).not.toHaveBeenCalled();
-    await act(() =>
-      renderer!.root.findByType("select").props.onChange({ currentTarget: { value: "staged" } }),
-    );
+    await act(async () => {
+      await renderer!.root
+        .findByType("select")
+        .props.onChange({ currentTarget: { value: "staged" } });
+    });
     const run = renderer!.root
       .findAllByType("button")
       .find((button) => button.children.includes("Review changes"))!;
-    await act(() => run.props.onClick());
+    await act(async () => {
+      await run.props.onClick();
+    });
     expect(review).toHaveBeenCalledWith({ ...scope, selection: "staged" });
     expect(
       renderer!.root.findAllByType("p").some((node) => node.children.includes("Before change")),
@@ -132,15 +139,19 @@ describe("ProjectIndexReview source sides", () => {
     const currentSource = renderer!.root
       .findAllByType("button")
       .find((button) => button.props["aria-label"] === "src/current.ts:7:1")!;
-    await act(() => currentSource.props.onClick());
+    await act(async () => {
+      await currentSource.props.onClick();
+    });
     expect(openSource).toHaveBeenCalledWith("src/current.ts", 7);
 
-    await act(() =>
-      renderer!.update(
+    await act(async () => {
+      await renderer!.update(
         <ProjectIndexReview api={api} scope={scope} disabled onOpenSource={openSource} />,
-      ),
-    );
-    await act(() => run.props.onClick());
+      );
+    });
+    await act(async () => {
+      await run.props.onClick();
+    });
     expect(review).toHaveBeenCalledTimes(1);
   });
 });

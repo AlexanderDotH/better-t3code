@@ -1,8 +1,8 @@
 import { EnvironmentId, type GitWorkbenchSnapshot } from "@t3tools/contracts";
 import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import * as Cause from "effect/Cause";
-import { act, useEffect } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { useEffect } from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { useGitWorkspaceDeckActions } from "./GitWorkspaceDeckController.actions";
@@ -124,7 +124,6 @@ function selection(action: "stage" | "unstage" | "discard" = "stage") {
 }
 
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   io.apply.mockReset().mockResolvedValue({ _tag: "Success", value: { snapshot: snapshot() } });
   io.refresh.mockReset().mockResolvedValue({ _tag: "Success", value: snapshot() });
   io.other.mockReset();
@@ -142,7 +141,10 @@ beforeEach(() => {
   }));
 });
 afterEach(async () => {
-  if (renderer) await act(async () => renderer.unmount());
+  if (renderer)
+    await act(async () => {
+      await renderer.unmount();
+    });
   vi.unstubAllGlobals();
 });
 
@@ -158,7 +160,9 @@ describe("Git workspace staging actions", () => {
     await act(async () => {
       renderer = create(<Host input={props} />);
     });
-    await act(async () => actions.setFilesStaged(["a", "b", "c"], true));
+    await act(async () => {
+      await actions.setFilesStaged(["a", "b", "c"], true);
+    });
 
     expect(io.refresh).toHaveBeenCalledTimes(2);
     expect(io.query).toHaveBeenCalledTimes(2);
@@ -204,7 +208,9 @@ describe("Git workspace staging actions", () => {
     expect(io.refresh).toHaveBeenCalledOnce();
     expect(actions.stagingPending).toBe(true);
     expect(io.apply).not.toHaveBeenCalled();
-    await act(async () => release({ _tag: "Success", value: snapshot() }));
+    await act(async () => {
+      await release({ _tag: "Success", value: snapshot() });
+    });
     expect(io.apply).toHaveBeenCalledOnce();
     expect(actions.stagingPending).toBe(false);
   });
@@ -220,14 +226,22 @@ describe("Git workspace staging actions", () => {
     await act(async () => {
       renderer = create(<Host input={first} />);
     });
-    await act(async () => actions.setFilesStaged(["a"], true));
+    await act(async () => {
+      await actions.setFilesStaged(["a"], true);
+    });
     const second = { ...input(), environmentId: EnvironmentId.make("env-b") };
-    await act(async () => renderer.update(<Host input={second} />));
-    await act(async () => release({ _tag: "Success", value: snapshot() }));
+    await act(async () => {
+      await renderer.update(<Host input={second} />);
+    });
+    await act(async () => {
+      await release({ _tag: "Success", value: snapshot() });
+    });
     expect(io.query).not.toHaveBeenCalled();
     expect(io.apply).not.toHaveBeenCalled();
     expect(actions.stagingPending).toBe(false);
-    await act(async () => actions.setFilesStaged(["a"], true));
+    await act(async () => {
+      await actions.setFilesStaged(["a"], true);
+    });
     expect(io.apply).toHaveBeenCalledOnce();
     expect(io.apply.mock.calls[0]?.[0].environmentId).toBe(EnvironmentId.make("env-b"));
   });
@@ -240,8 +254,12 @@ describe("Git workspace staging actions", () => {
     await act(async () => {
       renderer = create(<Host input={{ ...input(), ...blocked }} />);
     });
-    await act(async () => actions.applyChangeSelection(selection()));
-    await act(async () => actions.setFilesStaged(["a"], true));
+    await act(async () => {
+      await actions.applyChangeSelection(selection());
+    });
+    await act(async () => {
+      await actions.setFilesStaged(["a"], true);
+    });
     expect(io.apply).not.toHaveBeenCalled();
     expect(io.refresh).not.toHaveBeenCalled();
     expect(actions.stagingError).toBeTruthy();
@@ -257,14 +275,16 @@ describe("Git workspace staging actions", () => {
     await act(async () => {
       renderer = create(<Host input={input(conflict)} />);
     });
-    await act(async () =>
-      actions.applyChangeSelection({ ...selection(), changeId: "a::conflict" }),
-    );
+    await act(async () => {
+      await actions.applyChangeSelection({ ...selection(), changeId: "a::conflict" });
+    });
     expect(io.apply).toHaveBeenCalledOnce();
-    await act(async () => actions.setFilesStaged(["a"], true));
-    await act(async () =>
-      actions.applyChangeSelection({ ...selection("discard"), changeId: "a::conflict" }),
-    );
+    await act(async () => {
+      await actions.setFilesStaged(["a"], true);
+    });
+    await act(async () => {
+      await actions.applyChangeSelection({ ...selection("discard"), changeId: "a::conflict" });
+    });
     expect(io.apply).toHaveBeenCalledOnce();
     expect(io.refresh).not.toHaveBeenCalled();
   });

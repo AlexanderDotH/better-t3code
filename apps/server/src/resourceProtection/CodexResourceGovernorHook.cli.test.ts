@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- The CLI fixture supplies a native Readable to the hook stdin boundary.
 import * as NodeStream from "node:stream";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
@@ -5,7 +6,7 @@ import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { beforeEach, expect, vi } from "vite-plus/test";
 
 const fixture = vi.hoisted(() => ({
@@ -42,7 +43,7 @@ vi.mock("./CodexResourceGovernorHook.ts", async (importOriginal) => {
   };
 });
 
-import { makeCli } from "../bin.ts";
+import { resourceGovernorHookCommand } from "../binCli.ts";
 
 const decodeDecision = Schema.decodeSync(
   Schema.fromJsonString(
@@ -66,10 +67,7 @@ it.effect.each([
 ])("enforces nesting policy through the CLI: $label", (testCase) =>
   Effect.gen(function* () {
     fixture.agentId = "agentId" in testCase ? testCase.agentId : undefined;
-    yield* Command.runWith(makeCli(), { version: "0.0.0" })([
-      "resource-governor-hook",
-      ...testCase.flags,
-    ]);
+    yield* Command.runWith(resourceGovernorHookCommand, { version: "0.0.0" })(testCase.flags);
     expect(decodeDecision(fixture.output[0] ?? "{}").hookSpecificOutput.permissionDecision).toBe(
       testCase.decision,
     );

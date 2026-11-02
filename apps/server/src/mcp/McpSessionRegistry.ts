@@ -1,43 +1,32 @@
-import {
-  CLAUDE_DRIVER_KIND,
-  CODEX_DRIVER_KIND,
-  CURSOR_DRIVER_KIND,
-  OPENCODE_DRIVER_KIND,
-  ProviderInstanceId,
-  resolveBetterT3FeatureFlag,
-  ThreadId,
-  type ProviderDriverKind,
-} from "@t3tools/contracts";
+import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as SynchronizedRef from "effect/SynchronizedRef";
-import { HttpServer } from "effect/unstable/http";
-import * as NetAddress from "effect/unstable/net/NetAddress";
+import { HttpServer } from "effect/http";
+import * as NetAddress from "effect/net/NetAddress";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import * as ServerSettings from "../serverSettings.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
-import * as McpProviderSession from "./McpProviderSession.ts";
+import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 
 export interface McpCredentialRequest {
   readonly threadId: ThreadId;
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly provider?: import("@t3tools/contracts").ProviderDriverKind;
   readonly workspaceContextThreadId?: ThreadId;
   readonly messageReply?: McpInvocationContext.McpMessageReplyContext;
   readonly deepPlan?: McpInvocationContext.McpDeepPlanContext;
-  /** True selects core-only; explicit false requests the full optional profile. */
   readonly workspaceOnly?: boolean;
-  /** False omits project memory when memory is disabled or provider-managed. */
   readonly projectMemoryEnabled?: boolean;
   readonly previewEnabled?: boolean;
-  /** True selects a writable profile in addition to ordinary workspace reads. */
   readonly workspaceWriteEnabled?: boolean;
-  readonly providerInstanceId: ProviderInstanceId;
-  readonly provider?: ProviderDriverKind;
+  /** False omits the preview capability wherever the token is honored. Defaults to full access. */
+  readonly browserToolsAvailable?: boolean;
   readonly capabilities?: ReadonlySet<McpInvocationContext.McpCapability>;
+  readonly subagent?: boolean;
 }
 
 export interface McpIssuedCredential {
@@ -48,12 +37,7 @@ export interface McpSessionRegistryShape {
   readonly issue: (request: McpCredentialRequest) => Effect.Effect<McpIssuedCredential>;
   readonly resolve: (
     rawToken: string,
-  ) => Effect.Effect<McpInvocationContext.McpInvocationScope | undefined>;
-  /**
-   * Records a sign of life for every credential bound to `threadId`. Provider
-   * turns call this so that a session which is plainly alive keeps its
-   * credential even when it goes a long time without touching an MCP tool.
-   */
+  ) => Effect.Effect<McpInvocationContext.McpThreadInvocationScope | undefined>;
   readonly touch: (threadId: ThreadId) => Effect.Effect<void>;
   readonly bindDeepPlan: (
     threadId: ThreadId,
@@ -71,8 +55,7 @@ export class McpSessionRegistry extends Context.Service<
 
 interface CredentialRecord {
   readonly tokenHash: string;
-  readonly ownerThreadId: ThreadId;
-  readonly scope: McpInvocationContext.McpInvocationScope;
+  readonly scope: McpInvocationContext.McpThreadInvocationScope;
   readonly lastAliveAt: number;
 }
 
@@ -86,45 +69,17 @@ export interface McpSessionRegistryOptions {
 }
 
 /**
- * How long a credential outlives the last sign of life from its provider
- * session.
- *
- * Liveness is refreshed both by MCP traffic and by `touch` on every provider
- * turn, so a session that is still doing work never expires no matter how long
- * it goes between browser tool calls. This window therefore only bounds
- * credentials whose session died without a clean stop — the normal paths
- * (`stopSession`, `stopAll`) revoke eagerly and do not wait for it.
- *
- * The bound matters because the provider-scoped MCP endpoints are mounted
- * outside the environment auth stack and are reachable on whatever host the
- * server binds to. This token is the only thing guarding those toolkits on a
- * remote-reachable server.
+ * `/mcp` is outside environment auth, so idle tokens stop authenticating.
+ * Keep expired records until explicit revocation: a trusted provider turn can
+ * refresh the token its subprocess still holds; MCP requests cannot.
  */
 const DEFAULT_LIVENESS_WINDOW_MS = 24 * 60 * 60 * 1_000;
-
-const WORKSPACE_CONTEXT_PROVIDERS = new Set<ProviderDriverKind>([
-  CODEX_DRIVER_KIND,
-  CLAUDE_DRIVER_KIND,
-  CURSOR_DRIVER_KIND,
-  OPENCODE_DRIVER_KIND,
-]);
-
-const supportsWorkspaceContext = (provider: ProviderDriverKind): boolean =>
-  WORKSPACE_CONTEXT_PROVIDERS.has(provider);
-
-const OPTIONAL_T3_TOOL_FEATURES = [
-  "knowledge.graph",
-  "agent.projectCoordination",
-  "agent.generalSubagents",
-] as const;
 
 const bytesToHex = (bytes: Uint8Array): string =>
   Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 
 const tokenFromBytes = (bytes: Uint8Array): string => Buffer.from(bytes).toString("base64url");
 
-// A wildcard bind is reachable on loopback, which is where the provider
-// subprocesses run; anything else is announced as the address it bound.
 const getHttpMcpEndpointHost = (address: NetAddress.IpAddress): string =>
   NetAddress.isUnspecified(address)
     ? "127.0.0.1"
@@ -135,150 +90,78 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
 ) {
   const crypto = yield* Crypto.Crypto;
   const environment = yield* ServerEnvironment.ServerEnvironment;
-  const serverSettings = Option.getOrUndefined(
-    yield* Effect.serviceOption(ServerSettings.ServerSettingsService),
-  );
   const environmentId = yield* environment.getEnvironmentId;
   const httpServer = yield* HttpServer.HttpServer;
   const state = yield* SynchronizedRef.make<RegistryState>({ records: new Map() });
   const currentTimeMillis = options.now ? Effect.sync(options.now) : Clock.currentTimeMillis;
   const livenessWindowMs = options.livenessWindowMs ?? DEFAULT_LIVENESS_WINDOW_MS;
-  const endpointBase = NetAddress.isInetAddress(httpServer.address)
-    ? `http://${getHttpMcpEndpointHost(httpServer.address.address)}:${httpServer.address.port}`
-    : "http://127.0.0.1";
+  const endpoint = NetAddress.isInetAddress(httpServer.address)
+    ? `http://${getHttpMcpEndpointHost(httpServer.address.address)}:${httpServer.address.port}/mcp`
+    : "http://127.0.0.1/mcp";
 
   const hashToken = (token: string) =>
     crypto
       .digest("SHA-256", new TextEncoder().encode(token))
       .pipe(Effect.map(bytesToHex), Effect.orDie);
 
-  const pruneDead = (records: ReadonlyMap<string, CredentialRecord>, timestamp: number) => {
-    const next = new Map(
-      Array.from(records).filter(
-        ([, record]) => timestamp - record.lastAliveAt <= livenessWindowMs,
-      ),
-    );
-    return next.size === records.size ? records : next;
-  };
-
   const issue: McpSessionRegistryShape["issue"] = Effect.fn("McpSessionRegistry.issue")(
     function* (request) {
       const issuedAt = yield* currentTimeMillis;
-      const workspaceContextEnabled =
-        request.provider !== undefined && supportsWorkspaceContext(request.provider);
-      const workspaceWriteEnabled =
-        workspaceContextEnabled && request.workspaceWriteEnabled === true;
-      const previewEnabled = request.previewEnabled ?? request.capabilities?.has("preview") ?? true;
-      const configuredOptionalGroups = serverSettings
-        ? yield* serverSettings.getSettings.pipe(
-            Effect.map((settings) =>
-              OPTIONAL_T3_TOOL_FEATURES.some((feature) =>
-                resolveBetterT3FeatureFlag(settings.betterT3Environment, feature),
-              ),
-            ),
-            Effect.catch((cause) =>
-              Effect.logWarning(
-                "Could not read optional T3 tool settings; using the core MCP profile.",
-                { cause },
-              ).pipe(Effect.as(false)),
-            ),
-          )
-        : false;
-      const coreWorkspaceOnly =
-        request.workspaceOnly === true ||
-        (workspaceContextEnabled &&
-          !previewEnabled &&
-          !configuredOptionalGroups &&
-          request.workspaceOnly === undefined &&
-          !request.capabilities?.has("device") &&
-          !request.capabilities?.has("pull-requests"));
-      const projectMemoryEnabled = request.projectMemoryEnabled !== false;
-      const providerSessionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+      const providerSessionId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
       const rawToken = yield* crypto.randomBytes(32).pipe(Effect.map(tokenFromBytes), Effect.orDie);
       const tokenHash = yield* hashToken(rawToken);
-      const capabilities: ReadonlySet<McpInvocationContext.McpCapability> =
-        request.provider === undefined
-          ? new Set<McpInvocationContext.McpCapability>()
-          : coreWorkspaceOnly
-            ? workspaceContextEnabled
-              ? new Set([
-                  "workspace",
-                  ...(workspaceWriteEnabled ? (["workspace-write"] as const) : []),
-                ])
-              : new Set()
-            : workspaceContextEnabled
-              ? previewEnabled
-                ? new Set([
-                    "preview",
-                    "workspace",
-                    ...(workspaceWriteEnabled ? (["workspace-write"] as const) : []),
-                    "coordination",
-                  ])
-                : new Set([
-                    "workspace",
-                    ...(workspaceWriteEnabled ? (["workspace-write"] as const) : []),
-                    "coordination",
-                  ])
-              : previewEnabled
-                ? new Set(["preview", "coordination"])
-                : new Set(["coordination"]);
-      const readEndpointPath = coreWorkspaceOnly
-        ? projectMemoryEnabled
-          ? "/mcp/workspace-only"
-          : "/mcp/workspace-only-no-memory"
-        : workspaceContextEnabled
-          ? previewEnabled
-            ? projectMemoryEnabled
-              ? "/mcp/workspace"
-              : "/mcp/workspace-no-memory"
-            : projectMemoryEnabled
-              ? "/mcp/workspace-no-preview"
-              : "/mcp/workspace-no-preview-no-memory"
-          : previewEnabled
-            ? "/mcp"
-            : "/mcp/coordination";
-      const endpointPath = workspaceWriteEnabled
-        ? readEndpointPath.replace("/mcp/workspace", "/mcp/workspace-write")
-        : readEndpointPath;
-      const scope: McpInvocationContext.McpInvocationScope = {
+      const browserToolsAvailable = request.previewEnabled ?? request.browserToolsAvailable ?? true;
+      const scope: McpInvocationContext.McpThreadInvocationScope = {
         environmentId,
         ownerThreadId: request.threadId,
+        projectMemoryEnabled: request.projectMemoryEnabled !== false,
+        ...(request.workspaceContextThreadId === undefined
+          ? {}
+          : { workspaceContextThreadId: request.workspaceContextThreadId }),
         ...(request.messageReply === undefined
           ? {}
           : { messageReply: { ...request.messageReply } }),
         ...(request.deepPlan === undefined || request.messageReply !== undefined
           ? {}
           : { deepPlan: request.deepPlan }),
-        threadId: ThreadId.make(request.workspaceContextThreadId ?? request.threadId),
-        providerSessionId,
-        providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
+        requestNamespace: providerSessionId,
+        thread: {
+          threadId: ThreadId.make(request.threadId),
+          providerSessionId,
+          providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
+          subagent: request.subagent === true,
+        },
+        client: undefined,
         capabilities: new Set<McpInvocationContext.McpCapability>([
-          ...capabilities,
+          "workspace",
+          ...(request.workspaceWriteEnabled === true ? (["workspace-write"] as const) : []),
+          ...(request.workspaceOnly === true ? [] : (["coordination"] as const)),
           ...(request.deepPlan !== undefined && request.messageReply === undefined
             ? (["deep-plan"] as const)
             : []),
-          ...(coreWorkspaceOnly ? [] : (request.capabilities ?? [])),
+          "orchestration",
+          "worktree",
+          "pull-requests",
+          ...[
+            ...(request.capabilities ?? (browserToolsAvailable ? (["preview"] as const) : [])),
+          ].filter((capability) => capability !== "preview" || browserToolsAvailable),
         ]),
         issuedAt,
       };
       yield* SynchronizedRef.update(state, ({ records }) => {
-        const next = new Map(pruneDead(records, issuedAt));
-        next.set(tokenHash, {
-          tokenHash,
-          ownerThreadId: request.threadId,
-          scope,
-          lastAliveAt: issuedAt,
-        });
+        const next = new Map(records);
+        next.set(tokenHash, { tokenHash, scope, lastAliveAt: issuedAt });
         return { records: next };
       });
       return {
         config: {
           environmentId,
-          threadId: request.threadId,
+          threadId: scope.thread.threadId,
           providerSessionId,
-          providerInstanceId: scope.providerInstanceId,
-          endpoint: `${endpointBase}${endpointPath}`,
+          providerInstanceId: scope.thread.providerInstanceId,
+          endpoint,
           authorizationHeader: `Bearer ${rawToken}`,
+          browserToolsAvailable: scope.capabilities.has("preview"),
           capabilities: scope.capabilities,
           ...(scope.deepPlan === undefined ? {} : { deepPlan: scope.deepPlan }),
         },
@@ -292,10 +175,11 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       const tokenHash = yield* hashToken(rawToken);
       const timestamp = yield* currentTimeMillis;
       return yield* SynchronizedRef.modify(state, ({ records }) => {
-        const current = pruneDead(records, timestamp);
-        const record = current.get(tokenHash);
-        if (!record) return [undefined, { records: current }] as const;
-        const next = new Map(current);
+        const record = records.get(tokenHash);
+        if (!record || timestamp - record.lastAliveAt > livenessWindowMs) {
+          return [undefined, { records }] as const;
+        }
+        const next = new Map(records);
         next.set(tokenHash, { ...record, lastAliveAt: timestamp });
         return [record.scope, { records: next }] as const;
       });
@@ -306,10 +190,9 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     function* (threadId) {
       const timestamp = yield* currentTimeMillis;
       yield* SynchronizedRef.update(state, ({ records }) => {
-        const current = pruneDead(records, timestamp);
-        const next = new Map(current);
-        for (const [tokenHash, record] of current) {
-          if (record.ownerThreadId === threadId) {
+        const next = new Map(records);
+        for (const [tokenHash, record] of records) {
+          if (record.scope.thread.threadId === threadId) {
             next.set(tokenHash, { ...record, lastAliveAt: timestamp });
           }
         }
@@ -327,11 +210,11 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     issue,
     resolve,
     touch,
-    bindDeepPlan: (threadId, binding) =>
-      SynchronizedRef.update(state, ({ records }) => {
+    bindDeepPlan: Effect.fn("McpSessionRegistry.bindDeepPlan")(function* (threadId, binding) {
+      yield* SynchronizedRef.update(state, ({ records }) => {
         const next = new Map(records);
         for (const [tokenHash, record] of records) {
-          if (record.ownerThreadId !== threadId || record.scope.messageReply !== undefined)
+          if (record.scope.thread.threadId !== threadId || record.scope.messageReply !== undefined)
             continue;
           const capabilities = new Set(record.scope.capabilities);
           const { deepPlan: _previous, ...scope } = record.scope;
@@ -347,14 +230,15 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           });
         }
         return { records: next };
-      }),
+      });
+    }),
     revokeProviderSession: Effect.fn("McpSessionRegistry.revokeProviderSession")(
       function* (providerSessionId) {
-        yield* revokeWhere((record) => record.scope.providerSessionId === providerSessionId);
+        yield* revokeWhere((record) => record.scope.thread.providerSessionId === providerSessionId);
       },
     ),
     revokeThread: Effect.fn("McpSessionRegistry.revokeThread")(function* (threadId) {
-      yield* revokeWhere((record) => record.ownerThreadId === threadId);
+      yield* revokeWhere((record) => record.scope.thread.threadId === threadId);
     }),
     revokeAll: SynchronizedRef.set(state, { records: new Map() }),
   });
@@ -380,35 +264,12 @@ const make = Effect.acquireRelease(
 
 export const layer = Layer.effect(McpSessionRegistry, make);
 
-export const issueActiveMcpCredential = (
-  request: McpCredentialRequest,
-): Effect.Effect<McpIssuedCredential | undefined> =>
-  activeMcpSessionRegistry
-    ? activeMcpSessionRegistry
-        .revokeThread(request.threadId)
-        .pipe(Effect.andThen(activeMcpSessionRegistry.issue(request)))
-    : Effect.undefined;
-
-/**
- * Refreshes the liveness of a thread's MCP credential. Called on every provider
- * turn so an active session is never mistaken for an abandoned one.
- */
+/** Refresh an active credential at provider-turn boundaries, including after idle expiry. */
 export const touchActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>
   activeMcpSessionRegistry ? activeMcpSessionRegistry.touch(threadId) : Effect.void;
 
-export const bindActiveMcpDeepPlan = (
-  threadId: ThreadId,
-  binding: McpInvocationContext.McpDeepPlanContext | undefined,
-): Effect.Effect<void> =>
-  activeMcpSessionRegistry ? activeMcpSessionRegistry.bindDeepPlan(threadId, binding) : Effect.void;
-
-export const revokeActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>
-  activeMcpSessionRegistry ? activeMcpSessionRegistry.revokeThread(threadId) : Effect.void;
-
-export const revokeAllActiveMcpCredentials = (): Effect.Effect<void> =>
-  activeMcpSessionRegistry ? activeMcpSessionRegistry.revokeAll : Effect.void;
-
 /** Exposed for tests. */
+
 export const __testing = {
   make: makeWithOptions,
 };

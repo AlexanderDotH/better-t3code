@@ -11,6 +11,7 @@ function EnvironmentActivitySubscription({
 }: {
   readonly environmentId: EnvironmentId;
 }) {
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the environment activity subscription and clear its projected store when disconnected.
   useEffect(() => {
     const activity = projectIndexEnvironment.activity({ environmentId, input: {} });
     const unsubscribe = appAtomRegistry.subscribe(

@@ -1,7 +1,7 @@
 import type {
   ProviderAdapterCapabilities,
   ProviderDeepPlanSupport,
-} from "./Services/ProviderAdapter.ts";
+} from "./nativeHarness/NativeProviderTypes.ts";
 
 export const DEEP_PLAN_PROVIDER_SUPPORT = {
   codex: { supported: true, readOnlyPlan: "native" },

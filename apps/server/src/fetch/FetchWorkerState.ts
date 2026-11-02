@@ -2,7 +2,6 @@ import {
   type IsoDateTime,
   type MessageId,
   type ModelSelection,
-  type OrchestrationSubagentSummary,
   type ProviderDriverKind,
   type RuntimeSessionId,
   type ServerProviderFetchWorkerCommandExecutionPolicy,
@@ -10,6 +9,7 @@ import {
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
+import { type OrchestrationSubagentSummary } from "@t3tools/contracts/legacy";
 import type * as Deferred from "effect/Deferred";
 import type * as Fiber from "effect/Fiber";
 import type * as Semaphore from "effect/Semaphore";

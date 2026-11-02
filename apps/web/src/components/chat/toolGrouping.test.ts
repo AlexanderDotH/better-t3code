@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ApprovalRequestId, MessageId, TurnId } from "@t3tools/contracts";
-import { deriveTimelineEntries, type WorkLogEntry } from "../../session-logic";
+import { RuntimeRequestId, MessageId, RunId } from "@t3tools/contracts";
+import { type TimelineEntry, type WorkLogEntry } from "../../session-logic";
 import type { ChatMessage } from "../../types";
 import {
   deriveMessagesTimelineRows,
@@ -8,7 +8,7 @@ import {
   type MessagesTimelineRow,
 } from "./MessagesTimeline.logic";
 
-const turnId = TurnId.make("combined-tools");
+const runId = RunId.make("combined-tools");
 const timestamp = (second: number) => new Date(Date.UTC(2026, 9, 27, 14, 0, second)).toISOString();
 const message = (
   id: string,
@@ -19,15 +19,15 @@ const message = (
   id: MessageId.make(id),
   role,
   text,
-  turnId,
-  streaming: role === "reasoning",
+  runId,
+  streaming: false,
   createdAt: timestamp(second),
   updatedAt: timestamp(second),
 });
 const tool = (id: string, second: number, extra: Partial<WorkLogEntry> = {}): WorkLogEntry => ({
   id,
   toolCallId: id,
-  turnId,
+  runId,
   createdAt: timestamp(second),
   tone: "tool",
   label: "Run command",
@@ -35,16 +35,38 @@ const tool = (id: string, second: number, extra: Partial<WorkLogEntry> = {}): Wo
   toolLifecycleStatus: "completed",
   ...extra,
 });
-function input(messages: ChatMessage[], entries: WorkLogEntry[]) {
+const thought = (id: string, second: number): WorkLogEntry => ({
+  id,
+  runId,
+  createdAt: timestamp(second),
+  tone: "thinking",
+  itemType: "reasoning",
+  label: "Thinking",
+  detail: id,
+});
+function input(messages: Array<ChatMessage | WorkLogEntry>, entries: WorkLogEntry[]) {
+  const timelineEntries: TimelineEntry[] = [
+    ...messages.map((entry): TimelineEntry =>
+      "role" in entry
+        ? { kind: "message", id: entry.id, createdAt: entry.createdAt, message: entry }
+        : { kind: "work", id: entry.id, createdAt: entry.createdAt, entry },
+    ),
+    ...entries.map((entry): TimelineEntry => ({
+      kind: "work",
+      id: entry.id,
+      createdAt: entry.createdAt,
+      entry,
+    })),
+  ].toSorted((a, b) => a.createdAt.localeCompare(b.createdAt));
   return {
     chatVisualMode: "better-t3" as const,
     showReasoning: true,
     hideWorkingIndicator: true,
-    timelineEntries: deriveTimelineEntries(messages, [], entries),
+    timelineEntries,
     isWorking: false,
     activeTurnStartedAt: timestamp(0),
     turnDiffSummaries: [],
-    expandedTurnIds: new Set([turnId, TurnId.make("continuation")]),
+    expandedRunIds: new Set([runId, RunId.make("continuation")]),
     supportsConversationRollback: false,
   };
 }
@@ -63,12 +85,12 @@ describe("Better T3 tool groups between messages", () => {
       input(
         [
           message("request", "user", 0),
-          message("first-thought", "reasoning", 2),
-          { ...message("orphan-thought", "reasoning", 4), turnId: null },
+          thought("first-thought", 2),
+          { ...thought("orphan-thought", 4), runId: null },
         ],
         [
           tool("first", 1),
-          tool("second", 3, { turnId: TurnId.make("continuation") }),
+          tool("second", 3, { runId: RunId.make("continuation") }),
           tool("third", 5),
         ],
       ),
@@ -88,9 +110,9 @@ describe("Better T3 tool groups between messages", () => {
       input(
         [
           message("request", "user", 0),
-          message("thought-a", "reasoning", 2),
+          thought("thought-a", 2),
           message("commentary", "assistant", 4),
-          message("thought-b", "reasoning", 6),
+          thought("thought-b", 6),
           message("next-request", "user", 8),
         ],
         [tool("a", 1), tool("b", 3), tool("c", 5), tool("d", 7), tool("e", 9)],
@@ -106,8 +128,8 @@ describe("Better T3 tool groups between messages", () => {
   it("keeps the latest running call and the combined disclosure stable through completion", () => {
     const messages = [
       message("request", "user", 0),
-      message("thought-a", "reasoning", 2),
-      message("thought-b", "reasoning", 4),
+      thought("thought-a", 2),
+      thought("thought-b", 4),
     ];
     const entries = [
       tool("first", 1),
@@ -117,7 +139,13 @@ describe("Better T3 tool groups between messages", () => {
     const activeInput = {
       ...input(messages, entries),
       isWorking: true,
-      latestTurn: { turnId, state: "running" as const, startedAt: timestamp(0), completedAt: null },
+      latestRun: {
+        runId,
+        status: "running" as const,
+        startedAt: timestamp(0),
+        completedAt: null,
+        turnEnded: false,
+      },
     };
     const live = toolRows(deriveMessagesTimelineRows(activeInput));
     expect(live).toHaveLength(1);
@@ -126,7 +154,7 @@ describe("Better T3 tool groups between messages", () => {
     if (running.kind !== "work-live") throw new Error("Expected live tools");
     expect(toolsIn(running)).toHaveLength(3);
     const completeInput = input(
-      messages.map((item) => ({ ...item, streaming: false })),
+      messages,
       entries.map((item) => ({ ...item, toolLifecycleStatus: "completed" })),
     );
     const completed = toolRows(
@@ -185,7 +213,7 @@ describe("Better T3 tool groups between messages", () => {
           }
         : {
             questionAnswer: {
-              requestId: ApprovalRequestId.make("question"),
+              requestId: RuntimeRequestId.make("question"),
               answers: { choice: "Yes" },
               attachmentsByQuestionId: {},
             },
@@ -193,11 +221,7 @@ describe("Better T3 tool groups between messages", () => {
     );
     const rows = deriveMessagesTimelineRows(
       input(
-        [
-          message("request", "user", 0),
-          message("thought-a", "reasoning", 2),
-          message("thought-b", "reasoning", 6),
-        ],
+        [message("request", "user", 0), thought("thought-a", 2), thought("thought-b", 6)],
         [tool("a", 1), tool("b", 3), boundary, tool("c", 5), tool("d", 7)],
       ),
     );
@@ -210,11 +234,13 @@ describe("Better T3 tool groups between messages", () => {
 
   it("does not change grouping in Current and Classic modes", () => {
     const base = input(
-      [message("request", "user", 0), message("thought", "reasoning", 2)],
+      [message("request", "user", 0), thought("thought", 2)],
       [tool("first", 1), tool("second", 3)],
     );
     for (const chatVisualMode of ["current", "classic"] as const) {
-      expect(toolRows(deriveMessagesTimelineRows({ ...base, chatVisualMode }))).toHaveLength(2);
+      expect(deriveMessagesTimelineRows({ ...base, chatVisualMode })).toEqual(
+        deriveMessagesTimelineRows({ ...base, chatVisualMode: "current" }),
+      );
     }
   });
 });

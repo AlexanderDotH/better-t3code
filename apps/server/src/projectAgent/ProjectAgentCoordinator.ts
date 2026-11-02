@@ -1,10 +1,9 @@
 import {
-  CommandId,
   PROJECT_AGENT_MAX_PEERS,
-  ProjectAgentClaimConflict,
   ProjectAgentCoordinationOperationError,
   ProjectAgentCoordinationUnavailableError,
   ProjectAgentMessageId,
+  TurnId,
   resolveBetterT3FeatureFlag,
   type ProjectAgentClaimSetInput,
   type ProjectAgentClaimSetResult,
@@ -17,34 +16,28 @@ import {
   type ThreadId,
   type SubagentId,
   type ProviderInstanceId,
-  type OrchestrationSubagentSummary,
-  type TurnId,
+  type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import * as Cause from "effect/Cause";
+import { Platform } from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as Schema from "effect/Schema";
-import * as Scope from "effect/Scope";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-
-import { OrchestrationCommandInvariantError } from "../orchestration/Errors.ts";
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as SqlClient from "effect/sql/SqlClient";
+import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
+import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
 import { ProjectionProjectAgentCoordinationRepository } from "../persistence/Services/ProjectionProjectAgentCoordination.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
-import { normalizeProjectAgentClaims } from "./claimRules.ts";
+import { findProjectAgentClaimConflicts, normalizeProjectAgentClaims } from "./claimRules.ts";
 
 export interface ProjectAgentReplyExecution {
   readonly replyTopicId: SubagentId;
   readonly turnId: TurnId;
   readonly providerInstanceId: ProviderInstanceId;
 }
-
 export interface ProjectAgentCoordinatorShape {
   readonly list: (
     threadId: ThreadId,
@@ -66,415 +59,304 @@ export interface ProjectAgentCoordinatorShape {
     reply?: ProjectAgentReplyExecution,
   ) => Effect.Effect<ProjectAgentInboxResult, ProjectAgentCoordinationError>;
 }
-
 export class ProjectAgentCoordinator extends Context.Service<
   ProjectAgentCoordinator,
   ProjectAgentCoordinatorShape
 >()("t3/projectAgent/ProjectAgentCoordinator") {}
 
-const decodeConflicts = Schema.decodeUnknownEffect(Schema.Array(ProjectAgentClaimConflict));
-const isOrchestrationCommandInvariantError = Schema.is(OrchestrationCommandInvariantError);
-const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
-
-function isAvailableThread(thread: {
-  readonly archivedAt: string | null;
-  readonly deletedAt?: string | null;
-}): boolean {
-  return (
-    thread.archivedAt === null && (thread.deletedAt === undefined || thread.deletedAt === null)
-  );
-}
-
-function isActiveRootThread(thread: {
-  readonly archivedAt: string | null;
-  readonly deletedAt?: string | null;
-  readonly session: { readonly status: string; readonly activeTurnId: TurnId | null } | null;
-  readonly latestTurn: { readonly state: string; readonly turnId: TurnId } | null;
-}): boolean {
-  return (
-    isAvailableThread(thread) &&
-    (thread.session?.status === "starting" ||
-      thread.session?.status === "running" ||
-      thread.latestTurn?.state === "running")
-  );
-}
-
-function isActiveReplyTopic(topic: OrchestrationSubagentSummary): boolean {
-  return (
-    topic.messageReply !== undefined &&
-    (topic.status === "starting" || topic.status === "running" || topic.status === "waiting")
-  );
-}
-
-function isActiveThread(
-  thread: Parameters<typeof isActiveRootThread>[0] & {
-    readonly subagents: ReadonlyArray<OrchestrationSubagentSummary>;
-  },
-): boolean {
-  return (
-    isActiveRootThread(thread) ||
-    (isAvailableThread(thread) && thread.subagents.some(isActiveReplyTopic))
-  );
-}
-
-function activeTurnId(thread: {
-  readonly session: { readonly status: string; readonly activeTurnId: TurnId | null } | null;
-  readonly latestTurn: { readonly state: string; readonly turnId: TurnId } | null;
-}): TurnId | null {
-  if (
-    (thread.session?.status === "starting" || thread.session?.status === "running") &&
-    thread.session.activeTurnId !== null
-  ) {
-    return thread.session.activeTurnId;
-  }
-  return thread.latestTurn?.state === "running" ? thread.latestTurn.turnId : null;
-}
-
-const makeCoordinator = Effect.gen(function* () {
-  const snapshots = yield* ProjectionSnapshotQuery;
+const make = Effect.gen(function* () {
+  const orchestration = yield* OrchestratorV2;
+  const projects = yield* ProjectStoreV2;
   const repository = yield* ProjectionProjectAgentCoordinationRepository;
-  const orchestration = yield* OrchestrationEngineService;
-  const crypto = yield* Crypto.Crypto;
-  const hostPlatform = yield* HostProcessPlatform;
   const settings = yield* ServerSettingsService;
-  const coordinatorScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
-    Scope.close(scope, Exit.void),
-  );
-
-  const nextId = (prefix: string) =>
-    crypto.randomUUIDv4.pipe(
-      Effect.orDie,
-      Effect.map((value) => `${prefix}-${value}`),
-    );
-
+  const crypto = yield* Crypto.Crypto;
+  const platform = yield* Platform;
+  const sql = yield* SqlClient.SqlClient;
+  const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const operationError = (operation: "list" | "claim" | "send" | "inbox", cause: unknown) =>
     new ProjectAgentCoordinationOperationError({ operation, cause });
-
-  const ensureFeatureEnabled = Effect.fn("ProjectAgentCoordinator.ensureFeatureEnabled")(function* (
-    operation: "list" | "claim" | "send" | "inbox",
-  ) {
-    const current = yield* settings.getSettings.pipe(
-      Effect.mapError((cause) => operationError(operation, cause)),
-    );
-    if (!resolveBetterT3FeatureFlag(current.betterT3Environment, "agent.projectCoordination")) {
-      return yield* operationError(
-        operation,
-        new Error("Project-agent coordination is disabled in Better T3 settings."),
-      );
-    }
-  });
-
-  const readCommandModel = Effect.fn("ProjectAgentCoordinator.readCommandModel")(function* () {
-    return yield* snapshots.getCommandReadModel().pipe(
-      Effect.mapError(
-        (cause) =>
-          new ProjectAgentCoordinationUnavailableError({
-            reason: "projection_unavailable",
-            cause,
-          }),
-      ),
-    );
-  });
-
-  const resolveScope = Effect.fn("ProjectAgentCoordinator.resolveScope")(function* (
+  const scope = Effect.fn("ProjectAgentCoordinator.scope")(function* (
     threadId: ThreadId,
     reply?: ProjectAgentReplyExecution,
+    requireEnabled = true,
   ) {
-    const readModel = yield* readCommandModel();
-    const thread = readModel.threads.find((candidate) => candidate.id === threadId);
-    const topic =
-      reply === undefined
-        ? undefined
-        : thread?.subagents.find((candidate) => candidate.id === reply.replyTopicId);
-    const active =
-      reply === undefined
-        ? thread !== undefined && isActiveRootThread(thread)
-        : thread !== undefined &&
-          isAvailableThread(thread) &&
-          topic !== undefined &&
-          isActiveReplyTopic(topic) &&
-          topic.messageReply?.modelSelection.instanceId === reply.providerInstanceId &&
-          topic.latestTurn?.state === "running" &&
-          topic.latestTurn.turnId === reply.turnId;
-    if (!thread || !active) {
-      return yield* new ProjectAgentCoordinationUnavailableError({
-        reason: "thread_unavailable",
-      });
-    }
-    const project = readModel.projects.find(
-      (candidate) => candidate.id === thread.projectId && candidate.deletedAt === null,
+    const current = yield* settings.getSettings.pipe(
+      Effect.mapError((cause) => operationError("list", cause)),
     );
-    if (!project) {
-      return yield* new ProjectAgentCoordinationUnavailableError({
-        reason: "project_unavailable",
-      });
-    }
-    return { readModel, project, thread, turnId: reply?.turnId ?? activeTurnId(thread) } as const;
+    if (
+      requireEnabled &&
+      !resolveBetterT3FeatureFlag(current.betterT3Environment, "agent.projectCoordination")
+    )
+      return yield* operationError(
+        "list",
+        new Error("Project-agent coordination is disabled in Better T3 settings."),
+      );
+    const snapshot = yield* orchestration
+      .getShellSnapshot()
+      .pipe(Effect.mapError((cause) => operationError("list", cause)));
+    const thread = snapshot.threads.find((candidate) =>
+      reply === undefined
+        ? candidate.id === threadId
+        : candidate.messageReply?.sourceThreadId === threadId &&
+          candidate.messageReply.replyTopicId === reply.replyTopicId,
+    );
+    if (
+      !thread ||
+      thread.activeRunId === null ||
+      thread.deletedAt !== null ||
+      thread.archivedAt !== null ||
+      (reply !== undefined && thread.providerInstanceId !== reply.providerInstanceId)
+    )
+      return yield* new ProjectAgentCoordinationUnavailableError({ reason: "thread_unavailable" });
+    const project = yield* projects
+      .get(thread.projectId)
+      .pipe(Effect.mapError((cause) => operationError("list", cause)));
+    if (Option.isNone(project))
+      return yield* new ProjectAgentCoordinationUnavailableError({ reason: "project_unavailable" });
+    const records = yield* orchestration
+      .getThreadRecords(thread.id, ["providerTurns", "runs"])
+      .pipe(Effect.mapError((cause) => operationError("list", cause)));
+    const run = records.runs.find((candidate) => candidate.id === thread.activeRunId);
+    const turn = records.providerTurns
+      .filter((candidate) => candidate.runAttemptId === run?.activeAttemptId)
+      .at(-1);
+    const turnId =
+      turn?.nativeTurnRef?.nativeId == null ? null : TurnId.make(turn.nativeTurnRef.nativeId);
+    if (reply !== undefined && turnId !== reply.turnId)
+      return yield* new ProjectAgentCoordinationUnavailableError({ reason: "thread_unavailable" });
+    return { thread, project: project.value, threads: snapshot.threads, turnId };
   });
-
+  const activePeers = (threads: ReadonlyArray<OrchestrationV2ThreadShell>) =>
+    threads.filter((thread) => thread.activeRunId !== null);
   const list: ProjectAgentCoordinatorShape["list"] = Effect.fn("ProjectAgentCoordinator.list")(
     function* (threadId, reply) {
-      yield* ensureFeatureEnabled("list");
-      const scope = yield* resolveScope(threadId, reply);
-      const [shell, unreadCounts] = yield* Effect.all([
-        snapshots
-          .getShellSnapshot()
-          .pipe(Effect.mapError((cause) => operationError("list", cause))),
-        repository
-          .listUnreadCountsByProjectId(scope.project.id)
-          .pipe(Effect.mapError((cause) => operationError("list", cause))),
-      ]);
-      const { readModel, project } = scope;
-
-      const shellByThread = new Map(shell.threads.map((candidate) => [candidate.id, candidate]));
-      const leaseByThread = new Map(
-        project.coordinationClaims.map((lease) => [lease.threadId, lease]),
-      );
-      const projectPeers = readModel.threads
-        .filter((candidate) => candidate.projectId === project.id && isAvailableThread(candidate))
-        .toSorted((left, right) => {
-          if (left.id === threadId) return -1;
-          if (right.id === threadId) return 1;
-          const activeOrder = Number(isActiveThread(right)) - Number(isActiveThread(left));
-          if (activeOrder !== 0) return activeOrder;
-          return (
-            right.updatedAt.localeCompare(left.updatedAt) ||
-            left.title.localeCompare(right.title) ||
-            left.id.localeCompare(right.id)
-          );
-        });
-      const peers = projectPeers.slice(0, PROJECT_AGENT_MAX_PEERS).map((candidate) => {
-        const shellThread = shellByThread.get(candidate.id);
-        const lease = leaseByThread.get(candidate.id);
-        const waiting =
-          shellThread?.hasPendingApprovals === true || shellThread?.hasPendingUserInput === true;
-        return {
-          threadId: candidate.id,
-          self: candidate.id === threadId,
-          phase: !isActiveThread(candidate)
-            ? ("offline" as const)
-            : waiting
-              ? ("waiting" as const)
-              : candidate.session?.status === "starting"
-                ? ("starting" as const)
-                : ("working" as const),
-          title: candidate.title,
-          model: candidate.modelSelection.model,
-          branch: candidate.branch,
-          worktreePath: candidate.worktreePath,
-          summary: lease?.summary ?? null,
-          claims: lease?.claims ?? [],
-          unreadCount: unreadCounts.get(candidate.id) ?? 0,
-        };
-      });
-      return { peers, truncated: projectPeers.length > peers.length };
+      const current = yield* scope(threadId, reply);
+      const [leases, unread] = yield* Effect.all([
+        repository.listClaimsByProjectId(current.project.projectId),
+        repository.listUnreadCountsByProjectId(current.project.projectId),
+      ]).pipe(Effect.mapError((cause) => operationError("list", cause)));
+      const peers = current.threads
+        .filter(
+          (thread) =>
+            thread.projectId === current.project.projectId &&
+            thread.deletedAt === null &&
+            thread.archivedAt === null,
+        )
+        .toSorted(
+          (left, right) =>
+            Number(right.id === current.thread.id) - Number(left.id === current.thread.id) ||
+            Number(right.activeRunId !== null) - Number(left.activeRunId !== null) ||
+            DateTime.Order(right.updatedAt, left.updatedAt),
+        );
+      return {
+        peers: peers.slice(0, PROJECT_AGENT_MAX_PEERS).map((thread) => {
+          const lease = leases.find((entry) => entry.threadId === thread.id);
+          return {
+            threadId: thread.id,
+            self: thread.id === current.thread.id,
+            phase:
+              thread.activeRunId === null
+                ? ("offline" as const)
+                : thread.pendingRuntimeRequest
+                  ? ("waiting" as const)
+                  : thread.status === "starting"
+                    ? ("starting" as const)
+                    : ("working" as const),
+            title: thread.title,
+            model: thread.modelSelection.model,
+            branch: thread.branch,
+            worktreePath: thread.worktreePath,
+            summary: lease?.summary ?? null,
+            claims: lease?.claims ?? [],
+            unreadCount: unread.get(thread.id) ?? 0,
+          };
+        }),
+        truncated: peers.length > PROJECT_AGENT_MAX_PEERS,
+      };
     },
   );
-
   const claim: ProjectAgentCoordinatorShape["claim"] = Effect.fn("ProjectAgentCoordinator.claim")(
     function* (threadId, input, reply) {
-      if (input.action !== "release") yield* ensureFeatureEnabled("claim");
-      const { project, turnId } = yield* resolveScope(threadId, reply);
-      const timestamp = yield* nowIso;
+      const current = yield* scope(threadId, reply, input.action !== "release");
       if (input.action === "release") {
-        const lease = project.coordinationClaims.find(
-          (candidate) => candidate.threadId === threadId,
-        );
-        yield* orchestration
-          .dispatch({
-            type: "project.agent.claim.release",
-            commandId: CommandId.make(yield* nextId("project-agent-claim-release")),
-            projectId: project.id,
-            threadId,
-            ...(lease !== undefined || turnId !== null
-              ? { expectedTurnId: lease?.turnId ?? turnId! }
-              : {}),
-            releasedAt: timestamp,
-          })
+        yield* repository
+          .releaseClaimsByThreadId(current.thread.id)
           .pipe(Effect.mapError((cause) => operationError("claim", cause)));
         return { accepted: true, lease: null };
       }
-      if (turnId === null) {
+      if (current.turnId === null)
         return yield* new ProjectAgentCoordinationUnavailableError({
           reason: "thread_unavailable",
         });
-      }
       const claims = yield* Effect.try({
         try: () =>
           normalizeProjectAgentClaims(input.claims, {
-            caseInsensitivePaths: hostPlatform === "win32" || hostPlatform === "darwin",
+            caseInsensitivePaths: platform === "darwin" || platform === "win32",
           }),
         catch: (cause) => operationError("claim", cause),
       });
       const lease = {
-        projectId: project.id,
-        threadId,
-        turnId,
+        projectId: current.project.projectId,
+        threadId: current.thread.id,
+        turnId: current.turnId,
         summary: input.summary,
         claims,
-        updatedAt: timestamp,
-      } as const;
-      const dispatchResult = yield* Effect.result(
-        orchestration.dispatch({
-          type: "project.agent.claim.set",
-          commandId: CommandId.make(yield* nextId("project-agent-claim-set")),
-          projectId: project.id,
-          threadId,
-          turnId,
-          summary: input.summary,
-          claims,
-          claimedAt: timestamp,
-        }),
-      );
-      if (dispatchResult._tag === "Success") {
-        return { accepted: true, lease };
-      }
-      const cause = dispatchResult.failure;
-      if (
-        isOrchestrationCommandInvariantError(cause) &&
-        cause.code === "project_agent_claim_conflict" &&
-        typeof cause.context === "object" &&
-        cause.context !== null &&
-        "conflicts" in cause.context
-      ) {
-        const conflicts = yield* decodeConflicts(
-          (cause.context as { readonly conflicts: unknown }).conflicts,
-        ).pipe(Effect.mapError((decodeCause) => operationError("claim", decodeCause)));
-        return { accepted: false, conflicts };
-      }
-      return yield* operationError("claim", cause);
+        updatedAt: yield* nowIso,
+      };
+      return yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const leases = yield* repository.listClaimsByProjectId(current.project.projectId);
+            const conflicts = leases
+              .filter(
+                (other) =>
+                  other.threadId !== current.thread.id &&
+                  current.threads.some(
+                    (thread) => thread.id === other.threadId && thread.activeRunId !== null,
+                  ),
+              )
+              .flatMap((other) =>
+                findProjectAgentClaimConflicts(claims, other.claims).map((pair) => ({
+                  ...pair,
+                  threadId: other.threadId,
+                  threadTitle: current.threads.find((thread) => thread.id === other.threadId)!
+                    .title,
+                  summary: other.summary,
+                })),
+              );
+            if (conflicts.length > 0) return { accepted: false as const, conflicts };
+            yield* repository.upsertClaim(lease);
+            return { accepted: true as const, lease };
+          }),
+        )
+        .pipe(Effect.mapError((cause) => operationError("claim", cause)));
     },
   );
-
   const send: ProjectAgentCoordinatorShape["send"] = Effect.fn("ProjectAgentCoordinator.send")(
     function* (threadId, input, reply) {
-      yield* ensureFeatureEnabled("send");
-      const { readModel, project } = yield* resolveScope(threadId, reply);
-      const projectPeers = readModel.threads.filter(
-        (candidate) =>
-          candidate.projectId === project.id &&
-          candidate.id !== threadId &&
-          isAvailableThread(candidate),
+      const current = yield* scope(threadId, reply);
+      const peers = current.threads.filter(
+        (thread) =>
+          thread.projectId === current.project.projectId &&
+          thread.id !== current.thread.id &&
+          thread.deletedAt === null &&
+          thread.archivedAt === null,
       );
-      const activePeers = projectPeers.filter(isActiveThread);
-      let recipientThreadIds: ReadonlyArray<ThreadId>;
       const target = input.target;
-      if ("broadcast" in target) {
-        if (activePeers.length === 0) {
-          return yield* new ProjectAgentCoordinationUnavailableError({
-            reason: "no_active_recipients",
-          });
-        }
-        if (activePeers.length > PROJECT_AGENT_MAX_PEERS) {
-          return yield* operationError("send", new Error("Too many active project agents."));
-        }
-        recipientThreadIds = activePeers.map((peer) => peer.id);
-      } else {
-        if (target.threadId === threadId) {
-          return yield* new ProjectAgentCoordinationUnavailableError({ reason: "self_target" });
-        }
-        const recipient = projectPeers.find((peer) => peer.id === target.threadId);
-        if (!recipient) {
-          return yield* new ProjectAgentCoordinationUnavailableError({
-            reason: "target_unavailable",
-          });
-        }
-        recipientThreadIds = [recipient.id];
-      }
-      const timestamp = yield* nowIso;
-      const messageId = ProjectAgentMessageId.make(yield* nextId("project-agent-message"));
-      yield* orchestration
-        .dispatch({
-          type: "project.agent.message.send",
-          commandId: CommandId.make(yield* nextId("project-agent-message-send")),
-          projectId: project.id,
-          messageId,
-          senderThreadId: threadId,
-          recipientThreadIds,
-          kind: input.kind,
-          body: input.body,
-          sentAt: timestamp,
-        })
+      const recipients =
+        "broadcast" in target
+          ? activePeers(peers)
+          : peers.filter((thread) => thread.id === target.threadId);
+      if (recipients.length === 0 || recipients.length > PROJECT_AGENT_MAX_PEERS)
+        return yield* new ProjectAgentCoordinationUnavailableError({
+          reason: "target_unavailable",
+        });
+      const messageId = ProjectAgentMessageId.make(yield* crypto.randomUUIDv4().pipe(Effect.orDie));
+      const createdAt = yield* nowIso;
+      const recipientThreadIds = recipients.map((thread) => thread.id);
+      yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const rows = yield* sql<{
+              sequence: number;
+            }>`SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence FROM projection_project_agent_messages`;
+            yield* repository.recordMessage({
+              sequence: rows[0]!.sequence,
+              projectId: current.project.projectId,
+              messageId,
+              senderThreadId: current.thread.id,
+              recipientThreadIds,
+              kind: input.kind,
+              body: input.body,
+              createdAt,
+            });
+          }),
+        )
         .pipe(Effect.mapError((cause) => operationError("send", cause)));
-      return { messageId, recipientThreadIds, createdAt: timestamp };
+      return { messageId, recipientThreadIds, createdAt };
     },
   );
-
   const inbox: ProjectAgentCoordinatorShape["inbox"] = Effect.fn("ProjectAgentCoordinator.inbox")(
     function* (threadId, input, reply) {
-      yield* ensureFeatureEnabled("inbox");
-      const { project } = yield* resolveScope(threadId, reply);
-      if (input.acknowledgeThrough !== undefined) {
-        const timestamp = yield* nowIso;
-        yield* orchestration
-          .dispatch({
-            type: "project.agent.inbox.acknowledge",
-            commandId: CommandId.make(yield* nextId("project-agent-inbox-acknowledge")),
-            projectId: project.id,
-            threadId,
+      const current = yield* scope(threadId, reply);
+      if (input.acknowledgeThrough !== undefined)
+        yield* repository
+          .acknowledgeInbox({
+            projectId: current.project.projectId,
+            threadId: current.thread.id,
             acknowledgeThrough: input.acknowledgeThrough,
-            acknowledgedAt: timestamp,
+            acknowledgedAt: yield* nowIso,
           })
           .pipe(Effect.mapError((cause) => operationError("inbox", cause)));
-      }
       const page = yield* repository
-        .readInbox({ projectId: project.id, threadId, limit: input.limit })
+        .readInbox({
+          projectId: current.project.projectId,
+          threadId: current.thread.id,
+          limit: input.limit,
+        })
         .pipe(Effect.mapError((cause) => operationError("inbox", cause)));
-      const lastSequence = page.messages.at(-1)?.sequence ?? page.cursor;
       return {
         messages: page.messages,
         cursor: page.cursor,
-        nextAcknowledgeThrough: Math.max(page.cursor, lastSequence),
+        nextAcknowledgeThrough: Math.max(
+          page.cursor,
+          page.messages.at(-1)?.sequence ?? page.cursor,
+        ),
         hasMore: page.hasMore,
         historyTruncated:
           page.minRetainedSequence !== null && page.cursor < page.minRetainedSequence - 1,
       };
     },
   );
-
-  const releaseActiveClaims = Effect.fn("ProjectAgentCoordinator.releaseActiveClaims")(
-    function* () {
-      const readModel = yield* readCommandModel();
-      const releasedAt = yield* nowIso;
-      yield* Effect.forEach(
-        readModel.projects,
-        (project) =>
-          Effect.forEach(
-            project.coordinationClaims,
-            (lease) =>
-              Effect.gen(function* () {
-                yield* orchestration.dispatch({
-                  type: "project.agent.claim.release",
-                  commandId: CommandId.make(yield* nextId("project-agent-feature-disabled")),
-                  projectId: project.id,
-                  threadId: lease.threadId,
-                  expectedTurnId: lease.turnId,
-                  releasedAt,
-                });
-              }),
-            { concurrency: 1, discard: true },
-          ),
-        { concurrency: 1, discard: true },
-      );
-    },
+  const afterSequence = (yield* orchestration.getShellSnapshot()).snapshotSequence;
+  yield* orchestration.streamStoredEventsFrom({ afterSequence, eventType: "run.updated" }).pipe(
+    Stream.runForEach(
+      Effect.fn("ProjectAgentCoordinator.releaseCompletedLease")(function* (stored) {
+        const event = stored.event;
+        if (
+          event.type !== "run.updated" ||
+          !["completed", "failed", "cancelled", "interrupted"].includes(event.payload.status)
+        )
+          return;
+        const records = yield* orchestration.getThreadRecords(event.threadId, ["providerTurns"]);
+        const turn = records.providerTurns.findLast(
+          (turn) => turn.runAttemptId === event.payload.activeAttemptId,
+        );
+        const nativeTurnId = turn?.nativeTurnRef?.nativeId;
+        if (nativeTurnId == null) return;
+        yield* repository.releaseClaim({
+          projectId: records.thread.projectId,
+          threadId: event.threadId,
+          expectedTurnId: TurnId.make(nativeTurnId),
+        });
+      }),
+    ),
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Project-agent claim cleanup failed", { cause }),
+    ),
+    Effect.forkScoped,
   );
-
   yield* settings.streamChanges.pipe(
-    Stream.map((next) =>
-      resolveBetterT3FeatureFlag(next.betterT3Environment, "agent.projectCoordination"),
+    Stream.map((current) =>
+      resolveBetterT3FeatureFlag(current.betterT3Environment, "agent.projectCoordination"),
     ),
     Stream.changes,
     Stream.filter((enabled) => !enabled),
-    Stream.runForEach(() => releaseActiveClaims()),
-    Effect.catchCause((cause) =>
-      Effect.logWarning("Project-agent feature reconciliation failed", {
-        cause: Cause.pretty(cause),
+    Stream.runForEach(
+      Effect.fn("ProjectAgentCoordinator.releaseDisabledLeases")(function* () {
+        for (const lease of yield* repository.listAllClaims())
+          yield* repository.releaseClaim({
+            projectId: lease.projectId,
+            threadId: lease.threadId,
+            expectedTurnId: lease.turnId,
+          });
       }),
     ),
-    Effect.forkIn(coordinatorScope),
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Project-agent feature cleanup failed", { cause }),
+    ),
+    Effect.forkScoped,
   );
-
   return ProjectAgentCoordinator.of({ list, claim, send, inbox });
 });
-
-export const ProjectAgentCoordinatorLive = Layer.effect(ProjectAgentCoordinator, makeCoordinator);
+export const ProjectAgentCoordinatorLive = Layer.effect(ProjectAgentCoordinator, make);

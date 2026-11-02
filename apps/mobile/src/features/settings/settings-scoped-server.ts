@@ -1,4 +1,5 @@
 import {
+  isManagedSettingPath,
   isNullableProjectSettingsOverride,
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   type EnvironmentId,
@@ -13,13 +14,26 @@ import {
 } from "@t3tools/shared/projectSettings";
 
 import type { SettingsTarget } from "./settings-environment-filter";
-import { mobileResponseStreamingSettingsPatch } from "./response-streaming-settings";
 
 export interface ScopedMobileSettingsTarget {
   readonly environment: SettingsTarget;
   readonly projectId: ProjectId | null;
   readonly settings: ServerSettings;
   readonly sources: ReturnType<typeof resolveProjectSettings>["sources"];
+}
+
+/**
+ * "Managed by <organization>." when any target's policy locks `path`: the server refuses the
+ * whole write then, so the control is managed for the selection.
+ */
+export function managedSettingReason(
+  targets: readonly ScopedMobileSettingsTarget[],
+  ...paths: readonly string[]
+): string | undefined {
+  const policy = targets
+    .map((target) => target.environment.serverConfig.managedPolicy)
+    .find((candidate) => paths.some((path) => isManagedSettingPath(candidate, path)));
+  return policy === undefined ? undefined : `Managed by ${policy.organization}.`;
 }
 
 export function resolveMobileSettingsTargets(
@@ -53,12 +67,7 @@ export function planMobileScopedSettingsPatch(
   patch: ServerSettingsPatch,
 ) {
   if (!projectSelected) {
-    return targets.flatMap((target) => {
-      const supportedPatch = streamingPatchForTarget(target, false, patch);
-      return Object.keys(supportedPatch).length === 0
-        ? []
-        : [{ environmentId: target.environment.environmentId, patch: supportedPatch }];
-    });
+    return targets.map((target) => ({ environmentId: target.environment.environmentId, patch }));
   }
   const keys = Object.keys(patch);
   if (
@@ -69,19 +78,11 @@ export function planMobileScopedSettingsPatch(
     return [];
   const writes = new Map<EnvironmentId, Record<string, unknown>>();
   for (const target of targets) {
-    if (
-      target.projectId === null ||
-      target.environment.serverConfig.environment.capabilities.projectSettingsOverrides !== true
-    )
-      continue;
-    const supportedPatch = streamingPatchForTarget(target, true, patch);
-    if (Object.keys(supportedPatch).length === 0) continue;
+    if (target.projectId === null) continue;
     const current =
       target.environment.serverConfig.settings.projectSettingsOverrides[target.projectId] ?? {};
     const next: Record<string, unknown> = { ...current };
-    for (const [key, value] of Object.entries(supportedPatch)) {
-      // A picker's "Inherit" sends null; for keys whose override cannot
-      // store null that means remove the override.
+    for (const [key, value] of Object.entries(patch)) {
       if (
         value === null &&
         !isNullableProjectSettingsOverride(key as ProjectScopedServerSettingKey)
@@ -101,20 +102,14 @@ export function planMobileScopedSettingsPatch(
   }));
 }
 
-function streamingPatchForTarget(
-  target: ScopedMobileSettingsTarget,
-  projectSelected: boolean,
-  patch: ServerSettingsPatch,
-): ServerSettingsPatch {
-  const capabilities = target.environment.serverConfig.environment.capabilities;
-  if (patch.responseStreamingMode === undefined || capabilities.responseStreamingModes === true)
-    return patch;
-  const { responseStreamingMode, ...remaining } = patch;
-  if (projectSelected) return remaining;
-  return {
-    ...remaining,
-    ...mobileResponseStreamingSettingsPatch(responseStreamingMode, capabilities),
-  };
+export function uniformMobileSetting<K extends keyof ServerSettings>(
+  targets: readonly Pick<ScopedMobileSettingsTarget, "settings">[],
+  key: K,
+): ServerSettings[K] | null {
+  const reference = targets[0];
+  if (!reference) return null;
+  const value = reference.settings[key];
+  return targets.every((target) => target.settings[key] === value) ? value : null;
 }
 
 export function planMobileScopedSettingsClear(
@@ -123,11 +118,7 @@ export function planMobileScopedSettingsClear(
 ) {
   const writes = new Map<EnvironmentId, Record<string, unknown>>();
   for (const target of targets) {
-    if (
-      target.projectId === null ||
-      target.environment.serverConfig.environment.capabilities.projectSettingsOverrides !== true
-    )
-      continue;
+    if (target.projectId === null) continue;
     const overrides = writes.get(target.environment.environmentId) ?? {};
     overrides[target.projectId] = clearProjectSettingsOverrides(
       target.environment.serverConfig.settings,

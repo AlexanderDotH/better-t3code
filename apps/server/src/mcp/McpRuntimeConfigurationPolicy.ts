@@ -5,7 +5,7 @@ import type {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 
-import type { ProviderMcpRuntimeTarget } from "../provider/Services/ProviderAdapter.ts";
+import type { ProviderMcpRuntimeTarget } from "./McpRuntimeAdapters.ts";
 import { managedMcpProviderKey } from "./McpProviderConfigProjection.ts";
 import type { McpRuntimeConfigurationReconcileInput } from "./McpRuntimeConfigurationTypes.ts";
 import type { RuntimeEntry } from "./McpRuntimeContextState.ts";

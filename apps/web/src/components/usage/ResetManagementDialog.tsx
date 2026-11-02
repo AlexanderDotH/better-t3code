@@ -99,7 +99,7 @@ function RecommendationGauge({ recommendation }: { readonly recommendation: Rese
           fontSize={22}
           fontWeight={600}
         >
-          {recommendation.score ?? "—"}
+          {recommendation.score ?? ","}
         </text>
       </svg>
       <p className="text-sm font-medium" style={{ color }}>
@@ -337,7 +337,7 @@ export function ResetManagementDialog({
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
 }) {
-  const presentations = useAtomValue(environmentPresentations.presentationsAtom);
+  const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
   const [selectedId, setSelectedId] = useState(report.accounts[0]?.id);
   const [openedAt] = useState(Date.now);
   const accounts = liveResetAccounts(

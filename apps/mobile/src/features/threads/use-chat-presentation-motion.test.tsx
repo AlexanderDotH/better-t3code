@@ -1,11 +1,6 @@
-// @vitest-environment jsdom
+import type { ThreadCheckpointSummary as OrchestrationCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 
-import {
-  EnvironmentId,
-  MessageId,
-  TurnId,
-  type OrchestrationCheckpointSummary,
-} from "@t3tools/contracts";
+import { EnvironmentId, MessageId, ThreadId, RunId } from "@t3tools/contracts";
 import { resolveChatPresentation } from "@t3tools/client-runtime/chat-presentation";
 import { act, useLayoutEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -50,8 +45,11 @@ const message = (id: string, text = "Answer"): ThreadFeedEntry => ({
   createdAt: new Date(now).toISOString(),
   message: {
     id: MessageId.make(id),
-    turnId: TurnId.make("turn"),
+    runId: RunId.make("turn"),
     role: "assistant",
+    attachments: [],
+    visibility: "local",
+    sourceThreadId: ThreadId.make("thread"),
     text,
     streaming: true,
     createdAt: new Date(now).toISOString(),

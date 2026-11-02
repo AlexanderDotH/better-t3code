@@ -5,7 +5,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeTimersPromises from "node:timers/promises";
 
 import type { UsageRecord } from "./usageTranscripts.ts";
-import { readMacCursorAccessToken } from "../provider/cursorCredentialStore.ts";
+import { readMacCursorAccessToken } from "@t3tools/provider-cursor/server/macKeychainPassword";
 
 function object(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -22,7 +22,7 @@ function tokens(value: unknown): number {
  * `claude-fable-5-1-thinking-high`) to the base model's rate-table key.
  * Grok resolves through xAI's first-party entry, which has no bare alias.
  */
-export function cursorRateModel(model: string): string {
+function cursorRateModel(model: string): string {
   const base = model
     .replace(/^cursor-/, "")
     .replace(/(?:-thinking)?(?:-(?:none|minimal|low|medium|high|xhigh|max))?(?:-fast)?$/, "");

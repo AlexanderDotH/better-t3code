@@ -6,7 +6,7 @@ import {
   AndroidScreenScaffold,
   ScreenScaffoldScrollView,
 } from "../../components/AndroidScreenScaffold";
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useEnvironmentServerConfig } from "../../state/entities";

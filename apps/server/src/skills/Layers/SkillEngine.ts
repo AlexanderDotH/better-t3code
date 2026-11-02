@@ -14,7 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Exit from "effect/Exit";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { downloadRegistrySkill } from "../extensionCatalog.ts";
 import { registrySkillFileBytes } from "../skillPackage.ts";
 
@@ -23,9 +23,9 @@ import {
   importSkillsFromAgentSources,
   type AgentImportedSkill,
 } from "../../agentImportSources.ts";
-import { writeFileStringAtomically } from "../../atomicWrite.ts";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { ServerConfig } from "../../config.ts";
-import { ServerSettingsService, type ServerSettingsShape } from "../../serverSettings.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { SkillEngine, type SkillEngineShape } from "../Services/SkillEngine.ts";
 import {
   isValidSkillName,
@@ -102,22 +102,20 @@ function assertValidSkillName(name: string): Effect.Effect<void, SkillEngineErro
   );
 }
 
-function readSkillFile(
+const readSkillFile = Effect.fn("readSkillFile")(function* (
   filePath: string,
-): Effect.Effect<ParsedSkillFile, SkillEngineError, FileSystem.FileSystem> {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const contents = yield* fs
-      .readFileString(filePath)
-      .pipe(Effect.mapError(mapSkillError(`Failed to read skill file '${filePath}'.`)));
-    return parseSkillFile(contents);
-  });
-}
+): Effect.fn.Return<ParsedSkillFile, SkillEngineError, FileSystem.FileSystem> {
+  const fs = yield* FileSystem.FileSystem;
+  const contents = yield* fs
+    .readFileString(filePath)
+    .pipe(Effect.mapError(mapSkillError(`Failed to read skill file '${filePath}'.`)));
+  return parseSkillFile(contents);
+});
 
 function readSkillFileOptional(
   filePath: string,
 ): Effect.Effect<ParsedSkillFile | null, never, FileSystem.FileSystem> {
-  return readSkillFile(filePath).pipe(Effect.catch(() => Effect.succeed(null)));
+  return readSkillFile(filePath).pipe(Effect.orElseSucceed(() => null));
 }
 
 function providerSupportFromSettings(settings: ServerSettings): SkillDescriptor["providerSupport"] {
@@ -208,7 +206,7 @@ function uniqueImportedSkillName(input: {
   return candidate;
 }
 
-function scanLocalSkillRoot(input: {
+const scanLocalSkillRoot = Effect.fn("scanLocalSkillRoot")(function* (input: {
   readonly scope: SkillMutationScope;
   readonly root: string;
   readonly includeBody: boolean;
@@ -216,102 +214,96 @@ function scanLocalSkillRoot(input: {
   readonly providerSupport: SkillDescriptor["providerSupport"];
   readonly projectId?: SkillDescriptor["projectId"] | undefined;
   readonly projectCwd?: string | undefined;
-}): Effect.Effect<ReadonlyArray<SkillDescriptor>, never, FileSystem.FileSystem | Path.Path> {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const entries = yield* fs.readDirectory(input.root).pipe(Effect.orElseSucceed(() => []));
-    return yield* Effect.forEach(
-      entries,
-      (entry) =>
-        Effect.gen(function* () {
-          const filePath = skillFilePath(path, input.root, entry);
-          const parsed = yield* readSkillFileOptional(filePath);
-          if (!parsed) {
-            return null;
-          }
-          const id = skillId({ scope: input.scope, path: filePath });
-          return descriptorFromFile({
-            scope: input.scope,
-            path: filePath,
-            enabled: !input.disabledSkillIds.has(id),
-            providerSupport: input.providerSupport,
-            parsed,
-            fallbackName: entry,
-            includeBody: input.includeBody,
-            ...(input.projectId ? { projectId: input.projectId } : {}),
-            ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
-          });
-        }),
-      { concurrency: "unbounded" },
-    ).pipe(Effect.map((items) => items.filter((item): item is SkillDescriptor => item !== null)));
-  });
-}
+}): Effect.fn.Return<ReadonlyArray<SkillDescriptor>, never, FileSystem.FileSystem | Path.Path> {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const entries = yield* fs.readDirectory(input.root).pipe(Effect.orElseSucceed(() => []));
+  return yield* Effect.forEach(
+    entries,
+    (entry) =>
+      Effect.gen(function* () {
+        const filePath = skillFilePath(path, input.root, entry);
+        const parsed = yield* readSkillFileOptional(filePath);
+        if (!parsed) {
+          return null;
+        }
+        const id = skillId({ scope: input.scope, path: filePath });
+        return descriptorFromFile({
+          scope: input.scope,
+          path: filePath,
+          enabled: !input.disabledSkillIds.has(id),
+          providerSupport: input.providerSupport,
+          parsed,
+          fallbackName: entry,
+          includeBody: input.includeBody,
+          ...(input.projectId ? { projectId: input.projectId } : {}),
+          ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
+        });
+      }),
+    { concurrency: "unbounded" },
+  ).pipe(Effect.map((items) => items.filter((item): item is SkillDescriptor => item !== null)));
+});
 
-function resolveSkillRoots(input: {
+const resolveSkillRoots = Effect.fn("resolveSkillRoots")(function* (input: {
   readonly stateDir: string;
   readonly projectCwd?: string | undefined;
-}): Effect.Effect<SkillRoots, never, Path.Path> {
-  return Effect.gen(function* () {
-    const path = yield* Path.Path;
-    return {
-      globalRoot: globalSkillRoot(path, input.stateDir),
-      ...(input.projectCwd ? { projectRoot: projectSkillRoot(path, input.projectCwd) } : {}),
-    };
-  });
-}
+}): Effect.fn.Return<SkillRoots, never, Path.Path> {
+  const path = yield* Path.Path;
+  return {
+    globalRoot: globalSkillRoot(path, input.stateDir),
+    ...(input.projectCwd ? { projectRoot: projectSkillRoot(path, input.projectCwd) } : {}),
+  };
+});
 
-function resolveOwnedTarget(input: {
+const resolveOwnedTarget = Effect.fn("resolveOwnedTarget")(function* (input: {
   readonly roots: SkillRoots;
   readonly target: SkillTarget;
-}): Effect.Effect<OwnedSkillTarget, SkillEngineError, Path.Path> {
-  return Effect.gen(function* () {
-    const path = yield* Path.Path;
-    if (input.target.scope === "system") {
-      return yield* toSkillError("System skills are read-only in T3 Code.");
-    }
+}): Effect.fn.Return<OwnedSkillTarget, SkillEngineError, Path.Path> {
+  const path = yield* Path.Path;
+  if (input.target.scope === "system") {
+    return yield* toSkillError("System skills are read-only in T3 Code.");
+  }
 
-    const projectCwd = input.target.projectCwd;
-    if (input.target.scope === "project" && !projectCwd) {
-      return yield* toSkillError("Project skill operations require a project cwd.");
-    }
+  const projectCwd = input.target.projectCwd;
+  if (input.target.scope === "project" && !projectCwd) {
+    return yield* toSkillError("Project skill operations require a project cwd.");
+  }
 
-    const root = input.target.scope === "global" ? input.roots.globalRoot : input.roots.projectRoot;
-    if (!root) {
-      return yield* toSkillError("Project skill operations require a project cwd.");
-    }
+  const root = input.target.scope === "global" ? input.roots.globalRoot : input.roots.projectRoot;
+  if (!root) {
+    return yield* toSkillError("Project skill operations require a project cwd.");
+  }
 
-    const resolvedRoot = path.resolve(root);
-    const skillPath = input.target.path
-      ? path.resolve(input.target.path)
-      : input.target.name
-        ? skillFilePath(path, resolvedRoot, input.target.name)
-        : null;
+  const resolvedRoot = path.resolve(root);
+  const skillPath = input.target.path
+    ? path.resolve(input.target.path)
+    : input.target.name
+      ? skillFilePath(path, resolvedRoot, input.target.name)
+      : null;
 
-    if (!skillPath) {
-      return yield* toSkillError("Skill target requires a name or path.");
-    }
-    if (!isPathInside(path, resolvedRoot, skillPath)) {
-      return yield* toSkillError("Skill path is outside the requested skill scope.");
-    }
-    if (path.basename(skillPath) !== SKILL_FILE_NAME) {
-      return yield* toSkillError("Skill target path must point to SKILL.md.");
-    }
+  if (!skillPath) {
+    return yield* toSkillError("Skill target requires a name or path.");
+  }
+  if (!isPathInside(path, resolvedRoot, skillPath)) {
+    return yield* toSkillError("Skill path is outside the requested skill scope.");
+  }
+  if (path.basename(skillPath) !== SKILL_FILE_NAME) {
+    return yield* toSkillError("Skill target path must point to SKILL.md.");
+  }
 
-    const skillDir = path.dirname(skillPath);
-    const name = input.target.name ?? path.basename(skillDir);
-    yield* assertValidSkillName(name);
-    return {
-      scope: input.target.scope,
-      root: resolvedRoot,
-      skillDir,
-      skillPath,
-      name,
-      ...(input.target.projectId ? { projectId: input.target.projectId } : {}),
-      ...(projectCwd ? { projectCwd } : {}),
-    };
-  });
-}
+  const skillDir = path.dirname(skillPath);
+  const name = input.target.name ?? path.basename(skillDir);
+  yield* assertValidSkillName(name);
+  return {
+    scope: input.target.scope,
+    root: resolvedRoot,
+    skillDir,
+    skillPath,
+    name,
+    ...(input.target.projectId ? { projectId: input.target.projectId } : {}),
+    ...(projectCwd ? { projectCwd } : {}),
+  };
+});
 
 function writeSkillFile(input: {
   readonly target: OwnedSkillTarget;
@@ -337,63 +329,59 @@ function writeSkillFile(input: {
   }).pipe(Effect.mapError(mapSkillError("Failed to write skill file.")));
 }
 
-function importSkillToTarget(input: {
+const importSkillToTarget = Effect.fn("importSkillToTarget")(function* (input: {
   readonly roots: SkillRoots;
   readonly scope: SkillMutationScope;
   readonly projectId?: SkillDescriptor["projectId"] | undefined;
   readonly projectCwd?: string | undefined;
   readonly skill: AgentImportedSkill;
   readonly reservedNames: Set<string>;
-}): Effect.Effect<void, SkillEngineError, FileSystem.FileSystem | Path.Path> {
-  return Effect.gen(function* () {
-    const name = uniqueImportedSkillName({
-      preferredName: input.skill.name,
-      reservedNames: input.reservedNames,
-    });
-    const target = yield* resolveOwnedTarget({
-      roots: input.roots,
-      target: {
-        scope: input.scope,
-        name,
-        ...(input.projectId ? { projectId: input.projectId } : {}),
-        ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
-      },
-    });
-    yield* writeSkillFile({
-      target,
-      name,
-      description: input.skill.description,
-      body: input.skill.body,
-      ...(input.skill.displayName ? { displayName: input.skill.displayName } : {}),
-      ...(input.skill.shortDescription ? { shortDescription: input.skill.shortDescription } : {}),
-    });
+}): Effect.fn.Return<void, SkillEngineError, FileSystem.FileSystem | Path.Path> {
+  const name = uniqueImportedSkillName({
+    preferredName: input.skill.name,
+    reservedNames: input.reservedNames,
   });
-}
+  const target = yield* resolveOwnedTarget({
+    roots: input.roots,
+    target: {
+      scope: input.scope,
+      name,
+      ...(input.projectId ? { projectId: input.projectId } : {}),
+      ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
+    },
+  });
+  yield* writeSkillFile({
+    target,
+    name,
+    description: input.skill.description,
+    body: input.skill.body,
+    ...(input.skill.displayName ? { displayName: input.skill.displayName } : {}),
+    ...(input.skill.shortDescription ? { shortDescription: input.skill.shortDescription } : {}),
+  });
+});
 
-function localDescriptorForTarget(input: {
+const localDescriptorForTarget = Effect.fn("localDescriptorForTarget")(function* (input: {
   readonly target: OwnedSkillTarget;
   readonly settings: ServerSettings;
   readonly includeBody: boolean;
-}): Effect.Effect<SkillDescriptor, SkillEngineError, FileSystem.FileSystem> {
-  return Effect.gen(function* () {
-    const parsed = yield* readSkillFile(input.target.skillPath);
-    const id = skillId({ scope: input.target.scope, path: input.target.skillPath });
-    return descriptorFromFile({
-      scope: input.target.scope,
-      path: input.target.skillPath,
-      enabled: !input.settings.skills.disabledSkillIds.includes(id),
-      providerSupport: providerSupportFromSettings(input.settings),
-      parsed,
-      fallbackName: input.target.name,
-      includeBody: input.includeBody,
-      ...(input.target.projectId ? { projectId: input.target.projectId } : {}),
-      ...(input.target.projectCwd ? { projectCwd: input.target.projectCwd } : {}),
-    });
+}): Effect.fn.Return<SkillDescriptor, SkillEngineError, FileSystem.FileSystem> {
+  const parsed = yield* readSkillFile(input.target.skillPath);
+  const id = skillId({ scope: input.target.scope, path: input.target.skillPath });
+  return descriptorFromFile({
+    scope: input.target.scope,
+    path: input.target.skillPath,
+    enabled: !input.settings.skills.disabledSkillIds.includes(id),
+    providerSupport: providerSupportFromSettings(input.settings),
+    parsed,
+    fallbackName: input.target.name,
+    includeBody: input.includeBody,
+    ...(input.target.projectId ? { projectId: input.target.projectId } : {}),
+    ...(input.target.projectCwd ? { projectCwd: input.target.projectCwd } : {}),
   });
-}
+});
 
 function setSkillEnabledInSettings(input: {
-  readonly serverSettings: ServerSettingsShape;
+  readonly serverSettings: ServerSettingsService["Service"];
   readonly id: string;
   readonly enabled: boolean;
 }): Effect.Effect<ServerSettings, SkillEngineError> {
@@ -414,7 +402,7 @@ function setSkillEnabledInSettings(input: {
 }
 
 function removeDisabledSkillIds(input: {
-  readonly serverSettings: ServerSettingsShape;
+  readonly serverSettings: ServerSettingsService["Service"];
   readonly ids: ReadonlyArray<string>;
 }): Effect.Effect<ServerSettings, SkillEngineError> {
   return input.serverSettings.getSettings.pipe(
@@ -431,7 +419,7 @@ function removeDisabledSkillIds(input: {
 }
 
 function transferDisabledSkillId(input: {
-  readonly serverSettings: ServerSettingsShape;
+  readonly serverSettings: ServerSettingsService["Service"];
   readonly fromId: string;
   readonly toId: string;
 }): Effect.Effect<ServerSettings, SkillEngineError> {
@@ -500,394 +488,386 @@ function rewritePromptWithSkills(input: {
   return changed ? rewritten : input.prompt;
 }
 
-function makeSkillEngine(): Effect.Effect<
+const makeSkillEngine = Effect.fn("makeSkillEngine")(function* (): Effect.fn.Return<
   SkillEngineShape,
   never,
   FileSystem.FileSystem | Path.Path | ServerConfig | ServerSettingsService
 > {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const serverConfig = yield* ServerConfig;
-    const serverSettings = yield* ServerSettingsService;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const serverConfig = yield* ServerConfig;
+  const serverSettings = yield* ServerSettingsService;
 
-    const provideCaptured = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      effect.pipe(
-        Effect.provideService(FileSystem.FileSystem, fs),
-        Effect.provideService(Path.Path, path),
-        Effect.provideService(ServerConfig, serverConfig),
-        Effect.provideService(ServerSettingsService, serverSettings),
-      );
+  const provideCaptured = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(ServerConfig, serverConfig),
+      Effect.provideService(ServerSettingsService, serverSettings),
+    );
 
-    const list: SkillEngineShape["list"] = (input) =>
-      provideCaptured(
+  const list: SkillEngineShape["list"] = (input) =>
+    provideCaptured(
+      Effect.gen(function* () {
+        const settings = yield* serverSettings.getSettings.pipe(
+          Effect.mapError(mapSkillError("Failed to read server settings.")),
+        );
+        const roots = yield* resolveSkillRoots({
+          stateDir: serverConfig.stateDir,
+          ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
+        });
+        const disabledSkillIds = new Set(settings.skills.disabledSkillIds);
+        const providerSupport = providerSupportFromSettings(settings);
+        const globalSkills = yield* scanLocalSkillRoot({
+          scope: "global",
+          root: roots.globalRoot,
+          includeBody: input.includeBody ?? false,
+          disabledSkillIds,
+          providerSupport,
+        });
+        const projectSkills = roots.projectRoot
+          ? yield* scanLocalSkillRoot({
+              scope: "project",
+              root: roots.projectRoot,
+              includeBody: input.includeBody ?? false,
+              disabledSkillIds,
+              providerSupport,
+              ...(input.projectId ? { projectId: input.projectId } : {}),
+              ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
+            })
+          : [];
+        return { skills: sortSkills([...globalSkills, ...projectSkills]) };
+      }),
+    );
+
+  const discoverImportSources: SkillEngineShape["discoverImportSources"] = provideCaptured(
+    serverSettings.getSettings.pipe(
+      Effect.flatMap((settings) => discoverAgentImportSources({ settings })),
+      Effect.mapError(mapSkillError("Failed to discover agent import sources.")),
+    ),
+  );
+
+  const importSources: SkillEngineShape["importSources"] = (input) =>
+    provideCaptured(
+      Effect.gen(function* () {
+        if (input.scope === "project" && (!input.projectId || !input.projectCwd)) {
+          return yield* toSkillError("Project skill imports require a project and project cwd.");
+        }
+        const settings = yield* serverSettings.getSettings.pipe(
+          Effect.mapError(mapSkillError("Failed to read server settings.")),
+        );
+        const existing = yield* list({
+          includeBody: input.deduplicate ?? true,
+          ...(input.projectId ? { projectId: input.projectId } : {}),
+          ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
+        });
+        const existingInScope = existing.skills.filter((skill) => skill.scope === input.scope);
+        const imported = yield* importSkillsFromAgentSources({
+          sourceIds: input.sourceIds,
+          settings,
+          existingSkills: existingInScope,
+          deduplicate: input.deduplicate,
+        });
+        const roots = yield* resolveSkillRoots({
+          stateDir: serverConfig.stateDir,
+          ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
+        });
+        const reservedNames = new Set(existingInScope.map((skill) => skill.name));
+        yield* Effect.forEach(
+          imported,
+          (skill) =>
+            importSkillToTarget({
+              roots,
+              scope: input.scope,
+              skill,
+              reservedNames,
+              ...(input.projectId ? { projectId: input.projectId } : {}),
+              ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
+            }),
+          { concurrency: "unbounded" },
+        );
+        return yield* list({
+          includeBody: true,
+          forceReload: true,
+          ...(input.projectId ? { projectId: input.projectId } : {}),
+          ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
+        });
+      }),
+    );
+
+  const create: SkillEngineShape["create"] = (input) =>
+    provideCaptured(
+      Effect.gen(function* () {
+        yield* assertValidSkillName(input.name);
+        if (input.scope === "project" && (!input.projectId || !input.projectCwd)) {
+          return yield* toSkillError("Project skill operations require a project and project cwd.");
+        }
+        const roots = yield* resolveSkillRoots({
+          stateDir: serverConfig.stateDir,
+          ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
+        });
+        const target = yield* resolveOwnedTarget({
+          roots,
+          target: {
+            scope: input.scope,
+            name: input.name,
+            ...(input.projectId ? { projectId: input.projectId } : {}),
+            ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
+          },
+        });
+        if (yield* fs.exists(target.skillPath).pipe(Effect.orElseSucceed(() => false))) {
+          return yield* toSkillError(`Skill '${input.name}' already exists.`);
+        }
+        yield* writeSkillFile({
+          target,
+          name: input.name,
+          description: input.description,
+          body: input.body,
+          ...(input.displayName !== undefined ? { displayName: input.displayName } : {}),
+          ...(input.shortDescription !== undefined
+            ? { shortDescription: input.shortDescription }
+            : {}),
+        });
+        const id = skillId({ scope: target.scope, path: target.skillPath });
+        const settings =
+          input.enabled === false
+            ? yield* setSkillEnabledInSettings({ serverSettings, id, enabled: false })
+            : yield* serverSettings.getSettings.pipe(
+                Effect.mapError(mapSkillError("Failed to read server settings.")),
+              );
+        const skill = yield* localDescriptorForTarget({
+          target,
+          settings,
+          includeBody: true,
+        });
+        return { skill };
+      }),
+    );
+
+  const installRegistry: SkillEngineShape["installRegistry"] = (input) =>
+    provideCaptured(
+      Effect.scoped(
         Effect.gen(function* () {
+          if (input.scope === "project" && (!input.projectId || !input.projectCwd)) {
+            return yield* toSkillError("Project skill installs require a project and project cwd.");
+          }
+          const downloaded = yield* downloadRegistrySkill(input).pipe(
+            Effect.provide(FetchHttpClient.layer),
+          );
+          if (downloaded.contentHash !== input.contentHash) {
+            return yield* toSkillError(
+              "This skill changed after the preview. Open its preview again before installing.",
+            );
+          }
+          const roots = yield* resolveSkillRoots({ stateDir: serverConfig.stateDir, ...input });
+          const target = yield* resolveOwnedTarget({
+            roots,
+            target: { ...input, name: downloaded.name },
+          });
+          yield* fs
+            .makeDirectory(target.root, { recursive: true })
+            .pipe(Effect.mapError(mapSkillError("Could not create the skills folder.")));
+          yield* Effect.acquireUseRelease(
+            // Readers discover SKILL.md, so publish it atomically after all supporting files.
+            fs
+              .makeDirectory(target.skillDir)
+              .pipe(
+                Effect.mapError(
+                  mapSkillError(
+                    `Skill '${downloaded.name}' already exists or its folder is not writable.`,
+                  ),
+                ),
+              ),
+            () =>
+              Effect.gen(function* () {
+                for (const file of downloaded.files) {
+                  if (file.path === "SKILL.md") continue;
+                  const destination = path.join(target.skillDir, file.path);
+                  yield* fs.makeDirectory(path.dirname(destination), { recursive: true });
+                  yield* fs.writeFile(destination, registrySkillFileBytes(file));
+                  if (file.executable) yield* fs.chmod(destination, 0o755);
+                }
+                yield* writeFileStringAtomically({
+                  filePath: target.skillPath,
+                  contents: downloaded.files.find((file) => file.path === "SKILL.md")!.contents,
+                });
+              }).pipe(Effect.mapError(mapSkillError("Could not install the skill files."))),
+            (_, exit) =>
+              Exit.isFailure(exit)
+                ? fs
+                    .remove(target.skillDir, { recursive: true })
+                    .pipe(Effect.orElseSucceed(() => undefined))
+                : Effect.void,
+          );
           const settings = yield* serverSettings.getSettings.pipe(
             Effect.mapError(mapSkillError("Failed to read server settings.")),
           );
-          const roots = yield* resolveSkillRoots({
-            stateDir: serverConfig.stateDir,
-            ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
-          });
-          const disabledSkillIds = new Set(settings.skills.disabledSkillIds);
-          const providerSupport = providerSupportFromSettings(settings);
-          const globalSkills = yield* scanLocalSkillRoot({
-            scope: "global",
-            root: roots.globalRoot,
-            includeBody: input.includeBody ?? false,
-            disabledSkillIds,
-            providerSupport,
-          });
-          const projectSkills = roots.projectRoot
-            ? yield* scanLocalSkillRoot({
-                scope: "project",
-                root: roots.projectRoot,
-                includeBody: input.includeBody ?? false,
-                disabledSkillIds,
-                providerSupport,
-                ...(input.projectId ? { projectId: input.projectId } : {}),
-                ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
-              })
-            : [];
-          return { skills: sortSkills([...globalSkills, ...projectSkills]) };
+          return {
+            skill: yield* localDescriptorForTarget({ target, settings, includeBody: true }),
+          };
         }),
-      );
-
-    const discoverImportSources: SkillEngineShape["discoverImportSources"] = provideCaptured(
-      serverSettings.getSettings.pipe(
-        Effect.flatMap((settings) => discoverAgentImportSources({ settings })),
-        Effect.mapError(mapSkillError("Failed to discover agent import sources.")),
       ),
     );
 
-    const importSources: SkillEngineShape["importSources"] = (input) =>
-      provideCaptured(
-        Effect.gen(function* () {
-          if (input.scope === "project" && (!input.projectId || !input.projectCwd)) {
-            return yield* toSkillError("Project skill imports require a project and project cwd.");
-          }
-          const settings = yield* serverSettings.getSettings.pipe(
-            Effect.mapError(mapSkillError("Failed to read server settings.")),
-          );
-          const existing = yield* list({
-            includeBody: input.deduplicate ?? true,
-            ...(input.projectId ? { projectId: input.projectId } : {}),
-            ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
-          });
-          const existingInScope = existing.skills.filter((skill) => skill.scope === input.scope);
-          const imported = yield* importSkillsFromAgentSources({
-            sourceIds: input.sourceIds,
-            settings,
-            existingSkills: existingInScope,
-            deduplicate: input.deduplicate,
-          });
-          const roots = yield* resolveSkillRoots({
-            stateDir: serverConfig.stateDir,
-            ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
-          });
-          const reservedNames = new Set(existingInScope.map((skill) => skill.name));
-          yield* Effect.forEach(
-            imported,
-            (skill) =>
-              importSkillToTarget({
-                roots,
-                scope: input.scope,
-                skill,
-                reservedNames,
-                ...(input.projectId ? { projectId: input.projectId } : {}),
-                ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
-              }),
-            { concurrency: "unbounded" },
-          );
-          return yield* list({
-            includeBody: true,
-            forceReload: true,
-            ...(input.projectId ? { projectId: input.projectId } : {}),
-            ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
-          });
-        }),
-      );
+  const update: SkillEngineShape["update"] = (input) =>
+    provideCaptured(
+      Effect.gen(function* () {
+        const roots = yield* resolveSkillRoots({
+          stateDir: serverConfig.stateDir,
+          ...(input.target.projectCwd ? { projectCwd: input.target.projectCwd } : {}),
+        });
+        const target = yield* resolveOwnedTarget({ roots, target: input.target });
+        const parsed = yield* readSkillFile(target.skillPath);
+        const description = input.description ?? parsed.description;
+        if (!description) {
+          return yield* toSkillError("Skill description is required.");
+        }
+        yield* writeSkillFile({
+          target,
+          name: parsed.name ?? target.name,
+          description,
+          body: input.body ?? parsed.body,
+          displayName:
+            input.displayName !== undefined ? input.displayName : (parsed.displayName ?? undefined),
+          shortDescription:
+            input.shortDescription !== undefined
+              ? input.shortDescription
+              : (parsed.shortDescription ?? undefined),
+        });
+        const settings = yield* serverSettings.getSettings.pipe(
+          Effect.mapError(mapSkillError("Failed to read server settings.")),
+        );
+        const skill = yield* localDescriptorForTarget({
+          target,
+          settings,
+          includeBody: true,
+        });
+        return { skill };
+      }),
+    );
 
-    const create: SkillEngineShape["create"] = (input) =>
-      provideCaptured(
-        Effect.gen(function* () {
-          yield* assertValidSkillName(input.name);
-          if (input.scope === "project" && (!input.projectId || !input.projectCwd)) {
-            return yield* toSkillError(
-              "Project skill operations require a project and project cwd.",
-            );
-          }
-          const roots = yield* resolveSkillRoots({
-            stateDir: serverConfig.stateDir,
-            ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
-          });
-          const target = yield* resolveOwnedTarget({
-            roots,
-            target: {
-              scope: input.scope,
-              name: input.name,
-              ...(input.projectId ? { projectId: input.projectId } : {}),
-              ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
-            },
-          });
-          if (yield* fs.exists(target.skillPath).pipe(Effect.orElseSucceed(() => false))) {
-            return yield* toSkillError(`Skill '${input.name}' already exists.`);
-          }
-          yield* writeSkillFile({
-            target,
-            name: input.name,
-            description: input.description,
-            body: input.body,
-            ...(input.displayName !== undefined ? { displayName: input.displayName } : {}),
-            ...(input.shortDescription !== undefined
-              ? { shortDescription: input.shortDescription }
-              : {}),
-          });
-          const id = skillId({ scope: target.scope, path: target.skillPath });
-          const settings =
-            input.enabled === false
-              ? yield* setSkillEnabledInSettings({ serverSettings, id, enabled: false })
-              : yield* serverSettings.getSettings.pipe(
-                  Effect.mapError(mapSkillError("Failed to read server settings.")),
-                );
-          const skill = yield* localDescriptorForTarget({
-            target,
-            settings,
-            includeBody: true,
-          });
-          return { skill };
-        }),
-      );
+  const rename: SkillEngineShape["rename"] = (input) =>
+    provideCaptured(
+      Effect.gen(function* () {
+        yield* assertValidSkillName(input.newName);
+        const roots = yield* resolveSkillRoots({
+          stateDir: serverConfig.stateDir,
+          ...(input.target.projectCwd ? { projectCwd: input.target.projectCwd } : {}),
+        });
+        const target = yield* resolveOwnedTarget({ roots, target: input.target });
+        const nextPath = skillFilePath(path, target.root, input.newName);
+        const nextDir = path.dirname(nextPath);
+        if (yield* fs.exists(nextPath).pipe(Effect.orElseSucceed(() => false))) {
+          return yield* toSkillError(`Skill '${input.newName}' already exists.`);
+        }
+        const parsed = yield* readSkillFile(target.skillPath);
+        yield* fs
+          .rename(target.skillDir, nextDir)
+          .pipe(Effect.mapError(mapSkillError("Failed to rename skill directory.")));
+        const nextTarget = {
+          ...target,
+          name: input.newName,
+          skillDir: nextDir,
+          skillPath: nextPath,
+        };
+        yield* writeSkillFile({
+          target: nextTarget,
+          name: input.newName,
+          description: parsed.description ?? input.newName,
+          body: parsed.body,
+          displayName: parsed.displayName ?? undefined,
+          shortDescription: parsed.shortDescription ?? undefined,
+        });
+        const settings = yield* transferDisabledSkillId({
+          serverSettings,
+          fromId: skillId({ scope: target.scope, path: target.skillPath }),
+          toId: skillId({ scope: nextTarget.scope, path: nextTarget.skillPath }),
+        });
+        const skill = yield* localDescriptorForTarget({
+          target: nextTarget,
+          settings,
+          includeBody: true,
+        });
+        return { skill };
+      }),
+    );
 
-    const installRegistry: SkillEngineShape["installRegistry"] = (input) =>
-      provideCaptured(
-        Effect.scoped(
-          Effect.gen(function* () {
-            if (input.scope === "project" && (!input.projectId || !input.projectCwd)) {
-              return yield* toSkillError(
-                "Project skill installs require a project and project cwd.",
-              );
-            }
-            const downloaded = yield* downloadRegistrySkill(input).pipe(
-              Effect.provide(FetchHttpClient.layer),
-            );
-            if (downloaded.contentHash !== input.contentHash) {
-              return yield* toSkillError(
-                "This skill changed after the preview. Open its preview again before installing.",
-              );
-            }
-            const roots = yield* resolveSkillRoots({ stateDir: serverConfig.stateDir, ...input });
-            const target = yield* resolveOwnedTarget({
-              roots,
-              target: { ...input, name: downloaded.name },
-            });
-            yield* fs
-              .makeDirectory(target.root, { recursive: true })
-              .pipe(Effect.mapError(mapSkillError("Could not create the skills folder.")));
-            yield* Effect.acquireUseRelease(
-              // Readers discover SKILL.md, so publish it atomically after all supporting files.
-              fs
-                .makeDirectory(target.skillDir)
-                .pipe(
-                  Effect.mapError(
-                    mapSkillError(
-                      `Skill '${downloaded.name}' already exists or its folder is not writable.`,
-                    ),
-                  ),
-                ),
-              () =>
-                Effect.gen(function* () {
-                  for (const file of downloaded.files) {
-                    if (file.path === "SKILL.md") continue;
-                    const destination = path.join(target.skillDir, file.path);
-                    yield* fs.makeDirectory(path.dirname(destination), { recursive: true });
-                    yield* fs.writeFile(destination, registrySkillFileBytes(file));
-                    if (file.executable) yield* fs.chmod(destination, 0o755);
-                  }
-                  yield* writeFileStringAtomically({
-                    filePath: target.skillPath,
-                    contents: downloaded.files.find((file) => file.path === "SKILL.md")!.contents,
-                  });
-                }).pipe(Effect.mapError(mapSkillError("Could not install the skill files."))),
-              (_, exit) =>
-                Exit.isFailure(exit)
-                  ? fs
-                      .remove(target.skillDir, { recursive: true })
-                      .pipe(Effect.orElseSucceed(() => undefined))
-                  : Effect.void,
-            );
-            const settings = yield* serverSettings.getSettings.pipe(
-              Effect.mapError(mapSkillError("Failed to read server settings.")),
-            );
-            return {
-              skill: yield* localDescriptorForTarget({ target, settings, includeBody: true }),
-            };
-          }),
-        ),
-      );
+  const remove: SkillEngineShape["delete"] = (input) =>
+    provideCaptured(
+      Effect.gen(function* () {
+        const roots = yield* resolveSkillRoots({
+          stateDir: serverConfig.stateDir,
+          ...(input.target.projectCwd ? { projectCwd: input.target.projectCwd } : {}),
+        });
+        const target = yield* resolveOwnedTarget({ roots, target: input.target });
+        yield* fs
+          .remove(target.skillDir, { recursive: true, force: true })
+          .pipe(Effect.mapError(mapSkillError("Failed to delete skill directory.")));
+        yield* removeDisabledSkillIds({
+          serverSettings,
+          ids: [skillId({ scope: target.scope, path: target.skillPath })],
+        });
+        return yield* list({
+          includeBody: true,
+          forceReload: true,
+          ...(target.projectId ? { projectId: target.projectId } : {}),
+          ...(target.projectCwd ? { projectCwd: target.projectCwd } : {}),
+        });
+      }),
+    );
 
-    const update: SkillEngineShape["update"] = (input) =>
-      provideCaptured(
-        Effect.gen(function* () {
-          const roots = yield* resolveSkillRoots({
-            stateDir: serverConfig.stateDir,
-            ...(input.target.projectCwd ? { projectCwd: input.target.projectCwd } : {}),
-          });
-          const target = yield* resolveOwnedTarget({ roots, target: input.target });
-          const parsed = yield* readSkillFile(target.skillPath);
-          const description = input.description ?? parsed.description;
-          if (!description) {
-            return yield* toSkillError("Skill description is required.");
-          }
-          yield* writeSkillFile({
-            target,
-            name: parsed.name ?? target.name,
-            description,
-            body: input.body ?? parsed.body,
-            displayName:
-              input.displayName !== undefined
-                ? input.displayName
-                : (parsed.displayName ?? undefined),
-            shortDescription:
-              input.shortDescription !== undefined
-                ? input.shortDescription
-                : (parsed.shortDescription ?? undefined),
-          });
-          const settings = yield* serverSettings.getSettings.pipe(
-            Effect.mapError(mapSkillError("Failed to read server settings.")),
-          );
-          const skill = yield* localDescriptorForTarget({
-            target,
-            settings,
-            includeBody: true,
-          });
-          return { skill };
-        }),
-      );
+  const setEnabled: SkillEngineShape["setEnabled"] = (input) =>
+    provideCaptured(
+      Effect.gen(function* () {
+        const roots = yield* resolveSkillRoots({
+          stateDir: serverConfig.stateDir,
+          ...(input.target.projectCwd ? { projectCwd: input.target.projectCwd } : {}),
+        });
+        const target = yield* resolveOwnedTarget({ roots, target: input.target });
+        const id = skillId({ scope: target.scope, path: target.skillPath });
+        const settings = yield* setSkillEnabledInSettings({
+          serverSettings,
+          id,
+          enabled: input.enabled,
+        });
+        const skill = yield* localDescriptorForTarget({
+          target,
+          settings,
+          includeBody: true,
+        });
+        return { skill };
+      }),
+    );
 
-    const rename: SkillEngineShape["rename"] = (input) =>
-      provideCaptured(
-        Effect.gen(function* () {
-          yield* assertValidSkillName(input.newName);
-          const roots = yield* resolveSkillRoots({
-            stateDir: serverConfig.stateDir,
-            ...(input.target.projectCwd ? { projectCwd: input.target.projectCwd } : {}),
-          });
-          const target = yield* resolveOwnedTarget({ roots, target: input.target });
-          const nextPath = skillFilePath(path, target.root, input.newName);
-          const nextDir = path.dirname(nextPath);
-          if (yield* fs.exists(nextPath).pipe(Effect.orElseSucceed(() => false))) {
-            return yield* toSkillError(`Skill '${input.newName}' already exists.`);
-          }
-          const parsed = yield* readSkillFile(target.skillPath);
-          yield* fs
-            .rename(target.skillDir, nextDir)
-            .pipe(Effect.mapError(mapSkillError("Failed to rename skill directory.")));
-          const nextTarget = {
-            ...target,
-            name: input.newName,
-            skillDir: nextDir,
-            skillPath: nextPath,
-          };
-          yield* writeSkillFile({
-            target: nextTarget,
-            name: input.newName,
-            description: parsed.description ?? input.newName,
-            body: parsed.body,
-            displayName: parsed.displayName ?? undefined,
-            shortDescription: parsed.shortDescription ?? undefined,
-          });
-          const settings = yield* transferDisabledSkillId({
-            serverSettings,
-            fromId: skillId({ scope: target.scope, path: target.skillPath }),
-            toId: skillId({ scope: nextTarget.scope, path: nextTarget.skillPath }),
-          });
-          const skill = yield* localDescriptorForTarget({
-            target: nextTarget,
-            settings,
-            includeBody: true,
-          });
-          return { skill };
-        }),
-      );
+  const rewritePromptForProvider: SkillEngineShape["rewritePromptForProvider"] = (input) =>
+    provideCaptured(
+      Effect.gen(function* () {
+        const result = yield* list({
+          includeBody: true,
+          ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
+        }).pipe(Effect.result);
+        if (Result.isFailure(result)) {
+          return input.prompt;
+        }
+        return rewritePromptWithSkills({
+          prompt: input.prompt,
+          skills: result.success.skills,
+        });
+      }),
+    );
 
-    const remove: SkillEngineShape["delete"] = (input) =>
-      provideCaptured(
-        Effect.gen(function* () {
-          const roots = yield* resolveSkillRoots({
-            stateDir: serverConfig.stateDir,
-            ...(input.target.projectCwd ? { projectCwd: input.target.projectCwd } : {}),
-          });
-          const target = yield* resolveOwnedTarget({ roots, target: input.target });
-          yield* fs
-            .remove(target.skillDir, { recursive: true, force: true })
-            .pipe(Effect.mapError(mapSkillError("Failed to delete skill directory.")));
-          yield* removeDisabledSkillIds({
-            serverSettings,
-            ids: [skillId({ scope: target.scope, path: target.skillPath })],
-          });
-          return yield* list({
-            includeBody: true,
-            forceReload: true,
-            ...(target.projectId ? { projectId: target.projectId } : {}),
-            ...(target.projectCwd ? { projectCwd: target.projectCwd } : {}),
-          });
-        }),
-      );
-
-    const setEnabled: SkillEngineShape["setEnabled"] = (input) =>
-      provideCaptured(
-        Effect.gen(function* () {
-          const roots = yield* resolveSkillRoots({
-            stateDir: serverConfig.stateDir,
-            ...(input.target.projectCwd ? { projectCwd: input.target.projectCwd } : {}),
-          });
-          const target = yield* resolveOwnedTarget({ roots, target: input.target });
-          const id = skillId({ scope: target.scope, path: target.skillPath });
-          const settings = yield* setSkillEnabledInSettings({
-            serverSettings,
-            id,
-            enabled: input.enabled,
-          });
-          const skill = yield* localDescriptorForTarget({
-            target,
-            settings,
-            includeBody: true,
-          });
-          return { skill };
-        }),
-      );
-
-    const rewritePromptForProvider: SkillEngineShape["rewritePromptForProvider"] = (input) =>
-      provideCaptured(
-        Effect.gen(function* () {
-          const result = yield* list({
-            includeBody: true,
-            ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
-          }).pipe(Effect.result);
-          if (Result.isFailure(result)) {
-            return input.prompt;
-          }
-          return rewritePromptWithSkills({
-            prompt: input.prompt,
-            skills: result.success.skills,
-          });
-        }),
-      );
-
-    return {
-      list,
-      discoverImportSources,
-      importSources,
-      create,
-      installRegistry,
-      update,
-      rename,
-      delete: remove,
-      setEnabled,
-      rewritePromptForProvider,
-    } satisfies SkillEngineShape;
-  });
-}
+  return {
+    list,
+    discoverImportSources,
+    importSources,
+    create,
+    installRegistry,
+    update,
+    rename,
+    delete: remove,
+    setEnabled,
+    rewritePromptForProvider,
+  } satisfies SkillEngineShape;
+});
 
 export const SkillEngineLive = Layer.effect(SkillEngine, makeSkillEngine());

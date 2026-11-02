@@ -1,5 +1,5 @@
-import { act, useLayoutEffect } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { useLayoutEffect } from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 import { useSettingsMutation } from "./useSettingsMutation";
@@ -19,7 +19,6 @@ function Probe() {
 }
 
 beforeEach(async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.clearAllMocks();
   await act(() => {
     renderer = create(<Probe />);
@@ -27,7 +26,9 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await act(() => renderer?.unmount());
+  await act(async () => {
+    await renderer?.unmount();
+  });
   vi.unstubAllGlobals();
 });
 

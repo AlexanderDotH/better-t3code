@@ -53,7 +53,7 @@ function toError(
   return new GitWorkbenchUndoError({ operation, cwd, detail, ...(cause ? { cause } : {}) });
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const commandRunner = yield* GitWorkbenchOperationsDriver;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -126,7 +126,7 @@ export const make = Effect.gen(function* () {
     );
 
   return GitWorkbenchUndoDriver.of({
-    capture: (input) =>
+    capture: Effect.fn("GitWorkbenchUndoDriver.capture")((input) =>
       Effect.gen(function* () {
         const root = yield* required("capture", input.cwd, ["rev-parse", "--show-toplevel"]);
         const commonDirResult = yield* required("capture", root, ["rev-parse", "--git-common-dir"]);
@@ -211,8 +211,9 @@ export const make = Effect.gen(function* () {
             : toError("capture", input.cwd, "Failed to capture an undo snapshot.", cause),
         ),
       ),
+    ),
 
-    restore: (snapshot) =>
+    restore: Effect.fn("GitWorkbenchUndoDriver.restore")((snapshot) =>
       Effect.gen(function* () {
         yield* verifySnapshotObject(
           snapshot,
@@ -290,6 +291,7 @@ export const make = Effect.gen(function* () {
             : toError("restore", snapshot.cwd, "Failed to restore an undo snapshot.", cause),
         ),
       ),
+    ),
 
     remove: deleteRefs,
   });

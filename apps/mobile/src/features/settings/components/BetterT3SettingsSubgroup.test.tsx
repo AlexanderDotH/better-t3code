@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { act, createElement, useEffect, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -35,10 +34,10 @@ vi.mock("react-native", () => ({
     ),
 }));
 
-vi.mock("../../../components/AppText", () => ({
+vi.mock("../../../components/ui/AppText", () => ({
   AppText: (props: { children?: ReactNode }) => createElement("span", {}, props.children),
 }));
-vi.mock("../../../components/AppSymbol", () => ({
+vi.mock("../../../components/ui/AppSymbol", () => ({
   SymbolView: () => null,
 }));
 

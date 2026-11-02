@@ -1,12 +1,15 @@
 import * as NodeModule from "node:module";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import {
+  XML,
+  type AndroidManifest,
+  type ExportedConfig,
+  type ExportedConfigWithProps,
+} from "expo/config-plugins";
 
 import { describe, expect, it } from "vite-plus/test";
-
-type AndroidManifest = {
-  manifest: {
-    application?: Array<{ $?: Record<string, string> }>;
-  };
-};
 
 type AndroidResourceItem = { _: string; $: { name: string } };
 type AndroidStyle = {
@@ -21,9 +24,7 @@ type AndroidResources = {
   };
 };
 
-type CleartextPlugin = {
-  configureCleartextTraffic(manifest: AndroidManifest): AndroidManifest;
-};
+type NetworkSecurityPlugin = (config: ExportedConfig) => ExportedConfig;
 type GradleProperty = {
   key?: string;
   type: string;
@@ -44,7 +45,9 @@ type ResourcePlugin = {
 const require = NodeModule.createRequire(import.meta.url);
 const loadCjs = (path: string): unknown => require(path);
 
-const cleartextPlugin = loadCjs("./withAndroidCleartextTraffic.cjs") as CleartextPlugin;
+const networkSecurityPlugin = loadCjs(
+  "./withAndroidNetworkSecurityConfig.cjs",
+) as NetworkSecurityPlugin;
 const gradleHeapPlugin = loadCjs("./withAndroidGradleHeap.cjs") as GradleHeapPlugin;
 const predictiveBackPlugin = loadCjs("./withAndroidPredictiveBackCompat.cjs") as MainActivityPlugin;
 const tabletOrientationPlugin = loadCjs("./withAndroidTabletOrientation.cjs") as MainActivityPlugin;
@@ -95,22 +98,110 @@ function createThemeResources(): AndroidResources {
   };
 }
 
+function androidModInput<Results>(
+  config: ExportedConfig,
+  modResults: Results,
+  modName: "manifest" | "dangerous",
+  projectRoot = "/project",
+): ExportedConfigWithProps<Results> {
+  return {
+    ...config,
+    modResults,
+    modRawConfig: config,
+    modRequest: {
+      platform: "android",
+      modName,
+      projectRoot,
+      platformProjectRoot: NodePath.join(projectRoot, "android"),
+      introspect: false,
+    },
+  };
+}
+
 describe("Android native config plugins", () => {
-  it("enables cleartext traffic without duplicating the manifest attribute", () => {
-    const manifest: AndroidManifest = { manifest: { application: [{}] } };
+  it("attaches the HTTP and private-CA policy without duplicating manifest attributes", async () => {
+    const config = networkSecurityPlugin(
+      networkSecurityPlugin({ name: "Native config test", slug: "native-config-test" }),
+    );
+    const manifestMod = config.mods?.android?.manifest;
+    if (manifestMod === undefined) throw new Error("Network security manifest mod is missing");
+    const manifest: AndroidManifest = {
+      manifest: {
+        $: { "xmlns:android": "http://schemas.android.com/apk/res/android" },
+        queries: [],
+        application: [{ $: { "android:name": ".MainApplication", "android:label": "T3 Code" } }],
+      },
+    };
+    await manifestMod(androidModInput(config, manifest, "manifest"));
+    const configured = structuredClone(manifest);
+    await manifestMod(androidModInput(config, manifest, "manifest"));
 
-    cleartextPlugin.configureCleartextTraffic(manifest);
-    cleartextPlugin.configureCleartextTraffic(manifest);
-
+    expect(manifest).toEqual(configured);
     expect(manifest.manifest.application?.[0]?.$).toEqual({
-      "android:usesCleartextTraffic": "true",
+      "android:name": ".MainApplication",
+      "android:label": "T3 Code",
+      "android:networkSecurityConfig": "@xml/network_security_config",
     });
   });
 
-  it("fails clearly when the manifest application anchor disappears", () => {
-    expect(() => cleartextPlugin.configureCleartextTraffic({ manifest: {} })).toThrowError(
+  it("fails clearly when the manifest application anchor disappears", async () => {
+    const config = networkSecurityPlugin({
+      name: "Native config test",
+      slug: "native-config-test",
+    });
+    const manifestMod = config.mods?.android?.manifest;
+    if (manifestMod === undefined) throw new Error("Network security manifest mod is missing");
+    const manifest: AndroidManifest = {
+      manifest: {
+        $: { "xmlns:android": "http://schemas.android.com/apk/res/android" },
+        queries: [],
+      },
+    };
+    await expect(manifestMod(androidModInput(config, manifest, "manifest"))).rejects.toThrowError(
       /missing the application element/,
     );
+  });
+
+  it("generates an idempotent policy allowing HTTP and trusting system and user certificates", async () => {
+    const projectRoot = await NodeFSP.mkdtemp(
+      NodePath.join(NodeOS.tmpdir(), "t3-android-network-policy-"),
+    );
+    try {
+      const config = networkSecurityPlugin({
+        name: "Native config test",
+        slug: "native-config-test",
+      });
+      const resourceMod = config.mods?.android?.dangerous;
+      if (resourceMod === undefined) throw new Error("Network security resource mod is missing");
+      const xmlPath = NodePath.join(
+        projectRoot,
+        "android",
+        "app",
+        "src",
+        "main",
+        "res",
+        "xml",
+        "network_security_config.xml",
+      );
+      await resourceMod(androidModInput<unknown>(config, undefined, "dangerous", projectRoot));
+      const generated = await NodeFSP.readFile(xmlPath, "utf8");
+      await resourceMod(androidModInput<unknown>(config, undefined, "dangerous", projectRoot));
+      expect(await NodeFSP.readFile(xmlPath, "utf8")).toBe(generated);
+      expect(await XML.parseXMLAsync(generated)).toEqual({
+        "network-security-config": {
+          "base-config": [
+            {
+              $: { cleartextTrafficPermitted: "true" },
+              "trust-anchors": [
+                { certificates: [{ $: { src: "system" } }, { $: { src: "user" } }] },
+              ],
+            },
+          ],
+        },
+      });
+    } finally {
+      await NodeFSP.rm(projectRoot, { recursive: true, force: true });
+    }
   });
 
   it("replaces stale Gradle heap settings once while preserving unrelated properties", () => {

@@ -1,52 +1,45 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import {
-  EnvironmentId,
-  ProjectId,
-  CommandId,
-  SourceControlDiscoveryResult,
-} from "@t3tools/contracts";
-import * as Option from "effect/Option";
+import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 import {
-  buildAddProjectRemoteSourceReadiness,
-  buildProjectCreateCommand,
-  canCreateProjectInEnvironment,
   findExistingAddProject,
-  getAddProjectInitialQuery,
-  getCloneDestinationBrowsePath,
-  getCloneDestinationPath,
   getCloneDirectoryName,
   getDefaultCloneUrl,
+  githubIncompleteOwnerRepositoryMessage,
   normalizePastedCloneUrl,
-  resolveAddProjectPath,
-  resolveCloneDestinationPath,
-  sortAddProjectProviderSources,
 } from "./projects.ts";
 import type { EnvironmentProject } from "../state/models.ts";
 
 describe("add project shared logic", () => {
-  it("only allows project creation in connected environments", () => {
-    expect(canCreateProjectInEnvironment("connected")).toBe(true);
-    expect(canCreateProjectInEnvironment("available")).toBe(false);
-    expect(canCreateProjectInEnvironment("offline")).toBe(false);
-    expect(canCreateProjectInEnvironment("connecting")).toBe(false);
-    expect(canCreateProjectInEnvironment("reconnecting")).toBe(false);
-    expect(canCreateProjectInEnvironment("error")).toBe(false);
-  });
+  it("asks for a repository name when GitHub input is only an owner path", () => {
+    const github = SourceControlProviderKind.make("github");
+    expect(githubIncompleteOwnerRepositoryMessage(github, "pingdotgg/")).toBe(
+      "Enter the full owner/repository name.",
+    );
+    expect(githubIncompleteOwnerRepositoryMessage(github, "  pingdotgg//  ")).toBe(
+      "Enter the full owner/repository name.",
+    );
+    expect(githubIncompleteOwnerRepositoryMessage(github, "mona-cat_octo/")).toBe(
+      "Enter the full owner/repository name.",
+    );
 
-  it("resolves initial browse paths from settings", () => {
-    expect(getAddProjectInitialQuery("")).toBe("~/");
-    expect(getAddProjectInitialQuery("/work")).toBe("/work/");
-    expect(getAddProjectInitialQuery("C:\\work")).toBe("C:\\work\\");
-  });
-
-  it("derives the clone folder name from the repository name with owner", () => {
-    expect(getCloneDirectoryName("owner/repo")).toBe("repo");
-    expect(getCloneDirectoryName("org/project/repo")).toBe("repo");
-    expect(getCloneDirectoryName("repo")).toBe("repo");
-    expect(getCloneDirectoryName("owner/repo/")).toBe("repo");
-    expect(getCloneDirectoryName("")).toBe("");
-    expect(getCloneDirectoryName(null)).toBe("");
+    for (const input of [
+      "pingdotgg/t3code",
+      "mona-cat_octo/repo",
+      "pingdotgg",
+      "https://github.com/pingdotgg/t3code.git",
+      "git@github.com:pingdotgg/t3code.git",
+    ]) {
+      expect(githubIncompleteOwnerRepositoryMessage(github, input)).toBeNull();
+    }
+    expect(
+      githubIncompleteOwnerRepositoryMessage(SourceControlProviderKind.make("gitlab"), "group/"),
+    ).toBeNull();
+    expect(githubIncompleteOwnerRepositoryMessage("url", "owner/")).toBeNull();
+    expect(
+      githubIncompleteOwnerRepositoryMessage(SourceControlProviderKind.make("forgejo"), "owner/"),
+    ).toBeNull();
   });
 
   it("routes owner/repository shorthand to GitHub over HTTPS", () => {
@@ -72,28 +65,18 @@ describe("add project shared logic", () => {
   it("uses HTTPS for repositories selected through a provider", () => {
     expect(
       getDefaultCloneUrl({
-        provider: "github",
+        provider: SourceControlProviderKind.make("github"),
         url: "https://github.com/imputnet/helium",
         sshUrl: "git@github.com:imputnet/helium.git",
       }),
     ).toBe("https://github.com/imputnet/helium");
     expect(
       getDefaultCloneUrl({
-        provider: "forgejo",
+        provider: SourceControlProviderKind.make("forgejo"),
         url: "https://forgejo.example.test:8443/owner/repo.git",
         sshUrl: "ssh://git@forgejo.example.test:2222/owner/repo.git",
       }),
     ).toBe("https://forgejo.example.test:8443/owner/repo.git");
-  });
-
-  it("preserves existing clone transport behavior for other providers", () => {
-    expect(
-      getDefaultCloneUrl({
-        provider: "gitlab",
-        url: "https://gitlab.com/group/project.git",
-        sshUrl: "git@gitlab.com:group/project.git",
-      }),
-    ).toBe("git@gitlab.com:group/project.git");
   });
 
   it("derives the clone folder name from any pasted clone URL", () => {
@@ -117,180 +100,6 @@ describe("add project shared logic", () => {
     expect(getCloneDirectoryName("git@github.com:acme/123.git")).toBe("123");
   });
 
-  it("proposes no clone folder for a link that names no repository", () => {
-    expect(getCloneDirectoryName("https://github.com/")).toBe("");
-    expect(getCloneDirectoryName("https://github.com")).toBe("");
-    expect(getCloneDirectoryName("git@github.com:")).toBe("");
-    expect(getCloneDirectoryName("ssh://git@github.com:22")).toBe("");
-    expect(getCloneDirectoryName("https://")).toBe("");
-  });
-
-  it("proposes the clone destination inside the selected directory", () => {
-    expect(getCloneDestinationPath("~/Projects/", "repo")).toBe("~/Projects/repo");
-    expect(getCloneDestinationPath("~/Projects", "repo")).toBe("~/Projects/repo");
-    expect(getCloneDestinationPath("C:\\work\\", "repo")).toBe("C:\\work\\repo");
-    expect(getCloneDestinationPath("~/Projects/", null)).toBe("~/Projects/");
-    expect(getCloneDestinationPath("~/Projects/", "")).toBe("~/Projects/");
-  });
-
-  it("keeps pinned clone destinations anchored to the browsed directory", () => {
-    expect(
-      getCloneDestinationBrowsePath({
-        browseDirectoryPath: "~/Projects/",
-        selectedDirectoryName: "work",
-        cloneDirectoryName: "repo",
-        caseSensitive: true,
-      }),
-    ).toBe("~/Projects/work/repo");
-    expect(
-      getCloneDestinationBrowsePath({
-        browseDirectoryPath: "~/Projects/",
-        selectedDirectoryName: "repo",
-        cloneDirectoryName: "repo",
-        caseSensitive: true,
-      }),
-    ).toBe("~/Projects/repo/");
-    expect(
-      getCloneDestinationBrowsePath({
-        browseDirectoryPath: "C:\\Projects\\",
-        selectedDirectoryName: "Repo",
-        cloneDirectoryName: "repo",
-        caseSensitive: false,
-      }),
-    ).toBe("C:\\Projects\\Repo\\");
-  });
-
-  it("rejects unsupported windows paths on non-windows environments", () => {
-    expect(
-      resolveAddProjectPath({
-        rawPath: "C:\\repo",
-        platform: "MacIntel",
-        currentProjectCwd: null,
-      }),
-    ).toEqual({
-      ok: false,
-      error: "Windows-style paths are only supported on Windows environments.",
-    });
-  });
-
-  it("resolves relative paths from the active project cwd", () => {
-    expect(
-      resolveAddProjectPath({
-        rawPath: "../next",
-        platform: "Linux",
-        currentProjectCwd: "/work/current",
-      }),
-    ).toEqual({ ok: true, path: "/work/next" });
-  });
-
-  it("clones into a repository-named child of a selected parent folder", () => {
-    expect(
-      resolveCloneDestinationPath({
-        rawPath: "/work/",
-        platform: "Linux",
-        destinationIsParent: true,
-        repositoryNameWithOwner: "t3-oss/t3-env",
-        remoteUrl: "git@github.com:t3-oss/t3-env.git",
-      }),
-    ).toEqual({ ok: true, path: "/work/t3-env" });
-    expect(
-      resolveCloneDestinationPath({
-        rawPath: "/work",
-        platform: "Linux",
-        destinationIsParent: true,
-        repositoryNameWithOwner: "t3-oss/t3-env",
-        remoteUrl: "git@github.com:t3-oss/t3-env.git",
-      }),
-    ).toEqual({ ok: true, path: "/work/t3-env" });
-  });
-
-  it("derives repository folders from HTTPS and SCP-style clone URLs", () => {
-    expect(
-      resolveCloneDestinationPath({
-        rawPath: "/work/",
-        platform: "Linux",
-        destinationIsParent: true,
-        repositoryNameWithOwner: null,
-        remoteUrl: "https://git.example.com/team/repository.git?ref=main#readme",
-      }),
-    ).toEqual({ ok: true, path: "/work/repository" });
-    expect(
-      resolveCloneDestinationPath({
-        rawPath: "/work/",
-        platform: "Linux",
-        destinationIsParent: true,
-        repositoryNameWithOwner: null,
-        remoteUrl: "git@git.example.com:team/other-repository.git",
-      }),
-    ).toEqual({ ok: true, path: "/work/other-repository" });
-  });
-
-  it("preserves an explicitly typed clone destination", () => {
-    expect(
-      resolveCloneDestinationPath({
-        rawPath: "/work/custom-name",
-        platform: "Linux",
-        destinationIsParent: false,
-        repositoryNameWithOwner: "t3-oss/t3-env",
-        remoteUrl: "git@github.com:t3-oss/t3-env.git",
-      }),
-    ).toEqual({ ok: true, path: "/work/custom-name" });
-  });
-
-  it("uses the selected environment's path separator for the clone child", () => {
-    expect(
-      resolveCloneDestinationPath({
-        rawPath: "C:\\Work\\",
-        platform: "Win32",
-        destinationIsParent: true,
-        repositoryNameWithOwner: "t3-oss/t3-env",
-        remoteUrl: "git@github.com:t3-oss/t3-env.git",
-      }),
-    ).toEqual({ ok: true, path: "C:\\Work\\t3-env" });
-  });
-
-  it("marks authenticated source control providers as ready", () => {
-    const discovery: SourceControlDiscoveryResult = {
-      versionControlSystems: [],
-      sourceControlProviders: [
-        {
-          kind: "github",
-          label: "GitHub",
-          status: "available",
-          installHint: "Install gh",
-          version: Option.some("1.0.0"),
-          detail: Option.none(),
-          auth: {
-            status: "authenticated",
-            account: Option.some("octo"),
-            host: Option.some("github.com"),
-            detail: Option.none(),
-          },
-        },
-        {
-          kind: "gitlab",
-          label: "GitLab",
-          status: "available",
-          installHint: "Install glab",
-          version: Option.some("1.0.0"),
-          detail: Option.none(),
-          auth: {
-            status: "unauthenticated",
-            account: Option.none(),
-            host: Option.none(),
-            detail: Option.some("Run glab auth login"),
-          },
-        },
-      ],
-    };
-
-    const readiness = buildAddProjectRemoteSourceReadiness(discovery);
-    expect(readiness.url.ready).toBe(true);
-    expect(readiness.github.ready).toBe(true);
-    expect(readiness.gitlab).toEqual({ ready: false, hint: "Run glab auth login" });
-    expect(sortAddProjectProviderSources(readiness)[0]).toBe("github");
-  });
-
   it("finds existing projects by normalized path in the target environment", () => {
     const env = EnvironmentId.make("env");
     const other = EnvironmentId.make("other");
@@ -304,7 +113,6 @@ describe("add project shared logic", () => {
         updatedAt: "2026-01-01T00:00:00.000Z",
         repositoryIdentity: null,
         defaultModelSelection: null,
-        checkpointsEnabled: true,
         scripts: [],
       },
       {
@@ -316,7 +124,6 @@ describe("add project shared logic", () => {
         updatedAt: "2026-01-01T00:00:00.000Z",
         repositoryIdentity: null,
         defaultModelSelection: null,
-        checkpointsEnabled: true,
         scripts: [],
       },
     ];
@@ -324,24 +131,5 @@ describe("add project shared logic", () => {
     expect(findExistingAddProject({ projects, environmentId: env, path: "/repo" })?.id).toBe(
       "project",
     );
-  });
-
-  it("builds the existing project.create command shape", () => {
-    expect(
-      buildProjectCreateCommand({
-        commandId: CommandId.make("command"),
-        projectId: ProjectId.make("project"),
-        workspaceRoot: "/work/repo",
-        createdAt: "2026-01-01T00:00:00.000Z",
-      }),
-    ).toMatchObject({
-      type: "project.create",
-      commandId: "command",
-      projectId: "project",
-      title: "repo",
-      workspaceRoot: "/work/repo",
-      createWorkspaceRootIfMissing: true,
-      defaultModelSelection: null,
-    });
   });
 });
