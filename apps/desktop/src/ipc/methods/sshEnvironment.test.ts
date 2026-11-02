@@ -34,7 +34,11 @@ function layerHttpClient(
 }
 
 describe("SSH environment IPC", () => {
-  it.effect("fetches and decodes the remote environment descriptor", () => {
+  it.effect.each([
+    { repositoryIdentity: true },
+    { repositoryIdentity: true, midChatProviderSwitching: false },
+    { repositoryIdentity: true, midChatProviderSwitching: true },
+  ])("preserves the remote descriptor's declared capabilities: %j", (capabilities) => {
     const requestUrls: string[] = [];
     const layer = layerHttpClient((request) =>
       Effect.sync(() => {
@@ -44,7 +48,7 @@ describe("SSH environment IPC", () => {
           label: "Remote Devbox",
           platform: { os: "linux", arch: "x64" },
           serverVersion: "1.2.3",
-          capabilities: { repositoryIdentity: true },
+          capabilities,
         });
       }),
     );
@@ -59,10 +63,7 @@ describe("SSH environment IPC", () => {
         label: "Remote Devbox",
         platform: { os: "linux", arch: "x64" },
         serverVersion: "1.2.3",
-        capabilities: {
-          repositoryIdentity: true,
-          midChatProviderSwitching: false,
-        },
+        capabilities,
       });
       assert.deepEqual(requestUrls, ["http://127.0.0.1:41773/.well-known/t3/environment"]);
     }).pipe(Effect.provide(layer));

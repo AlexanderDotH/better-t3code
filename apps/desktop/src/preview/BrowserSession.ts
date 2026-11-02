@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
+import { translateDesktopInterfaceMessage as t } from "../settings/DesktopInterfaceLanguage.ts";
 
 const PREVIEW_PARTITION_PREFIX = "persist:t3code-preview-";
 /** Ephemeral partitions omit persist: but retain a product prefix so the webview gate recognizes them. */
@@ -247,9 +248,11 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     promptPermission(
       requester,
       {
-        buttons: ["Open", "Cancel"],
-        message: `Open this ${new URL(url).protocol.slice(0, -1)} link?`,
-        detail: `A page in the browser wants to open another application:\n\n${truncateForPrompt(url)}`,
+        buttons: [t("common.open"), t("common.cancel")],
+        message: t("desktop.preview.permission.openExternal", {
+          protocol: new URL(url).protocol.slice(0, -1),
+        }),
+        detail: t("desktop.preview.permission.openExternalDetail", { url: truncateForPrompt(url) }),
       },
       (answer) => callback(answer === true),
     );
@@ -306,8 +309,13 @@ export const make = Effect.gen(function* BrowserSessionMake() {
             promptPermission(
               requester,
               {
-                buttons: ["Allow", "Block"],
-                message: `${truncateForPrompt(origin)} wants to see text and images copied to the clipboard`,
+                buttons: [
+                  t("desktop.preview.permission.allow"),
+                  t("desktop.preview.permission.block"),
+                ],
+                message: t("desktop.preview.permission.clipboardRead", {
+                  origin: truncateForPrompt(origin),
+                }),
               },
               (answer) => {
                 if (answer !== undefined) clipboardReadDecisions.set(origin, answer);

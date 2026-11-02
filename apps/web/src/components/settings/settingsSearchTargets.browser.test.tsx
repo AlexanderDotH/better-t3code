@@ -19,9 +19,12 @@ import {
   useRequestSettingsSearchTarget,
 } from "./settingsLayout";
 
-vi.mock("../../hooks/useInterfaceTranslator", () => ({
-  useInterfaceTranslator: () => createInterfaceTranslator({ language: "de", locale: "de-DE" }),
-}));
+vi.mock("../../hooks/useInterfaceTranslator", async () => {
+  const { createInterfaceTranslator } = await import("@t3tools/shared/interfaceLanguage");
+  return {
+    useInterfaceTranslator: () => createInterfaceTranslator({ language: "de", locale: "de-DE" }),
+  };
+});
 
 const targetId = "agent.fetchModel";
 const scrollIntoView = vi.fn();

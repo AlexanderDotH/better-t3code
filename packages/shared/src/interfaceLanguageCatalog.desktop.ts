@@ -1,6 +1,116 @@
 import { defineLocalizedInterfaceCatalog } from "./interfaceLanguageCatalog.types.ts";
 
 export const desktopInterfaceCatalog = defineLocalizedInterfaceCatalog({
+  "desktop.menu.aboutApp": ["About {{app}}", "Über {{app}}", "À propos de {{app}}"],
+  "desktop.menu.hideApp": ["Hide {{app}}", "{{app}} ausblenden", "Masquer {{app}}"],
+  "desktop.menu.quitApp": ["Quit {{app}}", "{{app}} beenden", "Quitter {{app}}"],
+  "desktop.menu.closeWindow": ["Close Window", "Fenster schließen", "Fermer la fenêtre"],
+  "desktop.menu.reload": ["Reload", "Neu laden", "Recharger"],
+  "desktop.menu.forceReload": ["Force Reload", "Neu laden erzwingen", "Forcer le rechargement"],
+  "desktop.menu.toggleDeveloperTools": [
+    "Toggle Developer Tools",
+    "Entwicklertools ein-/ausblenden",
+    "Afficher ou masquer les outils de développement",
+  ],
+  "desktop.recovery.title": [
+    "T3 Code could not start",
+    "T3 Code konnte nicht gestartet werden",
+    "T3 Code n’a pas pu démarrer",
+  ],
+  "desktop.recovery.checking": [
+    "Checking for a newer version…",
+    "Nach einer neueren Version suchen…",
+    "Recherche d’une version plus récente…",
+  ],
+  "desktop.recovery.updateAvailable": [
+    "Version {{version}} is available. It can contain a fix.",
+    "Version {{version}} ist verfügbar. Sie enthält möglicherweise eine Fehlerbehebung.",
+    "La version {{version}} est disponible. Elle peut contenir un correctif.",
+  ],
+  "desktop.recovery.updateTo": [
+    "Update to {{version}}",
+    "Auf {{version}} aktualisieren",
+    "Mettre à jour vers {{version}}",
+  ],
+  "desktop.recovery.downloading": [
+    "Downloading {{version}}{{progress}}. T3 Code restarts when the download is done.",
+    "{{version}} wird heruntergeladen{{progress}}. T3 Code startet neu, sobald der Download abgeschlossen ist.",
+    "Téléchargement de {{version}}{{progress}}. T3 Code redémarrera une fois le téléchargement terminé.",
+  ],
+  "desktop.recovery.reinstall": [
+    "Version {{version}} started correctly on this computer. Download it and install it to go back.",
+    "Version {{version}} wurde auf diesem Computer erfolgreich gestartet. Lade sie herunter und installiere sie, um zu dieser Version zurückzukehren.",
+    "La version {{version}} a démarré correctement sur cet ordinateur. Téléchargez-la et installez-la pour revenir à cette version.",
+  ],
+  "desktop.recovery.downloadVersion": [
+    "Download {{version}}",
+    "{{version}} herunterladen",
+    "Télécharger {{version}}",
+  ],
+  "desktop.recovery.releases": [
+    "Get a different version from the releases page.",
+    "Eine andere Version findest du auf der Veröffentlichungsseite.",
+    "Vous trouverez une autre version sur la page des versions.",
+  ],
+  "desktop.recovery.openReleases": [
+    "Open releases",
+    "Veröffentlichungen öffnen",
+    "Ouvrir la page des versions",
+  ],
+  "desktop.recovery.copyDetails": ["Copy details", "Details kopieren", "Copier les détails"],
+  "desktop.recovery.quit": ["Quit", "Beenden", "Quitter"],
+  "desktop.recovery.noOutput": [
+    "The server wrote no output.",
+    "Der Server hat keine Ausgabe erzeugt.",
+    "Le serveur n’a produit aucune sortie.",
+  ],
+  "desktop.recovery.versionAndLogs": [
+    "Version {{version}}. T3 Code tries again in the background. Logs: {{logDir}}",
+    "Version {{version}}. T3 Code versucht es im Hintergrund erneut. Protokolle: {{logDir}}",
+    "Version {{version}}. T3 Code réessaie en arrière-plan. Journaux : {{logDir}}",
+  ],
+  "desktop.backend.homeUnavailableTitle": [
+    "This T3 home is unavailable",
+    "Dieses T3-Verzeichnis ist nicht verfügbar",
+    "Ce répertoire T3 n’est pas disponible",
+  ],
+  "desktop.backend.homeUnavailableMessage": [
+    "Another T3 Code server, such as the background service, is using this data directory, or an older background service is set up for it. Stop that server or try `t3 update`. If the older launcher cannot update, run `t3 service uninstall` and optionally reinstall with `t3 service install` from a current CLI. Use `npx t3@latest` if `t3` is missing or outdated, and pass `--base-dir` with the service's T3 home to each command. Then reopen T3 Code. You can also set a separate T3CODE_HOME and pair with the running server.",
+    "Ein anderer T3-Code-Server, etwa der Hintergrunddienst, verwendet dieses Datenverzeichnis, oder ein älterer Hintergrunddienst ist dafür eingerichtet. Beende diesen Server oder versuche `t3 update`. Falls der ältere Starter kein Update durchführen kann, führe `t3 service uninstall` aus und installiere den Dienst bei Bedarf mit `t3 service install` über eine aktuelle CLI neu. Verwende `npx t3@latest`, falls `t3` fehlt oder veraltet ist, und gib bei jedem Befehl mit `--base-dir` das T3-Verzeichnis des Dienstes an. Öffne T3 Code anschließend erneut. Du kannst auch ein separates T3CODE_HOME festlegen und dich mit dem laufenden Server verbinden.",
+    "Un autre serveur T3 Code, par exemple le service en arrière-plan, utilise ce répertoire de données, ou un ancien service en arrière-plan est configuré pour celui-ci. Arrêtez ce serveur ou essayez `t3 update`. Si l’ancien lanceur ne peut pas se mettre à jour, exécutez `t3 service uninstall`, puis réinstallez le service si nécessaire avec `t3 service install` depuis une CLI à jour. Utilisez `npx t3@latest` si `t3` est absent ou obsolète, et indiquez le répertoire T3 du service avec `--base-dir` pour chaque commande. Rouvrez ensuite T3 Code. Vous pouvez aussi définir un T3CODE_HOME distinct et vous connecter au serveur en cours d’exécution.",
+  ],
+  "desktop.preview.permission.openExternal": [
+    "Open this {{protocol}} link?",
+    "Diesen {{protocol}}-Link öffnen?",
+    "Ouvrir ce lien {{protocol}} ?",
+  ],
+  "desktop.preview.permission.openExternalDetail": [
+    "A page in the browser wants to open another application:\n\n{{url}}",
+    "Eine Seite im Browser möchte eine andere Anwendung öffnen:\n\n{{url}}",
+    "Une page du navigateur souhaite ouvrir une autre application :\n\n{{url}}",
+  ],
+  "desktop.preview.permission.clipboardRead": [
+    "{{origin}} wants to see text and images copied to the clipboard",
+    "{{origin}} möchte auf Text und Bilder in der Zwischenablage zugreifen",
+    "{{origin}} souhaite accéder au texte et aux images copiés dans le presse-papiers",
+  ],
+  "desktop.preview.permission.allow": ["Allow", "Zulassen", "Autoriser"],
+  "desktop.preview.permission.block": ["Block", "Blockieren", "Bloquer"],
+  "desktop.preview.passkeys.choose": [
+    "Choose a passkey",
+    "Passkey auswählen",
+    "Choisir une clé d’accès",
+  ],
+  "desktop.preview.passkeys.unnamed": [
+    "Unnamed passkey",
+    "Unbenannter Passkey",
+    "Clé d’accès sans nom",
+  ],
+  "desktop.update.managedPolicyUnavailable": [
+    "Updates are off because T3 Code cannot use the managed policy at {{path}}. Contact your administrator.",
+    "Updates sind deaktiviert, weil T3 Code die verwaltete Richtlinie unter {{path}} nicht verwenden kann. Wende dich an deinen Administrator.",
+    "Les mises à jour sont désactivées, car T3 Code ne peut pas utiliser la stratégie gérée à l’emplacement {{path}}. Contactez votre administrateur.",
+  ],
   "desktop.menu.file": ["File", "Datei", "Fichier"],
   "desktop.menu.edit": ["Edit", "Bearbeiten", "Édition"],
   "desktop.menu.pasteAsText": ["Paste as Text", "Als Text einfügen", "Coller en texte brut"],

@@ -46,17 +46,17 @@ const runtime = vi.hoisted(() => ({
   refresh: vi.fn(),
 }));
 
-vi.mock("@effect/atom-react", () => ({
+vi.mock("@effect/atom-react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@effect/atom-react")>()),
   useAtomValue: () => ({ status: "idle" }),
 }));
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@tanstack/react-router")>()),
   useBlocker: vi.fn(),
 }));
-vi.mock("~/state/session", async (importOriginal) => {
+vi.mock("~/state/session", async () => {
   const { sessionGrantsScope } = await import("@t3tools/contracts");
   return {
-    ...(await importOriginal<typeof import("~/state/session")>()),
     useEnvironmentScope: (
       _environmentId: EnvironmentId,
       scope: import("@t3tools/contracts").AuthEnvironmentScope,

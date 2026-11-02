@@ -10,6 +10,8 @@ const LOG_BLOCK_SIZE = 32 * 1024;
 const LOG_HEADER_SIZE = 7;
 const TABLE_FOOTER_SIZE = 48;
 const BLOCK_TRAILER_SIZE = 5;
+const INVALID_CURRENT_DETAIL = "bad CURRENT";
+const CHANGED_DATABASE_DETAIL = "database changed while reading";
 
 class LevelDbFormatError extends Schema.TaggedError<LevelDbFormatError>()("LevelDbFormatError", {
   detail: Schema.String,
@@ -380,7 +382,7 @@ export const readChromiumLocalStorage = Effect.fn("desktop.chromiumLocalStorage.
   if (!/^MANIFEST-\d+$/.test(current)) {
     return yield* new ChromiumLocalStorageReadError({
       directory,
-      cause: new LevelDbFormatError({ detail: "bad CURRENT" }),
+      cause: new LevelDbFormatError({ detail: INVALID_CURRENT_DETAIL }),
     });
   }
   const manifest = yield* readFile(current).pipe(wrap);
@@ -419,7 +421,7 @@ export const readChromiumLocalStorage = Effect.fn("desktop.chromiumLocalStorage.
   if (currentAfter !== current || Number(manifestAfter.size) !== manifest.length) {
     return yield* new ChromiumLocalStorageReadError({
       directory,
-      cause: new LevelDbFormatError({ detail: "database changed while reading" }),
+      cause: new LevelDbFormatError({ detail: CHANGED_DATABASE_DETAIL }),
     });
   }
 

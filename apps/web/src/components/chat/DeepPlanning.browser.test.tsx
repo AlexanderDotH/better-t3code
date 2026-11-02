@@ -40,7 +40,8 @@ import { DeepPlanReviewCard } from "./DeepPlanReviewCard";
 vi.mock("../ChatMarkdown", () => ({ default: ({ text }: { text: string }) => <div>{text}</div> }));
 const planReview = vi.hoisted(() => ({ request: vi.fn() }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => planReview.request }));
-vi.mock("../../hooks/useSettings", () => ({
+vi.mock("../../hooks/useSettings", async (original) => ({
+  ...(await original<typeof import("../../hooks/useSettings")>()),
   useClientSettings: () => false,
   useEnvironmentIdentificationMode: () => "none",
 }));

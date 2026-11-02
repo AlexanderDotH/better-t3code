@@ -1,4 +1,5 @@
 // Electron allows one debugger per webContents; share the manager's attachment.
+const CDP_PAYLOAD_TOO_LARGE_MESSAGE = "CDP payload too large";
 
 export interface CdpRelayTarget {
   readonly send: (
@@ -88,7 +89,7 @@ export function createCdpRelayConnection(
       write(
         JSON.stringify({
           id: message["id"],
-          error: { code: -32000, message: "CDP payload too large" },
+          error: { code: -32000, message: CDP_PAYLOAD_TOO_LARGE_MESSAGE },
           ...(message["sessionId"] === undefined ? {} : { sessionId: message["sessionId"] }),
         }),
       );

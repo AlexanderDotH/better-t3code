@@ -601,7 +601,6 @@ function startAnnotation(sendEnabled: boolean): void {
 
   const comment = document.createElement("textarea");
   comment.placeholder = annotationMessage("desktop.preview.annotation.describeChange");
-  comment.placeholder = "Describe the change…";
   comment.setAttribute("dir", "auto");
   comment.rows = 1;
   comment.className =

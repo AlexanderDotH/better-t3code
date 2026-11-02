@@ -175,8 +175,10 @@ export const make = Effect.gen(function* () {
     });
     const language = resolveInterfaceLocale(preference, [yield* electronApp.systemLocale]).language;
     setDesktopInterfaceLanguage(language);
-    const t = (key: Parameters<typeof translateInterfaceMessage>[1]) =>
-      translateInterfaceMessage(language, key);
+    const t = (
+      key: Parameters<typeof translateInterfaceMessage>[1],
+      values?: Parameters<typeof translateInterfaceMessage>[2],
+    ) => translateInterfaceMessage(language, key, values);
     const checkForUpdatesClick = () => {
       runMenuEffect("check-for-updates", handleCheckForUpdatesMenuClick(language));
     };
@@ -208,7 +210,7 @@ export const make = Effect.gen(function* () {
       template.push({
         label: environment.displayName,
         submenu: [
-          { role: "about", label: `About ${environment.displayName}` },
+          { role: "about", label: t("desktop.menu.aboutApp", { app: environment.displayName }) },
           {
             label: t("desktop.menu.checkForUpdates"),
             click: checkForUpdatesClick,
@@ -262,11 +264,11 @@ export const make = Effect.gen(function* () {
           { type: "separator" },
           { role: "services" },
           { type: "separator" },
-          { role: "hide", label: `Hide ${environment.displayName}` },
+          { role: "hide", label: t("desktop.menu.hideApp", { app: environment.displayName }) },
           { role: "hideOthers" },
           { role: "unhide" },
           { type: "separator" },
-          { role: "quit", label: `Quit ${environment.displayName}` },
+          { role: "quit", label: t("desktop.menu.quitApp", { app: environment.displayName }) },
         ],
       });
     }
@@ -287,7 +289,7 @@ export const make = Effect.gen(function* () {
               ]),
           // Cmd/Ctrl+W belongs to the renderer's tab close; it must never close the window.
           environment.platform === "darwin"
-            ? { label: "Close Window", click: (_item, window) => window?.close() }
+            ? { label: t("desktop.menu.closeWindow"), click: (_item, window) => window?.close() }
             : { role: "quit" },
         ],
       },
@@ -323,14 +325,18 @@ export const make = Effect.gen(function* () {
         label: t("desktop.menu.view"),
         submenu: [
           /* Native reload/DevTools/zoom roles target focused guests; these commands must target the app. */
-          { label: "Reload", accelerator: "CmdOrCtrl+R", click: mainContentsClick("reload") },
           {
-            label: "Force Reload",
+            label: t("desktop.menu.reload"),
+            accelerator: "CmdOrCtrl+R",
+            click: mainContentsClick("reload"),
+          },
+          {
+            label: t("desktop.menu.forceReload"),
             accelerator: "Shift+CmdOrCtrl+R",
             click: mainContentsClick("forceReload"),
           },
           {
-            label: "Toggle Developer Tools",
+            label: t("desktop.menu.toggleDeveloperTools"),
             accelerator: environment.platform === "darwin" ? "Alt+Command+I" : "Ctrl+Shift+I",
             click: mainContentsClick("toggleDevTools"),
           },
@@ -350,29 +356,29 @@ export const make = Effect.gen(function* () {
           ...(environment.platform === "darwin"
             ? [
                 {
-                  label: "Zoom In",
+                  label: t("desktop.menu.zoomIn"),
                   accelerator: "CmdOrCtrl+Shift+=",
                   visible: false,
                   click: zoomClick("in"),
                 },
               ]
             : []),
-          { label: "Zoom Out", accelerator: "CmdOrCtrl+-", click: zoomClick("out") },
+          { label: t("desktop.menu.zoomOut"), accelerator: "CmdOrCtrl+-", click: zoomClick("out") },
           // Keypad codes do not match number-row accelerators.
           {
-            label: "Actual Size",
+            label: t("desktop.menu.actualSize"),
             accelerator: "CmdOrCtrl+num0",
             visible: false,
             click: zoomClick("reset"),
           },
           {
-            label: "Zoom In",
+            label: t("desktop.menu.zoomIn"),
             accelerator: "CmdOrCtrl+numadd",
             visible: false,
             click: zoomClick("in"),
           },
           {
-            label: "Zoom Out",
+            label: t("desktop.menu.zoomOut"),
             accelerator: "CmdOrCtrl+numsub",
             visible: false,
             click: zoomClick("out"),

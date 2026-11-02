@@ -1,3 +1,4 @@
+import * as Electron from "electron";
 import { describe, afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { MacPermissionHelper, macAppBundlePath } from "./MacPermissionHelper.ts";
 import type { SettingsWindow } from "./MacSettingsWindow.ts";

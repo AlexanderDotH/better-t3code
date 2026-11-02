@@ -44,7 +44,7 @@ describe("DesktopUpdates", () => {
 
   it.effect("keeps the disabled reason available after configuration and channel changes", () => {
     const harness = makeHarness({ env: { T3CODE_DISABLE_AUTO_UPDATE: "true" } });
-    const reason = "Automatic updates are disabled by the T3CODE_DISABLE_AUTO_UPDATE setting.";
+    const reason = "disabled-by-environment";
 
     return Effect.scoped(
       Effect.gen(function* () {
@@ -53,6 +53,10 @@ describe("DesktopUpdates", () => {
 
         const configured = yield* updates.getState;
         assert.equal(configured.message, reason);
+        assert.equal(
+          DesktopUpdates.updateDisabledReasonMessageId(configured.message ?? ""),
+          "desktop.update.disabled.environment",
+        );
 
         const changed = yield* updates.setChannel("nightly");
         assert.equal(changed.channel, "nightly");
