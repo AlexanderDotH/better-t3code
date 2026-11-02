@@ -7,6 +7,7 @@ import {
   type ScanCache,
 } from "./usageScanCache.ts";
 import type { UsageRecord } from "@t3tools/provider-core/server/usage";
+import type { UsageContextDiagnostics } from "@t3tools/contracts";
 
 import { TEST_FORMAT_MAP } from "./usageTestFormats.ts";
 import { initialCodexScanState, parseCodexLine } from "../provider/Drivers/codexUsage.ts";
@@ -58,6 +59,131 @@ function cacheWith(entries: readonly [string, number, readonly UsageRecord[]][])
 }
 
 describe("scan cache round trip", () => {
+  it("preserves call attribution and optional diagnostics in committed and tentative rows", () => {
+    const diagnostics: UsageContextDiagnostics = {
+      nativeForks: 2,
+      compactHandoffs: 1,
+      totalHandoffChars: 4_096,
+      compactionEvents: 3,
+      maxContextTokens: 8_192,
+      instructionChars: 120,
+      memoryInjectionChars: 240,
+      toolSchemaChars: 360,
+      subagentResultChars: 480,
+      toolDigestChars: 600,
+      autoRoutingChars: 720,
+    };
+    const original = cacheWith([
+      [
+        "/claude.jsonl",
+        100,
+        [
+          record({ callKind: "root", diagnostics }),
+          record({ callKind: "subagent", dedupeKey: "subagent" }),
+          record({ callKind: "metadata", dedupeKey: "metadata" }),
+          record({ callKind: "auto-reasoning", dedupeKey: "auto-reasoning", diagnostics }),
+          record({ callKind: "unknown", dedupeKey: "unknown" }),
+        ],
+      ],
+    ]);
+    original.set("/codex.jsonl", {
+      ...original.get("/claude.jsonl")!,
+      provider: "codex",
+      records: [
+        record({
+          provider: "codex",
+          model: "gpt-6-astra",
+          rateModel: "gpt-6",
+          callKind: "root",
+          diagnostics,
+          unresolvedServiceTierTurnId: "native-root",
+        }),
+      ],
+      tailRecords: [
+        record({
+          provider: "codex",
+          model: "gpt-6-astra",
+          diagnostics,
+          unresolvedServiceTierTurnId: "native-tail",
+        }),
+      ],
+    });
+    const encoded = JSON.parse(makeScanCacheWriter()(original, {}));
+    expect(encoded.version).toBe(11);
+    const restored = decodeScanCache(encoded, TEST_FORMAT_MAP);
+    expect(restored).toEqual(original);
+    expect(restored.get("/claude.jsonl")?.records[1]).not.toHaveProperty("diagnostics");
+    expect(restored.get("/claude.jsonl")?.records[0]).not.toHaveProperty(
+      "unresolvedServiceTierTurnId",
+    );
+    expect(restored.get("/codex.jsonl")?.tailRecords[0]).not.toHaveProperty("callKind");
+  });
+
+  it("keeps v10 history but forces a cold scan for newly classified Codex and Claude sources", () => {
+    const original = cacheWith([["/deleted-claude.jsonl", 100, [record()]]]);
+    for (const provider of ["codex", "grok"] as const) {
+      original.set(`/deleted-${provider}.jsonl`, {
+        ...original.get("/deleted-claude.jsonl")!,
+        provider,
+        records: [record({ provider })],
+        tailRecords: [record({ provider, dedupeKey: "tail" })],
+      });
+    }
+    const encoded = JSON.parse(makeScanCacheWriter()(original, {}));
+    const restored = decodeScanCache({ ...encoded, version: 10 }, TEST_FORMAT_MAP);
+    for (const provider of ["codex", "claude"] as const) {
+      const path = `/deleted-${provider}.jsonl`;
+      expect(restored.get(path)).toEqual({
+        ...original.get(path),
+        size: -1,
+        position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+      });
+      expect(restored.get(path)?.records[0]).not.toHaveProperty("callKind");
+      expect(restored.get(path)?.records[0]).not.toHaveProperty("diagnostics");
+    }
+    expect(restored.get("/deleted-grok.jsonl")).toEqual(original.get("/deleted-grok.jsonl"));
+    // Persisting retained deleted-file history must not turn its stale position into a warm one.
+    expect(
+      decodeScanCache(JSON.parse(makeScanCacheWriter()(restored, {})), TEST_FORMAT_MAP),
+    ).toEqual(restored);
+  });
+
+  it.each([
+    [13, "private-call-kind"],
+    [
+      14,
+      {
+        nativeForks: -1,
+        compactHandoffs: 0,
+        totalHandoffChars: 0,
+        compactionEvents: 0,
+        maxContextTokens: 0,
+      },
+    ],
+    [14, { nativeForks: 1 }],
+  ])("rejects corrupt attribution or diagnostics in tuple slot %s", (slot, invalid) => {
+    const original = cacheWith([["/bad.jsonl", 100, [record({ callKind: "root" })]]]);
+    const encoded = JSON.parse(makeScanCacheWriter()(original, {}));
+    encoded.files["/bad.jsonl"].r[0][slot] = invalid;
+    expect(decodeScanCache(encoded, TEST_FORMAT_MAP).has("/bad.jsonl")).toBe(false);
+  });
+
+  it("decodes only the diagnostic counters and drops extraneous content before the next write", () => {
+    const diagnostics: UsageContextDiagnostics = {
+      nativeForks: 1,
+      compactHandoffs: 2,
+      totalHandoffChars: 3,
+      compactionEvents: 4,
+      maxContextTokens: 5,
+    };
+    const original = cacheWith([["/a.jsonl", 100, [record({ diagnostics })]]]);
+    const encoded = JSON.parse(makeScanCacheWriter()(original, {}));
+    encoded.files["/a.jsonl"].r[0][14].prompt = "private-content";
+    const restored = decodeScanCache(encoded, TEST_FORMAT_MAP);
+    expect(restored.get("/a.jsonl")?.records[0]?.diagnostics).toEqual(diagnostics);
+    expect(makeScanCacheWriter()(restored, {})).not.toContain("private-content");
+  });
+
   it("restores cached history unchanged except for Claude local placeholders", () => {
     const original = cacheWith([
       [
@@ -228,15 +354,11 @@ describe("scan cache round trip", () => {
         size: -1,
         position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
       });
-      expect(restored.get("/clean-codex.jsonl")).toEqual(
-        version >= 8
-          ? cleanCodex
-          : {
-              ...cleanCodex,
-              size: -1,
-              position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
-            },
-      );
+      expect(restored.get("/clean-codex.jsonl")).toEqual({
+        ...cleanCodex,
+        size: -1,
+        position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+      });
       expect(restored.get("/gone-pi.jsonl")).toEqual(
         version >= 6
           ? original.get("/gone-pi.jsonl")

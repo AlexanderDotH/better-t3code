@@ -47,6 +47,7 @@ vi.mock("~/localApi", () => ({
   }),
 }));
 vi.mock("./state/environments", () => ({
+  usePrimaryEnvironment: () => null,
   useEnvironments: () => ({
     environments: mocks.environments,
     isReady: true,

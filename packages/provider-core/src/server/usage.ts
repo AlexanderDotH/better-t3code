@@ -5,6 +5,8 @@ import type {
   UsageReadError,
   UsageSource,
   UsageTokenTotals,
+  UsageCallKind,
+  UsageContextDiagnostics,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
@@ -20,6 +22,8 @@ export interface UsageRecord {
   readonly totals: UsageTokenTotals;
   readonly reportedCostUsd: number | null;
   readonly speed: UsageSpeed;
+  readonly callKind?: UsageCallKind;
+  readonly diagnostics?: UsageContextDiagnostics;
   readonly unresolvedServiceTierTurnId?: string;
   readonly dedupeKey: string | null;
 }

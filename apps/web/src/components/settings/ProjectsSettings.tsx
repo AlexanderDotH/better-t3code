@@ -14,21 +14,19 @@ export function ProjectsSettings() {
   const { search: value, scope, selectScope } = useSettingsScope();
   const unavailable =
     scope.kind === "unavailable" ? (
-      <SettingsPageContainer>
-        <div className="flex flex-col items-start gap-3">
-          <p className="text-sm text-muted-foreground">{scope.message}</p>
-          {value.machine || value.checkout ? (
-            <Button
-              variant="outline"
-              size="xs"
-              onClick={() => selectScope(selectEnvironmentAxis(value, ALL_ENVIRONMENTS_VALUE))}
-            >
-              <LayersIcon />
-              Show all environments
-            </Button>
-          ) : null}
-        </div>
-      </SettingsPageContainer>
+      <div className="flex flex-col items-start gap-3">
+        <p className="text-sm text-muted-foreground">{scope.message}</p>
+        {value.machine || value.checkout ? (
+          <Button
+            variant="outline"
+            size="xs"
+            onClick={() => selectScope(selectEnvironmentAxis(value, ALL_ENVIRONMENTS_VALUE))}
+          >
+            <LayersIcon />
+            Show all environments
+          </Button>
+        ) : null}
+      </div>
     ) : null;
   // Keep the panel mounted so it can follow members when regrouping changes the project key.
   const projectScope =
@@ -43,25 +41,29 @@ export function ProjectsSettings() {
           projectKey={value.project}
           environmentId={value.machine ? EnvironmentId.make(value.machine) : null}
           checkoutKey={value.checkout ?? null}
-          unavailable={unavailable}
+          unavailable={
+            unavailable ? <SettingsPageContainer>{unavailable}</SettingsPageContainer> : null
+          }
         />
-      ) : unavailable ? (
-        unavailable
       ) : (
-        <SettingsScopeNotice target="project">
-          Choose a project to manage its name, icon, checkouts and actions.
-        </SettingsScopeNotice>
-      )}
-      {!projectScope ? (
         <SettingsPageContainer>
-          <TranscriptPortabilitySettings
-            environmentId={value.machine ? EnvironmentId.make(value.machine) : null}
-          />
-          <HarnessChatSyncSettings
-            environmentId={value.machine ? EnvironmentId.make(value.machine) : null}
-          />
+          {unavailable ?? (
+            <SettingsScopeNotice inline target="project">
+              Choose a project to manage its name, icon, checkouts and actions.
+            </SettingsScopeNotice>
+          )}
+          {!projectScope ? (
+            <>
+              <TranscriptPortabilitySettings
+                environmentId={value.machine ? EnvironmentId.make(value.machine) : null}
+              />
+              <HarnessChatSyncSettings
+                environmentId={value.machine ? EnvironmentId.make(value.machine) : null}
+              />
+            </>
+          ) : null}
         </SettingsPageContainer>
-      ) : null}
+      )}
     </div>
   );
 }

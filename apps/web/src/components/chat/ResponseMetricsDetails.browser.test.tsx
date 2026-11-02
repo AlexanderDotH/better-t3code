@@ -2,6 +2,7 @@ import { act, fakeTimers, render as renderScreen } from "../../../test/render";
 
 import type { ResponseMetricsSnapshot } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { setInterfaceLocaleRuntime } from "../../interfaceLanguageRuntime";
 import { ResponseMetricsDetails } from "./ResponseMetricsDetails";
@@ -32,8 +33,8 @@ function popup() {
 }
 
 async function focusLabel(label: HTMLElement) {
+  await userEvent.keyboard("{Tab}");
   await act(() => {
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
     label.focus();
   });
 }
@@ -75,12 +76,10 @@ it("explains each metric on keyboard focus and closes with Escape", async () => 
   for (const [index, label] of triggers().entries()) {
     await focusLabel(label);
     expect(document.activeElement).toBe(label);
-    expect(popup()?.textContent).toContain(explanations[index]);
+    await expect.element(page.getByRole("tooltip")).toHaveTextContent(explanations[index]!);
     expect(label.getAttribute("aria-describedby")).toBe(popup()?.id);
-    await act(() => {
-      label.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    });
-    expect(popup()).toBeNull();
+    await userEvent.keyboard("{Escape}");
+    await expect.poll(popup).toBeNull();
   }
 });
 

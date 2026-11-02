@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 
 import { TEST_FORMATS } from "./usageTestFormats.ts";
+import { UsageAggregator } from "./usageAggregation.ts";
 import {
   readTranscriptRecords as readWithDefaultThreshold,
   type TranscriptParsePosition,
@@ -108,6 +109,173 @@ async function scan(
 }
 
 describe("large usage records", () => {
+  it("carries Claude attribution through projected reads, resume and deduplicated aggregation", async () => {
+    const handoff = "<t3code_context_handoff>private handoff</t3code_context_handoff>";
+    const memory = "<t3code_project_memory>private memory</t3code_project_memory>";
+    const prompt = `<t3code_auto_reasoning_call>\n${handoff}\n${memory}`;
+    const first = await scan(
+      [
+        {
+          type: "user",
+          message: {
+            content: [
+              { type: "text", text: prompt },
+              { type: "image", source: { data: content } },
+            ],
+          },
+        },
+      ],
+      "claude",
+      "attributed",
+    );
+    expect(first.records).toEqual([]);
+    expect(JSON.stringify(first.position.state)).not.toContain("private");
+    const sidechain = { ...claude("subagent"), isSidechain: true };
+    await NodeFSP.appendFile(
+      NodePath.join(dir, "attributed.jsonl"),
+      [
+        { ...claude("auto"), isSidechain: false },
+        { ...claude("root"), isSidechain: false },
+        sidechain,
+        sidechain,
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n") + "\n",
+    );
+    const resumed = await readTranscriptRecords(
+      NodePath.join(dir, "attributed.jsonl"),
+      "claude",
+      first.position,
+    );
+    expect(resumed?.resumed).toBe(true);
+    expect(resumed?.records.map((record) => record.callKind)).toEqual([
+      "auto-reasoning",
+      "root",
+      "subagent",
+      "subagent",
+    ]);
+    expect(resumed?.records[0]?.diagnostics).toMatchObject({
+      compactHandoffs: 1,
+      totalHandoffChars: handoff.length,
+      memoryInjectionChars: memory.length,
+      autoRoutingChars: prompt.length,
+    });
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-01",
+      rates: new Map(),
+    });
+    for (const record of resumed?.records ?? []) aggregator.add(record);
+    const result = aggregator.finish();
+    expect(result.duplicatesDropped).toBe(1);
+    expect(result.buckets.map((bucket) => bucket.callKind)).toEqual([
+      "auto-reasoning",
+      "root",
+      "subagent",
+    ]);
+    expect(result.buckets.map((bucket) => bucket.costUsd)).toEqual([0.25, 0.25, 0.25]);
+    expect(result.buckets[0]?.diagnostics).toMatchObject({
+      autoRoutingChars: prompt.length,
+      memoryInjectionChars: memory.length,
+    });
+    expect(result.buckets[1]?.diagnostics).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain("private");
+  });
+
+  it("keeps Codex context diagnostics and native call kinds alongside ultrafast token deltas", async () => {
+    const prompt = "<t3code_auto_reasoning_call>private routing";
+    const subagentResult = "private child result";
+    const count = (input: number, output: number) => ({
+      ...codex[2],
+      timestamp: "2026-08-01T10:00:05Z",
+      payload: {
+        type: "token_count",
+        info: {
+          model_context_window: 128_000,
+          last_token_usage: {
+            input_tokens: input,
+            output_tokens: output,
+            cached_input_tokens: 20,
+            cache_write_input_tokens: 5,
+          },
+        },
+      },
+    });
+    const result = await scan(
+      [
+        {
+          ...codex[0],
+          payload: {
+            id: "child",
+            model_provider: "openai",
+            forked_from_id: "parent",
+            source: { subagent: {} },
+            base_instructions: "private instructions",
+          },
+        },
+        codex[1],
+        {
+          type: "response_item",
+          padding: content,
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: prompt }],
+          },
+        },
+        {
+          type: "response_item",
+          payload: { type: "function_call", name: "spawn_agent", call_id: "child-call" },
+        },
+        {
+          type: "response_item",
+          payload: { type: "function_call_output", call_id: "child-call", output: subagentResult },
+        },
+        { type: "event_msg", payload: { type: "context_compacted" } },
+        {
+          type: "event_msg",
+          payload: {
+            type: "thread_settings_applied",
+            thread_settings: { service_tier: "ultrafast" },
+          },
+        },
+        count(100, 99),
+        count(100, 99),
+        count(200, 101),
+      ],
+      "codex",
+      "attributed-codex",
+    );
+    expect(
+      result.records.map((record) => [record.callKind, record.speed, record.totals.outputTokens]),
+    ).toEqual([
+      ["auto-reasoning", "ultrafast", 99],
+      ["subagent", "ultrafast", 101],
+    ]);
+    expect(result.records[0]?.diagnostics).toMatchObject({
+      nativeForks: 1,
+      compactionEvents: 1,
+      maxContextTokens: 128_000,
+      instructionChars: "private instructions".length,
+      subagentResultChars: subagentResult.length,
+      autoRoutingChars: prompt.length,
+    });
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-01",
+      rates: new Map(),
+    });
+    for (const record of result.records) aggregator.add(record);
+    expect(aggregator.finish().buckets.map((bucket) => bucket.callKind)).toEqual([
+      "auto-reasoning",
+      "subagent",
+    ]);
+    expect(JSON.stringify(result.records)).not.toContain("private");
+    expect(JSON.stringify(result.position.state)).not.toContain("private");
+  });
+
   it("streams Muse completion envelopes and resumes a partial appended event", async () => {
     const entry = {
       schema_version: 1,

@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import type { InteractionUpdate } from "@cursor/sdk";
 import {
   EnvironmentId,
+  DeepPlanRunId,
   MessageId,
   NodeId,
   ProjectId,
@@ -39,14 +40,40 @@ const { ConfigurationError } = loadCursorSdk();
 
 describe("CursorAdapterV2", () => {
   it.effect.each([
-    { status: "finished", model: undefined, lateModel: undefined },
-    { status: "cancelled", model: "claude-opus-4-6", lateModel: undefined },
-    { status: "error", model: "custom-fable", lateModel: undefined },
-    { status: "finished", model: undefined, lateModel: "gpt-6-sol" },
-    { status: "finished", model: "gpt-6-sol", lateModel: null },
+    {
+      status: "finished",
+      model: undefined,
+      lateModel: undefined,
+      mode: "default",
+      deepPlan: false,
+    },
+    {
+      status: "cancelled",
+      model: "claude-opus-4-6",
+      lateModel: undefined,
+      mode: "default",
+      deepPlan: false,
+    },
+    {
+      status: "error",
+      model: "custom-fable",
+      lateModel: undefined,
+      mode: "default",
+      deepPlan: false,
+    },
+    {
+      status: "finished",
+      model: undefined,
+      lateModel: "gpt-6-sol",
+      mode: "default",
+      deepPlan: false,
+    },
+    { status: "finished", model: "gpt-6-sol", lateModel: null, mode: "default", deepPlan: false },
+    { status: "finished", model: undefined, lateModel: undefined, mode: "plan", deepPlan: true },
+    { status: "finished", model: undefined, lateModel: undefined, mode: "chat", deepPlan: true },
   ] as const)(
-    "projects Cursor tasks and unfinished tools: $status, late model $lateModel",
-    ({ status, model, lateModel }) =>
+    "projects Cursor tasks and unfinished tools: $status, late model $lateModel, mode $mode",
+    ({ status, model, lateModel, mode, deepPlan }) =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const workspace = yield* fileSystem.makeTempDirectoryScoped({
@@ -54,6 +81,7 @@ describe("CursorAdapterV2", () => {
         });
         const instanceId = ProviderInstanceId.make("cursor");
         const threadId = ThreadId.make("cursor-lifecycle-thread");
+        const modelSelection = { instanceId, model: "composer-2.5" };
         const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
         yield* mcpSessions.set({
           environmentId: EnvironmentId.make("cursor-lifecycle-environment"),
@@ -63,12 +91,24 @@ describe("CursorAdapterV2", () => {
           endpoint: "http://127.0.0.1:43123/mcp",
           authorizationHeader: "Bearer synthetic-cursor-token",
           browserToolsAvailable: true,
+          ...(deepPlan
+            ? {
+                deepPlan: {
+                  runId: DeepPlanRunId.make("cursor-deep-plan"),
+                  runThreadId: threadId,
+                  approvedPlanVersion: null,
+                  phase: "planning" as const,
+                  readOnly: true,
+                  modelSelection,
+                },
+              }
+            : {}),
         });
         let sentWithMcpOverride = true;
-        const modelSelection = { instanceId, model: "composer-2.5" };
+        let sentText = "";
         const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: "full-access",
-          interactionMode: "default",
+          interactionMode: mode,
           cwd: workspace,
         });
         const adapter = yield* makeCursorAdapterV2({
@@ -85,6 +125,8 @@ describe("CursorAdapterV2", () => {
                 send: (input) =>
                   Effect.gen(function* () {
                     sentWithMcpOverride = Object.hasOwn(input.options ?? {}, "mcpServers");
+                    sentText =
+                      typeof input.message === "string" ? input.message : input.message.text;
                     // Recorded tasks stream partial args before start, then end without completion; live runs cannot force this.
                     const taskToolCall = {
                       type: "task" as const,
@@ -115,7 +157,7 @@ describe("CursorAdapterV2", () => {
                               : {}),
                           },
                         },
-                      }).pipe(Effect.orDie);
+                      });
                     }
                     const readUpdates: ReadonlyArray<InteractionUpdate> = [
                       {
@@ -143,7 +185,7 @@ describe("CursorAdapterV2", () => {
                       })),
                     ];
                     for (const update of readUpdates) {
-                      yield* input.onDelta!(update).pipe(Effect.orDie);
+                      yield* input.onDelta!(update);
                     }
                     return {
                       agentId: "native-cursor-lifecycle",
@@ -157,7 +199,7 @@ describe("CursorAdapterV2", () => {
                       }),
                       cancel: Effect.void,
                     };
-                  }),
+                  }).pipe(Effect.orDie),
               }),
           }),
           Effect.provide(TestProviderHost.layer({ cwd: workspace })),
@@ -193,7 +235,7 @@ describe("CursorAdapterV2", () => {
             providerInstanceId: instanceId,
             modelSelection,
             runtimeMode: "full-access",
-            interactionMode: "default",
+            interactionMode: mode,
             branch: null,
             worktreePath: null,
             activeProviderThreadId: providerThread.id,
@@ -220,6 +262,15 @@ describe("CursorAdapterV2", () => {
           Stream.runCollect,
         );
         assert.isFalse(sentWithMcpOverride);
+        assert.include(sentText, "Review the code.");
+        assert.isAbove(sentText.indexOf("<runtime_info>"), sentText.indexOf("Review the code."));
+        for (const tag of ["runtime_info", "pull_request_linking", "deep_plan", "chat_mode"])
+          assert.equal(sentText.split(`<${tag}>`).length - 1, 1);
+        assert.include(
+          sentText,
+          deepPlan && mode !== "chat" ? "Planning is read-only" : "Deep Plan is inactive",
+        );
+        assert.include(sentText, mode === "chat" ? "Chat mode is active" : "Chat mode is inactive");
         const rows = events.filter((event) => event.type === "subagent.updated");
         assert.equal(rows[0]?.subagent.status, "running");
         assert.equal(rows[0]?.subagent.model, model ?? null);

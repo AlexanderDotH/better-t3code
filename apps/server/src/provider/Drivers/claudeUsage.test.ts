@@ -1,3 +1,4 @@
+import { initialClaudeUsageContext } from "../../usage/usageContextAttribution.ts";
 import { describe, expect, it } from "@effect/vitest";
 
 import { claudeUsageFormat, parseClaudeLine } from "./claudeUsage.ts";
@@ -78,12 +79,18 @@ describe("parseClaudeLine", () => {
         },
       }),
     ];
-    expect(claudeUsageFormat.parseLine(JSON.stringify(projected), undefined)).toEqual(expected);
-    expect(claudeUsageFormat.parseProjected(projected, undefined)).toEqual(expected);
+    expect(
+      claudeUsageFormat.parseLine(JSON.stringify(projected), initialClaudeUsageContext()),
+    ).toEqual(expected);
+    expect(claudeUsageFormat.parseProjected(projected, initialClaudeUsageContext())).toEqual(
+      expected,
+    );
 
     const synthetic = { ...projected, message: { ...projected.message, model: "<synthetic>" } };
-    expect(claudeUsageFormat.parseLine(JSON.stringify(synthetic), undefined)).toEqual([]);
-    expect(claudeUsageFormat.parseProjected(synthetic, undefined)).toEqual([]);
+    expect(
+      claudeUsageFormat.parseLine(JSON.stringify(synthetic), initialClaudeUsageContext()),
+    ).toEqual([]);
+    expect(claudeUsageFormat.parseProjected(synthetic, initialClaudeUsageContext())).toEqual([]);
   });
 });
 
@@ -133,11 +140,13 @@ describe("Claude advisor iterations", () => {
     ...advisorTurn,
     message: { ...advisorTurn.message, usage: { ...advisorTurn.message.usage, iterations } },
   });
-  const parse = (turn: unknown) => claudeUsageFormat.parseLine(JSON.stringify(turn), undefined);
+  const parse = (turn: unknown) =>
+    claudeUsageFormat.parseLine(JSON.stringify(turn), initialClaudeUsageContext());
 
   it("reports the advisor model's tokens as their own record beside the unchanged executor record", () => {
     const executor = {
       provider: "claude",
+      callKind: "unknown",
       timestampMs: Date.parse("2026-10-22T01:31:11.984Z"),
       model: "claude-opus-5-5",
       sessionId: "5a128faa-8253-489e-b935-6c08e8e670c0",
@@ -169,7 +178,9 @@ describe("Claude advisor iterations", () => {
     ];
 
     expect(parse(advisorTurn)).toEqual(expected);
-    expect(claudeUsageFormat.parseProjected(advisorTurn, undefined)).toEqual(expected);
+    expect(claudeUsageFormat.parseProjected(advisorTurn, initialClaudeUsageContext())).toEqual(
+      expected,
+    );
   });
 
   it("keys the advisor record apart from the executor and the same across a message's content blocks", () => {
@@ -195,11 +206,13 @@ describe("Claude advisor iterations", () => {
     );
 
     expect(parse(withIterations(executorIterations))).toHaveLength(1);
-    expect(claudeUsageFormat.parseProjected(withIterations([]), undefined)).toHaveLength(1);
+    expect(
+      claudeUsageFormat.parseProjected(withIterations([]), initialClaudeUsageContext()),
+    ).toHaveLength(1);
     expect(
       claudeUsageFormat.parseLine(
         claudeLine({ messageId: "msg_3", contentType: "text" }),
-        undefined,
+        initialClaudeUsageContext(),
       ),
     ).toHaveLength(1);
   });

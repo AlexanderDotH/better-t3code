@@ -446,12 +446,12 @@ describe.each([
     const { onReply } = await renderGesture(screen, role);
     const block = container.querySelector("pre")!;
     block.style.overflowX = "auto";
-    Object.defineProperties(block, {
-      clientWidth: { value: 100 },
-      scrollWidth: { value: 300 },
-    });
-    block.scrollLeft = 40;
+    block.style.width = "100px";
     const target = container.querySelector("code")!;
+    target.style.display = "block";
+    target.style.width = "300px";
+    block.scrollLeft = 40;
+    expect(block.scrollLeft).toBe(40);
     await pointer(target, "pointerdown", 0);
     expect((await pointer(target, "pointermove", direction * 80)).defaultPrevented).toBe(false);
     await pointer(target, "pointerup", direction * 80);

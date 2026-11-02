@@ -2510,6 +2510,14 @@ function toHydratedThreadDraft(
     })) ?? [];
 
   return {
+    ...(persistedDraft.replyTarget
+      ? {
+          replyTarget: {
+            ...persistedDraft.replyTarget,
+            replyTo: { ...persistedDraft.replyTarget.replyTo },
+          },
+        }
+      : {}),
     prompt: ensureInlineContextReferences(persistedDraft.prompt, [
       ...(persistedDraft.reviewComments ?? []).map(reviewCommentContextReference),
       ...(persistedDraft.previewAnnotations ?? []).map(previewAnnotationContextReference),

@@ -292,12 +292,16 @@ export function createNewThreadHandler(router: AnyRouter) {
         const isDraftAlreadyOpen =
           currentRouteTarget?.kind === "draft" &&
           currentRouteTarget.draftId === emptyStoredDraftThread.draftId;
+        const preserveOpenProjectSettings =
+          isDraftAlreadyOpen &&
+          emptyStoredDraftThread.environmentId === projectRef.environmentId &&
+          emptyStoredDraftThread.projectId === projectRef.projectId;
         const hasExplicitWorkspaceOption =
           hasBranchOption || hasWorktreePathOption || hasEnvModeOption || hasStartFromOriginOption;
         let workspaceContext: NewThreadWorkspaceOptions | null = null;
         if (hasExplicitWorkspaceOption) {
           workspaceContext = pickExplicitWorkspaceOptions(options);
-        } else if (!isDraftAlreadyOpen) {
+        } else if (!preserveOpenProjectSettings) {
           const defaultEnvMode = await resolveDefaultEnvMode();
           if (abandonedSinceRequest()) {
             return null;
@@ -305,13 +309,16 @@ export function createNewThreadHandler(router: AnyRouter) {
           // Concurrent calls may change the draft; stale resets, remaps, or navigation could clobber it.
           const routeTargetNow = getCurrentRouteTarget();
           const openedMeanwhile =
+            !isDraftAlreadyOpen &&
             routeTargetNow?.kind === "draft" &&
             routeTargetNow.draftId === emptyStoredDraftThread.draftId;
           const promotedMeanwhile =
             storedDraftThreadRef !== null && readThreadShell(storedDraftThreadRef) !== null;
+          const currentStoredDraft = getDraftSessionByLogicalProjectKey(logicalProjectKey);
           const remappedMeanwhile =
-            getDraftSessionByLogicalProjectKey(logicalProjectKey)?.draftId !==
-            emptyStoredDraftThread.draftId;
+            currentStoredDraft?.draftId !== emptyStoredDraftThread.draftId ||
+            currentStoredDraft.environmentId !== emptyStoredDraftThread.environmentId ||
+            currentStoredDraft.projectId !== emptyStoredDraftThread.projectId;
           const investedMeanwhile = composerDraftHasUserContent(
             getComposerDraft(emptyStoredDraftThread.draftId),
           );
@@ -331,21 +338,21 @@ export function createNewThreadHandler(router: AnyRouter) {
         if (workspaceContext) {
           setDraftThreadContext(emptyStoredDraftThread.draftId, {
             ...workspaceContext,
-            ...(!isDraftAlreadyOpen ? { runtimeMode: defaultRuntimeMode } : {}),
+            ...(!preserveOpenProjectSettings ? { runtimeMode: defaultRuntimeMode } : {}),
             ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
           });
         }
         const storedDraft = getComposerDraft(emptyStoredDraftThread.draftId);
         const storedDraftHasExplicitModelPick =
           hasExplicitComposerModelSelection(storedDraft) &&
-          (!supportsProjectChatSettings || isDraftAlreadyOpen);
+          (!supportsProjectChatSettings || preserveOpenProjectSettings);
         const rememberedChatSettings = readProjectChatSettings();
         if (rememberedChatSettings) {
           applyProjectChatSettings(
             emptyStoredDraftThread.draftId,
             rememberedChatSettings,
             storedDraftHasExplicitModelPick,
-            isDraftAlreadyOpen,
+            preserveOpenProjectSettings,
           );
         } else if (!storedDraftHasExplicitModelPick) {
           applyStickyState(emptyStoredDraftThread.draftId);
@@ -366,7 +373,7 @@ export function createNewThreadHandler(router: AnyRouter) {
           {
             threadId: emptyStoredDraftThread.threadId,
             ...workspaceContext,
-            ...(!isDraftAlreadyOpen
+            ...(!preserveOpenProjectSettings
               ? {
                   runtimeMode: rememberedChatSettings?.runtimeMode ?? defaultRuntimeMode,
                   ...(rememberedChatSettings

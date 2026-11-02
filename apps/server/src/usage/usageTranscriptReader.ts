@@ -49,6 +49,7 @@ function selectUsageFields(fields: SelectedFields) {
   return (path: ReadonlyArray<string | number | null>): boolean => {
     let selected: true | SelectedFields = fields;
     for (const key of path) {
+      if (key === null || typeof key === "number") continue;
       if (selected === true) return true;
       if (typeof key !== "string" || !Object.hasOwn(selected, key)) return false;
       selected = selected[key]!;

@@ -598,6 +598,7 @@ describe("orchestrator MCP toolkit", () => {
             delegated.resultContextTransferId,
           );
           const transferReads: Array<string> = [];
+          const forkBoundaryReads: Array<string> = [];
           const messageReads: Array<string> = [];
           const tracer = Tracer.make({
             span(options) {
@@ -610,7 +611,8 @@ describe("orchestrator MCP toolkit", () => {
                 if (
                   /SELECT[\s\S]*FROM orchestration_v2_projection_context_transfers/i.test(query)
                 ) {
-                  transferReads.push(query);
+                  if (/\btype\s*=\s*'fork'/i.test(query)) forkBoundaryReads.push(query);
+                  else transferReads.push(query);
                 }
                 if (
                   /SELECT\s+payload_json\s+FROM orchestration_v2_projection_messages/i.test(query)
@@ -668,7 +670,13 @@ describe("orchestrator MCP toolkit", () => {
             { ...invocation, thread: undefined },
           ).pipe(Effect.withTracer(tracer));
           expect(parentlessRead.isError).not.toBe(true);
-          expect(transferReads).toHaveLength(0);
+          expect(transferReads).toEqual([]);
+          expect(forkBoundaryReads).toHaveLength(2);
+          for (const query of forkBoundaryReads) {
+            expect(query).toMatch(/\bLIMIT 1\b/i);
+            expect(query).toMatch(/\b(?:target_thread_id|thread\.thread_id) = \?/i);
+            expect(query).not.toMatch(/\bSELECT\s+payload_json\s+FROM/i);
+          }
           const afterParentlessRead = yield* orchestrator.getThreadProjection(parentThreadId);
           expect(
             afterParentlessRead.subagents.find((task) => task.id === queuedFollowup.taskId)

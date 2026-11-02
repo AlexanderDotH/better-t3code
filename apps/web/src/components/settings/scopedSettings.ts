@@ -25,6 +25,7 @@ import * as Equal from "effect/Equal";
 import * as Cause from "effect/Cause";
 
 import type { ResolvedSettingsScope } from "./settingsScope";
+import { compatibleResponseStreamingSettingsPatch } from "./responseStreamingSettings";
 
 export type ScopedSettingsPatch = ServerSettingsPatch & ClientSettingsPatch;
 
@@ -306,28 +307,32 @@ export function planScopedSettingsPatch(
                   environmentId: environment.environmentId,
                   label: environment.label,
                   previous,
-                  patch: forDestination(
-                    previous,
-                    previous.worktreeCleanup != null &&
-                      serverPatch.storageCleanup &&
-                      Object.keys(serverPatch.storageCleanup).some((key) =>
-                        key.startsWith("worktree"),
-                      )
-                      ? {
-                          ...serverPatch,
-                          worktreeCleanup: {
-                            mode: "custom",
-                            rules: {
-                              ...resolveWorktreeCleanup(previous, null),
-                              ...Object.fromEntries(
-                                Object.entries(serverPatch.storageCleanup).filter(([key]) =>
-                                  key.startsWith("worktree"),
+                  patch: compatibleResponseStreamingSettingsPatch(
+                    forDestination(
+                      previous,
+                      previous.worktreeCleanup != null &&
+                        serverPatch.storageCleanup &&
+                        Object.keys(serverPatch.storageCleanup).some((key) =>
+                          key.startsWith("worktree"),
+                        )
+                        ? {
+                            ...serverPatch,
+                            worktreeCleanup: {
+                              mode: "custom",
+                              rules: {
+                                ...resolveWorktreeCleanup(previous, null),
+                                ...Object.fromEntries(
+                                  Object.entries(serverPatch.storageCleanup).filter(([key]) =>
+                                    key.startsWith("worktree"),
+                                  ),
                                 ),
-                              ),
+                              },
                             },
-                          },
-                        }
-                      : serverPatch,
+                          }
+                        : serverPatch,
+                    ),
+                    environment.serverConfig?.environment?.capabilities.responseStreamingModes ===
+                      true,
                   ),
                 },
               ];

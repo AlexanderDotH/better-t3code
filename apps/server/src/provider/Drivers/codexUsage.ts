@@ -1,3 +1,10 @@
+import {
+  CodexUsageContext,
+  initialCodexUsageContext,
+  observeCodexSessionContext,
+  observeCodexResponseContext,
+  takeCodexUsageContext,
+} from "../../usage/usageContextAttribution.ts";
 import type { CodexSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
@@ -5,6 +12,7 @@ import * as Schema from "effect/Schema";
 
 import {
   parseTimestampMs,
+  tokenCount,
   totalTokens,
   type ProviderUsageReader,
   type TranscriptUsageFormat,
@@ -72,6 +80,7 @@ function advanceCodexUsage(previous: CodexTokenUsage | null, last: CodexTokenUsa
  * from the most recent `turn_context`, the tier from the most recent `thread_settings_applied`.
  */
 export const CodexScanState = Schema.Struct({
+  ...CodexUsageContext.fields,
   model: Schema.mutableKey(Schema.String),
   speed: Schema.mutableKey(Schema.Literals(["standard", "fast", "ultrafast"])),
   sessionId: Schema.mutableKey(Schema.String),
@@ -91,6 +100,7 @@ export type CodexScanState = typeof CodexScanState.Type;
 
 export function initialCodexScanState(): CodexScanState {
   return {
+    ...initialCodexUsageContext(),
     model: "",
     speed: "standard",
     sessionId: "",
@@ -157,6 +167,11 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
       state.suppressingForkCopies = true;
       state.forkCopyAnchorMs = metaTimestampMs;
     }
+    observeCodexSessionContext(
+      payloadRecord,
+      state,
+      metaTimestampMs !== null && isForkedSessionMeta(payloadRecord),
+    );
     return null;
   }
 
@@ -169,6 +184,15 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
       payloadRecord["model"].length > 0
         ? payloadRecord["turn_id"]
         : "";
+    return null;
+  }
+
+  if (record["type"] === "response_item") {
+    observeCodexResponseContext(payloadRecord, state);
+    return null;
+  }
+  if (record["type"] === "event_msg" && payloadType === "context_compacted") {
+    state.pendingDiagnostics.compactionEvents += 1;
     return null;
   }
 
@@ -291,8 +315,10 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
   };
 
   if (totalTokens(totals) === 0) return null;
+  const attribution = takeCodexUsageContext(state, tokenCount(infoRecord["model_context_window"]));
 
   return {
+    ...attribution,
     provider: "codex",
     timestampMs,
     model: state.model,
@@ -329,16 +355,29 @@ export const codexUsageFormat: TranscriptUsageFormat<CodexScanState> = {
       id: true,
       session_id: true,
       model_provider: true,
+      base_instructions: true,
+      role: true,
+      content: { text: true },
+      name: true,
+      call_id: true,
+      output: { text: true, content: true, output: true },
       turn_id: true,
       model: true,
       thread_settings: { service_tier: true },
       forked_from_id: true,
       source: { subagent: { thread_spawn: { parent_thread_id: true } } },
-      info: { last_token_usage: true, total_token_usage: true },
+      info: { last_token_usage: true, total_token_usage: true, model_context_window: true },
     },
   },
   // Metadata lines carry model, tier and session even without usage.
-  usageMarkers: ['"token_count"', '"turn_context"', '"thread_settings_applied"', '"session_meta"'],
+  usageMarkers: [
+    '"token_count"',
+    '"turn_context"',
+    '"thread_settings_applied"',
+    '"session_meta"',
+    '"response_item"',
+    '"context_compacted"',
+  ],
   parseLine: (line, state) => orEmpty(parseCodexLine(line, state)),
   parseProjected: (projected, state) => orEmpty(parseCodexRecord(projected, state)),
   state: { initial: initialCodexScanState, schema: CodexScanState },

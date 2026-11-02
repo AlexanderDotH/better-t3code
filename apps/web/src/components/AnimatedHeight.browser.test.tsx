@@ -66,7 +66,7 @@ it("resizes changing content, rebases after disable, and follows a textarea drag
       await notify();
     });
     expect(shell.style.height).toBe("200px");
-    expect(shell.style.overflow).toBe("hidden");
+    expect(shell.style.overflow).toBe("clip");
     height = 100;
     await act(async () => {
       await notify();
@@ -75,7 +75,7 @@ it("resizes changing content, rebases after disable, and follows a textarea drag
     const textarea = host.querySelector("textarea")!;
     await act(async () => {
       await textarea.dispatchEvent(
-        new MouseEvent("pointerdown", {
+        new PointerEvent("pointerdown", {
           bubbles: true,
           clientX: 295,
           clientY: 95,

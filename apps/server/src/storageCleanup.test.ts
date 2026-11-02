@@ -346,6 +346,7 @@ const cleanupFixture = (
     let sessionLive = true;
     let onLiveCheck: Effect.Effect<void> = Effect.void;
     let outboxStatus: string | null = null;
+    let branchProbeFailure: string | null = null;
     let fullStatusCalls = 0;
     let snapshotReads = 0;
     let terminalListener: ((event: TerminalMetadataStreamEvent) => Effect.Effect<void>) | undefined;
@@ -356,6 +357,14 @@ const cleanupFixture = (
         ...git,
         execute: (input) =>
           Effect.gen(function* () {
+            if (input.operation === "StorageCleanup.branchChanged" && branchProbeFailure !== null)
+              return {
+                exitCode: 128,
+                stdout: "",
+                stderr: branchProbeFailure,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+              };
             // Before Git's own clean check: inside `git worktree remove`, or on
             // Windows the same status check the removal makes before deleting.
             if (
@@ -516,6 +525,9 @@ const cleanupFixture = (
       },
       setOutboxStatus: (status: string | null) => {
         outboxStatus = status;
+      },
+      setBranchProbeFailure: (detail: string) => {
+        branchProbeFailure = detail;
       },
       setDeletedThreads: (next: OrchestrationV2ThreadShell[]) => {
         deletedThreads = next;
@@ -2053,6 +2065,31 @@ describe("storage cleanup reports and local file policies", () => {
         expect((yield* service.runNow).entries[0]).toMatchObject(changed);
         yield* fs.writeFileString(`${worktree}/.git`, gitFile);
         expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
+        expect(fullStatusCalls()).toBe(0);
+      }),
+    ),
+  );
+  it.live.each([
+    ["fatal: not a git repository: '/missing-git-directory'", "kept"],
+    ["fatal: gitfile does not point to a valid repository: feature/.git", "kept"],
+    ["fatal: unable to read gitfile: Permission denied", "failed"],
+  ] as const)("preserves the worktree when the branch probe reports %s", ([diagnostic, outcome]) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, setBranchProbeFailure, fullStatusCalls } =
+          yield* cleanupFixture();
+        yield* fs.writeFileString(`${worktree}/.git`, "gitdir: /missing-git-directory\n");
+        yield* fs.writeFileString(`${worktree}/notes.txt`, "untracked data\n");
+        setBranchProbeFailure(diagnostic);
+        const report = yield* service.runNow;
+        expect(report.entries[0]).toMatchObject({
+          outcome,
+          reason: outcome === "kept" ? "Repository or branch changed" : `git: ${diagnostic}`,
+        });
+        expect(report.bytesFreed).toBe(0);
+        expect(yield* fs.exists(worktree)).toBe(true);
+        expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("original\n");
+        expect(yield* fs.readFileString(`${worktree}/notes.txt`)).toBe("untracked data\n");
         expect(fullStatusCalls()).toBe(0);
       }),
     ),

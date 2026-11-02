@@ -153,6 +153,12 @@ function BetterT3SettingsSubgroupContent({
   const headingId = `${id}-heading`;
   const panelId = `${id}-panel`;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Persist search and validation reveals to browser storage so returning to settings keeps the subgroup open.
+  useLayoutEffect(() => {
+    if (!group?.collapsible || !reveal.expanded || expansion.isExpanded(groupId)) return;
+    expansion.setExpanded(groupId, true);
+  }, [expansion, group?.collapsible, groupId, reveal.expanded]);
+
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- retries DOM search-target focus after a collapsed section mounts its content
   useLayoutEffect(() => {
     if (!group?.collapsible || !expanded) return;

@@ -81,13 +81,15 @@ vi.mock("~/state/use-atom-command", () => ({
 vi.mock("~/state/entities", () => ({
   useThreadShell: () => testState.serverThread,
 }));
-vi.mock("~/composerDraftStore", () => {
+vi.mock("~/composerDraftStore", async () => {
+  const Schema = await import("effect/Schema");
   const store = {
     getDraftSession: () => null,
     getDraftThreadByRef: () => null,
     setDraftThreadContext: testState.setDraftThreadContext,
   };
   return {
+    DraftId: Schema.String.pipe(Schema.brand("DraftId")),
     useComposerDraftStore: (select: (value: typeof store) => unknown) => select(store),
   };
 });

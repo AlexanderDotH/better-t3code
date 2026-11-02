@@ -9,12 +9,13 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { usageLimitsBannerItem } from "../chat/ComposerUsageLimits";
 import { ComposerBannerStack } from "../chat/ComposerBannerStack";
 const consume = vi.hoisted(() => vi.fn());
-vi.mock("@effect/atom-react", () => ({
+vi.mock("@effect/atom-react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@effect/atom-react")>()),
   useAtomValue: () => new Map(),
 }));
 vi.mock("../../state/presentation", () => ({
   environmentPresentations: {
-    presentationsAtom: "presentations",
+    presentationsWithProvidersAtom: "presentations",
   },
 }));
 vi.mock("../../state/server", () => ({

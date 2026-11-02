@@ -165,11 +165,13 @@ describe("scoped settings writes", () => {
       {
         environmentId: modern.environmentId,
         label: modern.label,
+        previous: modern.serverConfig!.settings,
         patch: { responseStreamingMode: "token" },
       },
       {
         environmentId: legacy.environmentId,
         label: legacy.label,
+        previous: legacy.serverConfig!.settings,
         patch: { enableLegacyTokenStreaming: true },
       },
     ]);

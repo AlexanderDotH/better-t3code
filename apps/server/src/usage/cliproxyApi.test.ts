@@ -1,6 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
@@ -201,6 +202,52 @@ describe("CLIProxyAPI hub failures", () => {
 });
 
 describe("CLIProxyAPI built-in management API", () => {
+  it.effect(
+    "excludes credits expiring exactly now and retains unexpired, undated and redeemed details",
+    () =>
+      Effect.gen(function* () {
+        const now = 1788710400000;
+        yield* TestClock.setTime(now);
+        const expires = (offset: number) => DateTime.formatIso(DateTime.makeUnsafe(now + offset));
+        const test = fixture({
+          upstream: (request) => ({
+            status: 200,
+            body: request.url?.endsWith("/rate-limit-reset-credits")
+              ? {
+                  credits: [
+                    credit("later", expires(2_000)),
+                    credit("now", expires(0)),
+                    credit("past", expires(-1_000)),
+                    credit("next", expires(1_000)),
+                    { ...credit("undated"), expires_at: null },
+                    { ...credit("redeemed"), status: "redeemed", title: "Used reset" },
+                  ],
+                }
+              : {
+                  rate_limit: null,
+                  credits: { has_credits: true, unlimited: false, balance: 42.5 },
+                },
+          }),
+        });
+        const api = yield* test.api;
+        const [account] = yield* api.readAccounts(config);
+        expect(account?.usageLimits.accountCredits).toEqual({
+          hasCredits: true,
+          unlimited: false,
+          balance: "42.5",
+        });
+        expect(account?.usageLimits.resetCredits).toMatchObject({
+          availableCount: 3,
+          nextCreditId: "next",
+          nextExpiresAt: expires(1_000),
+        });
+        expect(account?.usageLimits.resetCredits?.credits).toHaveLength(6);
+        expect(
+          account?.usageLimits.resetCredits?.credits?.find((entry) => entry.id === "redeemed"),
+        ).toMatchObject({ status: "redeemed", title: "Used reset" });
+      }),
+  );
+
   it.effect(
     "reads both accounts and their earliest unexpired credits without plugin endpoints",
     () =>

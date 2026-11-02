@@ -1,6 +1,8 @@
 // @effect-diagnostics globalDate:off
 import type {
   UsageBucket,
+  UsageCallKind,
+  UsageContextDiagnostics,
   UsageCategoryCost,
   UsageDay,
   UsageModelFilter,
@@ -49,6 +51,8 @@ const QUARTER_HOUR_MS = 15 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 
 interface MutableBucket {
+  callKind: UsageCallKind | undefined;
+  diagnostics?: UsageContextDiagnostics;
   totals: { -readonly [K in keyof UsageTokenTotals]: number };
   costUsd: number;
   cacheSavingsUsd: number;
@@ -142,6 +146,7 @@ export class UsageAggregator {
     readonly provider: string;
     readonly model: string;
     readonly source: string;
+    readonly callKind: UsageCallKind;
     readonly bucket: MutableBucket;
   } | null = null;
   #duplicatesDropped = 0;
@@ -196,7 +201,14 @@ export class UsageAggregator {
       this.#hourlyWindow === null
         ? -1
         : Math.floor((record.timestampMs - this.#hourlyWindow.sinceTimeMs) / HOUR_MS);
-    const bucket = this.#bucketFor(day, hourIndex, record.provider, record.model, sourcePath ?? "");
+    const bucket = this.#bucketFor(
+      day,
+      hourIndex,
+      record.provider,
+      record.model,
+      sourcePath ?? "",
+      record.callKind,
+    );
 
     const priced = priceUsage(this.#options.rates, record, this.#options.priceOverrides);
 
@@ -228,6 +240,31 @@ export class UsageAggregator {
       record,
       this.#options.priceOverrides,
     );
+    if (record.diagnostics !== undefined) {
+      const current = bucket.diagnostics;
+      bucket.diagnostics = {
+        nativeForks: (current?.nativeForks ?? 0) + record.diagnostics.nativeForks,
+        compactHandoffs: (current?.compactHandoffs ?? 0) + record.diagnostics.compactHandoffs,
+        totalHandoffChars: (current?.totalHandoffChars ?? 0) + record.diagnostics.totalHandoffChars,
+        compactionEvents: (current?.compactionEvents ?? 0) + record.diagnostics.compactionEvents,
+        maxContextTokens: Math.max(
+          current?.maxContextTokens ?? 0,
+          record.diagnostics.maxContextTokens,
+        ),
+        instructionChars:
+          (current?.instructionChars ?? 0) + (record.diagnostics.instructionChars ?? 0),
+        memoryInjectionChars:
+          (current?.memoryInjectionChars ?? 0) + (record.diagnostics.memoryInjectionChars ?? 0),
+        toolSchemaChars:
+          (current?.toolSchemaChars ?? 0) + (record.diagnostics.toolSchemaChars ?? 0),
+        subagentResultChars:
+          (current?.subagentResultChars ?? 0) + (record.diagnostics.subagentResultChars ?? 0),
+        toolDigestChars:
+          (current?.toolDigestChars ?? 0) + (record.diagnostics.toolDigestChars ?? 0),
+        autoRoutingChars:
+          (current?.autoRoutingChars ?? 0) + (record.diagnostics.autoRoutingChars ?? 0),
+      };
+    }
     bucket.records += 1;
     if (priced.costSource === "unpriced") bucket.unpricedRecords += 1;
     if (priced.costSource === "providerReported") bucket.providerReportedRecords += 1;
@@ -250,7 +287,9 @@ export class UsageAggregator {
     provider: string,
     model: string,
     source: string,
+    callKind: UsageCallKind | undefined,
   ): MutableBucket {
+    const kind = callKind ?? "unknown";
     const last = this.#lastBucket;
     if (
       last !== null &&
@@ -258,17 +297,20 @@ export class UsageAggregator {
       last.hourIndex === hourIndex &&
       last.provider === provider &&
       last.model === model &&
-      last.source === source
+      last.source === source &&
+      last.callKind === kind
     ) {
+      if (callKind !== undefined) last.bucket.callKind = callKind;
       return last.bucket;
     }
     const window = this.#hourlyWindow;
     const hourStart =
       window === null ? "" : new Date(window.sinceTimeMs + hourIndex * HOUR_MS).toISOString();
-    const key = `${day}\u0000${hourStart}\u0000${provider}\u0000${model}\u0000${source}`;
+    const key = `${day}\u0000${hourStart}\u0000${provider}\u0000${model}\u0000${source}\u0000${kind}`;
     let bucket = this.#buckets.get(key);
     if (bucket === undefined) {
       bucket = {
+        callKind,
         totals: { ...EMPTY_TOTALS },
         costUsd: 0,
         cacheSavingsUsd: 0,
@@ -283,7 +325,8 @@ export class UsageAggregator {
       };
       this.#buckets.set(key, bucket);
     }
-    this.#lastBucket = { day, hourIndex, provider, model, source, bucket };
+    if (callKind !== undefined) bucket.callKind = callKind;
+    this.#lastBucket = { day, hourIndex, provider, model, source, callKind: kind, bucket };
     return bucket;
   }
 
@@ -303,6 +346,8 @@ export class UsageAggregator {
         model,
         ...(sourcePath === "" ? {} : { sourcePath }),
         totals: { ...bucket.totals },
+        ...(bucket.callKind === undefined ? {} : { callKind: bucket.callKind }),
+        ...(bucket.diagnostics === undefined ? {} : { diagnostics: bucket.diagnostics }),
         costUsd: bucket.costUsd,
         cacheSavingsUsd: bucket.cacheSavingsUsd,
         ...(category === null
@@ -329,7 +374,8 @@ export class UsageAggregator {
         a.day.localeCompare(b.day) ||
         (a.hourStart ?? "").localeCompare(b.hourStart ?? "") ||
         a.provider.localeCompare(b.provider) ||
-        a.model.localeCompare(b.model),
+        a.model.localeCompare(b.model) ||
+        (a.callKind ?? "unknown").localeCompare(b.callKind ?? "unknown"),
     );
 
     return {

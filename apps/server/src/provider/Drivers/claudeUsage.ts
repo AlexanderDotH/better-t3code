@@ -1,6 +1,12 @@
 import type { ClaudeSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
+import {
+  ClaudeUsageContext,
+  initialClaudeUsageContext,
+  observeClaudeUsageContext,
+  takeClaudeUsageContext,
+} from "../../usage/usageContextAttribution.ts";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import {
@@ -20,20 +26,30 @@ export const CLAUDE_SYNTHETIC_MODEL = "<synthetic>";
  * the same complete `usage` object for the parent message. Summing them overcounts by roughly
  * 2.4x on a real workload, so the caller must drop repeats by `dedupeKey` and keep the first.
  */
-export function parseClaudeLine(line: string): readonly UsageRecord[] {
+export function parseClaudeLine(
+  line: string,
+  state = initialClaudeUsageContext(),
+): readonly UsageRecord[] {
   let parsed: unknown;
   try {
     parsed = JSON.parse(line);
   } catch {
     return [];
   }
-  return parseClaudeRecord(parsed);
+  return parseClaudeRecord(parsed, state);
 }
 
-function parseClaudeRecord(parsed: unknown): readonly UsageRecord[] {
+function parseClaudeRecord(
+  parsed: unknown,
+  state: ClaudeUsageContext = initialClaudeUsageContext(),
+): readonly UsageRecord[] {
   if (typeof parsed !== "object" || parsed === null) return [];
 
   const record = parsed as Record<string, unknown>;
+  if (record["type"] === "user") {
+    observeClaudeUsageContext(record, state);
+    return [];
+  }
   if (record["type"] !== "assistant") return [];
 
   const message = record["message"];
@@ -56,9 +72,11 @@ function parseClaudeRecord(parsed: unknown): readonly UsageRecord[] {
     messageId === null && requestId === null ? null : `${messageId ?? ""}:${requestId ?? ""}`;
 
   const cost = record["costUSD"];
+  const attribution = takeClaudeUsageContext(record, state);
 
   const executor: UsageRecord = {
     provider: "claude",
+    ...attribution,
     timestampMs,
     model,
     sessionId: typeof record["sessionId"] === "string" ? record["sessionId"] : "",
@@ -91,6 +109,7 @@ function parseClaudeRecord(parsed: unknown): readonly UsageRecord[] {
 
     records.push({
       provider: "claude",
+      callKind: attribution.callKind,
       timestampMs,
       model: advisorModel,
       sessionId: executor.sessionId,
@@ -109,18 +128,20 @@ function parseClaudeRecord(parsed: unknown): readonly UsageRecord[] {
   return records;
 }
 
-export const claudeUsageFormat: TranscriptUsageFormat<void> = {
+export const claudeUsageFormat: TranscriptUsageFormat<ClaudeUsageContext> = {
   selectFields: {
     type: true,
     timestamp: true,
     requestId: true,
     sessionId: true,
     costUSD: true,
-    message: { id: true, model: true, usage: true },
+    isSidechain: true,
+    message: { id: true, model: true, usage: true, content: { text: true } },
   },
-  usageMarkers: ['"usage"'],
-  parseLine: (line) => parseClaudeLine(line),
-  parseProjected: (projected) => parseClaudeRecord(projected),
+  usageMarkers: ['"usage"', '"user"'],
+  parseLine: (line, state) => parseClaudeLine(line, state),
+  parseProjected: (projected, state) => parseClaudeRecord(projected, state),
+  state: { initial: initialClaudeUsageContext, schema: ClaudeUsageContext },
 };
 
 export const claudeUsageReader: ProviderUsageReader<ClaudeSettings, Path.Path> = {

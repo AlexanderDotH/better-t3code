@@ -514,13 +514,15 @@ it("animates whole streamed graphemes and removes motion when the preference is 
       (node) => node.textContent,
     );
   await vi.waitFor(() => {
-    expect(animated().join("")).toBe("First 👩‍💻");
+    expect(animated().join("")).toBe("First👩‍💻");
   });
+  expect(screen.container.textContent).toBe("First 👩‍💻");
   expect(animated()).toContain("👩‍💻");
   await screen.rerender(markdown("First 👩‍💻 final", false));
   await vi.waitFor(() => {
     expect(animated().join("")).toContain("final");
   });
+  expect(screen.container.textContent).toBe("First 👩‍💻 final");
   characterMotion.enabled = false;
   await screen.rerender(markdown("First 👩‍💻 final disabled", false));
   expect(animated()).toEqual([]);

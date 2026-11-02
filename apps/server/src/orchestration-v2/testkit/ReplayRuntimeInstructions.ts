@@ -32,9 +32,32 @@ export function materializeReplayTranscriptRuntimeInstructions(
         "message" in frame &&
         typeof frame.message === "string"
       ) {
-        return frame.message.endsWith(instructions)
-          ? entry
-          : { ...entry, frame: { ...frame, message: `${frame.message}\n\n${instructions}` } };
+        const cursorInstructions = buildRuntimeInstructions({
+          harness,
+          model: runtime.model,
+          interactionMode:
+            "options" in frame &&
+            typeof frame.options === "object" &&
+            frame.options !== null &&
+            "mode" in frame.options &&
+            frame.options.mode === "plan"
+              ? "plan"
+              : "default",
+          deepPlan: null,
+        });
+        if (frame.message.endsWith(`\n\n${cursorInstructions}`)) return entry;
+        const legacySuffix = `\n\n${instructions}`;
+        const request = frame.message.endsWith(legacySuffix)
+          ? frame.message.slice(0, -legacySuffix.length)
+          : frame.message;
+        return {
+          ...entry,
+          frame: {
+            ...frame,
+            message:
+              request.trim() === "/compress" ? "/compress" : `${request}\n\n${cursorInstructions}`,
+          },
+        };
       }
       if (
         "method" in frame &&

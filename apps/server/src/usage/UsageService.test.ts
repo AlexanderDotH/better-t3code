@@ -93,8 +93,8 @@ const WINDOW: UsageSummaryInput = {
 };
 
 const setup = Effect.gen(function* () {
-  const home = yield* Effect.promise(() =>
-    NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "usage-service-test-")),
+  const home = yield* Effect.promise(async () =>
+    NodeFSP.realpath(await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "usage-service-test-"))),
   );
   yield* Effect.addFinalizer(() =>
     Effect.promise(() => NodeFSP.rm(home, { recursive: true, force: true })),
@@ -1250,6 +1250,74 @@ describe("UsageService", () => {
         Effect.provide(layerService({ prefix: "usage-pi-malformed", home, settings })),
       );
     }).pipe(Effect.scoped),
+  );
+
+  it.live(
+    "preserves driver attribution and context diagnostics through a persisted warm restart",
+    () =>
+      Effect.gen(function* () {
+        const { home, settings, transcript } = yield* setup;
+        const handoff =
+          "<t3code_context_handoff>sensitive handoff payload</t3code_context_handoff>";
+        const assistant = (id: number, output: number, isSidechain: boolean) => ({
+          type: "assistant",
+          timestamp: "2026-08-01T10:00:00Z",
+          requestId: `req_${id}`,
+          sessionId: "session-attribution",
+          isSidechain,
+          message: {
+            id: `msg_${id}`,
+            model: "claude-fable-5",
+            usage: { input_tokens: 10, output_tokens: output },
+          },
+        });
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(
+            transcript,
+            [
+              { type: "user", message: { content: `<t3code_metadata_call>\n${handoff}` } },
+              assistant(1, 5, false),
+              assistant(2, 7, false),
+              assistant(3, 11, true),
+            ]
+              .map((entry) => encodeUnknownJsonString(entry))
+              .join("\n") + "\n",
+          ),
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          const cold = yield* service.readSummary(WINDOW);
+          const attribution = (summary: UsageSummary) =>
+            summary.buckets
+              .filter((bucket) => bucket.provider === "claude")
+              .map((bucket) => ({
+                callKind: bucket.callKind,
+                output: bucket.totals.outputTokens,
+                diagnostics: bucket.diagnostics,
+              }));
+          assert.deepStrictEqual(
+            attribution(cold).map(({ callKind, output }) => ({ callKind, output })),
+            [
+              { callKind: "metadata", output: 5 },
+              { callKind: "root", output: 7 },
+              { callKind: "subagent", output: 11 },
+            ],
+          );
+          assert.strictEqual(attribution(cold)[0]?.diagnostics?.totalHandoffChars, handoff.length);
+          yield* service.awaitPersisted;
+          const open = vi.spyOn(NodeFSP, "open");
+          yield* Effect.addFinalizer(() => Effect.sync(() => open.mockRestore()));
+          open.mockClear();
+          const restarted = yield* UsageService.make;
+          const warm = yield* restarted.readSummary(WINDOW);
+          assert.deepStrictEqual(attribution(warm), attribution(cold));
+          assert.isFalse(open.mock.calls.some(([path]) => path === transcript));
+          assert.notInclude(encodeUnknownJsonString(warm.buckets), "sensitive handoff payload");
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(layerService({ prefix: "usage-attribution-cache", home, settings })),
+        );
+      }).pipe(Effect.scoped),
   );
 
   it.live("discovers Pi history in its default home and directory overrides", () =>
@@ -2508,7 +2576,7 @@ describe("UsageService", () => {
             60 + 20 * (version === 4 ? 1 : 2),
           );
           yield* upgraded.awaitPersisted;
-          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v10.json");
+          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v11.json");
           assert.strictEqual(
             yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
             legacy,

@@ -22,9 +22,16 @@ it("follows widget and disclosure growth, yields immediately to navigation, and 
     });
   const viewport = document.createElement("div");
   let height = 1500;
+  let scrollOffset = 900;
   Object.defineProperties(viewport, {
     scrollHeight: { get: () => height },
     clientHeight: { value: 600 },
+    scrollTop: {
+      get: () => scrollOffset,
+      set: (value: number) => {
+        scrollOffset = Math.max(0, Math.min(value, height - 600));
+      },
+    },
   });
   viewport.scrollTop = 900;
   let following = true;

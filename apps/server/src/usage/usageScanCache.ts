@@ -1,24 +1,28 @@
-import type { UsageProviderKind } from "@t3tools/contracts";
+import { UsageCallKind, UsageContextDiagnostics, type UsageProviderKind } from "@t3tools/contracts";
 import type {
   TranscriptUsageFormat,
   UsageRecord,
   UsageSpeed,
 } from "@t3tools/provider-core/server/usage";
 import * as Schema from "effect/Schema";
+import * as Option from "effect/Option";
 
 import { CLAUDE_SYNTHETIC_MODEL } from "../provider/Drivers/claudeUsage.ts";
 import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptReader.ts";
 
-const USAGE_SCAN_CACHE_VERSION = 10 as const;
+const USAGE_SCAN_CACHE_VERSION = 11 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
+const isUsageCallKind = Schema.is(UsageCallKind);
+const decodeDiagnostics = Schema.decodeUnknownOption(UsageContextDiagnostics);
 
 /**
  * An older server sharing that directory cannot read a newer cache and would
  * replace it, dropping saved usage for deleted transcripts. Separate files keep
  * both.
  */
-export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v10.json";
+export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v11.json";
 export const LEGACY_SCAN_CACHE_FILE_NAMES = [
+  "usage-scan-cache-v10.json",
   "usage-scan-cache-v9.json",
   "usage-scan-cache-v8.json",
   "usage-scan-cache-v7.json",
@@ -56,7 +60,9 @@ type SerializedRecord = readonly [
   reportedCostUsd: number | null,
   speed: number,
   rateModelIndex?: number | null,
-  unresolvedServiceTierTurnId?: string,
+  unresolvedServiceTierTurnId?: string | null,
+  callKind?: UsageCallKind | null,
+  diagnostics?: UsageContextDiagnostics | null,
 ];
 
 interface SerializedFile {
@@ -100,25 +106,31 @@ function intern(table: string[], index: Map<string, number>, value: string): num
 }
 
 function serializeFile(entry: CachedFile, tables: InternTables): SerializedFile {
-  const serializeRecord = (record: UsageRecord): SerializedRecord => [
-    record.timestampMs,
-    intern(tables.models, tables.modelIndex, record.model),
-    intern(tables.sessions, tables.sessionIndex, record.sessionId),
-    record.totals.uncachedInputTokens,
-    record.totals.cachedInputTokens,
-    record.totals.cacheCreationTokens,
-    record.totals.outputTokens,
-    record.totals.reasoningTokens,
-    record.dedupeKey,
-    record.reportedCostUsd,
-    SPEEDS.indexOf(record.speed),
-    record.rateModel === undefined
-      ? null
-      : intern(tables.models, tables.modelIndex, record.rateModel),
-    ...(record.unresolvedServiceTierTurnId === undefined
-      ? ([] as const)
-      : ([record.unresolvedServiceTierTurnId] as const)),
-  ];
+  const serializeRecord = (record: UsageRecord): SerializedRecord => {
+    const metadata =
+      record.callKind === undefined && record.diagnostics === undefined
+        ? ([] as const)
+        : ([record.callKind ?? null, record.diagnostics ?? null] as const);
+    return [
+      record.timestampMs,
+      intern(tables.models, tables.modelIndex, record.model),
+      intern(tables.sessions, tables.sessionIndex, record.sessionId),
+      record.totals.uncachedInputTokens,
+      record.totals.cachedInputTokens,
+      record.totals.cacheCreationTokens,
+      record.totals.outputTokens,
+      record.totals.reasoningTokens,
+      record.dedupeKey,
+      record.reportedCostUsd,
+      SPEEDS.indexOf(record.speed),
+      record.rateModel === undefined
+        ? null
+        : intern(tables.models, tables.modelIndex, record.rateModel),
+      ...(record.unresolvedServiceTierTurnId === undefined && metadata.length === 0
+        ? ([] as const)
+        : ([record.unresolvedServiceTierTurnId ?? null, ...metadata] as const)),
+    ];
+  };
   return {
     s: entry.size,
     m: entry.mtimeMs,
@@ -212,17 +224,25 @@ export function decodeScanCache(
         speedIndex,
         rateModelIndex,
         unresolvedServiceTierTurnId,
+        rawCallKind,
+        rawDiagnostics,
       ] = row as SerializedRecord;
       const speed = typeof speedIndex === "number" ? SPEEDS[speedIndex] : undefined;
 
       const model = typeof modelIndex === "number" ? models[modelIndex] : undefined;
       const rateModel = typeof rateModelIndex === "number" ? models[rateModelIndex] : undefined;
+      const callKind = version >= 11 && rawCallKind != null ? rawCallKind : undefined;
+      const diagnostics =
+        version >= 11 && rawDiagnostics != null
+          ? Option.getOrUndefined(decodeDiagnostics(rawDiagnostics))
+          : undefined;
       if (
         typeof timestampMs !== "number" ||
         !Number.isFinite(timestampMs) ||
         model === undefined ||
-        (unresolvedServiceTierTurnId !== undefined &&
-          typeof unresolvedServiceTierTurnId !== "string") ||
+        (unresolvedServiceTierTurnId != null && typeof unresolvedServiceTierTurnId !== "string") ||
+        (callKind !== undefined && !isUsageCallKind(callKind)) ||
+        (version >= 11 && rawDiagnostics != null && diagnostics === undefined) ||
         (rateModelIndex != null && rateModel === undefined) ||
         !Number.isFinite(uncached) ||
         !Number.isFinite(cached) ||
@@ -253,9 +273,11 @@ export function decodeScanCache(
         },
         reportedCostUsd: typeof reportedCostUsd === "number" ? reportedCostUsd : null,
         speed,
-        ...(version >= 7 && unresolvedServiceTierTurnId !== undefined
+        ...(version >= 7 && unresolvedServiceTierTurnId != null
           ? { unresolvedServiceTierTurnId }
           : {}),
+        ...(callKind === undefined ? {} : { callKind }),
+        ...(diagnostics === undefined ? {} : { diagnostics }),
         dedupeKey: typeof dedupeKey === "string" ? dedupeKey : null,
       });
     }
@@ -290,14 +312,11 @@ export function decodeScanCache(
     ) {
       continue;
     }
-    // Keep history for deleted rollouts, but re-parse incompatible reducer state.
-    // v9 repairs skipped initial Codex requests; clean v8 entries can still resume.
-    // v10 adds Claude advisor calls, which no older Claude entry holds.
+    // Keep deleted-file history while invalidating incompatible reducer positions.
+    // v11 requires cold Codex/Claude scans to recover attribution and diagnostics.
     const legacy =
-      (entry.p === "claude" && version < 10) ||
-      (format.state !== undefined &&
-        (version < 6 ||
-          (entry.p === "codex" && (version < 8 || (version < 9 && malformedRecords > 0)))));
+      ((entry.p === "claude" || entry.p === "codex") && version < 11) ||
+      (format.state !== undefined && version < 6);
     // A corrupt state disqualifies the entry: resuming with it would attach
     // appended usage to the wrong model or replay fork-copied history.
     if (!legacy && !isValidState.get(entry.p)?.(entry.cs)) continue;

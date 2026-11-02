@@ -76,7 +76,6 @@ describe("selectCliRuntimeExternalDependencies", () => {
         "@napi-rs/keyring",
         "@typescript/typescript6",
         "ffi-rs",
-        "msgpackr",
         "node-pty",
         "playwright-core",
         "tree-sitter-wasms",

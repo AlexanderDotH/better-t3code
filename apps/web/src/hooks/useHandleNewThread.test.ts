@@ -120,13 +120,22 @@ const testServerConfigs = () =>
     [
       "environment-primary",
       {
+        environment: { capabilities: { projectChatSettings: false } },
+        providers: [],
         settings: {
           ...testState.targetSettings,
           newWorktreesStartFromOrigin: !testState.targetSettings.newWorktreesStartFromOrigin,
         },
       },
     ],
-    ["environment-ssh", { settings: testState.targetSettings }],
+    [
+      "environment-ssh",
+      {
+        settings: testState.targetSettings,
+        providers: [],
+        environment: { capabilities: { projectChatSettings: false } },
+      },
+    ],
   ]);
 
 vi.mock("../rpc/atomRegistry", () => ({
@@ -201,7 +210,9 @@ vi.mock("../lib/chatThreadActions", async (importOriginal) => ({
   hasExplicitComposerModelSelection: () => false,
   resolveNewThreadModelSelectionOverride: () => null,
 }));
-vi.mock("../providerInstances", () => ({ resolveDefaultProviderModelSelection: () => null }));
+vi.mock("../providerInstances", () => ({
+  resolveProjectDefaultProviderModelSelection: () => null,
+}));
 vi.mock("../lib/t3ProjectFileDefaults", () => ({
   readT3ProjectFile: () => testState.projectFileRead,
 }));

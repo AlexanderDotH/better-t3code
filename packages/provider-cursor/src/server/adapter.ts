@@ -2336,26 +2336,15 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             );
           }
           const userText = t3OrchestrationPrompt({
-            prompt: [
-              buildRuntimeInstructions({
-                harness: "Cursor",
-                model: turnInput.modelSelection.model,
-                interactionMode: turnInput.runtimePolicy.interactionMode,
-                deepPlan:
-                  turnInput.runtimePolicy.interactionMode === "chat" ? null : (deepPlan ?? null),
-              }),
-              yield* providerMessageTextWithAttachmentPaths({
-                text:
-                  cursorSkillNames === undefined
-                    ? rawText
-                    : rewriteCursorSkillMentions(rawText, cursorSkillNames),
-                attachments: turnInput.message.attachments,
-                resolveAttachmentPath: host.resolveAttachmentPath,
-                resolveExtractedTextPath: host.resolveExtractedTextPath,
-              }),
-            ]
-              .filter(Boolean)
-              .join("\n\n"),
+            prompt: yield* providerMessageTextWithAttachmentPaths({
+              text:
+                cursorSkillNames === undefined
+                  ? rawText
+                  : rewriteCursorSkillMentions(rawText, cursorSkillNames),
+              attachments: turnInput.message.attachments,
+              resolveAttachmentPath: host.resolveAttachmentPath,
+              resolveExtractedTextPath: host.resolveExtractedTextPath,
+            }),
             hasT3Mcp: mcpServers?.["t3-code"] !== undefined,
             hasDeviceTools,
             orchestrationDelivered: delivered.orchestration,
@@ -2396,7 +2385,14 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               detail: "Cursor turn requires non-empty text or attachments.",
             });
           }
-          const text = `${userText}\n\n${buildRuntimeInstructions({ harness: "Cursor", model: turnInput.modelSelection.model })}`;
+          const runtimeInstructions = buildRuntimeInstructions({
+            harness: "Cursor",
+            model: turnInput.modelSelection.model,
+            interactionMode: turnInput.runtimePolicy.interactionMode,
+            deepPlan:
+              turnInput.runtimePolicy.interactionMode === "chat" ? null : (deepPlan ?? null),
+          });
+          const text = `${userText}\n\n${runtimeInstructions}`;
           return images.length === 0
             ? text
             : ({
