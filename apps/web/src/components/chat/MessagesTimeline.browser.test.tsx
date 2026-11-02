@@ -1521,7 +1521,13 @@ it("preserves the user message and expanded tool output while presentation modes
     '[data-message-id="presentation-user"] [data-user-message-body]',
   );
   expect(user).not.toBeNull();
+  const workGroup = screen.getByRole("button", { name: /^Worked for/ });
   const disclosure = screen.getByRole("button", { name: "printf preserved", exact: true });
+  await expect.element(workGroup).toBeVisible();
+  await expect.element(workGroup).toHaveAttribute("aria-expanded", "false");
+  await expect.element(disclosure).not.toBeInTheDocument();
+  await workGroup.click();
+  await expect.element(workGroup).toHaveAttribute("aria-expanded", "true");
   await expect.element(disclosure).toBeVisible();
   await expect.element(disclosure).toHaveAttribute("aria-expanded", "false");
   await disclosure.click();
@@ -1543,6 +1549,7 @@ it("preserves the user message and expanded tool output while presentation modes
       ),
     ).toBe(user);
     await expect.element(page.getByText("Preserved tool output", { exact: true })).toBeVisible();
+    await expect.element(workGroup).toHaveAttribute("aria-expanded", "true");
     await expect.element(disclosure).toHaveAttribute("aria-expanded", "true");
   }
 });

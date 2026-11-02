@@ -35,8 +35,22 @@ import {
 } from "./MessagesTimeline.logic";
 import { buildToolCallExpandedBody } from "./TimelineWorkEntryRow.logic";
 
-it("projects the presentation-switch command as one named expandable tool in each layout", () => {
+it("keeps the completed presentation-switch turn collapsed until opened in every layout", () => {
   const createdAt = "2026-03-17T19:12:28.000Z";
+  const message = (id: string, role: "user" | "assistant", text: string): TimelineEntry => ({
+    id: `entry-${id}`,
+    kind: "message",
+    createdAt,
+    message: {
+      id: MessageId.make(id),
+      role,
+      text,
+      runId: null,
+      streaming: false,
+      createdAt,
+      updatedAt: createdAt,
+    },
+  });
   const tool: Extract<TimelineEntry, { kind: "work" }> = {
     id: "presentation-tool",
     kind: "work",
@@ -55,21 +69,47 @@ it("projects the presentation-switch command as one named expandable tool in eac
     },
   };
   const input = {
-    timelineEntries: [tool],
+    timelineEntries: [
+      message("presentation-user", "user", "A persistent request"),
+      tool,
+      message("presentation-assistant", "assistant", "A persistent answer"),
+    ],
     isWorking: false,
     turnDiffSummaries: [],
     supportsConversationRollback: false,
   };
   const current = deriveMessagesTimelineRows({ ...input, chatVisualMode: "current" });
-  expect(current).toHaveLength(1);
-  expect(current[0]).toMatchObject({ kind: "work", displayLabel: "printf preserved" });
+  const fold = current.find((row) => row.kind === "turn-fold");
+  expect(fold).toMatchObject({ label: "Worked for 1ms", expanded: false });
+  expect(current.filter((row) => row.kind === "work")).toEqual([]);
   expect(buildToolCallExpandedBody(tool.entry, undefined, "printf preserved", null)).toBe(
     "Preserved tool output",
   );
-  const better = deriveMessagesTimelineRows({ ...input, chatVisualMode: "better-t3" });
-  expect(better).toEqual(current);
-  const classic = deriveMessagesTimelineRows({ ...input, chatVisualMode: "classic" });
-  expect(classic).toEqual(current);
+  for (const chatVisualMode of ["current", "better-t3", "classic"] as const) {
+    const collapsed = deriveMessagesTimelineRows({ ...input, chatVisualMode });
+    expect(collapsed.find((row) => row.kind === "turn-fold")).toMatchObject({
+      id: fold!.id,
+      expanded: false,
+    });
+    expect(collapsed.filter((row) => row.kind === "work")).toEqual([]);
+    const expanded = deriveMessagesTimelineRows({
+      ...input,
+      chatVisualMode,
+      expandedRunIds: new Set([fold!.runId]),
+    });
+    expect(expanded.find((row) => row.kind === "turn-fold")).toMatchObject({
+      id: fold!.id,
+      expanded: true,
+    });
+    expect(expanded.find((row) => row.kind === "work")).toMatchObject({
+      displayLabel: "printf preserved",
+      groupedEntries: [tool.entry],
+    });
+    expect(expanded.filter((row) => row.kind === "message").map((row) => row.message.id)).toEqual([
+      "presentation-user",
+      "presentation-assistant",
+    ]);
+  }
 });
 
 describe("resolveAssistantMessageCopyState", () => {

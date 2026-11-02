@@ -7,14 +7,17 @@ import {
   useGitStackedAction,
 } from "./sourceControlActions.transport.fixture";
 import { RegistryContext } from "@effect/atom-react";
+import { it as effectIt } from "@effect/vitest";
 import type { GitRunStackedActionInput } from "@t3tools/contracts";
 import { createVcsActionTransportId } from "@t3tools/client-runtime/state/vcs";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
-import { AsyncResult, type AtomRegistry } from "effect/reactivity";
+import * as Effect from "effect/Effect";
+import { AsyncResult, AtomRegistry } from "effect/reactivity";
 import { useLayoutEffect } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
-import { commitResult } from "../components/git-workbench/gitCommitTestFixtures";
+import { commitResult, vcsStatus } from "../components/git-workbench/gitCommitTestFixtures";
+import { resolveQuickAction } from "../components/GitActionsControl.logic";
 
 const testState = transportTestState();
 
@@ -29,7 +32,9 @@ function Probe() {
   return null;
 }
 beforeEach(async () => {
-  registry = await setupTransportTest();
+  registry = await setupTransportTest({
+    status: vcsStatus({ hasPrimaryRemote: false, hasUpstream: false }),
+  });
   await act(() => {
     renderer = create(
       <RegistryContext.Provider value={registry}>
@@ -44,6 +49,31 @@ afterEach(async () => {
 });
 
 describe("useGitStackedAction commit selection transport", () => {
+  effectIt.effect(
+    "loads the configured checkout through the runtime before selecting commit preparation",
+    () =>
+      Effect.gen(function* () {
+        const { vcsEnvironment } = yield* Effect.promise(() => import("./vcs"));
+        const atom = vcsEnvironment.status({
+          environmentId: scope.environmentId,
+          input: { cwd: scope.cwd },
+        });
+        const status = yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* AtomRegistry.mount(registry, atom);
+            return yield* AtomRegistry.getResult(registry, atom, { suspendOnWaiting: false });
+          }),
+        );
+        expect(status).toEqual(vcsStatus({ hasPrimaryRemote: false, hasUpstream: false }));
+        expect(resolveQuickAction(status, false, false, false)).toEqual({
+          label: "Commit",
+          disabled: false,
+          kind: "run_action",
+          action: "commit",
+        });
+      }),
+  );
+
   it("observes the runtime request before releasing its terminal result", async () => {
     using response = deferStackedResponse();
     const actionId = "held-commit-response";

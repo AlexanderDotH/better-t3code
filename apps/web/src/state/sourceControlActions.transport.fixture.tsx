@@ -19,6 +19,7 @@ import {
   WS_METHODS,
   type GitRunStackedActionInput,
   type GitRunStackedActionResult,
+  type VcsStatusResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -43,6 +44,7 @@ const testState = vi.hoisted(() => ({
   stackedResult: null as GitRunStackedActionResult | null,
   stackedResponse: undefined as Promise<GitRunStackedActionResult> | undefined,
   onStackedRequest: undefined as ((input: GitRunStackedActionInput) => void) | undefined,
+  status: undefined as VcsStatusResult | undefined,
   threadId: null as ThreadId | null,
 }));
 
@@ -152,7 +154,7 @@ export function deferStackedResponse() {
   };
 }
 
-export async function setupTransportTest() {
+export async function setupTransportTest(options: { status?: VcsStatusResult } = {}) {
   if (testState.runtime === undefined) {
     testState.runtime = Atom.runtime(
       Layer.unwrap(
@@ -161,8 +163,8 @@ export async function setupTransportTest() {
             [WS_METHODS.subscribeVcsStatus]: () =>
               Stream.make({
                 _tag: "snapshot" as const,
-                local: vcsStatus(),
-                remote: vcsStatus(),
+                local: testState.status ?? vcsStatus(),
+                remote: testState.status ?? vcsStatus(),
               }).pipe(Stream.concat(Stream.never)),
             [WS_METHODS.serverDiscoverSourceControl]: () =>
               Effect.succeed({ sourceControlProviders: [] }),
@@ -265,5 +267,6 @@ export async function setupTransportTest() {
   testState.stackedResult = null;
   testState.stackedResponse = undefined;
   testState.onStackedRequest = undefined;
+  testState.status = options.status ?? vcsStatus();
   return AtomRegistry.make();
 }

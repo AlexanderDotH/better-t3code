@@ -8,6 +8,7 @@ import {
   GitActionsControl,
 } from "./sourceControlActions.transport.fixture";
 import { RegistryContext } from "@effect/atom-react";
+import { useEffect, useState } from "react";
 import { expect, it } from "vite-plus/test";
 import { act, render } from "../../test/render";
 import { GitCommitComposer } from "../components/git-workbench/GitCommitComposer";
@@ -15,24 +16,32 @@ import {
   gitCommitDraftKey,
   useGitCommitDraftStore,
 } from "../components/git-workbench/gitCommitDraftStore";
-import { commitResult, deferredResult } from "../components/git-workbench/gitCommitTestFixtures";
+import {
+  commitResult,
+  deferredResult,
+  vcsStatus,
+} from "../components/git-workbench/gitCommitTestFixtures";
 import { TooltipProvider } from "../components/ui/tooltip";
+import { requestGitActionsControl } from "../components/gitActionsControlBus";
+import { subscribeGitWorkbenchEntry } from "../components/git-workbench/gitWorkbenchEntryBus";
 
 const testState = transportTestState();
 
-it("submits the actual composer through the actual control and web hook to the runtime RPC", async () => {
-  const settled = deferredResult<void>();
-  const registry = await setupTransportTest();
-  testState.stackedResult = commitResult();
-  using _registry = { [Symbol.dispose]: () => registry.dispose() };
-  using response = deferStackedResponse();
-  const _draftCleanup = { [Symbol.dispose]: () => useGitCommitDraftStore.getState().clear() };
-  useGitCommitDraftStore.getState().clear();
-  using _draft = _draftCleanup;
-  await using screen = await render(
-    <RegistryContext.Provider value={registry}>
-      <TooltipProvider>
-        <GitActionsControl gitCwd={scope.cwd} activeThreadRef={{ environmentId, threadId }} />
+function CommitPreparation({ onSettled }: { onSettled: () => void }) {
+  const [preparing, setPreparing] = useState(false);
+  useEffect(
+    () =>
+      subscribeGitWorkbenchEntry((request) => {
+        if (request.environmentId !== environmentId || request.cwd !== scope.cwd) return false;
+        setPreparing(true);
+        return true;
+      }),
+    [],
+  );
+  return (
+    <>
+      <GitActionsControl gitCwd={scope.cwd} activeThreadRef={{ environmentId, threadId }} />
+      {preparing ? (
         <GitCommitComposer
           {...scope}
           stateToken="state-1"
@@ -44,31 +53,47 @@ it("submits the actual composer through the actual control and web hook to the r
           focusRequest={0}
           pushAvailable={false}
           onQueueCommit={async () => ({ status: "queued" })}
-          onSettled={() => settled.resolve()}
+          onSettled={onSettled}
         />
+      ) : null}
+    </>
+  );
+}
+
+it("submits the actual composer through the actual control and web hook to the runtime RPC", async () => {
+  const settled = deferredResult<void>();
+  const registry = await setupTransportTest({
+    status: vcsStatus({ hasPrimaryRemote: false, hasUpstream: false }),
+  });
+  testState.stackedResult = commitResult();
+  using _registry = { [Symbol.dispose]: () => registry.dispose() };
+  using response = deferStackedResponse();
+  const _draftCleanup = { [Symbol.dispose]: () => useGitCommitDraftStore.getState().clear() };
+  useGitCommitDraftStore.getState().clear();
+  using _draft = _draftCleanup;
+  await using screen = await render(
+    <RegistryContext.Provider value={registry}>
+      <TooltipProvider>
+        <CommitPreparation onSettled={() => settled.resolve()} />
       </TooltipProvider>
     </RegistryContext.Provider>,
   );
   const container = screen.container;
-  await expect
-    .element(screen.getByRole("button", { name: "Commit, push & PR", exact: true }))
-    .not.toBeDisabled();
+  expect(container.querySelector("[data-git-commit-composer]")).toBeNull();
+  await act(() => requestGitActionsControl({ ...scope, intent: "commit-staged" }));
+  const preparation = screen.getByRole("form", { name: "Prepare commit", exact: true });
+  await expect.element(preparation).toBeVisible();
   expect(testState.rpcInputs).toEqual([]);
   expect(testState.refreshInputs).toEqual([]);
-  const manual = container.querySelector<HTMLInputElement>('[data-git-commit-mode="manual"]')!;
-  await act(() => manual.click());
+  await preparation.getByRole("radio", { name: "Write a message", exact: true }).click();
+  const message = preparation.getByRole("textbox", { name: "Commit message", exact: true });
+  await expect.element(message).not.toBeDisabled();
   const textarea = container.querySelector<HTMLTextAreaElement>("[data-git-commit-message]")!;
   const commitMessage = "  A deliberate subject\n\nBody with details.  ";
-  await act(() => {
-    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
-      textarea,
-      commitMessage,
-    );
-    textarea.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-  const button = container.querySelector<HTMLButtonElement>('[data-git-commit-action="commit"]')!;
+  await message.fill(commitMessage);
+  const button = preparation.getByRole("button", { name: "Commit staged changes", exact: true });
   await expect.element(button).not.toBeDisabled();
-  await act(() => button.click());
+  await button.click();
   const observed = await Promise.race([
     response.received.then((input) => ({ status: "request" as const, input })),
     settled.promise.then(() => ({
